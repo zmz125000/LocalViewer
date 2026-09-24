@@ -20,31 +20,32 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.waitForUpOrCancellation
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.displayCutout
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.requiredHeight
+import androidx.compose.foundation.layout.requiredWidth
 import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
@@ -76,13 +77,13 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.key
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -94,6 +95,7 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.Offset
@@ -113,6 +115,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.lifecycleScope
@@ -181,10 +184,12 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import me.saket.telephoto.zoomable.DoubleClickToZoomListener
 import me.saket.telephoto.zoomable.EnabledZoomGestures
 import me.saket.telephoto.zoomable.OverzoomEffect
 import me.saket.telephoto.zoomable.ZoomLimit
 import me.saket.telephoto.zoomable.ZoomSpec
+import me.saket.telephoto.zoomable.ZoomableContentLocation
 import me.saket.telephoto.zoomable.rememberZoomableState
 import me.saket.telephoto.zoomable.zoomable
 import okio.Path.Companion.toPath
@@ -1037,35 +1042,37 @@ private fun PdfReaderScreen(
                                 showNavigationOverlay = false
                             }
                         }
-                        .zoomable(
-                            state = zoomableState,
-                            gestures = gestures,
-                            onClick = { offset ->
-                                val w = viewportPx.width.takeIf { it > 0 }
-                                    ?: listState.layoutInfo.viewportSize.width
-                                val h = viewportPx.height.takeIf { it > 0 }
-                                    ?: listState.layoutInfo.viewportSize.height
-                                if (w <= 0 || h <= 0) return@zoomable
-                                when (navigator.getAction(Offset(offset.x / w, offset.y / h))) {
-                                    NavigationRegion.MENU -> {
-                                        if (!suppressPageClick) appbarVisible = !appbarVisible
+                        .thenIf(isWebtoon || pagerDual) {
+                            zoomable(
+                                state = zoomableState,
+                                gestures = gestures,
+                                onClick = { offset ->
+                                    val w = viewportPx.width.takeIf { it > 0 }
+                                        ?: listState.layoutInfo.viewportSize.width
+                                    val h = viewportPx.height.takeIf { it > 0 }
+                                        ?: listState.layoutInfo.viewportSize.height
+                                    if (w <= 0 || h <= 0) return@zoomable
+                                    when (navigator.getAction(Offset(offset.x / w, offset.y / h))) {
+                                        NavigationRegion.MENU -> {
+                                            if (!suppressPageClick) appbarVisible = !appbarVisible
+                                        }
+                                        NavigationRegion.NEXT -> {
+                                            scope.launch { stepPdfPage(forward = true) }
+                                        }
+                                        NavigationRegion.PREV -> {
+                                            scope.launch { stepPdfPage(forward = false) }
+                                        }
+                                        NavigationRegion.RIGHT -> {
+                                            scope.launch { stepPdfPage(forward = !webtoonHorizontal) }
+                                        }
+                                        NavigationRegion.LEFT -> {
+                                            scope.launch { stepPdfPage(forward = webtoonHorizontal) }
+                                        }
                                     }
-                                    NavigationRegion.NEXT -> {
-                                        scope.launch { stepPdfPage(forward = true) }
-                                    }
-                                    NavigationRegion.PREV -> {
-                                        scope.launch { stepPdfPage(forward = false) }
-                                    }
-                                    NavigationRegion.RIGHT -> {
-                                        scope.launch { stepPdfPage(forward = !webtoonHorizontal) }
-                                    }
-                                    NavigationRegion.LEFT -> {
-                                        scope.launch { stepPdfPage(forward = webtoonHorizontal) }
-                                    }
-                                }
-                            },
-                            onDoubleClick = doubleTap,
-                        )
+                                },
+                                onDoubleClick = doubleTap,
+                            )
+                        }
                     val sidePadding = with(LocalDensity.current) {
                         val edge = if (webtoonHorizontal) heightPx else widthPx
                         (edge * Settings.webtoonSidePadding.value / 100f).toDp()
@@ -1102,15 +1109,48 @@ private fun PdfReaderScreen(
                                         )
                                     }
                                 }
-                                doc is PdfDocumentModel.Vector -> PdfVectorPage(
-                                    session = doc.session,
-                                    index = index,
-                                    widthPx = vectorWidthPx,
-                                    viewWidthPx = cellW,
-                                    viewHeightPx = cellH,
-                                    box = box,
-                                    scaleType = if (box == PdfPageBox.Cell) 1 else scaleType,
-                                )
+                                doc is PdfDocumentModel.Vector -> if (box == PdfPageBox.Single) {
+                                    PdfSingleVectorPage(
+                                        session = doc.session,
+                                        index = index,
+                                        viewWidthPx = cellW,
+                                        viewHeightPx = cellH,
+                                        scaleType = scaleType,
+                                        onDoubleClick = doubleTap,
+                                        onClick = { offset ->
+                                            val w = viewportPx.width.takeIf { it > 0 } ?: cellW
+                                            val h = viewportPx.height.takeIf { it > 0 } ?: cellH
+                                            if (w <= 0 || h <= 0) return@PdfSingleVectorPage
+                                            when (navigator.getAction(Offset(offset.x / w, offset.y / h))) {
+                                                NavigationRegion.MENU -> {
+                                                    if (!suppressPageClick) appbarVisible = !appbarVisible
+                                                }
+                                                NavigationRegion.NEXT -> {
+                                                    scope.launch { stepPdfPage(forward = true) }
+                                                }
+                                                NavigationRegion.PREV -> {
+                                                    scope.launch { stepPdfPage(forward = false) }
+                                                }
+                                                NavigationRegion.RIGHT -> {
+                                                    scope.launch { stepPdfPage(forward = true) }
+                                                }
+                                                NavigationRegion.LEFT -> {
+                                                    scope.launch { stepPdfPage(forward = false) }
+                                                }
+                                            }
+                                        },
+                                    )
+                                } else {
+                                    PdfVectorPage(
+                                        session = doc.session,
+                                        index = index,
+                                        widthPx = vectorWidthPx,
+                                        viewWidthPx = cellW,
+                                        viewHeightPx = cellH,
+                                        box = box,
+                                        scaleType = if (box == PdfPageBox.Cell) 1 else scaleType,
+                                    )
+                                }
                             }
                         }
                     if (isWebtoon) {
@@ -1393,8 +1433,8 @@ private fun PdfDualSpread(
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Row(
             Modifier
-                .width(with(density) { rowW.toDp() })
-                .height(with(density) { rowH.toDp() }),
+                .requiredWidth(with(density) { rowW.toDp() })
+                .requiredHeight(with(density) { rowH.toDp() }),
         ) {
             Box(Modifier.weight(leftAspect).fillMaxHeight()) {
                 pageAt(left, PdfPageBox.Cell, leftW, rowH)
@@ -1403,6 +1443,96 @@ private fun PdfDualSpread(
                 pageAt(right, PdfPageBox.Cell, rightW, rowH)
             }
         }
+    }
+}
+
+@Composable
+private fun PdfSingleVectorPage(
+    session: PdfSession,
+    index: Int,
+    viewWidthPx: Int,
+    viewHeightPx: Int,
+    scaleType: Int,
+    onClick: (Offset) -> Unit,
+    onDoubleClick: DoubleClickToZoomListener,
+) {
+    val zoomableState = rememberZoomableState(zoomSpec = PdfZoomSpec)
+    var aspect by remember(index) { mutableFloatStateOf(1f / 1.414f) }
+    LaunchedEffect(session, index) {
+        aspect = withContext(Dispatchers.IO) {
+            runCatching { session.pageAspect(index) }.getOrDefault(aspect)
+        }
+    }
+    val contentSize = Size(
+        viewWidthPx.toFloat().coerceAtLeast(1f),
+        (viewWidthPx / aspect.coerceAtLeast(0.01f)).coerceAtLeast(1f),
+    )
+    val viewport = Size(viewWidthPx.toFloat().coerceAtLeast(1f), viewHeightPx.toFloat().coerceAtLeast(1f))
+    val contentScale = ContentScale.fromPreferences(scaleType, contentSize, viewport)
+    zoomableState.contentScale = contentScale
+    LaunchedEffect(contentSize) {
+        zoomableState.setContentLocation(ZoomableContentLocation.scaledInsideAndCenterAligned(contentSize))
+    }
+    var appliedScale by remember { mutableIntStateOf(scaleType) }
+    LaunchedEffect(scaleType) {
+        if (appliedScale == scaleType) return@LaunchedEffect
+        appliedScale = scaleType
+        zoomableState.resetZoom()
+    }
+    val liveZoom by remember {
+        derivedStateOf {
+            val t = zoomableState.contentTransformation
+            if (!t.isSpecified) 1f else t.scale.scaleX.coerceAtLeast(1f)
+        }
+    }
+    var renderZoom by remember { mutableFloatStateOf(1f) }
+    LaunchedEffect(zoomableState) {
+        snapshotFlow { liveZoom }
+            .debounce(120)
+            .distinctUntilChanged { a, b -> abs(a - b) < 0.08f }
+            .collect { renderZoom = it }
+    }
+    val renderWidth = (pdfScaleRenderWidth(aspect, viewWidthPx, viewHeightPx, scaleType) * renderZoom)
+        .roundToInt()
+        .coerceIn(1, MAX_VECTOR_EDGE)
+    var bitmap by remember(index) { mutableStateOf<Bitmap?>(null) }
+    LaunchedEffect(session, index, renderWidth, scaleType) {
+        var next: Bitmap? = null
+        try {
+            next = withContext(Dispatchers.IO) {
+                runCatching { session.render(index, renderWidth) }.getOrNull()
+            }
+            if (next != null) {
+                val prev = bitmap
+                bitmap = next
+                next = null
+                if (prev != null && prev !== bitmap) prev.recycle()
+            }
+        } finally {
+            next?.recycle()
+        }
+    }
+    DisposableEffect(index) {
+        onDispose { bitmap?.recycle() }
+    }
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .zoomable(
+                state = zoomableState,
+                onClick = onClick,
+                onDoubleClick = onDoubleClick,
+            ),
+        contentAlignment = Alignment.Center,
+    ) {
+        PdfPageBitmap(
+            bitmap = bitmap,
+            pageLabel = index + 1,
+            pageCount = session.pageCount,
+            box = PdfPageBox.Single,
+            scaleType = scaleType,
+            aspect = aspect,
+        )
     }
 }
 
@@ -1512,11 +1642,7 @@ private fun PdfPageBitmap(
             }
         } else {
             val contentScale = when (box) {
-                PdfPageBox.Single -> ContentScale.fromPreferences(
-                    scaleType,
-                    Size(bitmap.width.toFloat(), bitmap.height.toFloat()),
-                    Size(maxWidth.value, maxHeight.value),
-                )
+                PdfPageBox.Single -> ContentScale.Inside
                 PdfPageBox.Cell -> ContentScale.Fit
                 PdfPageBox.Strip -> ContentScale.FillHeight
                 PdfPageBox.Webtoon -> ContentScale.FillWidth
