@@ -24,10 +24,6 @@ fun ReaderGeneralSetting() = Column(modifier = Modifier.verticalScroll(rememberS
         values = integerArrayResource(id = com.hippo.ehviewer.R.array.reader_themes_values).toList(),
         field = Settings.readerTheme.asMutableState(),
     )
-    SwitchChoice(
-        title = stringResource(id = R.string.pref_open_image_pdf_as_gallery),
-        field = Settings.openImagePdfAsGallery.asMutableState(),
-    )
     val hdrDisplay = Settings.readerHdrDisplay.asMutableState()
     SwitchChoice(
         title = stringResource(id = R.string.pref_reader_hdr_display),
