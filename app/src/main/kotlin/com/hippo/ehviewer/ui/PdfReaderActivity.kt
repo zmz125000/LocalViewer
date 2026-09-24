@@ -35,6 +35,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.layout.windowInsetsPadding
@@ -50,13 +51,16 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.VerticalPager
 import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.NavigateNext
 import androidx.compose.material.icons.outlined.MyLocation
+import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
@@ -80,6 +84,8 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
@@ -91,7 +97,9 @@ import androidx.compose.ui.keepScreenOn
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
@@ -1336,31 +1344,97 @@ private fun PdfContentsSheet(
         contentWindowInsets = { WindowInsets() },
     ) {
         val nearest = if (chapters.isEmpty()) -1 else nearestPdfTocIndex(chapters, pageIndex)
+        var searching by remember { mutableStateOf(false) }
+        var query by remember { mutableStateOf("") }
+        val queryTrim = query.trim()
+        val visible = remember(chapters, queryTrim) {
+            chapters.mapIndexed { index, entry -> index to entry }.filter { (_, entry) ->
+                queryTrim.isEmpty() || entry.title.contains(queryTrim, ignoreCase = true)
+            }
+        }
+        val headerStyle = MaterialTheme.typography.bodyLarge
+        val iconSize = with(LocalDensity.current) { headerStyle.fontSize.toDp() }
+        val focusRequester = remember { FocusRequester() }
+        val keyboard = LocalSoftwareKeyboardController.current
+        LaunchedEffect(searching) {
+            if (searching) {
+                focusRequester.requestFocus()
+                keyboard?.show()
+            }
+        }
+        LaunchedEffect(queryTrim) {
+            if (queryTrim.isNotEmpty() && visible.isNotEmpty()) {
+                listState.scrollToItem(0)
+            }
+        }
+        fun jumpToFirstResult() {
+            val first = visible.firstOrNull()?.second ?: return
+            onPick(first.pageIndex)
+        }
         Column(Modifier.readerSheetBox(GalleryGridDefaults.capReaderSheet()).navigationBarsPadding()) {
             Row(
-                modifier = Modifier.fillMaxWidth().padding(start = 24.dp, end = 4.dp),
+                modifier = Modifier.fillMaxWidth().padding(start = 24.dp, end = 12.dp, top = 12.dp, bottom = 4.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text(
-                    if (nearest >= 0) chapters[nearest].title else stringResource(R.string.pdf_reader_contents),
-                    style = MaterialTheme.typography.bodyLarge,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f),
-                )
-                if (chapters.isNotEmpty()) {
-                    IconButton(
-                        onClick = {
-                            scope.launch {
-                                listState.animateScrollToItem(nearestPdfTocIndex(chapters, pageIndex))
+                if (searching) {
+                    BasicTextField(
+                        value = query,
+                        onValueChange = { query = it },
+                        textStyle = headerStyle.copy(color = MaterialTheme.colorScheme.onSurface),
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                        keyboardActions = KeyboardActions(onSearch = { jumpToFirstResult() }),
+                        modifier = Modifier
+                            .weight(1f)
+                            .focusRequester(focusRequester),
+                        decorationBox = { inner ->
+                            if (query.isEmpty()) {
+                                Text(
+                                    stringResource(R.string.pdf_reader_contents_search),
+                                    style = headerStyle,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
                             }
+                            inner()
                         },
-                    ) {
-                        Icon(
-                            imageVector = Icons.Outlined.MyLocation,
-                            contentDescription = stringResource(R.string.pdf_reader_contents_locate),
-                        )
-                    }
+                    )
+                } else {
+                    Text(
+                        if (nearest >= 0) chapters[nearest].title else stringResource(R.string.pdf_reader_contents),
+                        style = headerStyle,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+                if (chapters.isNotEmpty()) {
+                    Icon(
+                        imageVector = Icons.Outlined.Search,
+                        contentDescription = stringResource(R.string.pdf_reader_contents_search),
+                        modifier = Modifier
+                            .padding(start = 12.dp)
+                            .size(iconSize)
+                            .clickable {
+                                searching = !searching
+                                if (!searching) {
+                                    query = ""
+                                    keyboard?.hide()
+                                }
+                            },
+                    )
+                    Icon(
+                        imageVector = Icons.Outlined.MyLocation,
+                        contentDescription = stringResource(R.string.pdf_reader_contents_locate),
+                        modifier = Modifier
+                            .padding(start = 12.dp)
+                            .size(iconSize)
+                            .clickable {
+                                val target = visible.indexOfFirst { it.first == nearest }.let { found ->
+                                    if (found >= 0) found else 0
+                                }
+                                scope.launch { listState.animateScrollToItem(target) }
+                            },
+                    )
                 }
             }
             if (chapters.isEmpty()) {
@@ -1370,9 +1444,18 @@ private fun PdfContentsSheet(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(horizontal = 24.dp),
                 )
+            } else if (visible.isEmpty()) {
+                Text(
+                    stringResource(R.string.pdf_reader_contents_no_matches),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 24.dp),
+                )
             } else {
                 LazyColumn(Modifier.fillMaxSize(), state = listState) {
-                    itemsIndexed(chapters, key = { index, entry -> "$index-${entry.pageIndex}-${entry.depth}-${entry.title}" }) { index, entry ->
+                    itemsIndexed(visible, key = { _, item -> "${item.first}-${item.second.pageIndex}-${item.second.depth}-${item.second.title}" }) { _, item ->
+                        val index = item.first
+                        val entry = item.second
                         val selected = index == nearest
                         Row(
                             modifier = Modifier

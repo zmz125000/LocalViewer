@@ -327,6 +327,8 @@
     <string name="pdf_reader_page">Page %1$d of %2$d</string>
     <string name="pdf_reader_contents">Table of contents</string>
     <string name="pdf_reader_contents_locate">Show current chapter</string>
+    <string name="pdf_reader_contents_search">Search chapters</string>
+    <string name="pdf_reader_contents_no_matches">No matching chapters</string>
     <string name="pdf_reader_no_contents">This PDF has no chapters</string>
     <string name="clear_image_cache">Clear image cache</string>
     <string name="clear_image_cache_confirm">Clear all cached images for this gallery?</string>
