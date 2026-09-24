@@ -95,6 +95,7 @@ import com.hippo.ehviewer.library.VideoThumbnail
 import com.hippo.ehviewer.library.VideoThumbnailSource
 import com.hippo.ehviewer.library.ZipAsDirListing
 import com.hippo.ehviewer.library.ZipPaths
+import com.hippo.ehviewer.library.safFolderLabel
 import com.hippo.ehviewer.library.browseScrollLayoutKey
 import com.hippo.ehviewer.library.filterByContentMode
 import com.hippo.ehviewer.library.filterSmallGalleries
@@ -110,7 +111,6 @@ import com.hippo.ehviewer.library.mimeTypeForFileName
 import com.hippo.ehviewer.library.naturalCompare
 import com.hippo.ehviewer.library.resolveBrowsePath
 import com.hippo.ehviewer.library.resolveRelative
-import com.hippo.ehviewer.library.safFolderLabel
 import com.hippo.ehviewer.library.stableGalleryId
 import com.hippo.ehviewer.library.toBrowseSections
 import com.hippo.ehviewer.library.withLocalZipCentralDirectory

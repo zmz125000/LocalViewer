@@ -66,6 +66,7 @@ import com.hippo.ehviewer.library.ArchiveCoverCache
 import com.hippo.ehviewer.library.CoverEnsureResult
 import com.hippo.ehviewer.library.HistoryThumbKey
 import com.hippo.ehviewer.library.LocalHistory
+import com.hippo.ehviewer.library.safFolderLabel
 import com.hippo.ehviewer.library.LocalHistoryTarget
 import com.hippo.ehviewer.library.LocalLibrary
 import com.hippo.ehviewer.library.SMB_BROWSE_TOKEN
@@ -73,7 +74,6 @@ import com.hippo.ehviewer.library.VideoThumbnailSource
 import com.hippo.ehviewer.library.WEBDAV_BROWSE_TOKEN
 import com.hippo.ehviewer.library.ZipPaths
 import com.hippo.ehviewer.library.isVideoFileName
-import com.hippo.ehviewer.library.safFolderLabel
 import okio.Path.Companion.toPath
 
 /** Prefer stored [GalleryInfo.thumbKey]; for network archives / videos derive the logical cover key. */
