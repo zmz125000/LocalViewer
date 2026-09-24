@@ -47,6 +47,9 @@ import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.VerticalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.NavigateNext
 import androidx.compose.material.icons.outlined.MyLocation
@@ -635,12 +638,6 @@ private fun PdfReaderScreen(
     val pageCount = imageLoader?.size ?: (doc?.pageCount ?: 0)
     val initial = startPage.coerceIn(0, (pageCount - 1).coerceAtLeast(0))
     val listState = rememberLazyListState(initialFirstVisibleItemIndex = initial)
-    val currentPage by remember(imageLoader, doc) {
-        derivedStateOf {
-            val n = imageLoader?.size ?: (doc?.pageCount ?: 0)
-            if (n <= 0) 0 else (listState.firstVisibleItemIndex + 1).coerceIn(1, n)
-        }
-    }
     val scope = rememberCoroutineScope()
     val showSeekbar by Settings.showReaderSeekbar.collectAsState()
     val hideTopBar by Settings.readerHideTopBar.collectAsState()
@@ -651,10 +648,6 @@ private fun PdfReaderScreen(
     val thumbGridState = rememberLazyGridState()
     val contentsListState = rememberLazyListState()
     val scrollGridToProgress by Settings.photoGridScrollToProgress.collectAsState()
-    LaunchedEffect(photoGridOpen) {
-        if (!photoGridOpen || !scrollGridToProgress || pageCount <= 0) return@LaunchedEffect
-        thumbGridState.scrollToItem((currentPage - 1).coerceIn(0, pageCount - 1))
-    }
     val fullscreen by Settings.fullscreen.collectAsState()
     val cutoutShort by Settings.cutoutShort.collectAsState()
     val keepScreenOn by Settings.keepScreenOn.collectAsState()
@@ -681,8 +674,32 @@ private fun PdfReaderScreen(
             uiController.isSystemBarsVisible = true
         }
     }
-    val readingMode by Settings.readingMode.collectAsState { ReadingModeType.fromPreference(it) }
+    val readingMode by Settings.readingMode.collectAsState {
+        when (val mode = ReadingModeType.fromPreference(it)) {
+            ReadingModeType.DEFAULT -> ReadingModeType.RIGHT_TO_LEFT
+            else -> mode
+        }
+    }
     val isWebtoon = ReadingModeType.isWebtoon(readingMode)
+    val pageCountState = rememberUpdatedState(pageCount)
+    val pagerState = rememberPagerState(initialPage = initial) {
+        pageCountState.value.coerceAtLeast(1)
+    }
+    val currentPage by remember(imageLoader, doc) {
+        derivedStateOf {
+            val n = imageLoader?.size ?: (doc?.pageCount ?: 0)
+            val index = if (ReadingModeType.isWebtoon(readingMode)) {
+                listState.firstVisibleItemIndex
+            } else {
+                pagerState.currentPage
+            }
+            if (n <= 0) 0 else (index + 1).coerceIn(1, n)
+        }
+    }
+    LaunchedEffect(photoGridOpen) {
+        if (!photoGridOpen || !scrollGridToProgress || pageCount <= 0) return@LaunchedEffect
+        thumbGridState.scrollToItem((currentPage - 1).coerceIn(0, pageCount - 1))
+    }
     val pagerNavigation by Settings.readerPagerNav.collectAsState()
     val pagerInvertMode by Settings.readerPagerNavInverted.collectAsState()
     val webtoonNavigation by Settings.readerWebtoonNav.collectAsState()
@@ -793,23 +810,60 @@ private fun PdfReaderScreen(
             loader.replan()
         }
     }
-    LaunchedEffect(doc, imageLoader, startPage) {
-        if (doc == null || pageCount <= 0) return@LaunchedEffect
-        val target = startPage.coerceIn(0, pageCount - 1)
-        if (listState.firstVisibleItemIndex != target) {
+    suspend fun jumpToPdfPage(index: Int) {
+        val target = index.coerceIn(0, (pageCount - 1).coerceAtLeast(0))
+        if (ReadingModeType.isWebtoon(readingMode)) {
             listState.scrollToItem(target)
+        } else {
+            pagerState.scrollToPage(target)
         }
         onPageChanged(target)
     }
-    LaunchedEffect(doc) {
+    suspend fun stepPdfPage(forward: Boolean) {
+        if (ReadingModeType.isWebtoon(readingMode)) {
+            if (forward) listState.scrollDown() else listState.scrollUp()
+        } else {
+            val delta = if (forward) 1 else -1
+            val target = (pagerState.currentPage + delta).coerceIn(0, (pageCount - 1).coerceAtLeast(0))
+            pagerState.animateScrollToPage(target)
+        }
+    }
+    LaunchedEffect(doc, imageLoader, startPage) {
+        if (doc == null || pageCount <= 0) return@LaunchedEffect
+        jumpToPdfPage(startPage)
+    }
+    var previousReadingMode by remember { mutableStateOf(readingMode) }
+    LaunchedEffect(readingMode) {
+        if (previousReadingMode == readingMode || pageCount <= 0) return@LaunchedEffect
+        val index = if (ReadingModeType.isWebtoon(previousReadingMode)) {
+            listState.firstVisibleItemIndex
+        } else {
+            pagerState.currentPage
+        }
+        previousReadingMode = readingMode
+        jumpToPdfPage(index)
+    }
+    LaunchedEffect(doc, readingMode) {
         if (doc == null) return@LaunchedEffect
-        snapshotFlow { listState.firstVisibleItemIndex }
+        snapshotFlow {
+            if (ReadingModeType.isWebtoon(readingMode)) {
+                listState.firstVisibleItemIndex
+            } else {
+                pagerState.currentPage
+            }
+        }
             .distinctUntilChanged()
             .collect { onPageChanged(it) }
     }
-    LaunchedEffect(progressGid, doc) {
+    LaunchedEffect(progressGid, doc, readingMode) {
         if (progressGid == 0L || doc == null) return@LaunchedEffect
-        snapshotFlow { listState.firstVisibleItemIndex }
+        snapshotFlow {
+            if (ReadingModeType.isWebtoon(readingMode)) {
+                listState.firstVisibleItemIndex
+            } else {
+                pagerState.currentPage
+            }
+        }
             .distinctUntilChanged()
             .debounce(1_000)
             .collect { page ->
@@ -872,58 +926,58 @@ private fun PdfReaderScreen(
                     val vectorWidthPx = (widthPx * renderZoom).roundToInt()
                         .coerceIn(widthPx, MAX_VECTOR_EDGE)
                     var multiTouch by remember { mutableStateOf(false) }
-                    LazyColumn(
-                        state = listState,
-                        userScrollEnabled = !multiTouch,
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .onSizeChanged { size ->
-                                if (size != viewportPx) viewportPx = size
-                            }
-                            .pointerInput(Unit) {
-                                awaitPointerEventScope {
-                                    while (true) {
-                                        val event = awaitPointerEvent(PointerEventPass.Initial)
-                                        multiTouch = event.changes.count { it.pressed } >= 2
-                                        if (event.changes.any { it.changedToDown() }) {
-                                            val hide = chromeVisible
-                                            suppressPageClick = hide
-                                            if (hide) appbarVisible = false
-                                        }
+                    val viewerModifier = Modifier
+                        .fillMaxSize()
+                        .onSizeChanged { size ->
+                            if (size != viewportPx) viewportPx = size
+                        }
+                        .pointerInput(Unit) {
+                            awaitPointerEventScope {
+                                while (true) {
+                                    val event = awaitPointerEvent(PointerEventPass.Initial)
+                                    multiTouch = event.changes.count { it.pressed } >= 2
+                                    if (event.changes.any { it.changedToDown() }) {
+                                        val hide = chromeVisible
+                                        suppressPageClick = hide
+                                        if (hide) appbarVisible = false
                                     }
                                 }
                             }
-                            .pointerInput(Unit) {
-                                awaitEachGesture {
-                                    waitForUpOrCancellation()
-                                    showNavigationOverlay = false
-                                }
+                        }
+                        .pointerInput(Unit) {
+                            awaitEachGesture {
+                                waitForUpOrCancellation()
+                                showNavigationOverlay = false
                             }
-                            .zoomable(
-                                state = zoomableState,
-                                gestures = gestures,
-                                onClick = { offset ->
-                                    val w = viewportPx.width.takeIf { it > 0 }
-                                        ?: listState.layoutInfo.viewportSize.width
-                                    val h = viewportPx.height.takeIf { it > 0 }
-                                        ?: listState.layoutInfo.viewportSize.height
-                                    if (w <= 0 || h <= 0) return@zoomable
-                                    when (navigator.getAction(Offset(offset.x / w, offset.y / h))) {
-                                        NavigationRegion.MENU -> {
-                                            if (!suppressPageClick) appbarVisible = !appbarVisible
-                                        }
-                                        NavigationRegion.NEXT, NavigationRegion.RIGHT -> {
-                                            scope.launch { listState.scrollDown() }
-                                        }
-                                        NavigationRegion.PREV, NavigationRegion.LEFT -> {
-                                            scope.launch { listState.scrollUp() }
-                                        }
+                        }
+                        .zoomable(
+                            state = zoomableState,
+                            gestures = gestures,
+                            onClick = { offset ->
+                                val w = viewportPx.width.takeIf { it > 0 }
+                                    ?: listState.layoutInfo.viewportSize.width
+                                val h = viewportPx.height.takeIf { it > 0 }
+                                    ?: listState.layoutInfo.viewportSize.height
+                                if (w <= 0 || h <= 0) return@zoomable
+                                when (navigator.getAction(Offset(offset.x / w, offset.y / h))) {
+                                    NavigationRegion.MENU -> {
+                                        if (!suppressPageClick) appbarVisible = !appbarVisible
                                     }
-                                },
-                                onDoubleClick = doubleTap,
-                            ),
-                    ) {
-                        items(pageCount, key = { it }) { index ->
+                                    NavigationRegion.NEXT, NavigationRegion.RIGHT -> {
+                                        scope.launch { stepPdfPage(forward = true) }
+                                    }
+                                    NavigationRegion.PREV, NavigationRegion.LEFT -> {
+                                        scope.launch { stepPdfPage(forward = false) }
+                                    }
+                                }
+                            },
+                            onDoubleClick = doubleTap,
+                        )
+                    val pageAt: @Composable (Int) -> Unit = { index ->
+                        Box(
+                            modifier = if (isWebtoon) Modifier else Modifier.fillMaxSize(),
+                            contentAlignment = Alignment.Center,
+                        ) {
                             when {
                                 imageLoader != null -> {
                                     val page = imageLoader.pages.getOrNull(index)
@@ -947,6 +1001,33 @@ private fun PdfReaderScreen(
                             }
                         }
                     }
+                    if (isWebtoon) {
+                        LazyColumn(
+                            state = listState,
+                            userScrollEnabled = !multiTouch,
+                            verticalArrangement = if (readingMode == ReadingModeType.CONTINUOUS_VERTICAL) {
+                                androidx.compose.foundation.layout.Arrangement.spacedBy(15.dp)
+                            } else {
+                                androidx.compose.foundation.layout.Arrangement.Top
+                            },
+                            modifier = viewerModifier,
+                        ) {
+                            items(pageCount, key = { it }) { index -> pageAt(index) }
+                        }
+                    } else if (readingMode == ReadingModeType.VERTICAL) {
+                        VerticalPager(
+                            state = pagerState,
+                            userScrollEnabled = !multiTouch,
+                            modifier = viewerModifier,
+                        ) { index -> pageAt(index) }
+                    } else {
+                        HorizontalPager(
+                            state = pagerState,
+                            reverseLayout = readingMode == ReadingModeType.RIGHT_TO_LEFT,
+                            userScrollEnabled = !multiTouch,
+                            modifier = viewerModifier,
+                        ) { index -> pageAt(index) }
+                    }
                     NavigationOverlay(
                         visible = showNavigationOverlay,
                         regions = regions,
@@ -960,15 +1041,13 @@ private fun PdfReaderScreen(
             onNavigateUp = onClose,
             showTopBar = !hideTopBar,
             title = title,
-            isRtl = false,
+            isRtl = readingMode == ReadingModeType.RIGHT_TO_LEFT,
             showSeekBar = showSeekbar,
             currentPage = currentPage,
             totalPages = pageCount,
             onSliderValueChange = { page ->
                 scope.launch {
-                    val target = (page - 1).coerceIn(0, (pageCount - 1).coerceAtLeast(0))
-                    listState.scrollToItem(target)
-                    onPageChanged(target)
+                    jumpToPdfPage(page - 1)
                 }
             },
             onClickSettings = {
@@ -1017,11 +1096,7 @@ private fun PdfReaderScreen(
                 onDismiss = { contentsOpen = false },
                 onPick = { page ->
                     contentsOpen = false
-                    scope.launch {
-                        val target = page.coerceIn(0, (pageCount - 1).coerceAtLeast(0))
-                        listState.scrollToItem(target)
-                        onPageChanged(target)
-                    }
+                    scope.launch { jumpToPdfPage(page) }
                 },
             )
         }
@@ -1034,11 +1109,7 @@ private fun PdfReaderScreen(
                 onDismiss = { photoGridOpen = false },
                 onPick = { page ->
                     photoGridOpen = false
-                    scope.launch {
-                        val target = (page - 1).coerceIn(0, (pageCount - 1).coerceAtLeast(0))
-                        listState.scrollToItem(target)
-                        onPageChanged(target)
-                    }
+                    scope.launch { jumpToPdfPage(page - 1) }
                 },
             )
         }
