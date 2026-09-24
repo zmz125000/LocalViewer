@@ -22,7 +22,8 @@ import splitties.init.appCtx
  *
  * Keyed by a stable cover identity so the reader photo grid can paint the small
  * file instead of the origin page.
- * Shares [OriginDiskCache.THUMB_BUDGET_BYTES] with other thumb stores.
+ * Trimmed with the origin image cache ([OriginDiskCache.originBudgetBytes]), not the
+ * folder-cover thumb pool.
  */
 object ReaderPageThumb {
     private const val FORMAT_VERSION = 1
