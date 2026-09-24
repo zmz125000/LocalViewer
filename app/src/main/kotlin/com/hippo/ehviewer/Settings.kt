@@ -158,6 +158,13 @@ object Settings : DataStorePreferences(null) {
     val pdfReaderMode = intPref("pdf_reader_mode", 0)
 
     /**
+     * When the built-in PDF reader is selected: comic / scan PDFs open in the
+     * gallery reader. Text PDFs stay in the PDF reader. Default on.
+     * Reader → General. Explicit PDF-reader open (long-press) ignores this.
+     */
+    val openImagePdfAsGallery = boolPref("open_image_pdf_as_gallery", true)
+
+    /**
      * Preferred external PDF app as flattened [android.content.ComponentName]
      * (`package/class`). Empty = system chooser. Settings → General.
      */

@@ -771,6 +771,8 @@
     <string name="pref_fullscreen">全螢幕</string>
     <string name="pref_page_transitions">翻頁轉場動畫</string>
     <string name="pref_show_page_number">顯示頁碼</string>
+    <string name="pref_open_image_pdf_as_gallery">以圖庫開啟圖片 PDF</string>
+    <string name="pref_open_image_pdf_as_gallery_summary">漫畫和掃描 PDF 用圖片閱讀器開啟。文字 PDF 仍用 PDF 閱讀器。</string>
     <string name="pref_reader_hide_top_bar">隱藏頂欄</string>
     <string name="pref_show_reader_seekbar">顯示跳頁拖動條</string>
     <string name="pref_double_tap_to_zoom">雙擊縮放</string>

@@ -835,6 +835,8 @@
     <string name="pref_reader_photo_grid">Photo grid</string>
     <string name="pref_reader_generate_page_thumb">Generate page thumbs</string>
     <string name="pref_reader_generate_page_thumb_summary">After a page loads, write a photo-grid thumb for later use</string>
+    <string name="pref_open_image_pdf_as_gallery">Open image PDF as gallery</string>
+    <string name="pref_open_image_pdf_as_gallery_summary">Comic and scan PDFs open in the image reader. Text PDFs stay in the PDF reader.</string>
     <string name="pref_reader_hide_top_bar">Hide top bar</string>
     <string name="pref_show_reader_seekbar">Show page jumping seekbar</string>
     <string name="pref_double_tap_to_zoom">Double tap to zoom (off: prev/next gallery)</string>
