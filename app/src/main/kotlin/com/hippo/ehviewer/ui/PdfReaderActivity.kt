@@ -38,8 +38,8 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.requiredHeight
+import androidx.compose.foundation.layout.requiredWidth
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
@@ -1393,8 +1393,8 @@ private fun PdfDualSpread(
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Row(
             Modifier
-                .width(with(density) { rowW.toDp() })
-                .height(with(density) { rowH.toDp() }),
+                .requiredWidth(with(density) { rowW.toDp() })
+                .requiredHeight(with(density) { rowH.toDp() }),
         ) {
             Box(Modifier.weight(leftAspect).fillMaxHeight()) {
                 pageAt(left, PdfPageBox.Cell, leftW, rowH)
