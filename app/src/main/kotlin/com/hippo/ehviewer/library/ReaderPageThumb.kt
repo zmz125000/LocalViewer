@@ -127,7 +127,7 @@ object ReaderPageThumb {
                 try {
                     if (bitmap.config == Bitmap.Config.HARDWARE) return@withLock null
                     software = bitmap
-                    if (software == null || software.isRecycled) return@withLock null
+                    if (software.isRecycled) return@withLock null
                     val w = software.width
                     val h = software.height
                     val longEdge = maxOf(w, h)
