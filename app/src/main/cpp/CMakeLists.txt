@@ -394,11 +394,25 @@ FetchContent_Declare(
         GIT_TAG v2.5.3
         GIT_SHALLOW 1
 )
+# Release CMAKE_C_FLAGS enable Polly and LTO for the whole native build.
+# Polly miscompiles OpenJPEG's indirect decode procedures and jumps into
+# non-executable memory (SIGSEGV SEGV_ACCERR on the first JP2).
+set(_eh_c_flags "${CMAKE_C_FLAGS}")
+set(_eh_oj_flags "${CMAKE_C_FLAGS}")
+foreach (_flag IN ITEMS "-ffast-math" "-fvisibility=hidden" "-fvisibility-inlines-hidden" "-funroll-loops" "-flto")
+    string(REPLACE "${_flag}" "" _eh_oj_flags "${_eh_oj_flags}")
+endforeach ()
+string(REGEX REPLACE "-mllvm +-polly[^ ]*" "" _eh_oj_flags "${_eh_oj_flags}")
+set(CMAKE_C_FLAGS "${_eh_oj_flags}")
 FetchContent_MakeAvailable(openjpeg)
+set(CMAKE_C_FLAGS "${_eh_c_flags}")
 set(BUILD_SHARED_LIBS "${_eh_build_shared}" CACHE BOOL "" FORCE)
 if (NOT TARGET openjp2)
     message(FATAL_ERROR "openjpeg target openjp2 not found")
 endif ()
+target_compile_definitions(openjp2 PUBLIC OPJ_STATIC)
+target_compile_options(openjp2 PRIVATE -fno-fast-math -fno-lto -fno-unroll-loops)
+set_property(TARGET openjp2 PROPERTY INTERPROCEDURAL_OPTIMIZATION OFF)
 set_source_files_properties(jp2_decode.cpp PROPERTIES COMPILE_DEFINITIONS OPJ_STATIC)
 
 # Build and link our app's native lib

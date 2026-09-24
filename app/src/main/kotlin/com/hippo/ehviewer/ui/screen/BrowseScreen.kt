@@ -82,8 +82,8 @@ import com.hippo.ehviewer.library.BrowseSession
 import com.hippo.ehviewer.library.LocalLibrary
 import com.hippo.ehviewer.library.MediaPermissions
 import com.hippo.ehviewer.library.displayNameForTreeUri
-import com.hippo.ehviewer.library.safFolderLabel
 import com.hippo.ehviewer.library.isMediaStoreRootUri
+import com.hippo.ehviewer.library.safFolderLabel
 import com.hippo.ehviewer.smb.SmbGateway
 import com.hippo.ehviewer.smb.SmbRepository
 import com.hippo.ehviewer.ui.Screen
