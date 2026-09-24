@@ -39,6 +39,10 @@ fun ReaderModeSetting(isWebtoon: Boolean) = Column(modifier = Modifier.verticalS
     if (!isWebtoon) {
         AnimatedVisibility(visible = dualPageLandscape.value) {
             Column {
+                SwitchChoice(
+                    title = stringResource(id = R.string.pref_dual_page_gap),
+                    field = Settings.dualPageGap.asMutableState(),
+                )
                 SpinnerChoice(
                     title = stringResource(id = R.string.pref_landscape_cover),
                     entries = arrayOf(
@@ -52,10 +56,6 @@ fun ReaderModeSetting(isWebtoon: Boolean) = Column(modifier = Modifier.verticalS
                         Settings.LANDSCAPE_COVER_OFF,
                     ),
                     field = Settings.landscapeCover.asMutableState(),
-                )
-                SwitchChoice(
-                    title = stringResource(id = R.string.pref_dual_page_gap),
-                    field = Settings.dualPageGap.asMutableState(),
                 )
             }
         }

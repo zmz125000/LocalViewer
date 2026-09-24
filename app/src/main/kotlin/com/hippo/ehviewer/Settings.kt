@@ -156,7 +156,7 @@ object Settings : DataStorePreferences(null) {
      * Long-press opens the other built-in reader, or the image reader when External is selected.
      * Settings → General.
      */
-    val pdfReaderMode = intPref("pdf_reader_mode", 0)
+    val pdfReaderMode = intPref("pdf_reader_mode", 1)
 
     /**
      * Preferred external PDF app as flattened [android.content.ComponentName]
