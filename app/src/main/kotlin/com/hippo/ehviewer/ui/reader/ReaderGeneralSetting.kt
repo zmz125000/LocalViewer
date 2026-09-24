@@ -26,7 +26,6 @@ fun ReaderGeneralSetting() = Column(modifier = Modifier.verticalScroll(rememberS
     )
     SwitchChoice(
         title = stringResource(id = R.string.pref_open_image_pdf_as_gallery),
-        summary = stringResource(id = R.string.pref_open_image_pdf_as_gallery_summary),
         field = Settings.openImagePdfAsGallery.asMutableState(),
     )
     val hdrDisplay = Settings.readerHdrDisplay.asMutableState()

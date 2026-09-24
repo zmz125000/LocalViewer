@@ -17,6 +17,7 @@ import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.waitForUpOrCancellation
@@ -24,6 +25,7 @@ import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.aspectRatio
@@ -38,15 +40,23 @@ import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.VerticalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.NavigateNext
+import androidx.compose.material.icons.outlined.MyLocation
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
@@ -69,6 +79,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
@@ -81,6 +92,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.lifecycleScope
@@ -534,10 +546,7 @@ private fun openPdfDocument(
     // connection when the original fd is closed (ENOTCONN on later preads).
     val source = PfdArchiveByteSource(pfd, ownsPfd = false, reopen = reopenPfd)
     val chapters = readPdfChapters(source, source.size)
-    tryOpenImagePdf(source, startPage, cacheKey)?.let { images ->
-        source.adoptPfd()
-        return images.also { it.chapters = chapters }
-    }
+    runCatching { source.close() }
     val renderer = runCatching { PdfRenderer(pfd) }.getOrElse { e ->
         runCatching { pfd.close() }
         throw e
@@ -582,8 +591,7 @@ private class PdfSession(private val renderer: PdfRenderer) {
             val h = ((page.height.toFloat() / page.width.coerceAtLeast(1)) * w)
                 .toInt()
                 .coerceAtLeast(1)
-            val (rw, rh) = cappedBitmapSize(w, h)
-            Bitmap.createBitmap(rw, rh, Bitmap.Config.ARGB_8888).also { bitmap ->
+            Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888).also { bitmap ->
                 bitmap.eraseColor(android.graphics.Color.WHITE)
                 page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
             }
@@ -593,23 +601,6 @@ private class PdfSession(private val renderer: PdfRenderer) {
     fun close() {
         runCatching { renderer.close() }
     }
-}
-
-private fun cappedBitmapSize(width: Int, height: Int): Pair<Int, Int> {
-    val pixels = width.toLong() * height
-    if (pixels <= MAX_VECTOR_PIXELS && width <= MAX_VECTOR_EDGE && height <= MAX_VECTOR_EDGE) {
-        return width to height
-    }
-    val edgeScale = minOf(
-        MAX_VECTOR_EDGE.toFloat() / width.coerceAtLeast(1),
-        MAX_VECTOR_EDGE.toFloat() / height.coerceAtLeast(1),
-        1f,
-    )
-    val pixelScale = kotlin.math.sqrt(MAX_VECTOR_PIXELS.toDouble() / pixels.coerceAtLeast(1L)).toFloat()
-        .coerceAtMost(1f)
-    val scale = minOf(edgeScale, pixelScale)
-    return (width * scale).roundToInt().coerceAtLeast(1) to
-        (height * scale).roundToInt().coerceAtLeast(1)
 }
 
 @Composable
@@ -629,12 +620,6 @@ private fun PdfReaderScreen(
     val pageCount = imageLoader?.size ?: (doc?.pageCount ?: 0)
     val initial = startPage.coerceIn(0, (pageCount - 1).coerceAtLeast(0))
     val listState = rememberLazyListState(initialFirstVisibleItemIndex = initial)
-    val currentPage by remember(imageLoader, doc) {
-        derivedStateOf {
-            val n = imageLoader?.size ?: (doc?.pageCount ?: 0)
-            if (n <= 0) 0 else (listState.firstVisibleItemIndex + 1).coerceIn(1, n)
-        }
-    }
     val scope = rememberCoroutineScope()
     val showSeekbar by Settings.showReaderSeekbar.collectAsState()
     val hideTopBar by Settings.readerHideTopBar.collectAsState()
@@ -642,6 +627,9 @@ private fun PdfReaderScreen(
     val readerPhotoGrid by Settings.readerPhotoGrid.collectAsState()
     var photoGridOpen by remember { mutableStateOf(false) }
     var contentsOpen by remember { mutableStateOf(false) }
+    val thumbGridState = rememberLazyGridState()
+    val contentsListState = rememberLazyListState()
+    val scrollGridToProgress by Settings.photoGridScrollToProgress.collectAsState()
     val fullscreen by Settings.fullscreen.collectAsState()
     val cutoutShort by Settings.cutoutShort.collectAsState()
     val keepScreenOn by Settings.keepScreenOn.collectAsState()
@@ -668,8 +656,32 @@ private fun PdfReaderScreen(
             uiController.isSystemBarsVisible = true
         }
     }
-    val readingMode by Settings.readingMode.collectAsState { ReadingModeType.fromPreference(it) }
+    val readingMode by Settings.readingMode.collectAsState {
+        when (val mode = ReadingModeType.fromPreference(it)) {
+            ReadingModeType.DEFAULT -> ReadingModeType.RIGHT_TO_LEFT
+            else -> mode
+        }
+    }
     val isWebtoon = ReadingModeType.isWebtoon(readingMode)
+    val pageCountState = rememberUpdatedState(pageCount)
+    val pagerState = rememberPagerState(initialPage = initial) {
+        pageCountState.value.coerceAtLeast(1)
+    }
+    val currentPage by remember(imageLoader, doc) {
+        derivedStateOf {
+            val n = imageLoader?.size ?: (doc?.pageCount ?: 0)
+            val index = if (ReadingModeType.isWebtoon(readingMode)) {
+                listState.firstVisibleItemIndex
+            } else {
+                pagerState.currentPage
+            }
+            if (n <= 0) 0 else (index + 1).coerceIn(1, n)
+        }
+    }
+    LaunchedEffect(photoGridOpen) {
+        if (!photoGridOpen || !scrollGridToProgress || pageCount <= 0) return@LaunchedEffect
+        thumbGridState.scrollToItem((currentPage - 1).coerceIn(0, pageCount - 1))
+    }
     val pagerNavigation by Settings.readerPagerNav.collectAsState()
     val pagerInvertMode by Settings.readerPagerNavInverted.collectAsState()
     val webtoonNavigation by Settings.readerWebtoonNav.collectAsState()
@@ -780,23 +792,60 @@ private fun PdfReaderScreen(
             loader.replan()
         }
     }
-    LaunchedEffect(doc, imageLoader, startPage) {
-        if (doc == null || pageCount <= 0) return@LaunchedEffect
-        val target = startPage.coerceIn(0, pageCount - 1)
-        if (listState.firstVisibleItemIndex != target) {
+    suspend fun jumpToPdfPage(index: Int) {
+        val target = index.coerceIn(0, (pageCount - 1).coerceAtLeast(0))
+        if (ReadingModeType.isWebtoon(readingMode)) {
             listState.scrollToItem(target)
+        } else {
+            pagerState.scrollToPage(target)
         }
         onPageChanged(target)
     }
-    LaunchedEffect(doc) {
+    suspend fun stepPdfPage(forward: Boolean) {
+        if (ReadingModeType.isWebtoon(readingMode)) {
+            if (forward) listState.scrollDown() else listState.scrollUp()
+        } else {
+            val delta = if (forward) 1 else -1
+            val target = (pagerState.currentPage + delta).coerceIn(0, (pageCount - 1).coerceAtLeast(0))
+            pagerState.animateScrollToPage(target)
+        }
+    }
+    LaunchedEffect(doc, imageLoader, startPage) {
+        if (doc == null || pageCount <= 0) return@LaunchedEffect
+        jumpToPdfPage(startPage)
+    }
+    var previousReadingMode by remember { mutableStateOf(readingMode) }
+    LaunchedEffect(readingMode) {
+        if (previousReadingMode == readingMode || pageCount <= 0) return@LaunchedEffect
+        val index = if (ReadingModeType.isWebtoon(previousReadingMode)) {
+            listState.firstVisibleItemIndex
+        } else {
+            pagerState.currentPage
+        }
+        previousReadingMode = readingMode
+        jumpToPdfPage(index)
+    }
+    LaunchedEffect(doc, readingMode) {
         if (doc == null) return@LaunchedEffect
-        snapshotFlow { listState.firstVisibleItemIndex }
+        snapshotFlow {
+            if (ReadingModeType.isWebtoon(readingMode)) {
+                listState.firstVisibleItemIndex
+            } else {
+                pagerState.currentPage
+            }
+        }
             .distinctUntilChanged()
             .collect { onPageChanged(it) }
     }
-    LaunchedEffect(progressGid, doc) {
+    LaunchedEffect(progressGid, doc, readingMode) {
         if (progressGid == 0L || doc == null) return@LaunchedEffect
-        snapshotFlow { listState.firstVisibleItemIndex }
+        snapshotFlow {
+            if (ReadingModeType.isWebtoon(readingMode)) {
+                listState.firstVisibleItemIndex
+            } else {
+                pagerState.currentPage
+            }
+        }
             .distinctUntilChanged()
             .debounce(1_000)
             .collect { page ->
@@ -856,61 +905,60 @@ private fun PdfReaderScreen(
                             .distinctUntilChanged { a, b -> abs(a - b) < 0.08f }
                             .collect { renderZoom = it }
                     }
-                    val vectorWidthPx = (widthPx * renderZoom).roundToInt()
-                        .coerceIn(widthPx, MAX_VECTOR_EDGE)
+                    val vectorWidthPx = (widthPx * renderZoom).roundToInt().coerceAtLeast(widthPx)
                     var multiTouch by remember { mutableStateOf(false) }
-                    LazyColumn(
-                        state = listState,
-                        userScrollEnabled = !multiTouch,
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .onSizeChanged { size ->
-                                if (size != viewportPx) viewportPx = size
-                            }
-                            .pointerInput(Unit) {
-                                awaitPointerEventScope {
-                                    while (true) {
-                                        val event = awaitPointerEvent(PointerEventPass.Initial)
-                                        multiTouch = event.changes.count { it.pressed } >= 2
-                                        if (event.changes.any { it.changedToDown() }) {
-                                            val hide = chromeVisible
-                                            suppressPageClick = hide
-                                            if (hide) appbarVisible = false
-                                        }
+                    val viewerModifier = Modifier
+                        .fillMaxSize()
+                        .onSizeChanged { size ->
+                            if (size != viewportPx) viewportPx = size
+                        }
+                        .pointerInput(Unit) {
+                            awaitPointerEventScope {
+                                while (true) {
+                                    val event = awaitPointerEvent(PointerEventPass.Initial)
+                                    multiTouch = event.changes.count { it.pressed } >= 2
+                                    if (event.changes.any { it.changedToDown() }) {
+                                        val hide = chromeVisible
+                                        suppressPageClick = hide
+                                        if (hide) appbarVisible = false
                                     }
                                 }
                             }
-                            .pointerInput(Unit) {
-                                awaitEachGesture {
-                                    waitForUpOrCancellation()
-                                    showNavigationOverlay = false
-                                }
+                        }
+                        .pointerInput(Unit) {
+                            awaitEachGesture {
+                                waitForUpOrCancellation()
+                                showNavigationOverlay = false
                             }
-                            .zoomable(
-                                state = zoomableState,
-                                gestures = gestures,
-                                onClick = { offset ->
-                                    val w = viewportPx.width.takeIf { it > 0 }
-                                        ?: listState.layoutInfo.viewportSize.width
-                                    val h = viewportPx.height.takeIf { it > 0 }
-                                        ?: listState.layoutInfo.viewportSize.height
-                                    if (w <= 0 || h <= 0) return@zoomable
-                                    when (navigator.getAction(Offset(offset.x / w, offset.y / h))) {
-                                        NavigationRegion.MENU -> {
-                                            if (!suppressPageClick) appbarVisible = !appbarVisible
-                                        }
-                                        NavigationRegion.NEXT, NavigationRegion.RIGHT -> {
-                                            scope.launch { listState.scrollDown() }
-                                        }
-                                        NavigationRegion.PREV, NavigationRegion.LEFT -> {
-                                            scope.launch { listState.scrollUp() }
-                                        }
+                        }
+                        .zoomable(
+                            state = zoomableState,
+                            gestures = gestures,
+                            onClick = { offset ->
+                                val w = viewportPx.width.takeIf { it > 0 }
+                                    ?: listState.layoutInfo.viewportSize.width
+                                val h = viewportPx.height.takeIf { it > 0 }
+                                    ?: listState.layoutInfo.viewportSize.height
+                                if (w <= 0 || h <= 0) return@zoomable
+                                when (navigator.getAction(Offset(offset.x / w, offset.y / h))) {
+                                    NavigationRegion.MENU -> {
+                                        if (!suppressPageClick) appbarVisible = !appbarVisible
                                     }
-                                },
-                                onDoubleClick = doubleTap,
-                            ),
-                    ) {
-                        items(pageCount, key = { it }) { index ->
+                                    NavigationRegion.NEXT, NavigationRegion.RIGHT -> {
+                                        scope.launch { stepPdfPage(forward = true) }
+                                    }
+                                    NavigationRegion.PREV, NavigationRegion.LEFT -> {
+                                        scope.launch { stepPdfPage(forward = false) }
+                                    }
+                                }
+                            },
+                            onDoubleClick = doubleTap,
+                        )
+                    val pageAt: @Composable (Int) -> Unit = { index ->
+                        Box(
+                            modifier = if (isWebtoon) Modifier else Modifier.fillMaxSize(),
+                            contentAlignment = Alignment.Center,
+                        ) {
                             when {
                                 imageLoader != null -> {
                                     val page = imageLoader.pages.getOrNull(index)
@@ -934,6 +982,33 @@ private fun PdfReaderScreen(
                             }
                         }
                     }
+                    if (isWebtoon) {
+                        LazyColumn(
+                            state = listState,
+                            userScrollEnabled = !multiTouch,
+                            verticalArrangement = if (readingMode == ReadingModeType.CONTINUOUS_VERTICAL) {
+                                androidx.compose.foundation.layout.Arrangement.spacedBy(15.dp)
+                            } else {
+                                androidx.compose.foundation.layout.Arrangement.Top
+                            },
+                            modifier = viewerModifier,
+                        ) {
+                            items(pageCount, key = { it }) { index -> pageAt(index) }
+                        }
+                    } else if (readingMode == ReadingModeType.VERTICAL) {
+                        VerticalPager(
+                            state = pagerState,
+                            userScrollEnabled = !multiTouch,
+                            modifier = viewerModifier,
+                        ) { index -> pageAt(index) }
+                    } else {
+                        HorizontalPager(
+                            state = pagerState,
+                            reverseLayout = readingMode == ReadingModeType.RIGHT_TO_LEFT,
+                            userScrollEnabled = !multiTouch,
+                            modifier = viewerModifier,
+                        ) { index -> pageAt(index) }
+                    }
                     NavigationOverlay(
                         visible = showNavigationOverlay,
                         regions = regions,
@@ -947,15 +1022,13 @@ private fun PdfReaderScreen(
             onNavigateUp = onClose,
             showTopBar = !hideTopBar,
             title = title,
-            isRtl = false,
+            isRtl = readingMode == ReadingModeType.RIGHT_TO_LEFT,
             showSeekBar = showSeekbar,
             currentPage = currentPage,
             totalPages = pageCount,
             onSliderValueChange = { page ->
                 scope.launch {
-                    val target = (page - 1).coerceIn(0, (pageCount - 1).coerceAtLeast(0))
-                    listState.scrollToItem(target)
-                    onPageChanged(target)
+                    jumpToPdfPage(page - 1)
                 }
             },
             onClickSettings = {
@@ -999,14 +1072,12 @@ private fun PdfReaderScreen(
         if (contentsOpen) {
             PdfContentsSheet(
                 chapters = doc?.chapters.orEmpty(),
+                currentPage = currentPage,
+                listState = contentsListState,
                 onDismiss = { contentsOpen = false },
                 onPick = { page ->
                     contentsOpen = false
-                    scope.launch {
-                        val target = page.coerceIn(0, (pageCount - 1).coerceAtLeast(0))
-                        listState.scrollToItem(target)
-                        onPageChanged(target)
-                    }
+                    scope.launch { jumpToPdfPage(page) }
                 },
             )
         }
@@ -1015,14 +1086,11 @@ private fun PdfReaderScreen(
                 doc = doc,
                 pageCount = pageCount,
                 currentPage = currentPage,
+                gridState = thumbGridState,
                 onDismiss = { photoGridOpen = false },
                 onPick = { page ->
                     photoGridOpen = false
-                    scope.launch {
-                        val target = (page - 1).coerceIn(0, (pageCount - 1).coerceAtLeast(0))
-                        listState.scrollToItem(target)
-                        onPageChanged(target)
-                    }
+                    scope.launch { jumpToPdfPage(page - 1) }
                 },
             )
         }
@@ -1147,10 +1215,14 @@ private fun PdfPageBitmap(
 @Composable
 private fun PdfContentsSheet(
     chapters: List<PdfTocEntry>,
+    currentPage: Int,
+    listState: androidx.compose.foundation.lazy.LazyListState,
     onDismiss: () -> Unit,
     onPick: (Int) -> Unit,
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val scope = rememberCoroutineScope()
+    val pageIndex = (currentPage - 1).coerceAtLeast(0)
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
@@ -1159,27 +1231,91 @@ private fun PdfContentsSheet(
         dragHandle = null,
         contentWindowInsets = { WindowInsets() },
     ) {
+        val nearest = if (chapters.isEmpty()) -1 else nearestPdfTocIndex(chapters, pageIndex)
         Column(Modifier.readerSheetBox(GalleryGridDefaults.capReaderSheet()).navigationBarsPadding()) {
-            Text(
-                stringResource(R.string.pdf_reader_contents),
-                style = MaterialTheme.typography.titleMedium,
-                modifier = Modifier.padding(horizontal = 24.dp, vertical = 16.dp),
-            )
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(start = 24.dp, end = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    if (nearest >= 0) chapters[nearest].title else stringResource(R.string.pdf_reader_contents),
+                    style = MaterialTheme.typography.bodyLarge,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
+                if (chapters.isNotEmpty()) {
+                    IconButton(
+                        onClick = {
+                            scope.launch {
+                                listState.animateScrollToItem(nearestPdfTocIndex(chapters, pageIndex))
+                            }
+                        },
+                    ) {
+                        Icon(
+                            imageVector = Icons.Outlined.MyLocation,
+                            contentDescription = stringResource(R.string.pdf_reader_contents_locate),
+                        )
+                    }
+                }
+            }
             if (chapters.isEmpty()) {
                 Text(
                     stringResource(R.string.pdf_reader_no_contents),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(horizontal = 24.dp),
                 )
             } else {
-                LazyColumn(Modifier.fillMaxSize()) {
-                    items(chapters, key = { "${it.pageIndex}-${it.depth}-${it.title}" }) { entry ->
-                        Text(
-                            text = entry.title,
+                LazyColumn(Modifier.fillMaxSize(), state = listState) {
+                    itemsIndexed(chapters, key = { index, entry -> "$index-${entry.pageIndex}-${entry.depth}-${entry.title}" }) { index, entry ->
+                        val selected = index == nearest
+                        Row(
                             modifier = Modifier
                                 .fillMaxWidth()
+                                .background(
+                                    if (selected) {
+                                        MaterialTheme.colorScheme.secondaryContainer
+                                    } else {
+                                        Color.Transparent
+                                    },
+                                )
                                 .clickable { onPick(entry.pageIndex) }
-                                .padding(start = (16 + entry.depth * 16).dp, end = 16.dp, top = 12.dp, bottom = 12.dp),
-                        )
+                                .padding(
+                                    start = (16 + entry.depth * 16).dp,
+                                    end = 16.dp,
+                                    top = 6.dp,
+                                    bottom = 6.dp,
+                                ),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                entry.title,
+                                style = if (entry.depth <= 2) {
+                                    MaterialTheme.typography.bodyLarge
+                                } else {
+                                    MaterialTheme.typography.bodyMedium
+                                },
+                                color = if (entry.depth <= 2) {
+                                    MaterialTheme.colorScheme.onSurface
+                                } else {
+                                    MaterialTheme.colorScheme.onSurfaceVariant
+                                },
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f),
+                            )
+                            Text(
+                                "${entry.pageIndex + 1}",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = if (selected) {
+                                    MaterialTheme.colorScheme.primary
+                                } else {
+                                    MaterialTheme.colorScheme.onSurfaceVariant
+                                },
+                                modifier = Modifier.padding(start = 12.dp),
+                            )
+                        }
                     }
                 }
             }
@@ -1187,11 +1323,25 @@ private fun PdfContentsSheet(
     }
 }
 
+private fun nearestPdfTocIndex(chapters: List<PdfTocEntry>, pageIndex: Int): Int {
+    var best = -1
+    var bestPage = Int.MIN_VALUE
+    chapters.forEachIndexed { index, entry ->
+        if (entry.pageIndex <= pageIndex && entry.pageIndex >= bestPage) {
+            best = index
+            bestPage = entry.pageIndex
+        }
+    }
+    if (best >= 0) return best
+    return chapters.indices.minByOrNull { kotlin.math.abs(chapters[it].pageIndex - pageIndex) } ?: 0
+}
+
 @Composable
 private fun PdfThumbGridSheet(
     doc: PdfDocumentModel,
     pageCount: Int,
     currentPage: Int,
+    gridState: LazyGridState,
     onDismiss: () -> Unit,
     onPick: (Int) -> Unit,
 ) {
@@ -1207,6 +1357,7 @@ private fun PdfThumbGridSheet(
     ) {
         LazyVerticalGrid(
             columns = GridCells.Fixed(GalleryGridDefaults.columnCount()),
+            state = gridState,
             modifier = Modifier
                 .readerSheetBox(GalleryGridDefaults.capReaderSheet())
                 .navigationBarsPadding()
@@ -1248,22 +1399,36 @@ private fun PdfPageThumb(
     DisposableEffect(index) {
         onDispose { bitmap?.recycle() }
     }
+    val bmp = bitmap
+    val aspect = if (bmp != null && !bmp.isRecycled && bmp.height > 0) {
+        bmp.width.toFloat() / bmp.height
+    } else {
+        1f / 1.414f
+    }
+    val shape = MaterialTheme.shapes.medium
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .aspectRatio(1f / 1.3f)
-            .background(if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.35f) else PageBackdrop)
-            .clickable(onClick = onClick),
+            .aspectRatio(aspect)
+            .clip(shape)
+            .clickable(onClick = onClick)
+            .then(
+                if (selected) {
+                    Modifier.border(2.dp, MaterialTheme.colorScheme.primary, shape)
+                } else {
+                    Modifier
+                },
+            ),
         contentAlignment = Alignment.Center,
     ) {
-        val bmp = bitmap
         if (bmp == null || bmp.isRecycled) {
             CircularProgressIndicator()
         } else {
             Image(
                 bitmap = bmp.asImageBitmap(),
                 contentDescription = stringResource(R.string.pdf_reader_page, index + 1, doc.pageCount),
-                modifier = Modifier.fillMaxSize().padding(4.dp),
+                contentScale = ContentScale.Fit,
+                modifier = Modifier.fillMaxSize(),
             )
         }
     }
@@ -1290,5 +1455,3 @@ private val PdfZoomSpec = ZoomSpec(
     minimum = ZoomLimit(factor = 1f, overzoomEffect = OverzoomEffect.Disabled),
 )
 
-private const val MAX_VECTOR_EDGE = 4096
-private const val MAX_VECTOR_PIXELS = 12_000_000
