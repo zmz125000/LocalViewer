@@ -1013,8 +1013,11 @@ object WebDavClient {
 
         fun finishResponse() {
             val h = href ?: return
-            val decodedHref = decodeHref(h)
-            val abs = resolveHref(dirUrl, decodedHref)
+            // Resolve from the raw href: it is already percent-encoded, and URLBuilder
+            // decodes path segments itself. Decoding first made the builder try to decode a
+            // string that still contained a literal '%' (a file actually named `…100%…`),
+            // which threw and silently dropped that entry from the listing.
+            val abs = resolveHref(dirUrl, h)
             if (sameCollection(abs, dirUrl)) {
                 resetResponse()
                 return
@@ -1129,23 +1132,31 @@ object WebDavClient {
     }
 
     private fun resolveHref(base: Url, href: String): Url = try {
-        if (href.startsWith("http://") || href.startsWith("https://")) {
-            Url(href)
-        } else {
-            URLBuilder().takeFrom(base).apply {
-                if (href.startsWith('/')) {
-                    encodedPath = href
-                } else {
-                    val parent = encodedPath.trimEnd('/').substringBeforeLast('/', missingDelimiterValue = "")
-                    val path = if (parent.isEmpty()) "/$href" else "$parent/$href"
-                    encodedPath = path
-                }
-            }.build()
-        }
+        buildHrefUrl(base, href)
     } catch (e: Exception) {
         logcat(e)
-        base
+        // A stray '%' the server left unencoded is the other way this build() call throws.
+        // Escape those and retry once so the entry still lands in the listing rather than
+        // being dropped (which used to hide whole files from the folder).
+        runCatching { buildHrefUrl(base, escapeStrayPercents(href)) }.getOrDefault(base)
     }
+
+    private fun buildHrefUrl(base: Url, href: String): Url = if (href.startsWith("http://") || href.startsWith("https://")) {
+        Url(href)
+    } else {
+        URLBuilder().takeFrom(base).apply {
+            if (href.startsWith('/')) {
+                encodedPath = href
+            } else {
+                val parent = encodedPath.trimEnd('/').substringBeforeLast('/', missingDelimiterValue = "")
+                val path = if (parent.isEmpty()) "/$href" else "$parent/$href"
+                encodedPath = path
+            }
+        }.build()
+    }
+
+    /** `%` not followed by two hex digits — a literal percent left unencoded by the server. */
+    private fun escapeStrayPercents(href: String): String = STRAY_PERCENT.replace(href, "%25")
 
     private fun sameCollection(a: Url, b: Url): Boolean {
         fun norm(u: Url) = u.host.lowercase() + u.encodedPath.trimEnd('/').lowercase()
@@ -1163,3 +1174,6 @@ object WebDavClient {
         return absPath.removePrefix(rootPath).trimStart('/').let { decodeHref(it) }
     }
 }
+
+/** `%` that is not followed by two hex digits — see [WebDavClient.resolveHref]. */
+private val STRAY_PERCENT = Regex("%(?![0-9A-Fa-f]{2})")
