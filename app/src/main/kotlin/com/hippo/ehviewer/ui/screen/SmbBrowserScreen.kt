@@ -117,6 +117,7 @@ import com.hippo.ehviewer.ui.DrawerHandle
 import com.hippo.ehviewer.ui.LocalShowNavShortcutFab
 import com.hippo.ehviewer.ui.OpenFileExternally
 import com.hippo.ehviewer.ui.OpenPdfExternally
+import com.hippo.ehviewer.ui.OpenPdfBySettings
 import com.hippo.ehviewer.ui.PdfReaderMode
 import com.hippo.ehviewer.ui.Screen
 import com.hippo.ehviewer.ui.destinations.BrowseScreenDestination
@@ -1464,6 +1465,14 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
 
     fun openPdfSecondary(entry: BrowseEntryRemote.ArchiveGallery) {
         when (Settings.pdfReaderMode.value) {
+            PdfReaderMode.AUTO -> {
+                val src = source ?: return
+                val remote = joinRemoteArchivePath(relativeDir, entry.parentRelativeName, entry.fileName)
+                OpenPdfBySettings.launchOtherBuiltin(
+                    context,
+                    ReaderScreenArgs.SmbStreamArchive(sourceId = src.id, remotePath = remote.trim('/')),
+                )
+            }
             PdfReaderMode.PDF, PdfReaderMode.EXTERNAL -> openArchive(entry, skipPdfPrimary = true)
             else -> openPdfReader(entry)
         }

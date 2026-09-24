@@ -117,6 +117,7 @@ import com.hippo.ehviewer.library.withLocalZipCentralDirectory
 import com.hippo.ehviewer.ui.LocalShowNavShortcutFab
 import com.hippo.ehviewer.ui.OpenFileExternally
 import com.hippo.ehviewer.ui.OpenPdfExternally
+import com.hippo.ehviewer.ui.OpenPdfBySettings
 import com.hippo.ehviewer.ui.PdfReaderMode
 import com.hippo.ehviewer.ui.Screen
 import com.hippo.ehviewer.ui.destinations.BrowseScreenDestination
@@ -150,6 +151,7 @@ import com.hippo.ehviewer.ui.main.rememberBrowseSectionCollapse
 import com.hippo.ehviewer.ui.navToLocalFolderReader
 import com.hippo.ehviewer.ui.navToLocalZipFolderReader
 import com.hippo.ehviewer.ui.navToReader
+import com.hippo.ehviewer.ui.reader.ReaderScreenArgs
 import com.hippo.ehviewer.util.addTextToClipboard
 import com.ramcosta.composedestinations.annotation.Destination
 import com.ramcosta.composedestinations.annotation.RootGraph
@@ -1585,6 +1587,10 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
 
     fun openPdfSecondary(entry: BrowseEntry.ArchiveGallery) {
         when (Settings.pdfReaderMode.value) {
+            PdfReaderMode.AUTO -> OpenPdfBySettings.launchOtherBuiltin(
+                context,
+                ReaderScreenArgs.Archive(entry.path.toString()),
+            )
             PdfReaderMode.PDF, PdfReaderMode.EXTERNAL -> openArchiveReader(entry, skipPdfPrimary = true)
             else -> openPdfReader(entry)
         }

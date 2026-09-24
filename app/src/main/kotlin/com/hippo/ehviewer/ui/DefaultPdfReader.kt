@@ -15,11 +15,14 @@ import com.ehviewer.core.util.withUIContext
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.provider.StreamDocumentProvider
 
-/** Tap PDF: 0 image reader (default), 1 built-in PDF reader, 2 external app. */
+/** Tap PDF: 0 image reader (default), 1 built-in PDF reader, 2 external app, 3 auto. */
 object PdfReaderMode {
     const val IMAGE = 0
     const val PDF = 1
     const val EXTERNAL = 2
+
+    /** Image PDFs open in the gallery. Text PDFs open in the built-in PDF reader. */
+    const val AUTO = 3
 }
 
 // Preferred external app for ACTION_VIEW of PDF files.

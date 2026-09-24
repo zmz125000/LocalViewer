@@ -96,14 +96,36 @@ object OpenPdfBySettings {
         else -> false
     }
 
-    suspend fun open(context: Context, args: ReaderScreenArgs): Outcome {
-        if (Settings.pdfReaderMode.value == PdfReaderMode.PDF &&
-            Settings.openImagePdfAsGallery.value &&
-            isImagePdf(args)
-        ) {
-            return Outcome.Gallery(args.asGallery())
+    /**
+     * Long-press while Auto is selected: the built-in reader tap would not have used.
+     */
+    fun launchOtherBuiltin(context: Context, args: ReaderScreenArgs) {
+        scope.launch {
+            runCatching {
+                if (isImagePdf(args)) {
+                    openInternal(context, args)
+                } else {
+                    handoffGallery(context, args.asGallery())
+                }
+            }.onFailure { e ->
+                logcat("OpenPdfBySettings", e)
+                withUIContext {
+                    Toast.makeText(
+                        context.applicationContext,
+                        context.getString(R.string.pdf_reader_open_failed, e.message ?: e.toString()),
+                        Toast.LENGTH_LONG,
+                    ).show()
+                }
+            }
         }
+    }
+
+    suspend fun open(context: Context, args: ReaderScreenArgs): Outcome {
         when (Settings.pdfReaderMode.value) {
+            PdfReaderMode.AUTO -> {
+                if (isImagePdf(args)) return Outcome.Gallery(args.asGallery())
+                openInternal(context, args)
+            }
             PdfReaderMode.PDF -> openInternal(context, args)
             PdfReaderMode.EXTERNAL -> openExternal(context, args)
             else -> error("image reader is not a PDF redirect")

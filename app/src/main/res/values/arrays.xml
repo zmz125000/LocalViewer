@@ -369,12 +369,14 @@
     </integer-array>
 
     <string-array name="pdf_reader_mode_entries" translatable="false">
+        <item>@string/settings_pdf_reader_mode_auto</item>
         <item>@string/settings_pdf_reader_mode_image</item>
         <item>@string/settings_pdf_reader_mode_pdf</item>
         <item>@string/settings_pdf_reader_mode_external</item>
     </string-array>
 
     <integer-array name="pdf_reader_mode_values" translatable="false">
+        <item>3</item>
         <item>0</item>
         <item>1</item>
         <item>2</item>

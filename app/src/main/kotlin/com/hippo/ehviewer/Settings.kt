@@ -151,18 +151,12 @@ object Settings : DataStorePreferences(null) {
     val defaultVideoPlayerComponent = stringPref("default_video_player_component", "")
 
     /**
-     * Tap PDF: 0 = image reader (default), 1 = built-in PDF reader, 2 = external app.
+     * Tap PDF: 0 = image reader (default), 1 = built-in PDF reader, 2 = external app,
+     * 3 = auto (image PDFs in the gallery, text PDFs in the PDF reader).
      * Long-press opens the other built-in reader, or the image reader when External is selected.
      * Settings → General.
      */
     val pdfReaderMode = intPref("pdf_reader_mode", 0)
-
-    /**
-     * When the built-in PDF reader is selected: comic / scan PDFs open in the
-     * gallery reader. Text PDFs stay in the PDF reader. Default on.
-     * Reader → General. Explicit PDF-reader open (long-press) ignores this.
-     */
-    val openImagePdfAsGallery = boolPref("open_image_pdf_as_gallery", true)
 
     /**
      * Preferred external PDF app as flattened [android.content.ComponentName]
