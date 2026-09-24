@@ -116,8 +116,8 @@ import com.hippo.ehviewer.library.toBrowseSections
 import com.hippo.ehviewer.library.withLocalZipCentralDirectory
 import com.hippo.ehviewer.ui.LocalShowNavShortcutFab
 import com.hippo.ehviewer.ui.OpenFileExternally
-import com.hippo.ehviewer.ui.OpenPdfExternally
 import com.hippo.ehviewer.ui.OpenPdfBySettings
+import com.hippo.ehviewer.ui.OpenPdfExternally
 import com.hippo.ehviewer.ui.PdfReaderMode
 import com.hippo.ehviewer.ui.Screen
 import com.hippo.ehviewer.ui.destinations.BrowseScreenDestination

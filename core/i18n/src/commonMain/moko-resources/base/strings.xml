@@ -841,6 +841,8 @@
     <string name="pref_reader_photo_grid">Photo grid</string>
     <string name="pref_reader_generate_page_thumb">Generate page thumbs</string>
     <string name="pref_reader_generate_page_thumb_summary">After a page loads, write a photo-grid thumb for later use</string>
+    <string name="pref_pdf_direct_image">PDF Direct Image</string>
+    <string name="pref_pdf_direct_image_summary">Image PDFs in the PDF reader use embedded images for pages and the photo grid. Off: render every page with the PDF renderer.</string>
     <string name="pref_reader_hide_top_bar">Hide top bar</string>
     <string name="pref_show_reader_seekbar">Show page jumping seekbar</string>
     <string name="pref_double_tap_to_zoom">Double tap to zoom (off: prev/next gallery)</string>

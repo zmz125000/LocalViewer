@@ -164,7 +164,8 @@ import okio.Path.Companion.toPath
  * Full-screen in-app PDF reader.
  *
  * Text / generic PDFs: [PdfRenderer] at the current zoom (vector drawing stays sharp).
- * Image / comic PDFs: native embedded bitmaps via [PdfImageEngine].
+ * Image / comic PDFs: native embedded bitmaps via [PdfImageEngine] when
+ * [Settings.pdfDirectImage] is on. Off uses [PdfRenderer] for every page and thumb.
  *
  * Local / SMB / WebDAV image PDFs read the origin [ArchiveByteSource] directly.
  * Vector PDFs still use a streamdoc PFD with [PdfRenderer].
@@ -197,6 +198,7 @@ class PdfReaderActivity : AppCompatActivity() {
                 onPageChanged = { lastVisiblePage = it },
                 onClose = { finish() },
                 onHopSibling = { next -> hopSibling(next) },
+                onDirectImageChanged = { reloadForDirectImage() },
                 sourceArgs = sourceArgs,
             )
         }
@@ -242,12 +244,19 @@ class PdfReaderActivity : AppCompatActivity() {
             var direct: ArchiveByteSource? = null
             try {
                 val cacheKey = pdfCacheKeyFromIntent(intent)
+                val directImage = Settings.pdfDirectImage.value
                 opened = withContext(Dispatchers.IO) {
-                    direct = runCatching { openDirectArchiveSource(intent, token) }
-                        .onFailure { logcat("PdfReader", it) }
-                        .getOrNull()
-                    val fromDirect = direct?.let { src ->
-                        tryOpenImagePdf(src, nextStart, cacheKey)
+                    if (directImage) {
+                        direct = runCatching { openDirectArchiveSource(intent, token) }
+                            .onFailure { logcat("PdfReader", it) }
+                            .getOrNull()
+                    }
+                    val fromDirect = if (directImage) {
+                        direct?.let { src ->
+                            tryOpenImagePdf(src, nextStart, cacheKey)
+                        }
+                    } else {
+                        null
                     }
                     if (fromDirect != null) {
                         direct = null
@@ -327,6 +336,11 @@ class PdfReaderActivity : AppCompatActivity() {
             streamToken?.let(StreamDocumentRegistry::remove)
             streamToken = null
         }
+    }
+
+    private fun reloadForDirectImage() {
+        intent.putExtra(EXTRA_START_PAGE, lastVisiblePage.coerceAtLeast(0))
+        openFromIntent(intent, replace = true)
     }
 
     private fun hopSibling(next: Boolean) {
@@ -640,6 +654,7 @@ private fun PdfReaderScreen(
     onPageChanged: (Int) -> Unit,
     onClose: () -> Unit,
     onHopSibling: (next: Boolean) -> Unit,
+    onDirectImageChanged: () -> Unit,
     sourceArgs: ReaderScreenArgs?,
 ) {
     val pageCount = imageLoader?.size ?: (doc?.pageCount ?: 0)
@@ -656,6 +671,13 @@ private fun PdfReaderScreen(
     var thumbAspect by remember { mutableStateOf<Float?>(null) }
     val contentsListState = rememberLazyListState()
     val scrollGridToProgress by Settings.photoGridScrollToProgress.collectAsState()
+    val directImage by Settings.pdfDirectImage.collectAsState()
+    var appliedDirectImage by remember { mutableStateOf<Boolean?>(null) }
+    LaunchedEffect(directImage) {
+        val previous = appliedDirectImage
+        appliedDirectImage = directImage
+        if (previous != null && previous != directImage) onDirectImageChanged()
+    }
     val fullscreen by Settings.fullscreen.collectAsState()
     val keepScreenOn by Settings.keepScreenOn.collectAsState()
     val uiController = rememberSystemUiController()

@@ -233,6 +233,8 @@
     <string name="history_disabled">プライバシー設定で履歴がオフになっています</string>
     <string name="pref_reader_hardware_bitmap">ハードウェアビットマップデコード</string>
     <string name="pref_reader_hardware_bitmap_summary">より高速な Coil 経路（GPU ビットマップ）。余白切り取りと QR 広告検出を無効化し、ソフトウェアコピーを避けます。</string>
+    <string name="pref_pdf_direct_image">PDF 直接画像</string>
+    <string name="pref_pdf_direct_image_summary">PDF リーダーの画像 PDF は埋め込み画像でページとフォトグリッドを表示します。オフでは各ページを PDF レンダラーで描画します。</string>
     <string name="pref_reader_lib_direct_bitmap">UHDR 変換をバイパス</string>
     <string name="pref_reader_lib_direct_bitmap_summary">高度な形式を Bitmap に直接デコードし、Ultra HDR JPEG 変換をスキップします。</string>
     <string name="pref_reader_hdr_display">HDR 表示サポート</string>

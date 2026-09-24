@@ -156,7 +156,7 @@ object Settings : DataStorePreferences(null) {
      * Long-press opens the other built-in reader, or the image reader when External is selected.
      * Settings → General.
      */
-    val pdfReaderMode = intPref("pdf_reader_mode", 0)
+    val pdfReaderMode = intPref("pdf_reader_mode", 1)
 
     /**
      * Preferred external PDF app as flattened [android.content.ComponentName]
@@ -614,6 +614,13 @@ object Settings : DataStorePreferences(null) {
      * Default on.
      */
     val readerGeneratePageThumb = boolPref("pref_reader_generate_page_thumb", true)
+
+    /**
+     * PDF reader only. On: image PDFs use embedded images for pages and the photo grid.
+     * Off: every page is drawn with [android.graphics.pdf.PdfRenderer].
+     * The image reader does not read this flag. Default on.
+     */
+    val pdfDirectImage = boolPref("pref_pdf_direct_image", false)
 
     /** Last open tab in the reader settings bottom sheet (0=mode, 1=general, 2=filter). */
     val readerSettingsTab = intPref("pref_reader_settings_tab", 0)
