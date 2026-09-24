@@ -67,6 +67,22 @@ external fun decodeJxrBytesToDirect(
     outBoost: FloatArray,
 ): ByteArray?
 
+external fun decodeJpeg2000BytesToDirect(
+    input: ByteArray,
+    maxEdge: Int,
+    advancedColor: Boolean,
+    outInfo: IntArray,
+    outBoost: FloatArray,
+): ByteArray?
+
+external fun convertJpeg2000BytesToUltraHdr(input: ByteArray, outputPath: String): Int
+
+external fun convertJpeg2000BytesToUltraHdrMaxEdge(
+    input: ByteArray,
+    outputPath: String,
+    maxEdge: Int,
+): Int
+
 external fun decodeJxlBytesToDirect(
     input: ByteArray,
     maxEdge: Int,

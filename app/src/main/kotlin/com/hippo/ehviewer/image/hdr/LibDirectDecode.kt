@@ -11,6 +11,7 @@ import com.hippo.ehviewer.image.PathSource
 import com.hippo.ehviewer.image.tryHardwareF16FromPixels
 import com.hippo.ehviewer.jni.decodeAvifBytesToDirect
 import com.hippo.ehviewer.jni.decodeJpeg2000Bitmap
+import com.hippo.ehviewer.jni.decodeJpeg2000BytesToDirect
 import com.hippo.ehviewer.jni.decodeJxlBytesToDirect
 import com.hippo.ehviewer.jni.decodeJxrBytesToDirect
 import java.nio.ByteBuffer
@@ -139,7 +140,8 @@ object LibDirectDecode {
             val pixels = when (route.codec) {
                 LibCodec.Jxl -> decodeJxlBytesToDirect(bytes, maxEdge, advanced, outInfo, outBoost)
                 LibCodec.Jxr -> decodeJxrBytesToDirect(bytes, maxEdge, advanced, outInfo, outBoost)
-                LibCodec.Jpeg2000 -> packJpeg2000(bytes, maxEdge, outInfo, outBoost)
+                LibCodec.Jpeg2000 -> decodeJpeg2000BytesToDirect(bytes, maxEdge, advanced, outInfo, outBoost)
+                    ?: packJpeg2000(bytes, maxEdge, outInfo, outBoost)
                 LibCodec.AvifPq -> decodeAvifBytesToDirect(bytes, maxEdge, advanced, outInfo, outBoost)
             } ?: return null
             // [bytes] ends with this block; only packed pixels + meta remain.

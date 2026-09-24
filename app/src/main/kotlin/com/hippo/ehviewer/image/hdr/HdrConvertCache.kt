@@ -9,6 +9,8 @@ import com.ehviewer.core.files.read
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.jni.convertAvifBytesToUltraHdr
 import com.hippo.ehviewer.jni.convertAvifBytesToUltraHdrMaxEdge
+import com.hippo.ehviewer.jni.convertJpeg2000BytesToUltraHdr
+import com.hippo.ehviewer.jni.convertJpeg2000BytesToUltraHdrMaxEdge
 import com.hippo.ehviewer.jni.convertJxlBytesToUltraHdr
 import com.hippo.ehviewer.jni.convertJxlBytesToUltraHdrMaxEdge
 import com.hippo.ehviewer.jni.convertJxrBytesToUltraHdr
@@ -505,14 +507,14 @@ object HdrConvertCache {
                         when (codec) {
                             LibCodec.Jxr -> convertJxrBytesToUltraHdrMaxEdge(input, tmp.absolutePath, maxEdge)
                             LibCodec.Jxl -> convertJxlBytesToUltraHdrMaxEdge(input, tmp.absolutePath, maxEdge)
-                            LibCodec.Jpeg2000 -> convertJpeg2000ToJpeg(input, tmp, maxEdge)
+                            LibCodec.Jpeg2000 -> convertJpeg2000(input, tmp, maxEdge)
                             LibCodec.AvifPq -> convertAvifBytesToUltraHdrMaxEdge(input, tmp.absolutePath, maxEdge)
                         }
                     } else {
                         when (codec) {
                             LibCodec.Jxr -> convertJxrBytesToUltraHdr(input, tmp.absolutePath)
                             LibCodec.Jxl -> convertJxlBytesToUltraHdr(input, tmp.absolutePath)
-                            LibCodec.Jpeg2000 -> convertJpeg2000ToJpeg(input, tmp, 0)
+                            LibCodec.Jpeg2000 -> convertJpeg2000(input, tmp, 0)
                             LibCodec.AvifPq -> convertAvifBytesToUltraHdr(input, tmp.absolutePath)
                         }
                     }
@@ -531,6 +533,20 @@ object HdrConvertCache {
                 }
             }
         }
+    }
+
+    /**
+     * OpenJPEG → the shared linear packer (gamut tag + PQ/HLG Ultra HDR).
+     * 32-bit builds have no skcms; they fall back to an untagged baseline JPEG.
+     */
+    private fun convertJpeg2000(input: ByteArray, dest: File, maxEdge: Int): Int {
+        val code = if (maxEdge > 0) {
+            convertJpeg2000BytesToUltraHdrMaxEdge(input, dest.absolutePath, maxEdge)
+        } else {
+            convertJpeg2000BytesToUltraHdr(input, dest.absolutePath)
+        }
+        if (code != -100) return code
+        return convertJpeg2000ToJpeg(input, dest, maxEdge)
     }
 
     /** OpenJPEG → baseline JPEG. SDR only; the convert cache is always `.jpg`. */
