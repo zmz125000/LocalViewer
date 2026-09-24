@@ -25,6 +25,7 @@ import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.aspectRatio
@@ -39,17 +40,20 @@ import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.NavigateNext
+import androidx.compose.material.icons.outlined.MyLocation
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
-import androidx.compose.material3.ListItem
-import androidx.compose.material3.ListItemDefaults
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
@@ -85,6 +89,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.lifecycleScope
@@ -643,6 +648,13 @@ private fun PdfReaderScreen(
     val readerPhotoGrid by Settings.readerPhotoGrid.collectAsState()
     var photoGridOpen by remember { mutableStateOf(false) }
     var contentsOpen by remember { mutableStateOf(false) }
+    val thumbGridState = rememberLazyGridState()
+    val contentsListState = rememberLazyListState()
+    val scrollGridToProgress by Settings.photoGridScrollToProgress.collectAsState()
+    LaunchedEffect(photoGridOpen) {
+        if (!photoGridOpen || !scrollGridToProgress || pageCount <= 0) return@LaunchedEffect
+        thumbGridState.scrollToItem((currentPage - 1).coerceIn(0, pageCount - 1))
+    }
     val fullscreen by Settings.fullscreen.collectAsState()
     val cutoutShort by Settings.cutoutShort.collectAsState()
     val keepScreenOn by Settings.keepScreenOn.collectAsState()
@@ -1001,6 +1013,7 @@ private fun PdfReaderScreen(
             PdfContentsSheet(
                 chapters = doc?.chapters.orEmpty(),
                 currentPage = currentPage,
+                listState = contentsListState,
                 onDismiss = { contentsOpen = false },
                 onPick = { page ->
                     contentsOpen = false
@@ -1017,6 +1030,7 @@ private fun PdfReaderScreen(
                 doc = doc,
                 pageCount = pageCount,
                 currentPage = currentPage,
+                gridState = thumbGridState,
                 onDismiss = { photoGridOpen = false },
                 onPick = { page ->
                     photoGridOpen = false
@@ -1150,10 +1164,13 @@ private fun PdfPageBitmap(
 private fun PdfContentsSheet(
     chapters: List<PdfTocEntry>,
     currentPage: Int,
+    listState: androidx.compose.foundation.lazy.LazyListState,
     onDismiss: () -> Unit,
     onPick: (Int) -> Unit,
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val scope = rememberCoroutineScope()
+    val pageIndex = (currentPage - 1).coerceAtLeast(0)
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
@@ -1163,48 +1180,79 @@ private fun PdfContentsSheet(
         contentWindowInsets = { WindowInsets() },
     ) {
         Column(Modifier.readerSheetBox(GalleryGridDefaults.capReaderSheet()).navigationBarsPadding()) {
-            Text(
-                stringResource(R.string.pdf_reader_contents),
-                style = MaterialTheme.typography.titleLarge,
-                modifier = Modifier.padding(horizontal = 24.dp, vertical = 16.dp),
-            )
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(start = 24.dp, end = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    stringResource(R.string.pdf_reader_contents),
+                    style = MaterialTheme.typography.bodyLarge,
+                    modifier = Modifier.weight(1f),
+                )
+                if (chapters.isNotEmpty()) {
+                    IconButton(
+                        onClick = {
+                            scope.launch {
+                                listState.animateScrollToItem(nearestPdfTocIndex(chapters, pageIndex))
+                            }
+                        },
+                    ) {
+                        Icon(
+                            imageVector = Icons.Outlined.MyLocation,
+                            contentDescription = stringResource(R.string.pdf_reader_contents_locate),
+                        )
+                    }
+                }
+            }
             if (chapters.isEmpty()) {
                 Text(
                     stringResource(R.string.pdf_reader_no_contents),
-                    style = MaterialTheme.typography.bodyLarge,
+                    style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(horizontal = 24.dp),
                 )
             } else {
-                LazyColumn(Modifier.fillMaxSize()) {
-                    items(chapters, key = { "${it.pageIndex}-${it.depth}-${it.title}" }) { entry ->
-                        val selected = entry.pageIndex == currentPage - 1
-                        ListItem(
-                            headlineContent = {
-                                Text(entry.title, maxLines = 2, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
-                            },
-                            trailingContent = {
-                                Text(
-                                    "${entry.pageIndex + 1}",
-                                    style = MaterialTheme.typography.labelLarge,
-                                    color = if (selected) {
-                                        MaterialTheme.colorScheme.primary
+                val nearest = nearestPdfTocIndex(chapters, pageIndex)
+                LazyColumn(Modifier.fillMaxSize(), state = listState) {
+                    itemsIndexed(chapters, key = { index, entry -> "$index-${entry.pageIndex}-${entry.depth}-${entry.title}" }) { index, entry ->
+                        val selected = index == nearest
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .background(
+                                    if (selected) {
+                                        MaterialTheme.colorScheme.secondaryContainer
                                     } else {
-                                        MaterialTheme.colorScheme.onSurfaceVariant
+                                        Color.Transparent
                                     },
                                 )
-                            },
-                            colors = ListItemDefaults.colors(
-                                containerColor = if (selected) {
-                                    MaterialTheme.colorScheme.secondaryContainer
+                                .clickable { onPick(entry.pageIndex) }
+                                .padding(
+                                    start = (16 + entry.depth * 16).dp,
+                                    end = 16.dp,
+                                    top = 6.dp,
+                                    bottom = 6.dp,
+                                ),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                entry.title,
+                                style = MaterialTheme.typography.bodyLarge,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f),
+                            )
+                            Text(
+                                "${entry.pageIndex + 1}",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = if (selected) {
+                                    MaterialTheme.colorScheme.primary
                                 } else {
-                                    Color.Transparent
+                                    MaterialTheme.colorScheme.onSurfaceVariant
                                 },
-                            ),
-                            modifier = Modifier
-                                .padding(start = (entry.depth * 16).dp)
-                                .clickable { onPick(entry.pageIndex) },
-                        )
+                                modifier = Modifier.padding(start = 12.dp),
+                            )
+                        }
                     }
                 }
             }
@@ -1212,11 +1260,25 @@ private fun PdfContentsSheet(
     }
 }
 
+private fun nearestPdfTocIndex(chapters: List<PdfTocEntry>, pageIndex: Int): Int {
+    var best = -1
+    var bestPage = Int.MIN_VALUE
+    chapters.forEachIndexed { index, entry ->
+        if (entry.pageIndex <= pageIndex && entry.pageIndex >= bestPage) {
+            best = index
+            bestPage = entry.pageIndex
+        }
+    }
+    if (best >= 0) return best
+    return chapters.indices.minByOrNull { kotlin.math.abs(chapters[it].pageIndex - pageIndex) } ?: 0
+}
+
 @Composable
 private fun PdfThumbGridSheet(
     doc: PdfDocumentModel,
     pageCount: Int,
     currentPage: Int,
+    gridState: LazyGridState,
     onDismiss: () -> Unit,
     onPick: (Int) -> Unit,
 ) {
@@ -1232,6 +1294,7 @@ private fun PdfThumbGridSheet(
     ) {
         LazyVerticalGrid(
             columns = GridCells.Fixed(GalleryGridDefaults.columnCount()),
+            state = gridState,
             modifier = Modifier
                 .readerSheetBox(GalleryGridDefaults.capReaderSheet())
                 .navigationBarsPadding()
