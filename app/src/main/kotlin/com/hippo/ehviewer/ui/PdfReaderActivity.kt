@@ -107,6 +107,7 @@ import androidx.compose.ui.input.pointer.changedToDown
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.keepScreenOn
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
@@ -117,6 +118,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
@@ -161,6 +163,7 @@ import com.hippo.ehviewer.ui.reader.dualLeftRight
 import com.hippo.ehviewer.ui.reader.dualPageActive
 import com.hippo.ehviewer.ui.reader.dualSpreadCount
 import com.hippo.ehviewer.ui.reader.dualSpreadIndex
+import com.hippo.ehviewer.ui.reader.insideSpreadSize
 import com.hippo.ehviewer.ui.reader.fromPreferences
 import com.hippo.ehviewer.ui.reader.isPagerDual
 import com.hippo.ehviewer.ui.reader.isWebtoonHorizontal
@@ -1587,10 +1590,14 @@ private fun PdfDualSpread(
             .distinctUntilChanged { a, b -> abs(a - b) < 0.08f }
             .collect { onRenderZoom(it) }
     }
-    val (rowW, rowH) = pdfFittedSize(combined, viewWidthPx, viewHeightPx, if (gap) 1 else scaleType)
-    val leftW = if (gap) (viewWidthPx / 2).coerceAtLeast(1) else (rowW * leftAspect / combined).roundToInt().coerceAtLeast(1)
-    val rightW = if (gap) leftW else (rowW - leftW).coerceAtLeast(1)
-    val cellH = if (gap) viewHeightPx else rowH
+    val spreadPx = if (gap) {
+        viewport
+    } else {
+        insideSpreadSize(contentSize, viewport).takeIf { it.width > 0f && it.height > 0f } ?: contentSize
+    }
+    val leftW = (spreadPx.width * if (gap) 0.5f else leftAspect / combined).roundToInt().coerceAtLeast(1)
+    val rightW = (spreadPx.width.roundToInt() - leftW).coerceAtLeast(1)
+    val cellH = spreadPx.height.roundToInt().coerceAtLeast(1)
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -1599,8 +1606,20 @@ private fun PdfDualSpread(
                 onClick = onClick,
                 onDoubleClick = onDoubleClick,
             ),
+        contentAlignment = Alignment.Center,
     ) {
-        Row(Modifier.fillMaxSize()) {
+        Row(
+            modifier = if (gap) {
+                Modifier.fillMaxSize()
+            } else {
+                Modifier.layout { measurable, _ ->
+                    val w = spreadPx.width.roundToInt().coerceAtLeast(1)
+                    val h = spreadPx.height.roundToInt().coerceAtLeast(1)
+                    val placeable = measurable.measure(Constraints.fixed(w, h))
+                    layout(w, h) { placeable.place(0, 0) }
+                }
+            },
+        ) {
             Box(Modifier.weight(if (gap) 1f else leftAspect).fillMaxHeight()) {
                 pageAt(left, PdfPageBox.Cell, leftW, cellH)
             }
@@ -1770,13 +1789,6 @@ private fun PdfVectorPage(
         scaleType = scaleType,
         aspect = aspect,
     )
-}
-
-private fun pdfFittedSize(aspect: Float, viewW: Int, viewH: Int, scaleType: Int): Pair<Int, Int> {
-    val safe = aspect.coerceAtLeast(0.01f)
-    val width = pdfScaleRenderWidth(safe, viewW, viewH, scaleType)
-    val height = (width / safe).roundToInt().coerceAtLeast(1)
-    return width to height
 }
 
 private fun pdfScaleRenderWidth(aspect: Float, viewW: Int, viewH: Int, scaleType: Int): Int {
