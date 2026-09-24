@@ -20,6 +20,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.isSystemInDarkTheme
@@ -110,6 +111,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
@@ -1630,13 +1632,18 @@ private fun PdfContentsSheet(
                     )
                 }
                 if (entries.isNotEmpty()) {
+                    val searchInteraction = remember { MutableInteractionSource() }
+                    val locateInteraction = remember { MutableInteractionSource() }
                     Icon(
                         imageVector = Icons.Outlined.Search,
                         contentDescription = stringResource(R.string.pdf_reader_contents_search),
                         modifier = Modifier
                             .padding(start = 12.dp)
                             .size(iconSize + 4.dp)
-                            .clickable {
+                            .clickable(
+                                interactionSource = searchInteraction,
+                                indication = null,
+                            ) {
                                 searching = !searching
                                 if (!searching) {
                                     query = ""
@@ -1650,7 +1657,10 @@ private fun PdfContentsSheet(
                         modifier = Modifier
                             .padding(start = 12.dp)
                             .size(iconSize + 4.dp)
-                            .clickable {
+                            .clickable(
+                                interactionSource = locateInteraction,
+                                indication = null,
+                            ) {
                                 val target = visible.indexOfFirst { it.first == nearest }.let { found ->
                                     if (found >= 0) found else 0
                                 }
@@ -1684,7 +1694,7 @@ private fun PdfContentsSheet(
                                 )
                                 .clickable { onPick(entry.pageIndex) }
                                 .padding(
-                                    start = (12 + entry.depth * 12).dp,
+                                    start = if (pagesOnly) 16.dp else (12 + entry.depth * 12).dp,
                                     end = 16.dp,
                                     top = 10.dp,
                                     bottom = 10.dp,
@@ -1703,6 +1713,7 @@ private fun PdfContentsSheet(
                                 } else {
                                     MaterialTheme.colorScheme.onSurfaceVariant
                                 },
+                                textAlign = if (pagesOnly) TextAlign.Center else TextAlign.Start,
                                 maxLines = 2,
                                 overflow = TextOverflow.Ellipsis,
                                 modifier = Modifier.weight(1f),
