@@ -39,6 +39,8 @@ class PdfImageEngine private constructor(
         val streamLen: Long,
         /** File offset of stream payload after `stream` keyword; -1 if unknown. */
         val streamOffset: Long = -1L,
+        /** Indexed color is re-encoded WebP and always written. Other PDF images may stay in RAM. */
+        val persistExtract: Boolean = false,
     ) {
         val hasSeek: Boolean get() = streamOffset >= 0L && streamLen > 0L
     }
@@ -74,6 +76,11 @@ class PdfImageEngine private constructor(
 
     override fun extOf(index: Int): String? = synchronized(pagesLock) {
         pages.getOrNull(index)?.ext
+    }
+
+    /** Indexed pages must be saved. JPEG, PNG-style Flate, and other images may stay in RAM. */
+    fun persistsExtract(index: Int): Boolean = synchronized(pagesLock) {
+        pages.getOrNull(index)?.persistExtract == true
     }
 
     /** File offset of page image stream for high-water ordering; -1 if unknown. */
@@ -1033,6 +1040,7 @@ internal class PdfParser(
             filter.isEmpty() -> "webp"
             else -> return null // CCITT, JBIG2, etc.
         }
+        val indexed = isIndexedColor(dict["/ColorSpace"])
         val streamOffset = streamDataOffsets[objNum] ?: -1L
         val length = streamLengthFromXref(dict["/Length"], streamOffset)
             ?: resolveLength(dict["/Length"])
@@ -1045,7 +1053,16 @@ internal class PdfParser(
             height = h,
             streamLen = length,
             streamOffset = streamOffset,
+            persistExtract = indexed,
         )
+    }
+
+    private fun isIndexedColor(value: PdfValue?): Boolean {
+        val resolved = value?.let { resolveValue(it) } as? PdfArray ?: return false
+        val head = resolved.items.firstOrNull()
+        val name = (head as? PdfName)?.name
+            ?: (head?.let { resolveValue(it) } as? PdfName)?.name
+        return name == "/Indexed" || name == "/I"
     }
 
     /**

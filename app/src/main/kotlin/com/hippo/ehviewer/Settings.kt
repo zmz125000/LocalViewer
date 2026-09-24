@@ -400,8 +400,9 @@ object Settings : DataStorePreferences(null) {
     val preloadImage = intPref("preload_image_2", 3)
 
     /**
-     * Skip all SMB/WebDAV/stream-archive page writes to flash (prefetch and current
-     * page). Decode from RAM; leftover files from earlier sessions may still be read.
+     * Skip SMB/WebDAV/stream-archive page writes, and non-indexed images inside a
+     * network image PDF (JPEG, PNG-style Flate, JPEG 2000). Indexed color is WebP
+     * and still saved. Decode from RAM; leftover files may still be read.
      * Local folders already skip a page cache.
      */
     val disableReaderNetworkCache = boolPref("disable_reader_network_cache", true)
