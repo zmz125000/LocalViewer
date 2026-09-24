@@ -6,8 +6,9 @@ import arrow.autoCloseScope
 import com.ehviewer.core.files.openFileDescriptor
 import com.ehviewer.core.model.GalleryInfo
 import com.ehviewer.core.util.logcat
-import com.hippo.ehviewer.image.ImageSource
 import com.hippo.ehviewer.Settings
+import com.hippo.ehviewer.image.ImageSource
+import com.hippo.ehviewer.image.PathSource
 import com.hippo.ehviewer.image.byteBufferSource
 import com.hippo.ehviewer.library.ArchiveByteSource
 import com.hippo.ehviewer.library.ArchiveCoverCache
@@ -154,6 +155,7 @@ internal suspend fun <T> runDocumentExtractPageLoader(
         DocumentExtractCache.saveIndex(engine.toIndex(cacheKey, complete = false))
 
         val pagePaths = ConcurrentHashMap<Int, Path>()
+
         /** DCT JPEG and other non-indexed images kept in RAM when network page cache is off. */
         val ramPages = ConcurrentHashMap<Int, ByteArray>()
 
@@ -431,8 +433,7 @@ internal suspend fun <T> runDocumentExtractPageLoader(
                 }
 
                 /** In-memory only — safe on main / onDispose. */
-                private fun isPageMapped(index: Int): Boolean =
-                    pagePaths.containsKey(index) || ramPages.containsKey(index)
+                private fun isPageMapped(index: Int): Boolean = pagePaths.containsKey(index) || ramPages.containsKey(index)
 
                 /** Disk probe; call only from [Dispatchers.IO]. */
                 private fun probePageOnDisk(index: Int): Boolean {
