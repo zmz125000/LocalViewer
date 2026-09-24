@@ -228,6 +228,7 @@ class PdfReaderActivity : AppCompatActivity() {
     private var startPage by mutableStateOf(0)
     private var lastVisiblePage = 0
     private var openJob: Job? = null
+    private var openGeneration = 0
     private var sourceArgs by mutableStateOf<ReaderScreenArgs?>(null)
     private val hopBusy = java.util.concurrent.atomic.AtomicBoolean(false)
 
@@ -244,7 +245,10 @@ class PdfReaderActivity : AppCompatActivity() {
                 startPage = startPage,
                 progressGid = progressGid,
                 onPageChanged = { lastVisiblePage = it },
-                onClose = { finish() },
+                onClose = {
+                    closeSession()
+                    finish()
+                },
                 onHopSibling = { next -> hopSibling(next) },
                 onDirectImageChanged = { reloadForDirectImage() },
                 sourceArgs = sourceArgs,
@@ -286,6 +290,8 @@ class PdfReaderActivity : AppCompatActivity() {
         val nextStart = intent.getIntExtra(EXTRA_START_PAGE, 0).coerceAtLeast(0)
         val nextArgs = readerArgsFromIntent(intent)
         openJob?.cancel()
+        val generation = ++openGeneration
+        if (replace) closeSession(removeToken = false)
         openJob = lifecycleScope.launch {
             var pfd: ParcelFileDescriptor? = null
             var opened: PdfDocumentModel? = null
@@ -321,6 +327,7 @@ class PdfReaderActivity : AppCompatActivity() {
                     openPdfDocument(descriptor, nextStart, cacheKey, reopen)
                 }
                 val model = opened
+                if (generation != openGeneration) return@launch
                 if (model == null) {
                     token?.let(StreamDocumentRegistry::remove)
                     error = getString(R.string.pdf_reader_open_failed, "descriptor")
@@ -400,6 +407,7 @@ class PdfReaderActivity : AppCompatActivity() {
                     runCatching { GallerySiblingNavigator.sibling(current, next) }.getOrNull()
                 } ?: return@launch
                 flushProgress()
+                closeSession()
                 if (OpenPdfBySettings.shouldRedirect(sibling)) {
                     when (val outcome = OpenPdfBySettings.open(this@PdfReaderActivity, sibling)) {
                         is OpenPdfBySettings.Outcome.Gallery -> {
@@ -648,7 +656,10 @@ private class PdfSession(private val renderer: PdfRenderer) {
     val pageCount: Int get() = renderer.pageCount
     private val mutex = Mutex()
 
+    @Volatile private var closed = false
+
     suspend fun render(index: Int, widthPx: Int): Bitmap = mutex.withLock {
+        if (closed) error("closed")
         renderer.openPage(index).use { page ->
             val w = widthPx.coerceAtLeast(1)
             val h = ((page.height.toFloat() / page.width.coerceAtLeast(1)) * w)
@@ -663,13 +674,21 @@ private class PdfSession(private val renderer: PdfRenderer) {
     }
 
     suspend fun pageAspect(index: Int): Float = mutex.withLock {
+        if (closed) error("closed")
         renderer.openPage(index).use { page ->
             page.width.toFloat() / page.height.coerceAtLeast(1)
         }
     }
 
     fun close() {
-        runCatching { renderer.close() }
+        if (closed) return
+        runBlocking {
+            mutex.withLock {
+                if (closed) return@withLock
+                closed = true
+                runCatching { renderer.close() }
+            }
+        }
     }
 }
 

@@ -93,6 +93,13 @@ class PdfImageEngine private constructor(
         parser.abortWalk = true
     }
 
+    override fun close() {
+        discoveryStopped = true
+        discoveryPaused = true
+        parser.abortWalk = true
+        pageCursor = null
+    }
+
     override fun resumeDiscovery() {
         parser.abortWalk = false
         discoveryPaused = false
