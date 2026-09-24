@@ -1424,7 +1424,10 @@ private fun PdfVectorPage(
     }
     val renderWidth = when (box) {
         PdfPageBox.Webtoon -> widthPx
-        PdfPageBox.Strip -> (viewHeightPx * aspect).roundToInt().coerceIn(1, MAX_VECTOR_EDGE)
+        PdfPageBox.Strip -> {
+            val zoom = if (viewWidthPx > 0) widthPx.toFloat() / viewWidthPx else 1f
+            (viewHeightPx * aspect * zoom).roundToInt().coerceIn(1, MAX_VECTOR_EDGE)
+        }
         else -> {
             val zoom = if (viewWidthPx > 0) widthPx.toFloat() / viewWidthPx else 1f
             (pdfScaleRenderWidth(aspect, viewWidthPx, viewHeightPx, scaleType) * zoom)
