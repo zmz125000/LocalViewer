@@ -534,10 +534,7 @@ private fun openPdfDocument(
     // connection when the original fd is closed (ENOTCONN on later preads).
     val source = PfdArchiveByteSource(pfd, ownsPfd = false, reopen = reopenPfd)
     val chapters = readPdfChapters(source, source.size)
-    tryOpenImagePdf(source, startPage, cacheKey)?.let { images ->
-        source.adoptPfd()
-        return images.also { it.chapters = chapters }
-    }
+    runCatching { source.close() }
     val renderer = runCatching { PdfRenderer(pfd) }.getOrElse { e ->
         runCatching { pfd.close() }
         throw e
