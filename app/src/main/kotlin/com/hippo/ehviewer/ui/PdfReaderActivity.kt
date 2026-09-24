@@ -1366,8 +1366,8 @@ private fun PdfContentsSheet(
                                 .padding(
                                     start = (12 + entry.depth * 12).dp,
                                     end = 16.dp,
-                                    top = 12.dp,
-                                    bottom = 12.dp,
+                                    top = 10.dp,
+                                    bottom = 10.dp,
                                 ),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
