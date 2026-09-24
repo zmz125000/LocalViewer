@@ -156,9 +156,9 @@ object LibDirectDecode {
         val colorSpace = resolveColorSpace(f16, gamut, transfer)
         // Default advanced/F16 path: copy the JNI result straight into a HardwareBuffer.
         // This removes the ByteArray → software Bitmap → AHB double copy while preserving
-        // the exact linear scRGB/BT.2020 ColorSpace chosen above. Fall back to software on
-        // unsupported devices or when the reader hardware-bitmap preference is disabled.
-        val hardware = if (packed.advanced && f16 && Settings.readerHardwareBitmap.value) {
+        // the exact linear scRGB/BT.2020 ColorSpace chosen above. Fall back to software
+        // when the device cannot wrap that color space.
+        val hardware = if (packed.advanced && f16) {
             tryHardwareF16FromPixels(packed.pixels, w, h, colorSpace)
         } else {
             null

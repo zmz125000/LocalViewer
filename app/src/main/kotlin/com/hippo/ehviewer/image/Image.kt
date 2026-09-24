@@ -459,11 +459,7 @@ class Image private constructor(
             val bi = asBitmapImage() ?: return this
             val soft = bi.bitmap
             if (soft.config != Bitmap.Config.RGBA_F16) return this
-            val finalBm = if (Settings.readerHardwareBitmap.value) {
-                tryHardwareF16Wrap(soft) ?: soft
-            } else {
-                soft
-            }
+            val finalBm = tryHardwareF16Wrap(soft) ?: soft
             if (Log.isLoggable("ReaderColor", Log.INFO)) {
                 val cs = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                     finalBm.colorSpace?.name ?: "null"

@@ -635,12 +635,13 @@ object Settings : DataStorePreferences(null) {
     val readerDecodeSize = intPref("pref_reader_decode_size", 4)
 
     /**
-     * Prefer GPU hardware bitmaps in the reader.
+     * Coil path only: skip the software intermediate used for QR detection and border crop.
      *
-     * When on: Coil [allowHardware] for decode (no software intermediate for crop/QR —
-     * those stay off). If decode still returns software (size policy / format / OEM),
-     * [com.hippo.ehviewer.coil.HardwareBitmapInterceptor] upgrades under
-     * [hardwareBitmapThreshold]. Gain maps stay software ([Bitmap.copy] strips them).
+     * On: [allowHardware] decode, so QR and crop stay off. Off: software decode so those
+     * run, then [com.hippo.ehviewer.coil.HardwareBitmapInterceptor] still uploads under
+     * [hardwareBitmapThreshold]. The bitmap on screen is hardware either way.
+     * Gain maps stay software ([Bitmap.copy] strips them). Custom formats (PDF, JXL,
+     * JXR, JPEG 2000, PQ-AVIF, platform F16) always upload and do not read this flag.
      * Default on.
      */
     val readerHardwareBitmap = boolPref("pref_reader_hardware_bitmap", true)
