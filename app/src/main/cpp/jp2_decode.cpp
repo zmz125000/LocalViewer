@@ -285,8 +285,8 @@ Java_com_hippo_ehviewer_jni_Jpeg2000Kt_decodeJpeg2000Bitmap(
     const bool cmyk = image->color_space == OPJ_CLRSPC_CMYK;
     const bool ycc = image->color_space == OPJ_CLRSPC_SYCC;
     for (int y = 0; y < h; ++y) {
-        // Config.ARGB_8888 is Skia kN32. On little-endian the bytes are B,G,R,A.
-        auto* row = reinterpret_cast<uint32_t*>(dst + static_cast<size_t>(y) * info.stride);
+        // ANDROID_BITMAP_FORMAT_RGBA_8888: byte order is R, G, B, A.
+        auto* row = dst + static_cast<size_t>(y) * info.stride;
         for (int x = 0; x < w; ++x) {
             int r, g, b, a = 255;
             if (nc == 1) {
@@ -315,10 +315,11 @@ Java_com_hippo_ehviewer_jni_Jpeg2000Kt_decodeJpeg2000Bitmap(
                 b = sample8(image->comps[2], x, y, w, h);
                 if (nc >= 4) a = sample8(image->comps[3], x, y, w, h);
             }
-            row[x] = (static_cast<uint32_t>(a) << 24) |
-                     (static_cast<uint32_t>(r) << 16) |
-                     (static_cast<uint32_t>(g) << 8) |
-                     static_cast<uint32_t>(b);
+            uint8_t* px = row + static_cast<size_t>(x) * 4;
+            px[0] = static_cast<uint8_t>(r);
+            px[1] = static_cast<uint8_t>(g);
+            px[2] = static_cast<uint8_t>(b);
+            px[3] = static_cast<uint8_t>(a);
         }
     }
 
