@@ -1179,14 +1179,17 @@ private fun PdfContentsSheet(
         dragHandle = null,
         contentWindowInsets = { WindowInsets() },
     ) {
+        val nearest = if (chapters.isEmpty()) -1 else nearestPdfTocIndex(chapters, pageIndex)
         Column(Modifier.readerSheetBox(GalleryGridDefaults.capReaderSheet()).navigationBarsPadding()) {
             Row(
                 modifier = Modifier.fillMaxWidth().padding(start = 24.dp, end = 4.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
-                    stringResource(R.string.pdf_reader_contents),
+                    if (nearest >= 0) chapters[nearest].title else stringResource(R.string.pdf_reader_contents),
                     style = MaterialTheme.typography.bodyLarge,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f),
                 )
                 if (chapters.isNotEmpty()) {
@@ -1212,7 +1215,6 @@ private fun PdfContentsSheet(
                     modifier = Modifier.padding(horizontal = 24.dp),
                 )
             } else {
-                val nearest = nearestPdfTocIndex(chapters, pageIndex)
                 LazyColumn(Modifier.fillMaxSize(), state = listState) {
                     itemsIndexed(chapters, key = { index, entry -> "$index-${entry.pageIndex}-${entry.depth}-${entry.title}" }) { index, entry ->
                         val selected = index == nearest
@@ -1237,7 +1239,16 @@ private fun PdfContentsSheet(
                         ) {
                             Text(
                                 entry.title,
-                                style = MaterialTheme.typography.bodyLarge,
+                                style = if (entry.depth <= 2) {
+                                    MaterialTheme.typography.bodyLarge
+                                } else {
+                                    MaterialTheme.typography.bodyMedium
+                                },
+                                color = if (entry.depth <= 2) {
+                                    MaterialTheme.colorScheme.onSurface
+                                } else {
+                                    MaterialTheme.colorScheme.onSurfaceVariant
+                                },
                                 maxLines = 2,
                                 overflow = TextOverflow.Ellipsis,
                                 modifier = Modifier.weight(1f),
