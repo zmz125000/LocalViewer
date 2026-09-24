@@ -600,6 +600,12 @@ private class PdfSession(private val renderer: PdfRenderer) {
         }
     }
 
+    suspend fun pageAspect(index: Int): Float = mutex.withLock {
+        renderer.openPage(index).use { page ->
+            page.width.toFloat() / page.height.coerceAtLeast(1)
+        }
+    }
+
     fun close() {
         runCatching { renderer.close() }
     }
@@ -919,8 +925,15 @@ private fun PdfReaderScreen(
                             .distinctUntilChanged { a, b -> abs(a - b) < 0.08f }
                             .collect { renderZoom = it }
                     }
+                    val heightPx = with(LocalDensity.current) { maxHeight.roundToPx() }.coerceAtLeast(1)
                     val vectorWidthPx = (widthPx * renderZoom).roundToInt()
                         .coerceIn(widthPx, MAX_VECTOR_EDGE)
+                    var appliedScale by remember { mutableIntStateOf(scaleType) }
+                    LaunchedEffect(scaleType) {
+                        if (appliedScale == scaleType) return@LaunchedEffect
+                        appliedScale = scaleType
+                        zoomableState.resetZoom()
+                    }
                     var multiTouch by remember { mutableStateOf(false) }
                     val viewerModifier = Modifier
                         .fillMaxSize()
@@ -993,6 +1006,8 @@ private fun PdfReaderScreen(
                                     session = doc.session,
                                     index = index,
                                     widthPx = vectorWidthPx,
+                                    viewWidthPx = widthPx,
+                                    viewHeightPx = heightPx,
                                     fillScreen = !isWebtoon,
                                     scaleType = scaleType,
                                 )
@@ -1175,15 +1190,32 @@ private fun PdfVectorPage(
     session: PdfSession,
     index: Int,
     widthPx: Int,
+    viewWidthPx: Int,
+    viewHeightPx: Int,
     fillScreen: Boolean,
     scaleType: Int,
 ) {
+    var aspect by remember(index) { mutableFloatStateOf(1f / 1.414f) }
+    LaunchedEffect(session, index, fillScreen) {
+        if (!fillScreen) return@LaunchedEffect
+        aspect = withContext(Dispatchers.IO) {
+            runCatching { session.pageAspect(index) }.getOrDefault(aspect)
+        }
+    }
+    val renderWidth = if (fillScreen) {
+        val zoom = if (viewWidthPx > 0) widthPx.toFloat() / viewWidthPx else 1f
+        (pdfScaleRenderWidth(aspect, viewWidthPx, viewHeightPx, scaleType) * zoom)
+            .roundToInt()
+            .coerceIn(1, MAX_VECTOR_EDGE)
+    } else {
+        widthPx
+    }
     var bitmap by remember(index) { mutableStateOf<Bitmap?>(null) }
-    LaunchedEffect(session, index, widthPx) {
+    LaunchedEffect(session, index, renderWidth, scaleType) {
         var next: Bitmap? = null
         try {
             next = withContext(Dispatchers.IO) {
-                runCatching { session.render(index, widthPx) }.getOrNull()
+                runCatching { session.render(index, renderWidth) }.getOrNull()
             }
             if (next != null) {
                 val prev = bitmap
@@ -1207,6 +1239,18 @@ private fun PdfVectorPage(
         fillScreen = fillScreen,
         scaleType = scaleType,
     )
+}
+
+private fun pdfScaleRenderWidth(aspect: Float, viewW: Int, viewH: Int, scaleType: Int): Int {
+    val safeAspect = aspect.coerceAtLeast(0.01f)
+    val width = when (scaleType) {
+        3 -> viewW.toFloat()
+        4 -> viewH * safeAspect
+        2 -> maxOf(viewW.toFloat(), viewH * safeAspect)
+        6 -> if (safeAspect > 1f) viewH * safeAspect else viewW.toFloat()
+        else -> minOf(viewW.toFloat(), viewH * safeAspect)
+    }
+    return width.roundToInt().coerceIn(1, MAX_VECTOR_EDGE)
 }
 
 @Composable
@@ -1322,8 +1366,8 @@ private fun PdfContentsSheet(
                                 .padding(
                                     start = (12 + entry.depth * 12).dp,
                                     end = 16.dp,
-                                    top = 6.dp,
-                                    bottom = 6.dp,
+                                    top = 12.dp,
+                                    bottom = 12.dp,
                                 ),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
