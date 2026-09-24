@@ -802,6 +802,8 @@
     <string name="pref_reader_photo_grid">照片墙</string>
     <string name="pref_reader_generate_page_thumb">生成页缩略图</string>
     <string name="pref_reader_generate_page_thumb_summary">页面加载完成后生成照片墙缩略图，供稍后使用</string>
+    <string name="pref_pdf_direct_image">PDF 直出图片</string>
+    <string name="pref_pdf_direct_image_summary">PDF 阅读器中的图片 PDF 用内嵌图片显示页面和照片墙。关闭后每页都用 PDF 渲染。</string>
     <string name="pref_decode_size">解码尺寸</string>
     <string name="pref_decode_size_1_5x">1.5× 屏幕</string>
     <string name="pref_decode_size_2x">2× 屏幕</string>

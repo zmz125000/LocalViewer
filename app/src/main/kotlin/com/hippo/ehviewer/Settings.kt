@@ -615,6 +615,13 @@ object Settings : DataStorePreferences(null) {
      */
     val readerGeneratePageThumb = boolPref("pref_reader_generate_page_thumb", true)
 
+    /**
+     * PDF reader only. On: image PDFs use embedded images for pages and the photo grid.
+     * Off: every page is drawn with [android.graphics.pdf.PdfRenderer].
+     * The image reader does not read this flag. Default on.
+     */
+    val pdfDirectImage = boolPref("pref_pdf_direct_image", false)
+
     /** Last open tab in the reader settings bottom sheet (0=mode, 1=general, 2=filter). */
     val readerSettingsTab = intPref("pref_reader_settings_tab", 0)
     val readerTheme = intPref("pref_reader_theme_key", 1)
