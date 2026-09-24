@@ -25,7 +25,8 @@ import splitties.init.appCtx
  * Network folder index metadata is preserved across this image LRU, like archive
  * `index.json` files. Other folder layouts are unchanged (smb_cache, webdav_cache,
  * zip_folder_pages, archive_pages, solid_extract, document_extract, *_thumb_cache,
- * archive_thumb, video_thumb_cache, page_thumb).
+ * archive_thumb, video_thumb_cache). Photo-grid image thumbs (`page_thumb`) use the
+ * origin budget, not the folder-thumb pool.
  *
  * 1. **Origin pics** (reader pages + remote folder/archive files): one shared cap =
  *    [Settings.readCacheSize] (Advanced “image disk cache”). No per-store pool.
@@ -33,8 +34,9 @@ import splitties.init.appCtx
  *    [WebDavCache.isPageCachedOnDisk] and extract [touch]/includePages=true)] bump
  *    on access). Never protects “complete” archive caches. **Never deletes
  *    `index.json`** under extract dirs.
- * 2. **Thumbs** (SMB/WebDAV/archive/video/page-grid covers): long edge [THUMB_EDGE], fixed
- *    [THUMB_BUDGET_BYTES] — separate from origin budget and settings.
+ * 2. **Folder thumbs** (SMB/WebDAV/archive/video covers): long edge [THUMB_EDGE], fixed
+ *    [THUMB_BUDGET_BYTES] — separate from origin budget and settings. Photo-grid image
+ *    thumbs (`page_thumb`) are origin files and share [originBudgetBytes].
  */
 object OriginDiskCache {
     /** Generated browse/cover thumb long edge (px). */
@@ -171,6 +173,8 @@ object OriginDiskCache {
         pinnedBytes += collectFlatOrigin(cacheDir("zip_folder_pages"), candidates)
         // Local-folder HDR → Ultra HDR derivatives (non-destructive).
         pinnedBytes += collectFlatOrigin(cacheDir("hdr_ultrahdr"), candidates)
+        // Photo-grid image thumbs (reader page thumbs). Not the folder-cover pool.
+        pinnedBytes += collectFlatOrigin(cacheDir("page_thumb"), candidates)
 
         // Extracted page caches — skip index.json; skip currently open galleries.
         pinnedBytes += collectExtractOrigin(
@@ -328,9 +332,8 @@ object OriginDiskCache {
         collectThumbFiles(cacheDir("smb_thumb_cache"), candidates)
         collectThumbFiles(cacheDir("webdav_thumb_cache"), candidates)
         collectThumbFiles(cacheDir("archive_thumb"), candidates)
-        // Video frames (local + network) — same shared byte budget as other covers.
+        // Video frames (local + network) — same shared byte budget as folder covers.
         collectThumbFiles(cacheDir("video_thumb_cache"), candidates)
-        collectThumbFiles(cacheDir("page_thumb"), candidates)
 
         var total = candidates.sumOf { it.size }
         if (total <= THUMB_BUDGET_BYTES) return

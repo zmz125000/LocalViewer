@@ -6,8 +6,10 @@ import arrow.autoCloseScope
 import com.ehviewer.core.files.openFileDescriptor
 import com.ehviewer.core.model.GalleryInfo
 import com.ehviewer.core.util.logcat
+import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.image.ImageSource
 import com.hippo.ehviewer.image.PathSource
+import com.hippo.ehviewer.image.byteBufferSource
 import com.hippo.ehviewer.library.ArchiveByteSource
 import com.hippo.ehviewer.library.ArchiveCoverCache
 import com.hippo.ehviewer.library.DocumentExtractCache
@@ -22,6 +24,7 @@ import com.hippo.ehviewer.library.isEpubFileName
 import com.hippo.ehviewer.library.isPdfFileName
 import com.hippo.ehviewer.library.openLocalArchiveByteSource
 import java.io.File
+import java.nio.ByteBuffer
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicBoolean
@@ -152,6 +155,28 @@ internal suspend fun <T> runDocumentExtractPageLoader(
         DocumentExtractCache.saveIndex(engine.toIndex(cacheKey, complete = false))
 
         val pagePaths = ConcurrentHashMap<Int, Path>()
+
+        /** DCT JPEG and other non-indexed images kept in RAM when network page cache is off. */
+        val ramPages = ConcurrentHashMap<Int, ByteArray>()
+
+        /**
+         * Network cache off: keep JPEG, PNG-style Flate, JPEG 2000, and other non-indexed
+         * PDF images in [ramPages]. Indexed color is WebP and always hits [DocumentExtractCache].
+         * Local documents always write.
+         */
+        fun storePdfExtract(index: Int, ext: String, bytes: ByteArray): Path? {
+            val pdf = engine as? PdfImageEngine
+            val keepOnDisk = pdf?.persistsExtract(index) == true ||
+                localPathForLibrary != null ||
+                !Settings.disableReaderNetworkCache.value
+            if (!keepOnDisk) {
+                ramPages[index] = bytes
+                return null
+            }
+            val path = DocumentExtractCache.writePage(cacheKey, index, ext, bytes)
+            pagePaths[index] = path
+            return path
+        }
         val readyWaiters = ConcurrentHashMap<Int, CopyOnWriteArrayList<() -> Unit>>()
         val extractJobs = ConcurrentHashMap<Int, Job>()
         val backgroundJobs = ConcurrentHashMap.newKeySet<Int>()
@@ -189,7 +214,7 @@ internal suspend fun <T> runDocumentExtractPageLoader(
                     }
                     if (bytes != null) {
                         val ext = pdf.extOf(resumePage) ?: "bin"
-                        DocumentExtractCache.writePage(cacheKey, resumePage, ext, bytes)
+                        storePdfExtract(resumePage, ext, bytes)
                     } else {
                         pendingIndexed.remove(resumePage)?.let { bmp ->
                             if (!bmp.isRecycled) bmp.recycle()
@@ -203,6 +228,7 @@ internal suspend fun <T> runDocumentExtractPageLoader(
             }
             check(
                 pagePaths[resumePage] != null ||
+                    ramPages.containsKey(resumePage) ||
                     DocumentExtractCache.isPageCached(
                         cacheKey,
                         resumePage,
@@ -211,12 +237,14 @@ internal suspend fun <T> runDocumentExtractPageLoader(
             ) {
                 "Failed to extract document page $resumePage"
             }
-            pagePaths[resumePage] = pagePaths[resumePage]
-                ?: DocumentExtractCache.pagePath(
-                    cacheKey,
-                    resumePage,
-                    engine.extOf(resumePage) ?: "bin",
-                )
+            if (!ramPages.containsKey(resumePage)) {
+                pagePaths[resumePage] = pagePaths[resumePage]
+                    ?: DocumentExtractCache.pagePath(
+                        cacheKey,
+                        resumePage,
+                        engine.extOf(resumePage) ?: "bin",
+                    )
+            }
         }
 
         // Reuse page 0 for the cover when it is already cached. Do not fetch it ahead
@@ -268,6 +296,10 @@ internal suspend fun <T> runDocumentExtractPageLoader(
                     ?: DocumentExtractCache.findCachedPage(cacheKey, index)?.name?.substringAfterLast('.', "")
 
                 override fun savePage(index: Int, file: Path): Boolean = runCatching {
+                    ramPages[index]?.let { bytes ->
+                        File(file.toString()).writeBytes(bytes)
+                        return@runCatching true
+                    }
                     val path = pagePaths[index]
                         ?: DocumentExtractCache.findCachedPage(cacheKey, index)
                         ?: engine.extOf(index)?.let { ext ->
@@ -284,7 +316,14 @@ internal suspend fun <T> runDocumentExtractPageLoader(
                     if (sessionClosed.get()) null else pendingIndexed.remove(index)
                 }
 
+                override fun releaseRamPage(index: Int) {
+                    ramPages.remove(index)
+                }
+
                 override fun openSource(index: Int): ImageSource {
+                    ramPages[index]?.let { bytes ->
+                        return byteBufferSource(ByteBuffer.wrap(bytes)) {}
+                    }
                     val path = pagePaths[index]
                         ?: DocumentExtractCache.findCachedPage(cacheKey, index)
                         ?: run {
@@ -394,11 +433,11 @@ internal suspend fun <T> runDocumentExtractPageLoader(
                 }
 
                 /** In-memory only — safe on main / onDispose. */
-                private fun isPageMapped(index: Int): Boolean = pagePaths.containsKey(index)
+                private fun isPageMapped(index: Int): Boolean = pagePaths.containsKey(index) || ramPages.containsKey(index)
 
                 /** Disk probe; call only from [Dispatchers.IO]. */
                 private fun probePageOnDisk(index: Int): Boolean {
-                    if (pagePaths.containsKey(index)) return true
+                    if (pagePaths.containsKey(index) || ramPages.containsKey(index)) return true
                     val cached = DocumentExtractCache.findCachedPage(cacheKey, index)
                     if (cached != null) {
                         pagePaths[index] = cached
@@ -576,7 +615,7 @@ internal suspend fun <T> runDocumentExtractPageLoader(
                                                 }
                                                 if (bytes != null) {
                                                     val ext = pdf.extOf(index) ?: "bin"
-                                                    DocumentExtractCache.writePage(cacheKey, index, ext, bytes)
+                                                    storePdfExtract(index, ext, bytes)
                                                 } else {
                                                     null
                                                 }
@@ -678,7 +717,7 @@ internal suspend fun <T> runDocumentExtractPageLoader(
                     }
                     if (known != null && pdf != null) {
                         val ext = pdf.extOf(index) ?: "bin"
-                        pagePaths[index] = DocumentExtractCache.writePage(cacheKey, index, ext, known)
+                        storePdfExtract(index, ext, known)
                         return
                     }
                     // A cell that left the sheet must not fall through onto the parser.
@@ -688,7 +727,7 @@ internal suspend fun <T> runDocumentExtractPageLoader(
                             publishPreparedBitmap(index, bitmap)
                         } ?: return
                         val ext = pdf.extOf(index) ?: "bin"
-                        pagePaths[index] = DocumentExtractCache.writePage(cacheKey, index, ext, bytes)
+                        storePdfExtract(index, ext, bytes)
                         return
                     }
                     engine.extractToCache(cacheKey, index)?.let { pagePaths[index] = it }

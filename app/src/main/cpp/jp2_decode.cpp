@@ -7,8 +7,11 @@
 #include <jni.h>
 #include <openjpeg.h>
 
+#include <pthread.h>
+
 #include <algorithm>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 
 #define LOG_TAG "Jp2Decode"
@@ -123,6 +126,92 @@ void ycbcr_to_rgb(int y, int cb, int cr, int& r, int& g, int& b) {
     b = clamp8(y + ((1815 * cbb) >> 10));
 }
 
+struct DecodeJob {
+    const uint8_t* data = nullptr;
+    int n = 0;
+    int maxEdge = 0;
+    opj_image_t* image = nullptr;
+};
+
+void* decodeJob(void* arg) {
+    auto* job = static_cast<DecodeJob*>(arg);
+    const OPJ_CODEC_FORMAT fmt = is_jp2(job->data, job->n) ? OPJ_CODEC_JP2
+        : is_j2k(job->data, job->n) ? OPJ_CODEC_J2K
+                                    : OPJ_CODEC_UNKNOWN;
+    if (fmt == OPJ_CODEC_UNKNOWN) return nullptr;
+
+    // Tier-1 decode recurses deeply. opj_dparameters_t is also ~8 KiB.
+    // Coil's Default dispatcher stack hits the guard page (SEGV_ACCERR,
+    // reported as executing non-executable memory).
+    MemSrc src{job->data, static_cast<OPJ_SIZE_T>(job->n), 0};
+    opj_stream_t* stream = opj_stream_default_create(OPJ_TRUE);
+    if (!stream) return nullptr;
+    opj_stream_set_read_function(stream, mem_read);
+    opj_stream_set_skip_function(stream, mem_skip);
+    opj_stream_set_seek_function(stream, mem_seek);
+    opj_stream_set_user_data(stream, &src, nullptr);
+    opj_stream_set_user_data_length(stream, src.size);
+
+    auto* params = static_cast<opj_dparameters_t*>(calloc(1, sizeof(opj_dparameters_t)));
+    if (!params) {
+        opj_stream_destroy(stream);
+        return nullptr;
+    }
+    opj_set_default_decoder_parameters(params);
+    opj_codec_t* codec = opj_create_decompress(fmt);
+    if (!codec || !opj_setup_decoder(codec, params)) {
+        free(params);
+        if (codec) opj_destroy_codec(codec);
+        opj_stream_destroy(stream);
+        return nullptr;
+    }
+    free(params);
+    opj_set_info_handler(codec, silent_callback, nullptr);
+    opj_set_warning_handler(codec, silent_callback, nullptr);
+    opj_set_error_handler(codec, silent_callback, nullptr);
+    opj_codec_set_threads(codec, 1);
+
+    opj_image_t* image = nullptr;
+    if (!opj_read_header(stream, codec, &image) || !image) {
+        opj_destroy_codec(codec);
+        opj_stream_destroy(stream);
+        if (image) opj_image_destroy(image);
+        return nullptr;
+    }
+    const int fullW = static_cast<int>(image->x1 - image->x0);
+    const int fullH = static_cast<int>(image->y1 - image->y0);
+    if (fullW <= 0 || fullH <= 0 || fullW > kMaxEdge || fullH > kMaxEdge ||
+        static_cast<int64_t>(fullW) * fullH > kMaxPixels || image->numcomps < 1) {
+        opj_destroy_codec(codec);
+        opj_stream_destroy(stream);
+        opj_image_destroy(image);
+        return nullptr;
+    }
+    if (job->maxEdge > 0) {
+        int reduce = 0;
+        while (reduce < 8) {
+            const int lw = std::max(1, fullW >> reduce);
+            const int lh = std::max(1, fullH >> reduce);
+            if (lw <= job->maxEdge && lh <= job->maxEdge) break;
+            ++reduce;
+        }
+        while (reduce > 0 &&
+               !opj_set_decoded_resolution_factor(codec, static_cast<OPJ_UINT32>(reduce))) {
+            --reduce;
+        }
+    }
+    if (!opj_decode(codec, stream, image) || !opj_end_decompress(codec, stream)) {
+        opj_destroy_codec(codec);
+        opj_stream_destroy(stream);
+        opj_image_destroy(image);
+        return nullptr;
+    }
+    opj_destroy_codec(codec);
+    opj_stream_destroy(stream);
+    job->image = image;
+    return nullptr;
+}
+
 }  // namespace
 
 extern "C" JNIEXPORT jobject JNICALL
@@ -139,58 +228,21 @@ Java_com_hippo_ehviewer_jni_Jpeg2000Kt_decodeJpeg2000Bitmap(
     if (!session.bytes) return nullptr;
     const auto* data = reinterpret_cast<const uint8_t*>(session.bytes);
 
-    const OPJ_CODEC_FORMAT fmt = is_jp2(data, n) ? OPJ_CODEC_JP2
-        : is_j2k(data, n) ? OPJ_CODEC_J2K
-                          : OPJ_CODEC_UNKNOWN;
-    if (fmt == OPJ_CODEC_UNKNOWN) return nullptr;
-
-    MemSrc src{data, static_cast<OPJ_SIZE_T>(n), 0};
-    session.stream = opj_stream_default_create(OPJ_TRUE);
-    if (!session.stream) return nullptr;
-    opj_stream_set_read_function(session.stream, mem_read);
-    opj_stream_set_skip_function(session.stream, mem_skip);
-    opj_stream_set_seek_function(session.stream, mem_seek);
-    opj_stream_set_user_data(session.stream, &src, nullptr);
-    opj_stream_set_user_data_length(session.stream, src.size);
-
-    opj_dparameters_t params;
-    opj_set_default_decoder_parameters(&params);
-    session.codec = opj_create_decompress(fmt);
-    if (!session.codec) return nullptr;
-    opj_set_info_handler(session.codec, silent_callback, nullptr);
-    opj_set_warning_handler(session.codec, silent_callback, nullptr);
-    opj_set_error_handler(session.codec, silent_callback, nullptr);
-    if (!opj_setup_decoder(session.codec, &params)) return nullptr;
-
-    if (!opj_read_header(session.codec, session.stream, &session.image) || !session.image) {
-        return nullptr;
-    }
-    const int fullW = static_cast<int>(session.image->x1 - session.image->x0);
-    const int fullH = static_cast<int>(session.image->y1 - session.image->y0);
-    if (fullW <= 0 || fullH <= 0 || fullW > kMaxEdge || fullH > kMaxEdge ||
-        static_cast<int64_t>(fullW) * fullH > kMaxPixels || session.image->numcomps < 1) {
-        return nullptr;
-    }
-    if (maxEdge > 0) {
-        int reduce = 0;
-        while (reduce < 8) {
-            const int lw = std::max(1, fullW >> reduce);
-            const int lh = std::max(1, fullH >> reduce);
-            if (lw <= maxEdge && lh <= maxEdge) break;
-            ++reduce;
-        }
-        // A factor past the codestream's levels returns false and still stores it.
-        // Step down until OpenJPEG accepts one (0 is always valid).
-        while (reduce > 0 &&
-               !opj_set_decoded_resolution_factor(session.codec, static_cast<OPJ_UINT32>(reduce))) {
-            --reduce;
-        }
-    }
-    if (!opj_decode(session.codec, session.stream, session.image) ||
-        !opj_end_decompress(session.codec, session.stream)) {
-        return nullptr;
-    }
+    DecodeJob job;
+    job.data = data;
+    job.n = static_cast<int>(n);
+    job.maxEdge = maxEdge;
+    pthread_t thread;
+    pthread_attr_t attr;
+    pthread_attr_init(&attr);
+    pthread_attr_setstacksize(&attr, 8u * 1024u * 1024u);
+    const int started = pthread_create(&thread, &attr, decodeJob, &job);
+    pthread_attr_destroy(&attr);
+    if (started != 0) return nullptr;
+    pthread_join(thread, nullptr);
     session.releaseInput();
+    session.image = job.image;
+    if (!session.image || session.image->numcomps < 1) return nullptr;
 
     // x1/y1 stay at the reference grid. A resolution factor only shrinks comps[].w/h.
     const int w = static_cast<int>(session.image->comps[0].w);
