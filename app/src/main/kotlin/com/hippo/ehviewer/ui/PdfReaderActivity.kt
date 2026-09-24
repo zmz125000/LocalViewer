@@ -127,6 +127,7 @@ import com.hippo.ehviewer.EhDB
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.collectAsState
 import com.hippo.ehviewer.gallery.NavigationKind
+import com.hippo.ehviewer.gallery.Page
 import com.hippo.ehviewer.gallery.PdfRamPageLoader
 import com.hippo.ehviewer.gallery.ReaderNavigation
 import com.hippo.ehviewer.library.ArchiveByteSource
@@ -142,11 +143,13 @@ import com.hippo.ehviewer.library.openLocalArchiveByteSource
 import com.hippo.ehviewer.provider.StreamDocumentProvider
 import com.hippo.ehviewer.provider.StreamDocumentRegistry
 import com.hippo.ehviewer.ui.main.GalleryGridDefaults
+import com.hippo.ehviewer.ui.reader.EInkRefreshOverlay
 import com.hippo.ehviewer.ui.reader.NavigationOverlay
 import com.hippo.ehviewer.ui.reader.PagerItem
 import com.hippo.ehviewer.ui.reader.PendingReaderOpen
 import com.hippo.ehviewer.ui.reader.ReaderScreenArgs
 import com.hippo.ehviewer.ui.reader.SettingsPager
+import com.hippo.ehviewer.ui.reader.applyPagerContentAlignment
 import com.hippo.ehviewer.ui.reader.doubleTapAction
 import com.hippo.ehviewer.ui.reader.dualFirstPageIndex
 import com.hippo.ehviewer.ui.reader.dualLeftRight
@@ -190,6 +193,7 @@ import me.saket.telephoto.zoomable.OverzoomEffect
 import me.saket.telephoto.zoomable.ZoomLimit
 import me.saket.telephoto.zoomable.ZoomSpec
 import me.saket.telephoto.zoomable.ZoomableContentLocation
+import me.saket.telephoto.zoomable.ZoomableState
 import me.saket.telephoto.zoomable.rememberZoomableState
 import me.saket.telephoto.zoomable.zoomable
 import okio.Path.Companion.toPath
@@ -1098,6 +1102,22 @@ private fun PdfReaderScreen(
                         { index, box, cellW, cellH ->
                             val viewport = Size(cellW.toFloat(), cellH.toFloat())
                             when {
+                                imageLoader != null && box == PdfPageBox.Single -> {
+                                    val page = imageLoader.pages.getOrNull(index)
+                                    if (page != null) {
+                                        PdfSingleImagePage(
+                                            page = page,
+                                            pageLoader = imageLoader,
+                                            viewWidthPx = cellW,
+                                            viewHeightPx = cellH,
+                                            scaleType = scaleType,
+                                            isRtl = readingMode == ReadingModeType.RIGHT_TO_LEFT,
+                                            isVertical = readingMode == ReadingModeType.VERTICAL,
+                                            onClick = pageClick,
+                                            onDoubleClick = doubleTap,
+                                        )
+                                    }
+                                }
                                 imageLoader != null -> {
                                     val page = imageLoader.pages.getOrNull(index)
                                     if (page != null) {
@@ -1132,6 +1152,8 @@ private fun PdfReaderScreen(
                                         viewWidthPx = cellW,
                                         viewHeightPx = cellH,
                                         scaleType = scaleType,
+                                        isRtl = readingMode == ReadingModeType.RIGHT_TO_LEFT,
+                                        isVertical = readingMode == ReadingModeType.VERTICAL,
                                         onDoubleClick = doubleTap,
                                         onClick = pageClick,
                                     )
@@ -1192,6 +1214,7 @@ private fun PdfReaderScreen(
                                 viewWidthPx = widthPx,
                                 viewHeightPx = heightPx,
                                 scaleType = scaleType,
+                                isVertical = readingMode == ReadingModeType.VERTICAL,
                                 onClick = pageClick,
                                 onDoubleClick = doubleTap,
                                 onRenderZoom = { dualZoom = it },
@@ -1243,6 +1266,9 @@ private fun PdfReaderScreen(
                         regions = regions,
                         modifier = Modifier.fillMaxSize(),
                     )
+                    if (!isWebtoon) {
+                        EInkRefreshOverlay(pagerState = pagerState)
+                    }
                 }
             }
         }
@@ -1386,6 +1412,84 @@ private fun PdfReaderScreen(
 private enum class PdfPageBox { Single, Webtoon, Strip, Cell }
 
 @Composable
+private fun PdfZoomStartAlignment(
+    zoomableState: ZoomableState,
+    contentSize: Size,
+    viewport: Size,
+    contentScale: ContentScale,
+    isRtl: Boolean,
+    isVertical: Boolean,
+    gap: Boolean = false,
+) {
+    val zoomStart by Settings.zoomStart.collectAsState()
+    val alignment = Alignment.fromPreferences(zoomStart, isRtl, isVertical)
+    if (gap) {
+        zoomableState.contentAlignment = Alignment.Center
+    } else {
+        LaunchedEffect(contentSize, contentScale, alignment, viewport) {
+            zoomableState.applyPagerContentAlignment(contentSize, contentScale, viewport, alignment)
+        }
+    }
+}
+
+@Composable
+private fun PdfSingleImagePage(
+    page: Page,
+    pageLoader: PdfRamPageLoader,
+    viewWidthPx: Int,
+    viewHeightPx: Int,
+    scaleType: Int,
+    isRtl: Boolean,
+    isVertical: Boolean,
+    onClick: (Offset) -> Unit,
+    onDoubleClick: DoubleClickToZoomListener,
+) {
+    val zoomableState = rememberZoomableState(zoomSpec = PdfZoomSpec)
+    val aspect = page.layoutAspect.coerceAtLeast(0.01f)
+    val contentSize = Size(
+        viewWidthPx.toFloat().coerceAtLeast(1f),
+        (viewWidthPx / aspect).coerceAtLeast(1f),
+    )
+    val viewport = Size(viewWidthPx.toFloat().coerceAtLeast(1f), viewHeightPx.toFloat().coerceAtLeast(1f))
+    val contentScale = ContentScale.fromPreferences(scaleType, contentSize, viewport)
+    zoomableState.contentScale = contentScale
+    PdfZoomStartAlignment(
+        zoomableState = zoomableState,
+        contentSize = contentSize,
+        viewport = viewport,
+        contentScale = contentScale,
+        isRtl = isRtl,
+        isVertical = isVertical,
+    )
+    LaunchedEffect(contentSize) {
+        zoomableState.setContentLocation(ZoomableContentLocation.scaledInsideAndCenterAligned(contentSize))
+    }
+    var appliedScale by remember { mutableIntStateOf(scaleType) }
+    LaunchedEffect(scaleType) {
+        if (appliedScale == scaleType) return@LaunchedEffect
+        appliedScale = scaleType
+        zoomableState.resetZoom()
+    }
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .zoomable(
+                state = zoomableState,
+                onClick = onClick,
+                onDoubleClick = onDoubleClick,
+            ),
+    ) {
+        PagerItem(
+            page = page,
+            pageLoader = pageLoader,
+            contentScale = ContentScale.Inside,
+            viewportSize = viewport,
+            modifier = Modifier.fillMaxSize(),
+        )
+    }
+}
+
+@Composable
 private fun PdfDualSpread(
     spread: Int,
     pageCount: Int,
@@ -1395,6 +1499,7 @@ private fun PdfDualSpread(
     viewWidthPx: Int,
     viewHeightPx: Int,
     scaleType: Int,
+    isVertical: Boolean,
     onClick: (Offset) -> Unit,
     onDoubleClick: DoubleClickToZoomListener,
     onRenderZoom: (Float) -> Unit,
@@ -1437,6 +1542,15 @@ private fun PdfDualSpread(
         ContentScale.fromPreferences(scaleType, contentSize, viewport)
     }
     zoomableState.contentScale = contentScale
+    PdfZoomStartAlignment(
+        zoomableState = zoomableState,
+        contentSize = contentSize,
+        viewport = viewport,
+        contentScale = contentScale,
+        isRtl = isRtl,
+        isVertical = isVertical,
+        gap = gap,
+    )
     LaunchedEffect(contentSize, gap) {
         zoomableState.setContentLocation(ZoomableContentLocation.scaledInsideAndCenterAligned(contentSize))
     }
@@ -1489,6 +1603,8 @@ private fun PdfSingleVectorPage(
     viewWidthPx: Int,
     viewHeightPx: Int,
     scaleType: Int,
+    isRtl: Boolean,
+    isVertical: Boolean,
     onClick: (Offset) -> Unit,
     onDoubleClick: DoubleClickToZoomListener,
 ) {
@@ -1506,6 +1622,14 @@ private fun PdfSingleVectorPage(
     val viewport = Size(viewWidthPx.toFloat().coerceAtLeast(1f), viewHeightPx.toFloat().coerceAtLeast(1f))
     val contentScale = ContentScale.fromPreferences(scaleType, contentSize, viewport)
     zoomableState.contentScale = contentScale
+    PdfZoomStartAlignment(
+        zoomableState = zoomableState,
+        contentSize = contentSize,
+        viewport = viewport,
+        contentScale = contentScale,
+        isRtl = isRtl,
+        isVertical = isVertical,
+    )
     LaunchedEffect(contentSize) {
         zoomableState.setContentLocation(ZoomableContentLocation.scaledInsideAndCenterAligned(contentSize))
     }
