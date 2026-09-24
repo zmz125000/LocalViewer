@@ -3,6 +3,7 @@ package com.hippo.ehviewer.ui
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.graphics.pdf.PdfRenderer
 import android.net.Uri
 import android.os.Bundle
@@ -16,11 +17,13 @@ import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.aspectRatio
@@ -34,6 +37,9 @@ import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
@@ -95,6 +101,8 @@ import com.hippo.ehviewer.library.GallerySiblingNavigator
 import com.hippo.ehviewer.library.PfdArchiveByteSource
 import com.hippo.ehviewer.library.document.PdfContentKind
 import com.hippo.ehviewer.library.document.PdfImageEngine
+import com.hippo.ehviewer.library.document.PdfTocEntry
+import com.hippo.ehviewer.library.document.readPdfChapters
 import com.hippo.ehviewer.library.openLocalArchiveByteSource
 import com.hippo.ehviewer.provider.StreamDocumentProvider
 import com.hippo.ehviewer.provider.StreamDocumentRegistry
@@ -105,6 +113,7 @@ import com.hippo.ehviewer.ui.reader.PendingReaderOpen
 import com.hippo.ehviewer.ui.reader.ReaderScreenArgs
 import com.hippo.ehviewer.ui.reader.SettingsPager
 import com.hippo.ehviewer.ui.reader.doubleTapAction
+import com.hippo.ehviewer.ui.reader.readerPhotoGridSheetMaxWidth
 import com.hippo.ehviewer.ui.reader.readerSheetBox
 import com.hippo.ehviewer.ui.reader.scrollDown
 import com.hippo.ehviewer.ui.reader.scrollUp
@@ -524,23 +533,28 @@ private fun openPdfDocument(
     // Do not dup()+close the original PFD: AppFuse/SAF FUSE tears down the
     // connection when the original fd is closed (ENOTCONN on later preads).
     val source = PfdArchiveByteSource(pfd, ownsPfd = false, reopen = reopenPfd)
+    val chapters = readPdfChapters(source, source.size)
     tryOpenImagePdf(source, startPage, cacheKey)?.let { images ->
         source.adoptPfd()
-        return images
+        return images.also { it.chapters = chapters }
     }
     val renderer = runCatching { PdfRenderer(pfd) }.getOrElse { e ->
         runCatching { pfd.close() }
         throw e
     }
     logcat("PdfReader") { "vector PDF pages=${renderer.pageCount}" }
-    return PdfDocumentModel.Vector(PdfSession(renderer))
+    return PdfDocumentModel.Vector(PdfSession(renderer), chapters)
 }
 
 private sealed interface PdfDocumentModel {
     val pageCount: Int
+    val chapters: List<PdfTocEntry>
     fun close()
 
-    class Vector(val session: PdfSession) : PdfDocumentModel {
+    class Vector(
+        val session: PdfSession,
+        override val chapters: List<PdfTocEntry>,
+    ) : PdfDocumentModel {
         override val pageCount get() = session.pageCount
         override fun close() = session.close()
     }
@@ -548,6 +562,7 @@ private sealed interface PdfDocumentModel {
     class Images(
         val engine: PdfImageEngine,
         private val source: ArchiveByteSource,
+        override var chapters: List<PdfTocEntry> = emptyList(),
     ) : PdfDocumentModel {
         override val pageCount get() = engine.pageCount
         override fun close() {
@@ -624,6 +639,9 @@ private fun PdfReaderScreen(
     val showSeekbar by Settings.showReaderSeekbar.collectAsState()
     val hideTopBar by Settings.readerHideTopBar.collectAsState()
     val showPageNumber by Settings.showPageNumber.collectAsState()
+    val readerPhotoGrid by Settings.readerPhotoGrid.collectAsState()
+    var photoGridOpen by remember { mutableStateOf(false) }
+    var contentsOpen by remember { mutableStateOf(false) }
     val fullscreen by Settings.fullscreen.collectAsState()
     val cutoutShort by Settings.cutoutShort.collectAsState()
     val keepScreenOn by Settings.keepScreenOn.collectAsState()
@@ -970,8 +988,44 @@ private fun PdfReaderScreen(
                     }
                 }
             },
+            onClickPhotoGrid = if (readerPhotoGrid && doc != null) {
+                { photoGridOpen = true }
+            } else {
+                null
+            },
             showScaleFitCycle = !isWebtoon,
+            onClickContents = { contentsOpen = true },
         )
+        if (contentsOpen) {
+            PdfContentsSheet(
+                chapters = doc?.chapters.orEmpty(),
+                onDismiss = { contentsOpen = false },
+                onPick = { page ->
+                    contentsOpen = false
+                    scope.launch {
+                        val target = page.coerceIn(0, (pageCount - 1).coerceAtLeast(0))
+                        listState.scrollToItem(target)
+                        onPageChanged(target)
+                    }
+                },
+            )
+        }
+        if (photoGridOpen && doc != null) {
+            PdfThumbGridSheet(
+                doc = doc,
+                pageCount = pageCount,
+                currentPage = currentPage,
+                onDismiss = { photoGridOpen = false },
+                onPick = { page ->
+                    photoGridOpen = false
+                    scope.launch {
+                        val target = (page - 1).coerceIn(0, (pageCount - 1).coerceAtLeast(0))
+                        listState.scrollToItem(target)
+                        onPageChanged(target)
+                    }
+                },
+            )
+        }
         if (showPageNumber && !appbarVisible && currentPage > 0 && pageCount > 0) {
             CompositionLocalProvider(LocalTextStyle provides MaterialTheme.typography.bodySmall) {
                 PageIndicatorText(
@@ -1088,6 +1142,145 @@ private fun PdfPageBitmap(
             )
         }
     }
+}
+
+@Composable
+private fun PdfContentsSheet(
+    chapters: List<PdfTocEntry>,
+    onDismiss: () -> Unit,
+    onPick: (Int) -> Unit,
+) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        modifier = Modifier.windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top)),
+        scrimColor = Color.Transparent,
+        dragHandle = null,
+        contentWindowInsets = { WindowInsets() },
+    ) {
+        Column(Modifier.readerSheetBox(GalleryGridDefaults.capReaderSheet()).navigationBarsPadding()) {
+            Text(
+                stringResource(R.string.pdf_reader_contents),
+                style = MaterialTheme.typography.titleMedium,
+                modifier = Modifier.padding(horizontal = 24.dp, vertical = 16.dp),
+            )
+            if (chapters.isEmpty()) {
+                Text(
+                    stringResource(R.string.pdf_reader_no_contents),
+                    modifier = Modifier.padding(horizontal = 24.dp),
+                )
+            } else {
+                LazyColumn(Modifier.fillMaxSize()) {
+                    items(chapters, key = { "${it.pageIndex}-${it.depth}-${it.title}" }) { entry ->
+                        Text(
+                            text = entry.title,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { onPick(entry.pageIndex) }
+                                .padding(start = (16 + entry.depth * 16).dp, end = 16.dp, top = 12.dp, bottom = 12.dp),
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PdfThumbGridSheet(
+    doc: PdfDocumentModel,
+    pageCount: Int,
+    currentPage: Int,
+    onDismiss: () -> Unit,
+    onPick: (Int) -> Unit,
+) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        sheetMaxWidth = readerPhotoGridSheetMaxWidth(),
+        modifier = Modifier.windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top)),
+        scrimColor = Color.Transparent,
+        dragHandle = null,
+        contentWindowInsets = { WindowInsets() },
+    ) {
+        LazyVerticalGrid(
+            columns = GridCells.Fixed(GalleryGridDefaults.columnCount()),
+            modifier = Modifier
+                .readerSheetBox(GalleryGridDefaults.capReaderSheet())
+                .navigationBarsPadding()
+                .padding(8.dp),
+            horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp),
+            verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp),
+        ) {
+            items(pageCount, key = { it }) { index ->
+                PdfPageThumb(
+                    doc = doc,
+                    index = index,
+                    selected = index == currentPage - 1,
+                    onClick = { onPick(index + 1) },
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun PdfPageThumb(
+    doc: PdfDocumentModel,
+    index: Int,
+    selected: Boolean,
+    onClick: () -> Unit,
+) {
+    var bitmap by remember(doc, index) { mutableStateOf<Bitmap?>(null) }
+    LaunchedEffect(doc, index) {
+        bitmap = withContext(Dispatchers.IO) {
+            when (doc) {
+                is PdfDocumentModel.Vector -> runCatching { doc.session.render(index, 256) }.getOrNull()
+                is PdfDocumentModel.Images -> runCatching {
+                    doc.engine.ensureListedThrough(index)
+                    doc.engine.extractBytes(index)?.let(::decodePdfThumb)
+                }.getOrNull()
+            }
+        }
+    }
+    DisposableEffect(index) {
+        onDispose { bitmap?.recycle() }
+    }
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .aspectRatio(1f / 1.3f)
+            .background(if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.35f) else PageBackdrop)
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        val bmp = bitmap
+        if (bmp == null || bmp.isRecycled) {
+            CircularProgressIndicator()
+        } else {
+            Image(
+                bitmap = bmp.asImageBitmap(),
+                contentDescription = stringResource(R.string.pdf_reader_page, index + 1, doc.pageCount),
+                modifier = Modifier.fillMaxSize().padding(4.dp),
+            )
+        }
+    }
+}
+
+private fun decodePdfThumb(bytes: ByteArray): Bitmap? {
+    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+    BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+    var sample = 1
+    val edge = maxOf(bounds.outWidth, bounds.outHeight)
+    while (edge / sample > 512 && sample < 32) sample *= 2
+    return BitmapFactory.decodeByteArray(
+        bytes,
+        0,
+        bytes.size,
+        BitmapFactory.Options().apply { inSampleSize = sample },
+    )
 }
 
 private val PageBackdrop = Color(0xFF2B2B2B)

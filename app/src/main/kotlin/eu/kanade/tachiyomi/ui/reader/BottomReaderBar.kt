@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.outlined.Settings
@@ -42,6 +43,8 @@ fun BottomReaderBar(
     containerColor: Color,
     onClickPhotoGrid: (() -> Unit)? = null,
     showScaleFitCycle: Boolean = false,
+    /** PDF reader: chapter list instead of auto-rotate. */
+    onClickContents: (() -> Unit)? = null,
 ) = FlexibleBottomAppBar(
     containerColor = containerColor,
     contentPadding = PaddingValues.Zero,
@@ -58,17 +61,24 @@ fun BottomReaderBar(
         },
         minMenuWidth = 192.dp,
     )
-    // 2. Auto-rotate to fit — cycle Off → CW → CCW → Off
-    val autoRotate by Settings.autoRotateMode.collectAsState { AutoRotateMode.fromPreference(it) }
-    ActionButton(
-        onClick = {
-            val modes = AutoRotateMode.entries
-            val next = modes[(modes.indexOf(autoRotate) + 1) % modes.size]
-            Settings.autoRotateMode.value = next.prefValue
-        },
-        imageVector = autoRotate.icon,
-        contentDescription = stringResource(autoRotate.stringRes),
-    )
+    if (onClickContents != null) {
+        ActionButton(
+            onClick = onClickContents,
+            imageVector = Icons.AutoMirrored.Filled.List,
+            contentDescription = stringResource(R.string.pdf_reader_contents),
+        )
+    } else {
+        val autoRotate by Settings.autoRotateMode.collectAsState { AutoRotateMode.fromPreference(it) }
+        ActionButton(
+            onClick = {
+                val modes = AutoRotateMode.entries
+                val next = modes[(modes.indexOf(autoRotate) + 1) % modes.size]
+                Settings.autoRotateMode.value = next.prefValue
+            },
+            imageVector = autoRotate.icon,
+            contentDescription = stringResource(autoRotate.stringRes),
+        )
+    }
     // 3. Fit width / height / screen — single page and dual no-gap
     if (showScaleFitCycle) {
         val scaleFit by Settings.imageScaleType.collectAsState { ScaleFitCycle.fromPreference(it) }

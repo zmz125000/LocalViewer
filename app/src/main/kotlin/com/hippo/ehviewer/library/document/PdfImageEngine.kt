@@ -541,6 +541,82 @@ internal class PdfParser(
         return PageImageCursor(pagesNode, maxPages)
     }
 
+    /** Bookmark tree (`/Outlines`). Empty when the file has no chapter destinations. */
+    fun readOutlines(): List<PdfTocEntry> {
+        if (!bootstrap() || encrypted) return emptyList()
+        val root = rootRef?.let { resolve(it) } as? PdfDict ?: return emptyList()
+        val outlines = root["/Outlines"]?.let { resolveValue(it) } as? PdfDict ?: return emptyList()
+        val pageOf = pageObjectIndex()
+        val out = ArrayList<PdfTocEntry>()
+        fun walk(node: PdfDict, depth: Int) {
+            if (depth > 12 || out.size >= 500) return
+            var child = node["/First"]?.let { resolveValue(it) } as? PdfDict
+            var guard = 0
+            while (child != null && guard++ < 500 && out.size < 500) {
+                val title = pdfOutlineTitle(child["/Title"])
+                val page = outlinePageIndex(child, pageOf)
+                if (title.isNotBlank() && page != null) {
+                    out += PdfTocEntry(title, page, depth)
+                }
+                if (child["/First"] != null) walk(child, depth + 1)
+                child = child["/Next"]?.let { resolveValue(it) } as? PdfDict
+            }
+        }
+        walk(outlines, 0)
+        return out
+    }
+
+    private fun pageObjectIndex(): Map<Int, Int> {
+        val root = rootRef?.let { resolve(it) } as? PdfDict ?: return emptyMap()
+        val pagesNode = root["/Pages"]?.let { resolveValue(it) } as? PdfDict ?: return emptyMap()
+        val index = HashMap<Int, Int>()
+        val pending = ArrayDeque<PdfValue>()
+        pending.add(pagesNode)
+        val seen = HashSet<Int>()
+        var n = 0
+        while (pending.isNotEmpty() && n < 100_000) {
+            val node = resolveValue(pending.removeFirst()) as? PdfDict ?: continue
+            val id = node.objNum
+            if (id != null && !seen.add(id)) continue
+            if ((node["/Type"] as? PdfName)?.name == "/Page") {
+                if (id != null) index[id] = n
+                n++
+                continue
+            }
+            val kids = node["/Kids"]?.let { resolveValue(it) } as? PdfArray ?: continue
+            kids.items.forEach { pending.add(it) }
+        }
+        return index
+    }
+
+    private fun outlinePageIndex(item: PdfDict, pageOf: Map<Int, Int>): Int? {
+        val dest = item["/Dest"]?.let { resolveValue(it) }
+            ?: (item["/A"]?.let { resolveValue(it) } as? PdfDict)?.get("/D")?.let { resolveValue(it) }
+        val array = dest as? PdfArray ?: return null
+        return when (val first = array.items.firstOrNull()?.let { resolveValue(it) } ?: array.items.firstOrNull()) {
+            is PdfDict -> first.objNum?.let { pageOf[it] }
+            is PdfRef -> pageOf[first.num]
+            is PdfNumber -> {
+                val raw = first.value.toInt()
+                when {
+                    raw in pageOf.values -> raw
+                    raw - 1 in pageOf.values -> raw - 1
+                    else -> raw.coerceAtLeast(0)
+                }
+            }
+            else -> null
+        }
+    }
+
+    private fun pdfOutlineTitle(value: PdfValue?): String {
+        val resolved = value?.let { resolveValue(it) } ?: value
+        val bytes = (resolved as? PdfString)?.bytes ?: return ""
+        if (bytes.size >= 2 && bytes[0] == 0xFE.toByte() && bytes[1] == 0xFF.toByte()) {
+            return String(bytes, 2, bytes.size - 2, Charsets.UTF_16BE).trim()
+        }
+        return String(bytes, Charsets.ISO_8859_1).trim()
+    }
+
     /**
      * Walk the first [maxPages] page objects (not image hits) to decide comic vs text PDF.
      */
@@ -2328,6 +2404,16 @@ internal class PdfDict(
 private fun Char.isPdfWs(): Boolean = this == ' ' || this == '\t' || this == '\n' || this == '\r' || this == '\u0000' || this == '\u000c'
 
 internal enum class PdfContentKind { Vector, Image }
+
+internal data class PdfTocEntry(
+    val title: String,
+    val pageIndex: Int,
+    val depth: Int,
+)
+
+internal fun readPdfChapters(source: ArchiveByteSource, size: Long): List<PdfTocEntry> = runCatching {
+    PdfParser(source, size).readOutlines()
+}.getOrDefault(emptyList())
 
 internal data class PdfFrontSample(
     val scannedPages: Int = 0,
