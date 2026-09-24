@@ -1042,7 +1042,7 @@ private fun PdfReaderScreen(
                                 showNavigationOverlay = false
                             }
                         }
-                        .thenIf(isWebtoon || pagerDual) {
+                        .thenIf(isWebtoon) {
                             zoomable(
                                 state = zoomableState,
                                 gestures = gestures,
@@ -1078,6 +1078,22 @@ private fun PdfReaderScreen(
                         (edge * Settings.webtoonSidePadding.value / 100f).toDp()
                     }
                     val pageGap = if (readingMode == ReadingModeType.CONTINUOUS_VERTICAL) 15.dp else 0.dp
+                    var dualZoom by remember { mutableFloatStateOf(1f) }
+                    val pageClick: (Offset) -> Unit = { offset ->
+                        val w = viewportPx.width.takeIf { it > 0 } ?: widthPx
+                        val h = viewportPx.height.takeIf { it > 0 } ?: heightPx
+                        if (w > 0 && h > 0) {
+                            when (navigator.getAction(Offset(offset.x / w, offset.y / h))) {
+                                NavigationRegion.MENU -> {
+                                    if (!suppressPageClick) appbarVisible = !appbarVisible
+                                }
+                                NavigationRegion.NEXT -> scope.launch { stepPdfPage(forward = true) }
+                                NavigationRegion.PREV -> scope.launch { stepPdfPage(forward = false) }
+                                NavigationRegion.RIGHT -> scope.launch { stepPdfPage(forward = !webtoonHorizontal) }
+                                NavigationRegion.LEFT -> scope.launch { stepPdfPage(forward = webtoonHorizontal) }
+                            }
+                        }
+                    }
                     val pageAt: @Composable (Int, PdfPageBox, Int, Int) -> Unit =
                         { index, box, cellW, cellH ->
                             val viewport = Size(cellW.toFloat(), cellH.toFloat())
@@ -1117,34 +1133,17 @@ private fun PdfReaderScreen(
                                         viewHeightPx = cellH,
                                         scaleType = scaleType,
                                         onDoubleClick = doubleTap,
-                                        onClick = { offset ->
-                                            val w = viewportPx.width.takeIf { it > 0 } ?: cellW
-                                            val h = viewportPx.height.takeIf { it > 0 } ?: cellH
-                                            if (w <= 0 || h <= 0) return@PdfSingleVectorPage
-                                            when (navigator.getAction(Offset(offset.x / w, offset.y / h))) {
-                                                NavigationRegion.MENU -> {
-                                                    if (!suppressPageClick) appbarVisible = !appbarVisible
-                                                }
-                                                NavigationRegion.NEXT -> {
-                                                    scope.launch { stepPdfPage(forward = true) }
-                                                }
-                                                NavigationRegion.PREV -> {
-                                                    scope.launch { stepPdfPage(forward = false) }
-                                                }
-                                                NavigationRegion.RIGHT -> {
-                                                    scope.launch { stepPdfPage(forward = true) }
-                                                }
-                                                NavigationRegion.LEFT -> {
-                                                    scope.launch { stepPdfPage(forward = false) }
-                                                }
-                                            }
-                                        },
+                                        onClick = pageClick,
                                     )
                                 } else {
                                     PdfVectorPage(
                                         session = doc.session,
                                         index = index,
-                                        widthPx = vectorWidthPx,
+                                        widthPx = if (box == PdfPageBox.Cell) {
+                                            (vectorWidthPx * dualZoom).roundToInt().coerceIn(1, MAX_VECTOR_EDGE)
+                                        } else {
+                                            vectorWidthPx
+                                        },
                                         viewWidthPx = cellW,
                                         viewHeightPx = cellH,
                                         box = box,
@@ -1193,6 +1192,9 @@ private fun PdfReaderScreen(
                                 viewWidthPx = widthPx,
                                 viewHeightPx = heightPx,
                                 scaleType = scaleType,
+                                onClick = pageClick,
+                                onDoubleClick = doubleTap,
+                                onRenderZoom = { dualZoom = it },
                                 aspectOf = { index ->
                                     val fromImage = imageLoader?.pages?.getOrNull(index)?.layoutAspect ?: 0f
                                     if (fromImage > 0f) {
@@ -1393,9 +1395,13 @@ private fun PdfDualSpread(
     viewWidthPx: Int,
     viewHeightPx: Int,
     scaleType: Int,
+    onClick: (Offset) -> Unit,
+    onDoubleClick: DoubleClickToZoomListener,
+    onRenderZoom: (Float) -> Unit,
     aspectOf: suspend (Int) -> Float,
     pageAt: @Composable (Int, PdfPageBox, Int, Int) -> Unit,
 ) {
+    val zoomableState = rememberZoomableState(zoomSpec = PdfZoomSpec)
     val (left, right) = dualLeftRight(spread, pageCount, isRtl, cover)
     val solo = left == null || right == null
     if (solo) {
@@ -1405,42 +1411,72 @@ private fun PdfDualSpread(
         }
         return
     }
-    if (gap) {
-        val half = (viewWidthPx / 2).coerceAtLeast(1)
-        Row(Modifier.fillMaxSize()) {
-            Box(Modifier.weight(1f).fillMaxHeight()) {
-                pageAt(left, PdfPageBox.Cell, half, viewHeightPx)
-            }
-            Box(Modifier.weight(1f).fillMaxHeight()) {
-                pageAt(right, PdfPageBox.Cell, half, viewHeightPx)
-            }
-        }
-        return
-    }
     var leftAspect by remember(left) { mutableFloatStateOf(1f / 1.414f) }
     var rightAspect by remember(right) { mutableFloatStateOf(1f / 1.414f) }
     val leftIndex = left
     val rightIndex = right
     LaunchedEffect(leftIndex, rightIndex) {
-        leftAspect = aspectOf(leftIndex)
-        rightAspect = aspectOf(rightIndex)
+        if (!gap) {
+            leftAspect = aspectOf(leftIndex)
+            rightAspect = aspectOf(rightIndex)
+        }
     }
     val combined = (leftAspect + rightAspect).coerceAtLeast(0.01f)
-    val (rowW, rowH) = pdfFittedSize(combined, viewWidthPx, viewHeightPx, scaleType)
-    val leftW = (rowW * leftAspect / combined).roundToInt().coerceAtLeast(1)
-    val rightW = (rowW - leftW).coerceAtLeast(1)
-    val density = LocalDensity.current
-    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        Row(
-            Modifier
-                .requiredWidth(with(density) { rowW.toDp() })
-                .requiredHeight(with(density) { rowH.toDp() }),
-        ) {
-            Box(Modifier.weight(leftAspect).fillMaxHeight()) {
-                pageAt(left, PdfPageBox.Cell, leftW, rowH)
+    val contentSize = if (gap) {
+        Size(viewWidthPx.toFloat().coerceAtLeast(1f), viewHeightPx.toFloat().coerceAtLeast(1f))
+    } else {
+        Size(
+            viewWidthPx.toFloat().coerceAtLeast(1f),
+            (viewWidthPx / combined).coerceAtLeast(1f),
+        )
+    }
+    val viewport = Size(viewWidthPx.toFloat().coerceAtLeast(1f), viewHeightPx.toFloat().coerceAtLeast(1f))
+    val contentScale = if (gap) {
+        ContentScale.Fit
+    } else {
+        ContentScale.fromPreferences(scaleType, contentSize, viewport)
+    }
+    zoomableState.contentScale = contentScale
+    LaunchedEffect(contentSize, gap) {
+        zoomableState.setContentLocation(ZoomableContentLocation.scaledInsideAndCenterAligned(contentSize))
+    }
+    var appliedScale by remember { mutableIntStateOf(scaleType) }
+    LaunchedEffect(scaleType) {
+        if (appliedScale == scaleType) return@LaunchedEffect
+        appliedScale = scaleType
+        zoomableState.resetZoom()
+    }
+    val liveZoom by remember {
+        derivedStateOf {
+            val t = zoomableState.contentTransformation
+            if (!t.isSpecified) 1f else t.scale.scaleX.coerceAtLeast(1f)
+        }
+    }
+    LaunchedEffect(zoomableState) {
+        snapshotFlow { liveZoom }
+            .debounce(120)
+            .distinctUntilChanged { a, b -> abs(a - b) < 0.08f }
+            .collect { onRenderZoom(it) }
+    }
+    val (rowW, rowH) = pdfFittedSize(combined, viewWidthPx, viewHeightPx, if (gap) 1 else scaleType)
+    val leftW = if (gap) (viewWidthPx / 2).coerceAtLeast(1) else (rowW * leftAspect / combined).roundToInt().coerceAtLeast(1)
+    val rightW = if (gap) leftW else (rowW - leftW).coerceAtLeast(1)
+    val cellH = if (gap) viewHeightPx else rowH
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .zoomable(
+                state = zoomableState,
+                onClick = onClick,
+                onDoubleClick = onDoubleClick,
+            ),
+    ) {
+        Row(Modifier.fillMaxSize()) {
+            Box(Modifier.weight(if (gap) 1f else leftAspect).fillMaxHeight()) {
+                pageAt(left, PdfPageBox.Cell, leftW, cellH)
             }
-            Box(Modifier.weight(rightAspect).fillMaxHeight()) {
-                pageAt(right, PdfPageBox.Cell, rightW, rowH)
+            Box(Modifier.weight(if (gap) 1f else rightAspect).fillMaxHeight()) {
+                pageAt(right, PdfPageBox.Cell, rightW, cellH)
             }
         }
     }
