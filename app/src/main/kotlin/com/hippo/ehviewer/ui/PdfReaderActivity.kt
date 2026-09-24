@@ -1305,12 +1305,12 @@ private fun PdfContentsSheet(
                         ) {
                             Text(
                                 entry.title,
-                                style = if (entry.depth <= 2) {
+                                style = if (entry.depth <= 1) {
                                     MaterialTheme.typography.bodyLarge
                                 } else {
                                     MaterialTheme.typography.bodyMedium
                                 },
-                                color = if (entry.depth <= 2) {
+                                color = if (entry.depth <= 1) {
                                     MaterialTheme.colorScheme.onSurface
                                 } else {
                                     MaterialTheme.colorScheme.onSurfaceVariant
