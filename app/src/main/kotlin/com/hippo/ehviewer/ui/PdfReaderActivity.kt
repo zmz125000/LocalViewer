@@ -125,6 +125,7 @@ import com.hippo.ehviewer.ui.reader.PendingReaderOpen
 import com.hippo.ehviewer.ui.reader.ReaderScreenArgs
 import com.hippo.ehviewer.ui.reader.SettingsPager
 import com.hippo.ehviewer.ui.reader.doubleTapAction
+import com.hippo.ehviewer.ui.reader.fromPreferences
 import com.hippo.ehviewer.ui.reader.readerPhotoGridSheetMaxWidth
 import com.hippo.ehviewer.ui.reader.readerSheetBox
 import com.hippo.ehviewer.ui.reader.scrollDown
@@ -631,7 +632,6 @@ private fun PdfReaderScreen(
     val contentsListState = rememberLazyListState()
     val scrollGridToProgress by Settings.photoGridScrollToProgress.collectAsState()
     val fullscreen by Settings.fullscreen.collectAsState()
-    val cutoutShort by Settings.cutoutShort.collectAsState()
     val keepScreenOn by Settings.keepScreenOn.collectAsState()
     val uiController = rememberSystemUiController()
     val appDarkTheme = isSystemInDarkTheme()
@@ -852,16 +852,11 @@ private fun PdfReaderScreen(
                 runCatching { EhDB.putReadProgress(progressGid, page) }
             }
     }
-    val contentInsets = if (fullscreen) {
-        if (cutoutShort) WindowInsets() else WindowInsets.displayCutout
-    } else {
-        WindowInsets.systemBars
-    }
+    val scaleType by Settings.imageScaleType.collectAsState()
     Box(
         modifier = Modifier
             .fillMaxSize()
             .background(PageBackdrop)
-            .windowInsetsPadding(contentInsets)
             .thenIf(keepScreenOn) { keepScreenOn() },
     ) {
         when {
@@ -978,6 +973,8 @@ private fun PdfReaderScreen(
                                     session = doc.session,
                                     index = index,
                                     widthPx = vectorWidthPx,
+                                    fillScreen = !isWebtoon,
+                                    scaleType = scaleType,
                                 )
                             }
                         }
@@ -1154,6 +1151,8 @@ private fun PdfVectorPage(
     session: PdfSession,
     index: Int,
     widthPx: Int,
+    fillScreen: Boolean,
+    scaleType: Int,
 ) {
     var bitmap by remember(index) { mutableStateOf<Bitmap?>(null) }
     LaunchedEffect(session, index, widthPx) {
@@ -1177,7 +1176,13 @@ private fun PdfVectorPage(
             bitmap?.recycle()
         }
     }
-    PdfPageBitmap(bitmap = bitmap, pageLabel = index + 1, pageCount = session.pageCount)
+    PdfPageBitmap(
+        bitmap = bitmap,
+        pageLabel = index + 1,
+        pageCount = session.pageCount,
+        fillScreen = fillScreen,
+        scaleType = scaleType,
+    )
 }
 
 @Composable
@@ -1185,28 +1190,37 @@ private fun PdfPageBitmap(
     bitmap: Bitmap?,
     pageLabel: Int,
     pageCount: Int,
+    fillScreen: Boolean,
+    scaleType: Int,
 ) {
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(PageBackdrop),
+    BoxWithConstraints(
+        modifier = if (fillScreen) Modifier.fillMaxSize() else Modifier.fillMaxWidth(),
         contentAlignment = Alignment.Center,
     ) {
         if (bitmap == null || bitmap.isRecycled) {
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .aspectRatio(1f / 1.414f)
-                    .padding(vertical = 48.dp),
+                    .aspectRatio(1f / 1.414f),
                 contentAlignment = Alignment.Center,
             ) {
                 CircularProgressIndicator()
             }
         } else {
+            val contentScale = if (fillScreen) {
+                ContentScale.fromPreferences(
+                    scaleType,
+                    Size(bitmap.width.toFloat(), bitmap.height.toFloat()),
+                    Size(maxWidth.value, maxHeight.value),
+                )
+            } else {
+                ContentScale.FillWidth
+            }
             Image(
                 bitmap = bitmap.asImageBitmap(),
                 contentDescription = stringResource(R.string.pdf_reader_page, pageLabel, pageCount),
-                modifier = Modifier.fillMaxWidth(),
+                contentScale = contentScale,
+                modifier = if (fillScreen) Modifier.fillMaxSize() else Modifier.fillMaxWidth(),
             )
         }
     }
@@ -1282,7 +1296,7 @@ private fun PdfContentsSheet(
                                 )
                                 .clickable { onPick(entry.pageIndex) }
                                 .padding(
-                                    start = (16 + entry.depth * 16).dp,
+                                    start = (12 + entry.depth * 12).dp,
                                     end = 16.dp,
                                     top = 6.dp,
                                     bottom = 6.dp,
