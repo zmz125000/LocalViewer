@@ -17,6 +17,7 @@ import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.waitForUpOrCancellation
@@ -47,6 +48,8 @@ import androidx.compose.material.icons.automirrored.filled.NavigateNext
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
+import androidx.compose.material3.ListItem
+import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
@@ -69,6 +72,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
@@ -996,6 +1000,7 @@ private fun PdfReaderScreen(
         if (contentsOpen) {
             PdfContentsSheet(
                 chapters = doc?.chapters.orEmpty(),
+                currentPage = currentPage,
                 onDismiss = { contentsOpen = false },
                 onPick = { page ->
                     contentsOpen = false
@@ -1144,6 +1149,7 @@ private fun PdfPageBitmap(
 @Composable
 private fun PdfContentsSheet(
     chapters: List<PdfTocEntry>,
+    currentPage: Int,
     onDismiss: () -> Unit,
     onPick: (Int) -> Unit,
 ) {
@@ -1159,23 +1165,45 @@ private fun PdfContentsSheet(
         Column(Modifier.readerSheetBox(GalleryGridDefaults.capReaderSheet()).navigationBarsPadding()) {
             Text(
                 stringResource(R.string.pdf_reader_contents),
-                style = MaterialTheme.typography.titleMedium,
+                style = MaterialTheme.typography.titleLarge,
                 modifier = Modifier.padding(horizontal = 24.dp, vertical = 16.dp),
             )
             if (chapters.isEmpty()) {
                 Text(
                     stringResource(R.string.pdf_reader_no_contents),
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(horizontal = 24.dp),
                 )
             } else {
                 LazyColumn(Modifier.fillMaxSize()) {
                     items(chapters, key = { "${it.pageIndex}-${it.depth}-${it.title}" }) { entry ->
-                        Text(
-                            text = entry.title,
+                        val selected = entry.pageIndex == currentPage - 1
+                        ListItem(
+                            headlineContent = {
+                                Text(entry.title, maxLines = 2, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+                            },
+                            trailingContent = {
+                                Text(
+                                    "${entry.pageIndex + 1}",
+                                    style = MaterialTheme.typography.labelLarge,
+                                    color = if (selected) {
+                                        MaterialTheme.colorScheme.primary
+                                    } else {
+                                        MaterialTheme.colorScheme.onSurfaceVariant
+                                    },
+                                )
+                            },
+                            colors = ListItemDefaults.colors(
+                                containerColor = if (selected) {
+                                    MaterialTheme.colorScheme.secondaryContainer
+                                } else {
+                                    Color.Transparent
+                                },
+                            ),
                             modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable { onPick(entry.pageIndex) }
-                                .padding(start = (16 + entry.depth * 16).dp, end = 16.dp, top = 12.dp, bottom = 12.dp),
+                                .padding(start = (entry.depth * 16).dp)
+                                .clickable { onPick(entry.pageIndex) },
                         )
                     }
                 }
@@ -1245,22 +1273,36 @@ private fun PdfPageThumb(
     DisposableEffect(index) {
         onDispose { bitmap?.recycle() }
     }
+    val bmp = bitmap
+    val aspect = if (bmp != null && !bmp.isRecycled && bmp.height > 0) {
+        bmp.width.toFloat() / bmp.height
+    } else {
+        1f / 1.414f
+    }
+    val shape = MaterialTheme.shapes.medium
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .aspectRatio(1f / 1.3f)
-            .background(if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.35f) else PageBackdrop)
-            .clickable(onClick = onClick),
+            .aspectRatio(aspect)
+            .clip(shape)
+            .clickable(onClick = onClick)
+            .then(
+                if (selected) {
+                    Modifier.border(2.dp, MaterialTheme.colorScheme.primary, shape)
+                } else {
+                    Modifier
+                },
+            ),
         contentAlignment = Alignment.Center,
     ) {
-        val bmp = bitmap
         if (bmp == null || bmp.isRecycled) {
             CircularProgressIndicator()
         } else {
             Image(
                 bitmap = bmp.asImageBitmap(),
                 contentDescription = stringResource(R.string.pdf_reader_page, index + 1, doc.pageCount),
-                modifier = Modifier.fillMaxSize().padding(4.dp),
+                contentScale = ContentScale.Fit,
+                modifier = Modifier.fillMaxSize(),
             )
         }
     }

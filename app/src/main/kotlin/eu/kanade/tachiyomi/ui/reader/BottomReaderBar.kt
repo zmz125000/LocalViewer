@@ -5,7 +5,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.List
+import androidx.compose.material.icons.automirrored.outlined.MenuBook
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.outlined.Settings
@@ -64,7 +64,7 @@ fun BottomReaderBar(
     if (onClickContents != null) {
         ActionButton(
             onClick = onClickContents,
-            imageVector = Icons.AutoMirrored.Filled.List,
+            imageVector = Icons.AutoMirrored.Outlined.MenuBook,
             contentDescription = stringResource(R.string.pdf_reader_contents),
         )
     } else {
