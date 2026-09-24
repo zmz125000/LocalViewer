@@ -70,6 +70,25 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeJxrBytesToDirect(JNIEnv*, jclass,
 }
 
 extern "C" JNIEXPORT jbyteArray JNICALL
+Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeJpeg2000BytesToDirect(JNIEnv*, jclass, jbyteArray,
+                                                                     jint, jboolean, jintArray,
+                                                                     jfloatArray) {
+    return nullptr;
+}
+
+extern "C" JNIEXPORT jint JNICALL
+Java_com_hippo_ehviewer_jni_HdrConvertKt_convertJpeg2000BytesToUltraHdr(JNIEnv*, jclass, jbyteArray,
+                                                                        jstring) {
+    return kUnsupportedAbi;
+}
+
+extern "C" JNIEXPORT jint JNICALL
+Java_com_hippo_ehviewer_jni_HdrConvertKt_convertJpeg2000BytesToUltraHdrMaxEdge(
+        JNIEnv*, jclass, jbyteArray, jstring, jint) {
+    return kUnsupportedAbi;
+}
+
+extern "C" JNIEXPORT jbyteArray JNICALL
 Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeJxlBytesToDirect(JNIEnv*, jclass, jbyteArray, jint,
                                                                 jboolean, jintArray, jfloatArray) {
     return nullptr;

@@ -409,6 +409,7 @@ target_include_directories(${PROJECT_NAME} PRIVATE
         ${openjpeg_BINARY_DIR}/src/lib/openjp2
 )
 if (EHVIEWER_HDR_CODECS)
+    target_compile_definitions(${PROJECT_NAME} PRIVATE EHVIEWER_HDR_CODECS)
     # libjpeg-turbo is built as an ExternalProject of libultrahdr (baseline SDR JPEG).
     set(EH_JPEG_INCLUDE_DIRS
             ${libultrahdr_SOURCE_DIR}/third_party/turbojpeg/src
