@@ -1134,6 +1134,7 @@ private fun PdfReaderScreen(
         if (contentsOpen) {
             PdfContentsSheet(
                 chapters = doc?.chapters.orEmpty(),
+                pageCount = pageCount,
                 currentPage = currentPage,
                 listState = contentsListState,
                 onDismiss = { contentsOpen = false },
@@ -1327,6 +1328,7 @@ private fun PdfPageBitmap(
 @Composable
 private fun PdfContentsSheet(
     chapters: List<PdfTocEntry>,
+    pageCount: Int,
     currentPage: Int,
     listState: androidx.compose.foundation.lazy.LazyListState,
     onDismiss: () -> Unit,
@@ -1343,12 +1345,22 @@ private fun PdfContentsSheet(
         dragHandle = null,
         contentWindowInsets = { WindowInsets() },
     ) {
-        val nearest = if (chapters.isEmpty()) -1 else nearestPdfTocIndex(chapters, pageIndex)
+        val pagesOnly = chapters.isEmpty()
+        val entries = remember(chapters, pageCount) {
+            if (!pagesOnly) {
+                chapters
+            } else {
+                List(pageCount) { index ->
+                    PdfTocEntry(title = "${index + 1}", pageIndex = index, depth = 0)
+                }
+            }
+        }
+        val nearest = if (entries.isEmpty()) -1 else nearestPdfTocIndex(entries, pageIndex)
         var searching by remember { mutableStateOf(false) }
         var query by remember { mutableStateOf("") }
         val queryTrim = query.trim()
-        val visible = remember(chapters, queryTrim) {
-            chapters.mapIndexed { index, entry -> index to entry }.filter { (_, entry) ->
+        val visible = remember(entries, queryTrim) {
+            entries.mapIndexed { index, entry -> index to entry }.filter { (_, entry) ->
                 queryTrim.isEmpty() || entry.title.contains(queryTrim, ignoreCase = true)
             }
         }
@@ -1400,14 +1412,18 @@ private fun PdfContentsSheet(
                     )
                 } else {
                     Text(
-                        if (nearest >= 0) chapters[nearest].title else stringResource(R.string.pdf_reader_contents),
+                        when {
+                            pagesOnly -> stringResource(R.string.pdf_reader_pages)
+                            nearest >= 0 -> entries[nearest].title
+                            else -> stringResource(R.string.pdf_reader_contents)
+                        },
                         style = headerStyle,
                         maxLines = 2,
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.weight(1f),
                     )
                 }
-                if (chapters.isNotEmpty()) {
+                if (entries.isNotEmpty()) {
                     Icon(
                         imageVector = Icons.Outlined.Search,
                         contentDescription = stringResource(R.string.pdf_reader_contents_search),
@@ -1437,14 +1453,7 @@ private fun PdfContentsSheet(
                     )
                 }
             }
-            if (chapters.isEmpty()) {
-                Text(
-                    stringResource(R.string.pdf_reader_no_contents),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(horizontal = 24.dp),
-                )
-            } else if (visible.isEmpty()) {
+            if (visible.isEmpty()) {
                 Text(
                     stringResource(R.string.pdf_reader_contents_no_matches),
                     style = MaterialTheme.typography.bodyMedium,
@@ -1478,12 +1487,12 @@ private fun PdfContentsSheet(
                         ) {
                             Text(
                                 entry.title,
-                                style = if (entry.depth <= 1) {
+                                style = if (pagesOnly || entry.depth <= 1) {
                                     MaterialTheme.typography.bodyLarge
                                 } else {
                                     MaterialTheme.typography.bodyMedium
                                 },
-                                color = if (entry.depth <= 1) {
+                                color = if (pagesOnly || entry.depth <= 1) {
                                     MaterialTheme.colorScheme.onSurface
                                 } else {
                                     MaterialTheme.colorScheme.onSurfaceVariant
@@ -1492,16 +1501,18 @@ private fun PdfContentsSheet(
                                 overflow = TextOverflow.Ellipsis,
                                 modifier = Modifier.weight(1f),
                             )
-                            Text(
-                                "${entry.pageIndex + 1}",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = if (selected) {
-                                    MaterialTheme.colorScheme.primary
-                                } else {
-                                    MaterialTheme.colorScheme.onSurfaceVariant
-                                },
-                                modifier = Modifier.padding(start = 12.dp),
-                            )
+                            if (!pagesOnly) {
+                                Text(
+                                    "${entry.pageIndex + 1}",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = if (selected) {
+                                        MaterialTheme.colorScheme.primary
+                                    } else {
+                                        MaterialTheme.colorScheme.onSurfaceVariant
+                                    },
+                                    modifier = Modifier.padding(start = 12.dp),
+                                )
+                            }
                         }
                     }
                 }

@@ -324,6 +324,7 @@
     <string name="pdf_reader_open_failed">Could not open PDF: %s</string>
     <string name="pdf_reader_page">Page %1$d of %2$d</string>
     <string name="pdf_reader_contents">Table of contents</string>
+    <string name="pdf_reader_pages">Pages</string>
     <string name="pdf_reader_contents_locate">Show current chapter</string>
     <string name="pdf_reader_contents_search">Search chapters</string>
     <string name="pdf_reader_contents_no_matches">No matching chapters</string>
