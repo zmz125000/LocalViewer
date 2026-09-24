@@ -117,8 +117,8 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.Constraints
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
@@ -132,15 +132,15 @@ import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.collectAsState
 import com.hippo.ehviewer.gallery.NavigationKind
 import com.hippo.ehviewer.gallery.Page
-import com.hippo.ehviewer.image.presentForReader
 import com.hippo.ehviewer.gallery.PdfRamPageLoader
 import com.hippo.ehviewer.gallery.ReaderNavigation
+import com.hippo.ehviewer.image.presentForReader
 import com.hippo.ehviewer.library.ArchiveByteSource
 import com.hippo.ehviewer.library.BlockCacheArchiveByteSource
 import com.hippo.ehviewer.library.DocumentExtractCache
 import com.hippo.ehviewer.library.GallerySiblingNavigator
-import com.hippo.ehviewer.library.PfdArchiveByteSource
 import com.hippo.ehviewer.library.OriginDiskCache
+import com.hippo.ehviewer.library.PfdArchiveByteSource
 import com.hippo.ehviewer.library.ReaderPageThumb
 import com.hippo.ehviewer.library.document.PdfContentKind
 import com.hippo.ehviewer.library.document.PdfImageEngine
@@ -163,8 +163,8 @@ import com.hippo.ehviewer.ui.reader.dualLeftRight
 import com.hippo.ehviewer.ui.reader.dualPageActive
 import com.hippo.ehviewer.ui.reader.dualSpreadCount
 import com.hippo.ehviewer.ui.reader.dualSpreadIndex
-import com.hippo.ehviewer.ui.reader.insideSpreadSize
 import com.hippo.ehviewer.ui.reader.fromPreferences
+import com.hippo.ehviewer.ui.reader.insideSpreadSize
 import com.hippo.ehviewer.ui.reader.isPagerDual
 import com.hippo.ehviewer.ui.reader.isWebtoonHorizontal
 import com.hippo.ehviewer.ui.reader.readerPdfCacheKey
@@ -174,6 +174,7 @@ import com.hippo.ehviewer.ui.reader.scrollDown
 import com.hippo.ehviewer.ui.reader.scrollLeft
 import com.hippo.ehviewer.ui.reader.scrollRight
 import com.hippo.ehviewer.ui.reader.scrollUp
+import com.hippo.ehviewer.ui.reader.webtoonReadingIndex
 import com.hippo.ehviewer.ui.tools.DialogState
 import com.hippo.ehviewer.ui.tools.dialog
 import eu.kanade.tachiyomi.ui.reader.PageIndicatorText
@@ -766,6 +767,7 @@ private fun PdfReaderScreen(
     val dualActive = dualPageActive(dualPagePref, isLandscape)
     val pagerDual = isPagerDual(dualActive, readingMode)
     val webtoonHorizontal = isWebtoonHorizontal(dualActive, readingMode)
+    val tapRtl = readingMode == ReadingModeType.RIGHT_TO_LEFT || webtoonHorizontal
     val landscapeCoverMode by Settings.landscapeCover.collectAsState()
     var page0Landscape by remember(doc, imageLoader) { mutableStateOf(false) }
     LaunchedEffect(doc, imageLoader) {
@@ -795,7 +797,8 @@ private fun PdfReaderScreen(
     }
     fun realPageIndex(): Int {
         val raw = if (isWebtoon) {
-            listState.firstVisibleItemIndex
+            listState.layoutInfo.webtoonReadingIndex(webtoonHorizontal)
+                ?: listState.firstVisibleItemIndex
         } else if (pagerDual) {
             dualFirstPageIndex(pagerState.currentPage, landscapeCover)
         } else {
@@ -803,7 +806,7 @@ private fun PdfReaderScreen(
         }
         return raw.coerceIn(0, (pageCount - 1).coerceAtLeast(0))
     }
-    val currentPage by remember(imageLoader, doc, pagerDual, landscapeCover, isWebtoon) {
+    val currentPage by remember(imageLoader, doc, pagerDual, landscapeCover, isWebtoon, webtoonHorizontal) {
         derivedStateOf {
             val n = imageLoader?.size ?: (doc?.pageCount ?: 0)
             if (n <= 0) 0 else (realPageIndex() + 1).coerceIn(1, n)
@@ -861,7 +864,7 @@ private fun PdfReaderScreen(
     val hopSibling by rememberUpdatedState(onHopSibling)
     val doubleTap = remember(navigator, onClose, viewportPx, readingMode, webtoonHorizontal) {
         doubleTapAction(
-            isRtl = readingMode == ReadingModeType.RIGHT_TO_LEFT || webtoonHorizontal,
+            isRtl = tapRtl,
             getViewportSize = {
                 Size(viewportPx.width.toFloat(), viewportPx.height.toFloat())
             },
@@ -1079,10 +1082,10 @@ private fun PdfReaderScreen(
                                             scope.launch { stepPdfPage(forward = false) }
                                         }
                                         NavigationRegion.RIGHT -> {
-                                            scope.launch { stepPdfPage(forward = !webtoonHorizontal) }
+                                            scope.launch { stepPdfPage(forward = !tapRtl) }
                                         }
                                         NavigationRegion.LEFT -> {
-                                            scope.launch { stepPdfPage(forward = webtoonHorizontal) }
+                                            scope.launch { stepPdfPage(forward = tapRtl) }
                                         }
                                     }
                                 },
@@ -1105,8 +1108,8 @@ private fun PdfReaderScreen(
                                 }
                                 NavigationRegion.NEXT -> scope.launch { stepPdfPage(forward = true) }
                                 NavigationRegion.PREV -> scope.launch { stepPdfPage(forward = false) }
-                                NavigationRegion.RIGHT -> scope.launch { stepPdfPage(forward = !webtoonHorizontal) }
-                                NavigationRegion.LEFT -> scope.launch { stepPdfPage(forward = webtoonHorizontal) }
+                                NavigationRegion.RIGHT -> scope.launch { stepPdfPage(forward = !tapRtl) }
+                                NavigationRegion.LEFT -> scope.launch { stepPdfPage(forward = tapRtl) }
                             }
                         }
                     }
@@ -1292,7 +1295,7 @@ private fun PdfReaderScreen(
             onNavigateUp = onClose,
             showTopBar = !hideTopBar,
             title = title,
-            isRtl = readingMode == ReadingModeType.RIGHT_TO_LEFT || webtoonHorizontal,
+            isRtl = tapRtl,
             showSeekBar = showSeekbar,
             currentPage = currentPage,
             totalPages = pageCount,
