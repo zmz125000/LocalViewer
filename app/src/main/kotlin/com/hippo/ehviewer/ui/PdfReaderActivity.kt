@@ -591,8 +591,7 @@ private class PdfSession(private val renderer: PdfRenderer) {
             val h = ((page.height.toFloat() / page.width.coerceAtLeast(1)) * w)
                 .toInt()
                 .coerceAtLeast(1)
-            val (rw, rh) = cappedBitmapSize(w, h)
-            Bitmap.createBitmap(rw, rh, Bitmap.Config.ARGB_8888).also { bitmap ->
+            Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888).also { bitmap ->
                 bitmap.eraseColor(android.graphics.Color.WHITE)
                 page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
             }
@@ -602,23 +601,6 @@ private class PdfSession(private val renderer: PdfRenderer) {
     fun close() {
         runCatching { renderer.close() }
     }
-}
-
-private fun cappedBitmapSize(width: Int, height: Int): Pair<Int, Int> {
-    val pixels = width.toLong() * height
-    if (pixels <= MAX_VECTOR_PIXELS && width <= MAX_VECTOR_EDGE && height <= MAX_VECTOR_EDGE) {
-        return width to height
-    }
-    val edgeScale = minOf(
-        MAX_VECTOR_EDGE.toFloat() / width.coerceAtLeast(1),
-        MAX_VECTOR_EDGE.toFloat() / height.coerceAtLeast(1),
-        1f,
-    )
-    val pixelScale = kotlin.math.sqrt(MAX_VECTOR_PIXELS.toDouble() / pixels.coerceAtLeast(1L)).toFloat()
-        .coerceAtMost(1f)
-    val scale = minOf(edgeScale, pixelScale)
-    return (width * scale).roundToInt().coerceAtLeast(1) to
-        (height * scale).roundToInt().coerceAtLeast(1)
 }
 
 @Composable
@@ -923,8 +905,7 @@ private fun PdfReaderScreen(
                             .distinctUntilChanged { a, b -> abs(a - b) < 0.08f }
                             .collect { renderZoom = it }
                     }
-                    val vectorWidthPx = (widthPx * renderZoom).roundToInt()
-                        .coerceIn(widthPx, MAX_VECTOR_EDGE)
+                    val vectorWidthPx = (widthPx * renderZoom).roundToInt().coerceAtLeast(widthPx)
                     var multiTouch by remember { mutableStateOf(false) }
                     val viewerModifier = Modifier
                         .fillMaxSize()
@@ -1474,5 +1455,3 @@ private val PdfZoomSpec = ZoomSpec(
     minimum = ZoomLimit(factor = 1f, overzoomEffect = OverzoomEffect.Disabled),
 )
 
-private const val MAX_VECTOR_EDGE = 4096
-private const val MAX_VECTOR_PIXELS = 12_000_000
