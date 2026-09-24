@@ -89,6 +89,7 @@ import androidx.compose.ui.input.pointer.changedToDown
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.keepScreenOn
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
@@ -156,6 +157,7 @@ import me.saket.telephoto.zoomable.EnabledZoomGestures
 import me.saket.telephoto.zoomable.OverzoomEffect
 import me.saket.telephoto.zoomable.ZoomLimit
 import me.saket.telephoto.zoomable.ZoomSpec
+import me.saket.telephoto.zoomable.ZoomableContentLocation
 import me.saket.telephoto.zoomable.rememberZoomableState
 import me.saket.telephoto.zoomable.zoomable
 import okio.Path.Companion.toPath
@@ -592,16 +594,40 @@ private class PdfSession(private val renderer: PdfRenderer) {
             val h = ((page.height.toFloat() / page.width.coerceAtLeast(1)) * w)
                 .toInt()
                 .coerceAtLeast(1)
-            Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888).also { bitmap ->
+            val (rw, rh) = cappedBitmapSize(w, h)
+            Bitmap.createBitmap(rw, rh, Bitmap.Config.ARGB_8888).also { bitmap ->
                 bitmap.eraseColor(android.graphics.Color.WHITE)
                 page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
             }
         }
     }
 
+    suspend fun pageAspect(index: Int): Float = mutex.withLock {
+        renderer.openPage(index).use { page ->
+            page.width.toFloat() / page.height.coerceAtLeast(1)
+        }
+    }
+
     fun close() {
         runCatching { renderer.close() }
     }
+}
+
+private fun cappedBitmapSize(width: Int, height: Int): Pair<Int, Int> {
+    val pixels = width.toLong() * height
+    if (pixels <= MAX_VECTOR_PIXELS && width <= MAX_VECTOR_EDGE && height <= MAX_VECTOR_EDGE) {
+        return width to height
+    }
+    val edgeScale = minOf(
+        MAX_VECTOR_EDGE.toFloat() / width.coerceAtLeast(1),
+        MAX_VECTOR_EDGE.toFloat() / height.coerceAtLeast(1),
+        1f,
+    )
+    val pixelScale = kotlin.math.sqrt(MAX_VECTOR_PIXELS.toDouble() / pixels.coerceAtLeast(1L)).toFloat()
+        .coerceAtMost(1f)
+    val scale = minOf(edgeScale, pixelScale)
+    return (width * scale).roundToInt().coerceAtLeast(1) to
+        (height * scale).roundToInt().coerceAtLeast(1)
 }
 
 @Composable
@@ -629,6 +655,7 @@ private fun PdfReaderScreen(
     var photoGridOpen by remember { mutableStateOf(false) }
     var contentsOpen by remember { mutableStateOf(false) }
     val thumbGridState = rememberLazyGridState()
+    var thumbAspect by remember { mutableStateOf<Float?>(null) }
     val contentsListState = rememberLazyListState()
     val scrollGridToProgress by Settings.photoGridScrollToProgress.collectAsState()
     val fullscreen by Settings.fullscreen.collectAsState()
@@ -900,7 +927,25 @@ private fun PdfReaderScreen(
                             .distinctUntilChanged { a, b -> abs(a - b) < 0.08f }
                             .collect { renderZoom = it }
                     }
-                    val vectorWidthPx = (widthPx * renderZoom).roundToInt().coerceAtLeast(widthPx)
+                    val heightPx = with(LocalDensity.current) { maxHeight.roundToPx() }.coerceAtLeast(1)
+                    val vectorWidthPx = (widthPx * renderZoom).roundToInt()
+                        .coerceIn(widthPx, MAX_VECTOR_EDGE)
+                    fun onPdfTap(offset: Offset) {
+                        val w = viewportPx.width.takeIf { it > 0 } ?: widthPx
+                        val h = viewportPx.height.takeIf { it > 0 } ?: heightPx
+                        if (w <= 0 || h <= 0) return
+                        when (navigator.getAction(Offset(offset.x / w, offset.y / h))) {
+                            NavigationRegion.MENU -> {
+                                if (!suppressPageClick) appbarVisible = !appbarVisible
+                            }
+                            NavigationRegion.NEXT, NavigationRegion.RIGHT -> {
+                                scope.launch { stepPdfPage(forward = true) }
+                            }
+                            NavigationRegion.PREV, NavigationRegion.LEFT -> {
+                                scope.launch { stepPdfPage(forward = false) }
+                            }
+                        }
+                    }
                     var multiTouch by remember { mutableStateOf(false) }
                     val viewerModifier = Modifier
                         .fillMaxSize()
@@ -926,29 +971,14 @@ private fun PdfReaderScreen(
                                 showNavigationOverlay = false
                             }
                         }
-                        .zoomable(
-                            state = zoomableState,
-                            gestures = gestures,
-                            onClick = { offset ->
-                                val w = viewportPx.width.takeIf { it > 0 }
-                                    ?: listState.layoutInfo.viewportSize.width
-                                val h = viewportPx.height.takeIf { it > 0 }
-                                    ?: listState.layoutInfo.viewportSize.height
-                                if (w <= 0 || h <= 0) return@zoomable
-                                when (navigator.getAction(Offset(offset.x / w, offset.y / h))) {
-                                    NavigationRegion.MENU -> {
-                                        if (!suppressPageClick) appbarVisible = !appbarVisible
-                                    }
-                                    NavigationRegion.NEXT, NavigationRegion.RIGHT -> {
-                                        scope.launch { stepPdfPage(forward = true) }
-                                    }
-                                    NavigationRegion.PREV, NavigationRegion.LEFT -> {
-                                        scope.launch { stepPdfPage(forward = false) }
-                                    }
-                                }
-                            },
-                            onDoubleClick = doubleTap,
-                        )
+                        .thenIf(isWebtoon) {
+                            zoomable(
+                                state = zoomableState,
+                                gestures = gestures,
+                                onClick = { offset -> onPdfTap(offset) },
+                                onDoubleClick = doubleTap,
+                            )
+                        }
                     val pageAt: @Composable (Int) -> Unit = { index ->
                         Box(
                             modifier = if (isWebtoon) Modifier else Modifier.fillMaxSize(),
@@ -972,9 +1002,12 @@ private fun PdfReaderScreen(
                                 doc is PdfDocumentModel.Vector -> PdfVectorPage(
                                     session = doc.session,
                                     index = index,
-                                    widthPx = vectorWidthPx,
+                                    widthPx = if (isWebtoon) vectorWidthPx else widthPx,
+                                    heightPx = heightPx,
                                     fillScreen = !isWebtoon,
                                     scaleType = scaleType,
+                                    onTap = { onPdfTap(it) },
+                                    onDoubleTap = doubleTap,
                                 )
                             }
                         }
@@ -1084,6 +1117,10 @@ private fun PdfReaderScreen(
                 pageCount = pageCount,
                 currentPage = currentPage,
                 gridState = thumbGridState,
+                cellAspect = thumbAspect,
+                onCellAspect = { aspect ->
+                    if (thumbAspect == null) thumbAspect = aspect
+                },
                 onDismiss = { photoGridOpen = false },
                 onPick = { page ->
                     photoGridOpen = false
@@ -1151,15 +1188,43 @@ private fun PdfVectorPage(
     session: PdfSession,
     index: Int,
     widthPx: Int,
+    heightPx: Int,
     fillScreen: Boolean,
     scaleType: Int,
+    onTap: (Offset) -> Unit,
+    onDoubleTap: me.saket.telephoto.zoomable.DoubleClickToZoomListener,
 ) {
+    var aspect by remember(index) { mutableFloatStateOf(1f / 1.414f) }
+    LaunchedEffect(session, index) {
+        aspect = withContext(Dispatchers.IO) {
+            runCatching { session.pageAspect(index) }.getOrDefault(aspect)
+        }
+    }
+    val display = if (fillScreen) {
+        pdfPageDisplaySize(aspect, widthPx, heightPx, scaleType)
+    } else {
+        Size(widthPx.toFloat(), widthPx / aspect.coerceAtLeast(0.01f))
+    }
+    val zoomableState = rememberZoomableState(zoomSpec = PdfZoomSpec)
+    val zoomedIn = (zoomableState.zoomFraction ?: 0f) > 0.01f
+    var renderZoom by remember { mutableFloatStateOf(1f) }
+    LaunchedEffect(zoomableState) {
+        snapshotFlow {
+            val t = zoomableState.contentTransformation
+            if (!t.isSpecified) 1f else t.scale.scaleX.coerceAtLeast(1f)
+        }
+            .debounce(120)
+            .distinctUntilChanged { a, b -> abs(a - b) < 0.08f }
+            .collect { renderZoom = it }
+    }
+    val renderWidth = (display.width * if (fillScreen) renderZoom else 1f).roundToInt()
+        .coerceIn(1, MAX_VECTOR_EDGE)
     var bitmap by remember(index) { mutableStateOf<Bitmap?>(null) }
-    LaunchedEffect(session, index, widthPx) {
+    LaunchedEffect(session, index, renderWidth) {
         var next: Bitmap? = null
         try {
             next = withContext(Dispatchers.IO) {
-                runCatching { session.render(index, widthPx) }.getOrNull()
+                runCatching { session.render(index, renderWidth) }.getOrNull()
             }
             if (next != null) {
                 val prev = bitmap
@@ -1172,17 +1237,64 @@ private fun PdfVectorPage(
         }
     }
     DisposableEffect(index) {
-        onDispose {
-            bitmap?.recycle()
+        onDispose { bitmap?.recycle() }
+    }
+    val contentScale = if (fillScreen) {
+        ContentScale.fromPreferences(scaleType, display, Size(widthPx.toFloat(), heightPx.toFloat()))
+    } else {
+        ContentScale.FillWidth
+    }
+    if (fillScreen) {
+        SideEffect { zoomableState.contentScale = contentScale }
+        LaunchedEffect(display, contentScale) {
+            zoomableState.setContentLocation(
+                ZoomableContentLocation.scaledInsideAndCenterAligned(display),
+            )
         }
+    }
+    val overflows = display.width > widthPx + 1 || display.height > heightPx + 1
+    val pageModifier = if (fillScreen) {
+        Modifier
+            .zoomable(
+                state = zoomableState,
+                gestures = if (zoomedIn || overflows) {
+                    EnabledZoomGestures.ZoomAndPan
+                } else {
+                    EnabledZoomGestures(zoom = true, pan = false)
+                },
+                onClick = onTap,
+                onDoubleClick = onDoubleTap,
+            )
+            .layout { measurable, _ ->
+                val w = display.width.roundToInt().coerceAtLeast(1)
+                val h = display.height.roundToInt().coerceAtLeast(1)
+                val placeable = measurable.measure(androidx.compose.ui.unit.Constraints.fixed(w, h))
+                layout(w, h) { placeable.place(0, 0) }
+            }
+    } else {
+        Modifier.fillMaxWidth()
     }
     PdfPageBitmap(
         bitmap = bitmap,
         pageLabel = index + 1,
         pageCount = session.pageCount,
-        fillScreen = fillScreen,
-        scaleType = scaleType,
+        modifier = pageModifier,
+        contentScale = if (fillScreen) ContentScale.FillBounds else ContentScale.FillWidth,
     )
+}
+
+private fun pdfPageDisplaySize(aspect: Float, viewW: Int, viewH: Int, scaleType: Int): Size {
+    val safeAspect = aspect.coerceAtLeast(0.01f)
+    val fillWidth = Size(viewW.toFloat(), viewW / safeAspect)
+    val fillHeight = Size(viewH * safeAspect, viewH.toFloat())
+    val fit = if (fillWidth.height <= viewH) fillWidth else fillHeight
+    return when (scaleType) {
+        2 -> if (fillWidth.width >= fillHeight.width) fillWidth else fillHeight
+        3 -> fillWidth
+        4 -> fillHeight
+        6 -> if (safeAspect > 1f) fillHeight else fillWidth
+        else -> fit
+    }
 }
 
 @Composable
@@ -1190,39 +1302,20 @@ private fun PdfPageBitmap(
     bitmap: Bitmap?,
     pageLabel: Int,
     pageCount: Int,
-    fillScreen: Boolean,
-    scaleType: Int,
+    modifier: Modifier,
+    contentScale: ContentScale,
 ) {
-    BoxWithConstraints(
-        modifier = if (fillScreen) Modifier.fillMaxSize() else Modifier.fillMaxWidth(),
-        contentAlignment = Alignment.Center,
-    ) {
-        if (bitmap == null || bitmap.isRecycled) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .aspectRatio(1f / 1.414f),
-                contentAlignment = Alignment.Center,
-            ) {
-                CircularProgressIndicator()
-            }
-        } else {
-            val contentScale = if (fillScreen) {
-                ContentScale.fromPreferences(
-                    scaleType,
-                    Size(bitmap.width.toFloat(), bitmap.height.toFloat()),
-                    Size(maxWidth.value, maxHeight.value),
-                )
-            } else {
-                ContentScale.FillWidth
-            }
-            Image(
-                bitmap = bitmap.asImageBitmap(),
-                contentDescription = stringResource(R.string.pdf_reader_page, pageLabel, pageCount),
-                contentScale = contentScale,
-                modifier = if (fillScreen) Modifier.fillMaxSize() else Modifier.fillMaxWidth(),
-            )
+    if (bitmap == null || bitmap.isRecycled) {
+        Box(modifier, contentAlignment = Alignment.Center) {
+            CircularProgressIndicator()
         }
+    } else {
+        Image(
+            bitmap = bitmap.asImageBitmap(),
+            contentDescription = stringResource(R.string.pdf_reader_page, pageLabel, pageCount),
+            contentScale = contentScale,
+            modifier = modifier,
+        )
     }
 }
 
@@ -1356,6 +1449,8 @@ private fun PdfThumbGridSheet(
     pageCount: Int,
     currentPage: Int,
     gridState: LazyGridState,
+    cellAspect: Float?,
+    onCellAspect: (Float) -> Unit,
     onDismiss: () -> Unit,
     onPick: (Int) -> Unit,
 ) {
@@ -1384,6 +1479,8 @@ private fun PdfThumbGridSheet(
                     doc = doc,
                     index = index,
                     selected = index == currentPage - 1,
+                    cellAspect = cellAspect,
+                    onCellAspect = onCellAspect,
                     onClick = { onPick(index + 1) },
                 )
             }
@@ -1396,6 +1493,8 @@ private fun PdfPageThumb(
     doc: PdfDocumentModel,
     index: Int,
     selected: Boolean,
+    cellAspect: Float?,
+    onCellAspect: (Float) -> Unit,
     onClick: () -> Unit,
 ) {
     var bitmap by remember(doc, index) { mutableStateOf<Bitmap?>(null) }
@@ -1414,11 +1513,15 @@ private fun PdfPageThumb(
         onDispose { bitmap?.recycle() }
     }
     val bmp = bitmap
-    val aspect = if (bmp != null && !bmp.isRecycled && bmp.height > 0) {
+    val measured = if (bmp != null && !bmp.isRecycled && bmp.height > 0) {
         bmp.width.toFloat() / bmp.height
     } else {
-        1f / 1.414f
+        null
     }
+    if (cellAspect == null && measured != null) {
+        SideEffect { onCellAspect(measured) }
+    }
+    val aspect = cellAspect ?: measured ?: (1f / 1.414f)
     val shape = MaterialTheme.shapes.medium
     Box(
         modifier = Modifier
@@ -1468,4 +1571,7 @@ private val PdfZoomSpec = ZoomSpec(
     maximum = ZoomLimit(factor = 5f),
     minimum = ZoomLimit(factor = 1f, overzoomEffect = OverzoomEffect.Disabled),
 )
+
+private const val MAX_VECTOR_EDGE = 6144
+private const val MAX_VECTOR_PIXELS = 6144 * 6144
 
