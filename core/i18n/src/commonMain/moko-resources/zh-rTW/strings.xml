@@ -365,6 +365,7 @@
     <string name="view_original">查看原圖</string>
     <string name="open_in_other_app">在其他應用程式中開啟</string>
     <string name="pdf_reader_open_failed">無法開啟 PDF：%s</string>
+    <string name="pdf_reader_pages">頁面</string>
     <string name="pdf_reader_page">第 %1$d / %2$d 頁</string>
     <string name="stream_keepalive_channel">外部串流</string>
     <string name="stream_keepalive_channel_desc">其他應用讀取網路檔案時保持連線</string>
