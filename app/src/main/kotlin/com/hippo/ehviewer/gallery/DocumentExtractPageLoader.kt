@@ -318,6 +318,7 @@ internal suspend fun <T> runDocumentExtractPageLoader(
 
                 override fun releaseRamPage(index: Int) {
                     ramPages.remove(index)
+                    if (!isDecodedDemand(index)) clearSourceReady(index)
                 }
 
                 override fun openSource(index: Int): ImageSource {
@@ -343,6 +344,9 @@ internal suspend fun <T> runDocumentExtractPageLoader(
                 }
 
                 override fun prefetchPages(pages: List<Int>, bounds: IntRange) {
+                    // Cache-off matches folder galleries: do not pull source-only pages
+                    // into RAM. Decode-ahead still extracts through onRequest.
+                    if (localPathForLibrary == null && Settings.disableReaderNetworkCache.value) return
                     // Same gate as decode-ahead: no prefetch until the page tree is listed.
                     if (deferDocumentBackgroundWork(progressiveEngine?.structureComplete ?: true)) {
                         return
@@ -386,6 +390,24 @@ internal suspend fun <T> runDocumentExtractPageLoader(
 
                 override fun onNavigation(demand: ReaderDemand) {
                     visiblePages = demand.navigation.visiblePages
+                    if (localPathForLibrary == null && Settings.disableReaderNetworkCache.value) {
+                        readyWaiters.forEach { idx, _ ->
+                            if (idx !in demand.decodedPages) readyWaiters.remove(idx)
+                        }
+                        ramPages.keys.toList().forEach { idx ->
+                            if (idx !in demand.decodedPages) {
+                                ramPages.remove(idx)
+                                clearSourceReady(idx)
+                            }
+                        }
+                        val stale = extractJobs.keys.toList()
+                        for (idx in stale) {
+                            if (idx in demand.sourcePages) continue
+                            val job = extractJobs.remove(idx) ?: continue
+                            backgroundJobs.remove(idx)
+                            job.cancel()
+                        }
+                    }
                     // Decode-ahead may already own inflight and have deferred extract.
                     // requestDecode is then a no-op — promote the new viewport here.
                     demand.visibleDecode.forEach { index ->
@@ -454,8 +476,8 @@ internal suspend fun <T> runDocumentExtractPageLoader(
 
                 private fun markReady(index: Int) {
                     markSourceReady(index)
-                    val path = pagePaths[index] ?: return
-                    if (index == 0 && coverWritten.compareAndSet(false, true)) {
+                    val path = pagePaths[index]
+                    if (path != null && index == 0 && coverWritten.compareAndSet(false, true)) {
                         ArchiveCoverCache.scheduleEncodeFromExtractedPage(cacheKey, path) { cover ->
                             localPathForLibrary?.let { pathStr ->
                                 val resolved = cover ?: ArchiveCoverCache.tryDiskCover(pathStr)
