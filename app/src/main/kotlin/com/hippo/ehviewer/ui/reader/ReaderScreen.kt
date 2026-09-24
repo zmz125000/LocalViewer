@@ -341,18 +341,24 @@ fun AnimatedVisibilityScope.ReaderScreen(args: ReaderScreenArgs, navigator: Dest
     }
 
     val context = LocalContext.current
-    if (OpenPdfBySettings.shouldRedirect(args)) {
+    var forceGallery by remember(args) { mutableStateOf(false) }
+    if (OpenPdfBySettings.shouldRedirect(args) && !forceGallery) {
         LaunchedEffect(args) {
-            runCatching { OpenPdfBySettings.open(context, args) }
-                .onFailure { e ->
+            val outcome = runCatching { OpenPdfBySettings.open(context, args) }
+                .getOrElse { e ->
                     snackbar(
                         context.getString(
                             R.string.pdf_reader_open_failed,
                             e.message ?: e.toString(),
                         ),
                     )
+                    navigator.popBackStack()
+                    return@LaunchedEffect
                 }
-            navigator.popBackStack()
+            when (outcome) {
+                is OpenPdfBySettings.Outcome.Gallery -> forceGallery = true
+                OpenPdfBySettings.Outcome.Handled -> navigator.popBackStack()
+            }
         }
         Background(bgColor) {
             CircularWavyProgressIndicator()
@@ -1036,8 +1042,8 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
                     // Stop this archive extract before replace so the next reader can
                     // preempt ArchiveAccess without waiting on solid decompress.
                     if (OpenPdfBySettings.shouldRedirect(sibling)) {
-                        runCatching { OpenPdfBySettings.open(activity, sibling) }
-                            .onFailure { e ->
+                        val outcome = runCatching { OpenPdfBySettings.open(activity, sibling) }
+                            .getOrElse { e ->
                                 snackbar(
                                     activity.getString(
                                         R.string.pdf_reader_open_failed,
@@ -1047,7 +1053,15 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
                                 return@launch
                             }
                         runCatching { pageLoader.close() }
-                        nav.popBackStack()
+                        when (outcome) {
+                            is OpenPdfBySettings.Outcome.Gallery -> {
+                                nav.navigate(ReaderScreenDestination(outcome.args)) {
+                                    launchSingleTop = true
+                                    popUpTo(ReaderScreenDestination) { inclusive = true }
+                                }
+                            }
+                            OpenPdfBySettings.Outcome.Handled -> nav.popBackStack()
+                        }
                     } else {
                         runCatching { pageLoader.close() }
                         nav.navigate(ReaderScreenDestination(sibling)) {

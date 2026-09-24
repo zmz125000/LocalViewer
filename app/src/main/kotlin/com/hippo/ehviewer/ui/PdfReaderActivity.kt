@@ -317,7 +317,13 @@ class PdfReaderActivity : AppCompatActivity() {
                 } ?: return@launch
                 flushProgress()
                 if (OpenPdfBySettings.shouldRedirect(sibling)) {
-                    OpenPdfBySettings.open(this@PdfReaderActivity, sibling)
+                    when (val outcome = OpenPdfBySettings.open(this@PdfReaderActivity, sibling)) {
+                        is OpenPdfBySettings.Outcome.Gallery -> {
+                            OpenPdfBySettings.handoffGallery(this@PdfReaderActivity, outcome.args)
+                            finish()
+                        }
+                        OpenPdfBySettings.Outcome.Handled -> Unit
+                    }
                 } else {
                     PendingReaderOpen.offer(sibling)
                     startActivity(
