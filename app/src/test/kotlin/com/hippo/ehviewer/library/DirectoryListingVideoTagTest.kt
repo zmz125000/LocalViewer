@@ -56,8 +56,10 @@ class DirectoryListingVideoTagTest {
         assertEquals(DirPresence.Navigable, packs.presence)
         assertTrue(packs.hasGallery)
         assertFalse(packs.hasVideo)
+        assertFalse(packs.hasDocument)
         assertTrue(packs.presence.visibleIn(BrowseContentMode.Galleries, packs.hasGallery, packs.hasVideo))
         assertFalse(packs.presence.visibleIn(BrowseContentMode.Video, packs.hasGallery, packs.hasVideo))
+        assertFalse(packs.presence.visibleIn(BrowseContentMode.Document, packs.hasGallery, packs.hasVideo, packs.hasDocument))
     }
 
     @Test

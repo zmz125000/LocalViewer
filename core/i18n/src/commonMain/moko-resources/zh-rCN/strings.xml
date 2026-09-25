@@ -70,6 +70,7 @@
     <string name="browse_mode_galleries">图库</string>
     <string name="browse_mode_media">媒体</string>
     <string name="browse_mode_video">视频</string>
+    <string name="browse_mode_document">文档</string>
     <string name="browse_mode_folder">文件夹</string>
     <string name="browse_layout_list">列表</string>
     <string name="browse_layout_grid">网格</string>
@@ -689,7 +690,7 @@
     <string name="clear_search_history_summary">移除您在此设备上执行过的搜索查询的记录</string>
     <string name="search_history_cleared">已清除搜索记录</string>
     <string name="settings_privacy_clear_folder_browse_mode">清除文件夹浏览模式</string>
-    <string name="settings_privacy_clear_folder_browse_mode_summary">删除已锁定在文件夹上的媒体 / 图库 / 视频 / 文件夹模式</string>
+    <string name="settings_privacy_clear_folder_browse_mode_summary">删除已锁定在文件夹上的媒体 / 图库 / 视频 / 文档 / 文件夹模式</string>
     <string name="folder_browse_mode_cleared">已清除文件夹浏览模式</string>
     <string name="settings_privacy_clear_folder_index_cache">清除文件夹索引缓存</string>
     <string name="settings_privacy_clear_folder_index_cache_summary">删除本地和网络来源已保存的文件夹列表。下次打开时将重新扫描。</string>

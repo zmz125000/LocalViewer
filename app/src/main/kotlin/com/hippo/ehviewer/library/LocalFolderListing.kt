@@ -1007,6 +1007,7 @@ fun materializeLocalEntries(
                     relativeName = entry.relativeName,
                     hasVideo = entry.hasVideo,
                     hasGallery = entry.hasGallery,
+                    hasDocument = entry.hasDocument,
                     presence = entry.presence,
                     coverPath = cover,
                     lastModifiedMs = entry.lastModifiedMs,

@@ -111,6 +111,8 @@ class ShallowIncompleteListingTest {
         assertTrue(DirPresence.Pending.visibleIn(BrowseContentMode.Galleries, false, false))
         assertTrue(DirPresence.Pending.visibleIn(BrowseContentMode.Media, false, false))
         assertTrue(DirPresence.Pending.visibleIn(BrowseContentMode.Video, false, false))
+        assertTrue(DirPresence.Pending.visibleIn(BrowseContentMode.Document, false, false, hasDocument = true))
+        assertTrue(DirPresence.Pending.visibleIn(BrowseContentMode.Document, false, false, hasDocument = false))
         assertTrue(DirPresence.Pending.visibleIn(BrowseContentMode.Folder, false, false))
         assertTrue(isShallowIncompleteListing(entries))
     }

@@ -74,6 +74,7 @@
     <string name="browse_mode_galleries">Photo</string>
     <string name="browse_mode_media">Media</string>
     <string name="browse_mode_video">Video</string>
+    <string name="browse_mode_document">Document</string>
     <string name="browse_mode_folder">Folder</string>
     <string name="browse_layout_list">List</string>
     <string name="browse_layout_grid">Grid</string>
@@ -722,7 +723,7 @@
     <string name="clear_search_history_summary">Remove searches you have performed from this device</string>
     <string name="search_history_cleared">Search history cleared</string>
     <string name="settings_privacy_clear_folder_browse_mode">Clear folder browse modes</string>
-    <string name="settings_privacy_clear_folder_browse_mode_summary">Remove locked Media / Photo / Video / Folder modes saved on folders</string>
+    <string name="settings_privacy_clear_folder_browse_mode_summary">Remove locked Media / Photo / Video / Document / Folder modes saved on folders</string>
     <string name="folder_browse_mode_cleared">Folder browse modes cleared</string>
     <string name="settings_privacy_clear_folder_index_cache">Clear folder index cache</string>
     <string name="settings_privacy_clear_folder_index_cache_summary">Remove saved folder listings for local and network sources. Folders will be scanned again when opened.</string>

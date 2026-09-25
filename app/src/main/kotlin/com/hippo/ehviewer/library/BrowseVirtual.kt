@@ -30,7 +30,7 @@ enum class BrowseVirtualKind {
 
     val isVirtual: Boolean get() = this != None
 
-    /** Hide Media/Galleries/Video/Folder in the view menu. */
+    /** Hide Media/Galleries/Video/Document/Folder in the view menu. */
     val hideContentModes: Boolean get() = isVirtual
 
     /** Force grid layout without writing [Settings.listMode]. */
