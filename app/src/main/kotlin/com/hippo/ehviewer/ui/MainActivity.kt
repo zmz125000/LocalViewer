@@ -147,6 +147,7 @@ import com.hippo.ehviewer.ui.main.HttpShareSnackbars
 import com.hippo.ehviewer.ui.main.awaitHttpShareQr
 import com.hippo.ehviewer.ui.navToReader
 import com.hippo.ehviewer.ui.reader.PendingReaderOpen
+import com.hippo.ehviewer.ui.screen.toggleHistorySection
 import com.hippo.ehviewer.ui.screen.toggleLibraryFlattenMode
 import com.hippo.ehviewer.ui.screen.toggleLibrarySection
 import com.hippo.ehviewer.ui.settings.showNewVersion
@@ -309,6 +310,13 @@ private fun navigateMainTab(
         currentDestination == LibraryScreenDestination
     ) {
         toggleLibrarySection()
+        return
+    }
+    // Already on History root: cycle Media ↔ Documents (same as the section header).
+    if (item.direction == HistoryScreenDestination &&
+        currentDestination == HistoryScreenDestination
+    ) {
+        toggleHistorySection()
         return
     }
     // Re-tap active tab (including while nested under it) → pop to that tab root.

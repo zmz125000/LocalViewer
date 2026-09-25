@@ -7,12 +7,10 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.plus
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
@@ -80,6 +78,8 @@ import com.hippo.ehviewer.library.WEBDAV_FOLDER_TOKEN
 import com.hippo.ehviewer.library.ZipAsDirListing
 import com.hippo.ehviewer.library.ZipPaths
 import com.hippo.ehviewer.library.buildLocalBrowseStack
+import com.hippo.ehviewer.library.isEbookFileName
+import com.hippo.ehviewer.library.isEpubFileName
 import com.hippo.ehviewer.library.isPdfFileName
 import com.hippo.ehviewer.library.isVideoFileName
 import com.hippo.ehviewer.library.libraryBrowseRelative
@@ -93,6 +93,7 @@ import com.hippo.ehviewer.smb.SmbGateway
 import com.hippo.ehviewer.smb.SmbRepository
 import com.hippo.ehviewer.ui.DrawerHandle
 import com.hippo.ehviewer.ui.OpenFileExternally
+import com.hippo.ehviewer.ui.OpenPdfExternally
 import com.hippo.ehviewer.ui.Screen
 import com.hippo.ehviewer.ui.main.GalleryGridDefaults
 import com.hippo.ehviewer.ui.main.HistoryDirectoryGridItem
@@ -160,13 +161,25 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
             }
         }
     }
-    // Browse-dir pins live in a capped top section; everything else stays in the main list.
+    val historySectionPref by Settings.historySection.collectAsState()
+    val historySection = HistorySection.fromPref(historySectionPref)
+    val favoriteKeys by Settings.favoriteBrowseSources.collectAsState()
+    // Browse-dir pins live in a capped top section and ignore Media/Documents.
     val allDirectoryItems = remember(filteredHistory) {
         filteredHistory.filter { LocalHistory.isBrowseDirectory(it) }
     }
-    val historyItems = remember(filteredHistory) {
+    val allFileItems = remember(filteredHistory) {
         filteredHistory.filterNot { LocalHistory.isBrowseDirectory(it) }
     }
+    // Live search lists every matching type, same as folder-view allTypes.
+    val historyItems = remember(allFileItems, historySection, filterQuery) {
+        filterHistoryFileItems(
+            allFileItems,
+            historySection,
+            allTypes = filterQuery.isNotEmpty(),
+        )
+    }
+    val hasFileItems = allFileItems.isNotEmpty()
 
     val listMode by Settings.listMode.collectAsState()
     val showPages by Settings.showGalleryPages.collectAsState()
@@ -667,8 +680,26 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
                     val path = target.path
                     val name = info.title
                         ?: path.substringAfterLast('/').substringAfterLast('\\')
-                    if (isPdfFileName(name) || isPdfFileName(path)) {
+                    if (isPdfFileName(name) || isPdfFileName(path) ||
+                        isEpubFileName(name) || isEpubFileName(path)
+                    ) {
                         navToReader(path)
+                        return@launch
+                    }
+                    if (isEbookFileName(name) || isEbookFileName(path)) {
+                        val gid = stableGalleryId(0L, "local-file:$path")
+                        val page = withIOContext {
+                            runCatching { EhDB.getReadProgress(gid) }.getOrDefault(0)
+                        }
+                        withIOContext {
+                            OpenPdfExternally.openInternalLocal(
+                                context,
+                                path,
+                                displayName = name,
+                                progressGid = gid,
+                                startPage = page,
+                            )
+                        }
                         return@launch
                     }
                     val mime = mimeTypeForFileName(name)
@@ -699,8 +730,27 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
                     val remote = target.remotePath.trim('/')
                     val name = info.title
                         ?: remote.substringAfterLast('/').substringAfterLast('\\')
-                    if (isPdfFileName(name) || isPdfFileName(remote)) {
+                    if (isPdfFileName(name) || isPdfFileName(remote) ||
+                        isEpubFileName(name) || isEpubFileName(remote)
+                    ) {
                         navToSmbStreamArchiveReader(source.id, remote)
+                        return@launch
+                    }
+                    if (isEbookFileName(name) || isEbookFileName(remote)) {
+                        val gid = stableGalleryId(source.id, "smbf:$remote")
+                        val page = withIOContext {
+                            runCatching { EhDB.getReadProgress(gid) }.getOrDefault(0)
+                        }
+                        withIOContext {
+                            OpenPdfExternally.openInternalSmb(
+                                context,
+                                source.id,
+                                remote,
+                                displayName = name,
+                                progressGid = gid,
+                                startPage = page,
+                            )
+                        }
                         return@launch
                     }
                     val mime = mimeTypeForFileName(name)
@@ -748,8 +798,27 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
                     val remote = target.remotePath.trim('/')
                     val name = info.title
                         ?: remote.substringAfterLast('/').substringAfterLast('\\')
-                    if (isPdfFileName(name) || isPdfFileName(remote)) {
+                    if (isPdfFileName(name) || isPdfFileName(remote) ||
+                        isEpubFileName(name) || isEpubFileName(remote)
+                    ) {
                         navToWebDavStreamArchiveReader(source.id, remote)
+                        return@launch
+                    }
+                    if (isEbookFileName(name) || isEbookFileName(remote)) {
+                        val gid = stableGalleryId(source.id, "davf:$remote")
+                        val page = withIOContext {
+                            runCatching { EhDB.getReadProgress(gid) }.getOrDefault(0)
+                        }
+                        withIOContext {
+                            OpenPdfExternally.openInternalWebDav(
+                                context,
+                                source.id,
+                                remote,
+                                displayName = name,
+                                progressGid = gid,
+                                startPage = page,
+                            )
+                        }
                         return@launch
                     }
                     val mime = mimeTypeForFileName(name)
@@ -826,6 +895,292 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
             EhDB.deleteHistoryInfo(info)
         }
     }
+
+    fun openFolderFromHistory(info: GalleryEntity) {
+        launch {
+            when (val target = LocalHistory.parse(info)) {
+                is LocalHistoryTarget.LocalBrowseFolder,
+                is LocalHistoryTarget.SmbBrowseFolder,
+                is LocalHistoryTarget.WebDavBrowseFolder,
+                -> openEntry(info)
+                is LocalHistoryTarget.LocalFolderGallery -> {
+                    val root = withIOContext { LocalLibrary.loadRoot(target.rootId) }
+                    val rootPath = root?.let { LocalLibrary.rootPath(it) }
+                    if (root == null || rootPath == null) {
+                        snackbar(string(R.string.history_unavailable))
+                        return@launch
+                    }
+                    openLocalBrowseDir(
+                        rootId = root.id,
+                        rootDisplayName = root.displayName,
+                        rootPath = rootPath,
+                        relativePath = target.relativePath,
+                        preferMediaStore = root.prefersMediaStore,
+                        fromHistory = true,
+                    )
+                }
+                is LocalHistoryTarget.SmbFolderGallery -> {
+                    val source = withIOContext { SmbRepository.load(target.sourceId) }
+                    if (source == null) {
+                        snackbar(string(R.string.history_unavailable))
+                        return@launch
+                    }
+                    openSmbBrowseDir(
+                        sourceId = source.id,
+                        remoteDir = target.remoteDir.trim('/'),
+                        fromHistory = true,
+                    )
+                }
+                is LocalHistoryTarget.WebDavFolderGallery -> {
+                    val source = withIOContext { WebDavRepository.load(target.sourceId) }
+                    if (source == null) {
+                        snackbar(string(R.string.history_unavailable))
+                        return@launch
+                    }
+                    openWebDavBrowseDir(
+                        sourceId = source.id,
+                        remoteDir = target.remoteDir.trim('/'),
+                        fromHistory = true,
+                    )
+                }
+                is LocalHistoryTarget.LocalArchive -> {
+                    val parent = withIOContext { LocalLibrary.resolveArchiveBrowseParent(target.path) }
+                    if (parent == null) {
+                        snackbar(string(R.string.history_unavailable))
+                        return@launch
+                    }
+                    val prefers = withIOContext {
+                        LocalLibrary.loadRoot(parent.rootId)?.prefersMediaStore
+                    } ?: false
+                    openLocalBrowseDir(
+                        rootId = parent.rootId,
+                        rootDisplayName = parent.rootDisplayName,
+                        rootPath = parent.rootPath,
+                        relativePath = parent.parentRelativePath,
+                        preferMediaStore = prefers,
+                        fromHistory = true,
+                    )
+                }
+                is LocalHistoryTarget.LocalFile -> {
+                    val parent = withIOContext { LocalLibrary.resolveArchiveBrowseParent(target.path) }
+                    if (parent == null) {
+                        snackbar(string(R.string.history_unavailable))
+                        return@launch
+                    }
+                    val prefers = withIOContext {
+                        LocalLibrary.loadRoot(parent.rootId)?.prefersMediaStore
+                    } ?: false
+                    openLocalBrowseDir(
+                        rootId = parent.rootId,
+                        rootDisplayName = parent.rootDisplayName,
+                        rootPath = parent.rootPath,
+                        relativePath = parent.parentRelativePath,
+                        preferMediaStore = prefers,
+                        fromHistory = true,
+                    )
+                }
+                is LocalHistoryTarget.SmbStreamArchive -> {
+                    val source = withIOContext { SmbRepository.load(target.sourceId) }
+                    if (source == null) {
+                        snackbar(string(R.string.history_unavailable))
+                        return@launch
+                    }
+                    openSmbBrowseDir(
+                        sourceId = source.id,
+                        remoteDir = parentRelativeOfFile(target.remotePath),
+                        fromHistory = true,
+                    )
+                }
+                is LocalHistoryTarget.SmbFile -> {
+                    val source = withIOContext { SmbRepository.load(target.sourceId) }
+                    if (source == null) {
+                        snackbar(string(R.string.history_unavailable))
+                        return@launch
+                    }
+                    openSmbBrowseDir(
+                        sourceId = source.id,
+                        remoteDir = parentRelativeOfFile(target.remotePath),
+                        fromHistory = true,
+                    )
+                }
+                is LocalHistoryTarget.WebDavStreamArchive -> {
+                    val source = withIOContext { WebDavRepository.load(target.sourceId) }
+                    if (source == null) {
+                        snackbar(string(R.string.history_unavailable))
+                        return@launch
+                    }
+                    openWebDavBrowseDir(
+                        sourceId = source.id,
+                        remoteDir = parentRelativeOfFile(target.remotePath),
+                        fromHistory = true,
+                    )
+                }
+                is LocalHistoryTarget.WebDavFile -> {
+                    val source = withIOContext { WebDavRepository.load(target.sourceId) }
+                    if (source == null) {
+                        snackbar(string(R.string.history_unavailable))
+                        return@launch
+                    }
+                    openWebDavBrowseDir(
+                        sourceId = source.id,
+                        remoteDir = parentRelativeOfFile(target.remotePath),
+                        fromHistory = true,
+                    )
+                }
+                is LocalHistoryTarget.LibraryGallery -> {
+                    val local = withIOContext { LocalLibrary.loadGallery(target.galleryId) }
+                    if (local == null) {
+                        snackbar(string(R.string.history_unavailable))
+                        return@launch
+                    }
+                    val root = withIOContext { LocalLibrary.loadRoot(local.rootId) }
+                    val rootPath = root?.let { LocalLibrary.rootPath(it) }
+                    if (root == null || rootPath == null) {
+                        snackbar(string(R.string.history_unavailable))
+                        return@launch
+                    }
+                    val rel = if (local.kind == LOCAL_GALLERY_KIND_ARCHIVE) {
+                        parentRelativeOfFile(local.relativePath)
+                    } else {
+                        libraryBrowseRelative(local.relativePath)
+                    }
+                    openLocalBrowseDir(
+                        rootId = root.id,
+                        rootDisplayName = root.displayName,
+                        rootPath = rootPath,
+                        relativePath = rel,
+                        preferMediaStore = root.prefersMediaStore,
+                        fromHistory = true,
+                    )
+                }
+                is LocalHistoryTarget.Orphan -> {
+                    snackbar(string(R.string.browse_action_not_supported))
+                }
+            }
+        }
+    }
+
+    fun openPhotoGridFromHistory(info: GalleryEntity) {
+        launch {
+            when (val target = LocalHistory.parse(info)) {
+                is LocalHistoryTarget.LocalFolderGallery -> {
+                    val root = withIOContext { LocalLibrary.loadRoot(target.rootId) }
+                    val rootPath = root?.let { LocalLibrary.rootPath(it) }
+                    if (root == null || rootPath == null) {
+                        snackbar(string(R.string.history_unavailable))
+                        return@launch
+                    }
+                    openLocalFolderPhotoGrid(
+                        rootId = root.id,
+                        rootDisplayName = root.displayName,
+                        rootPath = rootPath,
+                        relativePath = target.relativePath,
+                        preferMediaStore = root.prefersMediaStore,
+                        title = info.title ?: target.relativePath.substringAfterLast('/'),
+                        fromHistory = true,
+                    )
+                }
+                is LocalHistoryTarget.SmbFolderGallery -> {
+                    val source = withIOContext { SmbRepository.load(target.sourceId) }
+                    if (source == null) {
+                        snackbar(string(R.string.history_unavailable))
+                        return@launch
+                    }
+                    openSmbFolderPhotoGrid(
+                        sourceId = source.id,
+                        remoteDir = target.remoteDir.trim('/'),
+                        fromHistory = true,
+                    )
+                }
+                is LocalHistoryTarget.WebDavFolderGallery -> {
+                    val source = withIOContext { WebDavRepository.load(target.sourceId) }
+                    if (source == null) {
+                        snackbar(string(R.string.history_unavailable))
+                        return@launch
+                    }
+                    openWebDavFolderPhotoGrid(
+                        sourceId = source.id,
+                        remoteDir = target.remoteDir.trim('/'),
+                        fromHistory = true,
+                    )
+                }
+                is LocalHistoryTarget.LibraryGallery -> {
+                    val local = withIOContext { LocalLibrary.loadGallery(target.galleryId) }
+                    if (local == null || local.kind == LOCAL_GALLERY_KIND_ARCHIVE) {
+                        snackbar(string(R.string.browse_action_not_supported))
+                        return@launch
+                    }
+                    val root = withIOContext { LocalLibrary.loadRoot(local.rootId) }
+                    val rootPath = root?.let { LocalLibrary.rootPath(it) }
+                    if (root == null || rootPath == null) {
+                        snackbar(string(R.string.history_unavailable))
+                        return@launch
+                    }
+                    openLocalFolderPhotoGrid(
+                        rootId = root.id,
+                        rootDisplayName = root.displayName,
+                        rootPath = rootPath,
+                        relativePath = local.relativePath,
+                        preferMediaStore = root.prefersMediaStore,
+                        title = local.title,
+                        fromHistory = true,
+                    )
+                }
+                else -> snackbar(string(R.string.browse_action_not_supported))
+            }
+        }
+    }
+
+    fun imageReaderFromHistory(info: GalleryEntity) {
+        launch {
+            when (val target = LocalHistory.parse(info)) {
+                is LocalHistoryTarget.LocalArchive -> navToReader(target.path, skipPdfPrimary = true)
+                is LocalHistoryTarget.SmbStreamArchive -> {
+                    val source = withIOContext { SmbRepository.load(target.sourceId) }
+                    if (source == null) {
+                        snackbar(string(R.string.history_unavailable))
+                        return@launch
+                    }
+                    navToSmbStreamArchiveReader(
+                        source.id,
+                        target.remotePath.trim('/'),
+                        skipPdfPrimary = true,
+                    )
+                }
+                is LocalHistoryTarget.WebDavStreamArchive -> {
+                    val source = withIOContext { WebDavRepository.load(target.sourceId) }
+                    if (source == null) {
+                        snackbar(string(R.string.history_unavailable))
+                        return@launch
+                    }
+                    navToWebDavStreamArchiveReader(
+                        source.id,
+                        target.remotePath.trim('/'),
+                        skipPdfPrimary = true,
+                    )
+                }
+                is LocalHistoryTarget.LibraryGallery -> {
+                    val local = withIOContext { LocalLibrary.loadGallery(target.galleryId) }
+                    if (local == null) {
+                        snackbar(string(R.string.history_unavailable))
+                        return@launch
+                    }
+                    navToReader(local.contentPath, skipPdfPrimary = true)
+                }
+                else -> openEntry(info)
+            }
+        }
+    }
+
+    fun overflowFor(info: GalleryEntity) = historyOverflowActions(
+        context = context,
+        info = info,
+        favoriteKeys = favoriteKeys,
+        openEntry = { openEntry(info) },
+        openPhotoGrid = { openPhotoGridFromHistory(info) },
+        openFolder = { openFolderFromHistory(info) },
+        imageReader = { imageReaderFromHistory(info) },
+    )
 
     SearchBarScreen(
         onFilterChange = { keyword = it },
@@ -906,11 +1261,12 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
                                 showPages = showPages,
                                 showProgress = showProgress,
                                 modifier = Modifier.fillMaxWidth(),
+                                overflow = overflowFor(info),
                             )
                         }
                     }
                     // Gap under dirs: tap toggles expand/collapse when there is overflow.
-                    if (historyItems.isNotEmpty() || canExpandDirectories) {
+                    if (hasFileItems || canExpandDirectories) {
                         item(
                             key = "dir-gap",
                             span = { GridItemSpan(maxLineSpan) },
@@ -938,6 +1294,7 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
                             showPages = showPages,
                             showProgress = showProgress,
                             modifier = Modifier.fillMaxWidth(),
+                            overflow = overflowFor(info),
                         )
                     }
                 }
@@ -960,10 +1317,11 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
                             onClick = { openEntry(info) },
                             onLongClick = { deleteEntry(info) },
                             modifier = Modifier.thenIf(animateItems) { animateItem() },
+                            overflow = overflowFor(info),
                         )
                     }
                     // Gap under dirs: tap toggles expand/collapse when there is overflow.
-                    if (historyItems.isNotEmpty() || canExpandDirectories) {
+                    if (hasFileItems || canExpandDirectories) {
                         item(
                             key = "dir-gap",
                             span = { GridItemSpan(maxLineSpan) },
@@ -983,12 +1341,13 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
                         showPages = showPages,
                         showProgress = showProgress,
                         modifier = Modifier.thenIf(animateItems) { animateItem() },
+                        overflow = overflowFor(info),
                     )
                 }
             }
         }
 
-        if (directoryItems.isEmpty() && historyItems.isEmpty()) {
+        if (directoryItems.isEmpty() && historyItems.isEmpty() && allFileItems.isEmpty()) {
             Column(
                 modifier = Modifier.padding(paddingValues).padding(horizontal = marginH).fillMaxSize(),
                 verticalArrangement = Arrangement.Center,

@@ -12,8 +12,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.FixedScale
+import androidx.compose.ui.layout.times
 import com.hippo.ehviewer.Settings
 import eu.kanade.tachiyomi.ui.reader.setting.OrientationType
+import me.saket.telephoto.zoomable.ZoomableState
 
 /**
  * Forces the user preferred [orientation] on the activity.
@@ -51,6 +53,30 @@ fun Alignment.Companion.fromPreferences(value: Int, isRtl: Boolean, isVertical: 
     2 -> AbsoluteAlignment.Left
     3 -> AbsoluteAlignment.Right
     else -> CenterHorizontally
+}
+
+fun ZoomableState.applyPagerContentAlignment(
+    size: Size,
+    contentScale: ContentScale,
+    layoutSize: Size,
+    alignment: Alignment.Horizontal,
+) {
+    val contentSize = if (contentScale is FixedScale) {
+        size
+    } else {
+        size * contentScale.computeScaleFactor(size, layoutSize)
+    }
+    val horizontalAlignment = if (contentSize.width > layoutSize.width) {
+        alignment
+    } else {
+        Alignment.CenterHorizontally
+    }
+    val verticalAlignment = if (contentSize.height > layoutSize.height) {
+        Alignment.Top
+    } else {
+        Alignment.CenterVertically
+    }
+    contentAlignment = horizontalAlignment + verticalAlignment
 }
 
 @Stable

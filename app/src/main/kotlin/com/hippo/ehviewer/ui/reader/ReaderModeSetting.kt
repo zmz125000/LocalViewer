@@ -20,11 +20,13 @@ import androidx.compose.ui.unit.dp
 import com.ehviewer.core.i18n.R
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.asMutableState
+import com.hippo.ehviewer.library.document.EBOOK_FONT_SIZE_MAX
+import com.hippo.ehviewer.library.document.EBOOK_FONT_SIZE_MIN
 import eu.kanade.tachiyomi.ui.reader.setting.OrientationType
 import eu.kanade.tachiyomi.ui.reader.setting.ReadingModeType
 
 @Composable
-fun ReaderModeSetting(isWebtoon: Boolean) = Column(modifier = Modifier.verticalScroll(rememberScrollState()).navigationBarsPadding()) {
+fun ReaderModeSetting(isWebtoon: Boolean, isDocument: Boolean = false) = Column(modifier = Modifier.verticalScroll(rememberScrollState()).navigationBarsPadding()) {
     SpinnerChoice(
         title = stringResource(id = R.string.pref_category_reading_mode),
         entries = stringArrayResource(id = com.hippo.ehviewer.R.array.viewers_selector),
@@ -88,6 +90,10 @@ fun ReaderModeSetting(isWebtoon: Boolean) = Column(modifier = Modifier.verticalS
         values = listOf(0, 1, 2, 3, 4),
         field = Settings.readerDecodeSize.asMutableState(),
     )
+    if (isDocument) {
+        Spacer(modifier = Modifier.size(8.dp))
+        DocumentStyleSetting()
+    }
     Spacer(modifier = Modifier.size(16.dp))
     Crossfade(targetState = isWebtoon, label = "Setting") { webtoon ->
         if (webtoon) {
@@ -96,6 +102,126 @@ fun ReaderModeSetting(isWebtoon: Boolean) = Column(modifier = Modifier.verticalS
             PagerSetting()
         }
     }
+}
+
+@Composable
+private fun DocumentStyleSetting() = Column {
+    SpinnerChoice(
+        title = stringResource(id = R.string.pref_reader_theme),
+        entries = stringArrayResource(id = com.hippo.ehviewer.R.array.reader_themes),
+        values = integerArrayResource(id = com.hippo.ehviewer.R.array.reader_themes_values).toList(),
+        field = Settings.ebookTheme.asMutableState(),
+    )
+    Text(
+        text = stringResource(id = R.string.pref_ebook_text),
+        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    SpinnerChoice(
+        title = stringResource(id = R.string.pref_ebook_font),
+        entries = stringArrayResource(id = com.hippo.ehviewer.R.array.ebook_font),
+        values = listOf(
+            Settings.EBOOK_FONT_SERIF,
+            Settings.EBOOK_FONT_SANS,
+            Settings.EBOOK_FONT_SYSTEM,
+        ),
+        field = Settings.ebookFont.asMutableState(),
+    )
+    SpinnerChoice(
+        title = stringResource(id = R.string.pref_ebook_charset),
+        entries = stringArrayResource(id = com.hippo.ehviewer.R.array.ebook_charset),
+        values = listOf(
+            Settings.EBOOK_CHARSET_AUTO,
+            Settings.EBOOK_CHARSET_AUTO_ZH,
+            Settings.EBOOK_CHARSET_AUTO_JA,
+            Settings.EBOOK_CHARSET_AUTO_KO,
+            Settings.EBOOK_CHARSET_UTF8,
+            Settings.EBOOK_CHARSET_UTF16LE,
+            Settings.EBOOK_CHARSET_UTF16BE,
+            Settings.EBOOK_CHARSET_GBK,
+            Settings.EBOOK_CHARSET_GB18030,
+            Settings.EBOOK_CHARSET_BIG5,
+            Settings.EBOOK_CHARSET_SJIS,
+            Settings.EBOOK_CHARSET_EUCKR,
+            Settings.EBOOK_CHARSET_1252,
+        ),
+        field = Settings.ebookCharset.asMutableState(),
+    )
+    val fontSize = Settings.ebookFontSize.asMutableState()
+    Text(
+        text = stringResource(id = R.string.pref_ebook_font_size),
+        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    SliderChoice(
+        startSlot = {},
+        endSlot = { Text(text = "${fontSize.value}") },
+        range = EBOOK_FONT_SIZE_MIN..EBOOK_FONT_SIZE_MAX,
+        field = fontSize,
+    )
+    Text(
+        text = stringResource(id = R.string.pref_ebook_paragraph),
+        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    SpinnerChoice(
+        title = stringResource(id = R.string.pref_ebook_paragraph_mode),
+        entries = stringArrayResource(id = com.hippo.ehviewer.R.array.ebook_paragraph_mode),
+        values = listOf(
+            Settings.EBOOK_PARA_AUTO,
+            Settings.EBOOK_PARA_HARD,
+            Settings.EBOOK_PARA_SOFT,
+        ),
+        field = Settings.ebookParagraphMode.asMutableState(),
+    )
+    SpinnerChoice(
+        title = stringResource(id = R.string.pref_ebook_indent),
+        entries = stringArrayResource(id = com.hippo.ehviewer.R.array.ebook_indent),
+        values = listOf(0, 1, 2),
+        field = Settings.ebookIndent.asMutableState(),
+    )
+    SpinnerChoice(
+        title = stringResource(id = R.string.pref_ebook_align),
+        entries = stringArrayResource(id = com.hippo.ehviewer.R.array.ebook_align),
+        values = listOf(Settings.EBOOK_ALIGN_START, Settings.EBOOK_ALIGN_JUSTIFY),
+        field = Settings.ebookAlign.asMutableState(),
+    )
+    val lineHeight = Settings.ebookLineHeight.asMutableState()
+    Text(
+        text = stringResource(id = R.string.pref_ebook_line_height),
+        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    SliderChoice(
+        startSlot = {},
+        endSlot = { Text(text = "%.2f".format(lineHeight.value / 100f)) },
+        range = 100..200,
+        field = lineHeight,
+    )
+    val paragraph = Settings.ebookParagraphSpacing.asMutableState()
+    Text(
+        text = stringResource(id = R.string.pref_ebook_paragraph_spacing),
+        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    SliderChoice(
+        startSlot = {},
+        endSlot = { Text(text = "%.2f em".format(paragraph.value / 100f)) },
+        range = 0..200,
+        field = paragraph,
+    )
+    val margin = Settings.ebookMargin.asMutableState()
+    Text(
+        text = stringResource(id = R.string.pref_ebook_margin),
+        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    SliderChoice(
+        startSlot = {},
+        endSlot = { Text(text = "${margin.value}%") },
+        range = 4..12,
+        field = margin,
+    )
 }
 
 @Composable

@@ -4,6 +4,7 @@ import android.content.Context
 import android.os.ParcelFileDescriptor
 import com.ehviewer.core.files.openFileDescriptor
 import com.ehviewer.core.util.withIOContext
+import com.hippo.ehviewer.library.ZipPaths
 import com.hippo.ehviewer.library.isPdfFileName
 import com.hippo.ehviewer.provider.StreamDocumentProvider
 import com.hippo.ehviewer.provider.StreamDocumentRegistry
@@ -44,6 +45,17 @@ object OpenPdfExternally {
         displayName: String = File(pathStr).name,
         usePreferredReader: Boolean = true,
     ) {
+        if (ZipPaths.isZipPath(pathStr)) {
+            OpenFileExternally.openLocal(
+                context,
+                pathStr,
+                displayName = displayName,
+                mimeType = DefaultPdfReader.MIME_TYPE,
+                asFile = true,
+                usePreferredPlayer = usePreferredReader,
+            )
+            return
+        }
         val openPfd: () -> ParcelFileDescriptor = {
             val file = File(pathStr)
             // Real absolute file only — do not treat content:/… as File.

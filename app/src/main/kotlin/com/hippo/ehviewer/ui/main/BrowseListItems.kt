@@ -1873,6 +1873,7 @@ enum class BrowseFolderSection {
     Search,
     Directories,
     Galleries,
+    Documents,
     Videos,
     Files,
 }

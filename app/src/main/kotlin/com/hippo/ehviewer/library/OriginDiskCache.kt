@@ -48,7 +48,7 @@ object OriginDiskCache {
     const val THUMB_LEGACY_EXT = "jpg"
 
     /** Lossy WebP quality for new thumbs (JPEG leftovers keep their original bytes). */
-    const val THUMB_QUALITY = 85
+    const val THUMB_QUALITY = 75
 
     /** Shared budget for all on-disk thumb stores (not Coil’s separate 256 MiB). */
     const val THUMB_BUDGET_BYTES = 512L * 1024L * 1024L

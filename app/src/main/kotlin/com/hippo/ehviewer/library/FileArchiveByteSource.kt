@@ -6,6 +6,7 @@ import java.io.File
 import java.io.IOException
 import java.io.RandomAccessFile
 import okio.Path
+import okio.Path.Companion.toPath
 
 /**
  * Random-access [ArchiveByteSource] over a **real filesystem** file
@@ -60,17 +61,27 @@ class FileArchiveByteSource(private val file: File) : ArchiveByteSource {
  * Local zip/archive byte source: real files via [FileArchiveByteSource], SAF /
  * MediaStore via [Path.openFileDescriptor] + [PfdArchiveByteSource].
  */
-fun openLocalArchiveByteSource(path: Path): ArchiveByteSource? = runCatching {
-    val file = File(path.toString())
-    if (file.isFile) {
-        FileArchiveByteSource(file)
-    } else {
-        val pfd = path.openFileDescriptor("r")
-        val owned = ParcelFileDescriptor.dup(pfd.fileDescriptor)
-        pfd.close()
-        PfdArchiveByteSource(owned, ownsPfd = true)
+fun openLocalArchiveByteSource(path: Path): ArchiveByteSource? {
+    ZipPaths.parse(path.toString())?.let { (zipAbs, member) ->
+        val zip = openLocalArchiveByteSource(zipAbs.toPath()) ?: return null
+        return ZipMemberByteSource.open(zip, member, ownsZip = true)
+            ?: run {
+                runCatching { zip.close() }
+                null
+            }
     }
-}.getOrNull()
+    return runCatching {
+        val file = File(path.toString())
+        if (file.isFile) {
+            FileArchiveByteSource(file)
+        } else {
+            val pfd = path.openFileDescriptor("r")
+            val owned = ParcelFileDescriptor.dup(pfd.fileDescriptor)
+            pfd.close()
+            PfdArchiveByteSource(owned, ownsPfd = true)
+        }
+    }.getOrNull()
+}
 
 /** Parse ZIP EOCD+CD then run [block]; always closes the underlying source. */
 fun <T> withLocalZipCentralDirectory(

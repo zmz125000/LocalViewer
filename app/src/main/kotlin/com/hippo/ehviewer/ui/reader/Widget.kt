@@ -19,6 +19,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.MutableState
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -107,13 +108,17 @@ fun SliderChoice(
     steps: Int = range.last - range.first - 1,
 ) {
     var value by field
+    val clamped = value.coerceIn(range.first, range.last)
+    if (clamped != value) {
+        SideEffect { value = clamped }
+    }
     Row(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         startSlot()
         Slider(
-            value = value,
+            value = clamped,
             onValueChange = { value = it },
             modifier = Modifier.weight(1f).padding(8.dp),
             valueRange = range,

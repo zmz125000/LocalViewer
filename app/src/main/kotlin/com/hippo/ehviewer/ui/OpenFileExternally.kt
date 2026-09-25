@@ -13,12 +13,17 @@ import com.ehviewer.core.database.model.SmbSourceEntity
 import com.ehviewer.core.database.model.WebDavSourceEntity
 import com.ehviewer.core.files.openFileDescriptor
 import com.ehviewer.core.i18n.R
+import com.ehviewer.core.model.BaseGalleryInfo
+import com.ehviewer.core.model.GalleryInfo.Companion.NOT_FAVORITED
 import com.ehviewer.core.util.logcat
 import com.ehviewer.core.util.withIOContext
 import com.ehviewer.core.util.withUIContext
+import com.hippo.ehviewer.EhDB
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.library.BrowseEntryRemote
 import com.hippo.ehviewer.library.BrowseSession
+import com.hippo.ehviewer.library.HISTORY_FILE_CATEGORY_OTHER
+import com.hippo.ehviewer.library.LOCAL_FILE_TOKEN
 import com.hippo.ehviewer.library.LocalFolderListing
 import com.hippo.ehviewer.library.LocalHistory
 import com.hippo.ehviewer.library.LocalLibrary
@@ -26,19 +31,24 @@ import com.hippo.ehviewer.library.NetworkFolderIndexCache
 import com.hippo.ehviewer.library.OPEN_CACHE_WARN_BYTES
 import com.hippo.ehviewer.library.OriginDiskCache
 import com.hippo.ehviewer.library.RemoteChild
+import com.hippo.ehviewer.library.SMB_FILE_TOKEN
 import com.hippo.ehviewer.library.SidecarSubtitles
 import com.hippo.ehviewer.library.VideoDirectLinkByteSource
+import com.hippo.ehviewer.library.WEBDAV_FILE_TOKEN
 import com.hippo.ehviewer.library.ZipAsDirListing
 import com.hippo.ehviewer.library.ZipMemberByteSource
 import com.hippo.ehviewer.library.ZipPaths
 import com.hippo.ehviewer.library.isBrowseVideoFileName
+import com.hippo.ehviewer.library.isEbookFileName
 import com.hippo.ehviewer.library.isHtmlFileName
+import com.hippo.ehviewer.library.isPdfFileName
 import com.hippo.ehviewer.library.listBrowseChildrenRaw
 import com.hippo.ehviewer.library.mimeTypeForFileName
 import com.hippo.ehviewer.library.needsOpenCacheConfirm
 import com.hippo.ehviewer.library.openLocalArchiveByteSource
 import com.hippo.ehviewer.library.resolveBrowsePath
 import com.hippo.ehviewer.library.resolveRelative
+import com.hippo.ehviewer.library.stableGalleryId
 import com.hippo.ehviewer.library.withLocalZipCentralDirectory
 import com.hippo.ehviewer.provider.ExternalHttpStreamServer
 import com.hippo.ehviewer.provider.StreamDocumentProvider
@@ -121,7 +131,11 @@ object OpenFileExternally {
         asFile: Boolean = false,
         usePreferredPlayer: Boolean = true,
     ) {
-        if (!asFile && isHtmlFileName(displayName) && Settings.openHtmlWithBrowser.value) {
+        if (!asFile &&
+            isHtmlFileName(displayName) &&
+            Settings.openHtmlWithBrowser.value &&
+            ZipPaths.parse(pathStr) == null
+        ) {
             openLocalHtml(
                 context,
                 pathStr,
@@ -129,6 +143,10 @@ object OpenFileExternally {
                 mimeType,
                 incognito = Settings.openHtmlInIncognito.value,
             )
+            return
+        }
+        if (!asFile && shouldOpenInBuiltinPdfReader(displayName)) {
+            playEbookLocal(context, pathStr, displayName)
             return
         }
         if (DefaultVideoPlayer.isVideoMime(mimeType)) {
@@ -147,6 +165,108 @@ object OpenFileExternally {
         )
     }
 
+    /**
+     * RegularFile PDF/ebook → built-in PDF reader (file gid). Image reader is not used.
+     * EPUB archives that still have images stay ArchiveGallery and keep the image path.
+     */
+    suspend fun playDocumentLocal(
+        context: Context,
+        pathStr: String,
+        displayName: String = File(pathStr).name,
+    ) {
+        playEbookLocal(context, pathStr, displayName)
+    }
+
+    suspend fun playDocumentSmb(
+        context: Context,
+        sourceId: Long,
+        remoteRelativeFile: String,
+        displayName: String = remoteRelativeFile.substringAfterLast('/').substringAfterLast('\\'),
+    ) {
+        playEbookSmb(context, sourceId, remoteRelativeFile, displayName)
+    }
+
+    suspend fun playDocumentWebDav(
+        context: Context,
+        sourceId: Long,
+        remoteRelativeFile: String,
+        displayName: String = remoteRelativeFile.substringAfterLast('/').substringAfterLast('\\'),
+    ) {
+        playEbookWebDav(context, sourceId, remoteRelativeFile, displayName)
+    }
+
+    private fun shouldOpenInBuiltinPdfReader(displayName: String): Boolean {
+        if (isEbookFileName(displayName)) return true
+        return isPdfFileName(displayName) && Settings.pdfReaderMode.value != PdfReaderMode.EXTERNAL
+    }
+
+    private suspend fun playEbookLocal(
+        context: Context,
+        pathStr: String,
+        displayName: String,
+    ) {
+        val gid = stableGalleryId(0L, "local-file:$pathStr")
+        val info = BaseGalleryInfo(
+            gid = gid,
+            token = LOCAL_FILE_TOKEN,
+            title = displayName,
+            pages = 0,
+            favoriteSlot = NOT_FAVORITED,
+            rating = -1f,
+            uploader = pathStr,
+            category = HISTORY_FILE_CATEGORY_OTHER,
+        )
+        LocalHistory.ensureGalleryForProgress(info)
+        val page = runCatching { EhDB.getReadProgress(gid) }.getOrDefault(0)
+        playPdfLocal(context, pathStr, displayName, gid, page)
+    }
+
+    private suspend fun playEbookSmb(
+        context: Context,
+        sourceId: Long,
+        remoteRelativeFile: String,
+        displayName: String,
+    ) {
+        val rel = remoteRelativeFile.trim('/')
+        val gid = stableGalleryId(sourceId, "smbf:$rel")
+        val info = BaseGalleryInfo(
+            gid = gid,
+            token = SMB_FILE_TOKEN,
+            title = displayName,
+            pages = 0,
+            favoriteSlot = NOT_FAVORITED,
+            rating = -1f,
+            uploader = "$sourceId\u0000$rel",
+            category = HISTORY_FILE_CATEGORY_OTHER,
+        )
+        LocalHistory.ensureGalleryForProgress(info)
+        val page = runCatching { EhDB.getReadProgress(gid) }.getOrDefault(0)
+        playPdfSmb(context, sourceId, remoteRelativeFile, displayName, gid, page)
+    }
+
+    private suspend fun playEbookWebDav(
+        context: Context,
+        sourceId: Long,
+        remoteRelativeFile: String,
+        displayName: String,
+    ) {
+        val rel = remoteRelativeFile.trim('/')
+        val gid = stableGalleryId(sourceId, "davf:$rel")
+        val info = BaseGalleryInfo(
+            gid = gid,
+            token = WEBDAV_FILE_TOKEN,
+            title = displayName,
+            pages = 0,
+            favoriteSlot = NOT_FAVORITED,
+            rating = -1f,
+            uploader = "$sourceId\u0000$rel",
+            category = HISTORY_FILE_CATEGORY_OTHER,
+        )
+        LocalHistory.ensureGalleryForProgress(info)
+        val page = runCatching { EhDB.getReadProgress(gid) }.getOrDefault(0)
+        playPdfWebDav(context, sourceId, remoteRelativeFile, displayName, gid, page)
+    }
+
     suspend fun playPdfLocal(
         context: Context,
         pathStr: String,
@@ -154,15 +274,22 @@ object OpenFileExternally {
         progressGid: Long = 0L,
         startPage: Int = 0,
     ) {
+        val intent = preparePdfReaderIntentLocal(context, pathStr, displayName, progressGid, startPage)
+        launchPreparedPdfReader(context, intent)
+    }
+
+    suspend fun preparePdfReaderIntentLocal(
+        context: Context,
+        pathStr: String,
+        displayName: String,
+        progressGid: Long,
+        startPage: Int,
+    ): Intent {
         val token = registerLocalStreamdoc(pathStr, displayName, DefaultPdfReader.MIME_TYPE)
-        launchStreamdoc(
+        return pdfReaderIntent(
             context = context,
             token = token,
             displayName = displayName,
-            mimeType = DefaultPdfReader.MIME_TYPE,
-            networkStream = false,
-            internalPlayer = false,
-            internalPdf = true,
             progressGid = progressGid,
             startPage = startPage,
             pdfKind = PdfReaderActivity.KIND_LOCAL,
@@ -191,7 +318,11 @@ object OpenFileExternally {
         asFile: Boolean = false,
         usePreferredPlayer: Boolean = true,
     ) {
-        if (!asFile && isHtmlFileName(displayName) && Settings.openHtmlWithBrowser.value) {
+        if (!asFile &&
+            isHtmlFileName(displayName) &&
+            Settings.openHtmlWithBrowser.value &&
+            ZipAsDirListing.zipMemberPath(remoteRelativeFile) == null
+        ) {
             openSmbHtml(
                 context,
                 sourceId,
@@ -200,6 +331,10 @@ object OpenFileExternally {
                 mimeType,
                 incognito = Settings.openHtmlInIncognito.value,
             )
+            return
+        }
+        if (!asFile && shouldOpenInBuiltinPdfReader(displayName)) {
+            playEbookSmb(context, sourceId, remoteRelativeFile, displayName)
             return
         }
         if (DefaultVideoPlayer.isVideoMime(mimeType)) {
@@ -258,7 +393,11 @@ object OpenFileExternally {
         asFile: Boolean = false,
         usePreferredPlayer: Boolean = true,
     ) {
-        if (!asFile && isHtmlFileName(displayName) && Settings.openHtmlWithBrowser.value) {
+        if (!asFile &&
+            isHtmlFileName(displayName) &&
+            Settings.openHtmlWithBrowser.value &&
+            ZipAsDirListing.zipMemberPath(remoteRelativeFile) == null
+        ) {
             openWebDavHtml(
                 context,
                 sourceId,
@@ -267,6 +406,10 @@ object OpenFileExternally {
                 mimeType,
                 incognito = Settings.openHtmlInIncognito.value,
             )
+            return
+        }
+        if (!asFile && shouldOpenInBuiltinPdfReader(displayName)) {
+            playEbookWebDav(context, sourceId, remoteRelativeFile, displayName)
             return
         }
         if (DefaultVideoPlayer.isVideoMime(mimeType)) {
@@ -324,20 +467,35 @@ object OpenFileExternally {
         progressGid: Long = 0L,
         startPage: Int = 0,
     ) {
+        val intent = preparePdfReaderIntentSmb(
+            context,
+            sourceId,
+            remoteRelativeFile,
+            displayName,
+            progressGid,
+            startPage,
+        )
+        launchPreparedPdfReader(context, intent)
+    }
+
+    suspend fun preparePdfReaderIntentSmb(
+        context: Context,
+        sourceId: Long,
+        remoteRelativeFile: String,
+        displayName: String,
+        progressGid: Long,
+        startPage: Int,
+    ): Intent {
         val token = registerSmbStreamdoc(
             sourceId,
             remoteRelativeFile,
             displayName,
             DefaultPdfReader.MIME_TYPE,
         )
-        launchStreamdoc(
+        return pdfReaderIntent(
             context = context,
             token = token,
             displayName = displayName,
-            mimeType = DefaultPdfReader.MIME_TYPE,
-            networkStream = true,
-            internalPlayer = false,
-            internalPdf = true,
             progressGid = progressGid,
             startPage = startPage,
             pdfKind = PdfReaderActivity.KIND_SMB,
@@ -410,26 +568,73 @@ object OpenFileExternally {
         progressGid: Long = 0L,
         startPage: Int = 0,
     ) {
+        val intent = preparePdfReaderIntentWebDav(
+            context,
+            sourceId,
+            remoteRelativeFile,
+            displayName,
+            progressGid,
+            startPage,
+        )
+        launchPreparedPdfReader(context, intent)
+    }
+
+    suspend fun preparePdfReaderIntentWebDav(
+        context: Context,
+        sourceId: Long,
+        remoteRelativeFile: String,
+        displayName: String,
+        progressGid: Long,
+        startPage: Int,
+    ): Intent {
         val token = registerWebDavStreamdoc(
             sourceId,
             remoteRelativeFile,
             displayName,
             DefaultPdfReader.MIME_TYPE,
         )
-        launchStreamdoc(
+        return pdfReaderIntent(
             context = context,
             token = token,
             displayName = displayName,
-            mimeType = DefaultPdfReader.MIME_TYPE,
-            networkStream = true,
-            internalPlayer = false,
-            internalPdf = true,
             progressGid = progressGid,
             startPage = startPage,
             pdfKind = PdfReaderActivity.KIND_WEBDAV,
             pdfSourceId = sourceId,
             pdfRemotePath = remoteRelativeFile,
         )
+    }
+
+    private fun pdfReaderIntent(
+        context: Context,
+        token: String,
+        displayName: String,
+        progressGid: Long,
+        startPage: Int,
+        pdfKind: String?,
+        pdfLocalPath: String? = null,
+        pdfSourceId: Long = 0L,
+        pdfRemotePath: String? = null,
+    ): Intent {
+        val uri = StreamDocumentProvider.uriFor(token, displayName)
+        return PdfReaderActivity.intent(
+            context = context,
+            uri = uri,
+            title = displayName,
+            streamToken = token,
+            progressGid = progressGid,
+            startPage = startPage,
+            sourceKind = pdfKind,
+            localPath = pdfLocalPath,
+            sourceId = pdfSourceId,
+            remotePath = pdfRemotePath,
+        )
+    }
+
+    private suspend fun launchPreparedPdfReader(context: Context, intent: Intent) {
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        intent.addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
+        withUIContext { context.startActivity(intent) }
     }
 
     private suspend fun launchInternalVideo(

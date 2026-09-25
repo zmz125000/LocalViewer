@@ -413,7 +413,47 @@ class ZipAsDirListingTest {
         assertEquals("Addon.zip", dir.name)
         assertEquals(DirPresence.Navigable, dir.presence)
         assertFalse(dir.hasGallery)
+        assertFalse(dir.hasDocument)
         assertTrue(rows.none { it is BrowseEntryRemote.FolderGallery })
+    }
+
+    @Test
+    fun mixedZipWithDocumentsTagsHasDocument() {
+        val mixed = openZip(
+            "docs/guide.pdf" to byteArrayOf(1, 2, 3),
+            "docs/notes.txt" to byteArrayOf(4),
+            "Addon/a.meta" to byteArrayOf(5),
+        )
+        assertTrue(ZipAsDirListing.cdHasBrowseDocument(mixed))
+        val rows = ZipAsDirListing.classifyZipFileAsFolderRows(
+            mixed,
+            BrowseEntryRemote.ArchiveGallery(name = "docs.zip", fileName = "docs.zip"),
+        )
+        val dir = rows.filterIsInstance<BrowseEntryRemote.Directory>().single()
+        assertTrue(dir.hasDocument)
+        val docs = rows.filterRemoteByContentMode(BrowseContentMode.Document)
+        assertTrue(docs.any { it is BrowseEntryRemote.Directory && it.name == "docs.zip" })
+
+        val children = listOf(RemoteChild(name = "docs.zip", isDirectory = false, size = 10L))
+        val classified = ZipAsDirListing.classifyListingWithZipAsDirs(
+            currentDirName = "Library",
+            children = children,
+            childPeeks = emptyMap(),
+            grandPeeks = emptyMap(),
+        ) { ZipAsDirListing.zipRootListingFromCd(mixed) }
+        val zipDir = classified.filterIsInstance<BrowseEntryRemote.Directory>()
+            .single { it.name == "docs.zip" }
+        assertTrue(zipDir.hasDocument)
+        assertTrue(
+            classified.filterRemoteByContentMode(BrowseContentMode.Document)
+                .any { it.name == "docs.zip" },
+        )
+
+        val inner = ZipAsDirListing.uncategorizedAt(mixed, "")
+        val docsDir = inner.filterIsInstance<BrowseEntryRemote.Directory>().single { it.name == "docs" }
+        assertTrue(docsDir.hasDocument)
+        val addon = inner.filterIsInstance<BrowseEntryRemote.Directory>().single { it.name == "Addon" }
+        assertFalse(addon.hasDocument)
     }
 
     @Test

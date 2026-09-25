@@ -7,6 +7,42 @@ import org.junit.Test
 
 class BrowseVirtualTest {
     @Test
+    fun documentModeForcesListLikePhotoGridForcesGrid() {
+        assertTrue(BrowseContentMode.Document.forceList)
+        assertFalse(BrowseContentMode.Galleries.forceList)
+        assertFalse(BrowseContentMode.Folder.forceList)
+        assertFalse(
+            browseUseGrid(
+                listMode = 1,
+                contentMode = BrowseContentMode.Document,
+                virtual = BrowseVirtualKind.None,
+            ),
+        )
+        assertTrue(
+            browseUseGrid(
+                listMode = 1,
+                contentMode = BrowseContentMode.Galleries,
+                virtual = BrowseVirtualKind.None,
+            ),
+        )
+        assertTrue(
+            browseUseGrid(
+                listMode = 0,
+                contentMode = BrowseContentMode.Document,
+                virtual = BrowseVirtualKind.PhotoGrid,
+            ),
+        )
+        assertEquals(
+            browseScrollLayoutKey(1, BrowseContentMode.Folder, BrowseVirtualKind.None),
+            10 + BrowseContentMode.Folder.prefValue,
+        )
+        assertEquals(
+            browseScrollLayoutKey(1, BrowseContentMode.Document, BrowseVirtualKind.None),
+            BrowseContentMode.Document.prefValue,
+        )
+    }
+
+    @Test
     fun videoFolderLocksVideoFilterWithoutForcingGrid() {
         val kind = BrowseVirtualKind.VideoFolder
         assertTrue(kind.isVirtual)

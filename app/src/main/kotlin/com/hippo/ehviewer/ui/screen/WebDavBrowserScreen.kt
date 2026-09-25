@@ -92,12 +92,15 @@ import com.hippo.ehviewer.library.WEBDAV_ARCHIVE_TOKEN
 import com.hippo.ehviewer.library.WEBDAV_FOLDER_TOKEN
 import com.hippo.ehviewer.library.ZipAsDirListing
 import com.hippo.ehviewer.library.browseScrollLayoutKey
+import com.hippo.ehviewer.library.browseUseGrid
 import com.hippo.ehviewer.library.filterRemoteByContentMode
 import com.hippo.ehviewer.library.filterRemoteSmallGalleries
 import com.hippo.ehviewer.library.isDocumentFileName
+import com.hippo.ehviewer.library.isEbookFileName
 import com.hippo.ehviewer.library.isHtmlFileName
 import com.hippo.ehviewer.library.isImageFileName
 import com.hippo.ehviewer.library.isPdfFileName
+import com.hippo.ehviewer.library.isPdfOrEbookFileName
 import com.hippo.ehviewer.library.isSolidArchiveFileName
 import com.hippo.ehviewer.library.isStreamableArchiveFileName
 import com.hippo.ehviewer.library.isZipArchiveFileName
@@ -249,7 +252,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
     val photoGridNow = rememberUpdatedState(photoGrid)
     val folderId = BrowseFolderId.webDav(sourceId, relativeDirForMode)
     val contentMode = rememberEffectiveBrowseContentMode(folderId)
-    val useGrid = virtual.forceGrid || listMode == 1
+    val useGrid = browseUseGrid(listMode, contentMode, virtual)
     val scrollLayoutKey = browseScrollLayoutKey(listMode, contentMode, virtual)
     val favoriteKeys by Settings.favoriteBrowseSources.collectAsState()
     val addedToFavourites = stringResource(id = R.string.add_to_favourites)
@@ -1054,8 +1057,9 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
     }
 
     fun openPdfReader(entry: BrowseEntryRemote.ArchiveGallery) {
-        if (!isPdfFileName(entry.fileName)) return
+        if (!isPdfOrEbookFileName(entry.fileName)) return
         val src = source ?: return
+        ReaderGalleryPlaylist.setFromWebDavBrowse(src.id, relativeDir, entries)
         val remote = joinRemoteArchivePath(relativeDir, entry.parentRelativeName, entry.fileName)
         launchIO {
             recordCurrentBrowseFolderHistory(src.id)
@@ -1127,6 +1131,30 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
         }
     }
 
+    fun openInternalDocument(fileName: String) {
+        val src = source ?: return
+        ReaderGalleryPlaylist.setFromWebDavBrowse(src.id, relativeDir, entries)
+        val actualName = fileName.substringAfterLast('/').substringAfterLast('\\')
+        val remote = if (relativeDir.isEmpty()) fileName else WebDavGateway.joinRelative(relativeDir, fileName)
+        launchIO {
+            recordCurrentBrowseFolderHistory(src.id)
+            LocalHistory.recordWebDavFile(src.id, remote, title = actualName)
+            try {
+                OpenFileExternally.playDocumentWebDav(
+                    context = context,
+                    sourceId = src.id,
+                    remoteRelativeFile = remote,
+                    displayName = actualName,
+                )
+            } catch (e: Throwable) {
+                if (e.isZipMemberTooLarge()) return@launchIO
+                snackbar(
+                    context.getString(R.string.pdf_reader_open_failed, e.message ?: e.toString()),
+                )
+            }
+        }
+    }
+
     fun openExternalFile(fileName: String, asFile: Boolean = false, usePreferredPlayer: Boolean = true) {
         val src = source ?: return
         // fileName may be multi-segment for promoted single-video rows (`S/leaf/movie.mp4`).
@@ -1153,6 +1181,15 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                     context.getString(R.string.browse_open_failed) + " " + (e.message ?: e.toString()),
                 )
             }
+        }
+    }
+
+    fun openListedFile(fileName: String) {
+        val leaf = fileName.substringAfterLast('/').substringAfterLast('\\')
+        if (isPdfOrEbookFileName(leaf)) {
+            openInternalDocument(fileName)
+        } else {
+            openExternalFile(fileName)
         }
     }
 
@@ -1246,6 +1283,10 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
 
     fun openArchive(entry: BrowseEntryRemote.ArchiveGallery, skipPdfPrimary: Boolean = false) {
         val src = source ?: return
+        if (!skipPdfPrimary && isEbookFileName(entry.fileName)) {
+            openPdfReader(entry)
+            return
+        }
         if (!skipPdfPrimary && isPdfFileName(entry.fileName)) {
             when (Settings.pdfReaderMode.value) {
                 PdfReaderMode.PDF -> {
@@ -1357,7 +1398,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
     }
 
     fun openArchiveSecondary(entry: BrowseEntryRemote.ArchiveGallery) {
-        if (isPdfFileName(entry.fileName)) {
+        if (isPdfOrEbookFileName(entry.fileName)) {
             openPdfSecondary(entry)
         } else {
             openArchiveInOtherApp(entry)
@@ -1506,13 +1547,25 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
         onUnsupported = { notSupportedAction() },
     )
 
-    fun archiveOverflow(entry: BrowseEntryRemote.ArchiveGallery) = if (isPdfFileName(entry.fileName)) {
+    fun archiveOverflow(entry: BrowseEntryRemote.ArchiveGallery) = if (isPdfOrEbookFileName(entry.fileName)) {
         BrowseOverflowActions(
             kind = BrowseOverflowKind.Pdf,
             onRead = { openArchive(entry, skipPdfPrimary = true) },
             onPlay = { openPdfReader(entry) },
-            onExternalPlayer = { openPdfInOtherApp(entry) },
-            onOpenWith = { openPdfInOtherApp(entry, usePreferredReader = false) },
+            onExternalPlayer = {
+                if (isPdfFileName(entry.fileName)) {
+                    openPdfInOtherApp(entry)
+                } else {
+                    openArchiveInOtherApp(entry)
+                }
+            },
+            onOpenWith = {
+                if (isPdfFileName(entry.fileName)) {
+                    openPdfInOtherApp(entry, usePreferredReader = false)
+                } else {
+                    openArchiveInOtherApp(entry)
+                }
+            },
             onSaveAs = {
                 saveWebDavFile(
                     joinRemoteArchivePath("", entry.parentRelativeName, entry.fileName),
@@ -1602,10 +1655,59 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
             },
             onUnsupported = { notSupportedAction() },
         )
+    } else if (isPdfOrEbookFileName(fileName)) {
+        BrowseOverflowActions(
+            kind = BrowseOverflowKind.Pdf,
+            onPlay = { openInternalDocument(fileName) },
+            onExternalPlayer = {
+                val src = source
+                if (src != null && isPdfFileName(fileName)) {
+                    val remote = if (relativeDir.isEmpty()) {
+                        fileName
+                    } else {
+                        WebDavGateway.joinRelative(relativeDir, fileName)
+                    }
+                    launchIO {
+                        recordCurrentBrowseFolderHistory(src.id)
+                        LocalHistory.recordWebDavFile(
+                            src.id,
+                            remote,
+                            title = fileName.substringAfterLast('/'),
+                        )
+                        try {
+                            OpenPdfExternally.openWebDav(
+                                context = context,
+                                sourceId = src.id,
+                                remoteRelativeFile = remote,
+                                displayName = fileName.substringAfterLast('/').substringAfterLast('\\'),
+                            )
+                        } catch (e: Throwable) {
+                            if (e.isZipMemberTooLarge()) return@launchIO
+                            snackbar(
+                                context.getString(
+                                    R.string.open_pdf_external_failed,
+                                    e.message ?: e.toString(),
+                                ),
+                            )
+                        }
+                    }
+                } else if (!isPdfFileName(fileName)) {
+                    openExternalFile(fileName)
+                }
+            },
+            onOpenWith = { openExternalFile(fileName, asFile = true) },
+            onSaveAs = { saveWebDavFile(fileName) },
+            onShare = { shareWebDavFile(fileName) },
+            onShareViaHttp = webDavHttpShareFile(fileName),
+            onOpenFolder = {
+                openBrowseFolder(FolderSearch.openFolderTarget(fileName, isDirectory = false))
+            },
+            onUnsupported = { notSupportedAction() },
+        )
     } else {
         BrowseOverflowActions(
             kind = BrowseOverflowKind.Common,
-            onOpenWith = { openExternalFile(fileName) },
+            onOpenWith = { openExternalFile(fileName, asFile = true) },
             onSaveAs = { saveWebDavFile(fileName) },
             onShare = { shareWebDavFile(fileName) },
             onShareViaHttp = webDavHttpShareFile(fileName),
@@ -1757,6 +1859,12 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                             nameOf = { it.name },
                             dateOf = { it.lastModifiedMs },
                         )
+                    val documents = sections.documents.sortedForBrowseFolderUi(
+                        browseSortMode,
+                        browseSortAscending,
+                        nameOf = { it.name },
+                        dateOf = { it.lastModifiedMs },
+                    )
                     val files = sections.files
                         .filterIsInstance<BrowseEntryRemote.RegularFile>()
                         .sortedForBrowseFolderUi(
@@ -2029,7 +2137,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                                             BrowseFileGridItem(
                                                 modifier = itemMod,
                                                 name = entry.name,
-                                                onClick = { openExternalFile(entry.fileName) },
+                                                onClick = { openListedFile(entry.fileName) },
                                                 onLongClick = { openExternalFile(entry.fileName) },
                                                 overflow = fileOverflow(entry.fileName),
                                             )
@@ -2046,7 +2154,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                                                 if (isImage) {
                                                     openFolderImage(entry)
                                                 } else {
-                                                    openExternalFile(entry.fileName)
+                                                    openListedFile(entry.fileName)
                                                 }
                                             },
                                             onLongClick = { openExternalFile(entry.fileName) },
@@ -2057,6 +2165,82 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                                         )
                                     }
                                 }
+                            }
+                        }
+                    }
+                    fun LazyGridScope.documentSection(grid: Boolean) {
+                        if (documents.isEmpty()) return
+                        item(key = "hdr-docs", span = { GridItemSpan(maxLineSpan) }) {
+                            BrowseSectionHeader(
+                                stringResource(R.string.browse_documents),
+                                onClick = { toggleSection(BrowseFolderSection.Documents) },
+                            )
+                        }
+                        if (BrowseFolderSection.Documents in collapsedSections) return
+                        items(
+                            documents,
+                            key = { entry ->
+                                when (entry) {
+                                    is BrowseEntryRemote.ArchiveGallery ->
+                                        "a-${entry.parentRelativeName}/${entry.fileName}"
+                                    is BrowseEntryRemote.RegularFile -> "f-${entry.fileName}"
+                                    else -> "x-${entry.name}"
+                                }
+                            },
+                        ) { entry ->
+                            val itemMod = Modifier.thenIf(animateItems) { animateItem() }
+                            when (entry) {
+                                is BrowseEntryRemote.ArchiveGallery -> if (grid) {
+                                    BrowseArchiveGridItem(
+                                        modifier = itemMod,
+                                        name = entry.name,
+                                        cover = archiveCoverFor(entry),
+                                        thumbRetryKey = refreshToken,
+                                        allowRemoteFetch = allowRemoteThumbs,
+                                        onClick = { openArchive(entry) },
+                                        onLongClick = { openArchiveSecondary(entry) },
+                                        overflow = archiveOverflow(entry),
+                                    )
+                                } else {
+                                    BrowseArchiveGalleryRow(
+                                        modifier = itemMod,
+                                        name = entry.name,
+                                        cover = archiveCoverFor(entry),
+                                        thumbRetryKey = refreshToken,
+                                        allowRemoteFetch = allowRemoteThumbs,
+                                        onClick = { openArchive(entry) },
+                                        onLongClick = { openArchiveSecondary(entry) },
+                                        fileName = entry.fileName,
+                                        sizeBytes = entry.size,
+                                        lastModifiedMs = entry.lastModifiedMs,
+                                        pageCount = entry.pageCount,
+                                        showPages = showGalleryPages,
+                                        overflow = archiveOverflow(entry),
+                                    )
+                                }
+                                is BrowseEntryRemote.RegularFile -> if (grid) {
+                                    BrowseFileGridItem(
+                                        modifier = itemMod,
+                                        name = entry.name,
+                                        onClick = { openListedFile(entry.fileName) },
+                                        onLongClick = { openExternalFile(entry.fileName) },
+                                        overflow = fileOverflow(entry.fileName),
+                                    )
+                                } else {
+                                    BrowseFileRow(
+                                        modifier = itemMod,
+                                        name = entry.name,
+                                        thumbRetryKey = refreshToken,
+                                        allowRemoteFetch = allowRemoteThumbs,
+                                        onClick = { openListedFile(entry.fileName) },
+                                        onLongClick = { openExternalFile(entry.fileName) },
+                                        fileName = entry.fileName,
+                                        sizeBytes = entry.size,
+                                        lastModifiedMs = entry.lastModifiedMs,
+                                        overflow = fileOverflow(entry.fileName),
+                                    )
+                                }
+                                else -> Unit
                             }
                         }
                     }
@@ -2181,6 +2365,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                                     }
                                 }
                             }
+                            documentSection(grid = true)
                             if (videos.isNotEmpty()) {
                                 item(
                                     key = "hdr-vid",
@@ -2338,6 +2523,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                                     }
                                 }
                             }
+                            documentSection(grid = false)
                             if (videos.isNotEmpty()) {
                                 item(
                                     key = "hdr-vid",

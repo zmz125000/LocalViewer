@@ -8,7 +8,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 
 /**
- * Per-folder browse-mode persist (Media / Photo / Video / Folder).
+ * Per-folder browse-mode persist (Media / Photo / Video / Document / Folder).
  *
  * Disk keys reuse [BrowseFavorites] folder identities (`lf:` / `sf:` / `wf:`).
  * Entries in [Settings.persistBrowseModes]: `"key=prefInt"`.

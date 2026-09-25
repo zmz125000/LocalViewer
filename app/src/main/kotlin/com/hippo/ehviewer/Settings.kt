@@ -77,7 +77,7 @@ object Settings : DataStorePreferences(null) {
     val listMode = intPref("list_mode_2", 1)
 
     /**
-     * Folder browser content filter: 0=Galleries (default), 1=Media, 2=Video, 3=Folder.
+     * Folder browser content filter: 0=Galleries (default), 1=Media, 2=Video, 3=Folder, 4=Document.
      * See [com.hippo.ehviewer.library.BrowseContentMode].
      */
     val browseContentMode = intPref("browse_content_mode", 0)
@@ -428,7 +428,7 @@ object Settings : DataStorePreferences(null) {
     /**
      * When [saveHistory] is on: record opened **files** (archives, stream archives,
      * videos, and other non-dir files, including library archive galleries). Default on.
-     * Does not gate browse-dir history.
+     * Ebooks use [saveEbookHistory] instead. Does not gate browse-dir history.
      */
     val saveFileHistory = boolPref("save_file_history", true)
 
@@ -437,6 +437,12 @@ object Settings : DataStorePreferences(null) {
      * browse folder-galleries). Default on. Does not gate browse-dir history.
      */
     val saveGalleryHistory = boolPref("save_gallery_history", true)
+
+    /**
+     * When [saveHistory] is on: record opened **ebooks** (TXT / EPUB / HTML / FB2 /
+     * Markdown). Default on. Independent of [saveFileHistory]. Does not gate browse-dir history.
+     */
+    val saveEbookHistory = boolPref("save_ebook_history", true)
 
     /**
      * Back to upper directory when opening from History / Library / Favourites.
@@ -472,6 +478,13 @@ object Settings : DataStorePreferences(null) {
      * Toggled by tapping the Photos / Videos section header.
      */
     val librarySection = intPref("library_section", 0)
+
+    /**
+     * History file/gallery filter: 0 = media (default), 1 = documents.
+     * Browse-directory pins are not filtered. PDF and MOBI appear in both.
+     * Toggled by re-tapping History on the bottom nav, or the section header.
+     */
+    val historySection = intPref("history_section", 0)
 
     /**
      * Library Videos listing via the All videos toggle: 0 = folders that contain
@@ -596,6 +609,62 @@ object Settings : DataStorePreferences(null) {
     val customBrightness = boolPref("pref_custom_brightness_key", false)
     val customBrightnessValue = intPref("custom_brightness_value", 0)
     val readingMode = intPref("pref_default_reading_mode_key", ReadingModeType.WEBTOON.prefValue)
+
+    const val EBOOK_FONT_SERIF = 0
+    const val EBOOK_FONT_SANS = 1
+    const val EBOOK_FONT_SYSTEM = 2
+    const val EBOOK_ALIGN_START = 0
+    const val EBOOK_ALIGN_JUSTIFY = 1
+
+    /** Ebook text font: 0=serif, 1=sans, 2=system. PDF reader ebooks only. */
+    val ebookFont = intPref("pref_ebook_font", EBOOK_FONT_SERIF)
+
+    const val EBOOK_PARA_AUTO = 0
+    const val EBOOK_PARA_HARD = 1
+    const val EBOOK_PARA_SOFT = 2
+
+    const val EBOOK_CHARSET_AUTO = 0
+    const val EBOOK_CHARSET_AUTO_ZH = 1
+    const val EBOOK_CHARSET_AUTO_JA = 2
+    const val EBOOK_CHARSET_AUTO_KO = 3
+    const val EBOOK_CHARSET_UTF8 = 4
+    const val EBOOK_CHARSET_UTF16LE = 5
+    const val EBOOK_CHARSET_UTF16BE = 6
+    const val EBOOK_CHARSET_GBK = 7
+    const val EBOOK_CHARSET_GB18030 = 8
+    const val EBOOK_CHARSET_BIG5 = 9
+    const val EBOOK_CHARSET_SJIS = 10
+    const val EBOOK_CHARSET_EUCKR = 11
+    const val EBOOK_CHARSET_1252 = 12
+
+    /** Body type size 6–30, larger = larger glyphs. Fraction of page width, not content width. */
+    val ebookFontSize = intPref("pref_ebook_font_size", 18)
+
+    /**
+     * TXT/HTML/FB2/Markdown decode. 0=auto (default), then language-biased auto
+     * 1=Chinese / 2=Japanese / 3=Korean, then UTF-8 / UTF-16LE / UTF-16BE /
+     * GBK / GB18030 / Big5 / Shift_JIS / EUC-KR / Windows-1252.
+     * Language-biased auto still prefers UTF-8 when the sample is well-formed.
+     */
+    val ebookCharset = intPref("pref_ebook_charset", 0)
+
+    /** 0=auto, 1=hard-wrap join, 2=one paragraph per line (extra blanks collapse). */
+    val ebookParagraphMode = intPref("pref_ebook_paragraph_mode", EBOOK_PARA_AUTO)
+
+    /** Line height as percent of em (100–200). Default 150 (1.5). */
+    val ebookLineHeight = intPref("pref_ebook_line_height", 150)
+
+    /** Extra space after a paragraph as percent of em (0–200). Default 100 (1 em). */
+    val ebookParagraphSpacing = intPref("pref_ebook_paragraph_spacing", 100)
+
+    /** First-line indent in em (0 / 1 / 2). Default 2. */
+    val ebookIndent = intPref("pref_ebook_indent", 2)
+
+    /** 0=start, 1=justify. */
+    val ebookAlign = intPref("pref_ebook_align", EBOOK_ALIGN_START)
+
+    /** Page margin as percent of page width (4–12). Default 7. */
+    val ebookMargin = intPref("pref_ebook_margin", 7)
     val orientationMode = intPref("pref_default_orientation_type_key", OrientationType.DEFAULT.prefValue)
     val showReaderSeekbar = boolPref("pref_show_reader_seekbar", true)
     val showPageNumber = boolPref("pref_show_page_number_key", true)
@@ -613,7 +682,7 @@ object Settings : DataStorePreferences(null) {
      * After a reader page decodes, write a 768px photo-grid thumb for later grid use.
      * Default on.
      */
-    val readerGeneratePageThumb = boolPref("pref_reader_generate_page_thumb", true)
+    val readerGeneratePageThumb = boolPref("pref_reader_generate_page_thumb", false)
 
     /**
      * PDF reader only. On: image PDFs use embedded images for pages and the photo grid.
@@ -625,6 +694,12 @@ object Settings : DataStorePreferences(null) {
     /** Last open tab in the reader settings bottom sheet (0=mode, 1=general, 2=filter). */
     val readerSettingsTab = intPref("pref_reader_settings_tab", 0)
     val readerTheme = intPref("pref_reader_theme_key", 1)
+
+    /**
+     * Ebook page + reader backdrop. Same values as [readerTheme]
+     * (0 white, 1 black, 2 gray, 3 auto). Image/PDF reader keep [readerTheme].
+     */
+    val ebookTheme = intPref("pref_ebook_theme_key", 1)
 
     /** Off = double-tap prev/next gallery (folder mode). Default: off. */
     val doubleTapToZoom = boolPref("pref_double_tap_to_zoom", false)

@@ -4,7 +4,7 @@ package com.hippo.ehviewer.library
  * Folder-view content filter preset. Scanner always returns the full tagged list;
  * the UI filters instantly (same idea as name search) without re-listing.
  *
- * Pref int: 0=Galleries (default), 1=Media, 2=Video, 3=Folder.
+ * Pref int: 0=Galleries (default), 1=Media, 2=Video, 3=Folder, 4=Document.
  */
 enum class BrowseContentMode(val prefValue: Int) {
     /** Gallery-related navigation dirs + folder/archive galleries. */
@@ -21,7 +21,21 @@ enum class BrowseContentMode(val prefValue: Int) {
      * (including loose images). Synthetic folder galleries are hidden.
      */
     Folder(3),
+
+    /**
+     * Document files (PDF/EPUB, Office, OpenDocument, text, ebooks) in this
+     * directory + dirs that lead to them. Nested documents stay in their folders
+     * — unlike Video, they are not promoted onto the parent listing.
+     * Also keeps leftover RegularFiles that are not documents (Files section).
+     */
+    Document(4),
     ;
+
+    /**
+     * Force list layout without writing [Settings.listMode] (same idea as
+     * [BrowseVirtualKind.forceGrid] for photo grid).
+     */
+    val forceList: Boolean get() = this == Document
 
     companion object {
         fun fromPref(value: Int): BrowseContentMode = entries.firstOrNull { it.prefValue == value } ?: Galleries
@@ -37,6 +51,7 @@ fun DirPresence.visibleIn(
     mode: BrowseContentMode,
     hasGallery: Boolean,
     hasVideo: Boolean,
+    hasDocument: Boolean = false,
 ): Boolean = when (mode) {
     // Leaf image folders already have a FolderGallery row; only retain real navigation
     // branches that may lead to gallery content. Pending = shallow stub (paint now).
@@ -53,6 +68,13 @@ fun DirPresence.visibleIn(
         this == DirPresence.Pending ||
             (
                 hasVideo &&
+                    this != DirPresence.Empty &&
+                    this != DirPresence.PromotedShell
+                )
+    BrowseContentMode.Document ->
+        this == DirPresence.Pending ||
+            (
+                hasDocument &&
                     this != DirPresence.Empty &&
                     this != DirPresence.PromotedShell
                 )
@@ -78,7 +100,7 @@ fun List<BrowseEntry>.filterByContentMode(
     showVirtualGalleries: Boolean = true,
     /**
      * Live folder search: keep hidden/virtual filters but do not hide types the
-     * current Photo/Media/Video/Folder mode would drop (e.g. files in Media).
+     * current Photo/Media/Video/Folder/Document mode would drop (e.g. files in Media).
      * Photo-grid and SMB share-root listings do not use this.
      */
     allTypes: Boolean = false,
@@ -91,7 +113,7 @@ fun List<BrowseEntry>.filterByContentMode(
             is BrowseEntry.Directory -> {
                 // When virtuals off, PromotedShell is the enterable real folder.
                 if (!showVirtualGalleries && e.presence == DirPresence.PromotedShell) return@filter true
-                e.presence.visibleIn(mode, e.hasGallery, e.hasVideo)
+                e.presence.visibleIn(mode, e.hasGallery, e.hasVideo, e.hasDocument)
             }
             is BrowseEntry.FolderGallery, is BrowseEntry.ArchiveGallery -> true
             is BrowseEntry.VideoFile, is BrowseEntry.RegularFile -> false
@@ -99,7 +121,7 @@ fun List<BrowseEntry>.filterByContentMode(
         BrowseContentMode.Media -> when (e) {
             is BrowseEntry.Directory -> {
                 if (!showVirtualGalleries && e.presence == DirPresence.PromotedShell) return@filter true
-                e.presence.visibleIn(mode, e.hasGallery, e.hasVideo)
+                e.presence.visibleIn(mode, e.hasGallery, e.hasVideo, e.hasDocument)
             }
             is BrowseEntry.FolderGallery, is BrowseEntry.ArchiveGallery -> true
             is BrowseEntry.VideoFile -> true
@@ -108,13 +130,23 @@ fun List<BrowseEntry>.filterByContentMode(
         BrowseContentMode.Video -> when (e) {
             is BrowseEntry.Directory -> {
                 if (!showVirtualGalleries && e.presence == DirPresence.PromotedShell) return@filter true
-                e.presence.visibleIn(mode, e.hasGallery, e.hasVideo)
+                e.presence.visibleIn(mode, e.hasGallery, e.hasVideo, e.hasDocument)
             }
             is BrowseEntry.VideoFile -> true
             is BrowseEntry.FolderGallery, is BrowseEntry.ArchiveGallery, is BrowseEntry.RegularFile -> false
         }
+        BrowseContentMode.Document -> when (e) {
+            is BrowseEntry.Directory -> {
+                if (!showVirtualGalleries && e.presence == DirPresence.PromotedShell) return@filter true
+                e.presence.visibleIn(mode, e.hasGallery, e.hasVideo, e.hasDocument)
+            }
+            is BrowseEntry.ArchiveGallery -> isBrowseDocumentFileName(e.name)
+            // Document files go in the Documents section; leftover files stay in Files.
+            is BrowseEntry.RegularFile -> true
+            is BrowseEntry.FolderGallery, is BrowseEntry.VideoFile -> false
+        }
         BrowseContentMode.Folder -> when (e) {
-            is BrowseEntry.Directory -> e.presence.visibleIn(mode, e.hasGallery, e.hasVideo)
+            is BrowseEntry.Directory -> e.presence.visibleIn(mode, e.hasGallery, e.hasVideo, e.hasDocument)
             is BrowseEntry.ArchiveGallery, is BrowseEntry.RegularFile -> true
             // Real videos only — hide promoted rows (enter real dir instead).
             is BrowseEntry.VideoFile -> !e.virtual
@@ -170,7 +202,7 @@ fun List<BrowseEntryRemote>.filterRemoteByContentMode(
     showVirtualGalleries: Boolean = true,
     /**
      * Live folder search: keep hidden/virtual/unreachable filters but do not hide
-     * types the current Photo/Media/Video/Folder mode would drop (e.g. files in Media).
+     * types the current Photo/Media/Video/Folder/Document mode would drop (e.g. files in Media).
      * Photo-grid and SMB share-root listings do not use this.
      */
     allTypes: Boolean = false,
@@ -185,7 +217,7 @@ fun List<BrowseEntryRemote>.filterRemoteByContentMode(
             BrowseContentMode.Galleries -> when (e) {
                 is BrowseEntryRemote.Directory -> {
                     if (!showVirtualGalleries && e.presence == DirPresence.PromotedShell) return@filter true
-                    e.presence.visibleIn(mode, e.hasGallery, e.hasVideo)
+                    e.presence.visibleIn(mode, e.hasGallery, e.hasVideo, e.hasDocument)
                 }
                 is BrowseEntryRemote.FolderGallery, is BrowseEntryRemote.ArchiveGallery -> true
                 is BrowseEntryRemote.VideoFile, is BrowseEntryRemote.RegularFile -> false
@@ -193,7 +225,7 @@ fun List<BrowseEntryRemote>.filterRemoteByContentMode(
             BrowseContentMode.Media -> when (e) {
                 is BrowseEntryRemote.Directory -> {
                     if (!showVirtualGalleries && e.presence == DirPresence.PromotedShell) return@filter true
-                    e.presence.visibleIn(mode, e.hasGallery, e.hasVideo)
+                    e.presence.visibleIn(mode, e.hasGallery, e.hasVideo, e.hasDocument)
                 }
                 is BrowseEntryRemote.FolderGallery, is BrowseEntryRemote.ArchiveGallery -> true
                 is BrowseEntryRemote.VideoFile -> true
@@ -202,7 +234,7 @@ fun List<BrowseEntryRemote>.filterRemoteByContentMode(
             BrowseContentMode.Video -> when (e) {
                 is BrowseEntryRemote.Directory -> {
                     if (!showVirtualGalleries && e.presence == DirPresence.PromotedShell) return@filter true
-                    e.presence.visibleIn(mode, e.hasGallery, e.hasVideo)
+                    e.presence.visibleIn(mode, e.hasGallery, e.hasVideo, e.hasDocument)
                 }
                 is BrowseEntryRemote.VideoFile -> true
                 is BrowseEntryRemote.FolderGallery,
@@ -210,8 +242,21 @@ fun List<BrowseEntryRemote>.filterRemoteByContentMode(
                 is BrowseEntryRemote.RegularFile,
                 -> false
             }
+            BrowseContentMode.Document -> when (e) {
+                is BrowseEntryRemote.Directory -> {
+                    if (!showVirtualGalleries && e.presence == DirPresence.PromotedShell) return@filter true
+                    e.presence.visibleIn(mode, e.hasGallery, e.hasVideo, e.hasDocument)
+                }
+                is BrowseEntryRemote.ArchiveGallery -> isBrowseDocumentFileName(e.name)
+                // Document files go in the Documents section; leftover files stay in Files.
+                is BrowseEntryRemote.RegularFile -> true
+                is BrowseEntryRemote.FolderGallery,
+                is BrowseEntryRemote.VideoFile,
+                -> false
+            }
             BrowseContentMode.Folder -> when (e) {
-                is BrowseEntryRemote.Directory -> e.presence.visibleIn(mode, e.hasGallery, e.hasVideo)
+                is BrowseEntryRemote.Directory ->
+                    e.presence.visibleIn(mode, e.hasGallery, e.hasVideo, e.hasDocument)
                 is BrowseEntryRemote.ArchiveGallery,
                 is BrowseEntryRemote.RegularFile,
                 -> true
@@ -225,6 +270,7 @@ fun List<BrowseEntryRemote>.filterRemoteByContentMode(
 data class BrowseFolderSections<T>(
     val directories: List<T>,
     val galleries: List<T>,
+    val documents: List<T>,
     val videos: List<T>,
     val files: List<T>,
 )
@@ -232,9 +278,11 @@ data class BrowseFolderSections<T>(
 fun List<BrowseEntry>.toBrowseSections(): BrowseFolderSections<BrowseEntry> {
     val directories = ArrayList<BrowseEntry>()
     val galleries = ArrayList<BrowseEntry>()
+    val documents = ArrayList<BrowseEntry>()
     val videos = ArrayList<BrowseEntry>()
     val files = ArrayList<BrowseEntry>()
     val seenGallery = HashSet<String>()
+    val seenDocument = HashSet<String>()
     for (e in this) {
         when (e) {
             is BrowseEntry.Directory -> directories += e
@@ -244,21 +292,28 @@ fun List<BrowseEntry>.toBrowseSections(): BrowseFolderSections<BrowseEntry> {
             }
             is BrowseEntry.ArchiveGallery -> {
                 val id = "a-${e.path}"
-                if (seenGallery.add(id)) galleries += e
+                if (isBrowseDocumentFileName(e.name)) {
+                    if (seenDocument.add(id)) documents += e
+                } else if (seenGallery.add(id)) {
+                    galleries += e
+                }
             }
             is BrowseEntry.VideoFile -> videos += e
-            is BrowseEntry.RegularFile -> files += e
+            is BrowseEntry.RegularFile ->
+                if (isBrowseDocumentFileName(e.name)) documents += e else files += e
         }
     }
-    return BrowseFolderSections(directories, galleries, videos, files)
+    return BrowseFolderSections(directories, galleries, documents, videos, files)
 }
 
 fun List<BrowseEntryRemote>.toRemoteBrowseSections(): BrowseFolderSections<BrowseEntryRemote> {
     val directories = ArrayList<BrowseEntryRemote>()
     val galleries = ArrayList<BrowseEntryRemote>()
+    val documents = ArrayList<BrowseEntryRemote>()
     val videos = ArrayList<BrowseEntryRemote>()
     val files = ArrayList<BrowseEntryRemote>()
     val seenGallery = HashSet<String>()
+    val seenDocument = HashSet<String>()
     for (e in this) {
         when (e) {
             is BrowseEntryRemote.Directory -> directories += e
@@ -268,11 +323,16 @@ fun List<BrowseEntryRemote>.toRemoteBrowseSections(): BrowseFolderSections<Brows
             }
             is BrowseEntryRemote.ArchiveGallery -> {
                 val id = "a-${e.parentRelativeName}/${e.fileName}"
-                if (seenGallery.add(id)) galleries += e
+                if (isBrowseDocumentFileName(e.name)) {
+                    if (seenDocument.add(id)) documents += e
+                } else if (seenGallery.add(id)) {
+                    galleries += e
+                }
             }
             is BrowseEntryRemote.VideoFile -> videos += e
-            is BrowseEntryRemote.RegularFile -> files += e
+            is BrowseEntryRemote.RegularFile ->
+                if (isBrowseDocumentFileName(e.name)) documents += e else files += e
         }
     }
-    return BrowseFolderSections(directories, galleries, videos, files)
+    return BrowseFolderSections(directories, galleries, documents, videos, files)
 }

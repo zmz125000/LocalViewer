@@ -17,12 +17,12 @@ import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.asMutableState
 
 @Composable
-fun ReaderGeneralSetting() = Column(modifier = Modifier.verticalScroll(rememberScrollState()).navigationBarsPadding()) {
+fun ReaderGeneralSetting(isDocument: Boolean = false) = Column(modifier = Modifier.verticalScroll(rememberScrollState()).navigationBarsPadding()) {
     SpinnerChoice(
         title = stringResource(id = R.string.pref_reader_theme),
         entries = stringArrayResource(id = com.hippo.ehviewer.R.array.reader_themes),
         values = integerArrayResource(id = com.hippo.ehviewer.R.array.reader_themes_values).toList(),
-        field = Settings.readerTheme.asMutableState(),
+        field = if (isDocument) Settings.ebookTheme.asMutableState() else Settings.readerTheme.asMutableState(),
     )
     val hdrDisplay = Settings.readerHdrDisplay.asMutableState()
     SwitchChoice(

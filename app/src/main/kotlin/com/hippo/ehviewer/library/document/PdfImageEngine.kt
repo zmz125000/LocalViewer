@@ -93,6 +93,13 @@ class PdfImageEngine private constructor(
         parser.abortWalk = true
     }
 
+    override fun close() {
+        discoveryStopped = true
+        discoveryPaused = true
+        parser.abortWalk = true
+        pageCursor = null
+    }
+
     override fun resumeDiscovery() {
         parser.abortWalk = false
         discoveryPaused = false
@@ -438,6 +445,9 @@ internal class PdfParser(
     private val source: ArchiveByteSource,
     private val fileSize: Long,
 ) {
+    /** One pattern per open. Building these per object dominated large-book open. */
+    private val directLength = Regex("""/Length\s+(\d+)(?!\s+\d+\s+R)""")
+    private val indirectLength = Regex("""/Length\s+(\d+)\s+(\d+)\s+R""")
     data class XRefEntry(val offset: Long, val gen: Int, val free: Boolean)
 
     private data class PendingPageNode(
@@ -526,8 +536,44 @@ internal class PdfParser(
         return candidate.takeIf { it in 0L until fileSize }
     }
 
-    private fun findObjHeader(text: String, objNum: Int, gen: Int): MatchResult? = Regex("""\b$objNum\s+$gen\s+obj\b""").findAll(text).lastOrNull()
-        ?: Regex("""\b$objNum\s+\d+\s+obj\b""").findAll(text).lastOrNull()
+    /**
+     * Index just past the last `n gen obj` in [text].
+     * A compiled [Regex] per object made a 1000-page outline walk take seconds.
+     */
+    private fun objHeaderEnd(text: String, objNum: Int, gen: Int): Int {
+        val exact = lastObjHeaderEnd(text, objNum, gen)
+        if (exact >= 0) return exact
+        return lastObjHeaderEnd(text, objNum, gen = null)
+    }
+
+    /** [gen] null matches any generation. Returns -1 when the header is absent. */
+    private fun lastObjHeaderEnd(text: String, objNum: Int, gen: Int?): Int {
+        val prefix = objNum.toString()
+        var from = text.length
+        while (from > 0) {
+            val at = text.lastIndexOf(prefix, from - 1)
+            if (at < 0) return -1
+            from = at
+            if (at > 0 && text[at - 1].isLetterOrDigit()) continue
+            var i = at + prefix.length
+            if (i >= text.length || !text[i].isPdfWs()) continue
+            while (i < text.length && text[i].isPdfWs()) i++
+            if (i >= text.length || !text[i].isDigit()) continue
+            var parsedGen = 0
+            while (i < text.length && text[i].isDigit()) {
+                parsedGen = parsedGen * 10 + (text[i].code - '0'.code)
+                i++
+            }
+            if (gen != null && parsedGen != gen) continue
+            if (i >= text.length || !text[i].isPdfWs()) continue
+            while (i < text.length && text[i].isPdfWs()) i++
+            if (!text.startsWith("obj", i)) continue
+            val end = i + 3
+            if (end < text.length && text[end].isLetterOrDigit()) continue
+            return end
+        }
+        return -1
+    }
 
     fun openPageImageCursor(maxPages: Int = MAX_PAGES): PageImageCursor? {
         val root = rootRef?.let { resolve(it) as? PdfDict } ?: run {
@@ -541,32 +587,106 @@ internal class PdfParser(
         return PageImageCursor(pagesNode, maxPages)
     }
 
-    /** Bookmark tree (`/Outlines`). Empty when the file has no chapter destinations. */
-    fun readOutlines(): List<PdfTocEntry> {
-        if (!bootstrap() || encrypted) return emptyList()
-        val root = rootRef?.let { resolve(it) } as? PdfDict ?: return emptyList()
+    /**
+     * Bookmark tree (`/Outlines`).
+     *
+     * The outline itself is a short linked list. A destination that is already a
+     * page number needs no page-tree walk. A destination that points at a page
+     * object does: [pageObjectIndex] maps that object to a 0-based index.
+     * [stillWanted] false abandons the walk and returns nothing.
+     */
+    fun readOutlines(
+        pageCount: Int = -1,
+        stillWanted: () -> Boolean = { true },
+    ): List<PdfTocEntry>? {
+        // null = stopped or failed (do not cache). Empty = this file has no bookmarks.
+        if (!stillWanted()) return null
+        if (!bootstrap() || encrypted) return null
+        val root = rootRef?.let { resolve(it) } as? PdfDict ?: return null
         val outlines = root["/Outlines"]?.let { resolveValue(it) } as? PdfDict ?: return emptyList()
-        val pageOf = pageObjectIndex()
-        val out = ArrayList<PdfTocEntry>()
+        val pending = ArrayList<PendingOutline>(32)
         fun walk(node: PdfDict, depth: Int) {
-            if (depth > 12 || out.size >= 500) return
+            if (!stillWanted() || depth > 12 || pending.size >= 500) return
             var child = node["/First"]?.let { resolveValue(it) } as? PdfDict
             var guard = 0
-            while (child != null && guard++ < 500 && out.size < 500) {
+            while (child != null && guard++ < 500 && pending.size < 500) {
+                if (!stillWanted()) return
                 val title = pdfOutlineTitle(child["/Title"])
-                val page = outlinePageIndex(child, pageOf)
-                if (title.isNotBlank() && page != null) {
-                    out += PdfTocEntry(title, page, depth)
+                val dest = outlineDest(child)
+                if (title.isNotBlank() && dest != null) {
+                    pending += PendingOutline(title, depth, dest)
                 }
                 if (child["/First"] != null) walk(child, depth + 1)
                 child = child["/Next"]?.let { resolveValue(it) } as? PdfDict
             }
         }
         walk(outlines, 0)
+        if (!stillWanted()) return null
+        if (pending.isEmpty()) return emptyList()
+        val pageOf = if (pending.any { it.dest is OutlineDest.PageObj }) {
+            pageObjectIndex(stillWanted)
+        } else {
+            emptyMap()
+        }
+        if (!stillWanted()) return null
+        val out = ArrayList<PdfTocEntry>(pending.size)
+        for (item in pending) {
+            val page = when (val dest = item.dest) {
+                is OutlineDest.Index -> normalizeOutlinePage(dest.raw, pageCount, pageOf)
+                is OutlineDest.PageObj -> pageOf[dest.num]
+            } ?: continue
+            out += PdfTocEntry(item.title, page, item.depth)
+        }
         return out
     }
 
-    private fun pageObjectIndex(): Map<Int, Int> {
+    private data class PendingOutline(val title: String, val depth: Int, val dest: OutlineDest)
+
+    private sealed interface OutlineDest {
+        data class Index(val raw: Int) : OutlineDest
+        data class PageObj(val num: Int) : OutlineDest
+    }
+
+    /** First element of an explicit destination. Does not load a page object. */
+    private fun outlineDest(item: PdfDict): OutlineDest? {
+        val raw = item["/Dest"]
+            ?: (item["/A"]?.let { resolveValue(it) } as? PdfDict)?.get("/D")
+            ?: return null
+        // An indirect /Dest is the destination array (or a name), not the page.
+        val dest = if (raw is PdfRef) resolve(raw) ?: return null else raw
+        val array = dest as? PdfArray ?: return null
+        val first = array.items.firstOrNull() ?: return null
+        return when (first) {
+            is PdfRef -> OutlineDest.PageObj(first.num)
+            is PdfNumber -> OutlineDest.Index(first.value.toInt())
+            is PdfDict -> first.objNum?.let { OutlineDest.PageObj(it) }
+            else -> when (val resolved = resolveValue(first)) {
+                is PdfDict -> resolved.objNum?.let { OutlineDest.PageObj(it) }
+                is PdfNumber -> OutlineDest.Index(resolved.value.toInt())
+                is PdfRef -> OutlineDest.PageObj(resolved.num)
+                else -> null
+            }
+        }
+    }
+
+    private fun normalizeOutlinePage(raw: Int, pageCount: Int, pageOf: Map<Int, Int>): Int? {
+        if (pageOf.isNotEmpty()) {
+            return when {
+                raw in pageOf.values -> raw
+                raw - 1 in pageOf.values -> raw - 1
+                else -> raw.coerceAtLeast(0)
+            }
+        }
+        if (pageCount <= 0) return raw.coerceAtLeast(0)
+        return when {
+            raw in 0 until pageCount -> raw
+            raw - 1 in 0 until pageCount -> raw - 1
+            else -> null
+        }
+    }
+
+    private fun pageObjectIndex(stillWanted: () -> Boolean = { true }): Map<Int, Int> {
+        if (!stillWanted()) return emptyMap()
         val root = rootRef?.let { resolve(it) } as? PdfDict ?: return emptyMap()
         val pagesNode = root["/Pages"]?.let { resolveValue(it) } as? PdfDict ?: return emptyMap()
         val index = HashMap<Int, Int>()
@@ -574,7 +694,9 @@ internal class PdfParser(
         pending.add(pagesNode)
         val seen = HashSet<Int>()
         var n = 0
+        var steps = 0
         while (pending.isNotEmpty() && n < 100_000) {
+            if ((steps++ and 31) == 0 && !stillWanted()) return emptyMap()
             val node = resolveValue(pending.removeFirst()) as? PdfDict ?: continue
             val id = node.objNum
             if (id != null && !seen.add(id)) continue
@@ -586,26 +708,7 @@ internal class PdfParser(
             val kids = node["/Kids"]?.let { resolveValue(it) } as? PdfArray ?: continue
             kids.items.forEach { pending.add(it) }
         }
-        return index
-    }
-
-    private fun outlinePageIndex(item: PdfDict, pageOf: Map<Int, Int>): Int? {
-        val dest = item["/Dest"]?.let { resolveValue(it) }
-            ?: (item["/A"]?.let { resolveValue(it) } as? PdfDict)?.get("/D")?.let { resolveValue(it) }
-        val array = dest as? PdfArray ?: return null
-        return when (val first = array.items.firstOrNull()?.let { resolveValue(it) } ?: array.items.firstOrNull()) {
-            is PdfDict -> first.objNum?.let { pageOf[it] }
-            is PdfRef -> pageOf[first.num]
-            is PdfNumber -> {
-                val raw = first.value.toInt()
-                when {
-                    raw in pageOf.values -> raw
-                    raw - 1 in pageOf.values -> raw - 1
-                    else -> raw.coerceAtLeast(0)
-                }
-            }
-            else -> null
-        }
+        return if (stillWanted()) index else emptyMap()
     }
 
     private fun pdfOutlineTitle(value: PdfValue?): String {
@@ -1054,8 +1157,9 @@ internal class PdfParser(
     /** Parse object dict from a header probe that may not include the full stream body. */
     private fun parseDictOnly(raw: ByteArray, objNum: Int, gen: Int): PdfDict? {
         val text = String(raw, Charsets.ISO_8859_1)
-        val objMatch = findObjHeader(text, objNum, gen) ?: return null
-        val dictStart = text.indexOf("<<", objMatch.range.last)
+        val headerEnd = objHeaderEnd(text, objNum, gen)
+        if (headerEnd < 0) return null
+        val dictStart = text.indexOf("<<", headerEnd)
         if (dictStart < 0) return null
         val (dict, _) = parseDict(raw, dictStart) ?: return null
         dict.objNum = objNum
@@ -1281,8 +1385,9 @@ internal class PdfParser(
     private fun parseStreamAt(raw: ByteArray, objNum: Int, gen: Int): StreamObj? {
         // "n g obj <<...>> stream ... endstream endobj"
         val text = String(raw, Charsets.ISO_8859_1)
-        val objMatch = findObjHeader(text, objNum, gen) ?: return null
-        val dictStart = text.indexOf("<<", objMatch.range.last)
+        val headerEnd = objHeaderEnd(text, objNum, gen)
+        if (headerEnd < 0) return null
+        val dictStart = text.indexOf("<<", headerEnd)
         if (dictStart < 0) return null
         val (dict, dictEnd) = parseDict(raw, dictStart) ?: return null
         dict.objNum = objNum
@@ -1728,6 +1833,28 @@ internal class PdfParser(
         return null
     }
 
+    /** `0000000000 65535 n` at [pos]. Null when the line is not an xref entry. */
+    private fun parseClassicXrefEntry(text: String, pos: Int): Triple<Long, Int, Boolean>? {
+        if (pos + 18 > text.length) return null
+        var offset = 0L
+        for (i in 0 until 10) {
+            val c = text[pos + i]
+            if (c !in '0'..'9') return null
+            offset = offset * 10 + (c.code - '0'.code)
+        }
+        if (!text[pos + 10].isPdfWs()) return null
+        var gen = 0
+        for (i in 11 until 16) {
+            val c = text[pos + i]
+            if (c !in '0'..'9') return null
+            gen = gen * 10 + (c.code - '0'.code)
+        }
+        if (!text[pos + 16].isPdfWs()) return null
+        val flag = text[pos + 17]
+        if (flag != 'n' && flag != 'f') return null
+        return Triple(offset, gen, flag == 'f')
+    }
+
     private fun loadXrefMaybeShifted(offset: Long): Boolean {
         if (loadXref(offset)) return true
         val shifted = shiftedOffset(offset) ?: return false
@@ -1762,30 +1889,29 @@ internal class PdfParser(
             skipWs()
             if (pos >= text.length) break
             if (text.startsWith("trailer", pos)) break
-            // subsection: start count
-            val rest = text.substring(pos)
-            val m = Regex("""^(\d+)\s+(\d+)""").find(rest) ?: break
-            val start = m.groupValues[1].toInt()
-            val count = m.groupValues[2].toInt()
-            pos += m.range.last + 1
+            // subsection: start count. Parsed in place — a Regex per line made open O(pages).
+            if (!text[pos].isDigit()) break
+            var start = 0
+            while (pos < text.length && text[pos].isDigit()) {
+                start = start * 10 + (text[pos].code - '0'.code)
+                pos++
+            }
+            skipWs()
+            if (pos >= text.length || !text[pos].isDigit()) break
+            var count = 0
+            while (pos < text.length && text[pos].isDigit()) {
+                count = count * 10 + (text[pos].code - '0'.code)
+                pos++
+            }
             skipWs()
             for (i in 0 until count) {
                 // 20-byte lines typical: 10 offset, 5 gen, n/f
-                if (pos + 18 > text.length) break
-                val line = text.substring(pos, minOf(pos + 20, text.length))
-                val lm = Regex("""(\d{10})\s+(\d{5})\s+([nf])""").find(line)
-                if (lm != null) {
-                    val off = lm.groupValues[1].toLong()
-                    val gen = lm.groupValues[2].toInt()
-                    val free = lm.groupValues[3] == "f"
-                    val objNum = start + i
-                    if (!free) {
-                        // Newest xref section is loaded first. Older /Prev sections
-                        // must fill gaps, never overwrite revisions from the head.
-                        xref.putIfAbsent(objNum, XRefEntry(off, gen, free = false))
-                    }
+                val entry = parseClassicXrefEntry(text, pos)
+                if (entry != null && !entry.third) {
+                    // Newest xref section is loaded first. Older /Prev sections
+                    // must fill gaps, never overwrite revisions from the head.
+                    xref.putIfAbsent(start + i, XRefEntry(entry.first, entry.second, free = false))
                 }
-                // advance to next line
                 val nl = text.indexOf('\n', pos)
                 pos = if (nl < 0) text.length else nl + 1
             }
@@ -2006,8 +2132,9 @@ internal class PdfParser(
         objectOffset: Long = -1L,
     ): PdfValue? {
         val text = String(raw, Charsets.ISO_8859_1)
-        val m = findObjHeader(text, objNum, gen) ?: return null
-        var i = m.range.last + 1
+        val headerEnd = objHeaderEnd(text, objNum, gen)
+        if (headerEnd < 0) return null
+        var i = headerEnd
         // skip ws
         while (i < raw.size && raw[i].toInt().toChar().isPdfWs()) i++
         // stream?
@@ -2057,7 +2184,7 @@ internal class PdfParser(
         val s = String(data, Charsets.ISO_8859_1)
 
         // Stream with known /Length: one exact-sized read (dict + stream keyword + body).
-        val lenMatch = Regex("""/Length\s+(\d+)(?!\s+\d+\s+R)""").find(s)
+        val lenMatch = directLength.find(s)
         if (lenMatch != null) {
             if (!includeStreamData) return data
             val len = lenMatch.groupValues[1].toLong()
@@ -2080,7 +2207,9 @@ internal class PdfParser(
         }
         if (!includeStreamData) return data
         // Indirect /Length N 0 R — resolve and re-read exact once.
-        val indLen = Regex("""/Length\s+(\d+)\s+(\d+)\s+R""").find(String(data, Charsets.ISO_8859_1))
+        // Dict sits at the start, so the first probe is enough unless we grew past it.
+        val lengthText = if (data.size == s.length) s else String(data, Charsets.ISO_8859_1)
+        val indLen = indirectLength.find(lengthText)
         if (indLen != null) {
             val objN = indLen.groupValues[1].toIntOrNull()
             if (objN != null) {
@@ -2411,9 +2540,45 @@ internal data class PdfTocEntry(
     val depth: Int,
 )
 
-internal fun readPdfChapters(source: ArchiveByteSource, size: Long): List<PdfTocEntry> = runCatching {
-    PdfParser(source, size).readOutlines()
-}.getOrDefault(emptyList())
+/** File name as the first TOC row (page 0). Empty outline becomes name then 2, 3, … */
+internal fun pdfTocWithFileName(
+    fileName: String,
+    chapters: List<PdfTocEntry>,
+    pageCount: Int,
+): List<PdfTocEntry> {
+    val name = fileName.substringAfterLast('/').substringAfterLast('\\').trim()
+    val body = if (chapters.isNotEmpty()) {
+        chapters
+    } else {
+        List(pageCount.coerceAtLeast(0)) { index ->
+            PdfTocEntry(title = "${index + 1}", pageIndex = index, depth = 0)
+        }
+    }
+    if (name.isEmpty()) return body
+    val first = body.firstOrNull()
+    val skipFirst = first != null &&
+        first.pageIndex == 0 &&
+        (first.title == name || (chapters.isEmpty() && first.title == "1"))
+    val rest = if (skipFirst) body.drop(1) else body
+    return listOf(PdfTocEntry(name, 0, 0)) + rest
+}
+
+/**
+ * @return chapters, an empty list when the file has no outline, or null when the
+ * walk was stopped or failed. Null must not be stored as a TOC cache hit.
+ */
+internal fun readPdfChapters(
+    source: ArchiveByteSource,
+    size: Long,
+    pageCount: Int = -1,
+    stillWanted: () -> Boolean = { true },
+): List<PdfTocEntry>? = runCatching {
+    if (!stillWanted()) {
+        null
+    } else {
+        PdfParser(source, size).readOutlines(pageCount, stillWanted)
+    }
+}.getOrNull()
 
 internal data class PdfFrontSample(
     val scannedPages: Int = 0,

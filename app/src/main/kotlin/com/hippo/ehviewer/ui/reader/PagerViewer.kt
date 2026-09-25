@@ -25,9 +25,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.geometry.toRect
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.layout.FixedScale
 import androidx.compose.ui.layout.layout
-import androidx.compose.ui.layout.times
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.LayoutDirection
@@ -572,30 +570,6 @@ private val PagerZoomSpec = ZoomSpec(
     maximum = ZoomLimit(factor = 5f),
     minimum = ZoomLimit(factor = 1f, overzoomEffect = OverzoomEffect.Disabled),
 )
-
-private fun ZoomableState.applyPagerContentAlignment(
-    size: Size,
-    contentScale: ContentScale,
-    layoutSize: Size,
-    alignment: Alignment.Horizontal,
-) {
-    val contentSize = if (contentScale is FixedScale) { // Original
-        size
-    } else {
-        size * contentScale.computeScaleFactor(size, layoutSize)
-    }
-    val horizontalAlignment = if (contentSize.width > layoutSize.width) {
-        alignment
-    } else {
-        Alignment.CenterHorizontally
-    }
-    val verticalAlignment = if (contentSize.height > layoutSize.height) {
-        Alignment.Top
-    } else {
-        Alignment.CenterVertically
-    }
-    contentAlignment = horizontalAlignment + verticalAlignment
-}
 
 /** Lay out [size] in pixels so the no-gap pair matches telephoto's unscaled content. */
 private fun Modifier.fixedPxSize(size: Size) = layout { measurable, _ ->

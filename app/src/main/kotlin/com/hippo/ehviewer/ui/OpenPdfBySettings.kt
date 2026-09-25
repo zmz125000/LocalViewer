@@ -17,8 +17,10 @@ import com.hippo.ehviewer.library.HistoryThumbKey
 import com.hippo.ehviewer.library.LocalHistory
 import com.hippo.ehviewer.library.SMB_ARCHIVE_TOKEN
 import com.hippo.ehviewer.library.WEBDAV_ARCHIVE_TOKEN
+import com.hippo.ehviewer.library.ZipPaths
 import com.hippo.ehviewer.library.document.PdfContentKind
 import com.hippo.ehviewer.library.document.PdfImageEngine
+import com.hippo.ehviewer.library.isEbookFileName
 import com.hippo.ehviewer.library.isPdfFileName
 import com.hippo.ehviewer.library.openLocalArchiveByteSource
 import com.hippo.ehviewer.library.stableGalleryId
@@ -52,8 +54,21 @@ object OpenPdfBySettings {
 
     fun shouldRedirect(args: ReaderScreenArgs): Boolean {
         if (args.skipPdfPrimary) return false
+        if (isEbookArgs(args)) return true
         if (!isPdfArgs(args)) return false
         return Settings.pdfReaderMode.value != PdfReaderMode.IMAGE
+    }
+
+    /** Stay in [PdfReaderActivity] (ebook, or PDF that is not image/external). */
+    suspend fun shouldOpenInternal(args: ReaderScreenArgs): Boolean {
+        if (args.skipPdfPrimary) return false
+        if (isEbookArgs(args)) return true
+        if (!isPdfArgs(args)) return false
+        return when (Settings.pdfReaderMode.value) {
+            PdfReaderMode.PDF -> true
+            PdfReaderMode.AUTO -> !isImagePdf(args)
+            else -> false
+        }
     }
 
     /** Open PDF/external without composing [com.hippo.ehviewer.ui.reader.ReaderScreen]. */
@@ -96,6 +111,13 @@ object OpenPdfBySettings {
         else -> false
     }
 
+    fun isEbookArgs(args: ReaderScreenArgs): Boolean = when (args) {
+        is ReaderScreenArgs.Archive -> isEbookFileName(fileName(args.path))
+        is ReaderScreenArgs.SmbStreamArchive -> isEbookFileName(fileName(args.remotePath))
+        is ReaderScreenArgs.WebDavStreamArchive -> isEbookFileName(fileName(args.remotePath))
+        else -> false
+    }
+
     /**
      * Long-press while Auto is selected: the built-in reader tap would not have used.
      */
@@ -121,6 +143,10 @@ object OpenPdfBySettings {
     }
 
     suspend fun open(context: Context, args: ReaderScreenArgs): Outcome {
+        if (isEbookArgs(args)) {
+            openInternal(context, args)
+            return Outcome.Handled
+        }
         when (Settings.pdfReaderMode.value) {
             PdfReaderMode.AUTO -> {
                 if (isImagePdf(args)) return Outcome.Gallery(args.asGallery())
@@ -179,63 +205,72 @@ object OpenPdfBySettings {
     }
 
     private suspend fun openInternal(context: Context, args: ReaderScreenArgs) {
-        when (args) {
-            is ReaderScreenArgs.Archive -> {
-                val path = args.path
-                val name = fileName(path)
-                val info = args.info ?: LocalHistory.galleryInfoForLocalArchive(path, title = name)
-                LocalHistory.ensureGalleryForProgress(info)
-                LocalHistory.recordLocalArchive(path, title = name)
-                OpenPdfExternally.openInternalLocal(
-                    context,
-                    path,
-                    displayName = name,
-                    progressGid = info.gid,
-                    startPage = startPage(args.page, info.gid),
-                )
-            }
-            is ReaderScreenArgs.SmbStreamArchive -> {
-                val remote = args.remotePath.trim('/')
-                val name = args.info?.title?.ifBlank { null } ?: fileName(remote)
-                val info = args.info ?: smbInfo(args.sourceId, remote, name)
-                LocalHistory.ensureGalleryForProgress(info)
-                LocalHistory.recordSmbStreamArchive(
-                    args.sourceId,
-                    remote,
-                    title = name,
-                    info = info,
-                )
-                OpenPdfExternally.openInternalSmb(
-                    context,
-                    args.sourceId,
-                    remote,
-                    displayName = name,
-                    progressGid = info.gid,
-                    startPage = startPage(args.page, info.gid),
-                )
-            }
-            is ReaderScreenArgs.WebDavStreamArchive -> {
-                val remote = args.remotePath.trim('/')
-                val name = args.info?.title?.ifBlank { null } ?: fileName(remote)
-                val info = args.info ?: webDavInfo(args.sourceId, remote, name)
-                LocalHistory.ensureGalleryForProgress(info)
-                LocalHistory.recordWebDavStreamArchive(
-                    args.sourceId,
-                    remote,
-                    title = name,
-                    info = info,
-                )
-                OpenPdfExternally.openInternalWebDav(
-                    context,
-                    args.sourceId,
-                    remote,
-                    displayName = name,
-                    progressGid = info.gid,
-                    startPage = startPage(args.page, info.gid),
-                )
-            }
-            else -> error("not a PDF archive")
+        val intent = prepareInternal(context, args)
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        intent.addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
+        withUIContext { context.startActivity(intent) }
+    }
+
+    /**
+     * History + streamdoc [Intent] for [PdfReaderActivity] without starting it.
+     * Sibling hop reuses the same activity instead of flashing a loading spinner.
+     */
+    suspend fun prepareInternal(context: Context, args: ReaderScreenArgs): Intent = when (args) {
+        is ReaderScreenArgs.Archive -> {
+            val path = args.path
+            val name = fileName(path)
+            val info = args.info ?: LocalHistory.galleryInfoForLocalArchive(path, title = name)
+            LocalHistory.ensureGalleryForProgress(info)
+            LocalHistory.recordLocalArchive(path, title = name)
+            OpenFileExternally.preparePdfReaderIntentLocal(
+                context,
+                path,
+                name,
+                info.gid,
+                startPage(args.page, info.gid),
+            )
         }
+        is ReaderScreenArgs.SmbStreamArchive -> {
+            val remote = args.remotePath.trim('/')
+            val name = args.info?.title?.ifBlank { null } ?: fileName(remote)
+            val info = args.info ?: smbInfo(args.sourceId, remote, name)
+            LocalHistory.ensureGalleryForProgress(info)
+            LocalHistory.recordSmbStreamArchive(
+                args.sourceId,
+                remote,
+                title = name,
+                info = info,
+            )
+            OpenFileExternally.preparePdfReaderIntentSmb(
+                context,
+                args.sourceId,
+                remote,
+                name,
+                info.gid,
+                startPage(args.page, info.gid),
+            )
+        }
+        is ReaderScreenArgs.WebDavStreamArchive -> {
+            val remote = args.remotePath.trim('/')
+            val name = args.info?.title?.ifBlank { null } ?: fileName(remote)
+            val info = args.info ?: webDavInfo(args.sourceId, remote, name)
+            LocalHistory.ensureGalleryForProgress(info)
+            LocalHistory.recordWebDavStreamArchive(
+                args.sourceId,
+                remote,
+                title = name,
+                info = info,
+            )
+            OpenFileExternally.preparePdfReaderIntentWebDav(
+                context,
+                args.sourceId,
+                remote,
+                name,
+                info.gid,
+                startPage(args.page, info.gid),
+            )
+        }
+        else -> error("not a PDF archive")
     }
 
     private suspend fun openExternal(context: Context, args: ReaderScreenArgs) {
@@ -267,10 +302,11 @@ object OpenPdfBySettings {
         return runCatching { EhDB.getReadProgress(gid) }.getOrDefault(0)
     }
 
-    private fun fileName(path: String): String = path.trimEnd('/', '\\')
-        .substringAfterLast('/')
-        .substringAfterLast('\\')
-        .ifEmpty { File(path).name }
+    private fun fileName(path: String): String = ZipPaths.memberLeafName(path)
+        ?: path.trimEnd('/', '\\')
+            .substringAfterLast('/')
+            .substringAfterLast('\\')
+            .ifEmpty { File(path).name }
 
     private fun smbInfo(sourceId: Long, remote: String, name: String) = BaseGalleryInfo(
         gid = stableGalleryId(sourceId, "smba:$remote"),

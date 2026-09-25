@@ -30,7 +30,7 @@ enum class BrowseVirtualKind {
 
     val isVirtual: Boolean get() = this != None
 
-    /** Hide Media/Galleries/Video/Folder in the view menu. */
+    /** Hide Media/Galleries/Video/Document/Folder in the view menu. */
     val hideContentModes: Boolean get() = isVirtual
 
     /** Force grid layout without writing [Settings.listMode]. */
@@ -99,8 +99,22 @@ fun localBrowseVirtual(
     else -> BrowseVirtualKind.None
 }
 
+/** Effective list/grid: photo-grid wins, then Document force-list, else [listMode]. */
+fun browseUseGrid(
+    listMode: Int,
+    contentMode: BrowseContentMode,
+    virtual: BrowseVirtualKind,
+): Boolean = virtual.forceGrid || (!contentMode.forceList && listMode == 1)
+
 fun browseScrollLayoutKey(
     listMode: Int,
     contentMode: BrowseContentMode,
     virtual: BrowseVirtualKind,
-): Int = listMode * 10 + contentMode.prefValue + virtual.scrollKeyBoost
+): Int {
+    val layout = when {
+        virtual.forceGrid -> 1
+        contentMode.forceList -> 0
+        else -> listMode
+    }
+    return layout * 10 + contentMode.prefValue + virtual.scrollKeyBoost
+}
