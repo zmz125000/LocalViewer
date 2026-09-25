@@ -487,7 +487,9 @@
     <string name="settings_privacy_save_history">保存历史</string>
     <string name="settings_privacy_save_history_summary">浏览文件夹、文件与图库历史的总开关。关闭后会清除已有历史。</string>
     <string name="settings_privacy_save_file_history">保存文件历史</string>
-    <string name="settings_privacy_save_file_history_summary">记录打开的压缩包、视频与其他非文件夹文件。父文件夹仍会在开启“保存历史”时记录。</string>
+    <string name="settings_privacy_save_file_history_summary">记录打开的压缩包、视频与其他非电子书文件。父文件夹仍会在开启“保存历史”时记录。</string>
+    <string name="settings_privacy_save_ebook_history">保存电子书历史</string>
+    <string name="settings_privacy_save_ebook_history_summary">记录打开的文本电子书（TXT、EPUB、HTML、FB2、Markdown）。父文件夹仍会在开启“保存历史”时记录。</string>
     <string name="settings_privacy_save_gallery_history">保存图库历史</string>
     <string name="settings_privacy_save_gallery_history_summary">记录打开的库图库与文件夹图库。父文件夹仍会在开启“保存历史”时记录。</string>
     <string name="settings_general_back_to_upper_dir">返回上级目录</string>
@@ -891,6 +893,9 @@
     <string name="pref_ebook_font_size">字号</string>
     <string name="pref_ebook_charset">代码页</string>
     <string name="ebook_charset_auto">自动</string>
+    <string name="ebook_charset_auto_zh">自动（中文）</string>
+    <string name="ebook_charset_auto_ko">自动（韩文）</string>
+    <string name="ebook_charset_auto_ja">自动（日文）</string>
     <string name="ebook_charset_utf8">UTF-8</string>
     <string name="ebook_charset_utf16le">UTF-16 LE</string>
     <string name="ebook_charset_utf16be">UTF-16 BE</string>

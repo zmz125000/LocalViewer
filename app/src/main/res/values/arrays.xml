@@ -280,6 +280,9 @@
 
     <string-array name="ebook_charset">
         <item>@string/ebook_charset_auto</item>
+        <item>@string/ebook_charset_auto_zh</item>
+        <item>@string/ebook_charset_auto_ko</item>
+        <item>@string/ebook_charset_auto_ja</item>
         <item>@string/ebook_charset_utf8</item>
         <item>@string/ebook_charset_utf16le</item>
         <item>@string/ebook_charset_utf16be</item>

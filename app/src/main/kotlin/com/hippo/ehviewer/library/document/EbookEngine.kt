@@ -45,17 +45,18 @@ internal object EbookEngine {
         fileName: String,
         stillWanted: () -> Boolean = { true },
         charset: Charset? = null,
+        charsetPref: Int = TextCharset.PREF_AUTO,
     ): List<EbookChapter>? {
         if (!stillWanted()) return null
         val ext = FileUtils.getExtensionFromFilename(fileName)?.lowercase().orEmpty()
         val chapters = runCatching {
             when (ext) {
                 "epub" -> parseEpub(source, stillWanted)
-                "txt", "text" -> parseTxt(source, stillWanted, charset)
-                "html", "htm", "xhtml" -> parseHtml(source, fileName, charset)
-                "fb2" -> parseFb2(source, fileName, charset)
-                "md", "markdown" -> parseMarkdown(source, fileName, charset)
-                else -> parseTxt(source, stillWanted, charset)
+                "txt", "text" -> parseTxt(source, stillWanted, charset, charsetPref)
+                "html", "htm", "xhtml" -> parseHtml(source, fileName, charset, charsetPref)
+                "fb2" -> parseFb2(source, fileName, charset, charsetPref)
+                "md", "markdown" -> parseMarkdown(source, fileName, charset, charsetPref)
+                else -> parseTxt(source, stillWanted, charset, charsetPref)
             }
         }.onFailure { logcat("Ebook", it) }.getOrNull() ?: return null
         if (!stillWanted()) return null
@@ -66,11 +67,12 @@ internal object EbookEngine {
         source: ArchiveByteSource,
         stillWanted: () -> Boolean,
         charset: Charset?,
+        charsetPref: Int,
     ): List<EbookChapter> {
         if (!stillWanted()) return emptyList()
         val bytes = source.readFully(MAX_TEXT_BYTES) ?: return emptyList()
         if (!stillWanted()) return emptyList()
-        val text = TextCharset.decode(bytes, forced = charset)
+        val text = TextCharset.decode(bytes, forced = charset, pref = charsetPref)
         if (!stillWanted()) return emptyList()
         return chaptersFromPlain(text, "Text")
     }
@@ -79,9 +81,10 @@ internal object EbookEngine {
         source: ArchiveByteSource,
         fileName: String,
         charset: Charset?,
+        charsetPref: Int,
     ): List<EbookChapter> {
         val bytes = source.readFully(MAX_TEXT_BYTES) ?: return emptyList()
-        val html = TextCharset.decode(bytes, htmlHint = true, forced = charset)
+        val html = TextCharset.decode(bytes, htmlHint = true, forced = charset, pref = charsetPref)
         return EbookHtml.chaptersFromHtml(html, titleFromName(fileName))
     }
 
@@ -89,9 +92,10 @@ internal object EbookEngine {
         source: ArchiveByteSource,
         fileName: String,
         charset: Charset?,
+        charsetPref: Int,
     ): List<EbookChapter> {
         val bytes = source.readFully(MAX_TEXT_BYTES) ?: return emptyList()
-        val text = TextCharset.decode(bytes, forced = charset)
+        val text = TextCharset.decode(bytes, forced = charset, pref = charsetPref)
         return chaptersFromMarkdown(text, titleFromName(fileName))
     }
 
@@ -99,9 +103,10 @@ internal object EbookEngine {
         source: ArchiveByteSource,
         fileName: String,
         charset: Charset?,
+        charsetPref: Int,
     ): List<EbookChapter> {
         val bytes = source.readFully(MAX_TEXT_BYTES) ?: return emptyList()
-        val xml = TextCharset.decode(bytes, htmlHint = true, forced = charset)
+        val xml = TextCharset.decode(bytes, htmlHint = true, forced = charset, pref = charsetPref)
         return chaptersFromFb2(xml, titleFromName(fileName))
     }
 

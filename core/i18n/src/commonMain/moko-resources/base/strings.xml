@@ -708,7 +708,9 @@
     <string name="settings_privacy_save_history">Save history</string>
     <string name="settings_privacy_save_history_summary">Master switch for browse folders, files, and galleries. Turning this off clears existing history.</string>
     <string name="settings_privacy_save_file_history">Save file history</string>
-    <string name="settings_privacy_save_file_history_summary">Record opened archives, videos, and other non-folder files. Parent folders are still recorded when Save history is on.</string>
+    <string name="settings_privacy_save_file_history_summary">Record opened archives, videos, and other non-ebook files. Parent folders are still recorded when Save history is on.</string>
+    <string name="settings_privacy_save_ebook_history">Save ebook history</string>
+    <string name="settings_privacy_save_ebook_history_summary">Record opened text ebooks (TXT, EPUB, HTML, FB2, Markdown). Parent folders are still recorded when Save history is on.</string>
     <string name="settings_privacy_save_gallery_history">Save gallery history</string>
     <string name="settings_privacy_save_gallery_history_summary">Record opened library and folder galleries. Parent folders are still recorded when Save history is on.</string>
     <string name="settings_general_back_to_upper_dir">Back to upper dir</string>
@@ -936,6 +938,9 @@
     <string name="pref_ebook_font_size">Size</string>
     <string name="pref_ebook_charset">Code page</string>
     <string name="ebook_charset_auto">Auto</string>
+    <string name="ebook_charset_auto_zh">Auto (Chinese)</string>
+    <string name="ebook_charset_auto_ko">Auto (Korean)</string>
+    <string name="ebook_charset_auto_ja">Auto (Japanese)</string>
     <string name="ebook_charset_utf8">UTF-8</string>
     <string name="ebook_charset_utf16le">UTF-16 LE</string>
     <string name="ebook_charset_utf16be">UTF-16 BE</string>

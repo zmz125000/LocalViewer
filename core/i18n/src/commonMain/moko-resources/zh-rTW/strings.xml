@@ -250,7 +250,9 @@
     <string name="settings_privacy_save_history">儲存歷史</string>
     <string name="settings_privacy_save_history_summary">瀏覽資料夾、檔案與圖庫歷史的總開關。關閉後會清除既有歷史。</string>
     <string name="settings_privacy_save_file_history">儲存檔案歷史</string>
-    <string name="settings_privacy_save_file_history_summary">記錄開啟的壓縮檔、影片與其他非資料夾檔案。父資料夾仍會在開啟「儲存歷史」時記錄。</string>
+    <string name="settings_privacy_save_file_history_summary">記錄開啟的壓縮檔、影片與其他非電子書檔案。父資料夾仍會在開啟「儲存歷史」時記錄。</string>
+    <string name="settings_privacy_save_ebook_history">儲存電子書歷史</string>
+    <string name="settings_privacy_save_ebook_history_summary">記錄開啟的文字電子書（TXT、EPUB、HTML、FB2、Markdown）。父資料夾仍會在開啟「儲存歷史」時記錄。</string>
     <string name="settings_privacy_save_gallery_history">儲存圖庫歷史</string>
     <string name="settings_privacy_save_gallery_history_summary">記錄開啟的庫圖庫與資料夾圖庫。父資料夾仍會在開啟「儲存歷史」時記錄。</string>
     <string name="settings_general_back_to_upper_dir">返回上層目錄</string>
@@ -868,6 +870,9 @@
     <string name="pref_ebook_font_size">字級</string>
     <string name="pref_ebook_charset">代碼頁</string>
     <string name="ebook_charset_auto">自動</string>
+    <string name="ebook_charset_auto_zh">自動（中文）</string>
+    <string name="ebook_charset_auto_ko">自動（韓文）</string>
+    <string name="ebook_charset_auto_ja">自動（日文）</string>
     <string name="ebook_charset_utf8">UTF-8</string>
     <string name="ebook_charset_utf16le">UTF-16 LE</string>
     <string name="ebook_charset_utf16be">UTF-16 BE</string>

@@ -77,6 +77,55 @@ class TextCharsetTest {
         val forcedHan = TextCharset.decode(bytes, forced = gbk)
             .count { Character.UnicodeScript.of(it.code) == Character.UnicodeScript.HAN }
         assertEquals(han, forcedHan)
+        val autoZh = TextCharset.detect(bytes, pref = TextCharset.PREF_AUTO_ZH).first.name().uppercase()
+        assertTrue("autoZh=$autoZh", autoZh.contains("GB") || autoZh.contains("18030"))
+        assertTrue(
+            "autoZh decode han",
+            TextCharset.decode(bytes, pref = TextCharset.PREF_AUTO_ZH)
+                .count { Character.UnicodeScript.of(it.code) == Character.UnicodeScript.HAN } > 1000,
+        )
+    }
+
+    @Test
+    fun eucKrKoreanIsNotGbk() {
+        val kr = charset("EUC-KR")
+        val body = "한글 테스트입니다. 이것은 한국어 문서입니다. 다음 문장도 한국어입니다. ".repeat(80)
+        val bytes = body.toByteArray(kr)
+        val (cs, _) = TextCharset.detect(bytes)
+        val name = cs.name().uppercase()
+        assertTrue("detected=$name", name.contains("EUC-KR") || name.contains("EUC_KR") || name.contains("949"))
+        val text = TextCharset.decode(bytes)
+        assertTrue(text.contains("한글"))
+        val autoKo = TextCharset.detect(bytes, pref = TextCharset.PREF_AUTO_KO).first.name().uppercase()
+        assertTrue("autoKo=$autoKo", autoKo.contains("EUC-KR") || autoKo.contains("EUC_KR") || autoKo.contains("949"))
+    }
+
+    @Test
+    fun shiftJisJapaneseStaysJapanese() {
+        val sjis = charset("windows-31j", "Shift_JIS")
+        val body = "これは日本語のテストです。漢字も交ぜます。太陽バッテリー。".repeat(40)
+        val bytes = body.toByteArray(sjis)
+        val (cs, _) = TextCharset.detect(bytes)
+        val name = cs.name().uppercase()
+        assertTrue(
+            "detected=$name",
+            name.contains("SHIFT") || name.contains("31J") || name.contains("SJIS"),
+        )
+        val autoJa = TextCharset.detect(bytes, pref = TextCharset.PREF_AUTO_JA).first.name().uppercase()
+        assertTrue(
+            "autoJa=$autoJa",
+            autoJa.contains("SHIFT") || autoJa.contains("31J") || autoJa.contains("SJIS"),
+        )
+        assertTrue(TextCharset.decode(bytes).contains("日本語"))
+    }
+
+    @Test
+    fun autoChineseUtf8StillUtf8() {
+        val body = "这是一段用于代码页检测的简体中文。".repeat(200)
+        val bytes = body.toByteArray(StandardCharsets.UTF_8)
+        assertEquals(StandardCharsets.UTF_8, TextCharset.detect(bytes, pref = TextCharset.PREF_AUTO_ZH).first)
+        assertEquals(StandardCharsets.UTF_8, TextCharset.detect(bytes, pref = TextCharset.PREF_AUTO_KO).first)
+        assertEquals(StandardCharsets.UTF_8, TextCharset.detect(bytes, pref = TextCharset.PREF_AUTO_JA).first)
     }
 
     @Test

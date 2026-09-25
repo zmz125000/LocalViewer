@@ -217,6 +217,17 @@ object LocalHistory {
         return isBrowseDocumentFileName(title) || isBrowseDocumentFileName(name)
     }
 
+    /**
+     * Built-in text ebook (TXT / EPUB / HTML / FB2 / Markdown). Used by the
+     * Privacy “save ebook history” gate. Directory pins are never ebooks.
+     */
+    fun isHistoryEbook(info: GalleryInfo): Boolean {
+        if (isBrowseDirectory(info)) return false
+        val title = info.title.orEmpty()
+        val name = fileNameOfHistory(info)
+        return isEbookFileName(title) || isEbookFileName(name)
+    }
+
     /** PDF / MOBI file/gallery rows appear on both Media and Documents. */
     fun isHistoryPdfOrMobi(info: GalleryInfo): Boolean {
         val title = info.title.orEmpty()
@@ -363,30 +374,36 @@ object LocalHistory {
 
     /**
      * Privacy gates for HISTORY writes. Master [Settings.saveHistory] must be on.
-     * Browse-dir rows always pass when master is on; file vs gallery use nested prefs.
+     * Browse-dir rows always pass when master is on; file / ebook / gallery use nested prefs.
      * (Cover keys / parent-dir side records use the same [EhDB.putHistoryInfo] path.)
      */
     fun isHistoryWriteAllowed(info: GalleryInfo): Boolean {
         if (!Settings.saveHistory.value) return false
         return when (info.token) {
-            // Dir pins: parent of opened file/gallery — not gated by file/gallery toggles.
+            // Dir pins: parent of opened file/gallery — not gated by nested toggles.
             LOCAL_BROWSE_TOKEN, SMB_BROWSE_TOKEN, WEBDAV_BROWSE_TOKEN -> true
-            // Files (archives, videos, regular/external files).
-            LOCAL_ARCHIVE_TOKEN, SMB_ARCHIVE_TOKEN, WEBDAV_ARCHIVE_TOKEN,
-            LOCAL_FILE_TOKEN, SMB_FILE_TOKEN, WEBDAV_FILE_TOKEN,
-            -> Settings.saveFileHistory.value
-            // Folder galleries (image dirs).
-            LOCAL_FOLDER_TOKEN, SMB_FOLDER_TOKEN, WEBDAV_FOLDER_TOKEN ->
-                Settings.saveGalleryHistory.value
-            // Scanned library: category 1 = archive file, else folder gallery.
-            LOCAL_GALLERY_TOKEN ->
-                if (info.category == 1) {
-                    Settings.saveFileHistory.value
-                } else {
-                    Settings.saveGalleryHistory.value
+            else -> if (isHistoryEbook(info)) {
+                Settings.saveEbookHistory.value
+            } else {
+                when (info.token) {
+                    // Files (archives, videos, regular/external files). Ebooks already handled.
+                    LOCAL_ARCHIVE_TOKEN, SMB_ARCHIVE_TOKEN, WEBDAV_ARCHIVE_TOKEN,
+                    LOCAL_FILE_TOKEN, SMB_FILE_TOKEN, WEBDAV_FILE_TOKEN,
+                    -> Settings.saveFileHistory.value
+                    // Folder galleries (image dirs).
+                    LOCAL_FOLDER_TOKEN, SMB_FOLDER_TOKEN, WEBDAV_FOLDER_TOKEN ->
+                        Settings.saveGalleryHistory.value
+                    // Scanned library: category 1 = archive file, else folder gallery.
+                    LOCAL_GALLERY_TOKEN ->
+                        if (info.category == 1) {
+                            Settings.saveFileHistory.value
+                        } else {
+                            Settings.saveGalleryHistory.value
+                        }
+                    // Legacy / unknown: treat as gallery.
+                    else -> Settings.saveGalleryHistory.value
                 }
-            // Legacy / unknown: treat as gallery.
-            else -> Settings.saveGalleryHistory.value
+            }
         }
     }
 

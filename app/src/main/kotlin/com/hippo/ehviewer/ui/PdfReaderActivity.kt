@@ -762,7 +762,7 @@ private fun openEbookDocument(
         } else {
             null
         }
-        val chapters = cached ?: EbookEngine.parse(source, fileName, stillWanted, forced)
+        val chapters = cached ?: EbookEngine.parse(source, fileName, stillWanted, forced, charsetPref)
         if (chapters.isNullOrEmpty() || !stillWanted()) return null
         if (cached == null && cacheKey != null && size > 0L && stillWanted()) {
             EbookBodyCache.save(cacheKey, size, chapters, charsetKey)

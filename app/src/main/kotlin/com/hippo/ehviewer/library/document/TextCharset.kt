@@ -17,6 +17,11 @@ import java.nio.charset.StandardCharsets
  * 3. UTF-8 if the sample is well-formed (allow an incomplete sequence only at
  *    the end of a truncated sample)
  * 4. Legacy OEM/ANSI pages scored as document text, not zip names
+ *
+ * Language-biased auto (Chinese / Korean / Japanese) still prefers UTF-8
+ * when the sample is well-formed; the hint only ranks legacy CJK pages.
+ * GB2312 vs EUC-KR: Hangul-lead ratio (KS X 1001 0xB0–0xC8) must dominate
+ * before a page is called Korean — IBM949 otherwise maps Chinese as Hangul.
  */
 internal object TextCharset {
     private const val SAMPLE = 64 * 1024
@@ -31,6 +36,9 @@ internal object TextCharset {
     const val PREF_SJIS = 7
     const val PREF_EUCKR = 8
     const val PREF_1252 = 9
+    const val PREF_AUTO_ZH = 10
+    const val PREF_AUTO_KO = 11
+    const val PREF_AUTO_JA = 12
 
     fun forcedCharset(pref: Int): Charset? = when (pref) {
         PREF_UTF8 -> UTF8
@@ -47,7 +55,7 @@ internal object TextCharset {
         else -> null
     }
 
-    /** Cache bucket: `auto` or a stable family name. */
+    /** Cache bucket: `auto` / `auto-zh` / family name. Auto language hints keep UTF-8 first. */
     fun cacheLabel(pref: Int): String = when (pref) {
         PREF_UTF8 -> "utf8"
         PREF_UTF16LE -> "utf16le"
@@ -58,21 +66,29 @@ internal object TextCharset {
         PREF_SJIS -> "sjis"
         PREF_EUCKR -> "euckr"
         PREF_1252 -> "1252"
+        PREF_AUTO_ZH -> "auto-zh"
+        PREF_AUTO_KO -> "auto-ko"
+        PREF_AUTO_JA -> "auto-ja"
         else -> "auto"
     }
 
-    fun decode(bytes: ByteArray, htmlHint: Boolean = false, forced: Charset? = null): String {
+    fun decode(
+        bytes: ByteArray,
+        htmlHint: Boolean = false,
+        forced: Charset? = null,
+        pref: Int = PREF_AUTO,
+    ): String {
         if (bytes.isEmpty()) return ""
         if (forced != null) {
             val bom = bom(bytes)
             val offset = if (bom != null && sameFamily(bom.first, forced)) bom.second else 0
             return String(bytes, offset, bytes.size - offset, forced)
         }
-        val (cs, offset) = detect(bytes, htmlHint)
+        val (cs, offset) = detect(bytes, htmlHint, pref)
         return String(bytes, offset, bytes.size - offset, cs)
     }
 
-    fun detect(bytes: ByteArray, htmlHint: Boolean = false): Pair<Charset, Int> {
+    fun detect(bytes: ByteArray, htmlHint: Boolean = false, pref: Int = PREF_AUTO): Pair<Charset, Int> {
         if (bytes.isEmpty()) return UTF8 to 0
         bom(bytes)?.let { return it }
         if (htmlHint) {
@@ -81,7 +97,7 @@ internal object TextCharset {
         val sample = if (bytes.size <= SAMPLE) bytes else bytes.copyOf(SAMPLE)
         val truncated = bytes.size > sample.size
         if (decodeSample(sample, UTF8, truncated) != null) return UTF8 to 0
-        val cs = detectLegacy(sample) ?: UTF8
+        val cs = detectLegacy(sample, pref) ?: UTF8
         return cs to 0
     }
 
@@ -99,11 +115,12 @@ internal object TextCharset {
         return null
     }
 
-    private fun detectLegacy(sample: ByteArray): Charset? {
+    private fun detectLegacy(sample: ByteArray, pref: Int): Charset? {
         val gbk = dbcsFit(sample, ::isGbkPair)
         val big5 = dbcsFit(sample, ::isBig5Pair)
         val sjis = sjisFit(sample)
         val eucKr = eucKrFit(sample)
+        val hangulLead = hangulLeadRatio(sample)
         val c1High = c1HighRatio(sample)
         var best: Charset? = null
         var bestScore = Int.MIN_VALUE
@@ -111,7 +128,7 @@ internal object TextCharset {
             val strict = ZipNameDecoder.decodeOrNull(sample, cs)
             val text = strict ?: decodeLenient(sample, cs)
             if (text.isEmpty()) continue
-            var score = scoreDocument(text, cs, gbk, big5, sjis, eucKr, c1High)
+            var score = scoreDocument(text, cs, gbk, big5, sjis, eucKr, c1High, hangulLead, pref)
             if (strict == null) score -= 2500
             if (score > bestScore) {
                 bestScore = score
@@ -183,6 +200,33 @@ internal object TextCharset {
         lead in 0xA1..0xFE && trail in 0xA1..0xFE
     }
 
+    /**
+     * KS X 1001 Hangul syllables use lead 0xB0–0xC8. Real Korean is almost all
+     * that block; GB2312 Chinese decoded as EUC-KR is mixed (~0.3–0.6).
+     */
+    private fun hangulLeadRatio(sample: ByteArray): Float {
+        var hangul = 0
+        var pairs = 0
+        var i = 0
+        while (i < sample.size) {
+            val lead = sample[i].toInt() and 0xff
+            if (lead < 0x80) {
+                i++
+                continue
+            }
+            if (i + 1 >= sample.size) break
+            val trail = sample[i + 1].toInt() and 0xff
+            if (lead in 0xA1..0xFE && trail in 0xA1..0xFE) {
+                pairs++
+                if (lead in 0xB0..0xC8) hangul++
+                i += 2
+            } else {
+                i++
+            }
+        }
+        return if (pairs == 0) 0f else hangul.toFloat() / pairs
+    }
+
     /** Windows-1252 letters/dashes live in 0x80–0x9F; GBK leads are almost never there. */
     private fun c1HighRatio(sample: ByteArray): Float {
         var high = 0
@@ -233,6 +277,8 @@ internal object TextCharset {
         sjisFit: DbcsFit = DbcsFit(0, 0),
         eucKrFit: DbcsFit = DbcsFit(0, 0),
         c1High: Float = 0f,
+        hangulLead: Float = 0f,
+        pref: Int = PREF_AUTO,
     ): Int {
         var han = 0
         var kana = 0
@@ -282,9 +328,9 @@ internal object TextCharset {
             }
         }
         val cjk = han + kana + hangul
-        // DBCS CJK yields ~half as many letters as a 1-byte page of the same
-        // bytes (1251 turns every high byte into Cyrillic). Weight CJK higher.
-        var score = han * 8 + kana * 10 + hangul * 10 + cyr * 2 + arabic * 2 + latin + latinExt * 2
+        // Han and Hangul share a weight so IBM949 Hangul cannot beat GB2312 Han
+        // on letter count alone. Kana is a stronger Japanese signal than Han.
+        var score = han * 10 + kana * 12 + hangul * 10 + cyr * 2 + arabic * 2 + latin + latinExt * 2
         score -= c1 * 15 + box * 8 + privateUse * 20 + fffd * 80 + hwKana * 20
 
         val name = cs.name().uppercase()
@@ -292,15 +338,18 @@ internal object TextCharset {
         val isBig5 = name.contains("BIG5") || name.contains("BIG-5")
         val isJp = name.contains("SHIFT") || name.contains("31J") || name.contains("EUC-JP") ||
             name.contains("EUC_JP")
-        val isKr = name.contains("EUC-KR") || name.contains("EUC_KR")
+        val isKr = name.contains("EUC-KR") || name.contains("EUC_KR") ||
+            name.contains("949") || name.contains("KSC") ||
+            name.contains("KS_C") || name.contains("KS-C")
         val isCjk = isGb || isBig5 || isJp || isKr
         val isCyr = name.contains("1251") || name.contains("866") || name.contains("KOI8")
         val is437 = name.contains("437")
         val isLatin = name.contains("1252") || name.contains("8859") || name.contains("1250") ||
             name.contains("1254") || name.contains("1258") || is437
+        val krDominant = hangul > 8 && hangul >= han * 3 && hangulLead >= 0.75f
 
-        if (isJp && kana > 8 && kana * 2 >= han) score += 800
-        if (isKr && hangul > 8 && hangul >= han) score += 800
+        if (isJp && kana > 8 && kana * 2 >= han) score += 1200
+        if (isKr && krDominant) score += 800
         if ((isGb || isBig5) && han > 8 && kana * 4 < han && hangul * 4 < han) score += 800
         // 1251/KOI8 map every high byte to Cyrillic — only trust when there is no CJK.
         if (isCyr && cyr > 8 && cjk == 0 && cyr >= latin) score += 400
@@ -312,7 +361,10 @@ internal object TextCharset {
         if (isCjk && latin > cjk * 3) score -= 1500
         if ((isLatin || isCyr) && cjk > maxOf(latin, cyr)) score -= 1500
         if (isJp && kana == 0 && han > 0) score -= 200
-        if (isKr && hangul < han && han > 0) score -= 200
+        // GB2312 Chinese as EUC-KR is mixed Hangul+Hanja (~50–60% hangul leads).
+        if (isKr && cjk > 40 && !krDominant) score -= 2500
+        // Korean Hangul block on the byte stream: do not call that Chinese.
+        if ((isGb || isBig5) && hangulLead >= 0.80f && han > 8) score -= 3000
         if (isGb && han >= 80 && gbkFit.pairs >= 80 && gbkFit.fit >= 0.90f &&
             gbkFit.fit >= big5Fit.fit && c1High < 0.40f
         ) {
@@ -323,18 +375,29 @@ internal object TextCharset {
         ) {
             score += 2500
         }
-        if (isJp && kana >= 80 && sjisFit.pairs >= 80 && sjisFit.fit >= 0.90f &&
-            sjisFit.fit > gbkFit.fit + 0.04f
-        ) {
+        if (isJp && kana >= 40 && kana * 2 >= han && sjisFit.pairs >= 40 && sjisFit.fit >= 0.90f) {
             score += 2500
         }
-        if (isKr && hangul >= 80 && eucKrFit.pairs >= 80 && eucKrFit.fit >= 0.90f &&
-            eucKrFit.fit > gbkFit.fit + 0.04f
-        ) {
+        if (isKr && krDominant && eucKrFit.pairs >= 80 && eucKrFit.fit >= 0.90f) {
             score += 2500
         }
         if (isGb && han >= 80 && gbkFit.fit + 0.15f < big5Fit.fit && big5Fit.pairs >= 80) score -= 1500
         if (isJp && han >= 80 && gbkFit.pairs >= 80 && gbkFit.fit >= 0.90f && kana * 4 < han) score -= 2000
+
+        when (pref) {
+            PREF_AUTO_ZH -> {
+                if (isGb || isBig5) score += 4000
+                if (isKr || isJp) score -= 5000
+            }
+            PREF_AUTO_KO -> {
+                if (isKr) score += 4000
+                if (isGb || isBig5 || isJp) score -= 5000
+            }
+            PREF_AUTO_JA -> {
+                if (isJp) score += 4000
+                if (isGb || isBig5 || isKr) score -= 5000
+            }
+        }
         return score
     }
 

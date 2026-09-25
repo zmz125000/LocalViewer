@@ -221,7 +221,9 @@
     <string name="settings_privacy_save_history">履歴を保存</string>
     <string name="settings_privacy_save_history_summary">ブラウズフォルダ・ファイル・ギャラリー履歴のマスタースイッチです。オフにすると既存の履歴も消去されます。</string>
     <string name="settings_privacy_save_file_history">ファイル履歴を保存</string>
-    <string name="settings_privacy_save_file_history_summary">開いたアーカイブ・動画・その他のファイルを記録します。親フォルダは「履歴を保存」がオンなら引き続き記録されます。</string>
+    <string name="settings_privacy_save_file_history_summary">開いたアーカイブ・動画・電子書籍以外のファイルを記録します。親フォルダは「履歴を保存」がオンなら引き続き記録されます。</string>
+    <string name="settings_privacy_save_ebook_history">電子書籍の履歴を保存</string>
+    <string name="settings_privacy_save_ebook_history_summary">開いたテキスト電子書籍（TXT、EPUB、HTML、FB2、Markdown）を記録します。親フォルダは「履歴を保存」がオンなら引き続き記録されます。</string>
     <string name="settings_privacy_save_gallery_history">ギャラリー履歴を保存</string>
     <string name="settings_privacy_save_gallery_history_summary">開いたライブラリ／フォルダギャラリーを記録します。親フォルダは「履歴を保存」がオンなら引き続き記録されます。</string>
     <string name="settings_general_back_to_upper_dir">上位ディレクトリに戻る</string>
@@ -868,6 +870,9 @@
     <string name="pref_ebook_font_size">サイズ</string>
     <string name="pref_ebook_charset">コードページ</string>
     <string name="ebook_charset_auto">自動</string>
+    <string name="ebook_charset_auto_zh">自動（中国語）</string>
+    <string name="ebook_charset_auto_ko">自動（韓国語）</string>
+    <string name="ebook_charset_auto_ja">自動（日本語）</string>
     <string name="ebook_charset_utf8">UTF-8</string>
     <string name="ebook_charset_utf16le">UTF-16 LE</string>
     <string name="ebook_charset_utf16be">UTF-16 BE</string>

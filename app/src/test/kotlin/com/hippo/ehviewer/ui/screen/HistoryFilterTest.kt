@@ -67,6 +67,24 @@ class HistoryFilterTest {
     }
 
     @Test
+    fun ebookHistoryKindFromName() {
+        val txt = item(LOCAL_FILE_TOKEN, "notes.txt", "/books/notes.txt")
+        val epub = item(LOCAL_ARCHIVE_TOKEN, "book.epub", "/books/book.epub")
+        val html = item(LOCAL_FILE_TOKEN, "index.html", "/site/index.html")
+        val zip = item(LOCAL_ARCHIVE_TOKEN, "pack.cbz", "/comics/pack.cbz")
+        val pdf = item(LOCAL_ARCHIVE_TOKEN, "guide.pdf", "/docs/guide.pdf")
+        val video = item(LOCAL_FILE_TOKEN, "clip.mp4", "/videos/clip.mp4")
+        val dir = item(LOCAL_BROWSE_TOKEN, "Notes", "/root/Notes")
+        assertTrue(LocalHistory.isHistoryEbook(txt))
+        assertTrue(LocalHistory.isHistoryEbook(epub))
+        assertTrue(LocalHistory.isHistoryEbook(html))
+        assertFalse(LocalHistory.isHistoryEbook(zip))
+        assertFalse(LocalHistory.isHistoryEbook(pdf))
+        assertFalse(LocalHistory.isHistoryEbook(video))
+        assertFalse(LocalHistory.isHistoryEbook(dir))
+    }
+
+    @Test
     fun videoGoesToMediaOnly() {
         val video = item(LOCAL_FILE_TOKEN, "clip.mp4", "/videos/clip.mp4")
         assertEquals(listOf(video), filterHistoryFileItems(listOf(video), HistorySection.Media))

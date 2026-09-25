@@ -428,7 +428,7 @@ object Settings : DataStorePreferences(null) {
     /**
      * When [saveHistory] is on: record opened **files** (archives, stream archives,
      * videos, and other non-dir files, including library archive galleries). Default on.
-     * Does not gate browse-dir history.
+     * Ebooks use [saveEbookHistory] instead. Does not gate browse-dir history.
      */
     val saveFileHistory = boolPref("save_file_history", true)
 
@@ -437,6 +437,12 @@ object Settings : DataStorePreferences(null) {
      * browse folder-galleries). Default on. Does not gate browse-dir history.
      */
     val saveGalleryHistory = boolPref("save_gallery_history", true)
+
+    /**
+     * When [saveHistory] is on: record opened **ebooks** (TXT / EPUB / HTML / FB2 /
+     * Markdown). Default on. Independent of [saveFileHistory]. Does not gate browse-dir history.
+     */
+    val saveEbookHistory = boolPref("save_ebook_history", true)
 
     /**
      * Back to upper directory when opening from History / Library / Favourites.
@@ -627,13 +633,17 @@ object Settings : DataStorePreferences(null) {
     const val EBOOK_CHARSET_SJIS = 7
     const val EBOOK_CHARSET_EUCKR = 8
     const val EBOOK_CHARSET_1252 = 9
+    const val EBOOK_CHARSET_AUTO_ZH = 10
+    const val EBOOK_CHARSET_AUTO_KO = 11
+    const val EBOOK_CHARSET_AUTO_JA = 12
 
     /** Body type size 12–32, larger = larger glyphs. Fraction of page width, not content width. */
     val ebookFontSize = intPref("pref_ebook_font_size", 18)
 
     /**
      * TXT/HTML/FB2/Markdown decode. 0=auto (default), then UTF-8 / UTF-16LE / UTF-16BE /
-     * GBK / GB18030 / Big5 / Shift_JIS / EUC-KR / Windows-1252.
+     * GBK / GB18030 / Big5 / Shift_JIS / EUC-KR / Windows-1252, then language-biased
+     * auto 10=Chinese / 11=Korean / 12=Japanese (UTF-8 still wins when well-formed).
      */
     val ebookCharset = intPref("pref_ebook_charset", 0)
 

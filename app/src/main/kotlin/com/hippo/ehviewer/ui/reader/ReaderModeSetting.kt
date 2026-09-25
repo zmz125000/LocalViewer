@@ -130,6 +130,9 @@ private fun DocumentStyleSetting() = Column {
         entries = stringArrayResource(id = com.hippo.ehviewer.R.array.ebook_charset),
         values = listOf(
             Settings.EBOOK_CHARSET_AUTO,
+            Settings.EBOOK_CHARSET_AUTO_ZH,
+            Settings.EBOOK_CHARSET_AUTO_KO,
+            Settings.EBOOK_CHARSET_AUTO_JA,
             Settings.EBOOK_CHARSET_UTF8,
             Settings.EBOOK_CHARSET_UTF16LE,
             Settings.EBOOK_CHARSET_UTF16BE,
