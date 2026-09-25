@@ -1059,6 +1059,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
     fun openPdfReader(entry: BrowseEntryRemote.ArchiveGallery) {
         if (!isPdfOrEbookFileName(entry.fileName)) return
         val src = source ?: return
+        ReaderGalleryPlaylist.setFromWebDavBrowse(src.id, relativeDir, entries)
         val remote = joinRemoteArchivePath(relativeDir, entry.parentRelativeName, entry.fileName)
         launchIO {
             recordCurrentBrowseFolderHistory(src.id)
@@ -1132,6 +1133,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
 
     fun openInternalDocument(fileName: String) {
         val src = source ?: return
+        ReaderGalleryPlaylist.setFromWebDavBrowse(src.id, relativeDir, entries)
         val actualName = fileName.substringAfterLast('/').substringAfterLast('\\')
         val remote = if (relativeDir.isEmpty()) fileName else WebDavGateway.joinRelative(relativeDir, fileName)
         launchIO {

@@ -142,12 +142,13 @@ import com.hippo.ehviewer.gallery.ReaderNavigation
 import com.hippo.ehviewer.library.ArchiveByteSource
 import com.hippo.ehviewer.library.BlockCacheArchiveByteSource
 import com.hippo.ehviewer.library.DocumentExtractCache
+import com.hippo.ehviewer.library.EbookBodyCache
 import com.hippo.ehviewer.library.GallerySiblingNavigator
 import com.hippo.ehviewer.library.OriginDiskCache
 import com.hippo.ehviewer.library.PdfTocCache
 import com.hippo.ehviewer.library.PfdArchiveByteSource
 import com.hippo.ehviewer.library.ReaderPageThumb
-import com.hippo.ehviewer.library.document.EbookDocument
+import com.hippo.ehviewer.library.document.EbookChapter
 import com.hippo.ehviewer.library.document.EbookEngine
 import com.hippo.ehviewer.library.document.EbookLine
 import com.hippo.ehviewer.library.document.EbookPage
@@ -211,6 +212,7 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.yield
 import me.saket.telephoto.zoomable.DoubleClickToZoomListener
 import me.saket.telephoto.zoomable.EnabledZoomGestures
 import me.saket.telephoto.zoomable.OverzoomEffect
@@ -316,7 +318,14 @@ class PdfReaderActivity : AppCompatActivity() {
                 opened = withContext(Dispatchers.IO) {
                     val docName = documentNameFromIntent(intent, nextTitle)
                     if (isEbookFileName(docName)) {
-                        return@withContext openEbookDocument(intent, token, docName)
+                        return@withContext openEbookDocument(
+                            intent,
+                            token,
+                            docName,
+                            cacheKey,
+                            startPage = nextStart,
+                            stillWanted = { isActive },
+                        )
                     }
                     if (directImage) {
                         direct = runCatching { openDirectArchiveSource(intent, token) }
@@ -703,7 +712,11 @@ private fun openEbookDocument(
     intent: Intent,
     token: String?,
     fileName: String,
+    cacheKey: String?,
+    startPage: Int,
+    stillWanted: () -> Boolean,
 ): PdfDocumentModel.Vector? {
+    if (!stillWanted()) return null
     var owned: ArchiveByteSource? = null
     val source = runCatching { openDirectArchiveSource(intent, token) }
         .onFailure { logcat("PdfReader", it) }
@@ -714,13 +727,27 @@ private fun openEbookDocument(
             PfdArchiveByteSource(pfd, ownsPfd = true).also { owned = it }
         }
     return try {
+        val size = runCatching { source.size }.getOrDefault(-1L)
+        val cached = if (cacheKey != null && size > 0L) {
+            EbookBodyCache.load(cacheKey, size)
+        } else {
+            null
+        }
+        val chapters = cached ?: EbookEngine.parse(source, fileName, stillWanted)
+        if (chapters.isNullOrEmpty() || !stillWanted()) return null
+        if (cached == null && cacheKey != null && size > 0L && stillWanted()) {
+            EbookBodyCache.save(cacheKey, size, chapters)
+        }
         val style = ebookStyleFromSettings()
-        val book = EbookEngine.open(source, fileName, style) ?: return null
-        if (book.pageCount <= 0) return null
-        logcat("PdfReader") { "ebook pages=${book.pageCount} chapters=${book.chapters.size}" }
+        val session = EbookSession(chapters, style, ebookPaintFromSettings(dark = false))
+        if (!session.ensurePagesThrough(startPage.coerceAtLeast(0), stillWanted)) return null
+        logcat("PdfReader") {
+            "ebook pages=${session.pageCount} chapters=${chapters.size} cached=${cached != null}"
+        }
         PdfDocumentModel.Vector(
-            session = EbookSession(book, style, ebookPaintFromSettings(dark = false)),
-            chapters = book.chapters,
+            session = session,
+            chapters = session.toc,
+            chapterLoader = { wanted -> session.finishPaginate(wanted) },
             isEbook = true,
         )
     } finally {
@@ -747,7 +774,7 @@ private sealed interface PdfDocumentModel {
         override val pageCount get() = session.pageCount
         override fun close() = session.close()
 
-        /** Table of contents. No-op for ebooks, which already parsed chapters. */
+        /** PDF outlines, or remaining ebook pages. Cancelled with the open job. */
         suspend fun ensureChapters() {
             val load = chapterLoader ?: return
             chapterMutex.withLock {
@@ -854,15 +881,16 @@ private class PdfSession(private val renderer: PdfRenderer) : PageBitmapSession 
 }
 
 private class EbookSession(
-    book: EbookDocument,
+    body: List<EbookChapter>,
     initialStyle: EbookStyle,
     initialPaint: EbookPaint,
 ) : PageBitmapSession {
-    private val source = book.body
+    private val source = body
     private val mutex = Mutex()
     private var style = initialStyle
-    private var pages = book.pages
-    var toc: List<PdfTocEntry> = book.chapters
+    private var pages: List<EbookPage> = emptyList()
+    private var nextChapter = 0
+    var toc: List<PdfTocEntry> = emptyList()
         private set
 
     @Volatile var paint: EbookPaint = initialPaint
@@ -882,6 +910,43 @@ private class EbookSession(
 
     fun pageIndexFor(anchor: Pair<Int, Int>): Int = EbookPaginator.pageIndexFor(pages, anchor.first, anchor.second)
 
+    fun ensurePagesThrough(index: Int, stillWanted: () -> Boolean): Boolean {
+        val extraPages = ArrayList<EbookPage>()
+        val extraToc = ArrayList<PdfTocEntry>()
+        var from = nextChapter
+        while (stillWanted() && !closed && pages.size + extraPages.size <= index && from < source.size) {
+            EbookPaginator.appendChapter(source[from], from, style, extraPages, extraToc)
+            from++
+        }
+        if (!stillWanted() || closed) return false
+        pages = pages + extraPages
+        toc = toc + extraToc
+        nextChapter = from
+        if (pages.isEmpty() && nextChapter >= source.size) {
+            pages = listOf(EbookPage(listOf(EbookLine("", heightEm = style.lineHeightEm)), 0, 0))
+        }
+        return pages.isNotEmpty()
+    }
+
+    suspend fun finishPaginate(stillWanted: () -> Boolean): List<PdfTocEntry> {
+        while (stillWanted() && !closed) {
+            val next = mutex.withLock {
+                if (nextChapter >= source.size) null else source[nextChapter] to nextChapter
+            } ?: break
+            val extraPages = ArrayList<EbookPage>()
+            val extraToc = ArrayList<PdfTocEntry>()
+            EbookPaginator.appendChapter(next.first, next.second, style, extraPages, extraToc)
+            mutex.withLock {
+                if (closed || nextChapter != next.second) return@withLock
+                pages = pages + extraPages
+                toc = toc + extraToc
+                nextChapter++
+            }
+            yield()
+        }
+        return mutex.withLock { toc }
+    }
+
     suspend fun applyPaint(next: EbookPaint): Boolean = mutex.withLock {
         if (next == paint) return false
         paint = next
@@ -895,6 +960,7 @@ private class EbookSession(
         val (nextPages, nextToc) = EbookPaginator.paginate(source, next)
         pages = nextPages
         toc = nextToc
+        nextChapter = source.size
         styleGeneration++
         true
     }

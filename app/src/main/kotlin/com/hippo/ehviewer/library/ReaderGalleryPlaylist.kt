@@ -133,9 +133,14 @@ object ReaderGalleryPlaylist {
                         }
                 }
                 is BrowseEntry.ArchiveGallery -> Item.Archive(e.path.toString())
+                is BrowseEntry.RegularFile -> {
+                    if (!isEbookFileName(e.name) && !isEbookFileName(e.path.name)) {
+                        return@mapNotNull null
+                    }
+                    Item.Archive(e.path.toString())
+                }
                 is BrowseEntry.Directory,
                 is BrowseEntry.VideoFile,
-                is BrowseEntry.RegularFile,
                 -> null
             }
         }
@@ -203,9 +208,26 @@ object ReaderGalleryPlaylist {
                     )
                     Item.SmbStreamArchive(sourceId, remote, info)
                 }
+                is BrowseEntryRemote.RegularFile -> {
+                    if (!isEbookFileName(e.fileName) && !isEbookFileName(e.name)) {
+                        return@mapNotNull null
+                    }
+                    val remote = joinRemoteArchivePath(parentRelative, "", e.fileName).trim('/')
+                    val info = BaseGalleryInfo(
+                        gid = stableGalleryId(sourceId, "smba:$remote"),
+                        token = SMB_ARCHIVE_TOKEN,
+                        title = e.name,
+                        pages = 0,
+                        favoriteSlot = NOT_FAVORITED,
+                        rating = -1f,
+                        thumbKey = HistoryThumbKey.smbArchive(sourceId, remote),
+                        uploader = "$sourceId\u0000$remote",
+                        category = 1,
+                    )
+                    Item.SmbStreamArchive(sourceId, remote, info)
+                }
                 is BrowseEntryRemote.Directory,
                 is BrowseEntryRemote.VideoFile,
-                is BrowseEntryRemote.RegularFile,
                 -> null
             }
         }
@@ -272,9 +294,26 @@ object ReaderGalleryPlaylist {
                     )
                     Item.WebDavStreamArchive(sourceId, remote, info)
                 }
+                is BrowseEntryRemote.RegularFile -> {
+                    if (!isEbookFileName(e.fileName) && !isEbookFileName(e.name)) {
+                        return@mapNotNull null
+                    }
+                    val remote = joinRemoteArchivePath(parentRelative, "", e.fileName).trim('/')
+                    val info = BaseGalleryInfo(
+                        gid = stableGalleryId(sourceId, "dava:$remote"),
+                        token = WEBDAV_ARCHIVE_TOKEN,
+                        title = e.name,
+                        pages = 0,
+                        favoriteSlot = NOT_FAVORITED,
+                        rating = -1f,
+                        thumbKey = HistoryThumbKey.webdavArchive(sourceId, remote),
+                        uploader = "$sourceId\u0000$remote",
+                        category = 1,
+                    )
+                    Item.WebDavStreamArchive(sourceId, remote, info)
+                }
                 is BrowseEntryRemote.Directory,
                 is BrowseEntryRemote.VideoFile,
-                is BrowseEntryRemote.RegularFile,
                 -> null
             }
         }

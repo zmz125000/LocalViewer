@@ -57,32 +57,43 @@ internal object EbookPaginator {
     fun paginate(
         chapters: List<EbookChapter>,
         style: EbookStyle = EbookStyle.DEFAULT,
+        stillWanted: () -> Boolean = { true },
     ): Pair<List<EbookPage>, List<PdfTocEntry>> {
         val pages = ArrayList<EbookPage>()
         val toc = ArrayList<PdfTocEntry>(chapters.size)
-        val budget = contentHeightEm(style)
         for ((chIndex, ch) in chapters.withIndex()) {
-            val raw = ArrayList<EbookLine>()
-            val title = ch.title.trim()
-            if (title.isNotEmpty()) {
-                wrapHeading(title, ch.depth, style, raw)
-            }
-            if (ch.text.isNotBlank()) {
-                raw += wrapLines(ch.text, style)
-            }
-            if (raw.isEmpty()) continue
-            var placed = 0
-            val lines = raw.map { line ->
-                line.copy(offset = placed).also { placed += it.text.length }
-            }
-            val startPage = pages.size
-            toc += PdfTocEntry(title.ifBlank { "${startPage + 1}" }, startPage, ch.depth.coerceAtLeast(0))
-            packPages(lines, chIndex, budget, pages)
+            if (!stillWanted()) break
+            appendChapter(ch, chIndex, style, pages, toc)
         }
         if (pages.isEmpty()) {
             pages += EbookPage(listOf(EbookLine("", heightEm = EbookStyle.DEFAULT.lineHeightEm)), 0, 0)
         }
         return pages to toc
+    }
+
+    fun appendChapter(
+        ch: EbookChapter,
+        chIndex: Int,
+        style: EbookStyle,
+        pages: MutableList<EbookPage>,
+        toc: MutableList<PdfTocEntry>,
+    ) {
+        val raw = ArrayList<EbookLine>()
+        val title = ch.title.trim()
+        if (title.isNotEmpty()) {
+            wrapHeading(title, ch.depth, style, raw)
+        }
+        if (ch.text.isNotBlank()) {
+            raw += wrapLines(ch.text, style)
+        }
+        if (raw.isEmpty()) return
+        var placed = 0
+        val lines = raw.map { line ->
+            line.copy(offset = placed).also { placed += it.text.length }
+        }
+        val startPage = pages.size
+        toc += PdfTocEntry(title.ifBlank { "${startPage + 1}" }, startPage, ch.depth.coerceAtLeast(0))
+        packPages(lines, chIndex, contentHeightEm(style), pages)
     }
 
     fun pageIndexFor(pages: List<EbookPage>, chapterIndex: Int, charOffset: Int): Int {

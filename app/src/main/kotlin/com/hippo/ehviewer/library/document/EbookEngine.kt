@@ -27,26 +27,45 @@ internal object EbookEngine {
         source: ArchiveByteSource,
         fileName: String,
         style: EbookStyle = EbookStyle.DEFAULT,
+        stillWanted: () -> Boolean = { true },
     ): EbookDocument? {
-        val ext = FileUtils.getExtensionFromFilename(fileName)?.lowercase().orEmpty()
-        val chapters = runCatching {
-            when (ext) {
-                "epub" -> parseEpub(source)
-                "txt", "text" -> parseTxt(source)
-                "html", "htm", "xhtml" -> parseHtml(source, fileName)
-                "fb2" -> parseFb2(source, fileName)
-                "md", "markdown" -> parseMarkdown(source, fileName)
-                else -> parseTxt(source)
-            }
-        }.onFailure { logcat("Ebook", it) }.getOrNull() ?: return null
-        if (chapters.isEmpty()) return null
-        val (pages, toc) = EbookPaginator.paginate(chapters, style)
+        val chapters = parse(source, fileName, stillWanted) ?: return null
+        if (chapters.isEmpty() || !stillWanted()) return null
+        val (pages, toc) = EbookPaginator.paginate(chapters, style, stillWanted)
+        if (!stillWanted() || pages.isEmpty()) return null
         return EbookDocument(chapters, pages, toc)
     }
 
-    private fun parseTxt(source: ArchiveByteSource): List<EbookChapter> {
+    /**
+     * Chapter bodies only. Null = stopped or failed (do not cache). Empty = no text.
+     */
+    fun parse(
+        source: ArchiveByteSource,
+        fileName: String,
+        stillWanted: () -> Boolean = { true },
+    ): List<EbookChapter>? {
+        if (!stillWanted()) return null
+        val ext = FileUtils.getExtensionFromFilename(fileName)?.lowercase().orEmpty()
+        val chapters = runCatching {
+            when (ext) {
+                "epub" -> parseEpub(source, stillWanted)
+                "txt", "text" -> parseTxt(source, stillWanted)
+                "html", "htm", "xhtml" -> parseHtml(source, fileName)
+                "fb2" -> parseFb2(source, fileName)
+                "md", "markdown" -> parseMarkdown(source, fileName)
+                else -> parseTxt(source, stillWanted)
+            }
+        }.onFailure { logcat("Ebook", it) }.getOrNull() ?: return null
+        if (!stillWanted()) return null
+        return chapters
+    }
+
+    private fun parseTxt(source: ArchiveByteSource, stillWanted: () -> Boolean): List<EbookChapter> {
+        if (!stillWanted()) return emptyList()
         val bytes = source.readFully(MAX_TEXT_BYTES) ?: return emptyList()
+        if (!stillWanted()) return emptyList()
         val text = TextCharset.decode(bytes)
+        if (!stillWanted()) return emptyList()
         return chaptersFromPlain(text, "Text")
     }
 
@@ -68,12 +87,17 @@ internal object EbookEngine {
         return chaptersFromFb2(xml, titleFromName(fileName))
     }
 
-    private fun parseEpub(source: ArchiveByteSource): List<EbookChapter> {
+    private fun parseEpub(
+        source: ArchiveByteSource,
+        stillWanted: () -> Boolean,
+    ): List<EbookChapter> {
+        if (!stillWanted()) return emptyList()
         val zip = ZipCentralDirectory.open(source) ?: return emptyList()
         val opf = parseOpf(zip) ?: return fallbackEpubText(zip)
         val byHref = HashMap<String, EbookChapter>()
         var total = 0
         for (item in opf.spine) {
+            if (!stillWanted()) return emptyList()
             if (total >= MAX_TEXT_BYTES) break
             val entry = zip.find(item.href) ?: continue
             if (entry.isDirectory || entry.isEncrypted) continue

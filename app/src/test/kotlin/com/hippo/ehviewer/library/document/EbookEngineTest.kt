@@ -93,6 +93,36 @@ class EbookEngineTest {
     }
 
     @Test
+    fun parseCancelledDoesNotReturnChapters() {
+        val chapters = EbookEngine.parse(
+            source = object : com.hippo.ehviewer.library.ArchiveByteSource {
+                override val size: Long = 0
+                override fun readAt(offset: Long, buf: ByteArray, off: Int, len: Int) = -1
+                override fun close() = Unit
+            },
+            fileName = "book.txt",
+            stillWanted = { false },
+        )
+        assertEquals(null, chapters)
+    }
+
+    @Test
+    fun appendChapterMatchesFullPaginate() {
+        val chapters = listOf(
+            EbookChapter("One", "测".repeat(80), 0),
+            EbookChapter("Two", "试".repeat(80), 1),
+        )
+        val style = EbookStyle(paragraphMode = EbookParagraph.SOFT)
+        val full = EbookPaginator.paginate(chapters, style)
+        val pages = ArrayList<EbookPage>()
+        val toc = ArrayList<com.hippo.ehviewer.library.document.PdfTocEntry>()
+        EbookPaginator.appendChapter(chapters[0], 0, style, pages, toc)
+        EbookPaginator.appendChapter(chapters[1], 1, style, pages, toc)
+        assertEquals(full.first.map { it.lines.map { line -> line.text } }, pages.map { it.lines.map { line -> line.text } })
+        assertEquals(full.second, toc)
+    }
+
+    @Test
     fun largerFontIncreasesPageCount() {
         val chapters = listOf(EbookChapter("t", "测".repeat(800)))
         val small = EbookPaginator.paginate(chapters, EbookStyle(fontSize = 12)).first

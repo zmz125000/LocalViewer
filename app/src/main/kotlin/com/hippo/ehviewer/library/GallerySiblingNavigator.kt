@@ -89,9 +89,10 @@ object GallerySiblingNavigator {
             when (e) {
                 is BrowseEntry.FolderGallery -> e
                 is BrowseEntry.ArchiveGallery -> e
+                is BrowseEntry.RegularFile ->
+                    e.takeIf { isEbookFileName(it.name) || isEbookFileName(it.path.name) }
                 is BrowseEntry.Directory,
                 is BrowseEntry.VideoFile,
-                is BrowseEntry.RegularFile,
                 -> null
             }
         }
@@ -100,9 +101,9 @@ object GallerySiblingNavigator {
             when (e) {
                 is BrowseEntry.FolderGallery -> e.path.toString() == currentPath
                 is BrowseEntry.ArchiveGallery -> e.path.toString() == currentPath
+                is BrowseEntry.RegularFile -> e.path.toString() == currentPath
                 is BrowseEntry.Directory,
                 is BrowseEntry.VideoFile,
-                is BrowseEntry.RegularFile,
                 -> false
             }
         }
@@ -152,9 +153,9 @@ object GallerySiblingNavigator {
                     )
                 }
             }
+            is BrowseEntry.RegularFile -> ReaderScreenArgs.Archive(target.path.toString())
             is BrowseEntry.Directory,
             is BrowseEntry.VideoFile,
-            is BrowseEntry.RegularFile,
             -> null
         }
     }
@@ -189,6 +190,8 @@ object GallerySiblingNavigator {
                             isSolidArchiveFileName(it.fileName) ||
                             isDocumentFileName(it.fileName)
                     }
+                is BrowseEntryRemote.RegularFile ->
+                    e.takeIf { isEbookFileName(it.fileName) || isEbookFileName(it.name) }
                 else -> null
             }
         }
@@ -205,6 +208,7 @@ object GallerySiblingNavigator {
                 e.parentRelativeName,
                 e.fileName,
             )
+            is BrowseEntryRemote.RegularFile -> joinRemoteArchivePath(parentRel, "", e.fileName)
             else -> ""
         }
 
@@ -250,6 +254,21 @@ object GallerySiblingNavigator {
                 val names = if (target.pageCountCapped) emptyList() else target.imageFileNames
                 ReaderScreenArgs.SmbFolder(source.id, remote, names, page = -1, info = info)
             }
+            is BrowseEntryRemote.RegularFile -> {
+                val remote = remoteOf(target).trim('/')
+                val info = BaseGalleryInfo(
+                    gid = stableGalleryId(source.id, "smba:$remote"),
+                    token = SMB_ARCHIVE_TOKEN,
+                    title = target.name,
+                    pages = 0,
+                    favoriteSlot = NOT_FAVORITED,
+                    rating = -1f,
+                    thumbKey = HistoryThumbKey.smbArchive(source.id, remote),
+                    uploader = "${source.id}\u0000$remote",
+                    category = 1,
+                )
+                ReaderScreenArgs.SmbStreamArchive(source.id, remote, page = -1, info = info)
+            }
             else -> null
         }
     }
@@ -284,6 +303,8 @@ object GallerySiblingNavigator {
                             isSolidArchiveFileName(it.fileName) ||
                             isDocumentFileName(it.fileName)
                     }
+                is BrowseEntryRemote.RegularFile ->
+                    e.takeIf { isEbookFileName(it.fileName) || isEbookFileName(it.name) }
                 else -> null
             }
         }
@@ -300,6 +321,7 @@ object GallerySiblingNavigator {
                 e.parentRelativeName,
                 e.fileName,
             )
+            is BrowseEntryRemote.RegularFile -> joinRemoteArchivePath(parentRel, "", e.fileName)
             else -> ""
         }
 
@@ -344,6 +366,21 @@ object GallerySiblingNavigator {
                 )
                 val names = if (target.pageCountCapped) emptyList() else target.imageFileNames
                 ReaderScreenArgs.WebDavFolder(source.id, remote, names, page = -1, info = info)
+            }
+            is BrowseEntryRemote.RegularFile -> {
+                val remote = remoteOf(target).trim('/')
+                val info = BaseGalleryInfo(
+                    gid = stableGalleryId(source.id, "dava:$remote"),
+                    token = WEBDAV_ARCHIVE_TOKEN,
+                    title = target.name,
+                    pages = 0,
+                    favoriteSlot = NOT_FAVORITED,
+                    rating = -1f,
+                    thumbKey = HistoryThumbKey.webdavArchive(source.id, remote),
+                    uploader = "${source.id}\u0000$remote",
+                    category = 1,
+                )
+                ReaderScreenArgs.WebDavStreamArchive(source.id, remote, page = -1, info = info)
             }
             else -> null
         }

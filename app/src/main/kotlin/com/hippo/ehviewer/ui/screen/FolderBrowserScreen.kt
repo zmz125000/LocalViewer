@@ -1554,6 +1554,15 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
 
     fun openPdfReader(entry: BrowseEntry.ArchiveGallery) {
         if (!isPdfOrEbookFileName(entry.name)) return
+        val frame = stack.lastOrNull()
+        if (frame != null && !frame.isZipBrowse) {
+            ReaderGalleryPlaylist.setFromLocalBrowse(
+                rootId = frame.rootId,
+                parentPath = frame.path,
+                parentRelative = frame.relativePath,
+                entries = entries,
+            )
+        }
         val path = entry.path.toString()
         launchIO {
             recordCurrentBrowseFolderHistory()
@@ -1664,6 +1673,15 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
     }
 
     fun openInternalDocument(path: okio.Path) {
+        val frame = stack.lastOrNull()
+        if (frame != null && !frame.isZipBrowse) {
+            ReaderGalleryPlaylist.setFromLocalBrowse(
+                rootId = frame.rootId,
+                parentPath = frame.path,
+                parentRelative = frame.relativePath,
+                entries = entries,
+            )
+        }
         val pathStr = path.toString()
         val actualName = ZipPaths.memberLeafName(pathStr) ?: path.name
         launchIO {
