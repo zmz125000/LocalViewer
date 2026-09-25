@@ -7,6 +7,7 @@ import java.nio.charset.StandardCharsets
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -215,6 +216,54 @@ class EbookEngineTest {
         assertTrue(!paras[0].contains("  "))
         assertTrue(paras[1].startsWith("门厅里"))
         assertTrue(EbookParagraph.detect(text.repeat(4)) == EbookParagraph.HARD)
+    }
+
+    @Test
+    fun softKeepsOneLineParagraphsWithoutBlankLines() {
+        val text = "i am paragraph one.\ni am paragraph 2 hello every good morning"
+        val paras = EbookParagraph.paragraphs(text, EbookParagraph.SOFT)
+        assertEquals(2, paras.size)
+        assertEquals("i am paragraph one.", paras[0])
+        assertEquals("i am paragraph 2 hello every good morning", paras[1])
+        assertEquals(EbookParagraph.SOFT, EbookParagraph.detect(text))
+        val auto = EbookParagraph.paragraphs(text, EbookParagraph.AUTO)
+        assertEquals(paras, auto)
+    }
+
+    @Test
+    fun softStripsAuthorFirstLineIndent() {
+        val text = "　　第一段没有空行。\n　　第二段也顶格写成缩进。"
+        val paras = EbookParagraph.paragraphs(text, EbookParagraph.SOFT)
+        assertEquals(2, paras.size)
+        assertEquals("第一段没有空行。", paras[0])
+        assertEquals("第二段也顶格写成缩进。", paras[1])
+        val lines = EbookPaginator.wrapLines(
+            paras.joinToString("\n"),
+            EbookStyle(indentEm = 2, paragraphMode = EbookParagraph.SOFT),
+        )
+        val body = lines.filter { it.text.isNotEmpty() }
+        assertEquals(2, body.size)
+        assertTrue(body.all { it.indentEm == 2f })
+        assertTrue(body.none { it.text.startsWith("　") || it.text.startsWith(" ") })
+    }
+
+    @Test
+    fun htmlSourceWrapStaysOneParagraph() {
+        val text = EbookHtml.toText(
+            """
+            <p>
+            Hello world
+            continues here
+            </p>
+            <p>Next</p>
+            """.trimIndent(),
+        )
+        val paras = EbookParagraph.paragraphs(text, EbookParagraph.SOFT)
+        assertEquals(2, paras.size)
+        assertTrue(paras[0].contains("Hello world"))
+        assertTrue(paras[0].contains("continues here"))
+        assertFalse(paras[0].contains("Next"))
+        assertEquals("Next", paras[1])
     }
 
     @Test

@@ -6,7 +6,7 @@ package com.hippo.ehviewer.library.document
 internal object EbookHtml {
     fun toText(html: String): String {
         var s = SCRIPT_STYLE.replace(html, "")
-        s = BR.replace(s, "\n")
+        s = BR.replace(s, "\n\n")
         s = BLOCK.replace(s, "\n\n")
         s = TAG.replace(s, "")
         s = decodeEntities(s)
@@ -79,12 +79,15 @@ internal object EbookHtml {
                     if (nl == 0) space = true
                 }
                 else -> {
-                    if (nl > 0) {
-                        sb.append(if (nl >= 2) "\n\n" else "\n")
+                    if (nl >= 2) {
+                        sb.append("\n\n")
                         nl = 0
-                    } else if (space && sb.isNotEmpty()) {
-                        sb.append(' ')
+                        space = false
+                    } else if (nl == 1) {
+                        nl = 0
+                        space = sb.isNotEmpty()
                     }
+                    if (space && sb.isNotEmpty()) sb.append(' ')
                     space = false
                     sb.append(c)
                 }

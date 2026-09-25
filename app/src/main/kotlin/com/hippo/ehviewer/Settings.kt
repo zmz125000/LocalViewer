@@ -648,7 +648,7 @@ object Settings : DataStorePreferences(null) {
      */
     val ebookCharset = intPref("pref_ebook_charset", 0)
 
-    /** 0=auto, 1=hard-wrap join, 2=collapse extra blank lines. */
+    /** 0=auto, 1=hard-wrap join, 2=one paragraph per line (extra blanks collapse). */
     val ebookParagraphMode = intPref("pref_ebook_paragraph_mode", EBOOK_PARA_AUTO)
 
     /** Line height as percent of em (100–200). Default 150 (1.5). */

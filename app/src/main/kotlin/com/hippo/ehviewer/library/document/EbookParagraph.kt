@@ -5,9 +5,12 @@ package com.hippo.ehviewer.library.document
  * - [HARD]: old files wrap each line to a fixed width. Join consecutive lines
  *   (trim extra spaces at the join). A new paragraph starts on a blank line,
  *   a leading indent, or a short last line of the previous paragraph.
- * - [SOFT]: paragraphs already end at newlines; extra blank lines between them
- *   are not vertical space. Collapse those blanks to one break.
+ * - [SOFT]: each non-blank line is already a paragraph (no blank line required).
+ *   Extra blank lines are not vertical space — they only separate paragraphs.
  * [AUTO] picks from a sample of the chapter.
+ *
+ * Author first-line indent (spaces / fullwidth spaces) is stripped; the reader
+ * indent setting draws it.
  */
 internal object EbookParagraph {
     const val AUTO = 0
@@ -38,6 +41,10 @@ internal object EbookParagraph {
             runs++
         }
         if (nonempty.size < 6) return SOFT
+        val ended = nonempty.count { endsSentence(it) }
+        if (ended >= nonempty.size * 0.45f) return SOFT
+        val indented = nonempty.count { startsIndented(it) }
+        if (indented >= nonempty.size * 0.55f) return SOFT
         val widths = nonempty.map { lineWidth(it.trimEnd()) }.sorted()
         val med = widths[widths.size / 2]
         val p75 = widths[(widths.size * 3) / 4]
@@ -57,23 +64,10 @@ internal object EbookParagraph {
 
     private fun softParagraphs(lines: List<String>): List<String> {
         val out = ArrayList<String>()
-        val buf = StringBuilder()
-        fun flush() {
-            val t = buf.toString().trim()
-            buf.clear()
+        for (ln in lines) {
+            val t = trimJoinEdge(ln)
             if (t.isNotEmpty()) out += t
         }
-        var blank = false
-        for (ln in lines) {
-            if (ln.isBlank()) {
-                blank = true
-                continue
-            }
-            if (blank) flush()
-            blank = false
-            joinLine(buf, ln)
-        }
-        flush()
         return out
     }
 
@@ -142,15 +136,29 @@ internal object EbookParagraph {
             val c = line[i]
             if (c == '　') {
                 em += 1f
-            } else if (c == ' ' || c == '\t') {
+            } else if (c == ' ' || c == '\t' || c == '\u00a0') {
                 em += if (c == '\t') 2f else 0.55f
             } else {
                 break
             }
             i++
-            if (em >= 1.5f) return true
+            if (em >= 1f) return true
         }
-        return em >= 1.5f
+        return em >= 1f
+    }
+
+    private fun endsSentence(line: String): Boolean {
+        val t = line.trimEnd()
+        if (t.isEmpty()) return false
+        var i = t.lastIndex
+        while (i >= 0) {
+            when (t[i]) {
+                '"', '\'', '”', '’', '」', '』', ')', '）', ']', '】' -> i--
+                else -> break
+            }
+        }
+        if (i < 0) return false
+        return t[i] in ".!?。！？…；"
     }
 
     private fun isJoinSpace(c: Char): Boolean = c == ' ' || c == '\t' || c == '　' || c == '\u00a0'
