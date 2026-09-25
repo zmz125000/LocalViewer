@@ -150,8 +150,6 @@ import com.hippo.ehviewer.library.PdfTocCache
 import com.hippo.ehviewer.library.PfdArchiveByteSource
 import com.hippo.ehviewer.library.ReaderPageThumb
 import com.hippo.ehviewer.library.ZipPaths
-import com.hippo.ehviewer.library.document.EBOOK_FONT_SIZE_MAX
-import com.hippo.ehviewer.library.document.EBOOK_FONT_SIZE_MIN
 import com.hippo.ehviewer.library.document.EbookChapter
 import com.hippo.ehviewer.library.document.EbookEngine
 import com.hippo.ehviewer.library.document.EbookLine
@@ -162,6 +160,7 @@ import com.hippo.ehviewer.library.document.PdfContentKind
 import com.hippo.ehviewer.library.document.PdfImageEngine
 import com.hippo.ehviewer.library.document.PdfTocEntry
 import com.hippo.ehviewer.library.document.TextCharset
+import com.hippo.ehviewer.library.document.ebookDisplayFontSize
 import com.hippo.ehviewer.library.document.pdfTocWithFileName
 import com.hippo.ehviewer.library.document.readPdfChapters
 import com.hippo.ehviewer.library.isEbookFileName
@@ -331,6 +330,8 @@ class PdfReaderActivity : AppCompatActivity() {
                             docName,
                             cacheKey,
                             startPage = nextStart,
+                            landscape = resources.configuration.orientation ==
+                                Configuration.ORIENTATION_LANDSCAPE,
                             stillWanted = { isActive },
                         )
                     }
@@ -746,6 +747,7 @@ private fun openEbookDocument(
     fileName: String,
     cacheKey: String?,
     startPage: Int,
+    landscape: Boolean,
     stillWanted: () -> Boolean,
 ): PdfDocumentModel.Vector? {
     if (!stillWanted()) return null
@@ -773,7 +775,7 @@ private fun openEbookDocument(
         if (cached == null && cacheKey != null && size > 0L && stillWanted()) {
             EbookBodyCache.save(cacheKey, size, chapters, charsetKey)
         }
-        val style = ebookStyleFromSettings()
+        val style = ebookStyleFromSettings(landscape)
         val session = EbookSession(chapters, style, ebookPaintFromSettings(dark = false))
         if (!session.ensurePagesThrough(startPage.coerceAtLeast(0), stillWanted)) return null
         logcat("PdfReader") {
@@ -958,7 +960,14 @@ private class EbookSession(
         val extraToc = ArrayList<PdfTocEntry>()
         var from = nextChapter
         while (stillWanted() && !closed && pages.size + extraPages.size <= index && from < source.size) {
-            EbookPaginator.appendChapter(source[from], from, style, extraPages, extraToc)
+            EbookPaginator.appendChapter(
+                source[from],
+                from,
+                style,
+                extraPages,
+                extraToc,
+                pageBase = pages.size,
+            )
             from++
         }
         if (!stillWanted() || closed) return false
@@ -975,11 +984,22 @@ private class EbookSession(
     suspend fun finishPaginate(stillWanted: () -> Boolean): List<PdfTocEntry> {
         while (stillWanted() && !closed) {
             val next = mutex.withLock {
-                if (nextChapter >= source.size) null else source[nextChapter] to nextChapter
+                if (nextChapter >= source.size) {
+                    null
+                } else {
+                    Triple(source[nextChapter], nextChapter, pages.size)
+                }
             } ?: break
             val extraPages = ArrayList<EbookPage>()
             val extraToc = ArrayList<PdfTocEntry>()
-            EbookPaginator.appendChapter(next.first, next.second, style, extraPages, extraToc)
+            EbookPaginator.appendChapter(
+                next.first,
+                next.second,
+                style,
+                extraPages,
+                extraToc,
+                pageBase = next.third,
+            )
             mutex.withLock {
                 if (closed || nextChapter != next.second) return@withLock
                 pages = pages + extraPages
@@ -1035,8 +1055,8 @@ private data class EbookPaint(
     val fg: Int,
 )
 
-private fun ebookStyleFromSettings(): EbookStyle = EbookStyle(
-    fontSize = Settings.ebookFontSize.value.coerceIn(EBOOK_FONT_SIZE_MIN, EBOOK_FONT_SIZE_MAX),
+private fun ebookStyleFromSettings(landscape: Boolean): EbookStyle = EbookStyle(
+    fontSize = ebookDisplayFontSize(Settings.ebookFontSize.value, landscape),
     lineHeightPercent = Settings.ebookLineHeight.value.coerceIn(100, 200),
     paragraphPercent = Settings.ebookParagraphSpacing.value.coerceIn(0, 200),
     indentEm = Settings.ebookIndent.value.coerceIn(0, 2),
@@ -1230,6 +1250,7 @@ private fun PdfReaderScreen(
     val ebookMargin by Settings.ebookMargin.collectAsState()
     val ebookParaMode by Settings.ebookParagraphMode.collectAsState()
     val ebookTheme by Settings.ebookTheme.collectAsState()
+    val isLandscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
     val ebookCharset by Settings.ebookCharset.collectAsState()
     var appliedEbookCharset by remember { mutableStateOf<Int?>(null) }
     LaunchedEffect(ebookCharset, isEbook) {
@@ -1249,9 +1270,10 @@ private fun PdfReaderScreen(
         ebookAlign,
         ebookMargin,
         ebookParaMode,
+        isLandscape,
     ) {
         EbookStyle(
-            fontSize = ebookFontSize.coerceIn(EBOOK_FONT_SIZE_MIN, EBOOK_FONT_SIZE_MAX),
+            fontSize = ebookDisplayFontSize(ebookFontSize, isLandscape),
             lineHeightPercent = ebookLineHeight.coerceIn(100, 200),
             paragraphPercent = ebookParagraph.coerceIn(0, 200),
             indentEm = ebookIndent.coerceIn(0, 2),
@@ -1295,7 +1317,6 @@ private fun PdfReaderScreen(
     val isWebtoon = ReadingModeType.isWebtoon(readingMode)
     val dualPagePref by Settings.dualPageLandscape.collectAsState()
     val dualPageGap by Settings.dualPageGap.collectAsState()
-    val isLandscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
     val dualActive = dualPageActive(dualPagePref, isLandscape)
     val pagerDual = isPagerDual(dualActive, readingMode)
     val webtoonHorizontal = isWebtoonHorizontal(dualActive, readingMode)
