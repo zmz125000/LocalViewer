@@ -587,32 +587,104 @@ internal class PdfParser(
         return PageImageCursor(pagesNode, maxPages)
     }
 
-    /** Bookmark tree (`/Outlines`). Empty when the file has no chapter destinations. */
-    fun readOutlines(): List<PdfTocEntry> {
-        if (!bootstrap() || encrypted) return emptyList()
+    /**
+     * Bookmark tree (`/Outlines`).
+     *
+     * The outline itself is a short linked list. A destination that is already a
+     * page number needs no page-tree walk. A destination that points at a page
+     * object does: [pageObjectIndex] maps that object to a 0-based index.
+     * [stillWanted] false abandons the walk and returns nothing.
+     */
+    fun readOutlines(
+        pageCount: Int = -1,
+        stillWanted: () -> Boolean = { true },
+    ): List<PdfTocEntry> {
+        if (!stillWanted() || !bootstrap() || encrypted) return emptyList()
         val root = rootRef?.let { resolve(it) } as? PdfDict ?: return emptyList()
         val outlines = root["/Outlines"]?.let { resolveValue(it) } as? PdfDict ?: return emptyList()
-        val pageOf = pageObjectIndex()
-        val out = ArrayList<PdfTocEntry>()
+        val pending = ArrayList<PendingOutline>(32)
         fun walk(node: PdfDict, depth: Int) {
-            if (depth > 12 || out.size >= 500) return
+            if (!stillWanted() || depth > 12 || pending.size >= 500) return
             var child = node["/First"]?.let { resolveValue(it) } as? PdfDict
             var guard = 0
-            while (child != null && guard++ < 500 && out.size < 500) {
+            while (child != null && guard++ < 500 && pending.size < 500) {
+                if (!stillWanted()) return
                 val title = pdfOutlineTitle(child["/Title"])
-                val page = outlinePageIndex(child, pageOf)
-                if (title.isNotBlank() && page != null) {
-                    out += PdfTocEntry(title, page, depth)
+                val dest = outlineDest(child)
+                if (title.isNotBlank() && dest != null) {
+                    pending += PendingOutline(title, depth, dest)
                 }
                 if (child["/First"] != null) walk(child, depth + 1)
                 child = child["/Next"]?.let { resolveValue(it) } as? PdfDict
             }
         }
         walk(outlines, 0)
+        if (!stillWanted()) return emptyList()
+        if (pending.isEmpty()) return emptyList()
+        val pageOf = if (pending.any { it.dest is OutlineDest.PageObj }) {
+            pageObjectIndex(stillWanted)
+        } else {
+            emptyMap()
+        }
+        if (!stillWanted()) return emptyList()
+        val out = ArrayList<PdfTocEntry>(pending.size)
+        for (item in pending) {
+            val page = when (val dest = item.dest) {
+                is OutlineDest.Index -> normalizeOutlinePage(dest.raw, pageCount, pageOf)
+                is OutlineDest.PageObj -> pageOf[dest.num]
+            } ?: continue
+            out += PdfTocEntry(item.title, page, item.depth)
+        }
         return out
     }
 
-    private fun pageObjectIndex(): Map<Int, Int> {
+    private data class PendingOutline(val title: String, val depth: Int, val dest: OutlineDest)
+
+    private sealed interface OutlineDest {
+        data class Index(val raw: Int) : OutlineDest
+        data class PageObj(val num: Int) : OutlineDest
+    }
+
+    /** First element of an explicit destination. Does not load a page object. */
+    private fun outlineDest(item: PdfDict): OutlineDest? {
+        val raw = item["/Dest"]
+            ?: (item["/A"]?.let { resolveValue(it) } as? PdfDict)?.get("/D")
+            ?: return null
+        // An indirect /Dest is the destination array (or a name), not the page.
+        val dest = if (raw is PdfRef) resolve(raw) ?: return null else raw
+        val array = dest as? PdfArray ?: return null
+        val first = array.items.firstOrNull() ?: return null
+        return when (first) {
+            is PdfRef -> OutlineDest.PageObj(first.num)
+            is PdfNumber -> OutlineDest.Index(first.value.toInt())
+            is PdfDict -> first.objNum?.let { OutlineDest.PageObj(it) }
+            else -> when (val resolved = resolveValue(first)) {
+                is PdfDict -> resolved.objNum?.let { OutlineDest.PageObj(it) }
+                is PdfNumber -> OutlineDest.Index(resolved.value.toInt())
+                is PdfRef -> OutlineDest.PageObj(resolved.num)
+                else -> null
+            }
+        }
+    }
+
+    private fun normalizeOutlinePage(raw: Int, pageCount: Int, pageOf: Map<Int, Int>): Int? {
+        if (pageOf.isNotEmpty()) {
+            return when {
+                raw in pageOf.values -> raw
+                raw - 1 in pageOf.values -> raw - 1
+                else -> raw.coerceAtLeast(0)
+            }
+        }
+        if (pageCount <= 0) return raw.coerceAtLeast(0)
+        return when {
+            raw in 0 until pageCount -> raw
+            raw - 1 in 0 until pageCount -> raw - 1
+            else -> null
+        }
+    }
+
+    private fun pageObjectIndex(stillWanted: () -> Boolean = { true }): Map<Int, Int> {
+        if (!stillWanted()) return emptyMap()
         val root = rootRef?.let { resolve(it) } as? PdfDict ?: return emptyMap()
         val pagesNode = root["/Pages"]?.let { resolveValue(it) } as? PdfDict ?: return emptyMap()
         val index = HashMap<Int, Int>()
@@ -620,7 +692,9 @@ internal class PdfParser(
         pending.add(pagesNode)
         val seen = HashSet<Int>()
         var n = 0
+        var steps = 0
         while (pending.isNotEmpty() && n < 100_000) {
+            if ((steps++ and 31) == 0 && !stillWanted()) return emptyMap()
             val node = resolveValue(pending.removeFirst()) as? PdfDict ?: continue
             val id = node.objNum
             if (id != null && !seen.add(id)) continue
@@ -632,26 +706,7 @@ internal class PdfParser(
             val kids = node["/Kids"]?.let { resolveValue(it) } as? PdfArray ?: continue
             kids.items.forEach { pending.add(it) }
         }
-        return index
-    }
-
-    private fun outlinePageIndex(item: PdfDict, pageOf: Map<Int, Int>): Int? {
-        val dest = item["/Dest"]?.let { resolveValue(it) }
-            ?: (item["/A"]?.let { resolveValue(it) } as? PdfDict)?.get("/D")?.let { resolveValue(it) }
-        val array = dest as? PdfArray ?: return null
-        return when (val first = array.items.firstOrNull()?.let { resolveValue(it) } ?: array.items.firstOrNull()) {
-            is PdfDict -> first.objNum?.let { pageOf[it] }
-            is PdfRef -> pageOf[first.num]
-            is PdfNumber -> {
-                val raw = first.value.toInt()
-                when {
-                    raw in pageOf.values -> raw
-                    raw - 1 in pageOf.values -> raw - 1
-                    else -> raw.coerceAtLeast(0)
-                }
-            }
-            else -> null
-        }
+        return if (stillWanted()) index else emptyMap()
     }
 
     private fun pdfOutlineTitle(value: PdfValue?): String {
@@ -2483,8 +2538,14 @@ internal data class PdfTocEntry(
     val depth: Int,
 )
 
-internal fun readPdfChapters(source: ArchiveByteSource, size: Long): List<PdfTocEntry> = runCatching {
-    PdfParser(source, size).readOutlines()
+internal fun readPdfChapters(
+    source: ArchiveByteSource,
+    size: Long,
+    pageCount: Int = -1,
+    stillWanted: () -> Boolean = { true },
+): List<PdfTocEntry> = runCatching {
+    if (!stillWanted()) emptyList()
+    else PdfParser(source, size).readOutlines(pageCount, stillWanted)
 }.getOrDefault(emptyList())
 
 internal data class PdfFrontSample(

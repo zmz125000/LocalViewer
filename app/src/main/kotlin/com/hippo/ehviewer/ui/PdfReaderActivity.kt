@@ -340,8 +340,8 @@ class PdfReaderActivity : AppCompatActivity() {
                     }.getOrNull()
                     pfd = descriptor
                     if (descriptor == null) return@withContext null
-                    openPdfDocument(descriptor) {
-                        loadPdfChapters(intent, token)
+                    openPdfDocument(descriptor) { pageCount, stillWanted ->
+                        loadPdfChapters(intent, token, pageCount, stillWanted)
                     }
                 }
                 val model = opened
@@ -374,6 +374,12 @@ class PdfReaderActivity : AppCompatActivity() {
                     )
                 }
                 opened = null
+                if (model is PdfDocumentModel.Vector) {
+                    // Outline page numbers that are already in the file finish quickly.
+                    // Page-object destinations walk the page tree. This child is cancelled
+                    // with [openJob] when the reader exits.
+                    launch { model.ensureChapters() }
+                }
             } catch (e: kotlinx.coroutines.CancellationException) {
                 pfd?.let { runCatching { it.close() } }
                 direct?.let { runCatching { it.close() } }
@@ -627,32 +633,43 @@ private fun tryOpenImagePdf(
 
 private fun openPdfDocument(
     pfd: ParcelFileDescriptor,
-    loadChapters: (suspend () -> List<PdfTocEntry>)? = null,
+    loadChapters: (suspend (pageCount: Int, stillWanted: () -> Boolean) -> List<PdfTocEntry>)? = null,
 ): PdfDocumentModel {
-    // Contents are a second pass over the page tree. Do not run that before
-    // PdfRenderer — Direct Image off still opened every page object here.
+    // Do not walk the page tree before the first page. Contents load after open.
     val renderer = runCatching { PdfRenderer(pfd) }.getOrElse { e ->
         runCatching { pfd.close() }
         throw e
     }
     logcat("PdfReader") { "vector PDF pages=${renderer.pageCount}" }
-    return PdfDocumentModel.Vector(PdfSession(renderer), emptyList(), loadChapters)
+    val pages = renderer.pageCount
+    val loader: (suspend (() -> Boolean) -> List<PdfTocEntry>)? = loadChapters?.let { load ->
+        { stillWanted -> load(pages, stillWanted) }
+    }
+    return PdfDocumentModel.Vector(PdfSession(renderer), emptyList(), loader)
 }
 
 /**
- * Bookmark page index. Not used to open the file. A new descriptor so this
- * does not share the seek position PdfRenderer is using.
+ * Bookmark page index on its own descriptor, so it does not share PdfRenderer's
+ * seek position. [stillWanted] false stops a page-tree walk.
  */
-private fun loadPdfChapters(intent: Intent, token: String?): List<PdfTocEntry> {
+private fun loadPdfChapters(
+    intent: Intent,
+    token: String?,
+    pageCount: Int,
+    stillWanted: () -> Boolean,
+): List<PdfTocEntry> {
+    if (!stillWanted()) return emptyList()
     val source = runCatching { openDirectArchiveSource(intent, token) }.getOrNull()
         ?: token?.let { StreamDocumentRegistry.get(it)?.openFileDescriptor }?.let { open ->
             runCatching { PfdArchiveByteSource(open(), ownsPfd = true) }.getOrNull()
         }
         ?: return emptyList()
+    val previous = android.os.Process.getThreadPriority(android.os.Process.myTid())
     return try {
         android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND)
-        readPdfChapters(source, source.size)
+        readPdfChapters(source, source.size, pageCount, stillWanted)
     } finally {
+        android.os.Process.setThreadPriority(previous)
         runCatching { source.close() }
     }
 }
@@ -708,7 +725,7 @@ private sealed interface PdfDocumentModel {
     class Vector(
         val session: PageBitmapSession,
         chapters: List<PdfTocEntry>,
-        private val chapterLoader: (suspend () -> List<PdfTocEntry>)? = null,
+        private val chapterLoader: (suspend (stillWanted: () -> Boolean) -> List<PdfTocEntry>)? = null,
         val isEbook: Boolean = false,
     ) : PdfDocumentModel {
         override var chapters by mutableStateOf(chapters)
@@ -723,7 +740,11 @@ private sealed interface PdfDocumentModel {
             val load = chapterLoader ?: return
             chapterMutex.withLock {
                 if (chaptersLoaded) return@withLock
-                chapters = withContext(Dispatchers.IO) { load() }
+                val loaded = withContext(Dispatchers.IO) {
+                    load { isActive } to isActive
+                }
+                if (!loaded.second) return@withLock
+                chapters = loaded.first
                 chaptersLoaded = true
             }
         }
@@ -1743,10 +1764,6 @@ private fun PdfReaderScreen(
             showScaleFitCycle = !isWebtoon && (!pagerDual || !dualPageGap),
             onClickContents = { contentsOpen = true },
         )
-        LaunchedEffect(contentsOpen, doc) {
-            if (!contentsOpen) return@LaunchedEffect
-            (doc as? PdfDocumentModel.Vector)?.ensureChapters()
-        }
         if (contentsOpen) {
             PdfContentsSheet(
                 chapters = doc?.chapters.orEmpty(),
