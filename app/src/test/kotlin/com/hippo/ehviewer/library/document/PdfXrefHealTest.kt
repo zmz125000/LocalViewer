@@ -79,7 +79,7 @@ class PdfXrefHealTest {
             val t0 = System.nanoTime()
             val chapters = readPdfChapters(source, source.size)
             val ms = (System.nanoTime() - t0) / 1_000_000
-            check(chapters.size >= 8) { "chapters=${chapters.size} ms=$ms" }
+            check(chapters != null && chapters.size >= 8) { "chapters=${chapters?.size} ms=$ms" }
             // Was several seconds: a new Regex for every xref line and every page object.
             check(ms < 1500) { "outline walk ${ms}ms entries=${chapters.size}" }
         }

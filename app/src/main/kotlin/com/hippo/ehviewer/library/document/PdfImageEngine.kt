@@ -598,9 +598,11 @@ internal class PdfParser(
     fun readOutlines(
         pageCount: Int = -1,
         stillWanted: () -> Boolean = { true },
-    ): List<PdfTocEntry> {
-        if (!stillWanted() || !bootstrap() || encrypted) return emptyList()
-        val root = rootRef?.let { resolve(it) } as? PdfDict ?: return emptyList()
+    ): List<PdfTocEntry>? {
+        // null = stopped or failed (do not cache). Empty = this file has no bookmarks.
+        if (!stillWanted()) return null
+        if (!bootstrap() || encrypted) return null
+        val root = rootRef?.let { resolve(it) } as? PdfDict ?: return null
         val outlines = root["/Outlines"]?.let { resolveValue(it) } as? PdfDict ?: return emptyList()
         val pending = ArrayList<PendingOutline>(32)
         fun walk(node: PdfDict, depth: Int) {
@@ -619,14 +621,14 @@ internal class PdfParser(
             }
         }
         walk(outlines, 0)
-        if (!stillWanted()) return emptyList()
+        if (!stillWanted()) return null
         if (pending.isEmpty()) return emptyList()
         val pageOf = if (pending.any { it.dest is OutlineDest.PageObj }) {
             pageObjectIndex(stillWanted)
         } else {
             emptyMap()
         }
-        if (!stillWanted()) return emptyList()
+        if (!stillWanted()) return null
         val out = ArrayList<PdfTocEntry>(pending.size)
         for (item in pending) {
             val page = when (val dest = item.dest) {
@@ -2538,15 +2540,22 @@ internal data class PdfTocEntry(
     val depth: Int,
 )
 
+/**
+ * @return chapters, an empty list when the file has no outline, or null when the
+ * walk was stopped or failed. Null must not be stored as a TOC cache hit.
+ */
 internal fun readPdfChapters(
     source: ArchiveByteSource,
     size: Long,
     pageCount: Int = -1,
     stillWanted: () -> Boolean = { true },
-): List<PdfTocEntry> = runCatching {
-    if (!stillWanted()) emptyList()
-    else PdfParser(source, size).readOutlines(pageCount, stillWanted)
-}.getOrDefault(emptyList())
+): List<PdfTocEntry>? = runCatching {
+    if (!stillWanted()) {
+        null
+    } else {
+        PdfParser(source, size).readOutlines(pageCount, stillWanted)
+    }
+}.getOrNull()
 
 internal data class PdfFrontSample(
     val scannedPages: Int = 0,

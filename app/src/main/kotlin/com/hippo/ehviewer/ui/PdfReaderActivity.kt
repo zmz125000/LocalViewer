@@ -144,6 +144,7 @@ import com.hippo.ehviewer.library.BlockCacheArchiveByteSource
 import com.hippo.ehviewer.library.DocumentExtractCache
 import com.hippo.ehviewer.library.GallerySiblingNavigator
 import com.hippo.ehviewer.library.OriginDiskCache
+import com.hippo.ehviewer.library.PdfTocCache
 import com.hippo.ehviewer.library.PfdArchiveByteSource
 import com.hippo.ehviewer.library.ReaderPageThumb
 import com.hippo.ehviewer.library.document.EbookDocument
@@ -341,7 +342,7 @@ class PdfReaderActivity : AppCompatActivity() {
                     pfd = descriptor
                     if (descriptor == null) return@withContext null
                     openPdfDocument(descriptor) { pageCount, stillWanted ->
-                        loadPdfChapters(intent, token, pageCount, stillWanted)
+                        loadPdfChapters(intent, token, cacheKey, pageCount, stillWanted)
                     }
                 }
                 val model = opened
@@ -655,6 +656,7 @@ private fun openPdfDocument(
 private fun loadPdfChapters(
     intent: Intent,
     token: String?,
+    cacheKey: String?,
     pageCount: Int,
     stillWanted: () -> Boolean,
 ): List<PdfTocEntry> {
@@ -666,8 +668,18 @@ private fun loadPdfChapters(
         ?: return emptyList()
     val previous = android.os.Process.getThreadPriority(android.os.Process.myTid())
     return try {
+        val size = source.size
+        if (cacheKey != null) {
+            PdfTocCache.load(cacheKey, size, pageCount)?.let { return it }
+        }
+        if (!stillWanted()) return emptyList()
         android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND)
-        readPdfChapters(source, source.size, pageCount, stillWanted)
+        // null = stopped or failed. Do not store that as "this file has no TOC".
+        val chapters = readPdfChapters(source, size, pageCount, stillWanted) ?: return emptyList()
+        if (cacheKey != null && stillWanted()) {
+            PdfTocCache.save(cacheKey, size, pageCount, chapters)
+        }
+        chapters
     } finally {
         android.os.Process.setThreadPriority(previous)
         runCatching { source.close() }
