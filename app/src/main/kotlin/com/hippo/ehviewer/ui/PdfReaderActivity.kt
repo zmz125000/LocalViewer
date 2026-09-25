@@ -2173,7 +2173,12 @@ private fun PdfPageThumb(
         }
         val rendered = withContext(Dispatchers.IO) {
             when (doc) {
-                is PdfDocumentModel.Vector -> runCatching { doc.session.render(index, 256) }.getOrNull()
+                is PdfDocumentModel.Vector -> runCatching {
+                    val aspect = doc.session.pageAspect(index)
+                    val edge = OriginDiskCache.THUMB_EDGE
+                    val width = if (aspect >= 1f) edge else (edge * aspect).roundToInt().coerceAtLeast(1)
+                    doc.session.render(index, width)
+                }.getOrNull()
                 is PdfDocumentModel.Images -> runCatching {
                     doc.engine.ensureListedThrough(index)
                     doc.engine.extractBytes(index)?.let(::decodePdfThumb)
@@ -2232,15 +2237,28 @@ private fun PdfPageThumb(
 private fun decodePdfThumb(bytes: ByteArray): Bitmap? {
     val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
     BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
-    var sample = 1
     val edge = maxOf(bounds.outWidth, bounds.outHeight)
-    while (edge / sample > 512 && sample < 32) sample *= 2
-    return BitmapFactory.decodeByteArray(
+    if (edge <= 0) return null
+    val target = OriginDiskCache.THUMB_EDGE
+    var sample = 1
+    while (edge / sample > target * 2 && sample < 32) sample *= 2
+    val decoded = BitmapFactory.decodeByteArray(
         bytes,
         0,
         bytes.size,
         BitmapFactory.Options().apply { inSampleSize = sample },
+    ) ?: return null
+    val longEdge = maxOf(decoded.width, decoded.height)
+    if (longEdge <= target) return decoded
+    val scale = target.toFloat() / longEdge
+    val scaled = Bitmap.createScaledBitmap(
+        decoded,
+        (decoded.width * scale).toInt().coerceAtLeast(1),
+        (decoded.height * scale).toInt().coerceAtLeast(1),
+        true,
     )
+    if (scaled !== decoded && !decoded.isRecycled) decoded.recycle()
+    return scaled
 }
 
 private val PageBackdrop = Color(0xFF2B2B2B)
