@@ -613,7 +613,7 @@ object Settings : DataStorePreferences(null) {
      * After a reader page decodes, write a 768px photo-grid thumb for later grid use.
      * Default on.
      */
-    val readerGeneratePageThumb = boolPref("pref_reader_generate_page_thumb", true)
+    val readerGeneratePageThumb = boolPref("pref_reader_generate_page_thumb", false)
 
     /**
      * PDF reader only. On: image PDFs use embedded images for pages and the photo grid.
