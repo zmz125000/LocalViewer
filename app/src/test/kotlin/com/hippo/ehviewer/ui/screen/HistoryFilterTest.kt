@@ -6,6 +6,7 @@ import com.hippo.ehviewer.library.LOCAL_BROWSE_TOKEN
 import com.hippo.ehviewer.library.LOCAL_FILE_TOKEN
 import com.hippo.ehviewer.library.LOCAL_FOLDER_TOKEN
 import com.hippo.ehviewer.library.LocalHistory
+import com.hippo.ehviewer.ui.main.BrowseOverflowKind
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -92,6 +93,41 @@ class HistoryFilterTest {
         assertEquals(listOf(pdf, txt), filterHistoryFileItems(files, HistorySection.Documents))
         assertFalse(LocalHistory.matchesHistorySection(dir, documents = true))
         assertTrue(LocalHistory.matchesHistorySection(dir, documents = false))
+    }
+
+    @Test
+    fun overflowKindMatchesFolderView() {
+        val dir = item(LOCAL_BROWSE_TOKEN, "Album", "1\u0000photos")
+        val folder = item(LOCAL_FOLDER_TOKEN, "Album", "1\u0000photos/Album")
+        val zip = item(LOCAL_ARCHIVE_TOKEN, "pack.cbz", "/comics/pack.cbz")
+        val pdf = item(LOCAL_ARCHIVE_TOKEN, "guide.pdf", "/docs/guide.pdf")
+        val txt = item(LOCAL_FILE_TOKEN, "notes.txt", "/books/notes.txt")
+        val html = item(LOCAL_FILE_TOKEN, "index.html", "/site/index.html")
+        val video = item(LOCAL_FILE_TOKEN, "clip.mp4", "/videos/clip.mp4")
+        assertEquals(BrowseOverflowKind.Common, historyOverflowKind(dir))
+        assertEquals(BrowseOverflowKind.Gallery, historyOverflowKind(folder))
+        assertEquals(BrowseOverflowKind.Gallery, historyOverflowKind(zip))
+        assertEquals(BrowseOverflowKind.Pdf, historyOverflowKind(pdf))
+        assertEquals(BrowseOverflowKind.Pdf, historyOverflowKind(txt))
+        assertEquals(BrowseOverflowKind.Webpage, historyOverflowKind(html))
+        assertEquals(BrowseOverflowKind.Video, historyOverflowKind(video))
+        assertTrue(historyOverflowHasPhotoGrid(folder))
+        assertFalse(historyOverflowHasPhotoGrid(zip))
+        assertTrue(historyOverflowHasImageReader(pdf))
+        assertFalse(historyOverflowHasImageReader(item(LOCAL_FILE_TOKEN, "guide.pdf", "/docs/guide.pdf")))
+        assertTrue(historyOverflowHasFavorite(dir))
+        assertFalse(historyOverflowHasFavorite(txt))
+    }
+
+    @Test
+    fun searchIgnoresMediaDocumentsFilter() {
+        val txt = item(LOCAL_FILE_TOKEN, "notes.txt", "/books/notes.txt")
+        val zip = item(LOCAL_ARCHIVE_TOKEN, "pack.cbz", "/comics/pack.cbz")
+        val files = listOf(txt, zip)
+        assertEquals(listOf(zip), filterHistoryFileItems(files, HistorySection.Media))
+        assertEquals(listOf(txt), filterHistoryFileItems(files, HistorySection.Documents))
+        assertEquals(files, filterHistoryFileItems(files, HistorySection.Media, allTypes = true))
+        assertEquals(files, filterHistoryFileItems(files, HistorySection.Documents, allTypes = true))
     }
 
     private fun item(token: String, title: String, uploader: String) = BaseGalleryInfo(

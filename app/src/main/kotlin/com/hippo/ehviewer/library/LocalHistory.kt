@@ -189,7 +189,7 @@ object LocalHistory {
 
     enum class KindLabel { Library, Archive, Folder, Smb, WebDav, Video, File, Unknown }
 
-    private fun fileNameOfHistory(info: GalleryInfo): String {
+    fun fileNameOfHistory(info: GalleryInfo): String {
         val path = info.uploader.orEmpty()
         val fromPath = path.substringAfterLast('\u0000')
             .substringAfterLast('/')

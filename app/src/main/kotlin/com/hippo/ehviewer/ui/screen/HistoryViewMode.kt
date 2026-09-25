@@ -18,7 +18,7 @@ enum class HistorySection(val prefValue: Int) {
     }
 }
 
-/** Swap Media ↔ Documents. Same as tapping the History section header. */
+/** Swap Media ↔ Documents. Same as re-tapping History on the bottom nav. */
 fun toggleHistorySection() {
     Settings.historySection.value = when (HistorySection.fromPref(Settings.historySection.value)) {
         HistorySection.Media -> HistorySection.Documents.prefValue
@@ -29,6 +29,11 @@ fun toggleHistorySection() {
 fun <T : GalleryInfo> filterHistoryFileItems(
     items: List<T>,
     section: HistorySection,
-): List<T> = items.filter { info ->
-    LocalHistory.matchesHistorySection(info, section == HistorySection.Documents)
+    allTypes: Boolean = false,
+): List<T> = if (allTypes) {
+    items
+} else {
+    items.filter { info ->
+        LocalHistory.matchesHistorySection(info, section == HistorySection.Documents)
+    }
 }

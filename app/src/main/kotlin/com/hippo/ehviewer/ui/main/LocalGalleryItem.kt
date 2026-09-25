@@ -294,6 +294,7 @@ fun HistoryListItem(
     showPages: Boolean,
     @Suppress("UNUSED_PARAMETER") showProgress: Boolean,
     modifier: Modifier = Modifier,
+    overflow: BrowseOverflowActions? = null,
 ) {
     val haptic = LocalHapticFeedback.current
     val kind = LocalHistory.kindLabelKey(info)
@@ -354,6 +355,11 @@ fun HistoryListItem(
                     .clip(ShapeDefaults.Medium),
             )
         },
+        trailingContent = overflow?.let { actions ->
+            {
+                BrowseItemOverflowButton(actions, BrowseOverflowPlacement.ListTrailing)
+            }
+        },
         modifier = modifier
             .fillMaxWidth()
             .combinedClickable(
@@ -375,6 +381,7 @@ fun HistoryGridItem(
     showPages: Boolean,
     showProgress: Boolean,
     modifier: Modifier = Modifier,
+    overflow: BrowseOverflowActions? = null,
 ) {
     val kind = LocalHistory.kindLabelKey(info)
     val placeholderIcon: ImageVector = when (kind) {
@@ -474,6 +481,12 @@ fun HistoryGridItem(
                         textAlign = TextAlign.Start,
                         modifier = Modifier.weight(1f),
                     )
+                    overflow?.let { actions ->
+                        BrowseItemOverflowButton(
+                            actions = actions,
+                            placement = BrowseOverflowPlacement.GridBottomEnd,
+                        )
+                    }
                 }
             }
         }
@@ -491,6 +504,7 @@ fun HistoryDirectoryGridItem(
     onClick: () -> Unit,
     onLongClick: () -> Unit = onClick,
     modifier: Modifier = Modifier,
+    overflow: BrowseOverflowActions? = null,
 ) {
     val namePadH = GalleryGridDefaults.namePaddingH()
     val namePadBottom = GalleryGridDefaults.namePaddingBottom()
@@ -527,19 +541,30 @@ fun HistoryDirectoryGridItem(
                     placeholderSize = BrowseGridPlaceholderIconSize,
                     modifier = Modifier.fillMaxSize(),
                 )
-                Text(
-                    text = info.title.orEmpty(),
-                    style = MaterialTheme.typography.labelMedium,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                    textAlign = TextAlign.Start,
+                Row(
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
                         .fillMaxWidth()
                         .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.55f))
                         .padding(horizontal = namePadH)
                         .padding(top = 4.dp, bottom = namePadBottom),
-                )
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = info.title.orEmpty(),
+                        style = MaterialTheme.typography.labelMedium,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                        textAlign = TextAlign.Start,
+                        modifier = Modifier.weight(1f),
+                    )
+                    overflow?.let { actions ->
+                        BrowseItemOverflowButton(
+                            actions = actions,
+                            placement = BrowseOverflowPlacement.GridBottomEnd,
+                        )
+                    }
+                }
             }
         } else {
             val labelIconSize = with(LocalDensity.current) {
@@ -584,6 +609,12 @@ fun HistoryDirectoryGridItem(
                     textAlign = TextAlign.Start,
                     modifier = Modifier.weight(1f),
                 )
+                overflow?.let { actions ->
+                    BrowseItemOverflowButton(
+                        actions = actions,
+                        placement = BrowseOverflowPlacement.GridBottomEnd,
+                    )
+                }
             }
         }
     }
