@@ -890,6 +890,10 @@
     <string name="pref_ebook_font_system">系统</string>
     <string name="pref_ebook_font_size">字号</string>
     <string name="pref_ebook_paragraph">段落</string>
+    <string name="pref_ebook_paragraph_mode">段落处理</string>
+    <string name="ebook_paragraph_mode_auto">自动</string>
+    <string name="ebook_paragraph_mode_hard">合并断行</string>
+    <string name="ebook_paragraph_mode_soft">折叠多余空行</string>
     <string name="pref_ebook_line_height">行距</string>
     <string name="pref_ebook_paragraph_spacing">段距</string>
     <string name="pref_ebook_indent">首行缩进</string>

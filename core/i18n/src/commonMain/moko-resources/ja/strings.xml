@@ -867,6 +867,10 @@
     <string name="pref_ebook_font_system">システム</string>
     <string name="pref_ebook_font_size">サイズ</string>
     <string name="pref_ebook_paragraph">段落</string>
+    <string name="pref_ebook_paragraph_mode">段落</string>
+    <string name="ebook_paragraph_mode_auto">自動</string>
+    <string name="ebook_paragraph_mode_hard">折り返しを結合</string>
+    <string name="ebook_paragraph_mode_soft">余分な空行を詰める</string>
     <string name="pref_ebook_line_height">行間</string>
     <string name="pref_ebook_paragraph_spacing">段落間隔</string>
     <string name="pref_ebook_indent">字下げ</string>

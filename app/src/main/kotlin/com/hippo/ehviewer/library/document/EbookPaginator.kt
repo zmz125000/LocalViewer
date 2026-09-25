@@ -2,22 +2,24 @@ package com.hippo.ehviewer.library.document
 
 /**
  * A-series page geometry so page count / TOC indices stay stable while the PDF
- * reader scales the bitmap. Wrap metrics ([charsPerLine], line height, indent,
- * margin) are style parameters; pixel size does not change pagination.
+ * reader scales the bitmap. Glyph size is a fraction of **page** width (not
+ * content width), so margin/padding change line length, not type size.
  */
-internal const val EBOOK_CJK_PER_LINE = 28
+internal const val EBOOK_FONT_SIZE_DEFAULT = 18
 
 internal data class EbookStyle(
-    val charsPerLine: Int = EBOOK_CJK_PER_LINE,
+    val fontSize: Int = EBOOK_FONT_SIZE_DEFAULT,
     val lineHeightPercent: Int = 145,
     val paragraphPercent: Int = 0,
     val indentEm: Int = 2,
     val marginPercent: Int = 7,
     val justify: Boolean = false,
+    val paragraphMode: Int = EbookParagraph.AUTO,
 ) {
     val lineHeightEm: Float get() = lineHeightPercent / 100f
     val paragraphEm: Float get() = paragraphPercent / 100f
     val margin: Float get() = marginPercent / 100f
+    val fontFraction: Float get() = fontSize.coerceIn(12, 32) / 560f
 
     companion object {
         val DEFAULT = EbookStyle()
@@ -26,15 +28,25 @@ internal data class EbookStyle(
 
 internal object EbookPaginator {
     const val ASPECT = 1f / 1.41421356f
-    const val CJK_PER_LINE = EBOOK_CJK_PER_LINE
+    const val CJK_PER_LINE = 28
     const val LINE_HEIGHT_EM = 1.45f
     const val MARGIN = 0.07f
+
+    fun lineCapacity(style: EbookStyle = EbookStyle.DEFAULT): Float {
+        val content = (1f - 2f * style.margin).coerceAtLeast(0.2f)
+        return content / style.fontFraction.coerceAtLeast(0.01f)
+    }
 
     fun contentHeightEm(style: EbookStyle = EbookStyle.DEFAULT): Float {
         val invAspect = 1f / ASPECT
         val m = style.margin
-        val inner = (1f - 2f * m).coerceAtLeast(0.2f)
-        return style.charsPerLine * (invAspect - 2f * m).coerceAtLeast(0.2f) / inner
+        return (invAspect - 2f * m).coerceAtLeast(0.2f) / style.fontFraction.coerceAtLeast(0.01f)
+    }
+
+    fun headingScale(depth: Int): Float = when (depth.coerceAtLeast(0)) {
+        0 -> 1.35f
+        1 -> 1.22f
+        else -> 1.1f
     }
 
     val linesPerPage: Int = run {
@@ -49,15 +61,11 @@ internal object EbookPaginator {
         val pages = ArrayList<EbookPage>()
         val toc = ArrayList<PdfTocEntry>(chapters.size)
         val budget = contentHeightEm(style)
-        val titleStyle = style.copy(indentEm = 0, justify = false)
         for ((chIndex, ch) in chapters.withIndex()) {
             val raw = ArrayList<EbookLine>()
             val title = ch.title.trim()
             if (title.isNotEmpty()) {
-                raw += wrapLines(title, titleStyle)
-                if (ch.text.isNotBlank()) {
-                    raw += EbookLine("", heightEm = style.lineHeightEm)
-                }
+                wrapHeading(title, ch.depth, style, raw)
             }
             if (ch.text.isNotBlank()) {
                 raw += wrapLines(ch.text, style)
@@ -94,27 +102,13 @@ internal object EbookPaginator {
     fun wrap(text: String, style: EbookStyle = EbookStyle.DEFAULT): List<String> = wrapLines(text, style).map { it.text }
 
     fun wrapLines(text: String, style: EbookStyle = EbookStyle.DEFAULT): List<EbookLine> {
+        val paras = EbookParagraph.paragraphs(text, style.paragraphMode)
         val out = ArrayList<EbookLine>()
-        val normalized = text.replace("\r\n", "\n").replace('\r', '\n')
-        var i = 0
-        val n = normalized.length
-        while (i <= n) {
-            val nl = normalized.indexOf('\n', i)
-            val end = if (nl < 0) n else nl
-            val para = normalized.substring(i, end)
-            if (para.isEmpty()) {
-                out += EbookLine("", heightEm = style.lineHeightEm)
-            } else {
-                wrapParagraph(para, style, out)
-                if (style.paragraphEm > 0f) {
-                    out += EbookLine("", heightEm = style.paragraphEm)
-                }
+        for ((i, para) in paras.withIndex()) {
+            wrapParagraph(para, style, out)
+            if (i != paras.lastIndex && style.paragraphEm > 0f) {
+                out += EbookLine("", heightEm = style.paragraphEm)
             }
-            if (nl < 0) break
-            i = nl + 1
-        }
-        while (out.size > 1 && out.last().text.isEmpty()) {
-            out.removeAt(out.lastIndex)
         }
         return out
     }
@@ -135,6 +129,23 @@ internal object EbookPaginator {
             n in 0x3130..0x318F -> 1f
             else -> 0.7f
         }
+    }
+
+    private fun wrapHeading(title: String, depth: Int, style: EbookStyle, out: MutableList<EbookLine>) {
+        val scale = headingScale(depth)
+        val start = out.size
+        wrapParagraph(title, style.copy(indentEm = 0, justify = false), out)
+        for (i in start until out.size) {
+            val line = out[i]
+            out[i] = line.copy(
+                indentEm = 0f,
+                heightEm = style.lineHeightEm * scale,
+                justify = false,
+                scale = scale,
+                bold = true,
+            )
+        }
+        out += EbookLine("", heightEm = 0.35f * scale)
     }
 
     private fun packPages(
@@ -162,7 +173,7 @@ internal object EbookPaginator {
     }
 
     private fun wrapParagraph(para: String, style: EbookStyle, out: MutableList<EbookLine>) {
-        val full = style.charsPerLine.toFloat()
+        val full = lineCapacity(style)
         val indent = style.indentEm.toFloat().coerceAtLeast(0f)
         var first = true
         val sb = StringBuilder()
@@ -241,6 +252,8 @@ internal data class EbookLine(
     val heightEm: Float = EbookStyle.DEFAULT.lineHeightEm,
     val justify: Boolean = false,
     val offset: Int = 0,
+    val scale: Float = 1f,
+    val bold: Boolean = false,
 )
 
 internal data class EbookPage(

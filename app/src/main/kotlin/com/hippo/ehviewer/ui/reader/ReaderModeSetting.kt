@@ -119,7 +119,7 @@ private fun DocumentStyleSetting() = Column {
         ),
         field = Settings.ebookFont.asMutableState(),
     )
-    val chars = Settings.ebookCharsPerLine.asMutableState()
+    val fontSize = Settings.ebookFontSize.asMutableState()
     Text(
         text = stringResource(id = R.string.pref_ebook_font_size),
         modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
@@ -127,14 +127,24 @@ private fun DocumentStyleSetting() = Column {
     )
     SliderChoice(
         startSlot = {},
-        endSlot = { Text(text = "${chars.value}") },
-        range = 16..40,
-        field = chars,
+        endSlot = { Text(text = "${fontSize.value}") },
+        range = 12..32,
+        field = fontSize,
     )
     Text(
         text = stringResource(id = R.string.pref_ebook_paragraph),
         modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
         color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    SpinnerChoice(
+        title = stringResource(id = R.string.pref_ebook_paragraph_mode),
+        entries = stringArrayResource(id = com.hippo.ehviewer.R.array.ebook_paragraph_mode),
+        values = listOf(
+            Settings.EBOOK_PARA_AUTO,
+            Settings.EBOOK_PARA_HARD,
+            Settings.EBOOK_PARA_SOFT,
+        ),
+        field = Settings.ebookParagraphMode.asMutableState(),
     )
     val lineHeight = Settings.ebookLineHeight.asMutableState()
     Text(

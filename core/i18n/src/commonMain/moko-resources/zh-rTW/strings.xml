@@ -867,6 +867,10 @@
     <string name="pref_ebook_font_system">系統</string>
     <string name="pref_ebook_font_size">字級</string>
     <string name="pref_ebook_paragraph">段落</string>
+    <string name="pref_ebook_paragraph_mode">段落處理</string>
+    <string name="ebook_paragraph_mode_auto">自動</string>
+    <string name="ebook_paragraph_mode_hard">合併斷行</string>
+    <string name="ebook_paragraph_mode_soft">摺疊多餘空行</string>
     <string name="pref_ebook_line_height">行距</string>
     <string name="pref_ebook_paragraph_spacing">段距</string>
     <string name="pref_ebook_indent">首行縮排</string>

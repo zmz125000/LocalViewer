@@ -829,12 +829,13 @@ private data class EbookPaint(
 )
 
 private fun ebookStyleFromSettings(): EbookStyle = EbookStyle(
-    charsPerLine = Settings.ebookCharsPerLine.value.coerceIn(16, 40),
+    fontSize = Settings.ebookFontSize.value.coerceIn(12, 32),
     lineHeightPercent = Settings.ebookLineHeight.value.coerceIn(100, 200),
     paragraphPercent = Settings.ebookParagraphSpacing.value.coerceIn(0, 200),
     indentEm = Settings.ebookIndent.value.coerceIn(0, 2),
     marginPercent = Settings.ebookMargin.value.coerceIn(4, 12),
     justify = Settings.ebookAlign.value == Settings.EBOOK_ALIGN_JUSTIFY,
+    paragraphMode = Settings.ebookParagraphMode.value.coerceIn(0, 2),
 )
 
 private fun ebookPaintFromSettings(dark: Boolean): EbookPaint {
@@ -868,18 +869,25 @@ private fun drawEbookPage(bitmap: Bitmap, page: EbookPage, style: EbookStyle, co
     val h = bitmap.height.toFloat().coerceAtLeast(1f)
     val pad = w * style.margin
     val contentW = (w - 2f * pad).coerceAtLeast(1f)
-    val fontSize = contentW / style.charsPerLine.coerceAtLeast(8)
+    val fontSize = w * style.fontFraction
+    val baseFace = ebookTypeface(colors.font)
     val paint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
         color = colors.fg
         textSize = fontSize
-        typeface = ebookTypeface(colors.font)
+        typeface = baseFace
     }
-    var y = pad + fontSize
+    var y = pad
     val maxY = h - pad
     for (line in page.lines) {
+        if (line.text.isEmpty()) {
+            y += fontSize * line.heightEm
+            continue
+        }
+        val scale = line.scale.coerceAtLeast(0.5f)
+        y += fontSize * scale
         if (y > maxY) break
-        drawEbookLine(canvas, line, pad, y, contentW, fontSize, paint)
-        y += fontSize * line.heightEm
+        drawEbookLine(canvas, line, pad, y, contentW, fontSize, paint, baseFace)
+        y += fontSize * (line.heightEm - scale).coerceAtLeast(0f)
     }
 }
 
@@ -891,9 +899,14 @@ private fun drawEbookLine(
     contentW: Float,
     fontSize: Float,
     paint: TextPaint,
+    baseFace: Typeface,
 ) {
     val text = line.text
     if (text.isEmpty()) return
+    val size = fontSize * line.scale.coerceAtLeast(0.5f)
+    paint.textSize = size
+    paint.typeface = if (line.bold) Typeface.create(baseFace, Typeface.BOLD) else baseFace
+    paint.isFakeBoldText = line.bold
     val x0 = left + line.indentEm * fontSize
     val avail = (contentW - line.indentEm * fontSize).coerceAtLeast(1f)
     if (!line.justify) {
@@ -1001,28 +1014,31 @@ private fun PdfReaderScreen(
     val appDarkTheme = isSystemInDarkTheme()
     val isEbook = (doc as? PdfDocumentModel.Vector)?.isEbook == true
     val ebookFont by Settings.ebookFont.collectAsState()
-    val ebookChars by Settings.ebookCharsPerLine.collectAsState()
+    val ebookFontSize by Settings.ebookFontSize.collectAsState()
     val ebookLineHeight by Settings.ebookLineHeight.collectAsState()
     val ebookParagraph by Settings.ebookParagraphSpacing.collectAsState()
     val ebookIndent by Settings.ebookIndent.collectAsState()
     val ebookAlign by Settings.ebookAlign.collectAsState()
     val ebookMargin by Settings.ebookMargin.collectAsState()
+    val ebookParaMode by Settings.ebookParagraphMode.collectAsState()
     val readerTheme by Settings.readerTheme.collectAsState()
     val ebookLayout = remember(
-        ebookChars,
+        ebookFontSize,
         ebookLineHeight,
         ebookParagraph,
         ebookIndent,
         ebookAlign,
         ebookMargin,
+        ebookParaMode,
     ) {
         EbookStyle(
-            charsPerLine = ebookChars.coerceIn(16, 40),
+            fontSize = ebookFontSize.coerceIn(12, 32),
             lineHeightPercent = ebookLineHeight.coerceIn(100, 200),
             paragraphPercent = ebookParagraph.coerceIn(0, 200),
             indentEm = ebookIndent.coerceIn(0, 2),
             marginPercent = ebookMargin.coerceIn(4, 12),
             justify = ebookAlign == Settings.EBOOK_ALIGN_JUSTIFY,
+            paragraphMode = ebookParaMode.coerceIn(0, 2),
         )
     }
     val ebookPaint = remember(ebookFont, readerTheme, appDarkTheme) {

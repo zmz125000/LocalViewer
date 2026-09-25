@@ -606,8 +606,15 @@ object Settings : DataStorePreferences(null) {
     /** Ebook text font: 0=serif, 1=sans, 2=system. PDF reader ebooks only. */
     val ebookFont = intPref("pref_ebook_font", EBOOK_FONT_SERIF)
 
-    /** CJK characters per line (16–40). Default 28. */
-    val ebookCharsPerLine = intPref("pref_ebook_chars_per_line", 28)
+    const val EBOOK_PARA_AUTO = 0
+    const val EBOOK_PARA_HARD = 1
+    const val EBOOK_PARA_SOFT = 2
+
+    /** Body type size 12–32, larger = larger glyphs. Fraction of page width, not content width. */
+    val ebookFontSize = intPref("pref_ebook_font_size", 18)
+
+    /** 0=auto, 1=hard-wrap join, 2=collapse extra blank lines. */
+    val ebookParagraphMode = intPref("pref_ebook_paragraph_mode", EBOOK_PARA_AUTO)
 
     /** Line height as percent of em (100–200). Default 145. */
     val ebookLineHeight = intPref("pref_ebook_line_height", 145)

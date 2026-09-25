@@ -935,6 +935,10 @@
     <string name="pref_ebook_font_system">System</string>
     <string name="pref_ebook_font_size">Size</string>
     <string name="pref_ebook_paragraph">Paragraph</string>
+    <string name="pref_ebook_paragraph_mode">Paragraphs</string>
+    <string name="ebook_paragraph_mode_auto">Auto</string>
+    <string name="ebook_paragraph_mode_hard">Join wrapped lines</string>
+    <string name="ebook_paragraph_mode_soft">Collapse extra blank lines</string>
     <string name="pref_ebook_line_height">Line height</string>
     <string name="pref_ebook_paragraph_spacing">Paragraph spacing</string>
     <string name="pref_ebook_indent">First-line indent</string>
