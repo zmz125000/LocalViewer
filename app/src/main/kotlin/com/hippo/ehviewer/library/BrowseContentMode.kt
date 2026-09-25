@@ -26,9 +26,16 @@ enum class BrowseContentMode(val prefValue: Int) {
      * Document files (PDF/EPUB, Office, OpenDocument, text, ebooks) in this
      * directory + dirs that lead to them. Nested documents stay in their folders
      * — unlike Video, they are not promoted onto the parent listing.
+     * Also keeps leftover RegularFiles that are not documents (Files section).
      */
     Document(4),
     ;
+
+    /**
+     * Force list layout without writing [Settings.listMode] (same idea as
+     * [BrowseVirtualKind.forceGrid] for photo grid).
+     */
+    val forceList: Boolean get() = this == Document
 
     companion object {
         fun fromPref(value: Int): BrowseContentMode = entries.firstOrNull { it.prefValue == value } ?: Galleries
@@ -134,7 +141,8 @@ fun List<BrowseEntry>.filterByContentMode(
                 e.presence.visibleIn(mode, e.hasGallery, e.hasVideo, e.hasDocument)
             }
             is BrowseEntry.ArchiveGallery -> isBrowseDocumentFileName(e.name)
-            is BrowseEntry.RegularFile -> isBrowseDocumentFileName(e.name)
+            // Document files go in the Documents section; leftover files stay in Files.
+            is BrowseEntry.RegularFile -> true
             is BrowseEntry.FolderGallery, is BrowseEntry.VideoFile -> false
         }
         BrowseContentMode.Folder -> when (e) {
@@ -240,7 +248,8 @@ fun List<BrowseEntryRemote>.filterRemoteByContentMode(
                     e.presence.visibleIn(mode, e.hasGallery, e.hasVideo, e.hasDocument)
                 }
                 is BrowseEntryRemote.ArchiveGallery -> isBrowseDocumentFileName(e.name)
-                is BrowseEntryRemote.RegularFile -> isBrowseDocumentFileName(e.name)
+                // Document files go in the Documents section; leftover files stay in Files.
+                is BrowseEntryRemote.RegularFile -> true
                 is BrowseEntryRemote.FolderGallery,
                 is BrowseEntryRemote.VideoFile,
                 -> false
@@ -261,6 +270,7 @@ fun List<BrowseEntryRemote>.filterRemoteByContentMode(
 data class BrowseFolderSections<T>(
     val directories: List<T>,
     val galleries: List<T>,
+    val documents: List<T>,
     val videos: List<T>,
     val files: List<T>,
 )
@@ -268,9 +278,11 @@ data class BrowseFolderSections<T>(
 fun List<BrowseEntry>.toBrowseSections(): BrowseFolderSections<BrowseEntry> {
     val directories = ArrayList<BrowseEntry>()
     val galleries = ArrayList<BrowseEntry>()
+    val documents = ArrayList<BrowseEntry>()
     val videos = ArrayList<BrowseEntry>()
     val files = ArrayList<BrowseEntry>()
     val seenGallery = HashSet<String>()
+    val seenDocument = HashSet<String>()
     for (e in this) {
         when (e) {
             is BrowseEntry.Directory -> directories += e
@@ -280,21 +292,28 @@ fun List<BrowseEntry>.toBrowseSections(): BrowseFolderSections<BrowseEntry> {
             }
             is BrowseEntry.ArchiveGallery -> {
                 val id = "a-${e.path}"
-                if (seenGallery.add(id)) galleries += e
+                if (isBrowseDocumentFileName(e.name)) {
+                    if (seenDocument.add(id)) documents += e
+                } else if (seenGallery.add(id)) {
+                    galleries += e
+                }
             }
             is BrowseEntry.VideoFile -> videos += e
-            is BrowseEntry.RegularFile -> files += e
+            is BrowseEntry.RegularFile ->
+                if (isBrowseDocumentFileName(e.name)) documents += e else files += e
         }
     }
-    return BrowseFolderSections(directories, galleries, videos, files)
+    return BrowseFolderSections(directories, galleries, documents, videos, files)
 }
 
 fun List<BrowseEntryRemote>.toRemoteBrowseSections(): BrowseFolderSections<BrowseEntryRemote> {
     val directories = ArrayList<BrowseEntryRemote>()
     val galleries = ArrayList<BrowseEntryRemote>()
+    val documents = ArrayList<BrowseEntryRemote>()
     val videos = ArrayList<BrowseEntryRemote>()
     val files = ArrayList<BrowseEntryRemote>()
     val seenGallery = HashSet<String>()
+    val seenDocument = HashSet<String>()
     for (e in this) {
         when (e) {
             is BrowseEntryRemote.Directory -> directories += e
@@ -304,11 +323,16 @@ fun List<BrowseEntryRemote>.toRemoteBrowseSections(): BrowseFolderSections<Brows
             }
             is BrowseEntryRemote.ArchiveGallery -> {
                 val id = "a-${e.parentRelativeName}/${e.fileName}"
-                if (seenGallery.add(id)) galleries += e
+                if (isBrowseDocumentFileName(e.name)) {
+                    if (seenDocument.add(id)) documents += e
+                } else if (seenGallery.add(id)) {
+                    galleries += e
+                }
             }
             is BrowseEntryRemote.VideoFile -> videos += e
-            is BrowseEntryRemote.RegularFile -> files += e
+            is BrowseEntryRemote.RegularFile ->
+                if (isBrowseDocumentFileName(e.name)) documents += e else files += e
         }
     }
-    return BrowseFolderSections(directories, galleries, videos, files)
+    return BrowseFolderSections(directories, galleries, documents, videos, files)
 }

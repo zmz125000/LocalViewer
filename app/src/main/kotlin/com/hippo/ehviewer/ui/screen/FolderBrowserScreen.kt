@@ -96,6 +96,7 @@ import com.hippo.ehviewer.library.VideoThumbnailSource
 import com.hippo.ehviewer.library.ZipAsDirListing
 import com.hippo.ehviewer.library.ZipPaths
 import com.hippo.ehviewer.library.browseScrollLayoutKey
+import com.hippo.ehviewer.library.browseUseGrid
 import com.hippo.ehviewer.library.filterByContentMode
 import com.hippo.ehviewer.library.filterSmallGalleries
 import com.hippo.ehviewer.library.isEbookFileName
@@ -301,7 +302,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
     var refreshing by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     val listMode by Settings.listMode.collectAsState()
-    val useGrid = virtual.forceGrid || listMode == 1
+    val useGrid = browseUseGrid(listMode, contentMode, virtual)
     val showGalleryPages by Settings.showGalleryPages.collectAsState()
     val browseFolderThumbs by Settings.browseFolderThumbs.collectAsState()
 
@@ -1662,6 +1663,22 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         openArchiveReader(entry)
     }
 
+    fun openInternalDocument(path: okio.Path) {
+        val pathStr = path.toString()
+        val actualName = ZipPaths.memberLeafName(pathStr) ?: path.name
+        launchIO {
+            recordCurrentBrowseFolderHistory()
+            LocalHistory.recordLocalFile(pathStr, title = actualName)
+            try {
+                OpenFileExternally.playDocumentLocal(context, pathStr, actualName)
+            } catch (e: Throwable) {
+                snackbar(
+                    context.getString(R.string.pdf_reader_open_failed, e.message ?: e.toString()),
+                )
+            }
+        }
+    }
+
     fun openExternalFile(path: okio.Path, asFile: Boolean = false, usePreferredPlayer: Boolean = true) {
         // Always launch with the real path basename — promoted VideoFile rows use a
         // virtual `@dir` display name without extension (wrong MIME / player title).
@@ -1984,6 +2001,43 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
             },
             onUnsupported = { notSupportedAction() },
         )
+    } else if (isPdfOrEbookFileName(path.name)) {
+        BrowseOverflowActions(
+            kind = BrowseOverflowKind.Pdf,
+            onPlay = { openInternalDocument(path) },
+            onExternalPlayer = {
+                if (isPdfFileName(path.name)) {
+                    launchIO {
+                        recordCurrentBrowseFolderHistory()
+                        LocalHistory.recordLocalFile(path.toString(), title = path.name)
+                        try {
+                            OpenPdfExternally.openLocal(
+                                context,
+                                path.toString(),
+                                displayName = path.name,
+                            )
+                        } catch (e: Throwable) {
+                            snackbar(
+                                context.getString(
+                                    R.string.open_pdf_external_failed,
+                                    e.message ?: e.toString(),
+                                ),
+                            )
+                        }
+                    }
+                } else {
+                    openExternalFile(path)
+                }
+            },
+            onOpenWith = { openExternalFile(path, asFile = true) },
+            onSaveAs = { saveLocalFile(path) },
+            onShare = { shareLocalFile(path) },
+            onShareViaHttp = localHttpShareFile(path),
+            onOpenFolder = {
+                openBrowseFolder(FolderSearch.openFolderTarget(relativeName, isDirectory = false))
+            },
+            onUnsupported = { notSupportedAction() },
+        )
     } else {
         BrowseOverflowActions(
             kind = BrowseOverflowKind.Common,
@@ -2169,6 +2223,12 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                             nameOf = { it.name },
                             dateOf = { it.lastModifiedMs },
                         )
+                    val documents = sections.documents.sortedForBrowseFolderUi(
+                        browseSortMode,
+                        browseSortAscending,
+                        nameOf = { it.name },
+                        dateOf = { it.lastModifiedMs },
+                    )
                     val files = sections.files
                         .filterIsInstance<BrowseEntry.RegularFile>()
                         .sortedForBrowseFolderUi(
@@ -2376,6 +2436,77 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                             }
                         }
                     }
+                    fun LazyGridScope.documentSection(grid: Boolean) {
+                        if (documents.isEmpty()) return
+                        item(key = "hdr-docs", span = { GridItemSpan(maxLineSpan) }) {
+                            BrowseSectionHeader(
+                                stringResource(R.string.browse_documents),
+                                onClick = { toggleSection(BrowseFolderSection.Documents) },
+                            )
+                        }
+                        if (BrowseFolderSection.Documents in collapsedSections) return
+                        items(
+                            documents,
+                            key = { entry ->
+                                when (entry) {
+                                    is BrowseEntry.ArchiveGallery -> "a-${entry.path}"
+                                    is BrowseEntry.RegularFile -> "f-${entry.path}"
+                                    else -> "x-${entry.name}"
+                                }
+                            },
+                        ) { entry ->
+                            val itemMod = Modifier.thenIf(animateItems) { animateItem() }
+                            when (entry) {
+                                is BrowseEntry.ArchiveGallery -> if (grid) {
+                                    BrowseArchiveGridItem(
+                                        modifier = itemMod,
+                                        name = entry.name,
+                                        cover = BrowseCover.LocalArchive(entry.path),
+                                        onClick = { openArchive(entry) },
+                                        onLongClick = { openArchiveSecondary(entry) },
+                                        pageCount = entry.pageCount,
+                                        showPages = showGalleryPages,
+                                        overflow = archiveOverflow(entry),
+                                    )
+                                } else {
+                                    BrowseArchiveGalleryRow(
+                                        modifier = itemMod,
+                                        name = entry.name,
+                                        cover = BrowseCover.LocalArchive(entry.path),
+                                        onClick = { openArchive(entry) },
+                                        onLongClick = { openArchiveSecondary(entry) },
+                                        fileName = entry.name,
+                                        sizeBytes = entry.size,
+                                        lastModifiedMs = entry.lastModifiedMs,
+                                        pageCount = entry.pageCount,
+                                        showPages = showGalleryPages,
+                                        overflow = archiveOverflow(entry),
+                                    )
+                                }
+                                is BrowseEntry.RegularFile -> if (grid) {
+                                    BrowseFileGridItem(
+                                        modifier = itemMod,
+                                        name = entry.name,
+                                        onClick = { openExternalFile(entry.path) },
+                                        onLongClick = { openExternalFile(entry.path) },
+                                        overflow = fileOverflow(entry.path, entry.name),
+                                    )
+                                } else {
+                                    BrowseFileRow(
+                                        modifier = itemMod,
+                                        name = entry.name,
+                                        onClick = { openExternalFile(entry.path) },
+                                        onLongClick = { openExternalFile(entry.path) },
+                                        fileName = entry.name,
+                                        sizeBytes = entry.size,
+                                        lastModifiedMs = entry.lastModifiedMs,
+                                        overflow = fileOverflow(entry.path, entry.name),
+                                    )
+                                }
+                                else -> Unit
+                            }
+                        }
+                    }
                     if (photoGrid) {
                         // Virtual image-only grid for a folder gallery (long-press).
                         val frame = stack.lastOrNull()
@@ -2508,6 +2639,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                     }
                                 }
                             }
+                            documentSection(grid = true)
                             if (videos.isNotEmpty()) {
                                 item(
                                     key = "hdr-vid",
@@ -2661,6 +2793,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                     }
                                 }
                             }
+                            documentSection(grid = false)
                             if (videos.isNotEmpty()) {
                                 item(
                                     key = "hdr-vid",

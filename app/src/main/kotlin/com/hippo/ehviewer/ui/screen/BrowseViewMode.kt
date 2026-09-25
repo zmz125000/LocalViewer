@@ -119,11 +119,10 @@ fun BrowseViewModeMenu(
         folder?.let { BrowseModePersist.resolve(it, skipAncestorKeys) }
     }
     val contentMode = match?.effective ?: BrowseContentMode.fromPref(contentModePref)
-    val useGrid = listMode == 1
+    val useGrid = !contentMode.forceList && listMode == 1
     var browseSortModePref by Settings.browseSortMode.asMutableState()
     var browseSortAscending by Settings.browseSortAscending.asMutableState()
     val browseSortMode = BrowseSortMode.fromPref(browseSortModePref)
-    var browseFolderThumbs by Settings.browseFolderThumbs.asMutableState()
     var browseZipAsDir by Settings.browseZipAsDir.asMutableState()
     var showSmallGalleries by Settings.browseShowSmallGalleries.asMutableState()
     var showHiddenFiles by Settings.browseShowHiddenFiles.asMutableState()
@@ -148,6 +147,7 @@ fun BrowseViewModeMenu(
                 .combinedClickable(
                     onClick = { expanded = true },
                     onLongClick = {
+                        if (contentMode.forceList) return@combinedClickable
                         haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                         Settings.listMode.value = if (listMode == 0) 1 else 0
                     },
@@ -261,11 +261,6 @@ fun BrowseViewModeMenu(
                 label = stringResource(R.string.browse_menu_favorites_on_top),
                 checked = favoritesOnTop,
                 onClick = { favoritesOnTop = !favoritesOnTop },
-            )
-            ToggleMenuItem(
-                label = stringResource(R.string.browse_folder_thumbs),
-                checked = browseFolderThumbs,
-                onClick = { browseFolderThumbs = !browseFolderThumbs },
             )
             ToggleMenuItem(
                 label = stringResource(R.string.browse_menu_small_galleries),

@@ -41,6 +41,7 @@ import com.hippo.ehviewer.library.ZipPaths
 import com.hippo.ehviewer.library.isBrowseVideoFileName
 import com.hippo.ehviewer.library.isEbookFileName
 import com.hippo.ehviewer.library.isHtmlFileName
+import com.hippo.ehviewer.library.isPdfFileName
 import com.hippo.ehviewer.library.listBrowseChildrenRaw
 import com.hippo.ehviewer.library.mimeTypeForFileName
 import com.hippo.ehviewer.library.needsOpenCacheConfirm
@@ -140,7 +141,7 @@ object OpenFileExternally {
             )
             return
         }
-        if (!asFile && isEbookFileName(displayName)) {
+        if (!asFile && shouldOpenInBuiltinPdfReader(displayName)) {
             playEbookLocal(context, pathStr, displayName)
             return
         }
@@ -158,6 +159,41 @@ object OpenFileExternally {
             internalPlayer = false,
             usePreferredPlayer = usePreferredPlayer,
         )
+    }
+
+    /**
+     * RegularFile PDF/ebook → built-in PDF reader (file gid). Image reader is not used.
+     * EPUB archives that still have images stay ArchiveGallery and keep the image path.
+     */
+    suspend fun playDocumentLocal(
+        context: Context,
+        pathStr: String,
+        displayName: String = File(pathStr).name,
+    ) {
+        playEbookLocal(context, pathStr, displayName)
+    }
+
+    suspend fun playDocumentSmb(
+        context: Context,
+        sourceId: Long,
+        remoteRelativeFile: String,
+        displayName: String = remoteRelativeFile.substringAfterLast('/').substringAfterLast('\\'),
+    ) {
+        playEbookSmb(context, sourceId, remoteRelativeFile, displayName)
+    }
+
+    suspend fun playDocumentWebDav(
+        context: Context,
+        sourceId: Long,
+        remoteRelativeFile: String,
+        displayName: String = remoteRelativeFile.substringAfterLast('/').substringAfterLast('\\'),
+    ) {
+        playEbookWebDav(context, sourceId, remoteRelativeFile, displayName)
+    }
+
+    private fun shouldOpenInBuiltinPdfReader(displayName: String): Boolean {
+        if (isEbookFileName(displayName)) return true
+        return isPdfFileName(displayName) && Settings.pdfReaderMode.value != PdfReaderMode.EXTERNAL
     }
 
     private suspend fun playEbookLocal(
@@ -282,7 +318,7 @@ object OpenFileExternally {
             )
             return
         }
-        if (!asFile && isEbookFileName(displayName)) {
+        if (!asFile && shouldOpenInBuiltinPdfReader(displayName)) {
             playEbookSmb(context, sourceId, remoteRelativeFile, displayName)
             return
         }
@@ -353,7 +389,7 @@ object OpenFileExternally {
             )
             return
         }
-        if (!asFile && isEbookFileName(displayName)) {
+        if (!asFile && shouldOpenInBuiltinPdfReader(displayName)) {
             playEbookWebDav(context, sourceId, remoteRelativeFile, displayName)
             return
         }

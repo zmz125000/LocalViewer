@@ -22,6 +22,10 @@ class DirectoryListingDocumentTagTest {
         val photo = entries.filterRemoteByContentMode(BrowseContentMode.Galleries)
         assertTrue(photo.any { it is BrowseEntryRemote.ArchiveGallery && it.name == "guide.pdf" })
         assertTrue(photo.any { it is BrowseEntryRemote.ArchiveGallery && it.name == "pack.cbz" })
+        val photoSections = photo.toRemoteBrowseSections()
+        assertTrue(photoSections.documents.any { it.name == "guide.pdf" })
+        assertTrue(photoSections.galleries.any { it.name == "pack.cbz" })
+        assertFalse(photoSections.galleries.any { it.name == "guide.pdf" })
     }
 
     @Test
@@ -129,6 +133,47 @@ class DirectoryListingDocumentTagTest {
     }
 
     @Test
+    fun documentModeShowsLeftoverFilesInFilesSection() {
+        val entries = classifyRemoteListingWithPeeks(
+            currentDirName = "Mix",
+            entries = listOf(
+                RemoteChild(name = "guide.pdf", isDirectory = false),
+                RemoteChild(name = "notes.txt", isDirectory = false),
+                RemoteChild(name = "photo.jpg", isDirectory = false),
+                RemoteChild(name = "pack.cbz", isDirectory = false),
+                RemoteChild(name = "clip.mp4", isDirectory = false),
+            ),
+            childPeeks = emptyMap(),
+        )
+        val docs = entries.filterRemoteByContentMode(BrowseContentMode.Document)
+        assertTrue(docs.any { it.name == "photo.jpg" })
+        assertFalse(docs.any { it.name == "pack.cbz" })
+        assertFalse(docs.any { it.name == "clip.mp4" })
+        val sections = docs.toRemoteBrowseSections()
+        assertEquals(listOf("guide.pdf", "notes.txt"), sections.documents.map { it.name }.sorted())
+        assertEquals(listOf("photo.jpg"), sections.files.map { it.name })
+        assertTrue(sections.galleries.isEmpty())
+        assertTrue(sections.videos.isEmpty())
+    }
+
+    fun emptyPdfDemotesToDocumentFileNotGallery() {
+        val key = "smb:9:empty-guide.pdf"
+        EmptyArchiveRegistry.mark(key)
+        val entries = listOf(
+            BrowseEntryRemote.ArchiveGallery(name = "empty-guide.pdf", fileName = "empty-guide.pdf"),
+            BrowseEntryRemote.ArchiveGallery(name = "pack.cbz", fileName = "pack.cbz"),
+        )
+        val out = EmptyArchiveRegistry.filterRemoteEntries(entries) { arch ->
+            "smb:9:${arch.fileName}"
+        }
+        assertTrue(out.any { it is BrowseEntryRemote.RegularFile && it.name == "empty-guide.pdf" })
+        assertTrue(out.any { it is BrowseEntryRemote.ArchiveGallery && it.name == "pack.cbz" })
+        val sections = out.toRemoteBrowseSections()
+        assertTrue(sections.documents.any { it is BrowseEntryRemote.RegularFile && it.name == "empty-guide.pdf" })
+        assertTrue(sections.galleries.any { it.name == "pack.cbz" })
+        assertFalse(sections.galleries.any { it.name.endsWith(".pdf") })
+    }
+
     fun epubCountsAsDocumentZipDoesNot() {
         val entries = classifyRemoteListingWithPeeks(
             currentDirName = "Library",
