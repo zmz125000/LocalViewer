@@ -143,6 +143,8 @@ import com.hippo.ehviewer.library.ArchiveByteSource
 import com.hippo.ehviewer.library.BlockCacheArchiveByteSource
 import com.hippo.ehviewer.library.DocumentExtractCache
 import com.hippo.ehviewer.library.GallerySiblingNavigator
+import com.hippo.ehviewer.library.OriginDiskCache
+import com.hippo.ehviewer.library.PdfTocCache
 import com.hippo.ehviewer.library.PfdArchiveByteSource
 import com.hippo.ehviewer.library.ReaderPageThumb
 import com.hippo.ehviewer.library.document.EbookDocument
@@ -199,9 +201,11 @@ import kotlin.math.abs
 import kotlin.math.roundToInt
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.merge
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
@@ -337,8 +341,9 @@ class PdfReaderActivity : AppCompatActivity() {
                     }.getOrNull()
                     pfd = descriptor
                     if (descriptor == null) return@withContext null
-                    val reopen = token?.let { StreamDocumentRegistry.get(it)?.openFileDescriptor }
-                    openPdfDocument(descriptor, nextStart, cacheKey, reopen)
+                    openPdfDocument(descriptor) { pageCount, stillWanted ->
+                        loadPdfChapters(intent, token, cacheKey, pageCount, stillWanted)
+                    }
                 }
                 val model = opened
                 if (generation != openGeneration) return@launch
@@ -370,6 +375,12 @@ class PdfReaderActivity : AppCompatActivity() {
                     )
                 }
                 opened = null
+                if (model is PdfDocumentModel.Vector) {
+                    // Outline page numbers that are already in the file finish quickly.
+                    // Page-object destinations walk the page tree. This child is cancelled
+                    // with [openJob] when the reader exits.
+                    launch { model.ensureChapters() }
+                }
             } catch (e: kotlinx.coroutines.CancellationException) {
                 pfd?.let { runCatching { it.close() } }
                 direct?.let { runCatching { it.close() } }
@@ -623,21 +634,56 @@ private fun tryOpenImagePdf(
 
 private fun openPdfDocument(
     pfd: ParcelFileDescriptor,
-    startPage: Int,
-    cacheKey: String?,
-    reopenPfd: (() -> ParcelFileDescriptor)? = null,
+    loadChapters: (suspend (pageCount: Int, stillWanted: () -> Boolean) -> List<PdfTocEntry>)? = null,
 ): PdfDocumentModel {
-    // Do not dup()+close the original PFD: AppFuse/SAF FUSE tears down the
-    // connection when the original fd is closed (ENOTCONN on later preads).
-    val source = PfdArchiveByteSource(pfd, ownsPfd = false, reopen = reopenPfd)
-    val chapters = readPdfChapters(source, source.size)
-    runCatching { source.close() }
+    // Do not walk the page tree before the first page. Contents load after open.
     val renderer = runCatching { PdfRenderer(pfd) }.getOrElse { e ->
         runCatching { pfd.close() }
         throw e
     }
     logcat("PdfReader") { "vector PDF pages=${renderer.pageCount}" }
-    return PdfDocumentModel.Vector(PdfSession(renderer), chapters)
+    val pages = renderer.pageCount
+    val loader: (suspend (() -> Boolean) -> List<PdfTocEntry>)? = loadChapters?.let { load ->
+        { stillWanted -> load(pages, stillWanted) }
+    }
+    return PdfDocumentModel.Vector(PdfSession(renderer), emptyList(), loader)
+}
+
+/**
+ * Bookmark page index on its own descriptor, so it does not share PdfRenderer's
+ * seek position. [stillWanted] false stops a page-tree walk.
+ */
+private fun loadPdfChapters(
+    intent: Intent,
+    token: String?,
+    cacheKey: String?,
+    pageCount: Int,
+    stillWanted: () -> Boolean,
+): List<PdfTocEntry> {
+    if (!stillWanted()) return emptyList()
+    val source = runCatching { openDirectArchiveSource(intent, token) }.getOrNull()
+        ?: token?.let { StreamDocumentRegistry.get(it)?.openFileDescriptor }?.let { open ->
+            runCatching { PfdArchiveByteSource(open(), ownsPfd = true) }.getOrNull()
+        }
+        ?: return emptyList()
+    val previous = android.os.Process.getThreadPriority(android.os.Process.myTid())
+    return try {
+        val size = source.size
+        if (cacheKey != null) {
+            PdfTocCache.load(cacheKey, size, pageCount)?.let { return it }
+        }
+        if (!stillWanted()) return emptyList()
+        android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND)
+        // null = stopped or failed. Do not store that as "this file has no TOC".
+        val chapters = readPdfChapters(source, size, pageCount, stillWanted) ?: return emptyList()
+        if (cacheKey != null && stillWanted()) {
+            PdfTocCache.save(cacheKey, size, pageCount, chapters)
+        }
+        chapters
+    } finally {
+        android.os.Process.setThreadPriority(previous)
+        runCatching { source.close() }
+    }
 }
 
 private fun documentNameFromIntent(intent: Intent, title: String): String {
@@ -690,11 +736,30 @@ private sealed interface PdfDocumentModel {
 
     class Vector(
         val session: PageBitmapSession,
-        override var chapters: List<PdfTocEntry>,
+        chapters: List<PdfTocEntry>,
+        private val chapterLoader: (suspend (stillWanted: () -> Boolean) -> List<PdfTocEntry>)? = null,
         val isEbook: Boolean = false,
     ) : PdfDocumentModel {
+        override var chapters by mutableStateOf(chapters)
+        private var chaptersLoaded = chapterLoader == null
+        private val chapterMutex = Mutex()
+
         override val pageCount get() = session.pageCount
         override fun close() = session.close()
+
+        /** Table of contents. No-op for ebooks, which already parsed chapters. */
+        suspend fun ensureChapters() {
+            val load = chapterLoader ?: return
+            chapterMutex.withLock {
+                if (chaptersLoaded) return@withLock
+                val loaded = withContext(Dispatchers.IO) {
+                    load { isActive } to isActive
+                }
+                if (!loaded.second) return@withLock
+                chapters = loaded.first
+                chaptersLoaded = true
+            }
+        }
     }
 
     class Images(
@@ -716,33 +781,63 @@ private interface PageBitmapSession {
     suspend fun render(index: Int, widthPx: Int): Bitmap
     suspend fun pageAspect(index: Int): Float
     fun close()
+
+    /** Photo-grid thumb. PDF overrides this to measure and draw in one page open. */
+    suspend fun renderLongEdge(index: Int, edge: Int): Bitmap {
+        val aspect = pageAspect(index)
+        val width = if (aspect >= 1f) edge else (edge * aspect).roundToInt().coerceAtLeast(1)
+        return render(index, width)
+    }
 }
 
 private class PdfSession(private val renderer: PdfRenderer) : PageBitmapSession {
     override val pageCount: Int get() = renderer.pageCount
     private val mutex = Mutex()
+    private val aspects = java.util.concurrent.ConcurrentHashMap<Int, Float>()
 
     @Volatile private var closed = false
 
     override suspend fun render(index: Int, widthPx: Int): Bitmap = mutex.withLock {
         if (closed) error("closed")
         renderer.openPage(index).use { page ->
-            val w = widthPx.coerceAtLeast(1)
-            val h = ((page.height.toFloat() / page.width.coerceAtLeast(1)) * w)
-                .toInt()
-                .coerceAtLeast(1)
-            val (rw, rh) = cappedBitmapSize(w, h)
-            Bitmap.createBitmap(rw, rh, Bitmap.Config.ARGB_8888).also { bitmap ->
-                bitmap.eraseColor(android.graphics.Color.WHITE)
-                page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
-            }
+            noteAspect(index, page)
+            renderOpened(page, widthPx)
         }
     }
 
-    override suspend fun pageAspect(index: Int): Float = mutex.withLock {
+    /** One [PdfRenderer.Page] open. Long edge is [edge] px (photo-grid thumb). */
+    override suspend fun renderLongEdge(index: Int, edge: Int): Bitmap = mutex.withLock {
         if (closed) error("closed")
         renderer.openPage(index).use { page ->
-            page.width.toFloat() / page.height.coerceAtLeast(1)
+            val aspect = noteAspect(index, page)
+            val width = if (aspect >= 1f) edge else (edge * aspect).roundToInt().coerceAtLeast(1)
+            renderOpened(page, width)
+        }
+    }
+
+    override suspend fun pageAspect(index: Int): Float {
+        aspects[index]?.let { return it }
+        return mutex.withLock {
+            if (closed) error("closed")
+            aspects[index] ?: renderer.openPage(index).use { page -> noteAspect(index, page) }
+        }
+    }
+
+    private fun noteAspect(index: Int, page: PdfRenderer.Page): Float {
+        val aspect = page.width.toFloat() / page.height.coerceAtLeast(1)
+        aspects[index] = aspect
+        return aspect
+    }
+
+    private fun renderOpened(page: PdfRenderer.Page, widthPx: Int): Bitmap {
+        val w = widthPx.coerceAtLeast(1)
+        val h = ((page.height.toFloat() / page.width.coerceAtLeast(1)) * w)
+            .toInt()
+            .coerceAtLeast(1)
+        val (rw, rh) = cappedBitmapSize(w, h)
+        return Bitmap.createBitmap(rw, rh, Bitmap.Config.ARGB_8888).also { bitmap ->
+            bitmap.eraseColor(android.graphics.Color.WHITE)
+            page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
         }
     }
 
@@ -1083,7 +1178,13 @@ private fun PdfReaderScreen(
     val tapRtl = readingMode == ReadingModeType.RIGHT_TO_LEFT || webtoonHorizontal
     val landscapeCoverMode by Settings.landscapeCover.collectAsState()
     var page0Landscape by remember(doc, imageLoader) { mutableStateOf(false) }
-    LaunchedEffect(doc, imageLoader) {
+    LaunchedEffect(doc, imageLoader, pagerDual, landscapeCoverMode) {
+        // Opening page 0 just to read its aspect parses that page. Skip it unless a
+        // side-by-side spread actually needs to know whether the cover is landscape.
+        if (!pagerDual || landscapeCoverMode != Settings.LANDSCAPE_COVER_AUTO) {
+            page0Landscape = false
+            return@LaunchedEffect
+        }
         page0Landscape = when {
             imageLoader != null -> (imageLoader.pages.getOrNull(0)?.layoutAspect ?: 0f) > 1f
             doc is PdfDocumentModel.Vector -> withContext(Dispatchers.IO) {
@@ -1696,7 +1797,6 @@ private fun PdfReaderScreen(
                 styleGeneration = ebookStyleGen,
                 cacheKey = sourceArgs?.let { readerPdfCacheKey(it) },
                 allowGenerate = !networkPdf || downloadNetworkThumbs,
-                persistThumb = networkPdf && downloadNetworkThumbs,
                 gridState = thumbGridState,
                 cellAspect = thumbAspect,
                 onCellAspect = { aspect ->
@@ -1982,11 +2082,6 @@ private fun PdfSingleVectorPage(
 ) {
     val zoomableState = rememberZoomableState(zoomSpec = PdfZoomSpec)
     var aspect by remember(index) { mutableFloatStateOf(1f / 1.414f) }
-    LaunchedEffect(session, index) {
-        aspect = withContext(Dispatchers.IO) {
-            runCatching { session.pageAspect(index) }.getOrDefault(aspect)
-        }
-    }
     val contentSize = Size(
         viewWidthPx.toFloat().coerceAtLeast(1f),
         (viewWidthPx / aspect.coerceAtLeast(0.01f)).coerceAtLeast(1f),
@@ -2035,10 +2130,12 @@ private fun PdfSingleVectorPage(
                 runCatching { session.render(index, renderWidth) }.getOrNull()
             }
             if (next != null) {
+                val measured = if (next.height > 0) next.width.toFloat() / next.height else aspect
                 val prev = bitmap
                 bitmap = next
                 next = null
                 if (prev != null && prev !== bitmap) prev.recycle()
+                if (measured != aspect) aspect = measured
             }
         } finally {
             next?.recycle()
@@ -2080,11 +2177,6 @@ private fun PdfVectorPage(
     styleGeneration: Int = 0,
 ) {
     var aspect by remember(index) { mutableFloatStateOf(1f / 1.414f) }
-    LaunchedEffect(session, index) {
-        aspect = withContext(Dispatchers.IO) {
-            runCatching { session.pageAspect(index) }.getOrDefault(aspect)
-        }
-    }
     val renderWidth = when (box) {
         PdfPageBox.Webtoon -> widthPx
         PdfPageBox.Strip -> {
@@ -2106,10 +2198,12 @@ private fun PdfVectorPage(
                 runCatching { session.render(index, renderWidth) }.getOrNull()
             }
             if (next != null) {
+                val measured = if (next.height > 0) next.width.toFloat() / next.height else aspect
                 val prev = bitmap
                 bitmap = next
                 next = null
                 if (prev != null && prev !== bitmap) prev.recycle()
+                if (measured != aspect) aspect = measured
             }
         } finally {
             next?.recycle()
@@ -2153,7 +2247,9 @@ private fun PdfPageBitmap(
 ) {
     val frame = when (box) {
         PdfPageBox.Strip -> Modifier.fillMaxHeight().aspectRatio(aspect.coerceAtLeast(0.01f), matchHeightConstraintsFirst = true)
-        PdfPageBox.Webtoon -> Modifier.fillMaxWidth()
+        // Placeholder must have a real height. A zero-height row makes LazyColumn
+        // compose every page of a long book before the first bitmap exists.
+        PdfPageBox.Webtoon -> Modifier.fillMaxWidth().aspectRatio(aspect.coerceAtLeast(0.01f))
         PdfPageBox.Single, PdfPageBox.Cell -> Modifier.fillMaxSize()
     }
     BoxWithConstraints(modifier = frame, contentAlignment = Alignment.Center) {
@@ -2414,7 +2510,6 @@ private fun PdfThumbGridSheet(
     styleGeneration: Int,
     cacheKey: String?,
     allowGenerate: Boolean,
-    persistThumb: Boolean,
     gridState: LazyGridState,
     cellAspect: Float?,
     onCellAspect: (Float) -> Unit,
@@ -2448,7 +2543,6 @@ private fun PdfThumbGridSheet(
                     styleGeneration = styleGeneration,
                     cacheKey = cacheKey,
                     allowGenerate = allowGenerate,
-                    persistThumb = persistThumb,
                     selected = index == currentPage - 1,
                     cellAspect = cellAspect,
                     onCellAspect = onCellAspect,
@@ -2466,7 +2560,6 @@ private fun PdfPageThumb(
     styleGeneration: Int,
     cacheKey: String?,
     allowGenerate: Boolean,
-    persistThumb: Boolean,
     selected: Boolean,
     cellAspect: Float?,
     onCellAspect: (Float) -> Unit,
@@ -2497,21 +2590,32 @@ private fun PdfPageThumb(
             skipped = true
             return@LaunchedEffect
         }
-        val rendered = withContext(Dispatchers.IO) {
-            when (doc) {
-                is PdfDocumentModel.Vector -> runCatching { doc.session.render(index, 256) }.getOrNull()
-                is PdfDocumentModel.Images -> runCatching {
-                    doc.engine.ensureListedThrough(index)
-                    doc.engine.extractBytes(index)?.let(::decodePdfThumb)
-                }.getOrNull()
+        var rendered: Bitmap? = null
+        try {
+            rendered = withContext(Dispatchers.IO) {
+                when (doc) {
+                    is PdfDocumentModel.Vector -> runCatching {
+                        doc.session.renderLongEdge(index, OriginDiskCache.THUMB_EDGE)
+                    }.getOrNull()
+                    is PdfDocumentModel.Images -> runCatching {
+                        doc.engine.ensureListedThrough(index)
+                        doc.engine.extractBytes(index)?.let(::decodePdfThumb)
+                    }.getOrNull()
+                }
             }
-        }
-        if (rendered != null && identity != null && persistThumb) {
-            withContext(Dispatchers.IO) {
-                runCatching { ReaderPageThumb.ensureFromBitmap(identity, rendered) }
+            val thumb = rendered
+            if (thumb != null && identity != null) {
+                // Keep the file even if this cell scrolls off before the encode returns.
+                withContext(NonCancellable + Dispatchers.IO) {
+                    runCatching { ReaderPageThumb.ensureFromBitmap(identity, thumb) }
+                }
             }
+            if (!isActive) return@LaunchedEffect
+            bitmap = rendered
+            rendered = null
+        } finally {
+            rendered?.recycle()
         }
-        bitmap = rendered
     }
     DisposableEffect(index) {
         onDispose { bitmap?.recycle() }
@@ -2558,15 +2662,28 @@ private fun PdfPageThumb(
 private fun decodePdfThumb(bytes: ByteArray): Bitmap? {
     val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
     BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
-    var sample = 1
     val edge = maxOf(bounds.outWidth, bounds.outHeight)
-    while (edge / sample > 512 && sample < 32) sample *= 2
-    return BitmapFactory.decodeByteArray(
+    if (edge <= 0) return null
+    val target = OriginDiskCache.THUMB_EDGE
+    var sample = 1
+    while (edge / sample > target * 2 && sample < 32) sample *= 2
+    val decoded = BitmapFactory.decodeByteArray(
         bytes,
         0,
         bytes.size,
         BitmapFactory.Options().apply { inSampleSize = sample },
+    ) ?: return null
+    val longEdge = maxOf(decoded.width, decoded.height)
+    if (longEdge <= target) return decoded
+    val scale = target.toFloat() / longEdge
+    val scaled = Bitmap.createScaledBitmap(
+        decoded,
+        (decoded.width * scale).toInt().coerceAtLeast(1),
+        (decoded.height * scale).toInt().coerceAtLeast(1),
+        true,
     )
+    if (scaled !== decoded && !decoded.isRecycled) decoded.recycle()
+    return scaled
 }
 
 private val PageBackdrop = Color(0xFF2B2B2B)

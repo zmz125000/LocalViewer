@@ -72,6 +72,20 @@ class PdfXrefHealTest {
     }
 
     @Test
+    fun scannedBookOutlinesDoNotRebuildRegexPerObject() {
+        val file = File("/home/zlx22/LocalViewer/main2/.gradle/sample.pdf")
+        assumeTrue(file.isFile)
+        FileSource(file).use { source ->
+            val t0 = System.nanoTime()
+            val chapters = readPdfChapters(source, source.size)
+            val ms = (System.nanoTime() - t0) / 1_000_000
+            check(chapters != null && chapters.size >= 8) { "chapters=${chapters?.size} ms=$ms" }
+            // Was several seconds: a new Regex for every xref line and every page object.
+            check(ms < 1500) { "outline walk ${ms}ms entries=${chapters.size}" }
+        }
+    }
+
+    @Test
     fun githubSamplePdfOpensWhenPresent() {
         val file = File("../.github/1.pdf")
         assumeTrue("sample PDF not in .github", file.isFile)
