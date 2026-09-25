@@ -41,10 +41,12 @@ fun ChapterNavigator(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(text = "$currentPage")
-        val steps = totalPages - 2
+        val steps = (totalPages - 2).coerceAtLeast(0)
         val maxTickCount = defaultMaxTickCount()
+        // A step per page on a long book makes the Material slider snap and stick.
+        val sliderSteps = if (steps < maxTickCount) steps else 0
         val interactionSource = remember { MutableInteractionSource() }
-        if (steps < maxTickCount) {
+        if (sliderSteps > 0) {
             val sliderDragged by interactionSource.collectIsDraggedAsState()
             val hapticFeedback = rememberHapticFeedback()
             LaunchedEffect(currentPage) {
@@ -57,7 +59,7 @@ fun ChapterNavigator(
             modifier = Modifier.weight(1f).padding(horizontal = 8.dp),
             value = currentPage,
             valueRange = 1..totalPages,
-            steps = steps,
+            steps = sliderSteps,
             onValueChange = onSliderValueChange,
             maxTickCount = maxTickCount,
             interactionSource = interactionSource,

@@ -194,7 +194,7 @@ private fun DocumentStyleSetting() = Column {
     )
     SliderChoice(
         startSlot = {},
-        endSlot = { Text(text = "%.2f".format(lineHeight.value / 100f)) },
+        endSlot = { Text(text = "%.2f em".format(lineHeight.value / 100f)) },
         range = 100..200,
         field = lineHeight,
     )
