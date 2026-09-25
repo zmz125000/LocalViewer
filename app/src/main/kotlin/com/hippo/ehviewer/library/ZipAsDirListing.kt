@@ -189,7 +189,7 @@ object ZipAsDirListing {
                     name = child.name,
                     hasVideo = nested.any { !it.isDirectory && isVideoFileName(it.name) },
                     hasGallery = false,
-                    hasDocument = nested.any { !it.isDirectory && isBrowseDocumentFileName(it.name) },
+                    hasDocument = prefixHasBrowseDocument(cd, joinPrefix(innerPrefix, child.name)),
                     presence = if (nested.isEmpty()) DirPresence.Empty else DirPresence.Navigable,
                     lastModifiedMs = child.lastModifiedMs,
                     size = child.size,
@@ -340,6 +340,7 @@ object ZipAsDirListing {
             entries = children,
             childPeeks = childPeeks,
             grandPeeks = grandPeeks,
+            zipAsDir = true,
         )
     }
 
@@ -353,6 +354,8 @@ object ZipAsDirListing {
          * without CD peek, gallery promote, or persisting the virtual folder index.
          */
         val classified: Boolean = true,
+        /** True when the CD has a browse-document member (or mixed CD was truncated). */
+        val hasDocument: Boolean = false,
     )
 
     /**
@@ -367,6 +370,8 @@ object ZipAsDirListing {
         val grandPeeks: Map<String, List<RemoteChild>>,
         /** Mixed zips: Navigable dirs on the parent listing, no CD peek. */
         val mixedZipNames: Set<String> = emptySet(),
+        /** Mixed zips whose CD has (or may have) browse documents. */
+        val mixedZipDocuments: Set<String> = emptySet(),
     )
 
     /** Flat images, or exactly one wrapper folder of images — open as a gallery, not a dir. */
@@ -399,7 +404,12 @@ object ZipAsDirListing {
 
     fun zipRootListingFromCd(cd: ZipCentralDirectory, innerPrefix: String = ""): ZipRootListing {
         if (!cd.gallery) {
-            return ZipRootListing(emptyList(), emptyMap(), classified = false)
+            return ZipRootListing(
+                children = emptyList(),
+                grandPeeks = emptyMap(),
+                classified = false,
+                hasDocument = cdHasBrowseDocument(cd) || !cd.complete,
+            )
         }
         val peek = listChildren(cd, innerPrefix)
         val leaves = peek.filter { it.isDirectory && isPromotableLeafDirName(it.name) }
@@ -434,6 +444,7 @@ object ZipAsDirListing {
         val peeks = LinkedHashMap<String, List<RemoteChild>>()
         val grandPeeks = LinkedHashMap<String, List<RemoteChild>>()
         val mixedZipNames = LinkedHashSet<String>()
+        val mixedZipDocuments = HashSet<String>()
         val out = ArrayList<RemoteChild>(children.size)
         for (child in children) {
             if (child.isDirectory || !isZipArchiveFileName(child.name)) {
@@ -448,6 +459,7 @@ object ZipAsDirListing {
             out += child.copy(isDirectory = true)
             if (!listing.classified) {
                 mixedZipNames += child.name
+                if (listing.hasDocument) mixedZipDocuments += child.name
                 continue
             }
             peeks[child.name] = listing.children
@@ -455,7 +467,7 @@ object ZipAsDirListing {
                 grandPeeks["${child.name}/$leaf"] = leafPeek
             }
         }
-        return ZipFakeFolderExpansion(out, peeks, grandPeeks, mixedZipNames)
+        return ZipFakeFolderExpansion(out, peeks, grandPeeks, mixedZipNames, mixedZipDocuments)
     }
 
     /**
@@ -477,11 +489,20 @@ object ZipAsDirListing {
         grands.putAll(grandPeeks)
         grands.putAll(expansion.grandPeeks)
         val tagged = expansion.children.withHiddenFlags(peeks)
-        val classified = classifyRemoteListingWithPeeks(currentDirName, tagged, peeks, grands)
+        val classified = classifyRemoteListingWithPeeks(
+            currentDirName,
+            tagged,
+            peeks,
+            grands,
+            zipAsDir = true,
+        )
         if (expansion.mixedZipNames.isEmpty()) return classified
         return classified.map { entry ->
             if (entry is BrowseEntryRemote.Directory && entry.name in expansion.mixedZipNames) {
-                entry.copy(presence = DirPresence.Navigable)
+                entry.copy(
+                    presence = DirPresence.Navigable,
+                    hasDocument = entry.hasDocument || entry.name in expansion.mixedZipDocuments,
+                )
             } else {
                 entry
             }
@@ -947,6 +968,7 @@ object ZipAsDirListing {
                     relativeName = archive.fileName,
                     hasVideo = false,
                     hasGallery = false,
+                    hasDocument = cdHasBrowseDocument(cd) || !cd.complete,
                     presence = DirPresence.Navigable,
                     lastModifiedMs = archive.lastModifiedMs,
                     size = archive.size,
@@ -971,6 +993,7 @@ object ZipAsDirListing {
             entries = listOf(fake),
             childPeeks = mapOf(archive.fileName to listing.children),
             grandPeeks = grands,
+            zipAsDir = true,
         )
     }
 
@@ -1159,6 +1182,28 @@ object ZipAsDirListing {
             if (best == null || naturalCompare(rel, best) < 0) best = rel
         }
         return best?.let { if (prefix.isEmpty()) it else "$prefix/$it" }
+    }
+
+    /** Any non-directory CD member whose leaf is a browse document. */
+    fun cdHasBrowseDocument(cd: ZipCentralDirectory): Boolean {
+        for (entry in cd.entries) {
+            if (entry.isEncrypted || entry.isDirectory) continue
+            val name = normalizeMember(entry.name) ?: continue
+            if (isBrowseDocumentFileName(name.substringAfterLast('/'))) return true
+        }
+        return false
+    }
+
+    private fun prefixHasBrowseDocument(cd: ZipCentralDirectory, innerPrefix: String): Boolean {
+        val prefix = normalizePrefix(innerPrefix)
+        val slash = if (prefix.isEmpty()) "" else "$prefix/"
+        for (entry in cd.entries) {
+            if (entry.isEncrypted || entry.isDirectory) continue
+            val name = normalizeMember(entry.name) ?: continue
+            if (slash.isNotEmpty() && !name.startsWith(slash)) continue
+            if (isBrowseDocumentFileName(name.substringAfterLast('/'))) return true
+        }
+        return false
     }
 
     private fun normalizeMember(raw: String): String? {

@@ -997,6 +997,11 @@ fun classifyRemoteListingWithPeeks(
     entries: List<RemoteChild>,
     childPeeks: Map<String, List<RemoteChild>>,
     grandPeeks: Map<String, List<RemoteChild>> = emptyMap(),
+    /**
+     * Zip/cbz files are enterable folders. Tag dirs that contain them so Document
+     * mode can reach documents inside zip-as-dir (same idea as [sawArchive] for Galleries).
+     */
+    zipAsDir: Boolean = false,
 ): List<BrowseEntryRemote> {
     val dirs = ArrayList<BrowseEntryRemote.Directory>()
     val leafGalleries = ArrayList<BrowseEntryRemote.FolderGallery>()
@@ -1098,13 +1103,17 @@ fun classifyRemoteListingWithPeeks(
                     }
                     val sHasDocuments = peek.any {
                         !it.isDirectory && !it.name.startsWith('.') &&
-                            !isProtectedSystemName(it.name) && isBrowseDocumentFileName(it.name)
+                            !isProtectedSystemName(it.name) &&
+                            (
+                                isBrowseDocumentFileName(it.name) ||
+                                    (zipAsDir && isZipArchiveFileName(it.name))
+                                )
                     }
                     for (leaf in leaves) {
                         val key = "${e.name}/${leaf.name}"
                         val leafPeek = grandPeeks[key].orEmpty()
                         val sampleLeaf = isSampleDirName(leaf.name)
-                        when (val leafKind = classifyRemoteChild(leaf.name, leafPeek)) {
+                        when (val leafKind = classifyRemoteChild(leaf.name, leafPeek, zipAsDir)) {
                             is RemoteChildKind.LeafGallery -> {
                                 galleryLeaves += PromotedGalleryLeaf(leaf.name, key, leafKind)
                                 // Sample folder: gallery promote only, never video tag/dir.
@@ -1364,7 +1373,7 @@ fun classifyRemoteListingWithPeeks(
                     continue
                 }
 
-                when (val kind = classifyRemoteChild(e.name, peek)) {
+                when (val kind = classifyRemoteChild(e.name, peek, zipAsDir)) {
                     is RemoteChildKind.Navigable -> {
                         // Direct image, else first-leaf cover (including >3-leaf fallback peek).
                         val navCover = remoteDirCoverFileName(peek, e.name, leaves, grandPeeks)
@@ -1682,7 +1691,11 @@ private sealed interface RemoteChildKind {
     }
 }
 
-private fun classifyRemoteChild(dirName: String, peek: List<RemoteChild>): RemoteChildKind {
+private fun classifyRemoteChild(
+    dirName: String,
+    peek: List<RemoteChild>,
+    zipAsDir: Boolean = false,
+): RemoteChildKind {
     val imageNames = ArrayList<String>()
     val videoFileNames = ArrayList<String>()
     var sawSubdir = false
@@ -1701,6 +1714,8 @@ private fun classifyRemoteChild(dirName: String, peek: List<RemoteChild>): Remot
             isArchiveFileName(e.name) -> {
                 sawArchive = true
                 if (isBrowseDocumentFileName(e.name)) sawDocument = true
+                // Zip-as-dir: the archive is a folder that may hold documents.
+                if (zipAsDir && isZipArchiveFileName(e.name)) sawDocument = true
             }
             isBrowseVideoEntry(e.name, e.mimeType) -> videoFileNames += e.name
             isBrowseDocumentFileName(e.name) -> sawDocument = true

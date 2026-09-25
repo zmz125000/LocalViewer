@@ -193,4 +193,20 @@ class DirectoryListingDocumentTagTest {
         val docs = entries.filterRemoteByContentMode(BrowseContentMode.Document)
         assertEquals(listOf("Books"), docs.map { it.name })
     }
+
+    @Test
+    fun zipAsDirTagsArchiveFolderAsDocumentRoute() {
+        val entries = classifyRemoteListingWithPeeks(
+            currentDirName = "Library",
+            entries = listOf(RemoteChild(name = "Zips", isDirectory = true)),
+            childPeeks = mapOf(
+                "Zips" to listOf(RemoteChild(name = "vol1.zip", isDirectory = false)),
+            ),
+            zipAsDir = true,
+        )
+        val zips = entries.filterIsInstance<BrowseEntryRemote.Directory>().single { it.name == "Zips" }
+        assertTrue(zips.hasDocument)
+        val docs = entries.filterRemoteByContentMode(BrowseContentMode.Document)
+        assertEquals(listOf("Zips"), docs.map { it.name })
+    }
 }

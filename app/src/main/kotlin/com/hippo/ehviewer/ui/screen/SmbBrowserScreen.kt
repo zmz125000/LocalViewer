@@ -1303,6 +1303,15 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
         }
     }
 
+    fun openListedFile(fileName: String) {
+        val leaf = fileName.substringAfterLast('/').substringAfterLast('\\')
+        if (isPdfOrEbookFileName(leaf)) {
+            openInternalDocument(fileName)
+        } else {
+            openExternalFile(fileName)
+        }
+    }
+
     fun openSmbHtml(fileName: String, incognito: Boolean) {
         val src = source ?: return
         val actualName = fileName.substringAfterLast('/').substringAfterLast('\\')
@@ -2250,7 +2259,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                                             BrowseFileGridItem(
                                                 modifier = itemMod,
                                                 name = entry.name,
-                                                onClick = { openExternalFile(entry.fileName) },
+                                                onClick = { openListedFile(entry.fileName) },
                                                 onLongClick = { openExternalFile(entry.fileName) },
                                                 overflow = fileOverflow(entry.fileName),
                                             )
@@ -2267,7 +2276,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                                                 if (isImage) {
                                                     openFolderImage(entry)
                                                 } else {
-                                                    openExternalFile(entry.fileName)
+                                                    openListedFile(entry.fileName)
                                                 }
                                             },
                                             onLongClick = { openExternalFile(entry.fileName) },
@@ -2335,7 +2344,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                                     BrowseFileGridItem(
                                         modifier = itemMod,
                                         name = entry.name,
-                                        onClick = { openExternalFile(entry.fileName) },
+                                        onClick = { openListedFile(entry.fileName) },
                                         onLongClick = { openExternalFile(entry.fileName) },
                                         overflow = fileOverflow(entry.fileName),
                                     )
@@ -2345,7 +2354,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                                         name = entry.name,
                                         thumbRetryKey = refreshToken,
                                         allowRemoteFetch = allowRemoteThumbs,
-                                        onClick = { openExternalFile(entry.fileName) },
+                                        onClick = { openListedFile(entry.fileName) },
                                         onLongClick = { openExternalFile(entry.fileName) },
                                         fileName = entry.fileName,
                                         sizeBytes = entry.size,

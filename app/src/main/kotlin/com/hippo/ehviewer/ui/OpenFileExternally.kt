@@ -131,7 +131,11 @@ object OpenFileExternally {
         asFile: Boolean = false,
         usePreferredPlayer: Boolean = true,
     ) {
-        if (!asFile && isHtmlFileName(displayName) && Settings.openHtmlWithBrowser.value) {
+        if (!asFile &&
+            isHtmlFileName(displayName) &&
+            Settings.openHtmlWithBrowser.value &&
+            ZipPaths.parse(pathStr) == null
+        ) {
             openLocalHtml(
                 context,
                 pathStr,
@@ -314,7 +318,11 @@ object OpenFileExternally {
         asFile: Boolean = false,
         usePreferredPlayer: Boolean = true,
     ) {
-        if (!asFile && isHtmlFileName(displayName) && Settings.openHtmlWithBrowser.value) {
+        if (!asFile &&
+            isHtmlFileName(displayName) &&
+            Settings.openHtmlWithBrowser.value &&
+            ZipAsDirListing.zipMemberPath(remoteRelativeFile) == null
+        ) {
             openSmbHtml(
                 context,
                 sourceId,
@@ -385,7 +393,11 @@ object OpenFileExternally {
         asFile: Boolean = false,
         usePreferredPlayer: Boolean = true,
     ) {
-        if (!asFile && isHtmlFileName(displayName) && Settings.openHtmlWithBrowser.value) {
+        if (!asFile &&
+            isHtmlFileName(displayName) &&
+            Settings.openHtmlWithBrowser.value &&
+            ZipAsDirListing.zipMemberPath(remoteRelativeFile) == null
+        ) {
             openWebDavHtml(
                 context,
                 sourceId,

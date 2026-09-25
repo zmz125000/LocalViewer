@@ -51,6 +51,7 @@ import androidx.compose.foundation.layout.requiredWidth
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBars
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
@@ -148,6 +149,7 @@ import com.hippo.ehviewer.library.OriginDiskCache
 import com.hippo.ehviewer.library.PdfTocCache
 import com.hippo.ehviewer.library.PfdArchiveByteSource
 import com.hippo.ehviewer.library.ReaderPageThumb
+import com.hippo.ehviewer.library.ZipPaths
 import com.hippo.ehviewer.library.document.EBOOK_FONT_SIZE_MAX
 import com.hippo.ehviewer.library.document.EBOOK_FONT_SIZE_MIN
 import com.hippo.ehviewer.library.document.EbookChapter
@@ -725,10 +727,11 @@ private fun loadPdfChapters(
 }
 
 private fun documentNameFromIntent(intent: Intent, title: String): String {
-    fun leaf(path: String?): String? = path
-        ?.substringAfterLast('/')
-        ?.substringAfterLast('\\')
-        ?.ifBlank { null }
+    fun leaf(path: String?): String? {
+        if (path.isNullOrBlank()) return null
+        ZipPaths.memberLeafName(path)?.let { return it }
+        return path.substringAfterLast('/').substringAfterLast('\\').ifBlank { null }
+    }
     val fromPath = leaf(intent.getStringExtra(PdfReaderActivity.EXTRA_LOCAL_PATH))
         ?: leaf(intent.getStringExtra(PdfReaderActivity.EXTRA_REMOTE_PATH))
         ?: leaf(intent.data?.lastPathSegment)
@@ -1580,6 +1583,10 @@ private fun PdfReaderScreen(
                             .collect { renderZoom = it }
                     }
                     val heightPx = with(LocalDensity.current) { maxHeight.roundToPx() }.coerceAtLeast(1)
+                    // Ebooks keep A-series pages. Comic Fit-Width would make landscape
+                    // glyphs track the long edge (~2×). Always contain in the viewport.
+                    val ebookScaleType = 1
+                    val vectorScaleType = if (isEbook) ebookScaleType else scaleType
                     val vectorWidthPx = (widthPx * renderZoom).roundToInt()
                         .coerceIn(widthPx, MAX_VECTOR_EDGE)
                     var appliedScale by remember { mutableIntStateOf(scaleType) }
@@ -1718,12 +1725,13 @@ private fun PdfReaderScreen(
                                         index = index,
                                         viewWidthPx = cellW,
                                         viewHeightPx = cellH,
-                                        scaleType = scaleType,
+                                        scaleType = vectorScaleType,
                                         isRtl = readingMode == ReadingModeType.RIGHT_TO_LEFT,
                                         isVertical = readingMode == ReadingModeType.VERTICAL,
                                         onDoubleClick = doubleTap,
                                         onClick = pageClick,
                                         styleGeneration = ebookStyleGen,
+                                        containPage = isEbook,
                                     )
                                 } else {
                                     PdfVectorPage(
@@ -1740,8 +1748,13 @@ private fun PdfReaderScreen(
                                         viewWidthPx = cellW,
                                         viewHeightPx = cellH,
                                         box = box,
-                                        scaleType = if (box == PdfPageBox.Cell) 1 else scaleType,
+                                        scaleType = if (box == PdfPageBox.Cell || isEbook) {
+                                            ebookScaleType
+                                        } else {
+                                            scaleType
+                                        },
                                         styleGeneration = ebookStyleGen,
+                                        containPage = isEbook,
                                     )
                                 }
                             }
@@ -2204,6 +2217,7 @@ private fun PdfSingleVectorPage(
     onClick: (Offset) -> Unit,
     onDoubleClick: DoubleClickToZoomListener,
     styleGeneration: Int = 0,
+    containPage: Boolean = false,
 ) {
     val zoomableState = rememberZoomableState(zoomSpec = PdfZoomSpec)
     val (aspect, aspectReady) = rememberPdfPageAspect(session, index)
@@ -2289,6 +2303,9 @@ private fun PdfSingleVectorPage(
             box = PdfPageBox.Single,
             scaleType = scaleType,
             aspect = aspect,
+            containPage = containPage,
+            viewWidthPx = viewWidthPx,
+            viewHeightPx = viewHeightPx,
         )
     }
 }
@@ -2303,22 +2320,25 @@ private fun PdfVectorPage(
     box: PdfPageBox,
     scaleType: Int,
     styleGeneration: Int = 0,
+    containPage: Boolean = false,
 ) {
     val (aspect, aspectReady) = rememberPdfPageAspect(session, index)
     val renderWidth = if (!aspectReady) {
         0
     } else {
-        when (box) {
-            PdfPageBox.Webtoon -> widthPx
-            PdfPageBox.Strip -> {
-                val zoom = if (viewWidthPx > 0) widthPx.toFloat() / viewWidthPx else 1f
-                (viewHeightPx * aspect * zoom).roundToInt().coerceIn(1, MAX_VECTOR_EDGE)
-            }
-            else -> {
-                val zoom = if (viewWidthPx > 0) widthPx.toFloat() / viewWidthPx else 1f
-                (pdfScaleRenderWidth(aspect, viewWidthPx, viewHeightPx, scaleType) * zoom)
-                    .roundToInt()
-                    .coerceIn(1, MAX_VECTOR_EDGE)
+        val zoom = if (viewWidthPx > 0) widthPx.toFloat() / viewWidthPx else 1f
+        val fitted = (pdfScaleRenderWidth(aspect, viewWidthPx, viewHeightPx, scaleType) * zoom)
+            .roundToInt()
+            .coerceIn(1, MAX_VECTOR_EDGE)
+        if (containPage) {
+            fitted
+        } else {
+            when (box) {
+                PdfPageBox.Webtoon -> widthPx
+                PdfPageBox.Strip -> {
+                    (viewHeightPx * aspect * zoom).roundToInt().coerceIn(1, MAX_VECTOR_EDGE)
+                }
+                else -> fitted
             }
         }
     }
@@ -2352,6 +2372,9 @@ private fun PdfVectorPage(
         box = box,
         scaleType = scaleType,
         aspect = aspect,
+        containPage = containPage,
+        viewWidthPx = viewWidthPx,
+        viewHeightPx = viewHeightPx,
     )
 }
 
@@ -2375,41 +2398,65 @@ private fun PdfPageBitmap(
     box: PdfPageBox,
     scaleType: Int,
     aspect: Float,
+    containPage: Boolean = false,
+    viewWidthPx: Int = 0,
+    viewHeightPx: Int = 0,
 ) {
-    val frame = when (box) {
-        PdfPageBox.Strip -> Modifier.fillMaxHeight().aspectRatio(aspect.coerceAtLeast(0.01f), matchHeightConstraintsFirst = true)
+    val safeAspect = aspect.coerceAtLeast(0.01f)
+    val fittedWidthPx = if (containPage && viewWidthPx > 0 && viewHeightPx > 0) {
+        pdfScaleRenderWidth(safeAspect, viewWidthPx, viewHeightPx, 1)
+    } else {
+        0
+    }
+    val frame = when {
+        containPage && box == PdfPageBox.Webtoon -> Modifier.fillMaxWidth()
+        containPage && box == PdfPageBox.Strip -> Modifier.fillMaxHeight()
+        box == PdfPageBox.Strip ->
+            Modifier.fillMaxHeight().aspectRatio(safeAspect, matchHeightConstraintsFirst = true)
         // Placeholder must have a real height. A zero-height row makes LazyColumn
         // compose every page of a long book before the first bitmap exists.
-        PdfPageBox.Webtoon -> Modifier.fillMaxWidth().aspectRatio(aspect.coerceAtLeast(0.01f))
-        PdfPageBox.Single, PdfPageBox.Cell -> Modifier.fillMaxSize()
+        box == PdfPageBox.Webtoon -> Modifier.fillMaxWidth().aspectRatio(safeAspect)
+        else -> Modifier.fillMaxSize()
     }
     BoxWithConstraints(modifier = frame, contentAlignment = Alignment.Center) {
+        val pageMod = if (containPage && fittedWidthPx > 0 &&
+            (box == PdfPageBox.Webtoon || box == PdfPageBox.Strip)
+        ) {
+            Modifier
+                .width(with(LocalDensity.current) { fittedWidthPx.toDp() })
+                .aspectRatio(safeAspect)
+        } else if (bitmap == null || bitmap.isRecycled) {
+            Modifier.fillMaxWidth().aspectRatio(safeAspect)
+        } else {
+            when (box) {
+                PdfPageBox.Webtoon -> Modifier.fillMaxWidth()
+                PdfPageBox.Strip -> Modifier.fillMaxHeight()
+                else -> Modifier.fillMaxSize()
+            }
+        }
         if (bitmap == null || bitmap.isRecycled) {
             Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .aspectRatio(aspect.coerceAtLeast(0.01f)),
+                modifier = pageMod,
                 contentAlignment = Alignment.Center,
             ) {
                 CircularProgressIndicator()
             }
         } else {
-            val contentScale = when (box) {
-                PdfPageBox.Single -> ContentScale.Inside
-                PdfPageBox.Cell -> ContentScale.Fit
-                PdfPageBox.Strip -> ContentScale.FillHeight
-                PdfPageBox.Webtoon -> ContentScale.FillWidth
-            }
-            val imageMod = when (box) {
-                PdfPageBox.Webtoon -> Modifier.fillMaxWidth()
-                PdfPageBox.Strip -> Modifier.fillMaxHeight()
-                else -> Modifier.fillMaxSize()
+            val contentScale = if (containPage) {
+                ContentScale.Fit
+            } else {
+                when (box) {
+                    PdfPageBox.Single -> ContentScale.Inside
+                    PdfPageBox.Cell -> ContentScale.Fit
+                    PdfPageBox.Strip -> ContentScale.FillHeight
+                    PdfPageBox.Webtoon -> ContentScale.FillWidth
+                }
             }
             Image(
                 bitmap = bitmap.asImageBitmap(),
                 contentDescription = stringResource(R.string.pdf_reader_page, pageLabel, pageCount),
                 contentScale = contentScale,
-                modifier = imageMod,
+                modifier = pageMod,
             )
         }
     }

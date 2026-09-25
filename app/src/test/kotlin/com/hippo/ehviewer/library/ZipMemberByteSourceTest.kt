@@ -15,6 +15,19 @@ import org.junit.Test
 
 class ZipMemberByteSourceTest {
     @Test
+    fun openLocalArchiveByteSourceReadsZipfileMember() {
+        val payload = "chapter one".toByteArray()
+        val zip = writeZip(stored = true, "notes.txt" to payload)
+        val path = ZipPaths.encodePath(zip.absolutePath, "notes.txt")
+        openLocalArchiveByteSource(path)!!.use { src ->
+            assertEquals(payload.size.toLong(), src.size)
+            val buf = ByteArray(payload.size)
+            assertEquals(payload.size, src.readAt(0L, buf, 0, buf.size))
+            assertArrayEquals(payload, buf)
+        }
+    }
+
+    @Test
     fun storeMemberIsRandomAccessAndDoesNotNeedFullExtract() {
         val payload = ByteArray(64 * 1024) { i -> (i * 31).toByte() }
         val zip = writeZip(stored = true, "clip.mp4" to payload)

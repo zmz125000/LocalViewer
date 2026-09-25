@@ -1555,11 +1555,15 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
     fun openPdfReader(entry: BrowseEntry.ArchiveGallery) {
         if (!isPdfOrEbookFileName(entry.name)) return
         val frame = stack.lastOrNull()
-        if (frame != null && !frame.isZipBrowse) {
+        if (frame != null) {
             ReaderGalleryPlaylist.setFromLocalBrowse(
                 rootId = frame.rootId,
                 parentPath = frame.path,
-                parentRelative = frame.relativePath,
+                parentRelative = if (frame.isZipBrowse) {
+                    ZipAsDirListing.virtualRelativeDir(frame.relativePath, frame.zipInnerRel.orEmpty())
+                } else {
+                    frame.relativePath
+                },
                 entries = entries,
             )
         }
@@ -1674,11 +1678,15 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
 
     fun openInternalDocument(path: okio.Path) {
         val frame = stack.lastOrNull()
-        if (frame != null && !frame.isZipBrowse) {
+        if (frame != null) {
             ReaderGalleryPlaylist.setFromLocalBrowse(
                 rootId = frame.rootId,
                 parentPath = frame.path,
-                parentRelative = frame.relativePath,
+                parentRelative = if (frame.isZipBrowse) {
+                    ZipAsDirListing.virtualRelativeDir(frame.relativePath, frame.zipInnerRel.orEmpty())
+                } else {
+                    frame.relativePath
+                },
                 entries = entries,
             )
         }
@@ -1722,6 +1730,15 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                     ) + " " + (e.message ?: e.toString()),
                 )
             }
+        }
+    }
+
+    fun openListedFile(path: okio.Path) {
+        val name = ZipPaths.memberLeafName(path.toString()) ?: path.name
+        if (isPdfOrEbookFileName(name)) {
+            openInternalDocument(path)
+        } else {
+            openExternalFile(path)
         }
     }
 
@@ -2004,70 +2021,73 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         onUnsupported = { notSupportedAction() },
     )
 
-    fun fileOverflow(path: okio.Path, relativeName: String = path.name) = if (isHtmlFileName(path.name)) {
-        BrowseOverflowActions(
-            kind = BrowseOverflowKind.Webpage,
-            onOpenInBrowser = { openLocalHtml(path, incognito = false) },
-            onOpenIncognito = { openLocalHtml(path, incognito = true) },
-            onCopyUrl = { copyLocalHtmlUrl(path) },
-            onOpenWith = { openExternalFile(path, asFile = true) },
-            onSaveAs = { saveLocalFile(path) },
-            onShare = { shareLocalFile(path) },
-            onShareViaHttp = localHttpShareFile(path),
-            onOpenFolder = {
-                openBrowseFolder(FolderSearch.openFolderTarget(relativeName, isDirectory = false))
-            },
-            onUnsupported = { notSupportedAction() },
-        )
-    } else if (isPdfOrEbookFileName(path.name)) {
-        BrowseOverflowActions(
-            kind = BrowseOverflowKind.Pdf,
-            onPlay = { openInternalDocument(path) },
-            onExternalPlayer = {
-                if (isPdfFileName(path.name)) {
-                    launchIO {
-                        recordCurrentBrowseFolderHistory()
-                        LocalHistory.recordLocalFile(path.toString(), title = path.name)
-                        try {
-                            OpenPdfExternally.openLocal(
-                                context,
-                                path.toString(),
-                                displayName = path.name,
-                            )
-                        } catch (e: Throwable) {
-                            snackbar(
-                                context.getString(
-                                    R.string.open_pdf_external_failed,
-                                    e.message ?: e.toString(),
-                                ),
-                            )
+    fun fileOverflow(path: okio.Path, relativeName: String = path.name): BrowseOverflowActions {
+        val leaf = ZipPaths.memberLeafName(path.toString()) ?: path.name
+        return if (isHtmlFileName(leaf)) {
+            BrowseOverflowActions(
+                kind = BrowseOverflowKind.Webpage,
+                onOpenInBrowser = { openLocalHtml(path, incognito = false) },
+                onOpenIncognito = { openLocalHtml(path, incognito = true) },
+                onCopyUrl = { copyLocalHtmlUrl(path) },
+                onOpenWith = { openExternalFile(path, asFile = true) },
+                onSaveAs = { saveLocalFile(path) },
+                onShare = { shareLocalFile(path) },
+                onShareViaHttp = localHttpShareFile(path),
+                onOpenFolder = {
+                    openBrowseFolder(FolderSearch.openFolderTarget(relativeName, isDirectory = false))
+                },
+                onUnsupported = { notSupportedAction() },
+            )
+        } else if (isPdfOrEbookFileName(leaf)) {
+            BrowseOverflowActions(
+                kind = BrowseOverflowKind.Pdf,
+                onPlay = { openInternalDocument(path) },
+                onExternalPlayer = {
+                    if (isPdfFileName(leaf)) {
+                        launchIO {
+                            recordCurrentBrowseFolderHistory()
+                            LocalHistory.recordLocalFile(path.toString(), title = leaf)
+                            try {
+                                OpenPdfExternally.openLocal(
+                                    context,
+                                    path.toString(),
+                                    displayName = leaf,
+                                )
+                            } catch (e: Throwable) {
+                                snackbar(
+                                    context.getString(
+                                        R.string.open_pdf_external_failed,
+                                        e.message ?: e.toString(),
+                                    ),
+                                )
+                            }
                         }
+                    } else {
+                        openExternalFile(path)
                     }
-                } else {
-                    openExternalFile(path)
-                }
-            },
-            onOpenWith = { openExternalFile(path, asFile = true) },
-            onSaveAs = { saveLocalFile(path) },
-            onShare = { shareLocalFile(path) },
-            onShareViaHttp = localHttpShareFile(path),
-            onOpenFolder = {
-                openBrowseFolder(FolderSearch.openFolderTarget(relativeName, isDirectory = false))
-            },
-            onUnsupported = { notSupportedAction() },
-        )
-    } else {
-        BrowseOverflowActions(
-            kind = BrowseOverflowKind.Common,
-            onOpenWith = { openExternalFile(path, asFile = true) },
-            onSaveAs = { saveLocalFile(path) },
-            onShare = { shareLocalFile(path) },
-            onShareViaHttp = localHttpShareFile(path),
-            onOpenFolder = {
-                openBrowseFolder(FolderSearch.openFolderTarget(relativeName, isDirectory = false))
-            },
-            onUnsupported = { notSupportedAction() },
-        )
+                },
+                onOpenWith = { openExternalFile(path, asFile = true) },
+                onSaveAs = { saveLocalFile(path) },
+                onShare = { shareLocalFile(path) },
+                onShareViaHttp = localHttpShareFile(path),
+                onOpenFolder = {
+                    openBrowseFolder(FolderSearch.openFolderTarget(relativeName, isDirectory = false))
+                },
+                onUnsupported = { notSupportedAction() },
+            )
+        } else {
+            BrowseOverflowActions(
+                kind = BrowseOverflowKind.Common,
+                onOpenWith = { openExternalFile(path, asFile = true) },
+                onSaveAs = { saveLocalFile(path) },
+                onShare = { shareLocalFile(path) },
+                onShareViaHttp = localHttpShareFile(path),
+                onOpenFolder = {
+                    openBrowseFolder(FolderSearch.openFolderTarget(relativeName, isDirectory = false))
+                },
+                onUnsupported = { notSupportedAction() },
+            )
+        }
     }
 
     Scaffold(
@@ -2425,7 +2445,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                             BrowseFileGridItem(
                                                 modifier = itemMod,
                                                 name = entry.name,
-                                                onClick = { openExternalFile(entry.path) },
+                                                onClick = { openListedFile(entry.path) },
                                                 onLongClick = { openExternalFile(entry.path) },
                                                 overflow = fileOverflow(entry.path, entry.name),
                                             )
@@ -2440,7 +2460,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                                 if (isImage) {
                                                     openFolderImage(entry)
                                                 } else {
-                                                    openExternalFile(entry.path)
+                                                    openListedFile(entry.path)
                                                 }
                                             },
                                             onLongClick = { openExternalFile(entry.path) },
@@ -2505,7 +2525,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                     BrowseFileGridItem(
                                         modifier = itemMod,
                                         name = entry.name,
-                                        onClick = { openExternalFile(entry.path) },
+                                        onClick = { openListedFile(entry.path) },
                                         onLongClick = { openExternalFile(entry.path) },
                                         overflow = fileOverflow(entry.path, entry.name),
                                     )
@@ -2513,7 +2533,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                     BrowseFileRow(
                                         modifier = itemMod,
                                         name = entry.name,
-                                        onClick = { openExternalFile(entry.path) },
+                                        onClick = { openListedFile(entry.path) },
                                         onLongClick = { openExternalFile(entry.path) },
                                         fileName = entry.name,
                                         sizeBytes = entry.size,

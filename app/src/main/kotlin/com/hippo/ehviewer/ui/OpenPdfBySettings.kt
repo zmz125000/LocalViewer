@@ -17,6 +17,7 @@ import com.hippo.ehviewer.library.HistoryThumbKey
 import com.hippo.ehviewer.library.LocalHistory
 import com.hippo.ehviewer.library.SMB_ARCHIVE_TOKEN
 import com.hippo.ehviewer.library.WEBDAV_ARCHIVE_TOKEN
+import com.hippo.ehviewer.library.ZipPaths
 import com.hippo.ehviewer.library.document.PdfContentKind
 import com.hippo.ehviewer.library.document.PdfImageEngine
 import com.hippo.ehviewer.library.isEbookFileName
@@ -301,10 +302,11 @@ object OpenPdfBySettings {
         return runCatching { EhDB.getReadProgress(gid) }.getOrDefault(0)
     }
 
-    private fun fileName(path: String): String = path.trimEnd('/', '\\')
-        .substringAfterLast('/')
-        .substringAfterLast('\\')
-        .ifEmpty { File(path).name }
+    private fun fileName(path: String): String = ZipPaths.memberLeafName(path)
+        ?: path.trimEnd('/', '\\')
+            .substringAfterLast('/')
+            .substringAfterLast('\\')
+            .ifEmpty { File(path).name }
 
     private fun smbInfo(sourceId: Long, remote: String, name: String) = BaseGalleryInfo(
         gid = stableGalleryId(sourceId, "smba:$remote"),
