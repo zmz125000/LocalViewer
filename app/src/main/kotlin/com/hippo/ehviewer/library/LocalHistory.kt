@@ -191,9 +191,10 @@ object LocalHistory {
 
     private fun fileNameOfHistory(info: GalleryInfo): String {
         val path = info.uploader.orEmpty()
-        return path.substringAfterLast('/').substringAfterLast('\\').ifEmpty {
-            info.title.orEmpty()
-        }
+        val fromPath = path.substringAfterLast('\u0000')
+            .substringAfterLast('/')
+            .substringAfterLast('\\')
+        return fromPath.ifEmpty { info.title.orEmpty() }
     }
 
     /**
@@ -203,6 +204,36 @@ object LocalHistory {
     fun isBrowseDirectory(info: GalleryInfo): Boolean = when (info.token) {
         LOCAL_BROWSE_TOKEN, SMB_BROWSE_TOKEN, WEBDAV_BROWSE_TOKEN -> true
         else -> false
+    }
+
+    /**
+     * File/gallery history row that belongs on the Documents filter.
+     * Directory pins are never documents. Display-only; does not rewrite records.
+     */
+    fun isHistoryDocument(info: GalleryInfo): Boolean {
+        if (isBrowseDirectory(info)) return false
+        val title = info.title.orEmpty()
+        val name = fileNameOfHistory(info)
+        return isBrowseDocumentFileName(title) || isBrowseDocumentFileName(name)
+    }
+
+    /** PDF / MOBI file/gallery rows appear on both Media and Documents. */
+    fun isHistoryPdfOrMobi(info: GalleryInfo): Boolean {
+        val title = info.title.orEmpty()
+        val name = fileNameOfHistory(info)
+        return isPdfFileName(title) ||
+            isPdfFileName(name) ||
+            isMobiFileName(title) ||
+            isMobiFileName(name)
+    }
+
+    /**
+     * History file/gallery filter. Directories are excluded by the caller.
+     * Documents → Documents; everything else → Media; PDF and MOBI → both.
+     */
+    fun matchesHistorySection(info: GalleryInfo, documents: Boolean): Boolean {
+        val doc = isHistoryDocument(info)
+        return if (documents) doc else !doc || isHistoryPdfOrMobi(info)
     }
 
     /**

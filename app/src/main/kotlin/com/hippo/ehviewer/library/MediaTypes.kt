@@ -143,6 +143,11 @@ fun isPdfFileName(name: String): Boolean {
     return FileUtils.getExtensionFromFilename(name)?.lowercase() == "pdf"
 }
 
+fun isMobiFileName(name: String): Boolean {
+    if (name.startsWith('.')) return false
+    return FileUtils.getExtensionFromFilename(name)?.lowercase() == "mobi"
+}
+
 /**
  * Built-in PDF-reader ebooks (text + TOC pages). Not the image/gallery reader.
  * HTML still honors [com.hippo.ehviewer.Settings.openHtmlWithBrowser] first.

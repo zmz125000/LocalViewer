@@ -474,6 +474,13 @@ object Settings : DataStorePreferences(null) {
     val librarySection = intPref("library_section", 0)
 
     /**
+     * History file/gallery filter: 0 = media (default), 1 = documents.
+     * Browse-directory pins are not filtered. PDF and MOBI appear in both.
+     * Toggled by re-tapping History on the bottom nav, or the section header.
+     */
+    val historySection = intPref("history_section", 0)
+
+    /**
      * Library Videos listing via the All videos toggle: 0 = folders that contain
      * videos (off, default), 1 = flat list of every video file (on).
      */

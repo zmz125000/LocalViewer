@@ -97,6 +97,7 @@ import com.hippo.ehviewer.ui.DrawerHandle
 import com.hippo.ehviewer.ui.OpenFileExternally
 import com.hippo.ehviewer.ui.OpenPdfExternally
 import com.hippo.ehviewer.ui.Screen
+import com.hippo.ehviewer.ui.main.BrowseSectionHeader
 import com.hippo.ehviewer.ui.main.GalleryGridDefaults
 import com.hippo.ehviewer.ui.main.HistoryDirectoryGridItem
 import com.hippo.ehviewer.ui.main.HistoryGridItem
@@ -163,12 +164,23 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
             }
         }
     }
-    // Browse-dir pins live in a capped top section; everything else stays in the main list.
+    val historySectionPref by Settings.historySection.collectAsState()
+    val historySection = HistorySection.fromPref(historySectionPref)
+    // Browse-dir pins live in a capped top section and ignore Media/Documents.
     val allDirectoryItems = remember(filteredHistory) {
         filteredHistory.filter { LocalHistory.isBrowseDirectory(it) }
     }
-    val historyItems = remember(filteredHistory) {
+    val allFileItems = remember(filteredHistory) {
         filteredHistory.filterNot { LocalHistory.isBrowseDirectory(it) }
+    }
+    val historyItems = remember(allFileItems, historySection) {
+        filterHistoryFileItems(allFileItems, historySection)
+    }
+    val showFilterHeader = allFileItems.isNotEmpty()
+    val sectionHeaderText = if (historySection == HistorySection.Documents) {
+        stringResource(R.string.browse_documents)
+    } else {
+        stringResource(R.string.browse_mode_media)
     }
 
     val listMode by Settings.listMode.collectAsState()
@@ -969,7 +981,7 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
                         }
                     }
                     // Gap under dirs: tap toggles expand/collapse when there is overflow.
-                    if (historyItems.isNotEmpty() || canExpandDirectories) {
+                    if (showFilterHeader || canExpandDirectories) {
                         item(
                             key = "dir-gap",
                             span = { GridItemSpan(maxLineSpan) },
@@ -979,6 +991,17 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
                                 onToggle = { directoriesExpanded = !directoriesExpanded },
                             )
                         }
+                    }
+                }
+                if (showFilterHeader) {
+                    item(
+                        key = "hist-filter-hdr",
+                        span = { GridItemSpan(maxLineSpan) },
+                    ) {
+                        BrowseSectionHeader(
+                            sectionHeaderText,
+                            onClick = { toggleHistorySection() },
+                        )
                     }
                 }
                 items(historyItems, key = { it.gid }) { info ->
@@ -1022,7 +1045,7 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
                         )
                     }
                     // Gap under dirs: tap toggles expand/collapse when there is overflow.
-                    if (historyItems.isNotEmpty() || canExpandDirectories) {
+                    if (showFilterHeader || canExpandDirectories) {
                         item(
                             key = "dir-gap",
                             span = { GridItemSpan(maxLineSpan) },
@@ -1032,6 +1055,17 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
                                 onToggle = { directoriesExpanded = !directoriesExpanded },
                             )
                         }
+                    }
+                }
+                if (showFilterHeader) {
+                    item(
+                        key = "hist-filter-hdr",
+                        span = { GridItemSpan(maxLineSpan) },
+                    ) {
+                        BrowseSectionHeader(
+                            sectionHeaderText,
+                            onClick = { toggleHistorySection() },
+                        )
                     }
                 }
                 items(historyItems, key = { it.gid }) { info ->
@@ -1047,7 +1081,7 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
             }
         }
 
-        if (directoryItems.isEmpty() && historyItems.isEmpty()) {
+        if (directoryItems.isEmpty() && historyItems.isEmpty() && allFileItems.isEmpty()) {
             Column(
                 modifier = Modifier.padding(paddingValues).padding(horizontal = marginH).fillMaxSize(),
                 verticalArrangement = Arrangement.Center,
