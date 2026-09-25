@@ -60,7 +60,7 @@ fun SettingsPager(isWebtoon: Boolean, isDocument: Boolean = false, modifier: Mod
             ProvideTextStyle(value = MaterialTheme.typography.labelLarge) {
                 when (page) {
                     0 -> ReaderModeSetting(isWebtoon, isDocument)
-                    1 -> ReaderGeneralSetting()
+                    1 -> ReaderGeneralSetting(isDocument)
                     2 -> ColorFilterSetting()
                 }
             }

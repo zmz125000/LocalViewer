@@ -9,8 +9,8 @@ internal const val EBOOK_FONT_SIZE_DEFAULT = 18
 
 internal data class EbookStyle(
     val fontSize: Int = EBOOK_FONT_SIZE_DEFAULT,
-    val lineHeightPercent: Int = 145,
-    val paragraphPercent: Int = 0,
+    val lineHeightPercent: Int = 150,
+    val paragraphPercent: Int = 100,
     val indentEm: Int = 2,
     val marginPercent: Int = 7,
     val justify: Boolean = false,
@@ -29,7 +29,7 @@ internal data class EbookStyle(
 internal object EbookPaginator {
     const val ASPECT = 1f / 1.41421356f
     const val CJK_PER_LINE = 28
-    const val LINE_HEIGHT_EM = 1.45f
+    const val LINE_HEIGHT_EM = 1.5f
     const val MARGIN = 0.07f
 
     fun lineCapacity(style: EbookStyle = EbookStyle.DEFAULT): Float {

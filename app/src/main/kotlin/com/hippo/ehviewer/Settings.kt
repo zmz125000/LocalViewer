@@ -616,11 +616,11 @@ object Settings : DataStorePreferences(null) {
     /** 0=auto, 1=hard-wrap join, 2=collapse extra blank lines. */
     val ebookParagraphMode = intPref("pref_ebook_paragraph_mode", EBOOK_PARA_AUTO)
 
-    /** Line height as percent of em (100–200). Default 145. */
-    val ebookLineHeight = intPref("pref_ebook_line_height", 145)
+    /** Line height as percent of em (100–200). Default 150 (1.5). */
+    val ebookLineHeight = intPref("pref_ebook_line_height", 150)
 
-    /** Extra space after a paragraph as percent of em (0–200). Default 0. */
-    val ebookParagraphSpacing = intPref("pref_ebook_paragraph_spacing", 0)
+    /** Extra space after a paragraph as percent of em (0–200). Default 100 (1 em). */
+    val ebookParagraphSpacing = intPref("pref_ebook_paragraph_spacing", 100)
 
     /** First-line indent in em (0 / 1 / 2). Default 2. */
     val ebookIndent = intPref("pref_ebook_indent", 2)
@@ -659,6 +659,12 @@ object Settings : DataStorePreferences(null) {
     /** Last open tab in the reader settings bottom sheet (0=mode, 1=general, 2=filter). */
     val readerSettingsTab = intPref("pref_reader_settings_tab", 0)
     val readerTheme = intPref("pref_reader_theme_key", 1)
+
+    /**
+     * Ebook page + reader backdrop. Same values as [readerTheme]
+     * (0 white, 1 black, 2 gray, 3 auto). Image/PDF reader keep [readerTheme].
+     */
+    val ebookTheme = intPref("pref_ebook_theme_key", 1)
 
     /** Off = double-tap prev/next gallery (folder mode). Default: off. */
     val doubleTapToZoom = boolPref("pref_double_tap_to_zoom", false)

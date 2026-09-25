@@ -104,6 +104,12 @@ fun ReaderModeSetting(isWebtoon: Boolean, isDocument: Boolean = false) = Column(
 
 @Composable
 private fun DocumentStyleSetting() = Column {
+    SpinnerChoice(
+        title = stringResource(id = R.string.pref_reader_theme),
+        entries = stringArrayResource(id = com.hippo.ehviewer.R.array.reader_themes),
+        values = integerArrayResource(id = com.hippo.ehviewer.R.array.reader_themes_values).toList(),
+        field = Settings.ebookTheme.asMutableState(),
+    )
     Text(
         text = stringResource(id = R.string.pref_ebook_text),
         modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
@@ -146,6 +152,18 @@ private fun DocumentStyleSetting() = Column {
         ),
         field = Settings.ebookParagraphMode.asMutableState(),
     )
+    SpinnerChoice(
+        title = stringResource(id = R.string.pref_ebook_indent),
+        entries = stringArrayResource(id = com.hippo.ehviewer.R.array.ebook_indent),
+        values = listOf(0, 1, 2),
+        field = Settings.ebookIndent.asMutableState(),
+    )
+    SpinnerChoice(
+        title = stringResource(id = R.string.pref_ebook_align),
+        entries = stringArrayResource(id = com.hippo.ehviewer.R.array.ebook_align),
+        values = listOf(Settings.EBOOK_ALIGN_START, Settings.EBOOK_ALIGN_JUSTIFY),
+        field = Settings.ebookAlign.asMutableState(),
+    )
     val lineHeight = Settings.ebookLineHeight.asMutableState()
     Text(
         text = stringResource(id = R.string.pref_ebook_line_height),
@@ -169,18 +187,6 @@ private fun DocumentStyleSetting() = Column {
         endSlot = { Text(text = "%.2f em".format(paragraph.value / 100f)) },
         range = 0..200,
         field = paragraph,
-    )
-    SpinnerChoice(
-        title = stringResource(id = R.string.pref_ebook_indent),
-        entries = stringArrayResource(id = com.hippo.ehviewer.R.array.ebook_indent),
-        values = listOf(0, 1, 2),
-        field = Settings.ebookIndent.asMutableState(),
-    )
-    SpinnerChoice(
-        title = stringResource(id = R.string.pref_ebook_align),
-        entries = stringArrayResource(id = com.hippo.ehviewer.R.array.ebook_align),
-        values = listOf(Settings.EBOOK_ALIGN_START, Settings.EBOOK_ALIGN_JUSTIFY),
-        field = Settings.ebookAlign.asMutableState(),
     )
     val margin = Settings.ebookMargin.asMutableState()
     Text(

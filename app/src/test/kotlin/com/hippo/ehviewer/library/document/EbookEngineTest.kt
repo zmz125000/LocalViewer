@@ -87,6 +87,12 @@ class EbookEngineTest {
     }
 
     @Test
+    fun defaultLineHeightAndParagraphSpacing() {
+        assertEquals(1.5f, EbookStyle.DEFAULT.lineHeightEm, 0.0001f)
+        assertEquals(1f, EbookStyle.DEFAULT.paragraphEm, 0.0001f)
+    }
+
+    @Test
     fun largerFontIncreasesPageCount() {
         val chapters = listOf(EbookChapter("t", "测".repeat(800)))
         val small = EbookPaginator.paginate(chapters, EbookStyle(fontSize = 12)).first

@@ -839,7 +839,7 @@ private fun ebookStyleFromSettings(): EbookStyle = EbookStyle(
 )
 
 private fun ebookPaintFromSettings(dark: Boolean): EbookPaint {
-    val (bg, fg) = ebookPageColors(Settings.readerTheme.value, dark)
+    val (bg, fg) = ebookPageColors(Settings.ebookTheme.value, dark)
     return EbookPaint(font = Settings.ebookFont.value, bg = bg, fg = fg)
 }
 
@@ -1021,7 +1021,7 @@ private fun PdfReaderScreen(
     val ebookAlign by Settings.ebookAlign.collectAsState()
     val ebookMargin by Settings.ebookMargin.collectAsState()
     val ebookParaMode by Settings.ebookParagraphMode.collectAsState()
-    val readerTheme by Settings.readerTheme.collectAsState()
+    val ebookTheme by Settings.ebookTheme.collectAsState()
     val ebookLayout = remember(
         ebookFontSize,
         ebookLineHeight,
@@ -1041,8 +1041,8 @@ private fun PdfReaderScreen(
             paragraphMode = ebookParaMode.coerceIn(0, 2),
         )
     }
-    val ebookPaint = remember(ebookFont, readerTheme, appDarkTheme) {
-        val (bg, fg) = ebookPageColors(readerTheme, appDarkTheme)
+    val ebookPaint = remember(ebookFont, ebookTheme, appDarkTheme) {
+        val (bg, fg) = ebookPageColors(ebookTheme, appDarkTheme)
         EbookPaint(font = ebookFont, bg = bg, fg = fg)
     }
     var ebookStyleGen by remember { mutableIntStateOf(0) }
