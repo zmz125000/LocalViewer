@@ -337,8 +337,9 @@ class PdfReaderActivity : AppCompatActivity() {
                     }.getOrNull()
                     pfd = descriptor
                     if (descriptor == null) return@withContext null
-                    val reopen = token?.let { StreamDocumentRegistry.get(it)?.openFileDescriptor }
-                    openPdfDocument(descriptor, nextStart, cacheKey, reopen)
+                    openPdfDocument(descriptor) {
+                        loadPdfChapters(intent, token)
+                    }
                 }
                 val model = opened
                 if (generation != openGeneration) return@launch
@@ -623,21 +624,34 @@ private fun tryOpenImagePdf(
 
 private fun openPdfDocument(
     pfd: ParcelFileDescriptor,
-    startPage: Int,
-    cacheKey: String?,
-    reopenPfd: (() -> ParcelFileDescriptor)? = null,
+    loadChapters: (suspend () -> List<PdfTocEntry>)? = null,
 ): PdfDocumentModel {
-    // Do not dup()+close the original PFD: AppFuse/SAF FUSE tears down the
-    // connection when the original fd is closed (ENOTCONN on later preads).
-    val source = PfdArchiveByteSource(pfd, ownsPfd = false, reopen = reopenPfd)
-    val chapters = readPdfChapters(source, source.size)
-    runCatching { source.close() }
+    // Contents are a second pass over the page tree. Do not run that before
+    // PdfRenderer — Direct Image off still opened every page object here.
     val renderer = runCatching { PdfRenderer(pfd) }.getOrElse { e ->
         runCatching { pfd.close() }
         throw e
     }
     logcat("PdfReader") { "vector PDF pages=${renderer.pageCount}" }
-    return PdfDocumentModel.Vector(PdfSession(renderer), chapters)
+    return PdfDocumentModel.Vector(PdfSession(renderer), emptyList(), loadChapters)
+}
+
+/**
+ * Bookmark page index. Not used to open the file. A new descriptor so this
+ * does not share the seek position PdfRenderer is using.
+ */
+private fun loadPdfChapters(intent: Intent, token: String?): List<PdfTocEntry> {
+    val source = runCatching { openDirectArchiveSource(intent, token) }.getOrNull()
+        ?: token?.let { StreamDocumentRegistry.get(it)?.openFileDescriptor }?.let { open ->
+            runCatching { PfdArchiveByteSource(open(), ownsPfd = true) }.getOrNull()
+        }
+        ?: return emptyList()
+    return try {
+        android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND)
+        readPdfChapters(source, source.size)
+    } finally {
+        runCatching { source.close() }
+    }
 }
 
 private fun documentNameFromIntent(intent: Intent, title: String): String {
@@ -685,10 +699,26 @@ private sealed interface PdfDocumentModel {
 
     class Vector(
         val session: PageBitmapSession,
-        override val chapters: List<PdfTocEntry>,
+        chapters: List<PdfTocEntry>,
+        private val chapterLoader: (suspend () -> List<PdfTocEntry>)? = null,
     ) : PdfDocumentModel {
+        override var chapters by mutableStateOf(chapters)
+            private set
+        private var chaptersLoaded = chapterLoader == null
+        private val chapterMutex = Mutex()
+
         override val pageCount get() = session.pageCount
         override fun close() = session.close()
+
+        /** Table of contents. No-op for ebooks, which already parsed chapters. */
+        suspend fun ensureChapters() {
+            val load = chapterLoader ?: return
+            chapterMutex.withLock {
+                if (chaptersLoaded) return@withLock
+                chapters = withContext(Dispatchers.IO) { load() }
+                chaptersLoaded = true
+            }
+        }
     }
 
     class Images(
@@ -1503,6 +1533,10 @@ private fun PdfReaderScreen(
             showScaleFitCycle = !isWebtoon && (!pagerDual || !dualPageGap),
             onClickContents = { contentsOpen = true },
         )
+        LaunchedEffect(contentsOpen, doc) {
+            if (!contentsOpen) return@LaunchedEffect
+            (doc as? PdfDocumentModel.Vector)?.ensureChapters()
+        }
         if (contentsOpen) {
             PdfContentsSheet(
                 chapters = doc?.chapters.orEmpty(),
