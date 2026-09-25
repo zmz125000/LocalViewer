@@ -97,7 +97,6 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
-import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -210,6 +209,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -1355,6 +1355,9 @@ private fun PdfReaderScreen(
         }
     }
     fun realPageIndex(): Int {
+        // derivedStateOf keeps the first realPageIndex. Read the session
+        // count here; the composition-local pageCount stays at open time.
+        val n = imageLoader?.size ?: (doc?.pageCount ?: 0)
         val raw = if (isWebtoon) {
             listState.layoutInfo.webtoonReadingIndex(webtoonHorizontal)
                 ?: listState.firstVisibleItemIndex
@@ -1363,7 +1366,7 @@ private fun PdfReaderScreen(
         } else {
             pagerState.currentPage
         }
-        return raw.coerceIn(0, (pageCount - 1).coerceAtLeast(0))
+        return raw.coerceIn(0, (n - 1).coerceAtLeast(0))
     }
     val currentPage by remember(imageLoader, doc, pagerDual, landscapeCover, isWebtoon, webtoonHorizontal) {
         derivedStateOf {
@@ -1525,8 +1528,20 @@ private fun PdfReaderScreen(
         vector.chapters = session.toc
         ebookStyleGen = session.styleGeneration
         if (remapped) {
-            withFrameNanos { }
-            jumpToPdfPage(session.pageIndexFor(anchor))
+            val target = session.pageIndexFor(anchor)
+            val needed = session.pageCount.coerceAtLeast(1)
+            val slots = if (!isWebtoon && pagerDual) {
+                dualSpreadCount(needed, landscapeCover).coerceAtLeast(1)
+            } else {
+                needed
+            }
+            // scrollToPage clamps to the pager's previous page count.
+            if (isWebtoon) {
+                snapshotFlow { listState.layoutInfo.totalItemsCount }.first { it >= slots }
+            } else {
+                snapshotFlow { pagerState.pageCount }.first { it >= slots }
+            }
+            jumpToPdfPage(target)
         }
     }
     var layoutReady by remember { mutableStateOf(false) }
