@@ -134,12 +134,10 @@ import com.hippo.ehviewer.gallery.NavigationKind
 import com.hippo.ehviewer.gallery.Page
 import com.hippo.ehviewer.gallery.PdfRamPageLoader
 import com.hippo.ehviewer.gallery.ReaderNavigation
-import com.hippo.ehviewer.image.presentForReader
 import com.hippo.ehviewer.library.ArchiveByteSource
 import com.hippo.ehviewer.library.BlockCacheArchiveByteSource
 import com.hippo.ehviewer.library.DocumentExtractCache
 import com.hippo.ehviewer.library.GallerySiblingNavigator
-import com.hippo.ehviewer.library.OriginDiskCache
 import com.hippo.ehviewer.library.PfdArchiveByteSource
 import com.hippo.ehviewer.library.ReaderPageThumb
 import com.hippo.ehviewer.library.document.PdfContentKind
