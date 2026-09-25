@@ -67,13 +67,13 @@ class BrowseContentModeSearchTest {
     }
 
     @Test
-    fun documentModeKeepsPdfNotZipOrFiles() {
+    fun documentModeKeepsPdfAndTextNotZipOrMedia() {
         val docs = listing.filterRemoteByContentMode(BrowseContentMode.Document)
         assertTrue(docs.any { it is BrowseEntryRemote.ArchiveGallery && it.name == "guide.pdf" })
+        assertTrue(docs.any { it is BrowseEntryRemote.RegularFile && it.name == "notes.txt" })
         assertFalse(docs.any { it is BrowseEntryRemote.ArchiveGallery && it.name == "pack.cbz" })
         assertFalse(docs.any { it is BrowseEntryRemote.FolderGallery })
         assertFalse(docs.any { it is BrowseEntryRemote.VideoFile })
-        assertFalse(docs.any { it is BrowseEntryRemote.RegularFile })
     }
 
     @Test

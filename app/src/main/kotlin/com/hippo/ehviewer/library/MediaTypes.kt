@@ -54,6 +54,31 @@ val ARCHIVE_EXTENSIONS = setOf(
 val DOCUMENT_EXTENSIONS = setOf("epub", "pdf")
 
 /**
+ * Folder-view Document filter: [DOCUMENT_EXTENSIONS] plus common office / text / ebook
+ * types. Does not change reader extract (still PDF/EPUB only).
+ */
+val BROWSE_DOCUMENT_EXTENSIONS = DOCUMENT_EXTENSIONS + setOf(
+    // Microsoft Office
+    "doc", "docx", "docm", "dot", "dotx", "dotm",
+    "xls", "xlsx", "xlsm", "xlsb", "xlt", "xltx",
+    "ppt", "pptx", "pptm", "pps", "ppsx", "potx",
+    // OpenDocument
+    "odt", "ods", "odp", "odg", "odf", "ott", "ots", "otp",
+    // Text / interchange
+    "rtf", "txt", "text", "csv", "tsv", "md", "markdown",
+    // HTML
+    "html", "htm", "xhtml",
+    // Ebooks (non-PDF/EPUB)
+    "mobi", "azw", "azw3", "fb2", "djvu", "djv",
+    // Apple iWork / XPS / WPS
+    "pages", "numbers", "key",
+    "xps", "oxps",
+    "wps", "et", "dps",
+    // TeX
+    "tex", "latex",
+)
+
+/**
  * Solid / poor-seek archives: no ZIP-style range stream.
  * Network open uses fake-stream sequential extract ([useSolidExtractPageLoader]);
  * browse lazy thumbs use sequential first-page extract ([ArchiveCoverCache.ensureSolidStreamCover]).
@@ -99,6 +124,13 @@ fun isDocumentFileName(name: String): Boolean {
     if (name.startsWith('.')) return false
     val ext = FileUtils.getExtensionFromFilename(name)?.lowercase() ?: return false
     return ext in DOCUMENT_EXTENSIONS
+}
+
+/** Folder Document filter / [hasDocument] tag (PDF/EPUB + office / text / ebook). */
+fun isBrowseDocumentFileName(name: String): Boolean {
+    if (name.startsWith('.')) return false
+    val ext = FileUtils.getExtensionFromFilename(name)?.lowercase() ?: return false
+    return ext in BROWSE_DOCUMENT_EXTENSIONS
 }
 
 fun isEpubFileName(name: String): Boolean {

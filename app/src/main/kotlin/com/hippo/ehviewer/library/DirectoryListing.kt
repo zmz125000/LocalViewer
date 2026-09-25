@@ -1098,7 +1098,7 @@ fun classifyRemoteListingWithPeeks(
                     }
                     val sHasDocuments = peek.any {
                         !it.isDirectory && !it.name.startsWith('.') &&
-                            !isProtectedSystemName(it.name) && isDocumentFileName(it.name)
+                            !isProtectedSystemName(it.name) && isBrowseDocumentFileName(it.name)
                     }
                     for (leaf in leaves) {
                         val key = "${e.name}/${leaf.name}"
@@ -1172,7 +1172,7 @@ fun classifyRemoteListingWithPeeks(
                     val sHasGalleryFlag = sHasArchives || leafHasGallery
                     // After promoting video-bearing leaves, only keep S when something still needs enter
                     // (navigable leaf, archives in S, or direct video files in S).
-                    val keepDirS = hasNavigableLeaf || sHasArchives || sHasVideo
+                    val keepDirS = hasNavigableLeaf || sHasArchives || sHasVideo || sHasDocuments
                     val promotedAnything =
                         galleryLeaves.isNotEmpty() || videoLeaves.isNotEmpty() || videoFiles.isNotEmpty()
 
@@ -1700,9 +1700,10 @@ private fun classifyRemoteChild(dirName: String, peek: List<RemoteChild>): Remot
             isImageFileName(e.name) -> imageNames += e.name
             isArchiveFileName(e.name) -> {
                 sawArchive = true
-                if (isDocumentFileName(e.name)) sawDocument = true
+                if (isBrowseDocumentFileName(e.name)) sawDocument = true
             }
             isBrowseVideoEntry(e.name, e.mimeType) -> videoFileNames += e.name
+            isBrowseDocumentFileName(e.name) -> sawDocument = true
         }
     }
 
@@ -1730,7 +1731,7 @@ private fun classifyRemoteChild(dirName: String, peek: List<RemoteChild>): Remot
     // or single-file @ video rows; navigable leaves only tag hasVideo on the parent path.
     // Document files stay in their folder (Document filter shows the dir, not a lifted file).
     // Other non-video files (nfo/srt/txt/…) never block single-video file promote.
-    if (sawSubdir || sawArchive) {
+    if (sawSubdir || sawArchive || sawDocument) {
         return RemoteChildKind.Navigable(
             gallery = gallery,
             // Deep folders (and archive folders for gallery) are conservative

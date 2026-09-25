@@ -23,9 +23,9 @@ enum class BrowseContentMode(val prefValue: Int) {
     Folder(3),
 
     /**
-     * Document files (PDF/EPUB) in this directory + dirs that lead to them.
-     * Nested documents stay in their folders — unlike Video, they are not
-     * promoted onto the parent listing.
+     * Document files (PDF/EPUB, Office, OpenDocument, text, ebooks) in this
+     * directory + dirs that lead to them. Nested documents stay in their folders
+     * — unlike Video, they are not promoted onto the parent listing.
      */
     Document(4),
     ;
@@ -133,8 +133,9 @@ fun List<BrowseEntry>.filterByContentMode(
                 if (!showVirtualGalleries && e.presence == DirPresence.PromotedShell) return@filter true
                 e.presence.visibleIn(mode, e.hasGallery, e.hasVideo, e.hasDocument)
             }
-            is BrowseEntry.ArchiveGallery -> isDocumentFileName(e.name)
-            is BrowseEntry.FolderGallery, is BrowseEntry.VideoFile, is BrowseEntry.RegularFile -> false
+            is BrowseEntry.ArchiveGallery -> isBrowseDocumentFileName(e.name)
+            is BrowseEntry.RegularFile -> isBrowseDocumentFileName(e.name)
+            is BrowseEntry.FolderGallery, is BrowseEntry.VideoFile -> false
         }
         BrowseContentMode.Folder -> when (e) {
             is BrowseEntry.Directory -> e.presence.visibleIn(mode, e.hasGallery, e.hasVideo, e.hasDocument)
@@ -238,10 +239,10 @@ fun List<BrowseEntryRemote>.filterRemoteByContentMode(
                     if (!showVirtualGalleries && e.presence == DirPresence.PromotedShell) return@filter true
                     e.presence.visibleIn(mode, e.hasGallery, e.hasVideo, e.hasDocument)
                 }
-                is BrowseEntryRemote.ArchiveGallery -> isDocumentFileName(e.name)
+                is BrowseEntryRemote.ArchiveGallery -> isBrowseDocumentFileName(e.name)
+                is BrowseEntryRemote.RegularFile -> isBrowseDocumentFileName(e.name)
                 is BrowseEntryRemote.FolderGallery,
                 is BrowseEntryRemote.VideoFile,
-                is BrowseEntryRemote.RegularFile,
                 -> false
             }
             BrowseContentMode.Folder -> when (e) {

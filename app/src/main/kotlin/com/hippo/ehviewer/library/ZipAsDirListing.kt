@@ -189,7 +189,7 @@ object ZipAsDirListing {
                     name = child.name,
                     hasVideo = nested.any { !it.isDirectory && isVideoFileName(it.name) },
                     hasGallery = false,
-                    hasDocument = nested.any { !it.isDirectory && isDocumentFileName(it.name) },
+                    hasDocument = nested.any { !it.isDirectory && isBrowseDocumentFileName(it.name) },
                     presence = if (nested.isEmpty()) DirPresence.Empty else DirPresence.Navigable,
                     lastModifiedMs = child.lastModifiedMs,
                     size = child.size,

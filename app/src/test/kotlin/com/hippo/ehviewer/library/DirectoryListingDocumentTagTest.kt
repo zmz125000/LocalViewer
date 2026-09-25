@@ -98,6 +98,37 @@ class DirectoryListingDocumentTagTest {
     }
 
     @Test
+    fun officeFileShowsInDocumentModeAndIsNotPromoted() {
+        val entries = classifyRemoteListingWithPeeks(
+            currentDirName = "Work",
+            entries = listOf(
+                RemoteChild(name = "memo.docx", isDirectory = false),
+                RemoteChild(name = "sheet.xlsx", isDirectory = false),
+                RemoteChild(name = "pack.zip", isDirectory = false),
+            ),
+            childPeeks = emptyMap(),
+        )
+        val docs = entries.filterRemoteByContentMode(BrowseContentMode.Document)
+        assertEquals(listOf("memo.docx", "sheet.xlsx"), docs.map { it.name }.sorted())
+        assertTrue(docs.all { it is BrowseEntryRemote.RegularFile })
+        assertFalse(docs.any { it.name == "pack.zip" })
+
+        val nested = classifyRemoteListingWithPeeks(
+            currentDirName = "Library",
+            entries = listOf(RemoteChild(name = "Office", isDirectory = true)),
+            childPeeks = mapOf(
+                "Office" to listOf(RemoteChild(name = "memo.docx", isDirectory = false)),
+            ),
+        )
+        val office = nested.filterIsInstance<BrowseEntryRemote.Directory>().single { it.name == "Office" }
+        assertTrue(office.hasDocument)
+        assertFalse(office.hasGallery)
+        assertFalse(nested.any { it is BrowseEntryRemote.RegularFile && it.name.contains("docx") })
+        val nestedDocs = nested.filterRemoteByContentMode(BrowseContentMode.Document)
+        assertEquals(listOf("Office"), nestedDocs.map { it.name })
+    }
+
+    @Test
     fun epubCountsAsDocumentZipDoesNot() {
         val entries = classifyRemoteListingWithPeeks(
             currentDirName = "Library",
