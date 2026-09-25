@@ -13,12 +13,17 @@ import com.ehviewer.core.database.model.SmbSourceEntity
 import com.ehviewer.core.database.model.WebDavSourceEntity
 import com.ehviewer.core.files.openFileDescriptor
 import com.ehviewer.core.i18n.R
+import com.ehviewer.core.model.BaseGalleryInfo
+import com.ehviewer.core.model.GalleryInfo.Companion.NOT_FAVORITED
 import com.ehviewer.core.util.logcat
 import com.ehviewer.core.util.withIOContext
 import com.ehviewer.core.util.withUIContext
+import com.hippo.ehviewer.EhDB
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.library.BrowseEntryRemote
 import com.hippo.ehviewer.library.BrowseSession
+import com.hippo.ehviewer.library.HISTORY_FILE_CATEGORY_OTHER
+import com.hippo.ehviewer.library.LOCAL_FILE_TOKEN
 import com.hippo.ehviewer.library.LocalFolderListing
 import com.hippo.ehviewer.library.LocalHistory
 import com.hippo.ehviewer.library.LocalLibrary
@@ -26,12 +31,15 @@ import com.hippo.ehviewer.library.NetworkFolderIndexCache
 import com.hippo.ehviewer.library.OPEN_CACHE_WARN_BYTES
 import com.hippo.ehviewer.library.OriginDiskCache
 import com.hippo.ehviewer.library.RemoteChild
+import com.hippo.ehviewer.library.SMB_FILE_TOKEN
 import com.hippo.ehviewer.library.SidecarSubtitles
 import com.hippo.ehviewer.library.VideoDirectLinkByteSource
+import com.hippo.ehviewer.library.WEBDAV_FILE_TOKEN
 import com.hippo.ehviewer.library.ZipAsDirListing
 import com.hippo.ehviewer.library.ZipMemberByteSource
 import com.hippo.ehviewer.library.ZipPaths
 import com.hippo.ehviewer.library.isBrowseVideoFileName
+import com.hippo.ehviewer.library.isEbookFileName
 import com.hippo.ehviewer.library.isHtmlFileName
 import com.hippo.ehviewer.library.listBrowseChildrenRaw
 import com.hippo.ehviewer.library.mimeTypeForFileName
@@ -39,6 +47,7 @@ import com.hippo.ehviewer.library.needsOpenCacheConfirm
 import com.hippo.ehviewer.library.openLocalArchiveByteSource
 import com.hippo.ehviewer.library.resolveBrowsePath
 import com.hippo.ehviewer.library.resolveRelative
+import com.hippo.ehviewer.library.stableGalleryId
 import com.hippo.ehviewer.library.withLocalZipCentralDirectory
 import com.hippo.ehviewer.provider.ExternalHttpStreamServer
 import com.hippo.ehviewer.provider.StreamDocumentProvider
@@ -131,6 +140,10 @@ object OpenFileExternally {
             )
             return
         }
+        if (!asFile && isEbookFileName(displayName)) {
+            playEbookLocal(context, pathStr, displayName)
+            return
+        }
         if (DefaultVideoPlayer.isVideoMime(mimeType)) {
             openLocalVideoHttp(context, pathStr, displayName, mimeType, usePreferredPlayer)
             return
@@ -145,6 +158,73 @@ object OpenFileExternally {
             internalPlayer = false,
             usePreferredPlayer = usePreferredPlayer,
         )
+    }
+
+    private suspend fun playEbookLocal(
+        context: Context,
+        pathStr: String,
+        displayName: String,
+    ) {
+        val gid = stableGalleryId(0L, "local-file:$pathStr")
+        val info = BaseGalleryInfo(
+            gid = gid,
+            token = LOCAL_FILE_TOKEN,
+            title = displayName,
+            pages = 0,
+            favoriteSlot = NOT_FAVORITED,
+            rating = -1f,
+            uploader = pathStr,
+            category = HISTORY_FILE_CATEGORY_OTHER,
+        )
+        LocalHistory.ensureGalleryForProgress(info)
+        val page = runCatching { EhDB.getReadProgress(gid) }.getOrDefault(0)
+        playPdfLocal(context, pathStr, displayName, gid, page)
+    }
+
+    private suspend fun playEbookSmb(
+        context: Context,
+        sourceId: Long,
+        remoteRelativeFile: String,
+        displayName: String,
+    ) {
+        val rel = remoteRelativeFile.trim('/')
+        val gid = stableGalleryId(sourceId, "smbf:$rel")
+        val info = BaseGalleryInfo(
+            gid = gid,
+            token = SMB_FILE_TOKEN,
+            title = displayName,
+            pages = 0,
+            favoriteSlot = NOT_FAVORITED,
+            rating = -1f,
+            uploader = "$sourceId\u0000$rel",
+            category = HISTORY_FILE_CATEGORY_OTHER,
+        )
+        LocalHistory.ensureGalleryForProgress(info)
+        val page = runCatching { EhDB.getReadProgress(gid) }.getOrDefault(0)
+        playPdfSmb(context, sourceId, remoteRelativeFile, displayName, gid, page)
+    }
+
+    private suspend fun playEbookWebDav(
+        context: Context,
+        sourceId: Long,
+        remoteRelativeFile: String,
+        displayName: String,
+    ) {
+        val rel = remoteRelativeFile.trim('/')
+        val gid = stableGalleryId(sourceId, "davf:$rel")
+        val info = BaseGalleryInfo(
+            gid = gid,
+            token = WEBDAV_FILE_TOKEN,
+            title = displayName,
+            pages = 0,
+            favoriteSlot = NOT_FAVORITED,
+            rating = -1f,
+            uploader = "$sourceId\u0000$rel",
+            category = HISTORY_FILE_CATEGORY_OTHER,
+        )
+        LocalHistory.ensureGalleryForProgress(info)
+        val page = runCatching { EhDB.getReadProgress(gid) }.getOrDefault(0)
+        playPdfWebDav(context, sourceId, remoteRelativeFile, displayName, gid, page)
     }
 
     suspend fun playPdfLocal(
@@ -200,6 +280,10 @@ object OpenFileExternally {
                 mimeType,
                 incognito = Settings.openHtmlInIncognito.value,
             )
+            return
+        }
+        if (!asFile && isEbookFileName(displayName)) {
+            playEbookSmb(context, sourceId, remoteRelativeFile, displayName)
             return
         }
         if (DefaultVideoPlayer.isVideoMime(mimeType)) {
@@ -267,6 +351,10 @@ object OpenFileExternally {
                 mimeType,
                 incognito = Settings.openHtmlInIncognito.value,
             )
+            return
+        }
+        if (!asFile && isEbookFileName(displayName)) {
+            playEbookWebDav(context, sourceId, remoteRelativeFile, displayName)
             return
         }
         if (DefaultVideoPlayer.isVideoMime(mimeType)) {

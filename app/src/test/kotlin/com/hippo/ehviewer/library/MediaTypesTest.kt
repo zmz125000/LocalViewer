@@ -49,6 +49,21 @@ class MediaTypesTest {
     }
 
     @Test
+    fun ebookReaderTypesAreEpubTextHtmlFb2() {
+        assertTrue(isEbookFileName("novel.epub"))
+        assertTrue(isEbookFileName("notes.TXT"))
+        assertTrue(isEbookFileName("page.html"))
+        assertTrue(isEbookFileName("book.fb2"))
+        assertTrue(isEbookFileName("readme.md"))
+        assertTrue(isPdfOrEbookFileName("guide.pdf"))
+        assertTrue(isPdfOrEbookFileName("novel.epub"))
+        assertFalse(isEbookFileName("guide.pdf"))
+        assertFalse(isEbookFileName("pack.zip"))
+        assertFalse(isEbookFileName("shot.jpg"))
+        assertFalse(isEbookFileName(".hidden.txt"))
+    }
+
+    @Test
     fun zipAsDirExtensionsAreZipAndCbzOnly() {
         assertTrue(isZipArchiveFileName("album.zip"))
         assertTrue(isZipArchiveFileName("album.CBZ"))

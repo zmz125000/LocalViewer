@@ -95,9 +95,11 @@ import com.hippo.ehviewer.library.browseScrollLayoutKey
 import com.hippo.ehviewer.library.filterRemoteByContentMode
 import com.hippo.ehviewer.library.filterRemoteSmallGalleries
 import com.hippo.ehviewer.library.isDocumentFileName
+import com.hippo.ehviewer.library.isEbookFileName
 import com.hippo.ehviewer.library.isHtmlFileName
 import com.hippo.ehviewer.library.isImageFileName
 import com.hippo.ehviewer.library.isPdfFileName
+import com.hippo.ehviewer.library.isPdfOrEbookFileName
 import com.hippo.ehviewer.library.isSolidArchiveFileName
 import com.hippo.ehviewer.library.isStreamableArchiveFileName
 import com.hippo.ehviewer.library.isZipArchiveFileName
@@ -1054,7 +1056,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
     }
 
     fun openPdfReader(entry: BrowseEntryRemote.ArchiveGallery) {
-        if (!isPdfFileName(entry.fileName)) return
+        if (!isPdfOrEbookFileName(entry.fileName)) return
         val src = source ?: return
         val remote = joinRemoteArchivePath(relativeDir, entry.parentRelativeName, entry.fileName)
         launchIO {
@@ -1246,6 +1248,10 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
 
     fun openArchive(entry: BrowseEntryRemote.ArchiveGallery, skipPdfPrimary: Boolean = false) {
         val src = source ?: return
+        if (!skipPdfPrimary && isEbookFileName(entry.fileName)) {
+            openPdfReader(entry)
+            return
+        }
         if (!skipPdfPrimary && isPdfFileName(entry.fileName)) {
             when (Settings.pdfReaderMode.value) {
                 PdfReaderMode.PDF -> {
@@ -1357,7 +1363,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
     }
 
     fun openArchiveSecondary(entry: BrowseEntryRemote.ArchiveGallery) {
-        if (isPdfFileName(entry.fileName)) {
+        if (isPdfOrEbookFileName(entry.fileName)) {
             openPdfSecondary(entry)
         } else {
             openArchiveInOtherApp(entry)
@@ -1506,13 +1512,25 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
         onUnsupported = { notSupportedAction() },
     )
 
-    fun archiveOverflow(entry: BrowseEntryRemote.ArchiveGallery) = if (isPdfFileName(entry.fileName)) {
+    fun archiveOverflow(entry: BrowseEntryRemote.ArchiveGallery) = if (isPdfOrEbookFileName(entry.fileName)) {
         BrowseOverflowActions(
             kind = BrowseOverflowKind.Pdf,
             onRead = { openArchive(entry, skipPdfPrimary = true) },
             onPlay = { openPdfReader(entry) },
-            onExternalPlayer = { openPdfInOtherApp(entry) },
-            onOpenWith = { openPdfInOtherApp(entry, usePreferredReader = false) },
+            onExternalPlayer = {
+                if (isPdfFileName(entry.fileName)) {
+                    openPdfInOtherApp(entry)
+                } else {
+                    openArchiveInOtherApp(entry)
+                }
+            },
+            onOpenWith = {
+                if (isPdfFileName(entry.fileName)) {
+                    openPdfInOtherApp(entry, usePreferredReader = false)
+                } else {
+                    openArchiveInOtherApp(entry)
+                }
+            },
             onSaveAs = {
                 saveWebDavFile(
                     joinRemoteArchivePath("", entry.parentRelativeName, entry.fileName),
@@ -1605,7 +1623,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
     } else {
         BrowseOverflowActions(
             kind = BrowseOverflowKind.Common,
-            onOpenWith = { openExternalFile(fileName) },
+            onOpenWith = { openExternalFile(fileName, asFile = true) },
             onSaveAs = { saveWebDavFile(fileName) },
             onShare = { shareWebDavFile(fileName) },
             onShareViaHttp = webDavHttpShareFile(fileName),

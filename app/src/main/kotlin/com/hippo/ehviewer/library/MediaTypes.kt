@@ -144,6 +144,30 @@ fun isPdfFileName(name: String): Boolean {
 }
 
 /**
+ * Built-in PDF-reader ebooks (text + TOC pages). Not the image/gallery reader.
+ * HTML still honors [com.hippo.ehviewer.Settings.openHtmlWithBrowser] first.
+ */
+val EBOOK_READER_EXTENSIONS = setOf(
+    "epub",
+    "txt",
+    "text",
+    "html",
+    "htm",
+    "xhtml",
+    "fb2",
+    "md",
+    "markdown",
+)
+
+fun isEbookFileName(name: String): Boolean {
+    if (name.startsWith('.')) return false
+    val ext = FileUtils.getExtensionFromFilename(name)?.lowercase() ?: return false
+    return ext in EBOOK_READER_EXTENSIONS
+}
+
+fun isPdfOrEbookFileName(name: String): Boolean = isPdfFileName(name) || isEbookFileName(name)
+
+/**
  * Prefer mmap page-0 cover extract ([ArchiveCoverCache.ensureCover] non-solid branch).
  * Solid RAR/7z still get covers via sequential first-page extract in the same API.
  * Documents use [ArchiveCoverCache] document branch (not libarchive page-0).
@@ -291,6 +315,7 @@ private fun extraMimeForExtension(ext: String): String? = when (ext) {
     "json" -> "application/json"
     "xml" -> "application/xml"
     "html", "htm", "xhtml" -> "text/html"
+    "fb2" -> "application/x-fictionbook+xml"
     "css" -> "text/css"
     "js", "mjs" -> "text/javascript"
     "wasm" -> "application/wasm"

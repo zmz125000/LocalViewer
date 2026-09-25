@@ -98,9 +98,11 @@ import com.hippo.ehviewer.library.ZipPaths
 import com.hippo.ehviewer.library.browseScrollLayoutKey
 import com.hippo.ehviewer.library.filterByContentMode
 import com.hippo.ehviewer.library.filterSmallGalleries
+import com.hippo.ehviewer.library.isEbookFileName
 import com.hippo.ehviewer.library.isHtmlFileName
 import com.hippo.ehviewer.library.isImageFileName
 import com.hippo.ehviewer.library.isPdfFileName
+import com.hippo.ehviewer.library.isPdfOrEbookFileName
 import com.hippo.ehviewer.library.isZipArchiveFileName
 import com.hippo.ehviewer.library.isZipPlainFolderListingLocal
 import com.hippo.ehviewer.library.listBrowseChildrenRaw
@@ -1550,7 +1552,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
     }
 
     fun openPdfReader(entry: BrowseEntry.ArchiveGallery) {
-        if (!isPdfFileName(entry.name)) return
+        if (!isPdfOrEbookFileName(entry.name)) return
         val path = entry.path.toString()
         launchIO {
             recordCurrentBrowseFolderHistory()
@@ -1578,6 +1580,10 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
     }
 
     fun openPdfPrimary(entry: BrowseEntry.ArchiveGallery) {
+        if (isEbookFileName(entry.name)) {
+            openPdfReader(entry)
+            return
+        }
         when (Settings.pdfReaderMode.value) {
             PdfReaderMode.PDF -> openPdfReader(entry)
             PdfReaderMode.EXTERNAL -> openPdfInOtherApp(entry)
@@ -1627,7 +1633,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
     }
 
     fun openArchiveSecondary(entry: BrowseEntry.ArchiveGallery) {
-        if (isPdfFileName(entry.name)) {
+        if (isPdfOrEbookFileName(entry.name)) {
             openPdfSecondary(entry)
         } else {
             openArchiveInOtherApp(entry)
@@ -1635,7 +1641,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
     }
 
     fun openArchive(entry: BrowseEntry.ArchiveGallery) {
-        if (isPdfFileName(entry.name)) {
+        if (isPdfOrEbookFileName(entry.name)) {
             openPdfPrimary(entry)
             return
         }
@@ -1896,13 +1902,25 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         onUnsupported = { notSupportedAction() },
     )
 
-    fun archiveOverflow(entry: BrowseEntry.ArchiveGallery) = if (isPdfFileName(entry.name)) {
+    fun archiveOverflow(entry: BrowseEntry.ArchiveGallery) = if (isPdfOrEbookFileName(entry.name)) {
         BrowseOverflowActions(
             kind = BrowseOverflowKind.Pdf,
             onRead = { openArchiveReader(entry, skipPdfPrimary = true) },
             onPlay = { openPdfReader(entry) },
-            onExternalPlayer = { openPdfInOtherApp(entry) },
-            onOpenWith = { openPdfInOtherApp(entry, usePreferredReader = false) },
+            onExternalPlayer = {
+                if (isPdfFileName(entry.name)) {
+                    openPdfInOtherApp(entry)
+                } else {
+                    openArchiveInOtherApp(entry)
+                }
+            },
+            onOpenWith = {
+                if (isPdfFileName(entry.name)) {
+                    openPdfInOtherApp(entry, usePreferredReader = false)
+                } else {
+                    openArchiveInOtherApp(entry)
+                }
+            },
             onSaveAs = { saveLocalFile(entry.path) },
             onShare = { shareLocalFile(entry.path) },
             onShareViaHttp = localHttpShareFile(entry.path),
@@ -1969,7 +1987,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
     } else {
         BrowseOverflowActions(
             kind = BrowseOverflowKind.Common,
-            onOpenWith = { openExternalFile(path) },
+            onOpenWith = { openExternalFile(path, asFile = true) },
             onSaveAs = { saveLocalFile(path) },
             onShare = { shareLocalFile(path) },
             onShareViaHttp = localHttpShareFile(path),
