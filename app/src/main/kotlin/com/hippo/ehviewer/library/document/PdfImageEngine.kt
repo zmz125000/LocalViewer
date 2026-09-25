@@ -445,6 +445,9 @@ internal class PdfParser(
     private val source: ArchiveByteSource,
     private val fileSize: Long,
 ) {
+    /** One pattern per open. Building these per object dominated large-book open. */
+    private val directLength = Regex("""/Length\s+(\d+)(?!\s+\d+\s+R)""")
+    private val indirectLength = Regex("""/Length\s+(\d+)\s+(\d+)\s+R""")
     data class XRefEntry(val offset: Long, val gen: Int, val free: Boolean)
 
     private data class PendingPageNode(
@@ -533,8 +536,44 @@ internal class PdfParser(
         return candidate.takeIf { it in 0L until fileSize }
     }
 
-    private fun findObjHeader(text: String, objNum: Int, gen: Int): MatchResult? = Regex("""\b$objNum\s+$gen\s+obj\b""").findAll(text).lastOrNull()
-        ?: Regex("""\b$objNum\s+\d+\s+obj\b""").findAll(text).lastOrNull()
+    /**
+     * Index just past the last `n gen obj` in [text].
+     * A compiled [Regex] per object made a 1000-page outline walk take seconds.
+     */
+    private fun objHeaderEnd(text: String, objNum: Int, gen: Int): Int {
+        val exact = lastObjHeaderEnd(text, objNum, gen)
+        if (exact >= 0) return exact
+        return lastObjHeaderEnd(text, objNum, gen = null)
+    }
+
+    /** [gen] null matches any generation. Returns -1 when the header is absent. */
+    private fun lastObjHeaderEnd(text: String, objNum: Int, gen: Int?): Int {
+        val prefix = objNum.toString()
+        var from = text.length
+        while (from > 0) {
+            val at = text.lastIndexOf(prefix, from - 1)
+            if (at < 0) return -1
+            from = at
+            if (at > 0 && text[at - 1].isLetterOrDigit()) continue
+            var i = at + prefix.length
+            if (i >= text.length || !text[i].isPdfWs()) continue
+            while (i < text.length && text[i].isPdfWs()) i++
+            if (i >= text.length || !text[i].isDigit()) continue
+            var parsedGen = 0
+            while (i < text.length && text[i].isDigit()) {
+                parsedGen = parsedGen * 10 + (text[i].code - '0'.code)
+                i++
+            }
+            if (gen != null && parsedGen != gen) continue
+            if (i >= text.length || !text[i].isPdfWs()) continue
+            while (i < text.length && text[i].isPdfWs()) i++
+            if (!text.startsWith("obj", i)) continue
+            val end = i + 3
+            if (end < text.length && text[end].isLetterOrDigit()) continue
+            return end
+        }
+        return -1
+    }
 
     fun openPageImageCursor(maxPages: Int = MAX_PAGES): PageImageCursor? {
         val root = rootRef?.let { resolve(it) as? PdfDict } ?: run {
@@ -1061,8 +1100,9 @@ internal class PdfParser(
     /** Parse object dict from a header probe that may not include the full stream body. */
     private fun parseDictOnly(raw: ByteArray, objNum: Int, gen: Int): PdfDict? {
         val text = String(raw, Charsets.ISO_8859_1)
-        val objMatch = findObjHeader(text, objNum, gen) ?: return null
-        val dictStart = text.indexOf("<<", objMatch.range.last)
+        val headerEnd = objHeaderEnd(text, objNum, gen)
+        if (headerEnd < 0) return null
+        val dictStart = text.indexOf("<<", headerEnd)
         if (dictStart < 0) return null
         val (dict, _) = parseDict(raw, dictStart) ?: return null
         dict.objNum = objNum
@@ -1288,8 +1328,9 @@ internal class PdfParser(
     private fun parseStreamAt(raw: ByteArray, objNum: Int, gen: Int): StreamObj? {
         // "n g obj <<...>> stream ... endstream endobj"
         val text = String(raw, Charsets.ISO_8859_1)
-        val objMatch = findObjHeader(text, objNum, gen) ?: return null
-        val dictStart = text.indexOf("<<", objMatch.range.last)
+        val headerEnd = objHeaderEnd(text, objNum, gen)
+        if (headerEnd < 0) return null
+        val dictStart = text.indexOf("<<", headerEnd)
         if (dictStart < 0) return null
         val (dict, dictEnd) = parseDict(raw, dictStart) ?: return null
         dict.objNum = objNum
@@ -1735,6 +1776,28 @@ internal class PdfParser(
         return null
     }
 
+    /** `0000000000 65535 n` at [pos]. Null when the line is not an xref entry. */
+    private fun parseClassicXrefEntry(text: String, pos: Int): Triple<Long, Int, Boolean>? {
+        if (pos + 18 > text.length) return null
+        var offset = 0L
+        for (i in 0 until 10) {
+            val c = text[pos + i]
+            if (c !in '0'..'9') return null
+            offset = offset * 10 + (c.code - '0'.code)
+        }
+        if (!text[pos + 10].isPdfWs()) return null
+        var gen = 0
+        for (i in 11 until 16) {
+            val c = text[pos + i]
+            if (c !in '0'..'9') return null
+            gen = gen * 10 + (c.code - '0'.code)
+        }
+        if (!text[pos + 16].isPdfWs()) return null
+        val flag = text[pos + 17]
+        if (flag != 'n' && flag != 'f') return null
+        return Triple(offset, gen, flag == 'f')
+    }
+
     private fun loadXrefMaybeShifted(offset: Long): Boolean {
         if (loadXref(offset)) return true
         val shifted = shiftedOffset(offset) ?: return false
@@ -1769,30 +1832,29 @@ internal class PdfParser(
             skipWs()
             if (pos >= text.length) break
             if (text.startsWith("trailer", pos)) break
-            // subsection: start count
-            val rest = text.substring(pos)
-            val m = Regex("""^(\d+)\s+(\d+)""").find(rest) ?: break
-            val start = m.groupValues[1].toInt()
-            val count = m.groupValues[2].toInt()
-            pos += m.range.last + 1
+            // subsection: start count. Parsed in place — a Regex per line made open O(pages).
+            if (!text[pos].isDigit()) break
+            var start = 0
+            while (pos < text.length && text[pos].isDigit()) {
+                start = start * 10 + (text[pos].code - '0'.code)
+                pos++
+            }
+            skipWs()
+            if (pos >= text.length || !text[pos].isDigit()) break
+            var count = 0
+            while (pos < text.length && text[pos].isDigit()) {
+                count = count * 10 + (text[pos].code - '0'.code)
+                pos++
+            }
             skipWs()
             for (i in 0 until count) {
                 // 20-byte lines typical: 10 offset, 5 gen, n/f
-                if (pos + 18 > text.length) break
-                val line = text.substring(pos, minOf(pos + 20, text.length))
-                val lm = Regex("""(\d{10})\s+(\d{5})\s+([nf])""").find(line)
-                if (lm != null) {
-                    val off = lm.groupValues[1].toLong()
-                    val gen = lm.groupValues[2].toInt()
-                    val free = lm.groupValues[3] == "f"
-                    val objNum = start + i
-                    if (!free) {
-                        // Newest xref section is loaded first. Older /Prev sections
-                        // must fill gaps, never overwrite revisions from the head.
-                        xref.putIfAbsent(objNum, XRefEntry(off, gen, free = false))
-                    }
+                val entry = parseClassicXrefEntry(text, pos)
+                if (entry != null && !entry.third) {
+                    // Newest xref section is loaded first. Older /Prev sections
+                    // must fill gaps, never overwrite revisions from the head.
+                    xref.putIfAbsent(start + i, XRefEntry(entry.first, entry.second, free = false))
                 }
-                // advance to next line
                 val nl = text.indexOf('\n', pos)
                 pos = if (nl < 0) text.length else nl + 1
             }
@@ -2013,8 +2075,9 @@ internal class PdfParser(
         objectOffset: Long = -1L,
     ): PdfValue? {
         val text = String(raw, Charsets.ISO_8859_1)
-        val m = findObjHeader(text, objNum, gen) ?: return null
-        var i = m.range.last + 1
+        val headerEnd = objHeaderEnd(text, objNum, gen)
+        if (headerEnd < 0) return null
+        var i = headerEnd
         // skip ws
         while (i < raw.size && raw[i].toInt().toChar().isPdfWs()) i++
         // stream?
@@ -2064,7 +2127,7 @@ internal class PdfParser(
         val s = String(data, Charsets.ISO_8859_1)
 
         // Stream with known /Length: one exact-sized read (dict + stream keyword + body).
-        val lenMatch = Regex("""/Length\s+(\d+)(?!\s+\d+\s+R)""").find(s)
+        val lenMatch = directLength.find(s)
         if (lenMatch != null) {
             if (!includeStreamData) return data
             val len = lenMatch.groupValues[1].toLong()
@@ -2087,7 +2150,9 @@ internal class PdfParser(
         }
         if (!includeStreamData) return data
         // Indirect /Length N 0 R — resolve and re-read exact once.
-        val indLen = Regex("""/Length\s+(\d+)\s+(\d+)\s+R""").find(String(data, Charsets.ISO_8859_1))
+        // Dict sits at the start, so the first probe is enough unless we grew past it.
+        val lengthText = if (data.size == s.length) s else String(data, Charsets.ISO_8859_1)
+        val indLen = indirectLength.find(lengthText)
         if (indLen != null) {
             val objN = indLen.groupValues[1].toIntOrNull()
             if (objN != null) {
