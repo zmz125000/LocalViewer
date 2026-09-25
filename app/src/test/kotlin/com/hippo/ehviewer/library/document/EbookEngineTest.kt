@@ -85,6 +85,54 @@ class EbookEngineTest {
     }
 
     @Test
+    fun smallerTypeIncreasesPageCount() {
+        val chapters = listOf(EbookChapter("t", "测".repeat(800)))
+        val wide = EbookPaginator.paginate(chapters, EbookStyle(charsPerLine = 40)).first
+        val narrow = EbookPaginator.paginate(chapters, EbookStyle(charsPerLine = 16)).first
+        assertTrue(narrow.size > wide.size)
+    }
+
+    @Test
+    fun firstLineHonorsIndent() {
+        val lines = EbookPaginator.wrapLines("测".repeat(40), EbookStyle(indentEm = 2))
+        assertTrue(lines.size >= 2)
+        assertEquals(2f, lines.first().indentEm)
+        assertEquals(0f, lines[1].indentEm)
+        val firstEm = lines.first().text.sumOf { EbookPaginator.charEm(it).toDouble() }
+        assertTrue(firstEm <= 28 - 2 + 1.01)
+    }
+
+    @Test
+    fun justifyMarksWrappedLinesOnly() {
+        val lines = EbookPaginator.wrapLines("测".repeat(80), EbookStyle(justify = true, indentEm = 0))
+        assertTrue(lines.size >= 2)
+        assertTrue(lines.dropLast(1).all { it.justify })
+        assertTrue(!lines.last().justify)
+    }
+
+    @Test
+    fun paragraphSpacingAddsGapLine() {
+        val plain = EbookPaginator.wrapLines("甲\n乙", EbookStyle(paragraphPercent = 0))
+        val spaced = EbookPaginator.wrapLines("甲\n乙", EbookStyle(paragraphPercent = 100))
+        assertTrue(spaced.size > plain.size)
+        assertTrue(spaced.any { it.text.isEmpty() && it.heightEm == 1f })
+    }
+
+    @Test
+    fun pageIndexMapsOffsetAfterRestyle() {
+        val chapters = listOf(EbookChapter("t", "测".repeat(1200)))
+        val a = EbookPaginator.paginate(chapters, EbookStyle(charsPerLine = 28)).first
+        val mid = a[a.size / 2]
+        val b = EbookPaginator.paginate(chapters, EbookStyle(charsPerLine = 16)).first
+        val idx = EbookPaginator.pageIndexFor(b, mid.chapterIndex, mid.charOffset)
+        assertTrue(idx in b.indices)
+        assertTrue(b[idx].charOffset <= mid.charOffset)
+        if (idx + 1 < b.size) {
+            assertTrue(b[idx + 1].charOffset > mid.charOffset)
+        }
+    }
+
+    @Test
     fun ncxTocKeepsDepth() {
         val ncx = """
             <ncx>

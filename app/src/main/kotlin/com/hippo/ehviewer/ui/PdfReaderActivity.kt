@@ -96,6 +96,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -146,8 +147,10 @@ import com.hippo.ehviewer.library.PfdArchiveByteSource
 import com.hippo.ehviewer.library.ReaderPageThumb
 import com.hippo.ehviewer.library.document.EbookDocument
 import com.hippo.ehviewer.library.document.EbookEngine
+import com.hippo.ehviewer.library.document.EbookLine
 import com.hippo.ehviewer.library.document.EbookPage
 import com.hippo.ehviewer.library.document.EbookPaginator
+import com.hippo.ehviewer.library.document.EbookStyle
 import com.hippo.ehviewer.library.document.PdfContentKind
 import com.hippo.ehviewer.library.document.PdfImageEngine
 import com.hippo.ehviewer.library.document.PdfTocEntry
@@ -665,10 +668,15 @@ private fun openEbookDocument(
             PfdArchiveByteSource(pfd, ownsPfd = true).also { owned = it }
         }
     return try {
-        val book = EbookEngine.open(source, fileName) ?: return null
+        val style = ebookStyleFromSettings()
+        val book = EbookEngine.open(source, fileName, style) ?: return null
         if (book.pageCount <= 0) return null
         logcat("PdfReader") { "ebook pages=${book.pageCount} chapters=${book.chapters.size}" }
-        PdfDocumentModel.Vector(EbookSession(book), book.chapters)
+        PdfDocumentModel.Vector(
+            session = EbookSession(book, style, ebookPaintFromSettings(dark = false)),
+            chapters = book.chapters,
+            isEbook = true,
+        )
     } finally {
         runCatching { source.close() }
         if (owned !== source) runCatching { owned?.close() }
@@ -682,7 +690,8 @@ private sealed interface PdfDocumentModel {
 
     class Vector(
         val session: PageBitmapSession,
-        override val chapters: List<PdfTocEntry>,
+        override var chapters: List<PdfTocEntry>,
+        val isEbook: Boolean = false,
     ) : PdfDocumentModel {
         override val pageCount get() = session.pageCount
         override fun close() = session.close()
@@ -703,6 +712,7 @@ private sealed interface PdfDocumentModel {
 
 private interface PageBitmapSession {
     val pageCount: Int
+    val styleGeneration: Int get() = 0
     suspend fun render(index: Int, widthPx: Int): Bitmap
     suspend fun pageAspect(index: Int): Float
     fun close()
@@ -748,50 +758,184 @@ private class PdfSession(private val renderer: PdfRenderer) : PageBitmapSession 
     }
 }
 
-private class EbookSession(private val book: EbookDocument) : PageBitmapSession {
-    override val pageCount: Int get() = book.pageCount
+private class EbookSession(
+    book: EbookDocument,
+    initialStyle: EbookStyle,
+    initialPaint: EbookPaint,
+) : PageBitmapSession {
+    private val source = book.body
     private val mutex = Mutex()
+    private var style = initialStyle
+    private var pages = book.pages
+    var toc: List<PdfTocEntry> = book.chapters
+        private set
+
+    @Volatile var paint: EbookPaint = initialPaint
+        private set
+
+    @Volatile override var styleGeneration: Int = 0
+        private set
 
     @Volatile private var closed = false
 
+    override val pageCount: Int get() = pages.size
+
+    fun anchorAt(pageIndex: Int): Pair<Int, Int> {
+        val p = pages.getOrNull(pageIndex.coerceIn(0, (pages.size - 1).coerceAtLeast(0)))
+        return (p?.chapterIndex ?: 0) to (p?.charOffset ?: 0)
+    }
+
+    fun pageIndexFor(anchor: Pair<Int, Int>): Int = EbookPaginator.pageIndexFor(pages, anchor.first, anchor.second)
+
+    suspend fun applyPaint(next: EbookPaint): Boolean = mutex.withLock {
+        if (next == paint) return false
+        paint = next
+        styleGeneration++
+        true
+    }
+
+    suspend fun applyLayout(next: EbookStyle): Boolean = mutex.withLock {
+        if (next == style) return false
+        style = next
+        val (nextPages, nextToc) = EbookPaginator.paginate(source, next)
+        pages = nextPages
+        toc = nextToc
+        styleGeneration++
+        true
+    }
+
     override suspend fun render(index: Int, widthPx: Int): Bitmap = mutex.withLock {
         if (closed) error("closed")
-        val page = book.pages.getOrNull(index) ?: error("page")
+        val page = pages.getOrNull(index) ?: error("page")
         val w = widthPx.coerceAtLeast(1)
-        val h = (w / book.pageAspect.coerceAtLeast(0.01f)).toInt().coerceAtLeast(1)
+        val h = (w / EbookPaginator.ASPECT.coerceAtLeast(0.01f)).toInt().coerceAtLeast(1)
         val (rw, rh) = cappedBitmapSize(w, h)
         Bitmap.createBitmap(rw, rh, Bitmap.Config.ARGB_8888).also { bitmap ->
-            bitmap.eraseColor(android.graphics.Color.WHITE)
-            drawEbookPage(bitmap, page)
+            drawEbookPage(bitmap, page, style, paint)
         }
     }
 
-    override suspend fun pageAspect(index: Int): Float = book.pageAspect
+    override suspend fun pageAspect(index: Int): Float = EbookPaginator.ASPECT
 
     override fun close() {
         closed = true
     }
 }
 
-private fun drawEbookPage(bitmap: Bitmap, page: EbookPage) {
+private data class EbookPaint(
+    val font: Int,
+    val bg: Int,
+    val fg: Int,
+)
+
+private fun ebookStyleFromSettings(): EbookStyle = EbookStyle(
+    charsPerLine = Settings.ebookCharsPerLine.value.coerceIn(16, 40),
+    lineHeightPercent = Settings.ebookLineHeight.value.coerceIn(100, 200),
+    paragraphPercent = Settings.ebookParagraphSpacing.value.coerceIn(0, 200),
+    indentEm = Settings.ebookIndent.value.coerceIn(0, 2),
+    marginPercent = Settings.ebookMargin.value.coerceIn(4, 12),
+    justify = Settings.ebookAlign.value == Settings.EBOOK_ALIGN_JUSTIFY,
+)
+
+private fun ebookPaintFromSettings(dark: Boolean): EbookPaint {
+    val (bg, fg) = ebookPageColors(Settings.readerTheme.value, dark)
+    return EbookPaint(font = Settings.ebookFont.value, bg = bg, fg = fg)
+}
+
+private fun ebookPageColors(theme: Int, dark: Boolean): Pair<Int, Int> {
+    val grey = 0xFF202125.toInt()
+    val white = android.graphics.Color.WHITE
+    val black = android.graphics.Color.BLACK
+    val light = 0xFFEEEEEE.toInt()
+    return when (theme) {
+        0 -> white to black
+        2 -> grey to light
+        3 -> if (dark) grey to light else white to black
+        else -> black to light
+    }
+}
+
+private fun ebookTypeface(font: Int): Typeface = when (font) {
+    Settings.EBOOK_FONT_SANS -> Typeface.SANS_SERIF
+    Settings.EBOOK_FONT_SYSTEM -> Typeface.DEFAULT
+    else -> Typeface.SERIF
+}
+
+private fun drawEbookPage(bitmap: Bitmap, page: EbookPage, style: EbookStyle, colors: EbookPaint) {
     val canvas = Canvas(bitmap)
+    bitmap.eraseColor(colors.bg)
     val w = bitmap.width.toFloat().coerceAtLeast(1f)
     val h = bitmap.height.toFloat().coerceAtLeast(1f)
-    val pad = w * EbookPaginator.MARGIN
+    val pad = w * style.margin
     val contentW = (w - 2f * pad).coerceAtLeast(1f)
-    val fontSize = contentW / EbookPaginator.CJK_PER_LINE
-    val lineH = fontSize * EbookPaginator.LINE_HEIGHT_EM
+    val fontSize = contentW / style.charsPerLine.coerceAtLeast(8)
     val paint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = android.graphics.Color.BLACK
+        color = colors.fg
         textSize = fontSize
-        typeface = Typeface.create(Typeface.SERIF, Typeface.NORMAL)
+        typeface = ebookTypeface(colors.font)
     }
     var y = pad + fontSize
     val maxY = h - pad
     for (line in page.lines) {
         if (y > maxY) break
-        canvas.drawText(line, pad, y, paint)
-        y += lineH
+        drawEbookLine(canvas, line, pad, y, contentW, fontSize, paint)
+        y += fontSize * line.heightEm
+    }
+}
+
+private fun drawEbookLine(
+    canvas: Canvas,
+    line: EbookLine,
+    left: Float,
+    y: Float,
+    contentW: Float,
+    fontSize: Float,
+    paint: TextPaint,
+) {
+    val text = line.text
+    if (text.isEmpty()) return
+    val x0 = left + line.indentEm * fontSize
+    val avail = (contentW - line.indentEm * fontSize).coerceAtLeast(1f)
+    if (!line.justify) {
+        canvas.drawText(text, x0, y, paint)
+        return
+    }
+    val natural = paint.measureText(text)
+    val extra = avail - natural
+    if (extra <= 1f) {
+        canvas.drawText(text, x0, y, paint)
+        return
+    }
+    var spaces = 0
+    for (c in text) if (c == ' ') spaces++
+    if (spaces > 0) {
+        val gap = extra / spaces
+        var x = x0
+        var start = 0
+        while (start < text.length) {
+            val sp = text.indexOf(' ', start)
+            val end = if (sp < 0) text.length else sp
+            if (end > start) {
+                val word = text.substring(start, end)
+                canvas.drawText(word, x, y, paint)
+                x += paint.measureText(word)
+            }
+            if (sp < 0) break
+            x += paint.measureText(" ") + gap
+            start = sp + 1
+        }
+        return
+    }
+    if (text.length <= 1) {
+        canvas.drawText(text, x0, y, paint)
+        return
+    }
+    val gap = extra / (text.length - 1)
+    var x = x0
+    for (i in text.indices) {
+        val s = text[i].toString()
+        canvas.drawText(s, x, y, paint)
+        x += paint.measureText(s) + gap
     }
 }
 
@@ -855,6 +999,37 @@ private fun PdfReaderScreen(
     val keepScreenOn by Settings.keepScreenOn.collectAsState()
     val uiController = rememberSystemUiController()
     val appDarkTheme = isSystemInDarkTheme()
+    val isEbook = (doc as? PdfDocumentModel.Vector)?.isEbook == true
+    val ebookFont by Settings.ebookFont.collectAsState()
+    val ebookChars by Settings.ebookCharsPerLine.collectAsState()
+    val ebookLineHeight by Settings.ebookLineHeight.collectAsState()
+    val ebookParagraph by Settings.ebookParagraphSpacing.collectAsState()
+    val ebookIndent by Settings.ebookIndent.collectAsState()
+    val ebookAlign by Settings.ebookAlign.collectAsState()
+    val ebookMargin by Settings.ebookMargin.collectAsState()
+    val readerTheme by Settings.readerTheme.collectAsState()
+    val ebookLayout = remember(
+        ebookChars,
+        ebookLineHeight,
+        ebookParagraph,
+        ebookIndent,
+        ebookAlign,
+        ebookMargin,
+    ) {
+        EbookStyle(
+            charsPerLine = ebookChars.coerceIn(16, 40),
+            lineHeightPercent = ebookLineHeight.coerceIn(100, 200),
+            paragraphPercent = ebookParagraph.coerceIn(0, 200),
+            indentEm = ebookIndent.coerceIn(0, 2),
+            marginPercent = ebookMargin.coerceIn(4, 12),
+            justify = ebookAlign == Settings.EBOOK_ALIGN_JUSTIFY,
+        )
+    }
+    val ebookPaint = remember(ebookFont, readerTheme, appDarkTheme) {
+        val (bg, fg) = ebookPageColors(readerTheme, appDarkTheme)
+        EbookPaint(font = ebookFont, bg = bg, fg = fg)
+    }
+    var ebookStyleGen by remember { mutableIntStateOf(0) }
     SideEffect {
         uiController.statusBarDarkContentEnabled = appDarkTheme
     }
@@ -1050,7 +1225,8 @@ private fun PdfReaderScreen(
     }
     var anchorPage by remember { mutableIntStateOf(initial) }
     suspend fun jumpToPdfPage(index: Int) {
-        val target = index.coerceIn(0, (pageCount - 1).coerceAtLeast(0))
+        val n = imageLoader?.size ?: (doc?.pageCount ?: 0)
+        val target = index.coerceIn(0, (n - 1).coerceAtLeast(0))
         anchorPage = target
         if (isWebtoon) {
             listState.scrollToItem(target)
@@ -1074,6 +1250,22 @@ private fun PdfReaderScreen(
     LaunchedEffect(doc, imageLoader, startPage) {
         if (doc == null || pageCount <= 0) return@LaunchedEffect
         jumpToPdfPage(startPage)
+    }
+    val currentPageRef = rememberUpdatedState(currentPage)
+    LaunchedEffect(doc, ebookLayout, ebookPaint) {
+        val vector = doc as? PdfDocumentModel.Vector ?: return@LaunchedEffect
+        val session = vector.session as? EbookSession ?: return@LaunchedEffect
+        val anchor = session.anchorAt((currentPageRef.value - 1).coerceAtLeast(0))
+        val remapped = withContext(Dispatchers.IO) {
+            session.applyPaint(ebookPaint)
+            session.applyLayout(ebookLayout)
+        }
+        vector.chapters = session.toc
+        ebookStyleGen = session.styleGeneration
+        if (remapped) {
+            withFrameNanos { }
+            jumpToPdfPage(session.pageIndexFor(anchor))
+        }
     }
     var layoutReady by remember { mutableStateOf(false) }
     LaunchedEffect(readingMode, pagerDual, webtoonHorizontal, landscapeCover) {
@@ -1106,7 +1298,7 @@ private fun PdfReaderScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(PageBackdrop)
+            .background(if (isEbook) Color(ebookPaint.bg.toLong() and 0xFFFFFFFFL) else PageBackdrop)
             .thenIf(keepScreenOn) { keepScreenOn() },
     ) {
         when {
@@ -1293,6 +1485,7 @@ private fun PdfReaderScreen(
                                         isVertical = readingMode == ReadingModeType.VERTICAL,
                                         onDoubleClick = doubleTap,
                                         onClick = pageClick,
+                                        styleGeneration = ebookStyleGen,
                                     )
                                 } else {
                                     PdfVectorPage(
@@ -1307,6 +1500,7 @@ private fun PdfReaderScreen(
                                         viewHeightPx = cellH,
                                         box = box,
                                         scaleType = if (box == PdfPageBox.Cell) 1 else scaleType,
+                                        styleGeneration = ebookStyleGen,
                                     )
                                 }
                             }
@@ -1449,6 +1643,7 @@ private fun PdfReaderScreen(
                                 }
                                 SettingsPager(
                                     isWebtoon = ReadingModeType.isWebtoon(sheetMode),
+                                    isDocument = isEbook,
                                     modifier = Modifier.fillMaxSize(),
                                 )
                             }
@@ -1482,6 +1677,7 @@ private fun PdfReaderScreen(
                 doc = doc,
                 pageCount = pageCount,
                 currentPage = currentPage,
+                styleGeneration = ebookStyleGen,
                 cacheKey = sourceArgs?.let { readerPdfCacheKey(it) },
                 allowGenerate = !networkPdf || downloadNetworkThumbs,
                 persistThumb = networkPdf && downloadNetworkThumbs,
@@ -1766,6 +1962,7 @@ private fun PdfSingleVectorPage(
     isVertical: Boolean,
     onClick: (Offset) -> Unit,
     onDoubleClick: DoubleClickToZoomListener,
+    styleGeneration: Int = 0,
 ) {
     val zoomableState = rememberZoomableState(zoomSpec = PdfZoomSpec)
     var aspect by remember(index) { mutableFloatStateOf(1f / 1.414f) }
@@ -1814,8 +2011,8 @@ private fun PdfSingleVectorPage(
     val renderWidth = (pdfScaleRenderWidth(aspect, viewWidthPx, viewHeightPx, scaleType) * renderZoom)
         .roundToInt()
         .coerceIn(1, MAX_VECTOR_EDGE)
-    var bitmap by remember(index) { mutableStateOf<Bitmap?>(null) }
-    LaunchedEffect(session, index, renderWidth, scaleType) {
+    var bitmap by remember(index, styleGeneration) { mutableStateOf<Bitmap?>(null) }
+    LaunchedEffect(session, index, renderWidth, scaleType, styleGeneration) {
         var next: Bitmap? = null
         try {
             next = withContext(Dispatchers.IO) {
@@ -1831,7 +2028,7 @@ private fun PdfSingleVectorPage(
             next?.recycle()
         }
     }
-    DisposableEffect(index) {
+    DisposableEffect(index, styleGeneration) {
         onDispose { bitmap?.recycle() }
     }
     Box(
@@ -1864,6 +2061,7 @@ private fun PdfVectorPage(
     viewHeightPx: Int,
     box: PdfPageBox,
     scaleType: Int,
+    styleGeneration: Int = 0,
 ) {
     var aspect by remember(index) { mutableFloatStateOf(1f / 1.414f) }
     LaunchedEffect(session, index) {
@@ -1884,8 +2082,8 @@ private fun PdfVectorPage(
                 .coerceIn(1, MAX_VECTOR_EDGE)
         }
     }
-    var bitmap by remember(index) { mutableStateOf<Bitmap?>(null) }
-    LaunchedEffect(session, index, renderWidth, scaleType) {
+    var bitmap by remember(index, styleGeneration) { mutableStateOf<Bitmap?>(null) }
+    LaunchedEffect(session, index, renderWidth, scaleType, styleGeneration) {
         var next: Bitmap? = null
         try {
             next = withContext(Dispatchers.IO) {
@@ -1901,7 +2099,7 @@ private fun PdfVectorPage(
             next?.recycle()
         }
     }
-    DisposableEffect(index) {
+    DisposableEffect(index, styleGeneration) {
         onDispose {
             bitmap?.recycle()
         }
@@ -2197,6 +2395,7 @@ private fun PdfThumbGridSheet(
     doc: PdfDocumentModel,
     pageCount: Int,
     currentPage: Int,
+    styleGeneration: Int,
     cacheKey: String?,
     allowGenerate: Boolean,
     persistThumb: Boolean,
@@ -2230,6 +2429,7 @@ private fun PdfThumbGridSheet(
                 PdfPageThumb(
                     doc = doc,
                     index = index,
+                    styleGeneration = styleGeneration,
                     cacheKey = cacheKey,
                     allowGenerate = allowGenerate,
                     persistThumb = persistThumb,
@@ -2247,6 +2447,7 @@ private fun PdfThumbGridSheet(
 private fun PdfPageThumb(
     doc: PdfDocumentModel,
     index: Int,
+    styleGeneration: Int,
     cacheKey: String?,
     allowGenerate: Boolean,
     persistThumb: Boolean,
@@ -2257,7 +2458,11 @@ private fun PdfPageThumb(
 ) {
     val identity = cacheKey?.let { key ->
         val prefix = if (doc is PdfDocumentModel.Vector) "pdfrender" else "doc"
-        "$prefix:$key:$index"
+        if (styleGeneration > 0) {
+            "$prefix:$key:$index:e$styleGeneration"
+        } else {
+            "$prefix:$key:$index"
+        }
     }
     var bitmap by remember(identity, doc, index) { mutableStateOf<Bitmap?>(null) }
     var skipped by remember(identity) { mutableStateOf(false) }

@@ -7,9 +7,11 @@ import com.hippo.ehviewer.util.FileUtils
 
 /**
  * Text ebook for [com.hippo.ehviewer.ui.PdfReaderActivity]: EPUB / TXT / HTML / FB2 / Markdown.
- * Pages are wrapped at a fixed A-series geometry; TOC maps to page indices.
+ * [body] is the parsed chapter text; [pages] / [chapters] are a pagination of [body]
+ * at a given [EbookStyle] (re-paginated when the reader style prefs change).
  */
 internal class EbookDocument(
+    val body: List<EbookChapter>,
     val pages: List<EbookPage>,
     val chapters: List<PdfTocEntry>,
 ) {
@@ -21,7 +23,11 @@ internal object EbookEngine {
     private const val MAX_TEXT_BYTES = 8L * 1024L * 1024L
     private const val MAX_CHAPTER_BYTES = 2L * 1024L * 1024L
 
-    fun open(source: ArchiveByteSource, fileName: String): EbookDocument? {
+    fun open(
+        source: ArchiveByteSource,
+        fileName: String,
+        style: EbookStyle = EbookStyle.DEFAULT,
+    ): EbookDocument? {
         val ext = FileUtils.getExtensionFromFilename(fileName)?.lowercase().orEmpty()
         val chapters = runCatching {
             when (ext) {
@@ -34,8 +40,8 @@ internal object EbookEngine {
             }
         }.onFailure { logcat("Ebook", it) }.getOrNull() ?: return null
         if (chapters.isEmpty()) return null
-        val (pages, toc) = EbookPaginator.paginate(chapters)
-        return EbookDocument(pages, toc)
+        val (pages, toc) = EbookPaginator.paginate(chapters, style)
+        return EbookDocument(chapters, pages, toc)
     }
 
     private fun parseTxt(source: ArchiveByteSource): List<EbookChapter> {
