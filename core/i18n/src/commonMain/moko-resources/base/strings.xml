@@ -934,6 +934,17 @@
     <string name="pref_ebook_font_sans">Sans</string>
     <string name="pref_ebook_font_system">System</string>
     <string name="pref_ebook_font_size">Size</string>
+    <string name="pref_ebook_charset">Code page</string>
+    <string name="ebook_charset_auto">Auto</string>
+    <string name="ebook_charset_utf8">UTF-8</string>
+    <string name="ebook_charset_utf16le">UTF-16 LE</string>
+    <string name="ebook_charset_utf16be">UTF-16 BE</string>
+    <string name="ebook_charset_gbk">GBK</string>
+    <string name="ebook_charset_gb18030">GB18030</string>
+    <string name="ebook_charset_big5">Big5</string>
+    <string name="ebook_charset_sjis">Shift_JIS</string>
+    <string name="ebook_charset_euckr">EUC-KR</string>
+    <string name="ebook_charset_1252">Windows-1252</string>
     <string name="pref_ebook_paragraph">Paragraph</string>
     <string name="pref_ebook_paragraph_mode">Paragraphs</string>
     <string name="ebook_paragraph_mode_auto">Auto</string>

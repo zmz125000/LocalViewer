@@ -58,6 +58,28 @@ class TextCharsetTest {
     }
 
     @Test
+    fun sample1TxtIsGbkNotUtf8OrLatin() {
+        val file = File("samples/1.txt")
+        if (!file.isFile) return
+        val bytes = file.readBytes()
+        val (cs, _) = TextCharset.detect(bytes)
+        val name = cs.name().uppercase()
+        val text = TextCharset.decode(bytes)
+        val han = text.count { Character.UnicodeScript.of(it.code) == Character.UnicodeScript.HAN }
+        assertTrue("detected=$name han=$han", name.contains("GB") || name.contains("18030"))
+        assertTrue("han=$han", han > 1000)
+        assertTrue(text.none { it == '\uFFFD' })
+        val utf8Han = TextCharset.decode(bytes, forced = StandardCharsets.UTF_8)
+            .count { Character.UnicodeScript.of(it.code) == Character.UnicodeScript.HAN }
+        assertTrue("utf8Han=$utf8Han gbkHan=$han", han > utf8Han * 4)
+        val gbk = TextCharset.forcedCharset(TextCharset.PREF_GBK)
+        requireNotNull(gbk)
+        val forcedHan = TextCharset.decode(bytes, forced = gbk)
+            .count { Character.UnicodeScript.of(it.code) == Character.UnicodeScript.HAN }
+        assertEquals(han, forcedHan)
+    }
+
+    @Test
     fun sampleBooksDetect() {
         val dir = samplesDir() ?: return
         val files = dir.listFiles { f -> f.isFile && f.name.endsWith(".txt") }.orEmpty()

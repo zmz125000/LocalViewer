@@ -26,16 +26,17 @@ class EbookBodyCacheTest {
             EbookChapter("Cover", "hello", 0),
             EbookChapter("Chapter", "world", 1),
         )
-        EbookBodyCache.save(key, fileSize = 1000, chapters = chapters)
-        assertEquals(chapters, EbookBodyCache.load(key, fileSize = 1000))
-        assertNull(EbookBodyCache.load(key, fileSize = 1001))
+        EbookBodyCache.save(key, fileSize = 1000, chapters = chapters, charset = "auto")
+        assertEquals(chapters, EbookBodyCache.load(key, fileSize = 1000, charset = "auto"))
+        assertNull(EbookBodyCache.load(key, fileSize = 1001, charset = "auto"))
+        assertNull(EbookBodyCache.load(key, fileSize = 1000, charset = "gbk"))
 
-        val file = EbookBodyCache.fileFor(key)
+        val file = EbookBodyCache.fileFor(key, "auto")
         assertEquals(root, file.parentFile)
         assertFalse(file.path.contains("document_extract"))
         assertFalse(file.path.contains("pdf_toc"))
         assertNotEquals(sha256(key), file.name.substringBefore('.'))
-        assertEquals(sha256(EbookBodyCache.identity(key)), file.name.substringBefore('.'))
+        assertEquals(sha256(EbookBodyCache.identity(key, "auto")), file.name.substringBefore('.'))
     }
 
     @Test

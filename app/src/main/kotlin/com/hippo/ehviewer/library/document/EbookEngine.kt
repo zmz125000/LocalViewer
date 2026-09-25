@@ -4,6 +4,7 @@ import com.ehviewer.core.util.logcat
 import com.hippo.ehviewer.library.ArchiveByteSource
 import com.hippo.ehviewer.library.ZipCentralDirectory
 import com.hippo.ehviewer.util.FileUtils
+import java.nio.charset.Charset
 
 /**
  * Text ebook for [com.hippo.ehviewer.ui.PdfReaderActivity]: EPUB / TXT / HTML / FB2 / Markdown.
@@ -43,47 +44,64 @@ internal object EbookEngine {
         source: ArchiveByteSource,
         fileName: String,
         stillWanted: () -> Boolean = { true },
+        charset: Charset? = null,
     ): List<EbookChapter>? {
         if (!stillWanted()) return null
         val ext = FileUtils.getExtensionFromFilename(fileName)?.lowercase().orEmpty()
         val chapters = runCatching {
             when (ext) {
                 "epub" -> parseEpub(source, stillWanted)
-                "txt", "text" -> parseTxt(source, stillWanted)
-                "html", "htm", "xhtml" -> parseHtml(source, fileName)
-                "fb2" -> parseFb2(source, fileName)
-                "md", "markdown" -> parseMarkdown(source, fileName)
-                else -> parseTxt(source, stillWanted)
+                "txt", "text" -> parseTxt(source, stillWanted, charset)
+                "html", "htm", "xhtml" -> parseHtml(source, fileName, charset)
+                "fb2" -> parseFb2(source, fileName, charset)
+                "md", "markdown" -> parseMarkdown(source, fileName, charset)
+                else -> parseTxt(source, stillWanted, charset)
             }
         }.onFailure { logcat("Ebook", it) }.getOrNull() ?: return null
         if (!stillWanted()) return null
         return chapters
     }
 
-    private fun parseTxt(source: ArchiveByteSource, stillWanted: () -> Boolean): List<EbookChapter> {
+    private fun parseTxt(
+        source: ArchiveByteSource,
+        stillWanted: () -> Boolean,
+        charset: Charset?,
+    ): List<EbookChapter> {
         if (!stillWanted()) return emptyList()
         val bytes = source.readFully(MAX_TEXT_BYTES) ?: return emptyList()
         if (!stillWanted()) return emptyList()
-        val text = TextCharset.decode(bytes)
+        val text = TextCharset.decode(bytes, forced = charset)
         if (!stillWanted()) return emptyList()
         return chaptersFromPlain(text, "Text")
     }
 
-    private fun parseHtml(source: ArchiveByteSource, fileName: String): List<EbookChapter> {
+    private fun parseHtml(
+        source: ArchiveByteSource,
+        fileName: String,
+        charset: Charset?,
+    ): List<EbookChapter> {
         val bytes = source.readFully(MAX_TEXT_BYTES) ?: return emptyList()
-        val html = TextCharset.decode(bytes, htmlHint = true)
+        val html = TextCharset.decode(bytes, htmlHint = true, forced = charset)
         return EbookHtml.chaptersFromHtml(html, titleFromName(fileName))
     }
 
-    private fun parseMarkdown(source: ArchiveByteSource, fileName: String): List<EbookChapter> {
+    private fun parseMarkdown(
+        source: ArchiveByteSource,
+        fileName: String,
+        charset: Charset?,
+    ): List<EbookChapter> {
         val bytes = source.readFully(MAX_TEXT_BYTES) ?: return emptyList()
-        val text = TextCharset.decode(bytes)
+        val text = TextCharset.decode(bytes, forced = charset)
         return chaptersFromMarkdown(text, titleFromName(fileName))
     }
 
-    private fun parseFb2(source: ArchiveByteSource, fileName: String): List<EbookChapter> {
+    private fun parseFb2(
+        source: ArchiveByteSource,
+        fileName: String,
+        charset: Charset?,
+    ): List<EbookChapter> {
         val bytes = source.readFully(MAX_TEXT_BYTES) ?: return emptyList()
-        val xml = TextCharset.decode(bytes, htmlHint = true)
+        val xml = TextCharset.decode(bytes, htmlHint = true, forced = charset)
         return chaptersFromFb2(xml, titleFromName(fileName))
     }
 

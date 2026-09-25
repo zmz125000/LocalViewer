@@ -278,6 +278,19 @@
         <item>@string/ebook_paragraph_mode_soft</item>
     </string-array>
 
+    <string-array name="ebook_charset">
+        <item>@string/ebook_charset_auto</item>
+        <item>@string/ebook_charset_utf8</item>
+        <item>@string/ebook_charset_utf16le</item>
+        <item>@string/ebook_charset_utf16be</item>
+        <item>@string/ebook_charset_gbk</item>
+        <item>@string/ebook_charset_gb18030</item>
+        <item>@string/ebook_charset_big5</item>
+        <item>@string/ebook_charset_sjis</item>
+        <item>@string/ebook_charset_euckr</item>
+        <item>@string/ebook_charset_1252</item>
+    </string-array>
+
     <string-array name="reader_themes">
         <item>@string/black_background</item>
         <item>@string/gray_background</item>

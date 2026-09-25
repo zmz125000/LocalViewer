@@ -617,8 +617,25 @@ object Settings : DataStorePreferences(null) {
     const val EBOOK_PARA_HARD = 1
     const val EBOOK_PARA_SOFT = 2
 
+    const val EBOOK_CHARSET_AUTO = 0
+    const val EBOOK_CHARSET_UTF8 = 1
+    const val EBOOK_CHARSET_UTF16LE = 2
+    const val EBOOK_CHARSET_UTF16BE = 3
+    const val EBOOK_CHARSET_GBK = 4
+    const val EBOOK_CHARSET_GB18030 = 5
+    const val EBOOK_CHARSET_BIG5 = 6
+    const val EBOOK_CHARSET_SJIS = 7
+    const val EBOOK_CHARSET_EUCKR = 8
+    const val EBOOK_CHARSET_1252 = 9
+
     /** Body type size 12–32, larger = larger glyphs. Fraction of page width, not content width. */
     val ebookFontSize = intPref("pref_ebook_font_size", 18)
+
+    /**
+     * TXT/HTML/FB2/Markdown decode. 0=auto (default), then UTF-8 / UTF-16LE / UTF-16BE /
+     * GBK / GB18030 / Big5 / Shift_JIS / EUC-KR / Windows-1252.
+     */
+    val ebookCharset = intPref("pref_ebook_charset", 0)
 
     /** 0=auto, 1=hard-wrap join, 2=collapse extra blank lines. */
     val ebookParagraphMode = intPref("pref_ebook_paragraph_mode", EBOOK_PARA_AUTO)

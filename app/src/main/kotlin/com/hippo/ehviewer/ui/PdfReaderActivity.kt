@@ -157,6 +157,7 @@ import com.hippo.ehviewer.library.document.EbookStyle
 import com.hippo.ehviewer.library.document.PdfContentKind
 import com.hippo.ehviewer.library.document.PdfImageEngine
 import com.hippo.ehviewer.library.document.PdfTocEntry
+import com.hippo.ehviewer.library.document.TextCharset
 import com.hippo.ehviewer.library.document.readPdfChapters
 import com.hippo.ehviewer.library.isEbookFileName
 import com.hippo.ehviewer.library.openLocalArchiveByteSource
@@ -267,6 +268,7 @@ class PdfReaderActivity : AppCompatActivity() {
                 },
                 onHopSibling = { next -> hopSibling(next) },
                 onDirectImageChanged = { reloadForDirectImage() },
+                onEbookReload = { reloadForDirectImage() },
                 sourceArgs = sourceArgs,
             )
         }
@@ -728,15 +730,18 @@ private fun openEbookDocument(
         }
     return try {
         val size = runCatching { source.size }.getOrDefault(-1L)
+        val charsetPref = Settings.ebookCharset.value
+        val forced = TextCharset.forcedCharset(charsetPref)
+        val charsetKey = TextCharset.cacheLabel(charsetPref)
         val cached = if (cacheKey != null && size > 0L) {
-            EbookBodyCache.load(cacheKey, size)
+            EbookBodyCache.load(cacheKey, size, charsetKey)
         } else {
             null
         }
-        val chapters = cached ?: EbookEngine.parse(source, fileName, stillWanted)
+        val chapters = cached ?: EbookEngine.parse(source, fileName, stillWanted, forced)
         if (chapters.isNullOrEmpty() || !stillWanted()) return null
         if (cached == null && cacheKey != null && size > 0L && stillWanted()) {
-            EbookBodyCache.save(cacheKey, size, chapters)
+            EbookBodyCache.save(cacheKey, size, chapters, charsetKey)
         }
         val style = ebookStyleFromSettings()
         val session = EbookSession(chapters, style, ebookPaintFromSettings(dark = false))
@@ -1143,6 +1148,7 @@ private fun PdfReaderScreen(
     onClose: () -> Unit,
     onHopSibling: (next: Boolean) -> Unit,
     onDirectImageChanged: () -> Unit,
+    onEbookReload: () -> Unit,
     sourceArgs: ReaderScreenArgs?,
 ) {
     val pageCount = imageLoader?.size ?: (doc?.pageCount ?: 0)
@@ -1183,6 +1189,17 @@ private fun PdfReaderScreen(
     val ebookMargin by Settings.ebookMargin.collectAsState()
     val ebookParaMode by Settings.ebookParagraphMode.collectAsState()
     val ebookTheme by Settings.ebookTheme.collectAsState()
+    val ebookCharset by Settings.ebookCharset.collectAsState()
+    var appliedEbookCharset by remember { mutableStateOf<Int?>(null) }
+    LaunchedEffect(ebookCharset, isEbook) {
+        if (!isEbook) {
+            appliedEbookCharset = ebookCharset
+            return@LaunchedEffect
+        }
+        val previous = appliedEbookCharset
+        appliedEbookCharset = ebookCharset
+        if (previous != null && previous != ebookCharset) onEbookReload()
+    }
     val ebookLayout = remember(
         ebookFontSize,
         ebookLineHeight,

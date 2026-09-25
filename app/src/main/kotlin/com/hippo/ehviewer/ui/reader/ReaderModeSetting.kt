@@ -125,6 +125,23 @@ private fun DocumentStyleSetting() = Column {
         ),
         field = Settings.ebookFont.asMutableState(),
     )
+    SpinnerChoice(
+        title = stringResource(id = R.string.pref_ebook_charset),
+        entries = stringArrayResource(id = com.hippo.ehviewer.R.array.ebook_charset),
+        values = listOf(
+            Settings.EBOOK_CHARSET_AUTO,
+            Settings.EBOOK_CHARSET_UTF8,
+            Settings.EBOOK_CHARSET_UTF16LE,
+            Settings.EBOOK_CHARSET_UTF16BE,
+            Settings.EBOOK_CHARSET_GBK,
+            Settings.EBOOK_CHARSET_GB18030,
+            Settings.EBOOK_CHARSET_BIG5,
+            Settings.EBOOK_CHARSET_SJIS,
+            Settings.EBOOK_CHARSET_EUCKR,
+            Settings.EBOOK_CHARSET_1252,
+        ),
+        field = Settings.ebookCharset.asMutableState(),
+    )
     val fontSize = Settings.ebookFontSize.asMutableState()
     Text(
         text = stringResource(id = R.string.pref_ebook_font_size),

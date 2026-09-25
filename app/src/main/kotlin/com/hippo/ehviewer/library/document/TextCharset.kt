@@ -21,8 +21,53 @@ import java.nio.charset.StandardCharsets
 internal object TextCharset {
     private const val SAMPLE = 64 * 1024
 
-    fun decode(bytes: ByteArray, htmlHint: Boolean = false): String {
+    const val PREF_AUTO = 0
+    const val PREF_UTF8 = 1
+    const val PREF_UTF16LE = 2
+    const val PREF_UTF16BE = 3
+    const val PREF_GBK = 4
+    const val PREF_GB18030 = 5
+    const val PREF_BIG5 = 6
+    const val PREF_SJIS = 7
+    const val PREF_EUCKR = 8
+    const val PREF_1252 = 9
+
+    fun forcedCharset(pref: Int): Charset? = when (pref) {
+        PREF_UTF8 -> UTF8
+        PREF_UTF16LE -> StandardCharsets.UTF_16LE
+        PREF_UTF16BE -> StandardCharsets.UTF_16BE
+        PREF_GBK -> charsetOr(UTF8, "GBK")
+        PREF_GB18030 -> charsetOr(UTF8, "GB18030")
+        PREF_BIG5 -> charsetOr(UTF8, "Big5")
+        PREF_SJIS -> charsetOr(UTF8, "windows-31j").let { cs ->
+            if (cs === UTF8) charsetOr(UTF8, "Shift_JIS") else cs
+        }
+        PREF_EUCKR -> charsetOr(UTF8, "EUC-KR")
+        PREF_1252 -> charsetOr(UTF8, "windows-1252")
+        else -> null
+    }
+
+    /** Cache bucket: `auto` or a stable family name. */
+    fun cacheLabel(pref: Int): String = when (pref) {
+        PREF_UTF8 -> "utf8"
+        PREF_UTF16LE -> "utf16le"
+        PREF_UTF16BE -> "utf16be"
+        PREF_GBK -> "gbk"
+        PREF_GB18030 -> "gb18030"
+        PREF_BIG5 -> "big5"
+        PREF_SJIS -> "sjis"
+        PREF_EUCKR -> "euckr"
+        PREF_1252 -> "1252"
+        else -> "auto"
+    }
+
+    fun decode(bytes: ByteArray, htmlHint: Boolean = false, forced: Charset? = null): String {
         if (bytes.isEmpty()) return ""
+        if (forced != null) {
+            val bom = bom(bytes)
+            val offset = if (bom != null && sameFamily(bom.first, forced)) bom.second else 0
+            return String(bytes, offset, bytes.size - offset, forced)
+        }
         val (cs, offset) = detect(bytes, htmlHint)
         return String(bytes, offset, bytes.size - offset, cs)
     }
@@ -55,18 +100,122 @@ internal object TextCharset {
     }
 
     private fun detectLegacy(sample: ByteArray): Charset? {
+        val gbk = dbcsFit(sample, ::isGbkPair)
+        val big5 = dbcsFit(sample, ::isBig5Pair)
+        val sjis = sjisFit(sample)
+        val eucKr = eucKrFit(sample)
+        val c1High = c1HighRatio(sample)
         var best: Charset? = null
         var bestScore = Int.MIN_VALUE
         for (cs in ZipNameDecoder.legacyCharsets) {
-            val text = decodeLenient(sample, cs)
+            val strict = ZipNameDecoder.decodeOrNull(sample, cs)
+            val text = strict ?: decodeLenient(sample, cs)
             if (text.isEmpty()) continue
-            val score = scoreDocument(text, cs)
+            var score = scoreDocument(text, cs, gbk, big5, sjis, eucKr, c1High)
+            if (strict == null) score -= 2500
             if (score > bestScore) {
                 bestScore = score
                 best = cs
             }
         }
         return best
+    }
+
+    private data class DbcsFit(val pairs: Int, val bad: Int) {
+        val fit: Float get() {
+            val n = pairs + bad
+            return if (n <= 0) 0f else pairs.toFloat() / n
+        }
+    }
+
+    private fun dbcsFit(sample: ByteArray, pair: (Int, Int) -> Boolean): DbcsFit {
+        var pairs = 0
+        var bad = 0
+        var i = 0
+        while (i < sample.size) {
+            val lead = sample[i].toInt() and 0xff
+            if (lead < 0x80) {
+                i++
+                continue
+            }
+            if (i + 1 >= sample.size) {
+                bad++
+                break
+            }
+            val trail = sample[i + 1].toInt() and 0xff
+            if (pair(lead, trail)) {
+                pairs++
+                i += 2
+            } else {
+                bad++
+                i++
+            }
+        }
+        return DbcsFit(pairs, bad)
+    }
+
+    private fun sjisFit(sample: ByteArray): DbcsFit {
+        var pairs = 0
+        var bad = 0
+        var i = 0
+        while (i < sample.size) {
+            val b = sample[i].toInt() and 0xff
+            when {
+                b < 0x80 || b in 0xA1..0xDF -> i++
+                i + 1 >= sample.size -> {
+                    bad++
+                    break
+                }
+                isSjisLead(b) && isSjisTrail(sample[i + 1].toInt() and 0xff) -> {
+                    pairs++
+                    i += 2
+                }
+                else -> {
+                    bad++
+                    i++
+                }
+            }
+        }
+        return DbcsFit(pairs, bad)
+    }
+
+    private fun eucKrFit(sample: ByteArray): DbcsFit = dbcsFit(sample) { lead, trail ->
+        lead in 0xA1..0xFE && trail in 0xA1..0xFE
+    }
+
+    /** Windows-1252 letters/dashes live in 0x80–0x9F; GBK leads are almost never there. */
+    private fun c1HighRatio(sample: ByteArray): Float {
+        var high = 0
+        var c1 = 0
+        for (b in sample) {
+            val v = b.toInt() and 0xff
+            if (v < 0x80) continue
+            high++
+            if (v <= 0x9F) c1++
+        }
+        return if (high == 0) 0f else c1.toFloat() / high
+    }
+
+    private fun isGbkPair(lead: Int, trail: Int): Boolean = lead in 0x81..0xFE && (trail in 0x40..0x7E || trail in 0x80..0xFE)
+
+    private fun isBig5Pair(lead: Int, trail: Int): Boolean = lead in 0xA1..0xFE && (trail in 0x40..0x7E || trail in 0xA1..0xFE)
+
+    private fun isSjisLead(b: Int): Boolean = b in 0x81..0x9F || b in 0xE0..0xFC
+
+    private fun isSjisTrail(b: Int): Boolean = b in 0x40..0x7E || b in 0x80..0xFC
+
+    private fun sameFamily(a: Charset, b: Charset): Boolean {
+        val na = a.name().uppercase()
+        val nb = b.name().uppercase()
+        if (na == nb) return true
+        fun kind(n: String): String = when {
+            n.contains("UTF-8") || n.contains("UTF8") -> "utf8"
+            n.contains("UTF-16LE") || n.contains("UTF16LE") -> "utf16le"
+            n.contains("UTF-16BE") || n.contains("UTF16BE") -> "utf16be"
+            n.contains("GB") -> "gb"
+            else -> n
+        }
+        return kind(na) == kind(nb)
     }
 
     private fun decodeLenient(sample: ByteArray, cs: Charset): String {
@@ -76,7 +225,15 @@ internal object TextCharset {
         return dec.decode(ByteBuffer.wrap(sample)).toString()
     }
 
-    private fun scoreDocument(text: String, cs: Charset): Int {
+    private fun scoreDocument(
+        text: String,
+        cs: Charset,
+        gbkFit: DbcsFit = DbcsFit(0, 0),
+        big5Fit: DbcsFit = DbcsFit(0, 0),
+        sjisFit: DbcsFit = DbcsFit(0, 0),
+        eucKrFit: DbcsFit = DbcsFit(0, 0),
+        c1High: Float = 0f,
+    ): Int {
         var han = 0
         var kana = 0
         var hwKana = 0
@@ -128,7 +285,7 @@ internal object TextCharset {
         // DBCS CJK yields ~half as many letters as a 1-byte page of the same
         // bytes (1251 turns every high byte into Cyrillic). Weight CJK higher.
         var score = han * 8 + kana * 10 + hangul * 10 + cyr * 2 + arabic * 2 + latin + latinExt * 2
-        score -= c1 * 15 + box * 8 + privateUse * 20 + fffd * 80 + hwKana * 3
+        score -= c1 * 15 + box * 8 + privateUse * 20 + fffd * 80 + hwKana * 20
 
         val name = cs.name().uppercase()
         val isGb = name.contains("GB")
@@ -156,6 +313,28 @@ internal object TextCharset {
         if ((isLatin || isCyr) && cjk > maxOf(latin, cyr)) score -= 1500
         if (isJp && kana == 0 && han > 0) score -= 200
         if (isKr && hangul < han && han > 0) score -= 200
+        if (isGb && han >= 80 && gbkFit.pairs >= 80 && gbkFit.fit >= 0.90f &&
+            gbkFit.fit >= big5Fit.fit && c1High < 0.40f
+        ) {
+            score += 2500
+        }
+        if (isBig5 && han >= 80 && big5Fit.pairs >= 80 && big5Fit.fit >= 0.90f &&
+            big5Fit.fit > gbkFit.fit + 0.04f && c1High < 0.40f
+        ) {
+            score += 2500
+        }
+        if (isJp && kana >= 80 && sjisFit.pairs >= 80 && sjisFit.fit >= 0.90f &&
+            sjisFit.fit > gbkFit.fit + 0.04f
+        ) {
+            score += 2500
+        }
+        if (isKr && hangul >= 80 && eucKrFit.pairs >= 80 && eucKrFit.fit >= 0.90f &&
+            eucKrFit.fit > gbkFit.fit + 0.04f
+        ) {
+            score += 2500
+        }
+        if (isGb && han >= 80 && gbkFit.fit + 0.15f < big5Fit.fit && big5Fit.pairs >= 80) score -= 1500
+        if (isJp && han >= 80 && gbkFit.pairs >= 80 && gbkFit.fit >= 0.90f && kana * 4 < han) score -= 2000
         return score
     }
 

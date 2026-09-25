@@ -19,7 +19,7 @@ import splitties.init.appCtx
  * A stopped scan is not written.
  */
 internal object EbookBodyCache {
-    private const val FORMAT_VERSION = 1
+    private const val FORMAT_VERSION = 2
 
     private val json = Json {
         ignoreUnknownKeys = true
@@ -38,6 +38,7 @@ internal object EbookBodyCache {
     private data class FileBody(
         val v: Int = FORMAT_VERSION,
         val fileSize: Long,
+        val charset: String = "auto",
         val chapters: List<Chapter> = emptyList(),
     )
 
@@ -48,30 +49,35 @@ internal object EbookBodyCache {
         val depth: Int,
     )
 
-    /** Null on miss, including a size change. */
-    fun load(cacheKey: String, fileSize: Long): List<EbookChapter>? {
+    /** Null on miss, including a size or charset change. */
+    fun load(cacheKey: String, fileSize: Long, charset: String = "auto"): List<EbookChapter>? {
         if (cacheKey.isEmpty() || fileSize <= 0L) return null
-        val file = fileFor(cacheKey)
+        val file = fileFor(cacheKey, charset)
         if (!file.isFile || file.length() <= 0L) return null
         val body = runCatching {
             json.decodeFromString(FileBody.serializer(), file.readText())
         }.getOrNull() ?: return null
-        if (body.v != FORMAT_VERSION || body.fileSize != fileSize || body.chapters.isEmpty()) {
+        if (body.v != FORMAT_VERSION ||
+            body.fileSize != fileSize ||
+            body.charset != charset ||
+            body.chapters.isEmpty()
+        ) {
             return null
         }
         return body.chapters.map { EbookChapter(it.title, it.text, it.depth) }
     }
 
-    fun save(cacheKey: String, fileSize: Long, chapters: List<EbookChapter>) {
+    fun save(cacheKey: String, fileSize: Long, chapters: List<EbookChapter>, charset: String = "auto") {
         if (cacheKey.isEmpty() || fileSize <= 0L || chapters.isEmpty()) return
-        val lock = locks.computeIfAbsent(cacheKey) { Any() }
+        val lock = locks.computeIfAbsent("$cacheKey\u0000$charset") { Any() }
         synchronized(lock) {
-            val dest = fileFor(cacheKey)
+            val dest = fileFor(cacheKey, charset)
             dest.parentFile?.mkdirs()
             val tmp = File("${dest.path}.tmp.${System.nanoTime()}")
             try {
                 val body = FileBody(
                     fileSize = fileSize,
+                    charset = charset,
                     chapters = chapters.map { Chapter(it.title, it.text, it.depth) },
                 )
                 tmp.writeText(json.encodeToString(FileBody.serializer(), body))
@@ -85,10 +91,10 @@ internal object EbookBodyCache {
         }
     }
 
-    internal fun fileFor(cacheKey: String): File = File(root, sha256Hex(identity(cacheKey)) + ".json")
+    internal fun fileFor(cacheKey: String, charset: String = "auto"): File = File(root, sha256Hex(identity(cacheKey, charset)) + ".json")
 
     /** Hash input. Deliberately not the raw path the image index or PDF TOC uses. */
-    internal fun identity(cacheKey: String): String = "ebook-body:v$FORMAT_VERSION:$cacheKey"
+    internal fun identity(cacheKey: String, charset: String = "auto"): String = "ebook-body:v$FORMAT_VERSION:$charset:$cacheKey"
 
     private fun sha256Hex(s: String): String {
         val dig = MessageDigest.getInstance("SHA-256").digest(s.toByteArray())
