@@ -255,6 +255,29 @@
         <item>@string/vertical_plus_viewer</item>
     </string-array>
 
+    <string-array name="ebook_font">
+        <item>@string/pref_ebook_font_serif</item>
+        <item>@string/pref_ebook_font_sans</item>
+        <item>@string/pref_ebook_font_system</item>
+    </string-array>
+
+    <string-array name="ebook_indent">
+        <item>@string/ebook_indent_none</item>
+        <item>@string/ebook_indent_1</item>
+        <item>@string/ebook_indent_2</item>
+    </string-array>
+
+    <string-array name="ebook_align">
+        <item>@string/ebook_align_start</item>
+        <item>@string/ebook_align_justify</item>
+    </string-array>
+
+    <string-array name="ebook_paragraph_mode">
+        <item>@string/ebook_paragraph_mode_auto</item>
+        <item>@string/ebook_paragraph_mode_hard</item>
+        <item>@string/ebook_paragraph_mode_soft</item>
+    </string-array>
+
     <string-array name="reader_themes">
         <item>@string/black_background</item>
         <item>@string/gray_background</item>

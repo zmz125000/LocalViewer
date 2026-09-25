@@ -71,17 +71,118 @@ class EbookEngineTest {
 
     @Test
     fun paginatorWrapsCjkAndAscii() {
+        val style = EbookStyle(paragraphMode = EbookParagraph.SOFT)
+        val cap = EbookPaginator.lineCapacity(style)
         val cjk = "测".repeat(80)
-        val lines = EbookPaginator.wrap(cjk)
+        val lines = EbookPaginator.wrap(cjk, style)
         assertTrue(lines.size >= 2)
         assertTrue(
             lines.all { line ->
-                line.sumOf { EbookPaginator.charEm(it).toDouble() } <= EbookPaginator.CJK_PER_LINE + 1.01
+                line.sumOf { EbookPaginator.charEm(it).toDouble() } <= cap + 1.01
             },
         )
         val ascii = "word ".repeat(40)
-        val asciiLines = EbookPaginator.wrap(ascii)
+        val asciiLines = EbookPaginator.wrap(ascii, style)
         assertTrue(asciiLines.size >= 2)
+    }
+
+    @Test
+    fun largerFontIncreasesPageCount() {
+        val chapters = listOf(EbookChapter("t", "测".repeat(800)))
+        val small = EbookPaginator.paginate(chapters, EbookStyle(fontSize = 12)).first
+        val large = EbookPaginator.paginate(chapters, EbookStyle(fontSize = 28)).first
+        assertTrue(large.size > small.size)
+    }
+
+    @Test
+    fun marginDoesNotChangeFontFraction() {
+        val tight = EbookStyle(fontSize = 18, marginPercent = 4)
+        val wide = EbookStyle(fontSize = 18, marginPercent = 12)
+        assertEquals(tight.fontFraction, wide.fontFraction, 0.0001f)
+        assertTrue(EbookPaginator.lineCapacity(wide) < EbookPaginator.lineCapacity(tight))
+    }
+
+    @Test
+    fun firstLineHonorsIndent() {
+        val style = EbookStyle(indentEm = 2, paragraphMode = EbookParagraph.SOFT)
+        val lines = EbookPaginator.wrapLines("测".repeat(40), style)
+        assertTrue(lines.size >= 2)
+        assertEquals(2f, lines.first().indentEm)
+        assertEquals(0f, lines[1].indentEm)
+        val firstEm = lines.first().text.sumOf { EbookPaginator.charEm(it).toDouble() }
+        val cap = EbookPaginator.lineCapacity(style)
+        assertTrue(firstEm <= cap - 2 + 1.01)
+    }
+
+    @Test
+    fun justifyMarksWrappedLinesOnly() {
+        val lines = EbookPaginator.wrapLines(
+            "测".repeat(80),
+            EbookStyle(justify = true, indentEm = 0, paragraphMode = EbookParagraph.SOFT),
+        )
+        assertTrue(lines.size >= 2)
+        assertTrue(lines.dropLast(1).all { it.justify })
+        assertTrue(!lines.last().justify)
+    }
+
+    @Test
+    fun paragraphSpacingAddsGapLine() {
+        val style0 = EbookStyle(paragraphPercent = 0, paragraphMode = EbookParagraph.SOFT)
+        val style1 = EbookStyle(paragraphPercent = 100, paragraphMode = EbookParagraph.SOFT)
+        val plain = EbookPaginator.wrapLines("甲\n\n乙", style0)
+        val spaced = EbookPaginator.wrapLines("甲\n\n乙", style1)
+        assertTrue(spaced.size > plain.size)
+        assertTrue(spaced.any { it.text.isEmpty() && it.heightEm == 1f })
+    }
+
+    @Test
+    fun extraBlankLinesDoNotAddGap() {
+        val style = EbookStyle(paragraphPercent = 0, paragraphMode = EbookParagraph.SOFT)
+        val a = EbookPaginator.wrapLines("甲\n\n乙", style)
+        val b = EbookPaginator.wrapLines("甲\n\n\n\n\n乙", style)
+        assertEquals(a.map { it.text }, b.map { it.text })
+        assertTrue(a.none { it.text.isEmpty() })
+    }
+
+    @Test
+    fun hardWrapJoinsFixedLengthLines() {
+        val text = "     四月间，天气寒冷晴朗，钟敲了十三下。温斯顿史密斯为了要躲寒风，\n" +
+            "紧缩着脖子，很快地溜进了胜利大厦的玻璃门，不过动作不够迅速，没有能\n" +
+            "够防止一阵沙土跟着他刮进了门。\n" +
+            "     门厅里有一股熬白菜和旧地席的气味。门厅的一头，有一张彩色的招\n" +
+            "贴画钉在墙上。\n"
+        val paras = EbookParagraph.paragraphs(text, EbookParagraph.HARD)
+        assertEquals(2, paras.size)
+        assertTrue(paras[0].contains("四月间"))
+        assertTrue(paras[0].contains("刮进了门"))
+        assertTrue(!paras[0].contains("  "))
+        assertTrue(paras[1].startsWith("门厅里"))
+        assertTrue(EbookParagraph.detect(text.repeat(4)) == EbookParagraph.HARD)
+    }
+
+    @Test
+    fun headingUsesLargerBoldScale() {
+        val chapters = listOf(EbookChapter("第一章 开始", "正文一段。", 0))
+        val (pages, toc) = EbookPaginator.paginate(chapters)
+        assertEquals(0, toc[0].depth)
+        val title = pages.first().lines.first { it.text.isNotEmpty() }
+        assertTrue(title.bold)
+        assertTrue(title.scale > 1.2f)
+        assertEquals(0f, title.indentEm)
+    }
+
+    @Test
+    fun pageIndexMapsOffsetAfterRestyle() {
+        val chapters = listOf(EbookChapter("t", "测".repeat(1200)))
+        val a = EbookPaginator.paginate(chapters, EbookStyle(fontSize = 18)).first
+        val mid = a[a.size / 2]
+        val b = EbookPaginator.paginate(chapters, EbookStyle(fontSize = 28)).first
+        val idx = EbookPaginator.pageIndexFor(b, mid.chapterIndex, mid.charOffset)
+        assertTrue(idx in b.indices)
+        assertTrue(b[idx].charOffset <= mid.charOffset)
+        if (idx + 1 < b.size) {
+            assertTrue(b[idx + 1].charOffset > mid.charOffset)
+        }
     }
 
     @Test
