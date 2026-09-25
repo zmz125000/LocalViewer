@@ -1730,7 +1730,10 @@ private fun PdfReaderScreen(
                                         session = doc.session,
                                         index = index,
                                         widthPx = if (box == PdfPageBox.Cell) {
-                                            (vectorWidthPx * dualZoom).roundToInt().coerceIn(1, MAX_VECTOR_EDGE)
+                                            // Cell viewWidth is half the spread. Do not use the
+                                            // full-viewport vectorWidthPx or pinch-zoom is ~2×
+                                            // and Fit downscales a too-large bitmap.
+                                            (cellW * dualZoom).roundToInt().coerceIn(1, MAX_VECTOR_EDGE)
                                         } else {
                                             vectorWidthPx
                                         },
@@ -2203,7 +2206,7 @@ private fun PdfSingleVectorPage(
     styleGeneration: Int = 0,
 ) {
     val zoomableState = rememberZoomableState(zoomSpec = PdfZoomSpec)
-    var aspect by remember(index) { mutableFloatStateOf(1f / 1.414f) }
+    val (aspect, aspectReady) = rememberPdfPageAspect(session, index)
     val contentSize = Size(
         viewWidthPx.toFloat().coerceAtLeast(1f),
         (viewWidthPx / aspect.coerceAtLeast(0.01f)).coerceAtLeast(1f),
@@ -2241,23 +2244,26 @@ private fun PdfSingleVectorPage(
             .distinctUntilChanged { a, b -> abs(a - b) < 0.08f }
             .collect { renderZoom = it }
     }
-    val renderWidth = (pdfScaleRenderWidth(aspect, viewWidthPx, viewHeightPx, scaleType) * renderZoom)
-        .roundToInt()
-        .coerceIn(1, MAX_VECTOR_EDGE)
+    val renderWidth = if (!aspectReady) {
+        0
+    } else {
+        (pdfScaleRenderWidth(aspect, viewWidthPx, viewHeightPx, scaleType) * renderZoom)
+            .roundToInt()
+            .coerceIn(1, MAX_VECTOR_EDGE)
+    }
     var bitmap by remember(index, styleGeneration) { mutableStateOf<Bitmap?>(null) }
     LaunchedEffect(session, index, renderWidth, scaleType, styleGeneration) {
+        if (renderWidth <= 0) return@LaunchedEffect
         var next: Bitmap? = null
         try {
             next = withContext(Dispatchers.IO) {
                 runCatching { session.render(index, renderWidth) }.getOrNull()
             }
             if (next != null) {
-                val measured = if (next.height > 0) next.width.toFloat() / next.height else aspect
                 val prev = bitmap
                 bitmap = next
                 next = null
                 if (prev != null && prev !== bitmap) prev.recycle()
-                if (measured != aspect) aspect = measured
             }
         } finally {
             next?.recycle()
@@ -2298,34 +2304,37 @@ private fun PdfVectorPage(
     scaleType: Int,
     styleGeneration: Int = 0,
 ) {
-    var aspect by remember(index) { mutableFloatStateOf(1f / 1.414f) }
-    val renderWidth = when (box) {
-        PdfPageBox.Webtoon -> widthPx
-        PdfPageBox.Strip -> {
-            val zoom = if (viewWidthPx > 0) widthPx.toFloat() / viewWidthPx else 1f
-            (viewHeightPx * aspect * zoom).roundToInt().coerceIn(1, MAX_VECTOR_EDGE)
-        }
-        else -> {
-            val zoom = if (viewWidthPx > 0) widthPx.toFloat() / viewWidthPx else 1f
-            (pdfScaleRenderWidth(aspect, viewWidthPx, viewHeightPx, scaleType) * zoom)
-                .roundToInt()
-                .coerceIn(1, MAX_VECTOR_EDGE)
+    val (aspect, aspectReady) = rememberPdfPageAspect(session, index)
+    val renderWidth = if (!aspectReady) {
+        0
+    } else {
+        when (box) {
+            PdfPageBox.Webtoon -> widthPx
+            PdfPageBox.Strip -> {
+                val zoom = if (viewWidthPx > 0) widthPx.toFloat() / viewWidthPx else 1f
+                (viewHeightPx * aspect * zoom).roundToInt().coerceIn(1, MAX_VECTOR_EDGE)
+            }
+            else -> {
+                val zoom = if (viewWidthPx > 0) widthPx.toFloat() / viewWidthPx else 1f
+                (pdfScaleRenderWidth(aspect, viewWidthPx, viewHeightPx, scaleType) * zoom)
+                    .roundToInt()
+                    .coerceIn(1, MAX_VECTOR_EDGE)
+            }
         }
     }
     var bitmap by remember(index, styleGeneration) { mutableStateOf<Bitmap?>(null) }
     LaunchedEffect(session, index, renderWidth, scaleType, styleGeneration) {
+        if (renderWidth <= 0) return@LaunchedEffect
         var next: Bitmap? = null
         try {
             next = withContext(Dispatchers.IO) {
                 runCatching { session.render(index, renderWidth) }.getOrNull()
             }
             if (next != null) {
-                val measured = if (next.height > 0) next.width.toFloat() / next.height else aspect
                 val prev = bitmap
                 bitmap = next
                 next = null
                 if (prev != null && prev !== bitmap) prev.recycle()
-                if (measured != aspect) aspect = measured
             }
         } finally {
             next?.recycle()
@@ -2812,3 +2821,18 @@ private val PdfZoomSpec = ZoomSpec(
 
 private const val MAX_VECTOR_EDGE = 6144
 private const val MAX_VECTOR_PIXELS = 6144 * 6144
+private const val DEFAULT_PDF_ASPECT = 1f / 1.41421356f
+
+/** PDF page aspect from PdfRenderer, not the bitmap pixel ratio (integer rounding twitch). */
+@Composable
+private fun rememberPdfPageAspect(session: PageBitmapSession, index: Int): Pair<Float, Boolean> {
+    var aspect by remember(session, index) { mutableFloatStateOf(DEFAULT_PDF_ASPECT) }
+    var ready by remember(session, index) { mutableStateOf(false) }
+    LaunchedEffect(session, index) {
+        aspect = withContext(Dispatchers.IO) {
+            runCatching { session.pageAspect(index) }.getOrDefault(DEFAULT_PDF_ASPECT)
+        }.coerceAtLeast(0.01f)
+        ready = true
+    }
+    return aspect to ready
+}
