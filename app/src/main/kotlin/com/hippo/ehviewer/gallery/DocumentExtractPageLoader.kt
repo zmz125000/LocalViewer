@@ -197,6 +197,7 @@ internal suspend fun <T> runDocumentExtractPageLoader(
         val sessionClosed = AtomicBoolean(false)
         val discoveryJob = AtomicReference<Job?>(null)
         val hostScope = this
+
         val resumePage = startPage.coerceIn(0, (engine.pageCount - 1).coerceAtLeast(0))
         val pendingIndexed = ConcurrentHashMap<Int, Bitmap>()
 
@@ -717,34 +718,35 @@ internal suspend fun <T> runDocumentExtractPageLoader(
                     if (probePageOnDisk(index) || index >= engine.pageCount) return
                     val pdf = engine as? PdfImageEngine
                     val pool = extractPool
-                    val known = if (pdf != null && pool != null && pdf.streamOffsetOf(index) >= 0L) {
+                    if (pdf != null) {
+                        val known = if (pool != null && pdf.streamOffsetOf(index) >= 0L) {
+                            if (fromGrid && index !in gridWanted && prefetchRank(index) == NOT_IN_ORDER) {
+                                return
+                            }
+                            pool.use { readSource ->
+                                if (fromGrid) gridSources[index] = readSource
+                                try {
+                                    if (fromGrid && index !in gridWanted && prefetchRank(index) == NOT_IN_ORDER) {
+                                        return@use null
+                                    }
+                                    pdf.extractKnownBytes(index, readSource) { bitmap ->
+                                        publishPreparedBitmap(index, bitmap)
+                                    }
+                                } finally {
+                                    if (fromGrid) gridSources.remove(index, readSource)
+                                }
+                            }
+                        } else {
+                            null
+                        }
+                        if (known != null) {
+                            val ext = pdf.extOf(index) ?: "bin"
+                            storePdfExtract(index, ext, known)
+                            return
+                        }
                         if (fromGrid && index !in gridWanted && prefetchRank(index) == NOT_IN_ORDER) {
                             return
                         }
-                        pool.use { readSource ->
-                            if (fromGrid) gridSources[index] = readSource
-                            try {
-                                if (fromGrid && index !in gridWanted && prefetchRank(index) == NOT_IN_ORDER) {
-                                    return@use null
-                                }
-                                pdf.extractKnownBytes(index, readSource) { bitmap ->
-                                    publishPreparedBitmap(index, bitmap)
-                                }
-                            } finally {
-                                if (fromGrid) gridSources.remove(index, readSource)
-                            }
-                        }
-                    } else {
-                        null
-                    }
-                    if (known != null && pdf != null) {
-                        val ext = pdf.extOf(index) ?: "bin"
-                        storePdfExtract(index, ext, known)
-                        return
-                    }
-                    // A cell that left the sheet must not fall through onto the parser.
-                    if (fromGrid && index !in gridWanted && prefetchRank(index) == NOT_IN_ORDER) return
-                    if (pdf != null) {
                         val bytes = pdf.extractBytes(index) { bitmap ->
                             publishPreparedBitmap(index, bitmap)
                         } ?: return

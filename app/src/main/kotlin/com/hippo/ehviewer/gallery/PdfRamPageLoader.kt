@@ -67,7 +67,10 @@ internal class PdfRamPageLoader(
     private var lastSavedCount = 0
 
     init {
-        cacheKey?.let { DocumentExtractCache.pin(it) }
+        cacheKey?.let { key ->
+            DocumentExtractCache.pin(key)
+            pageThumbIdentity = { index -> "doc:$key:$index" }
+        }
         persistIndex()
         requestDiscovery()
     }

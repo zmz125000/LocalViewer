@@ -110,6 +110,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.ImeAction
@@ -117,6 +118,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.lifecycleScope
 import com.ehviewer.core.i18n.R
@@ -128,6 +130,7 @@ import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.collectAsState
 import com.hippo.ehviewer.gallery.NavigationKind
 import com.hippo.ehviewer.gallery.Page
+import com.hippo.ehviewer.image.presentForReader
 import com.hippo.ehviewer.gallery.PdfRamPageLoader
 import com.hippo.ehviewer.gallery.ReaderNavigation
 import com.hippo.ehviewer.library.ArchiveByteSource
@@ -135,6 +138,8 @@ import com.hippo.ehviewer.library.BlockCacheArchiveByteSource
 import com.hippo.ehviewer.library.DocumentExtractCache
 import com.hippo.ehviewer.library.GallerySiblingNavigator
 import com.hippo.ehviewer.library.PfdArchiveByteSource
+import com.hippo.ehviewer.library.OriginDiskCache
+import com.hippo.ehviewer.library.ReaderPageThumb
 import com.hippo.ehviewer.library.document.PdfContentKind
 import com.hippo.ehviewer.library.document.PdfImageEngine
 import com.hippo.ehviewer.library.document.PdfTocEntry
@@ -159,6 +164,7 @@ import com.hippo.ehviewer.ui.reader.dualSpreadIndex
 import com.hippo.ehviewer.ui.reader.fromPreferences
 import com.hippo.ehviewer.ui.reader.isPagerDual
 import com.hippo.ehviewer.ui.reader.isWebtoonHorizontal
+import com.hippo.ehviewer.ui.reader.readerPdfCacheKey
 import com.hippo.ehviewer.ui.reader.readerPhotoGridSheetMaxWidth
 import com.hippo.ehviewer.ui.reader.readerSheetBox
 import com.hippo.ehviewer.ui.reader.scrollDown
@@ -703,6 +709,9 @@ private fun PdfReaderScreen(
     val hideTopBar by Settings.readerHideTopBar.collectAsState()
     val showPageNumber by Settings.showPageNumber.collectAsState()
     val readerPhotoGrid by Settings.readerPhotoGrid.collectAsState()
+    val downloadNetworkThumbs by Settings.downloadNetworkPhotoGridThumb.collectAsState()
+    val networkPdf = sourceArgs is ReaderScreenArgs.SmbStreamArchive ||
+        sourceArgs is ReaderScreenArgs.WebDavStreamArchive
     var photoGridOpen by remember { mutableStateOf(false) }
     var contentsOpen by remember { mutableStateOf(false) }
     val thumbGridState = rememberLazyGridState()
@@ -847,9 +856,9 @@ private fun PdfReaderScreen(
     var suppressPageClick by remember { mutableStateOf(false) }
     var viewportPx by remember { mutableStateOf(IntSize.Zero) }
     val hopSibling by rememberUpdatedState(onHopSibling)
-    val doubleTap = remember(navigator, onClose, viewportPx) {
+    val doubleTap = remember(navigator, onClose, viewportPx, readingMode, webtoonHorizontal) {
         doubleTapAction(
-            isRtl = false,
+            isRtl = readingMode == ReadingModeType.RIGHT_TO_LEFT || webtoonHorizontal,
             getViewportSize = {
                 Size(viewportPx.width.toFloat(), viewportPx.height.toFloat())
             },
@@ -1240,9 +1249,11 @@ private fun PdfReaderScreen(
                                 modifier = viewerModifier,
                             ) { index -> spreadAt(index) }
                         } else {
+                            val pagerRtl = readingMode == ReadingModeType.RIGHT_TO_LEFT
+                            val isRtlLayout = LocalLayoutDirection.current == LayoutDirection.Rtl
                             HorizontalPager(
                                 state = pagerState,
-                                reverseLayout = readingMode == ReadingModeType.RIGHT_TO_LEFT,
+                                reverseLayout = pagerRtl xor isRtlLayout,
                                 userScrollEnabled = !multiTouch,
                                 modifier = viewerModifier,
                             ) { index -> spreadAt(index) }
@@ -1256,7 +1267,8 @@ private fun PdfReaderScreen(
                     } else {
                         HorizontalPager(
                             state = pagerState,
-                            reverseLayout = readingMode == ReadingModeType.RIGHT_TO_LEFT,
+                            reverseLayout = (readingMode == ReadingModeType.RIGHT_TO_LEFT) xor
+                                (LocalLayoutDirection.current == LayoutDirection.Rtl),
                             userScrollEnabled = !multiTouch,
                             modifier = viewerModifier,
                         ) { index -> pageAt(index, PdfPageBox.Single, widthPx, heightPx) }
@@ -1277,7 +1289,7 @@ private fun PdfReaderScreen(
             onNavigateUp = onClose,
             showTopBar = !hideTopBar,
             title = title,
-            isRtl = readingMode == ReadingModeType.RIGHT_TO_LEFT,
+            isRtl = readingMode == ReadingModeType.RIGHT_TO_LEFT || webtoonHorizontal,
             showSeekBar = showSeekbar,
             currentPage = currentPage,
             totalPages = pageCount,
@@ -1342,6 +1354,9 @@ private fun PdfReaderScreen(
                 doc = doc,
                 pageCount = pageCount,
                 currentPage = currentPage,
+                cacheKey = sourceArgs?.let { readerPdfCacheKey(it) },
+                allowGenerate = !networkPdf || downloadNetworkThumbs,
+                persistThumb = networkPdf && downloadNetworkThumbs,
                 gridState = thumbGridState,
                 cellAspect = thumbAspect,
                 onCellAspect = { aspect ->
@@ -2045,6 +2060,9 @@ private fun PdfThumbGridSheet(
     doc: PdfDocumentModel,
     pageCount: Int,
     currentPage: Int,
+    cacheKey: String?,
+    allowGenerate: Boolean,
+    persistThumb: Boolean,
     gridState: LazyGridState,
     cellAspect: Float?,
     onCellAspect: (Float) -> Unit,
@@ -2075,6 +2093,9 @@ private fun PdfThumbGridSheet(
                 PdfPageThumb(
                     doc = doc,
                     index = index,
+                    cacheKey = cacheKey,
+                    allowGenerate = allowGenerate,
+                    persistThumb = persistThumb,
                     selected = index == currentPage - 1,
                     cellAspect = cellAspect,
                     onCellAspect = onCellAspect,
@@ -2089,14 +2110,36 @@ private fun PdfThumbGridSheet(
 private fun PdfPageThumb(
     doc: PdfDocumentModel,
     index: Int,
+    cacheKey: String?,
+    allowGenerate: Boolean,
+    persistThumb: Boolean,
     selected: Boolean,
     cellAspect: Float?,
     onCellAspect: (Float) -> Unit,
     onClick: () -> Unit,
 ) {
-    var bitmap by remember(doc, index) { mutableStateOf<Bitmap?>(null) }
-    LaunchedEffect(doc, index) {
-        bitmap = withContext(Dispatchers.IO) {
+    val identity = cacheKey?.let { key ->
+        val prefix = if (doc is PdfDocumentModel.Vector) "pdfrender" else "doc"
+        "$prefix:$key:$index"
+    }
+    var bitmap by remember(identity, doc, index) { mutableStateOf<Bitmap?>(null) }
+    var skipped by remember(identity) { mutableStateOf(false) }
+    LaunchedEffect(doc, index, identity, allowGenerate) {
+        skipped = false
+        val cached = identity?.let { id ->
+            withContext(Dispatchers.IO) {
+                ReaderPageThumb.find(id)?.let { BitmapFactory.decodeFile(it.toString()) }
+            }
+        }
+        if (cached != null) {
+            bitmap = cached
+            return@LaunchedEffect
+        }
+        if (!allowGenerate) {
+            skipped = true
+            return@LaunchedEffect
+        }
+        val rendered = withContext(Dispatchers.IO) {
             when (doc) {
                 is PdfDocumentModel.Vector -> runCatching { doc.session.render(index, 256) }.getOrNull()
                 is PdfDocumentModel.Images -> runCatching {
@@ -2105,6 +2148,12 @@ private fun PdfPageThumb(
                 }.getOrNull()
             }
         }
+        if (rendered != null && identity != null && persistThumb) {
+            withContext(Dispatchers.IO) {
+                runCatching { ReaderPageThumb.ensureFromBitmap(identity, rendered) }
+            }
+        }
+        bitmap = rendered
     }
     DisposableEffect(index) {
         onDispose { bitmap?.recycle() }
@@ -2136,7 +2185,7 @@ private fun PdfPageThumb(
         contentAlignment = Alignment.Center,
     ) {
         if (bmp == null || bmp.isRecycled) {
-            CircularProgressIndicator()
+            if (!skipped) CircularProgressIndicator()
         } else {
             Image(
                 bitmap = bmp.asImageBitmap(),
