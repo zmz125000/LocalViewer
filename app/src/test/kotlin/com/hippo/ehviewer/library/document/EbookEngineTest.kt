@@ -17,9 +17,10 @@ class EbookEngineTest {
         val body = "这是一段简体中文测试文本，用于代码页检测。"
         val bytes = body.toByteArray(gbk)
         val text = TextCharset.decode(bytes)
-        assertTrue(text.contains("简体中文"))
-        val detected = TextCharset.detect(bytes).first.name().uppercase()
-        assertTrue(detected.contains("GB") || detected.contains("18030"))
+        val cs = TextCharset.detect(bytes).first
+        assertTrue("detected=$cs text=${text.take(80)}", text.contains("简体中文"))
+        val detected = cs.name().uppercase()
+        assertTrue("detected=$detected", detected.contains("GB") || detected.contains("18030"))
     }
 
     @Test
