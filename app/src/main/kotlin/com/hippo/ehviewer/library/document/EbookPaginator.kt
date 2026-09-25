@@ -1,5 +1,7 @@
 package com.hippo.ehviewer.library.document
 
+import kotlin.math.roundToInt
+
 /**
  * A-series page geometry so page count / TOC indices stay stable while the PDF
  * reader scales the bitmap. Glyph size is a fraction of **page** width (not
@@ -8,6 +10,15 @@ package com.hippo.ehviewer.library.document
 internal const val EBOOK_FONT_SIZE_DEFAULT = 18
 internal const val EBOOK_FONT_SIZE_MIN = 6
 internal const val EBOOK_FONT_SIZE_MAX = 30
+
+/** Landscape type is about 1.4× the slider. Portrait uses the slider as-is. */
+internal const val EBOOK_LANDSCAPE_FONT_SCALE = 1.4f
+
+internal fun ebookDisplayFontSize(slider: Int, landscape: Boolean): Int {
+    val base = slider.coerceIn(EBOOK_FONT_SIZE_MIN, EBOOK_FONT_SIZE_MAX)
+    if (!landscape) return base
+    return (base * EBOOK_LANDSCAPE_FONT_SCALE).roundToInt()
+}
 
 internal data class EbookStyle(
     val fontSize: Int = EBOOK_FONT_SIZE_DEFAULT,
@@ -21,7 +32,9 @@ internal data class EbookStyle(
     val lineHeightEm: Float get() = lineHeightPercent / 100f
     val paragraphEm: Float get() = paragraphPercent / 100f
     val margin: Float get() = marginPercent / 100f
-    val fontFraction: Float get() = fontSize.coerceIn(EBOOK_FONT_SIZE_MIN, EBOOK_FONT_SIZE_MAX) / 560f
+
+    // Landscape may exceed the slider max (30 × 1.4). Do not clamp that back to 30.
+    val fontFraction: Float get() = fontSize.coerceAtLeast(EBOOK_FONT_SIZE_MIN) / 560f
 
     companion object {
         val DEFAULT = EbookStyle()
@@ -65,7 +78,7 @@ internal object EbookPaginator {
         val toc = ArrayList<PdfTocEntry>(chapters.size)
         for ((chIndex, ch) in chapters.withIndex()) {
             if (!stillWanted()) break
-            appendChapter(ch, chIndex, style, pages, toc)
+            appendChapter(ch, chIndex, style, pages, toc, pageBase = 0)
         }
         if (pages.isEmpty()) {
             pages += EbookPage(listOf(EbookLine("", heightEm = EbookStyle.DEFAULT.lineHeightEm)), 0, 0)
@@ -79,6 +92,7 @@ internal object EbookPaginator {
         style: EbookStyle,
         pages: MutableList<EbookPage>,
         toc: MutableList<PdfTocEntry>,
+        pageBase: Int = 0,
     ) {
         val raw = ArrayList<EbookLine>()
         val title = ch.title.trim()
@@ -93,7 +107,8 @@ internal object EbookPaginator {
         val lines = raw.map { line ->
             line.copy(offset = placed).also { placed += it.text.length }
         }
-        val startPage = pages.size
+        // [pages] may be only this chapter. [pageBase] is the pages already published.
+        val startPage = pageBase + pages.size
         toc += PdfTocEntry(title.ifBlank { "${startPage + 1}" }, startPage, ch.depth.coerceAtLeast(0))
         packPages(lines, chIndex, contentHeightEm(style), pages)
     }

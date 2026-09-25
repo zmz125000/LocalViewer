@@ -332,12 +332,10 @@ private fun HistoryOverflowEnv.httpShare(info: GalleryEntity): (() -> Unit)? {
             val rel = when (target) {
                 is LocalHistoryTarget.LocalBrowseFolder -> target.relativePath
                 is LocalHistoryTarget.LocalFolderGallery -> target.relativePath
-                else -> return null
             }
             val rootId = when (target) {
                 is LocalHistoryTarget.LocalBrowseFolder -> target.rootId
                 is LocalHistoryTarget.LocalFolderGallery -> target.rootId
-                else -> return null
             }
             share {
                 val abs = localAbsPath(rootId, rel) ?: error("Missing folder")

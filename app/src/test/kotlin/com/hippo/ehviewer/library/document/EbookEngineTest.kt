@@ -129,6 +129,48 @@ class EbookEngineTest {
     }
 
     @Test
+    fun freshChapterListsKeepRealTocPages() {
+        val chapters = listOf(
+            EbookChapter("One", "测".repeat(800), 0),
+            EbookChapter("Two", "试".repeat(800), 0),
+            EbookChapter("Three", "文".repeat(400), 1),
+        )
+        val style = EbookStyle(paragraphMode = EbookParagraph.SOFT)
+        val (fullPages, fullToc) = EbookPaginator.paginate(chapters, style)
+        val pages = ArrayList<EbookPage>()
+        val toc = ArrayList<PdfTocEntry>()
+        for ((i, ch) in chapters.withIndex()) {
+            val extraPages = ArrayList<EbookPage>()
+            val extraToc = ArrayList<PdfTocEntry>()
+            EbookPaginator.appendChapter(ch, i, style, extraPages, extraToc, pageBase = pages.size)
+            pages += extraPages
+            toc += extraToc
+        }
+        assertEquals(fullPages.size, pages.size)
+        assertEquals(fullToc, toc)
+        assertTrue(toc[1].pageIndex > 0)
+        assertTrue(toc[2].pageIndex > toc[1].pageIndex)
+    }
+
+    @Test
+    fun landscapeFontIsAboutOnePointFourTimesSlider() {
+        assertEquals(18, ebookDisplayFontSize(18, landscape = false))
+        val landscape = ebookDisplayFontSize(18, landscape = true)
+        assertEquals(25, landscape)
+        assertTrue(landscape > 18)
+        assertTrue(landscape < (18 * 1.5f).toInt())
+        val portraitPages = EbookPaginator.paginate(
+            listOf(EbookChapter("t", "测".repeat(800))),
+            EbookStyle(fontSize = ebookDisplayFontSize(18, landscape = false)),
+        ).first
+        val landscapePages = EbookPaginator.paginate(
+            listOf(EbookChapter("t", "测".repeat(800))),
+            EbookStyle(fontSize = ebookDisplayFontSize(18, landscape = true)),
+        ).first
+        assertTrue(landscapePages.size > portraitPages.size)
+    }
+
+    @Test
     fun appendChapterMatchesFullPaginate() {
         val chapters = listOf(
             EbookChapter("One", "测".repeat(80), 0),
