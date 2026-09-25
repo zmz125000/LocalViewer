@@ -148,6 +148,8 @@ import com.hippo.ehviewer.library.OriginDiskCache
 import com.hippo.ehviewer.library.PdfTocCache
 import com.hippo.ehviewer.library.PfdArchiveByteSource
 import com.hippo.ehviewer.library.ReaderPageThumb
+import com.hippo.ehviewer.library.document.EBOOK_FONT_SIZE_MAX
+import com.hippo.ehviewer.library.document.EBOOK_FONT_SIZE_MIN
 import com.hippo.ehviewer.library.document.EbookChapter
 import com.hippo.ehviewer.library.document.EbookEngine
 import com.hippo.ehviewer.library.document.EbookLine
@@ -158,6 +160,7 @@ import com.hippo.ehviewer.library.document.PdfContentKind
 import com.hippo.ehviewer.library.document.PdfImageEngine
 import com.hippo.ehviewer.library.document.PdfTocEntry
 import com.hippo.ehviewer.library.document.TextCharset
+import com.hippo.ehviewer.library.document.pdfTocWithFileName
 import com.hippo.ehviewer.library.document.readPdfChapters
 import com.hippo.ehviewer.library.isEbookFileName
 import com.hippo.ehviewer.library.openLocalArchiveByteSource
@@ -1030,7 +1033,7 @@ private data class EbookPaint(
 )
 
 private fun ebookStyleFromSettings(): EbookStyle = EbookStyle(
-    fontSize = Settings.ebookFontSize.value.coerceIn(12, 32),
+    fontSize = Settings.ebookFontSize.value.coerceIn(EBOOK_FONT_SIZE_MIN, EBOOK_FONT_SIZE_MAX),
     lineHeightPercent = Settings.ebookLineHeight.value.coerceIn(100, 200),
     paragraphPercent = Settings.ebookParagraphSpacing.value.coerceIn(0, 200),
     indentEm = Settings.ebookIndent.value.coerceIn(0, 2),
@@ -1245,7 +1248,7 @@ private fun PdfReaderScreen(
         ebookParaMode,
     ) {
         EbookStyle(
-            fontSize = ebookFontSize.coerceIn(12, 32),
+            fontSize = ebookFontSize.coerceIn(EBOOK_FONT_SIZE_MIN, EBOOK_FONT_SIZE_MAX),
             lineHeightPercent = ebookLineHeight.coerceIn(100, 200),
             paragraphPercent = ebookParagraph.coerceIn(0, 200),
             indentEm = ebookIndent.coerceIn(0, 2),
@@ -1896,6 +1899,7 @@ private fun PdfReaderScreen(
         )
         if (contentsOpen) {
             PdfContentsSheet(
+                fileName = title,
                 chapters = doc?.chapters.orEmpty(),
                 pageCount = pageCount,
                 currentPage = currentPage,
@@ -2404,6 +2408,7 @@ private fun PdfPageBitmap(
 
 @Composable
 private fun PdfContentsSheet(
+    fileName: String,
     chapters: List<PdfTocEntry>,
     pageCount: Int,
     currentPage: Int,
@@ -2423,14 +2428,8 @@ private fun PdfContentsSheet(
         contentWindowInsets = { WindowInsets() },
     ) {
         val pagesOnly = chapters.isEmpty()
-        val entries = remember(chapters, pageCount) {
-            if (!pagesOnly) {
-                chapters
-            } else {
-                List(pageCount) { index ->
-                    PdfTocEntry(title = "${index + 1}", pageIndex = index, depth = 0)
-                }
-            }
+        val entries = remember(chapters, pageCount, fileName) {
+            pdfTocWithFileName(fileName, chapters, pageCount)
         }
         val nearest = if (entries.isEmpty()) -1 else nearestPdfTocIndex(entries, pageIndex)
         var searching by remember { mutableStateOf(false) }

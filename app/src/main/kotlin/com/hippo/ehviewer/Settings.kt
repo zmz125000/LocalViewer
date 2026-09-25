@@ -624,26 +624,27 @@ object Settings : DataStorePreferences(null) {
     const val EBOOK_PARA_SOFT = 2
 
     const val EBOOK_CHARSET_AUTO = 0
-    const val EBOOK_CHARSET_UTF8 = 1
-    const val EBOOK_CHARSET_UTF16LE = 2
-    const val EBOOK_CHARSET_UTF16BE = 3
-    const val EBOOK_CHARSET_GBK = 4
-    const val EBOOK_CHARSET_GB18030 = 5
-    const val EBOOK_CHARSET_BIG5 = 6
-    const val EBOOK_CHARSET_SJIS = 7
-    const val EBOOK_CHARSET_EUCKR = 8
-    const val EBOOK_CHARSET_1252 = 9
-    const val EBOOK_CHARSET_AUTO_ZH = 10
-    const val EBOOK_CHARSET_AUTO_KO = 11
-    const val EBOOK_CHARSET_AUTO_JA = 12
+    const val EBOOK_CHARSET_AUTO_ZH = 1
+    const val EBOOK_CHARSET_AUTO_JA = 2
+    const val EBOOK_CHARSET_AUTO_KO = 3
+    const val EBOOK_CHARSET_UTF8 = 4
+    const val EBOOK_CHARSET_UTF16LE = 5
+    const val EBOOK_CHARSET_UTF16BE = 6
+    const val EBOOK_CHARSET_GBK = 7
+    const val EBOOK_CHARSET_GB18030 = 8
+    const val EBOOK_CHARSET_BIG5 = 9
+    const val EBOOK_CHARSET_SJIS = 10
+    const val EBOOK_CHARSET_EUCKR = 11
+    const val EBOOK_CHARSET_1252 = 12
 
-    /** Body type size 12–32, larger = larger glyphs. Fraction of page width, not content width. */
+    /** Body type size 6–30, larger = larger glyphs. Fraction of page width, not content width. */
     val ebookFontSize = intPref("pref_ebook_font_size", 18)
 
     /**
-     * TXT/HTML/FB2/Markdown decode. 0=auto (default), then UTF-8 / UTF-16LE / UTF-16BE /
-     * GBK / GB18030 / Big5 / Shift_JIS / EUC-KR / Windows-1252, then language-biased
-     * auto 10=Chinese / 11=Korean / 12=Japanese (UTF-8 still wins when well-formed).
+     * TXT/HTML/FB2/Markdown decode. 0=auto (default), then language-biased auto
+     * 1=Chinese / 2=Japanese / 3=Korean, then UTF-8 / UTF-16LE / UTF-16BE /
+     * GBK / GB18030 / Big5 / Shift_JIS / EUC-KR / Windows-1252.
+     * Language-biased auto still prefers UTF-8 when the sample is well-formed.
      */
     val ebookCharset = intPref("pref_ebook_charset", 0)
 

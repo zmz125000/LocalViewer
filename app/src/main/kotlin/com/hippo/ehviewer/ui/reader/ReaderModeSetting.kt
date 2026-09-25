@@ -20,6 +20,8 @@ import androidx.compose.ui.unit.dp
 import com.ehviewer.core.i18n.R
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.asMutableState
+import com.hippo.ehviewer.library.document.EBOOK_FONT_SIZE_MAX
+import com.hippo.ehviewer.library.document.EBOOK_FONT_SIZE_MIN
 import eu.kanade.tachiyomi.ui.reader.setting.OrientationType
 import eu.kanade.tachiyomi.ui.reader.setting.ReadingModeType
 
@@ -131,8 +133,8 @@ private fun DocumentStyleSetting() = Column {
         values = listOf(
             Settings.EBOOK_CHARSET_AUTO,
             Settings.EBOOK_CHARSET_AUTO_ZH,
-            Settings.EBOOK_CHARSET_AUTO_KO,
             Settings.EBOOK_CHARSET_AUTO_JA,
+            Settings.EBOOK_CHARSET_AUTO_KO,
             Settings.EBOOK_CHARSET_UTF8,
             Settings.EBOOK_CHARSET_UTF16LE,
             Settings.EBOOK_CHARSET_UTF16BE,
@@ -154,7 +156,7 @@ private fun DocumentStyleSetting() = Column {
     SliderChoice(
         startSlot = {},
         endSlot = { Text(text = "${fontSize.value}") },
-        range = 12..32,
+        range = EBOOK_FONT_SIZE_MIN..EBOOK_FONT_SIZE_MAX,
         field = fontSize,
     )
     Text(

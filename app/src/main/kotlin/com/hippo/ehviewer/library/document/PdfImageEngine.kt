@@ -2540,6 +2540,29 @@ internal data class PdfTocEntry(
     val depth: Int,
 )
 
+/** File name as the first TOC row (page 0). Empty outline becomes name then 2, 3, … */
+internal fun pdfTocWithFileName(
+    fileName: String,
+    chapters: List<PdfTocEntry>,
+    pageCount: Int,
+): List<PdfTocEntry> {
+    val name = fileName.substringAfterLast('/').substringAfterLast('\\').trim()
+    val body = if (chapters.isNotEmpty()) {
+        chapters
+    } else {
+        List(pageCount.coerceAtLeast(0)) { index ->
+            PdfTocEntry(title = "${index + 1}", pageIndex = index, depth = 0)
+        }
+    }
+    if (name.isEmpty()) return body
+    val first = body.firstOrNull()
+    val skipFirst = first != null &&
+        first.pageIndex == 0 &&
+        (first.title == name || (chapters.isEmpty() && first.title == "1"))
+    val rest = if (skipFirst) body.drop(1) else body
+    return listOf(PdfTocEntry(name, 0, 0)) + rest
+}
+
 /**
  * @return chapters, an empty list when the file has no outline, or null when the
  * walk was stopped or failed. Null must not be stored as a TOC cache hit.

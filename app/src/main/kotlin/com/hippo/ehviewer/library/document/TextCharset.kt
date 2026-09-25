@@ -27,18 +27,18 @@ internal object TextCharset {
     private const val SAMPLE = 64 * 1024
 
     const val PREF_AUTO = 0
-    const val PREF_UTF8 = 1
-    const val PREF_UTF16LE = 2
-    const val PREF_UTF16BE = 3
-    const val PREF_GBK = 4
-    const val PREF_GB18030 = 5
-    const val PREF_BIG5 = 6
-    const val PREF_SJIS = 7
-    const val PREF_EUCKR = 8
-    const val PREF_1252 = 9
-    const val PREF_AUTO_ZH = 10
-    const val PREF_AUTO_KO = 11
-    const val PREF_AUTO_JA = 12
+    const val PREF_AUTO_ZH = 1
+    const val PREF_AUTO_JA = 2
+    const val PREF_AUTO_KO = 3
+    const val PREF_UTF8 = 4
+    const val PREF_UTF16LE = 5
+    const val PREF_UTF16BE = 6
+    const val PREF_GBK = 7
+    const val PREF_GB18030 = 8
+    const val PREF_BIG5 = 9
+    const val PREF_SJIS = 10
+    const val PREF_EUCKR = 11
+    const val PREF_1252 = 12
 
     fun forcedCharset(pref: Int): Charset? = when (pref) {
         PREF_UTF8 -> UTF8

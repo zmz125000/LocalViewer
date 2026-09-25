@@ -6,6 +6,8 @@ package com.hippo.ehviewer.library.document
  * content width), so margin/padding change line length, not type size.
  */
 internal const val EBOOK_FONT_SIZE_DEFAULT = 18
+internal const val EBOOK_FONT_SIZE_MIN = 6
+internal const val EBOOK_FONT_SIZE_MAX = 30
 
 internal data class EbookStyle(
     val fontSize: Int = EBOOK_FONT_SIZE_DEFAULT,
@@ -19,7 +21,7 @@ internal data class EbookStyle(
     val lineHeightEm: Float get() = lineHeightPercent / 100f
     val paragraphEm: Float get() = paragraphPercent / 100f
     val margin: Float get() = marginPercent / 100f
-    val fontFraction: Float get() = fontSize.coerceIn(12, 32) / 560f
+    val fontFraction: Float get() = fontSize.coerceIn(EBOOK_FONT_SIZE_MIN, EBOOK_FONT_SIZE_MAX) / 560f
 
     companion object {
         val DEFAULT = EbookStyle()
