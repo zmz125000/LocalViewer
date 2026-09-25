@@ -263,6 +263,7 @@ class PdfReaderActivity : AppCompatActivity() {
                 progressGid = progressGid,
                 onPageChanged = { lastVisiblePage = it },
                 onClose = {
+                    stopOpenEngines()
                     closeSession()
                     finish()
                 },
@@ -288,7 +289,7 @@ class PdfReaderActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         flushProgress()
-        openJob?.cancel()
+        stopOpenEngines()
         closeSession()
         super.onDestroy()
     }
@@ -307,9 +308,8 @@ class PdfReaderActivity : AppCompatActivity() {
         val nextGid = intent.getLongExtra(EXTRA_PROGRESS_GID, 0L)
         val nextStart = intent.getIntExtra(EXTRA_START_PAGE, 0).coerceAtLeast(0)
         val nextArgs = readerArgsFromIntent(intent)
-        openJob?.cancel()
+        stopOpenEngines()
         val generation = ++openGeneration
-        if (replace) closeSession(removeToken = false)
         openJob = lifecycleScope.launch {
             var pfd: ParcelFileDescriptor? = null
             var opened: PdfDocumentModel? = null
@@ -364,7 +364,8 @@ class PdfReaderActivity : AppCompatActivity() {
                     return@launch
                 }
                 val oldToken = streamToken
-                closeSession(removeToken = false)
+                val oldDoc = doc
+                val oldLoader = imageLoader
                 if (oldToken != null && oldToken != token) StreamDocumentRegistry.remove(oldToken)
                 streamToken = token
                 title = nextTitle.ifBlank { uri.lastPathSegment.orEmpty() }
@@ -386,6 +387,8 @@ class PdfReaderActivity : AppCompatActivity() {
                     )
                 }
                 opened = null
+                oldLoader?.close()
+                oldDoc?.close()
                 if (model is PdfDocumentModel.Vector) {
                     // Outline page numbers that are already in the file finish quickly.
                     // Page-object destinations walk the page tree. This child is cancelled
@@ -434,6 +437,11 @@ class PdfReaderActivity : AppCompatActivity() {
         openFromIntent(intent, replace = true)
     }
 
+    private fun stopOpenEngines() {
+        openJob?.cancel()
+        openJob = null
+    }
+
     private fun hopSibling(next: Boolean) {
         val current = sourceArgs ?: return
         if (!hopBusy.compareAndSet(false, true)) return
@@ -443,25 +451,41 @@ class PdfReaderActivity : AppCompatActivity() {
                     runCatching { GallerySiblingNavigator.sibling(current, next) }.getOrNull()
                 } ?: return@launch
                 flushProgress()
-                closeSession()
-                if (OpenPdfBySettings.shouldRedirect(sibling)) {
-                    when (val outcome = OpenPdfBySettings.open(this@PdfReaderActivity, sibling)) {
-                        is OpenPdfBySettings.Outcome.Gallery -> {
-                            OpenPdfBySettings.handoffGallery(this@PdfReaderActivity, outcome.args)
-                            finish()
-                        }
-                        OpenPdfBySettings.Outcome.Handled -> Unit
+                stopOpenEngines()
+                when {
+                    OpenPdfBySettings.shouldOpenInternal(sibling) -> {
+                        val hopIntent = OpenPdfBySettings.prepareInternal(
+                            this@PdfReaderActivity,
+                            sibling,
+                        )
+                        setIntent(hopIntent)
+                        openFromIntent(hopIntent, replace = true)
                     }
-                } else {
-                    PendingReaderOpen.offer(sibling)
-                    startActivity(
-                        Intent(this@PdfReaderActivity, MainActivity::class.java).apply {
-                            action = PendingReaderOpen.ACTION
-                            addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
-                            addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
-                        },
-                    )
-                    finish()
+                    OpenPdfBySettings.shouldRedirect(sibling) -> {
+                        closeSession()
+                        when (val outcome = OpenPdfBySettings.open(this@PdfReaderActivity, sibling)) {
+                            is OpenPdfBySettings.Outcome.Gallery -> {
+                                OpenPdfBySettings.handoffGallery(
+                                    this@PdfReaderActivity,
+                                    outcome.args,
+                                )
+                            }
+                            OpenPdfBySettings.Outcome.Handled -> Unit
+                        }
+                        finish()
+                    }
+                    else -> {
+                        closeSession()
+                        PendingReaderOpen.offer(sibling)
+                        startActivity(
+                            Intent(this@PdfReaderActivity, MainActivity::class.java).apply {
+                                action = PendingReaderOpen.ACTION
+                                addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
+                                addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                            },
+                        )
+                        finish()
+                    }
                 }
             } finally {
                 hopBusy.set(false)
@@ -787,6 +811,9 @@ private sealed interface PdfDocumentModel {
                 val loaded = withContext(Dispatchers.IO) {
                     load { isActive } to isActive
                 }
+                if (session is EbookSession) {
+                    chapters = session.toc.ifEmpty { chapters }
+                }
                 if (!loaded.second) return@withLock
                 chapters = loaded.first
                 chaptersLoaded = true
@@ -906,7 +933,12 @@ private class EbookSession(
 
     @Volatile private var closed = false
 
-    override val pageCount: Int get() = pages.size
+    private var pageCountState by mutableIntStateOf(0)
+    override val pageCount: Int get() = pageCountState
+
+    private fun publishPageCount() {
+        pageCountState = pages.size
+    }
 
     fun anchorAt(pageIndex: Int): Pair<Int, Int> {
         val p = pages.getOrNull(pageIndex.coerceIn(0, (pages.size - 1).coerceAtLeast(0)))
@@ -930,6 +962,7 @@ private class EbookSession(
         if (pages.isEmpty() && nextChapter >= source.size) {
             pages = listOf(EbookPage(listOf(EbookLine("", heightEm = style.lineHeightEm)), 0, 0))
         }
+        publishPageCount()
         return pages.isNotEmpty()
     }
 
@@ -946,6 +979,7 @@ private class EbookSession(
                 pages = pages + extraPages
                 toc = toc + extraToc
                 nextChapter++
+                publishPageCount()
             }
             yield()
         }
@@ -966,6 +1000,7 @@ private class EbookSession(
         pages = nextPages
         toc = nextToc
         nextChapter = source.size
+        publishPageCount()
         styleGeneration++
         true
     }
@@ -1518,7 +1553,7 @@ private fun PdfReaderScreen(
                     CircularProgressIndicator()
                 }
             }
-            else -> {
+            else -> key(progressGid, sourceArgs) {
                 BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
                     val widthPx = with(LocalDensity.current) { maxWidth.roundToPx() }
                     val zoomableState = rememberZoomableState(zoomSpec = PdfZoomSpec)

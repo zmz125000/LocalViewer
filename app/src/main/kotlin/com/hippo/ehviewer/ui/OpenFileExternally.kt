@@ -270,15 +270,22 @@ object OpenFileExternally {
         progressGid: Long = 0L,
         startPage: Int = 0,
     ) {
+        val intent = preparePdfReaderIntentLocal(context, pathStr, displayName, progressGid, startPage)
+        launchPreparedPdfReader(context, intent)
+    }
+
+    suspend fun preparePdfReaderIntentLocal(
+        context: Context,
+        pathStr: String,
+        displayName: String,
+        progressGid: Long,
+        startPage: Int,
+    ): Intent {
         val token = registerLocalStreamdoc(pathStr, displayName, DefaultPdfReader.MIME_TYPE)
-        launchStreamdoc(
+        return pdfReaderIntent(
             context = context,
             token = token,
             displayName = displayName,
-            mimeType = DefaultPdfReader.MIME_TYPE,
-            networkStream = false,
-            internalPlayer = false,
-            internalPdf = true,
             progressGid = progressGid,
             startPage = startPage,
             pdfKind = PdfReaderActivity.KIND_LOCAL,
@@ -448,20 +455,35 @@ object OpenFileExternally {
         progressGid: Long = 0L,
         startPage: Int = 0,
     ) {
+        val intent = preparePdfReaderIntentSmb(
+            context,
+            sourceId,
+            remoteRelativeFile,
+            displayName,
+            progressGid,
+            startPage,
+        )
+        launchPreparedPdfReader(context, intent)
+    }
+
+    suspend fun preparePdfReaderIntentSmb(
+        context: Context,
+        sourceId: Long,
+        remoteRelativeFile: String,
+        displayName: String,
+        progressGid: Long,
+        startPage: Int,
+    ): Intent {
         val token = registerSmbStreamdoc(
             sourceId,
             remoteRelativeFile,
             displayName,
             DefaultPdfReader.MIME_TYPE,
         )
-        launchStreamdoc(
+        return pdfReaderIntent(
             context = context,
             token = token,
             displayName = displayName,
-            mimeType = DefaultPdfReader.MIME_TYPE,
-            networkStream = true,
-            internalPlayer = false,
-            internalPdf = true,
             progressGid = progressGid,
             startPage = startPage,
             pdfKind = PdfReaderActivity.KIND_SMB,
@@ -534,26 +556,73 @@ object OpenFileExternally {
         progressGid: Long = 0L,
         startPage: Int = 0,
     ) {
+        val intent = preparePdfReaderIntentWebDav(
+            context,
+            sourceId,
+            remoteRelativeFile,
+            displayName,
+            progressGid,
+            startPage,
+        )
+        launchPreparedPdfReader(context, intent)
+    }
+
+    suspend fun preparePdfReaderIntentWebDav(
+        context: Context,
+        sourceId: Long,
+        remoteRelativeFile: String,
+        displayName: String,
+        progressGid: Long,
+        startPage: Int,
+    ): Intent {
         val token = registerWebDavStreamdoc(
             sourceId,
             remoteRelativeFile,
             displayName,
             DefaultPdfReader.MIME_TYPE,
         )
-        launchStreamdoc(
+        return pdfReaderIntent(
             context = context,
             token = token,
             displayName = displayName,
-            mimeType = DefaultPdfReader.MIME_TYPE,
-            networkStream = true,
-            internalPlayer = false,
-            internalPdf = true,
             progressGid = progressGid,
             startPage = startPage,
             pdfKind = PdfReaderActivity.KIND_WEBDAV,
             pdfSourceId = sourceId,
             pdfRemotePath = remoteRelativeFile,
         )
+    }
+
+    private fun pdfReaderIntent(
+        context: Context,
+        token: String,
+        displayName: String,
+        progressGid: Long,
+        startPage: Int,
+        pdfKind: String?,
+        pdfLocalPath: String? = null,
+        pdfSourceId: Long = 0L,
+        pdfRemotePath: String? = null,
+    ): Intent {
+        val uri = StreamDocumentProvider.uriFor(token, displayName)
+        return PdfReaderActivity.intent(
+            context = context,
+            uri = uri,
+            title = displayName,
+            streamToken = token,
+            progressGid = progressGid,
+            startPage = startPage,
+            sourceKind = pdfKind,
+            localPath = pdfLocalPath,
+            sourceId = pdfSourceId,
+            remotePath = pdfRemotePath,
+        )
+    }
+
+    private suspend fun launchPreparedPdfReader(context: Context, intent: Intent) {
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        intent.addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
+        withUIContext { context.startActivity(intent) }
     }
 
     private suspend fun launchInternalVideo(

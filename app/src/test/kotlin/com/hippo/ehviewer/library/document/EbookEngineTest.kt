@@ -70,6 +70,27 @@ class EbookEngineTest {
     }
 
     @Test
+    fun firstChapterPaginateIsNotTheWholeBook() {
+        val chapters = EbookEngine.chaptersFromPlain(
+            """
+                Title
+                第一章 开始
+                ${"paragraph ".repeat(80)}
+                第二章 继续
+                ${"more text ".repeat(80)}
+            """.trimIndent(),
+            "book",
+        )
+        assertTrue(chapters.size >= 2)
+        val firstPages = ArrayList<EbookPage>()
+        val firstToc = ArrayList<PdfTocEntry>()
+        EbookPaginator.appendChapter(chapters[0], 0, EbookStyle(), firstPages, firstToc)
+        val (allPages, _) = EbookPaginator.paginate(chapters)
+        assertTrue(firstPages.isNotEmpty())
+        assertTrue(allPages.size > firstPages.size)
+    }
+
+    @Test
     fun paginatorWrapsCjkAndAscii() {
         val style = EbookStyle(paragraphMode = EbookParagraph.SOFT)
         val cap = EbookPaginator.lineCapacity(style)

@@ -58,6 +58,18 @@ object OpenPdfBySettings {
         return Settings.pdfReaderMode.value != PdfReaderMode.IMAGE
     }
 
+    /** Stay in [PdfReaderActivity] (ebook, or PDF that is not image/external). */
+    suspend fun shouldOpenInternal(args: ReaderScreenArgs): Boolean {
+        if (args.skipPdfPrimary) return false
+        if (isEbookArgs(args)) return true
+        if (!isPdfArgs(args)) return false
+        return when (Settings.pdfReaderMode.value) {
+            PdfReaderMode.PDF -> true
+            PdfReaderMode.AUTO -> !isImagePdf(args)
+            else -> false
+        }
+    }
+
     /** Open PDF/external without composing [com.hippo.ehviewer.ui.reader.ReaderScreen]. */
     fun launch(context: Context, args: ReaderScreenArgs) {
         scope.launch {
@@ -192,63 +204,72 @@ object OpenPdfBySettings {
     }
 
     private suspend fun openInternal(context: Context, args: ReaderScreenArgs) {
-        when (args) {
-            is ReaderScreenArgs.Archive -> {
-                val path = args.path
-                val name = fileName(path)
-                val info = args.info ?: LocalHistory.galleryInfoForLocalArchive(path, title = name)
-                LocalHistory.ensureGalleryForProgress(info)
-                LocalHistory.recordLocalArchive(path, title = name)
-                OpenPdfExternally.openInternalLocal(
-                    context,
-                    path,
-                    displayName = name,
-                    progressGid = info.gid,
-                    startPage = startPage(args.page, info.gid),
-                )
-            }
-            is ReaderScreenArgs.SmbStreamArchive -> {
-                val remote = args.remotePath.trim('/')
-                val name = args.info?.title?.ifBlank { null } ?: fileName(remote)
-                val info = args.info ?: smbInfo(args.sourceId, remote, name)
-                LocalHistory.ensureGalleryForProgress(info)
-                LocalHistory.recordSmbStreamArchive(
-                    args.sourceId,
-                    remote,
-                    title = name,
-                    info = info,
-                )
-                OpenPdfExternally.openInternalSmb(
-                    context,
-                    args.sourceId,
-                    remote,
-                    displayName = name,
-                    progressGid = info.gid,
-                    startPage = startPage(args.page, info.gid),
-                )
-            }
-            is ReaderScreenArgs.WebDavStreamArchive -> {
-                val remote = args.remotePath.trim('/')
-                val name = args.info?.title?.ifBlank { null } ?: fileName(remote)
-                val info = args.info ?: webDavInfo(args.sourceId, remote, name)
-                LocalHistory.ensureGalleryForProgress(info)
-                LocalHistory.recordWebDavStreamArchive(
-                    args.sourceId,
-                    remote,
-                    title = name,
-                    info = info,
-                )
-                OpenPdfExternally.openInternalWebDav(
-                    context,
-                    args.sourceId,
-                    remote,
-                    displayName = name,
-                    progressGid = info.gid,
-                    startPage = startPage(args.page, info.gid),
-                )
-            }
-            else -> error("not a PDF archive")
+        val intent = prepareInternal(context, args)
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        intent.addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
+        withUIContext { context.startActivity(intent) }
+    }
+
+    /**
+     * History + streamdoc [Intent] for [PdfReaderActivity] without starting it.
+     * Sibling hop reuses the same activity instead of flashing a loading spinner.
+     */
+    suspend fun prepareInternal(context: Context, args: ReaderScreenArgs): Intent = when (args) {
+        is ReaderScreenArgs.Archive -> {
+            val path = args.path
+            val name = fileName(path)
+            val info = args.info ?: LocalHistory.galleryInfoForLocalArchive(path, title = name)
+            LocalHistory.ensureGalleryForProgress(info)
+            LocalHistory.recordLocalArchive(path, title = name)
+            OpenFileExternally.preparePdfReaderIntentLocal(
+                context,
+                path,
+                name,
+                info.gid,
+                startPage(args.page, info.gid),
+            )
         }
+        is ReaderScreenArgs.SmbStreamArchive -> {
+            val remote = args.remotePath.trim('/')
+            val name = args.info?.title?.ifBlank { null } ?: fileName(remote)
+            val info = args.info ?: smbInfo(args.sourceId, remote, name)
+            LocalHistory.ensureGalleryForProgress(info)
+            LocalHistory.recordSmbStreamArchive(
+                args.sourceId,
+                remote,
+                title = name,
+                info = info,
+            )
+            OpenFileExternally.preparePdfReaderIntentSmb(
+                context,
+                args.sourceId,
+                remote,
+                name,
+                info.gid,
+                startPage(args.page, info.gid),
+            )
+        }
+        is ReaderScreenArgs.WebDavStreamArchive -> {
+            val remote = args.remotePath.trim('/')
+            val name = args.info?.title?.ifBlank { null } ?: fileName(remote)
+            val info = args.info ?: webDavInfo(args.sourceId, remote, name)
+            LocalHistory.ensureGalleryForProgress(info)
+            LocalHistory.recordWebDavStreamArchive(
+                args.sourceId,
+                remote,
+                title = name,
+                info = info,
+            )
+            OpenFileExternally.preparePdfReaderIntentWebDav(
+                context,
+                args.sourceId,
+                remote,
+                name,
+                info.gid,
+                startPage(args.page, info.gid),
+            )
+        }
+        else -> error("not a PDF archive")
     }
 
     private suspend fun openExternal(context: Context, args: ReaderScreenArgs) {
