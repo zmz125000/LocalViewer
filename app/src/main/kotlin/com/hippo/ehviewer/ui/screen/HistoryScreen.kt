@@ -80,6 +80,8 @@ import com.hippo.ehviewer.library.WEBDAV_FOLDER_TOKEN
 import com.hippo.ehviewer.library.ZipAsDirListing
 import com.hippo.ehviewer.library.ZipPaths
 import com.hippo.ehviewer.library.buildLocalBrowseStack
+import com.hippo.ehviewer.library.isEbookFileName
+import com.hippo.ehviewer.library.isEpubFileName
 import com.hippo.ehviewer.library.isPdfFileName
 import com.hippo.ehviewer.library.isVideoFileName
 import com.hippo.ehviewer.library.libraryBrowseRelative
@@ -93,6 +95,7 @@ import com.hippo.ehviewer.smb.SmbGateway
 import com.hippo.ehviewer.smb.SmbRepository
 import com.hippo.ehviewer.ui.DrawerHandle
 import com.hippo.ehviewer.ui.OpenFileExternally
+import com.hippo.ehviewer.ui.OpenPdfExternally
 import com.hippo.ehviewer.ui.Screen
 import com.hippo.ehviewer.ui.main.GalleryGridDefaults
 import com.hippo.ehviewer.ui.main.HistoryDirectoryGridItem
@@ -667,8 +670,26 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
                     val path = target.path
                     val name = info.title
                         ?: path.substringAfterLast('/').substringAfterLast('\\')
-                    if (isPdfFileName(name) || isPdfFileName(path)) {
+                    if (isPdfFileName(name) || isPdfFileName(path) ||
+                        isEpubFileName(name) || isEpubFileName(path)
+                    ) {
                         navToReader(path)
+                        return@launch
+                    }
+                    if (isEbookFileName(name) || isEbookFileName(path)) {
+                        val gid = stableGalleryId(0L, "local-file:$path")
+                        val page = withIOContext {
+                            runCatching { EhDB.getReadProgress(gid) }.getOrDefault(0)
+                        }
+                        withIOContext {
+                            OpenPdfExternally.openInternalLocal(
+                                context,
+                                path,
+                                displayName = name,
+                                progressGid = gid,
+                                startPage = page,
+                            )
+                        }
                         return@launch
                     }
                     val mime = mimeTypeForFileName(name)
@@ -699,8 +720,27 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
                     val remote = target.remotePath.trim('/')
                     val name = info.title
                         ?: remote.substringAfterLast('/').substringAfterLast('\\')
-                    if (isPdfFileName(name) || isPdfFileName(remote)) {
+                    if (isPdfFileName(name) || isPdfFileName(remote) ||
+                        isEpubFileName(name) || isEpubFileName(remote)
+                    ) {
                         navToSmbStreamArchiveReader(source.id, remote)
+                        return@launch
+                    }
+                    if (isEbookFileName(name) || isEbookFileName(remote)) {
+                        val gid = stableGalleryId(source.id, "smbf:$remote")
+                        val page = withIOContext {
+                            runCatching { EhDB.getReadProgress(gid) }.getOrDefault(0)
+                        }
+                        withIOContext {
+                            OpenPdfExternally.openInternalSmb(
+                                context,
+                                source.id,
+                                remote,
+                                displayName = name,
+                                progressGid = gid,
+                                startPage = page,
+                            )
+                        }
                         return@launch
                     }
                     val mime = mimeTypeForFileName(name)
@@ -748,8 +788,27 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
                     val remote = target.remotePath.trim('/')
                     val name = info.title
                         ?: remote.substringAfterLast('/').substringAfterLast('\\')
-                    if (isPdfFileName(name) || isPdfFileName(remote)) {
+                    if (isPdfFileName(name) || isPdfFileName(remote) ||
+                        isEpubFileName(name) || isEpubFileName(remote)
+                    ) {
                         navToWebDavStreamArchiveReader(source.id, remote)
+                        return@launch
+                    }
+                    if (isEbookFileName(name) || isEbookFileName(remote)) {
+                        val gid = stableGalleryId(source.id, "davf:$remote")
+                        val page = withIOContext {
+                            runCatching { EhDB.getReadProgress(gid) }.getOrDefault(0)
+                        }
+                        withIOContext {
+                            OpenPdfExternally.openInternalWebDav(
+                                context,
+                                source.id,
+                                remote,
+                                displayName = name,
+                                progressGid = gid,
+                                startPage = page,
+                            )
+                        }
                         return@launch
                     }
                     val mime = mimeTypeForFileName(name)

@@ -54,6 +54,31 @@ val ARCHIVE_EXTENSIONS = setOf(
 val DOCUMENT_EXTENSIONS = setOf("epub", "pdf")
 
 /**
+ * Folder-view Document filter: [DOCUMENT_EXTENSIONS] plus common office / text / ebook
+ * types. Does not change reader extract (still PDF/EPUB only).
+ */
+val BROWSE_DOCUMENT_EXTENSIONS = DOCUMENT_EXTENSIONS + setOf(
+    // Microsoft Office
+    "doc", "docx", "docm", "dot", "dotx", "dotm",
+    "xls", "xlsx", "xlsm", "xlsb", "xlt", "xltx",
+    "ppt", "pptx", "pptm", "pps", "ppsx", "potx",
+    // OpenDocument
+    "odt", "ods", "odp", "odg", "odf", "ott", "ots", "otp",
+    // Text / interchange
+    "rtf", "txt", "text", "csv", "tsv", "md", "markdown",
+    // HTML
+    "html", "htm", "xhtml",
+    // Ebooks (non-PDF/EPUB)
+    "mobi", "azw", "azw3", "fb2", "djvu", "djv",
+    // Apple iWork / XPS / WPS
+    "pages", "numbers", "key",
+    "xps", "oxps",
+    "wps", "et", "dps",
+    // TeX
+    "tex", "latex",
+)
+
+/**
  * Solid / poor-seek archives: no ZIP-style range stream.
  * Network open uses fake-stream sequential extract ([useSolidExtractPageLoader]);
  * browse lazy thumbs use sequential first-page extract ([ArchiveCoverCache.ensureSolidStreamCover]).
@@ -101,6 +126,13 @@ fun isDocumentFileName(name: String): Boolean {
     return ext in DOCUMENT_EXTENSIONS
 }
 
+/** Folder Document filter / [hasDocument] tag (PDF/EPUB + office / text / ebook). */
+fun isBrowseDocumentFileName(name: String): Boolean {
+    if (name.startsWith('.')) return false
+    val ext = FileUtils.getExtensionFromFilename(name)?.lowercase() ?: return false
+    return ext in BROWSE_DOCUMENT_EXTENSIONS
+}
+
 fun isEpubFileName(name: String): Boolean {
     if (name.startsWith('.')) return false
     return FileUtils.getExtensionFromFilename(name)?.lowercase() == "epub"
@@ -110,6 +142,30 @@ fun isPdfFileName(name: String): Boolean {
     if (name.startsWith('.')) return false
     return FileUtils.getExtensionFromFilename(name)?.lowercase() == "pdf"
 }
+
+/**
+ * Built-in PDF-reader ebooks (text + TOC pages). Not the image/gallery reader.
+ * HTML still honors [com.hippo.ehviewer.Settings.openHtmlWithBrowser] first.
+ */
+val EBOOK_READER_EXTENSIONS = setOf(
+    "epub",
+    "txt",
+    "text",
+    "html",
+    "htm",
+    "xhtml",
+    "fb2",
+    "md",
+    "markdown",
+)
+
+fun isEbookFileName(name: String): Boolean {
+    if (name.startsWith('.')) return false
+    val ext = FileUtils.getExtensionFromFilename(name)?.lowercase() ?: return false
+    return ext in EBOOK_READER_EXTENSIONS
+}
+
+fun isPdfOrEbookFileName(name: String): Boolean = isPdfFileName(name) || isEbookFileName(name)
 
 /**
  * Prefer mmap page-0 cover extract ([ArchiveCoverCache.ensureCover] non-solid branch).
@@ -259,6 +315,7 @@ private fun extraMimeForExtension(ext: String): String? = when (ext) {
     "json" -> "application/json"
     "xml" -> "application/xml"
     "html", "htm", "xhtml" -> "text/html"
+    "fb2" -> "application/x-fictionbook+xml"
     "css" -> "text/css"
     "js", "mjs" -> "text/javascript"
     "wasm" -> "application/wasm"

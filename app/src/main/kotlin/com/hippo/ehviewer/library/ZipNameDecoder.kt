@@ -73,6 +73,10 @@ internal object ZipNameDecoder {
         return String(utf, UTF8)
     }
 
+    internal fun decodeOrNull(bytes: ByteArray, cs: Charset): String? = decodeStrict(bytes, cs)
+
+    internal val legacyCharsets: List<Charset> get() = CANDIDATES
+
     fun detect(names: List<ByteArray>): Charset? {
         if (names.isEmpty() || names.all { isAscii(it) }) return UTF8
         if (names.all { isStrictUtf8(it) }) return UTF8

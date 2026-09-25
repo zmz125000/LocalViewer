@@ -92,12 +92,15 @@ import com.hippo.ehviewer.library.VideoThumbnail
 import com.hippo.ehviewer.library.VideoThumbnailSource
 import com.hippo.ehviewer.library.ZipAsDirListing
 import com.hippo.ehviewer.library.browseScrollLayoutKey
+import com.hippo.ehviewer.library.browseUseGrid
 import com.hippo.ehviewer.library.filterRemoteByContentMode
 import com.hippo.ehviewer.library.filterRemoteSmallGalleries
 import com.hippo.ehviewer.library.isDocumentFileName
+import com.hippo.ehviewer.library.isEbookFileName
 import com.hippo.ehviewer.library.isHtmlFileName
 import com.hippo.ehviewer.library.isImageFileName
 import com.hippo.ehviewer.library.isPdfFileName
+import com.hippo.ehviewer.library.isPdfOrEbookFileName
 import com.hippo.ehviewer.library.isSolidArchiveFileName
 import com.hippo.ehviewer.library.isStreamableArchiveFileName
 import com.hippo.ehviewer.library.isZipArchiveFileName
@@ -284,7 +287,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
         folder = folderId,
         skipAncestorKeys = smbModeSkipAncestors,
     )
-    val useGrid = virtual.forceGrid || listMode == 1
+    val useGrid = browseUseGrid(listMode, contentMode, virtual)
     val scrollLayoutKey = browseScrollLayoutKey(listMode, contentMode, virtual)
     val favoriteKeys by Settings.favoriteBrowseSources.collectAsState()
     val addedToFavourites = stringResource(id = R.string.add_to_favourites)
@@ -1173,7 +1176,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
     }
 
     fun openPdfReader(entry: BrowseEntryRemote.ArchiveGallery) {
-        if (!isPdfFileName(entry.fileName)) return
+        if (!isPdfOrEbookFileName(entry.fileName)) return
         val src = source ?: return
         val remote = joinRemoteArchivePath(relativeDir, entry.parentRelativeName, entry.fileName)
         launchIO {
@@ -1241,6 +1244,29 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                 snackbar(
                     context.getString(R.string.browse_open_failed) +
                         " " + (e.message ?: e.toString()),
+                )
+            }
+        }
+    }
+
+    fun openInternalDocument(fileName: String) {
+        val src = source ?: return
+        val actualName = fileName.substringAfterLast('/').substringAfterLast('\\')
+        val remote = if (relativeDir.isEmpty()) fileName else SmbGateway.joinRelativePath(relativeDir, fileName)
+        launchIO {
+            recordCurrentBrowseFolderHistory(src.id)
+            LocalHistory.recordSmbFile(src.id, remote, title = actualName)
+            try {
+                OpenFileExternally.playDocumentSmb(
+                    context = context,
+                    sourceId = src.id,
+                    remoteRelativeFile = remote,
+                    displayName = actualName,
+                )
+            } catch (e: Throwable) {
+                if (e.isZipMemberTooLarge()) return@launchIO
+                snackbar(
+                    context.getString(R.string.pdf_reader_open_failed, e.message ?: e.toString()),
                 )
             }
         }
@@ -1365,6 +1391,10 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
 
     fun openArchive(entry: BrowseEntryRemote.ArchiveGallery, skipPdfPrimary: Boolean = false) {
         val src = source ?: return
+        if (!skipPdfPrimary && isEbookFileName(entry.fileName)) {
+            openPdfReader(entry)
+            return
+        }
         if (!skipPdfPrimary && isPdfFileName(entry.fileName)) {
             when (Settings.pdfReaderMode.value) {
                 PdfReaderMode.PDF -> {
@@ -1479,7 +1509,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
     }
 
     fun openArchiveSecondary(entry: BrowseEntryRemote.ArchiveGallery) {
-        if (isPdfFileName(entry.fileName)) {
+        if (isPdfOrEbookFileName(entry.fileName)) {
             openPdfSecondary(entry)
         } else {
             openArchiveInOtherApp(entry)
@@ -1628,13 +1658,25 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
         onUnsupported = { notSupportedAction() },
     )
 
-    fun archiveOverflow(entry: BrowseEntryRemote.ArchiveGallery) = if (isPdfFileName(entry.fileName)) {
+    fun archiveOverflow(entry: BrowseEntryRemote.ArchiveGallery) = if (isPdfOrEbookFileName(entry.fileName)) {
         BrowseOverflowActions(
             kind = BrowseOverflowKind.Pdf,
             onRead = { openArchive(entry, skipPdfPrimary = true) },
             onPlay = { openPdfReader(entry) },
-            onExternalPlayer = { openPdfInOtherApp(entry) },
-            onOpenWith = { openPdfInOtherApp(entry, usePreferredReader = false) },
+            onExternalPlayer = {
+                if (isPdfFileName(entry.fileName)) {
+                    openPdfInOtherApp(entry)
+                } else {
+                    openArchiveInOtherApp(entry)
+                }
+            },
+            onOpenWith = {
+                if (isPdfFileName(entry.fileName)) {
+                    openPdfInOtherApp(entry, usePreferredReader = false)
+                } else {
+                    openArchiveInOtherApp(entry)
+                }
+            },
             onSaveAs = {
                 saveSmbFile(
                     joinRemoteArchivePath("", entry.parentRelativeName, entry.fileName),
@@ -1724,10 +1766,55 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
             },
             onUnsupported = { notSupportedAction() },
         )
+    } else if (isPdfOrEbookFileName(fileName)) {
+        BrowseOverflowActions(
+            kind = BrowseOverflowKind.Pdf,
+            onPlay = { openInternalDocument(fileName) },
+            onExternalPlayer = {
+                val src = source
+                if (src != null && isPdfFileName(fileName)) {
+                    val remote = if (relativeDir.isEmpty()) {
+                        fileName
+                    } else {
+                        SmbGateway.joinRelativePath(relativeDir, fileName)
+                    }
+                    launchIO {
+                        recordCurrentBrowseFolderHistory(src.id)
+                        LocalHistory.recordSmbFile(src.id, remote, title = fileName.substringAfterLast('/'))
+                        try {
+                            OpenPdfExternally.openSmb(
+                                context = context,
+                                sourceId = src.id,
+                                remoteRelativeFile = remote,
+                                displayName = fileName.substringAfterLast('/').substringAfterLast('\\'),
+                            )
+                        } catch (e: Throwable) {
+                            if (e.isZipMemberTooLarge()) return@launchIO
+                            snackbar(
+                                context.getString(
+                                    R.string.open_pdf_external_failed,
+                                    e.message ?: e.toString(),
+                                ),
+                            )
+                        }
+                    }
+                } else if (!isPdfFileName(fileName)) {
+                    openExternalFile(fileName)
+                }
+            },
+            onOpenWith = { openExternalFile(fileName, asFile = true) },
+            onSaveAs = { saveSmbFile(fileName) },
+            onShare = { shareSmbFile(fileName) },
+            onShareViaHttp = smbHttpShareFile(fileName),
+            onOpenFolder = {
+                openBrowseFolder(FolderSearch.openFolderTarget(fileName, isDirectory = false))
+            },
+            onUnsupported = { notSupportedAction() },
+        )
     } else {
         BrowseOverflowActions(
             kind = BrowseOverflowKind.Common,
-            onOpenWith = { openExternalFile(fileName) },
+            onOpenWith = { openExternalFile(fileName, asFile = true) },
             onSaveAs = { saveSmbFile(fileName) },
             onShare = { shareSmbFile(fileName) },
             onShareViaHttp = smbHttpShareFile(fileName),
@@ -1883,6 +1970,12 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                             nameOf = { it.name },
                             dateOf = { it.lastModifiedMs },
                         )
+                    val documents = sections.documents.sortedForBrowseFolderUi(
+                        browseSortMode,
+                        browseSortAscending,
+                        nameOf = { it.name },
+                        dateOf = { it.lastModifiedMs },
+                    )
                     val files = sections.files
                         .filterIsInstance<BrowseEntryRemote.RegularFile>()
                         .sortedForBrowseFolderUi(
@@ -2186,6 +2279,82 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                             }
                         }
                     }
+                    fun LazyGridScope.documentSection(grid: Boolean) {
+                        if (documents.isEmpty()) return
+                        item(key = "hdr-docs", span = { GridItemSpan(maxLineSpan) }) {
+                            BrowseSectionHeader(
+                                stringResource(R.string.browse_documents),
+                                onClick = { toggleSection(BrowseFolderSection.Documents) },
+                            )
+                        }
+                        if (BrowseFolderSection.Documents in collapsedSections) return
+                        items(
+                            documents,
+                            key = { entry ->
+                                when (entry) {
+                                    is BrowseEntryRemote.ArchiveGallery ->
+                                        "a-${entry.parentRelativeName}/${entry.fileName}"
+                                    is BrowseEntryRemote.RegularFile -> "f-${entry.fileName}"
+                                    else -> "x-${entry.name}"
+                                }
+                            },
+                        ) { entry ->
+                            val itemMod = Modifier.thenIf(animateItems) { animateItem() }
+                            when (entry) {
+                                is BrowseEntryRemote.ArchiveGallery -> if (grid) {
+                                    BrowseArchiveGridItem(
+                                        modifier = itemMod,
+                                        name = entry.name,
+                                        cover = archiveCoverFor(entry),
+                                        thumbRetryKey = refreshToken,
+                                        allowRemoteFetch = allowRemoteThumbs,
+                                        onClick = { openArchive(entry) },
+                                        onLongClick = { openArchiveSecondary(entry) },
+                                        overflow = archiveOverflow(entry),
+                                    )
+                                } else {
+                                    BrowseArchiveGalleryRow(
+                                        modifier = itemMod,
+                                        name = entry.name,
+                                        cover = archiveCoverFor(entry),
+                                        thumbRetryKey = refreshToken,
+                                        allowRemoteFetch = allowRemoteThumbs,
+                                        onClick = { openArchive(entry) },
+                                        onLongClick = { openArchiveSecondary(entry) },
+                                        fileName = entry.fileName,
+                                        sizeBytes = entry.size,
+                                        lastModifiedMs = entry.lastModifiedMs,
+                                        pageCount = entry.pageCount,
+                                        showPages = showGalleryPages,
+                                        overflow = archiveOverflow(entry),
+                                    )
+                                }
+                                is BrowseEntryRemote.RegularFile -> if (grid) {
+                                    BrowseFileGridItem(
+                                        modifier = itemMod,
+                                        name = entry.name,
+                                        onClick = { openExternalFile(entry.fileName) },
+                                        onLongClick = { openExternalFile(entry.fileName) },
+                                        overflow = fileOverflow(entry.fileName),
+                                    )
+                                } else {
+                                    BrowseFileRow(
+                                        modifier = itemMod,
+                                        name = entry.name,
+                                        thumbRetryKey = refreshToken,
+                                        allowRemoteFetch = allowRemoteThumbs,
+                                        onClick = { openExternalFile(entry.fileName) },
+                                        onLongClick = { openExternalFile(entry.fileName) },
+                                        fileName = entry.fileName,
+                                        sizeBytes = entry.size,
+                                        lastModifiedMs = entry.lastModifiedMs,
+                                        overflow = fileOverflow(entry.fileName),
+                                    )
+                                }
+                                else -> Unit
+                            }
+                        }
+                    }
                     if (photoGrid) {
                         val progressGid = stableGalleryId(sourceId, "smb:$relativeDir")
                         val gridState = rememberSmbPhotoGridState(
@@ -2308,6 +2477,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                                     }
                                 }
                             }
+                            documentSection(grid = true)
                             if (videos.isNotEmpty()) {
                                 item(
                                     key = "hdr-vid",
@@ -2466,6 +2636,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                                     }
                                 }
                             }
+                            documentSection(grid = false)
                             if (videos.isNotEmpty()) {
                                 item(
                                     key = "hdr-vid",

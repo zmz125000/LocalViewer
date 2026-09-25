@@ -189,6 +189,7 @@ object ZipAsDirListing {
                     name = child.name,
                     hasVideo = nested.any { !it.isDirectory && isVideoFileName(it.name) },
                     hasGallery = false,
+                    hasDocument = nested.any { !it.isDirectory && isBrowseDocumentFileName(it.name) },
                     presence = if (nested.isEmpty()) DirPresence.Empty else DirPresence.Navigable,
                     lastModifiedMs = child.lastModifiedMs,
                     size = child.size,
@@ -1069,6 +1070,7 @@ object ZipAsDirListing {
                         relativeName = entry.relativeName.ifEmpty { entry.name },
                         hasVideo = entry.hasVideo,
                         hasGallery = entry.hasGallery,
+                        hasDocument = entry.hasDocument,
                         presence = entry.presence,
                         coverPath = entry.coverFileName?.let { cover ->
                             ZipPaths.encodePath(zipAbsolutePath, joinPrefix(childInner, cover))

@@ -350,6 +350,7 @@ private data class FolderIndexEntryFile(
     val relativeName: String? = null,
     val hasVideo: Boolean = false,
     val hasGallery: Boolean = false,
+    val hasDocument: Boolean = false,
     val presence: String? = null,
     val coverFileName: String? = null,
     val lastModifiedMs: Long = 0L,
@@ -368,6 +369,7 @@ private data class FolderIndexEntryFile(
             relativeName = relativeName ?: name,
             hasVideo = hasVideo,
             hasGallery = hasGallery,
+            hasDocument = hasDocument,
             presence = presence?.let { runCatching { DirPresence.valueOf(it) }.getOrNull() }
                 ?: DirPresence.Navigable,
             coverFileName = coverFileName,
@@ -435,6 +437,7 @@ private data class FolderIndexEntryFile(
                 relativeName = entry.relativeName,
                 hasVideo = entry.hasVideo,
                 hasGallery = entry.hasGallery,
+                hasDocument = entry.hasDocument,
                 presence = entry.presence.name,
                 coverFileName = entry.coverFileName,
                 lastModifiedMs = entry.lastModifiedMs,

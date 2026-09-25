@@ -67,6 +67,7 @@
     <string name="browse_favorites">收藏</string>
     <string name="browse_videos">影片</string>
     <string name="browse_files">檔案</string>
+    <string name="browse_documents">文件</string>
     <string name="browse_search">搜尋</string>
     <string name="browse_search_empty">沒有符合的檔案</string>
     <string name="browse_video">影片</string>
@@ -74,6 +75,7 @@
     <string name="browse_mode_galleries">圖庫</string>
     <string name="browse_mode_media">媒體</string>
     <string name="browse_mode_video">影片</string>
+    <string name="browse_mode_document">文件</string>
     <string name="browse_mode_folder">資料夾</string>
     <string name="browse_layout_list">列表</string>
     <string name="browse_layout_grid">網格</string>
@@ -678,7 +680,7 @@
     <string name="clear_search_history_summary">移除曾在此裝置上進行過的搜尋</string>
     <string name="search_history_cleared">已清除搜尋記錄</string>
     <string name="settings_privacy_clear_folder_browse_mode">清除資料夾瀏覽模式</string>
-    <string name="settings_privacy_clear_folder_browse_mode_summary">刪除已鎖定在資料夾上的媒體 / 圖庫 / 影片 / 資料夾模式</string>
+    <string name="settings_privacy_clear_folder_browse_mode_summary">刪除已鎖定在資料夾上的媒體 / 圖庫 / 影片 / 文件 / 資料夾模式</string>
     <string name="folder_browse_mode_cleared">已清除資料夾瀏覽模式</string>
     <string name="settings_privacy_clear_folder_index_cache">清除資料夾索引快取</string>
     <string name="settings_privacy_clear_folder_index_cache_summary">刪除本機與網路來源已儲存的資料夾列表。下次開啟時將重新掃描。</string>

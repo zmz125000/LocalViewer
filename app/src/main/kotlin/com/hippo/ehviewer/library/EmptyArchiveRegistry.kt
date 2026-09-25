@@ -44,12 +44,7 @@ object EmptyArchiveRegistry {
         val out = ArrayList<BrowseEntry>(entries.size)
         for (e in entries) {
             if (e is BrowseEntry.ArchiveGallery && isMarked(e.path.toString())) {
-                out += BrowseEntry.RegularFile(
-                    name = e.name,
-                    path = e.path,
-                    size = e.size,
-                    lastModifiedMs = e.lastModifiedMs,
-                )
+                out += e.toRegularFile()
                 changed = true
             } else {
                 out += e
@@ -71,12 +66,7 @@ object EmptyArchiveRegistry {
         val out = ArrayList<BrowseEntryRemote>(entries.size)
         for (e in entries) {
             if (e is BrowseEntryRemote.ArchiveGallery && isMarked(cacheKeyOf(e))) {
-                out += BrowseEntryRemote.RegularFile(
-                    name = e.name,
-                    fileName = e.fileName,
-                    size = e.size,
-                    lastModifiedMs = e.lastModifiedMs,
-                )
+                out += e.toRegularFile()
                 changed = true
             } else {
                 out += e
@@ -87,3 +77,21 @@ object EmptyArchiveRegistry {
 
     private fun normalize(key: String): String = key.trim()
 }
+
+internal fun BrowseEntry.ArchiveGallery.toRegularFile(): BrowseEntry.RegularFile = BrowseEntry.RegularFile(
+    name = name,
+    path = path,
+    size = size,
+    lastModifiedMs = lastModifiedMs,
+    hidden = hidden,
+    virtual = virtual,
+)
+
+internal fun BrowseEntryRemote.ArchiveGallery.toRegularFile(): BrowseEntryRemote.RegularFile = BrowseEntryRemote.RegularFile(
+    name = name,
+    fileName = fileName,
+    size = size,
+    lastModifiedMs = lastModifiedMs,
+    hidden = hidden,
+    virtual = virtual,
+)

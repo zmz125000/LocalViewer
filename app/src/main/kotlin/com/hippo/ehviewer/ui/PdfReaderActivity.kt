@@ -5,10 +5,14 @@ import android.content.Intent
 import android.content.res.Configuration
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.Canvas
+import android.graphics.Paint
+import android.graphics.Typeface
 import android.graphics.pdf.PdfRenderer
 import android.net.Uri
 import android.os.Bundle
 import android.os.ParcelFileDescriptor
+import android.text.TextPaint
 import androidx.activity.enableEdgeToEdge
 import androidx.appcompat.app.AppCompatActivity
 import androidx.compose.animation.AnimatedVisibility
@@ -141,10 +145,15 @@ import com.hippo.ehviewer.library.GallerySiblingNavigator
 import com.hippo.ehviewer.library.OriginDiskCache
 import com.hippo.ehviewer.library.PfdArchiveByteSource
 import com.hippo.ehviewer.library.ReaderPageThumb
+import com.hippo.ehviewer.library.document.EbookDocument
+import com.hippo.ehviewer.library.document.EbookEngine
+import com.hippo.ehviewer.library.document.EbookPage
+import com.hippo.ehviewer.library.document.EbookPaginator
 import com.hippo.ehviewer.library.document.PdfContentKind
 import com.hippo.ehviewer.library.document.PdfImageEngine
 import com.hippo.ehviewer.library.document.PdfTocEntry
 import com.hippo.ehviewer.library.document.readPdfChapters
+import com.hippo.ehviewer.library.isEbookFileName
 import com.hippo.ehviewer.library.openLocalArchiveByteSource
 import com.hippo.ehviewer.provider.StreamDocumentProvider
 import com.hippo.ehviewer.provider.StreamDocumentRegistry
@@ -301,6 +310,10 @@ class PdfReaderActivity : AppCompatActivity() {
                 val cacheKey = pdfCacheKeyFromIntent(intent)
                 val directImage = Settings.pdfDirectImage.value
                 opened = withContext(Dispatchers.IO) {
+                    val docName = documentNameFromIntent(intent, nextTitle)
+                    if (isEbookFileName(docName)) {
+                        return@withContext openEbookDocument(intent, token, docName)
+                    }
                     if (directImage) {
                         direct = runCatching { openDirectArchiveSource(intent, token) }
                             .onFailure { logcat("PdfReader", it) }
@@ -627,13 +640,51 @@ private fun openPdfDocument(
     return PdfDocumentModel.Vector(PdfSession(renderer), chapters)
 }
 
+private fun documentNameFromIntent(intent: Intent, title: String): String {
+    fun leaf(path: String?): String? = path
+        ?.substringAfterLast('/')
+        ?.substringAfterLast('\\')
+        ?.ifBlank { null }
+    val fromPath = leaf(intent.getStringExtra(PdfReaderActivity.EXTRA_LOCAL_PATH))
+        ?: leaf(intent.getStringExtra(PdfReaderActivity.EXTRA_REMOTE_PATH))
+        ?: leaf(intent.data?.lastPathSegment)
+    if (fromPath != null && isEbookFileName(fromPath)) return fromPath
+    if (isEbookFileName(title)) return title
+    return fromPath ?: title
+}
+
+private fun openEbookDocument(
+    intent: Intent,
+    token: String?,
+    fileName: String,
+): PdfDocumentModel.Vector? {
+    var owned: ArchiveByteSource? = null
+    val source = runCatching { openDirectArchiveSource(intent, token) }
+        .onFailure { logcat("PdfReader", it) }
+        .getOrNull()
+        ?: run {
+            val pfd = token?.let { StreamDocumentRegistry.get(it)?.openFileDescriptor?.invoke() }
+                ?: return null
+            PfdArchiveByteSource(pfd, ownsPfd = true).also { owned = it }
+        }
+    return try {
+        val book = EbookEngine.open(source, fileName) ?: return null
+        if (book.pageCount <= 0) return null
+        logcat("PdfReader") { "ebook pages=${book.pageCount} chapters=${book.chapters.size}" }
+        PdfDocumentModel.Vector(EbookSession(book), book.chapters)
+    } finally {
+        runCatching { source.close() }
+        if (owned !== source) runCatching { owned?.close() }
+    }
+}
+
 private sealed interface PdfDocumentModel {
     val pageCount: Int
     val chapters: List<PdfTocEntry>
     fun close()
 
     class Vector(
-        val session: PdfSession,
+        val session: PageBitmapSession,
         override val chapters: List<PdfTocEntry>,
     ) : PdfDocumentModel {
         override val pageCount get() = session.pageCount
@@ -653,14 +704,28 @@ private sealed interface PdfDocumentModel {
     }
 }
 
-private class PdfSession(private val renderer: PdfRenderer) {
-    val pageCount: Int get() = renderer.pageCount
+private interface PageBitmapSession {
+    val pageCount: Int
+    suspend fun render(index: Int, widthPx: Int): Bitmap
+    suspend fun pageAspect(index: Int): Float
+    fun close()
+
+    /** Photo-grid thumb. PDF overrides this to measure and draw in one page open. */
+    suspend fun renderLongEdge(index: Int, edge: Int): Bitmap {
+        val aspect = pageAspect(index)
+        val width = if (aspect >= 1f) edge else (edge * aspect).roundToInt().coerceAtLeast(1)
+        return render(index, width)
+    }
+}
+
+private class PdfSession(private val renderer: PdfRenderer) : PageBitmapSession {
+    override val pageCount: Int get() = renderer.pageCount
     private val mutex = Mutex()
     private val aspects = java.util.concurrent.ConcurrentHashMap<Int, Float>()
 
     @Volatile private var closed = false
 
-    suspend fun render(index: Int, widthPx: Int): Bitmap = mutex.withLock {
+    override suspend fun render(index: Int, widthPx: Int): Bitmap = mutex.withLock {
         if (closed) error("closed")
         renderer.openPage(index).use { page ->
             noteAspect(index, page)
@@ -669,7 +734,7 @@ private class PdfSession(private val renderer: PdfRenderer) {
     }
 
     /** One [PdfRenderer.Page] open. Long edge is [edge] px (photo-grid thumb). */
-    suspend fun renderLongEdge(index: Int, edge: Int): Bitmap = mutex.withLock {
+    override suspend fun renderLongEdge(index: Int, edge: Int): Bitmap = mutex.withLock {
         if (closed) error("closed")
         renderer.openPage(index).use { page ->
             val aspect = noteAspect(index, page)
@@ -678,7 +743,7 @@ private class PdfSession(private val renderer: PdfRenderer) {
         }
     }
 
-    suspend fun pageAspect(index: Int): Float {
+    override suspend fun pageAspect(index: Int): Float {
         aspects[index]?.let { return it }
         return mutex.withLock {
             if (closed) error("closed")
@@ -704,7 +769,7 @@ private class PdfSession(private val renderer: PdfRenderer) {
         }
     }
 
-    fun close() {
+    override fun close() {
         if (closed) return
         runBlocking {
             mutex.withLock {
@@ -713,6 +778,53 @@ private class PdfSession(private val renderer: PdfRenderer) {
                 runCatching { renderer.close() }
             }
         }
+    }
+}
+
+private class EbookSession(private val book: EbookDocument) : PageBitmapSession {
+    override val pageCount: Int get() = book.pageCount
+    private val mutex = Mutex()
+
+    @Volatile private var closed = false
+
+    override suspend fun render(index: Int, widthPx: Int): Bitmap = mutex.withLock {
+        if (closed) error("closed")
+        val page = book.pages.getOrNull(index) ?: error("page")
+        val w = widthPx.coerceAtLeast(1)
+        val h = (w / book.pageAspect.coerceAtLeast(0.01f)).toInt().coerceAtLeast(1)
+        val (rw, rh) = cappedBitmapSize(w, h)
+        Bitmap.createBitmap(rw, rh, Bitmap.Config.ARGB_8888).also { bitmap ->
+            bitmap.eraseColor(android.graphics.Color.WHITE)
+            drawEbookPage(bitmap, page)
+        }
+    }
+
+    override suspend fun pageAspect(index: Int): Float = book.pageAspect
+
+    override fun close() {
+        closed = true
+    }
+}
+
+private fun drawEbookPage(bitmap: Bitmap, page: EbookPage) {
+    val canvas = Canvas(bitmap)
+    val w = bitmap.width.toFloat().coerceAtLeast(1f)
+    val h = bitmap.height.toFloat().coerceAtLeast(1f)
+    val pad = w * EbookPaginator.MARGIN
+    val contentW = (w - 2f * pad).coerceAtLeast(1f)
+    val fontSize = contentW / EbookPaginator.CJK_PER_LINE
+    val lineH = fontSize * EbookPaginator.LINE_HEIGHT_EM
+    val paint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = android.graphics.Color.BLACK
+        textSize = fontSize
+        typeface = Typeface.create(Typeface.SERIF, Typeface.NORMAL)
+    }
+    var y = pad + fontSize
+    val maxY = h - pad
+    for (line in page.lines) {
+        if (y > maxY) break
+        canvas.drawText(line, pad, y, paint)
+        y += lineH
     }
 }
 
@@ -1683,7 +1795,7 @@ private fun PdfDualSpread(
 
 @Composable
 private fun PdfSingleVectorPage(
-    session: PdfSession,
+    session: PageBitmapSession,
     index: Int,
     viewWidthPx: Int,
     viewHeightPx: Int,
@@ -1780,7 +1892,7 @@ private fun PdfSingleVectorPage(
 
 @Composable
 private fun PdfVectorPage(
-    session: PdfSession,
+    session: PageBitmapSession,
     index: Int,
     widthPx: Int,
     viewWidthPx: Int,

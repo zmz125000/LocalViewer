@@ -146,10 +146,14 @@ fun BrowseItemOverflowButton(
                     HorizontalDivider()
                 }
                 BrowseOverflowKind.Pdf -> {
-                    DropdownMenuItem(
-                        text = { Text(stringResource(R.string.browse_image_reader)) },
-                        onClick = { run(actions.onRead) },
-                    )
+                    // Gallery PDFs keep Image reader. Demoted generic PDFs omit [onRead]
+                    // so the image reader is blocked (text PDF → built-in PDF reader).
+                    if (actions.onRead != null) {
+                        DropdownMenuItem(
+                            text = { Text(stringResource(R.string.browse_image_reader)) },
+                            onClick = { run(actions.onRead) },
+                        )
+                    }
                     DropdownMenuItem(
                         text = { Text(stringResource(R.string.browse_pdf_reader)) },
                         onClick = { run(actions.onPlay) },

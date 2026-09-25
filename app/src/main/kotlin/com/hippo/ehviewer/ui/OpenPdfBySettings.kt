@@ -19,6 +19,7 @@ import com.hippo.ehviewer.library.SMB_ARCHIVE_TOKEN
 import com.hippo.ehviewer.library.WEBDAV_ARCHIVE_TOKEN
 import com.hippo.ehviewer.library.document.PdfContentKind
 import com.hippo.ehviewer.library.document.PdfImageEngine
+import com.hippo.ehviewer.library.isEbookFileName
 import com.hippo.ehviewer.library.isPdfFileName
 import com.hippo.ehviewer.library.openLocalArchiveByteSource
 import com.hippo.ehviewer.library.stableGalleryId
@@ -52,6 +53,7 @@ object OpenPdfBySettings {
 
     fun shouldRedirect(args: ReaderScreenArgs): Boolean {
         if (args.skipPdfPrimary) return false
+        if (isEbookArgs(args)) return true
         if (!isPdfArgs(args)) return false
         return Settings.pdfReaderMode.value != PdfReaderMode.IMAGE
     }
@@ -96,6 +98,13 @@ object OpenPdfBySettings {
         else -> false
     }
 
+    fun isEbookArgs(args: ReaderScreenArgs): Boolean = when (args) {
+        is ReaderScreenArgs.Archive -> isEbookFileName(fileName(args.path))
+        is ReaderScreenArgs.SmbStreamArchive -> isEbookFileName(fileName(args.remotePath))
+        is ReaderScreenArgs.WebDavStreamArchive -> isEbookFileName(fileName(args.remotePath))
+        else -> false
+    }
+
     /**
      * Long-press while Auto is selected: the built-in reader tap would not have used.
      */
@@ -121,6 +130,10 @@ object OpenPdfBySettings {
     }
 
     suspend fun open(context: Context, args: ReaderScreenArgs): Outcome {
+        if (isEbookArgs(args)) {
+            openInternal(context, args)
+            return Outcome.Handled
+        }
         when (Settings.pdfReaderMode.value) {
             PdfReaderMode.AUTO -> {
                 if (isImagePdf(args)) return Outcome.Gallery(args.asGallery())

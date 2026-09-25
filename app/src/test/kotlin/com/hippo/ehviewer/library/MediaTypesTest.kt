@@ -29,6 +29,41 @@ class MediaTypesTest {
     }
 
     @Test
+    fun browseDocumentsCoverOfficeTextAndEbooks() {
+        assertTrue(isBrowseDocumentFileName("guide.pdf"))
+        assertTrue(isBrowseDocumentFileName("book.EPUB"))
+        assertTrue(isBrowseDocumentFileName("notes.docx"))
+        assertTrue(isBrowseDocumentFileName("sheet.xlsx"))
+        assertTrue(isBrowseDocumentFileName("deck.pptx"))
+        assertTrue(isBrowseDocumentFileName("paper.odt"))
+        assertTrue(isBrowseDocumentFileName("readme.txt"))
+        assertTrue(isBrowseDocumentFileName("index.html"))
+        assertTrue(isBrowseDocumentFileName("novel.mobi"))
+        assertFalse(isBrowseDocumentFileName("pack.zip"))
+        assertFalse(isBrowseDocumentFileName("pack.cbz"))
+        assertFalse(isBrowseDocumentFileName("clip.mp4"))
+        assertFalse(isBrowseDocumentFileName("shot.jpg"))
+        assertFalse(isBrowseDocumentFileName(".secret.txt"))
+        assertTrue(isDocumentFileName("guide.pdf"))
+        assertFalse(isDocumentFileName("notes.docx"))
+    }
+
+    @Test
+    fun ebookReaderTypesAreEpubTextHtmlFb2() {
+        assertTrue(isEbookFileName("novel.epub"))
+        assertTrue(isEbookFileName("notes.TXT"))
+        assertTrue(isEbookFileName("page.html"))
+        assertTrue(isEbookFileName("book.fb2"))
+        assertTrue(isEbookFileName("readme.md"))
+        assertTrue(isPdfOrEbookFileName("guide.pdf"))
+        assertTrue(isPdfOrEbookFileName("novel.epub"))
+        assertFalse(isEbookFileName("guide.pdf"))
+        assertFalse(isEbookFileName("pack.zip"))
+        assertFalse(isEbookFileName("shot.jpg"))
+        assertFalse(isEbookFileName(".hidden.txt"))
+    }
+
+    @Test
     fun zipAsDirExtensionsAreZipAndCbzOnly() {
         assertTrue(isZipArchiveFileName("album.zip"))
         assertTrue(isZipArchiveFileName("album.CBZ"))
