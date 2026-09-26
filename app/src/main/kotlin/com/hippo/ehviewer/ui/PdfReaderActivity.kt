@@ -874,6 +874,17 @@ private fun openEbookDocument(
     stillWanted: () -> Boolean,
 ): PdfDocumentModel.Vector? {
     if (!stillWanted()) return null
+    val charsetPref = Settings.ebookCharset.value
+    val forced = TextCharset.forcedCharset(charsetPref)
+    val charsetKey = TextCharset.cacheLabel(charsetPref)
+    val registered = token?.let { StreamDocumentRegistry.get(it) }
+    val registeredSize = registered?.sizeBytes ?: -1L
+    if (cacheKey != null && registered != null && registeredSize <= 0L) {
+        val cached = EbookBodyCache.loadLast(cacheKey, charsetKey)
+        if (!cached.isNullOrEmpty()) {
+            return ebookVector(cached, resources = null, landscape, startPage, stillWanted, fromCache = true)
+        }
+    }
     var owned: ArchiveByteSource? = null
     val source = runCatching { openDirectArchiveSource(intent, token) }
         .onFailure { logcat("PdfReader", it) }
@@ -886,9 +897,6 @@ private fun openEbookDocument(
     var sourceHeld = false
     return try {
         val size = runCatching { source.size }.getOrDefault(-1L)
-        val charsetPref = Settings.ebookCharset.value
-        val forced = TextCharset.forcedCharset(charsetPref)
-        val charsetKey = TextCharset.cacheLabel(charsetPref)
         val cached = if (cacheKey != null && size > 0L) {
             EbookBodyCache.load(cacheKey, size, charsetKey)
         } else {
@@ -909,28 +917,47 @@ private fun openEbookDocument(
         if (cached == null && !pictured && cacheKey != null && size > 0L && stillWanted()) {
             EbookBodyCache.save(cacheKey, size, chapters, charsetKey)
         }
-        val style = ebookStyleFromSettings(landscape)
-        val session = EbookSession(chapters, style, ebookPaintFromSettings(dark = false), book.resources)
-        sourceHeld = book.resources != null
-        if (!session.ensurePagesThrough(startPage.coerceAtLeast(0), stillWanted)) {
-            session.close()
-            return null
-        }
-        logcat("PdfReader") {
-            "ebook pages=${session.pageCount} chapters=${chapters.size} cached=${cached != null}"
-        }
-        PdfDocumentModel.Vector(
-            session = session,
-            chapters = session.toc,
-            chapterLoader = { wanted -> session.finishPaginate(wanted) },
-            isEbook = true,
+        val vector = ebookVector(
+            chapters,
+            book.resources,
+            landscape,
+            startPage,
+            stillWanted,
+            fromCache = cached != null,
         )
+        sourceHeld = vector != null && book.resources != null
+        vector
     } finally {
         if (!sourceHeld) {
             runCatching { source.close() }
             if (owned !== source) runCatching { owned?.close() }
         }
     }
+}
+
+private fun ebookVector(
+    chapters: List<EbookChapter>,
+    resources: EbookResources?,
+    landscape: Boolean,
+    startPage: Int,
+    stillWanted: () -> Boolean,
+    fromCache: Boolean,
+): PdfDocumentModel.Vector? {
+    val style = ebookStyleFromSettings(landscape)
+    val session = EbookSession(chapters, style, ebookPaintFromSettings(dark = false), resources)
+    if (!session.ensurePagesThrough(startPage.coerceAtLeast(0), stillWanted)) {
+        session.close()
+        return null
+    }
+    logcat("PdfReader") {
+        "ebook pages=${session.pageCount} chapters=${chapters.size} cached=$fromCache"
+    }
+    return PdfDocumentModel.Vector(
+        session = session,
+        chapters = session.toc,
+        chapterLoader = { wanted -> session.finishPaginate(wanted) },
+        isEbook = true,
+    )
 }
 
 private sealed interface PdfDocumentModel {

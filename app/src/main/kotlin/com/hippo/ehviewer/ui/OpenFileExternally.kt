@@ -2088,9 +2088,10 @@ object OpenFileExternally {
             -1L
         } else {
             withIOContext {
+                // Offline history cannot STAT. -1 still registers so a saved ebook body can open.
                 SmbGateway.fileSizeOrNull(source, password, remoteRelativeFile)
                     ?.takeIf { it > 0L }
-                    ?: error("empty or unreachable file")
+                    ?: -1L
             }
         }
         return StreamDocumentRegistry.register(
@@ -2125,12 +2126,13 @@ object OpenFileExternally {
         }
         val password = WebDavPasswordStore.get(sourceId)
         val sizeBytes = withIOContext {
+            // Offline history cannot PROPFIND. -1 still registers so a saved ebook body can open.
             WebDavClient.fileSizeOrNull(
                 source,
                 password,
                 remoteRelativeFile,
                 sticky = true,
-            )?.takeIf { it > 0L } ?: error("empty or unreachable file")
+            )?.takeIf { it > 0L } ?: -1L
         }
         return StreamDocumentRegistry.register(
             displayName = displayName,
