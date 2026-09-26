@@ -449,12 +449,12 @@ class MainActivity : AppCompatActivity() {
 
             val cannotParse = stringResource(R.string.error_cannot_parse_the_url)
             LaunchedEffect(Unit) {
-                fun openPendingReader() {
-                    PendingReaderOpen.take()?.let { args ->
-                        navigator.navigate(ReaderScreenDestination(args)) {
-                            launchSingleTop = true
-                        }
+                suspend fun openPendingReader() {
+                    val (args, notice) = PendingReaderOpen.take() ?: return
+                    navigator.navigate(ReaderScreenDestination(args)) {
+                        launchSingleTop = true
                     }
+                    if (notice != null) snackbarState.showSnackbar(notice)
                 }
                 openPendingReader()
                 intentFlow.collect { intent ->

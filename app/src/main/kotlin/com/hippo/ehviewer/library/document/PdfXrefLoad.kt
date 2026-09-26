@@ -1,5 +1,10 @@
 package com.hippo.ehviewer.library.document
 
+import java.io.IOException
+
+/** `startxref` does not point at an xref table. PdfRenderer must not scan the file. */
+internal class BrokenPdfXref : IOException("broken xref")
+
 /**
  * PdfRenderer rebuilds a missing xref by scanning the whole file. A stale
  * `startxref` (offset lands in a page image) makes that scan allocate enough

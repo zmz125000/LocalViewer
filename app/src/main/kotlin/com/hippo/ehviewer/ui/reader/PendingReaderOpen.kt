@@ -9,11 +9,11 @@ import java.util.concurrent.atomic.AtomicReference
 object PendingReaderOpen {
     const val ACTION = "com.hippo.ehviewer.action.OPEN_READER"
 
-    private val pending = AtomicReference<ReaderScreenArgs?>(null)
+    private val pending = AtomicReference<Pair<ReaderScreenArgs, String?>?>(null)
 
-    fun offer(args: ReaderScreenArgs) {
-        pending.set(args)
+    fun offer(args: ReaderScreenArgs, notice: String? = null) {
+        pending.set(args to notice)
     }
 
-    fun take(): ReaderScreenArgs? = pending.getAndSet(null)
+    fun take(): Pair<ReaderScreenArgs, String?>? = pending.getAndSet(null)
 }
