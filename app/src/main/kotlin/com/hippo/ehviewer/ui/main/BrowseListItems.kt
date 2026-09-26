@@ -484,8 +484,9 @@ fun BrowseFolderGalleryRow(
 ) {
     val haptic = LocalHapticFeedback.current
     val resolvedCover = cover ?: coverPath?.let { BrowseCover.Local(it) }
+    val label = name.safFolderLabel()
     BrowseFolderListItem(
-        headlineContent = { Text(name) },
+        headlineContent = { Text(label) },
         supportingContent = {
             Text(
                 browseListSupportingLine(
@@ -880,7 +881,7 @@ fun BrowseFolderGalleryGridItem(
     progressGid: Long = 0L,
 ) {
     BrowseGridCell(
-        name = name,
+        name = name.safFolderLabel(),
         onClick = onClick,
         modifier = modifier,
         onLongClick = onLongClick,
