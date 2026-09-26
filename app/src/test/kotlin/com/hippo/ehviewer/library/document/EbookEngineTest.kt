@@ -562,6 +562,107 @@ class EbookEngineTest {
         assertTrue(chapters.any { it.text.contains("aaa") })
     }
 
+    @Test
+    fun htmlKeepsInlineAndBlockStyles() {
+        val text = EbookHtml.toText(
+            """
+            <p>Hello <b>bold</b> <i>italic</i> <u>under</u> <s>cut</s>
+            <code>code</code> <sup>sup2</sup> <sub>subx</sub> <small>sm</small> <mark>hi</mark>
+            <a href="x">link</a></p>
+            <blockquote><p>quoted</p></blockquote>
+            <pre>a()
+            b()</pre>
+            <ul><li>One</li><li>Two</li></ul>
+            <p><span style="font-weight: bold; font-style: italic">both</span></p>
+            """.trimIndent(),
+        )
+        fun bits(sample: String): Int = EbookMarks.runs(text).first { it.text.contains(sample) }.bits
+        assertTrue(bits("bold") and EbookMarks.BOLD != 0)
+        assertTrue(bits("italic") and EbookMarks.ITALIC != 0)
+        assertTrue(bits("under") and EbookMarks.UNDER != 0)
+        assertTrue(bits("cut") and EbookMarks.STRIKE != 0)
+        assertTrue(bits("code") and EbookMarks.CODE != 0)
+        assertTrue(bits("sup2") and EbookMarks.SUP != 0)
+        assertTrue(bits("subx") and EbookMarks.SUB != 0)
+        assertTrue(bits("sm") and EbookMarks.SMALL != 0)
+        assertTrue(bits("hi") and EbookMarks.MARK != 0)
+        assertTrue(bits("link") and EbookMarks.UNDER != 0)
+        assertTrue(bits("both") and EbookMarks.BOLD != 0 && bits("both") and EbookMarks.ITALIC != 0)
+        assertTrue(text.contains("• One"))
+        assertTrue(text.contains("• Two"))
+        val lines = EbookPaginator.wrapLines(text, EbookStyle(indentEm = 0, paragraphMode = EbookParagraph.SOFT))
+        assertTrue(lines.any { it.quote && EbookMarks.strip(it.text).contains("quoted") })
+        assertTrue(lines.any { it.code && EbookMarks.strip(it.text).contains("a()") })
+        assertTrue(lines.any { it.code && EbookMarks.strip(it.text).contains("b()") })
+        val plain = EbookHtml.toPlain("<h1><b>Title</b></h1>")
+        assertFalse(plain.contains(EbookMarks.STYLE))
+        assertTrue(plain.contains("Title"))
+    }
+
+    @Test
+    fun markdownAndFb2KeepStyles() {
+        val chapters = EbookEngine.chaptersFromMarkdown(
+            """
+            # **Hello**
+
+            **bold** *italic* ~~cut~~ ==hi== `code` [link](http://x)
+
+            > quoted
+
+            - item
+
+            ```
+            f()
+            ```
+            """.trimIndent(),
+            "md",
+        )
+        val body = chapters.first { it.text.contains("bold") || EbookMarks.strip(it.text).contains("bold") }.text
+        fun bits(sample: String): Int = EbookMarks.runs(body).first { it.text.contains(sample) }.bits
+        assertTrue(chapters.any { it.title == "Hello" })
+        assertTrue(bits("bold") and EbookMarks.BOLD != 0)
+        assertTrue(bits("italic") and EbookMarks.ITALIC != 0)
+        assertTrue(bits("cut") and EbookMarks.STRIKE != 0)
+        assertTrue(bits("hi") and EbookMarks.MARK != 0)
+        assertTrue(bits("code") and EbookMarks.CODE != 0)
+        assertTrue(bits("link") and EbookMarks.UNDER != 0)
+        val lines = EbookPaginator.wrapLines(body, EbookStyle(indentEm = 0, paragraphMode = EbookParagraph.SOFT))
+        assertTrue(lines.any { it.quote && EbookMarks.strip(it.text).contains("quoted") })
+        assertTrue(lines.any { it.code && EbookMarks.strip(it.text).contains("f()") })
+        assertTrue(EbookMarks.strip(body).contains("• item"))
+
+        val fb = EbookEngine.chaptersFromFb2(
+            """
+            <FictionBook><body><section>
+              <title><p>Intro</p></title>
+              <p><emphasis>em</emphasis> <strong>st</strong> <strikethrough>no</strikethrough></p>
+              <cite><p>said</p></cite>
+              <poem><stanza><v>line</v></stanza></poem>
+            </section></body></FictionBook>
+            """.trimIndent(),
+            "fb",
+        )
+        val fbText = fb.first { EbookMarks.strip(it.text).contains("em") }.text
+        fun fbBits(sample: String): Int = EbookMarks.runs(fbText).first { it.text.contains(sample) }.bits
+        assertTrue(fbBits("em") and EbookMarks.ITALIC != 0)
+        assertTrue(fbBits("st") and EbookMarks.BOLD != 0)
+        assertTrue(fbBits("no") and EbookMarks.STRIKE != 0)
+        val fbLines = EbookPaginator.wrapLines(fbText, EbookStyle(indentEm = 0, paragraphMode = EbookParagraph.SOFT))
+        assertTrue(fbLines.any { it.quote && EbookMarks.strip(it.text).contains("said") })
+        assertTrue(fbLines.any { it.quote && EbookMarks.strip(it.text).contains("line") })
+    }
+
+    @Test
+    fun boldWrapCarriesStyleOntoTheNextLine() {
+        val text = EbookHtml.toText("<p><b>${"word ".repeat(80)}</b></p>")
+        val lines = EbookPaginator.wrapLines(
+            text,
+            EbookStyle(fontSize = 30, marginPercent = 12, indentEm = 0, paragraphMode = EbookParagraph.SOFT),
+        ).filter { EbookMarks.hasVisible(it.text) }
+        assertTrue(lines.size >= 2)
+        assertTrue(lines.all { EbookMarks.runs(it.text).all { run -> run.bits and EbookMarks.BOLD != 0 } })
+    }
+
     private fun putInt(buf: ByteArray, at: Int, value: Int) {
         buf[at] = (value ushr 24).toByte()
         buf[at + 1] = (value ushr 16).toByte()

@@ -158,6 +158,7 @@ import com.hippo.ehviewer.library.document.EbookChapter
 import com.hippo.ehviewer.library.document.EbookEngine
 import com.hippo.ehviewer.library.document.EbookImages
 import com.hippo.ehviewer.library.document.EbookLine
+import com.hippo.ehviewer.library.document.EbookMarks
 import com.hippo.ehviewer.library.document.EbookPage
 import com.hippo.ehviewer.library.document.EbookPaginator
 import com.hippo.ehviewer.library.document.EbookParse
@@ -1385,12 +1386,107 @@ private fun drawEbookLine(
     val text = line.text
     if (text.isEmpty()) return
     val size = fontSize * line.scale.coerceAtLeast(0.5f)
+    val ink = paint.color
     paint.textSize = size
-    paint.typeface = if (line.bold) Typeface.create(baseFace, Typeface.BOLD) else baseFace
-    paint.isFakeBoldText = line.bold
+    paint.isUnderlineText = false
+    paint.isStrikeThruText = false
+    paint.bgColor = 0
     val x0 = left + line.indentEm * fontSize
+    if (line.quote) {
+        val bar = x0 - fontSize * 0.5f
+        val stroke = paint.strokeWidth
+        val style = paint.style
+        paint.style = Paint.Style.STROKE
+        paint.strokeWidth = (fontSize * 0.07f).coerceAtLeast(1f)
+        canvas.drawLine(bar, y - size * 0.9f, bar, y + size * 0.22f, paint)
+        paint.style = style
+        paint.strokeWidth = stroke
+    }
+    if (text.indexOf(EbookMarks.STYLE) < 0) {
+        paint.typeface = when {
+            line.code -> Typeface.MONOSPACE
+            line.bold -> Typeface.create(baseFace, Typeface.BOLD)
+            else -> baseFace
+        }
+        paint.isFakeBoldText = line.bold && !line.code
+        drawPlainRun(canvas, text, x0, y, contentW - line.indentEm * fontSize, line.justify, paint)
+        return
+    }
+    val runs = EbookMarks.runs(text)
+    if (runs.isEmpty()) return
     val avail = (contentW - line.indentEm * fontSize).coerceAtLeast(1f)
-    if (!line.justify) {
+    var natural = 0f
+    var spaces = 0
+    for (run in runs) {
+        applyRun(paint, baseFace, line, run.bits, size)
+        natural += paint.measureText(run.text)
+        for (c in run.text) if (c == ' ') spaces++
+    }
+    val extra = if (line.justify) (avail - natural).coerceAtLeast(0f) else 0f
+    val gap = if (line.justify && extra > 1f && spaces > 0) extra / spaces else 0f
+    var x = x0
+    for (run in runs) {
+        applyRun(paint, baseFace, line, run.bits, size)
+        val dy = when {
+            run.bits and EbookMarks.SUP != 0 -> -size * 0.34f
+            run.bits and EbookMarks.SUB != 0 -> size * 0.16f
+            else -> 0f
+        }
+        var start = 0
+        val body = run.text
+        while (start < body.length) {
+            val sp = body.indexOf(' ', start)
+            val end = if (sp < 0) body.length else sp
+            if (end > start) {
+                val word = body.substring(start, end)
+                val w = paint.measureText(word)
+                if (run.bits and EbookMarks.MARK != 0) {
+                    paint.color = 0x55F6D56A
+                    canvas.drawRect(x, y + dy - paint.textSize * 0.92f, x + w, y + dy + paint.textSize * 0.22f, paint)
+                    paint.color = ink
+                }
+                canvas.drawText(word, x, y + dy, paint)
+                x += w
+            }
+            if (sp < 0) break
+            x += paint.measureText(" ") + gap
+            start = sp + 1
+        }
+    }
+    paint.color = ink
+    paint.isUnderlineText = false
+    paint.isStrikeThruText = false
+    paint.textSize = size
+}
+
+private fun applyRun(paint: TextPaint, baseFace: Typeface, line: EbookLine, bits: Int, size: Float) {
+    val bold = line.bold || bits and EbookMarks.BOLD != 0
+    val italic = bits and EbookMarks.ITALIC != 0
+    val code = line.code || bits and EbookMarks.CODE != 0
+    paint.typeface = when {
+        code && bold -> Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
+        code -> Typeface.MONOSPACE
+        bold && italic -> Typeface.create(baseFace, Typeface.BOLD_ITALIC)
+        bold -> Typeface.create(baseFace, Typeface.BOLD)
+        italic -> Typeface.create(baseFace, Typeface.ITALIC)
+        else -> baseFace
+    }
+    paint.isFakeBoldText = bold && !code
+    paint.isUnderlineText = bits and EbookMarks.UNDER != 0
+    paint.isStrikeThruText = bits and EbookMarks.STRIKE != 0
+    paint.textSize = size * EbookMarks.sizeScale(bits)
+}
+
+private fun drawPlainRun(
+    canvas: Canvas,
+    text: String,
+    x0: Float,
+    y: Float,
+    avail: Float,
+    justify: Boolean,
+    paint: TextPaint,
+) {
+    if (!justify) {
         canvas.drawText(text, x0, y, paint)
         return
     }

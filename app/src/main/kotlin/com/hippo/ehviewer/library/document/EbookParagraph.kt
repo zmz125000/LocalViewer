@@ -127,7 +127,8 @@ internal object EbookParagraph {
             val text = trimJoinEdge(ln)
             val width = if (byCount) text.length.toFloat() else lineWidth(text)
             val indented = startsIndented(ln)
-            if (buf.isNotEmpty() && (indented || prevShort)) flush()
+            val locked = isStyledBlock(ln) || isStyledBlock(buf)
+            if (buf.isNotEmpty() && (locked || indented || prevShort)) flush()
             joinLine(buf, text)
             prevShort = width < shortLimit
         }
@@ -157,6 +158,14 @@ internal object EbookParagraph {
         while (s < e && isJoinSpace(raw[s])) s++
         while (e > s && isJoinSpace(raw[e - 1])) e--
         return if (s == 0 && e == raw.length) raw else raw.substring(s, e)
+    }
+
+    /** Quote and code lines stay their own paragraph when hard-wrap joins lines. */
+    private fun isStyledBlock(line: CharSequence): Boolean {
+        var i = 0
+        while (i < line.length && line[i].isWhitespace()) i++
+        if (i >= line.length) return false
+        return line[i] == EbookMarks.QUOTE || line[i] == EbookMarks.CODE_LINE
     }
 
     private fun startsIndented(line: String): Boolean {
@@ -275,7 +284,20 @@ internal object EbookParagraph {
 
     private fun lineWidth(s: String): Float {
         var w = 0f
-        for (c in s) w += EbookPaginator.charEm(c)
+        var i = 0
+        while (i < s.length) {
+            val c = s[i]
+            if (c == EbookMarks.STYLE && i + 1 < s.length) {
+                i += 2
+                continue
+            }
+            if (c == EbookMarks.QUOTE || c == EbookMarks.CODE_LINE) {
+                i++
+                continue
+            }
+            w += EbookPaginator.charEm(c)
+            i++
+        }
         return w
     }
 

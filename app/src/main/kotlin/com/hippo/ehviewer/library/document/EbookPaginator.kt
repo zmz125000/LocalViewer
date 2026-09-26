@@ -289,39 +289,79 @@ internal object EbookPaginator {
     }
 
     private fun wrapParagraph(para: String, style: EbookStyle, out: MutableList<EbookLine>) {
+        var i = 0
+        var quote = 0
+        var codeLine = false
+        while (i < para.length) {
+            when (para[i]) {
+                EbookMarks.QUOTE -> {
+                    quote++
+                    i++
+                }
+                EbookMarks.CODE_LINE -> {
+                    codeLine = true
+                    i++
+                }
+                else -> break
+            }
+        }
         val full = lineCapacity(style)
-        val indent = style.indentEm.toFloat().coerceAtLeast(0f)
+        val firstIndent = if (quote > 0 || codeLine) 0f else style.indentEm.toFloat().coerceAtLeast(0f)
+        val quoteIndent = quote * 1.15f
         var first = true
+        var bits = 0
         val sb = StringBuilder()
         var width = 0f
-        var i = 0
-        fun limit() = if (first) (full - indent).coerceAtLeast(4f) else full
+        fun indentOf() = quoteIndent + if (first) firstIndent else 0f
+        fun limit() = (full - indentOf()).coerceAtLeast(4f)
+        fun prependStyle() {
+            if (bits != 0) {
+                sb.append(EbookMarks.STYLE)
+                sb.append(EbookMarks.styleChar(bits))
+            }
+        }
         fun emit(last: Boolean) {
+            if (!EbookMarks.hasVisible(sb)) {
+                sb.clear()
+                width = 0f
+                prependStyle()
+                return
+            }
             val text = sb.toString()
             out += EbookLine(
                 text = text,
-                indentEm = if (first) indent else 0f,
+                indentEm = indentOf(),
                 heightEm = style.lineHeightEm,
-                justify = style.justify && !last && text.isNotBlank(),
+                justify = style.justify && !last && !codeLine && EbookMarks.hasVisible(text),
+                quote = quote > 0,
+                code = codeLine,
             )
             first = false
             sb.clear()
             width = 0f
+            prependStyle()
         }
         while (i < para.length) {
             val c = para[i]
+            if (c == EbookMarks.STYLE && i + 1 < para.length) {
+                bits = EbookMarks.bitsOf(para[i + 1])
+                sb.append(c)
+                sb.append(para[i + 1])
+                i += 2
+                continue
+            }
             if (c == '\u000c') {
                 if (sb.isNotEmpty()) emit(last = false)
                 i++
                 continue
             }
-            val em = glyphEm(c, style.latinScale)
+            val em = glyphEm(c, style.latinScale) * EbookMarks.widthScale(bits)
             if (em == 0f) {
                 i++
                 continue
             }
-            if (width + em > limit() && sb.isNotEmpty()) {
-                val cut = if (style.hyphenate && isHyphenLetter(c)) {
+            if (width + em > limit() && EbookMarks.hasVisible(sb)) {
+                val cut = if (style.hyphenate && !codeLine && isHyphenLetter(c)) {
                     hyphenCut(para, i, sb, limit(), style.latinScale)
                 } else {
                     -1
@@ -331,7 +371,7 @@ internal object EbookPaginator {
                     val rest = sb.substring(cut)
                     sb.clear()
                     sb.append(kept)
-                    if (kept.isNotEmpty() && !kept.endsWith('-')) sb.append('-')
+                    if (kept.isNotEmpty() && !EbookMarks.strip(kept).endsWith('-')) sb.append('-')
                     emit(last = false)
                     sb.append(rest)
                     width = lineEm(sb, style.latinScale)
@@ -407,7 +447,22 @@ internal object EbookPaginator {
 
     private fun lineEmRange(sb: StringBuilder, from: Int, to: Int, latinScale: Float): Float {
         var w = 0f
-        for (i in from until to) w += glyphEm(sb[i], latinScale)
+        var bits = 0
+        var i = from
+        while (i < to) {
+            val c = sb[i]
+            if (c == EbookMarks.STYLE && i + 1 < to) {
+                bits = EbookMarks.bitsOf(sb[i + 1])
+                i += 2
+                continue
+            }
+            if (c == EbookMarks.QUOTE || c == EbookMarks.CODE_LINE) {
+                i++
+                continue
+            }
+            w += glyphEm(c, latinScale) * EbookMarks.widthScale(bits)
+            i++
+        }
         return w
     }
 }
@@ -426,6 +481,10 @@ internal data class EbookLine(
     val offset: Int = 0,
     val scale: Float = 1f,
     val bold: Boolean = false,
+    /** Block quote: extra indent plus a bar in the reader. */
+    val quote: Boolean = false,
+    /** Preformatted / fenced code: monospace, no justify. */
+    val code: Boolean = false,
     val imageKey: String? = null,
     val imageAspect: Float = 1f,
     val fullPage: Boolean = false,
