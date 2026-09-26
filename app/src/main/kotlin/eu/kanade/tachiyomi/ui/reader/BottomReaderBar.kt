@@ -33,6 +33,7 @@ import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.collectAsState
 import eu.kanade.tachiyomi.ui.reader.setting.AutoRotateMode
 import eu.kanade.tachiyomi.ui.reader.setting.DecodeSizeType
+import eu.kanade.tachiyomi.ui.reader.setting.LandscapeCoverCycle
 import eu.kanade.tachiyomi.ui.reader.setting.PreferenceType
 import eu.kanade.tachiyomi.ui.reader.setting.ReadingModeType
 import eu.kanade.tachiyomi.ui.reader.setting.ScaleFitCycle
@@ -43,6 +44,8 @@ fun BottomReaderBar(
     containerColor: Color,
     onClickPhotoGrid: (() -> Unit)? = null,
     showScaleFitCycle: Boolean = false,
+    /** Single-page landscape with dual-page on: extra cover cycle. */
+    showLandscapeCover: Boolean = false,
     /** PDF reader: chapter list instead of auto-rotate. */
     onClickContents: (() -> Unit)? = null,
 ) = FlexibleBottomAppBar(
@@ -86,6 +89,14 @@ fun BottomReaderBar(
             onClick = { Settings.imageScaleType.value = ScaleFitCycle.next(scaleFit.prefValue).prefValue },
             imageVector = scaleFit.icon,
             contentDescription = stringResource(scaleFit.stringRes),
+        )
+    }
+    if (showLandscapeCover) {
+        val cover by Settings.landscapeCover.collectAsState { LandscapeCoverCycle.fromPreference(it) }
+        ActionButton(
+            onClick = { Settings.landscapeCover.value = LandscapeCoverCycle.next(cover.prefValue).prefValue },
+            imageVector = cover.icon,
+            contentDescription = stringResource(R.string.pref_landscape_cover) + " " + stringResource(cover.stringRes),
         )
     }
     // 4. Photo grid (folder / ZIP / PDF) or decode size

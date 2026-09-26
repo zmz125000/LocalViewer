@@ -46,6 +46,7 @@ fun BoxScope.ReaderAppBars(
     onClickSettings: (() -> Unit)? = null,
     onClickPhotoGrid: (() -> Unit)? = null,
     showScaleFitCycle: Boolean = false,
+    showLandscapeCover: Boolean = false,
     onClickContents: (() -> Unit)? = null,
 ) {
     // Dark already reads as translucent grey; light used near-opaque white (0.95).
@@ -97,6 +98,7 @@ fun BoxScope.ReaderAppBars(
                     containerColor = backgroundColor,
                     onClickPhotoGrid = onClickPhotoGrid,
                     showScaleFitCycle = showScaleFitCycle,
+                    showLandscapeCover = showLandscapeCover,
                     onClickContents = onClickContents,
                 )
             }

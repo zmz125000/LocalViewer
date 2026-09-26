@@ -2329,6 +2329,7 @@ private fun PdfReaderScreen(
                 null
             },
             showScaleFitCycle = !isWebtoon && (!pagerDual || !dualPageGap),
+            showLandscapeCover = pagerDual,
             onClickContents = { contentsOpen = true },
         )
         if (contentsOpen) {

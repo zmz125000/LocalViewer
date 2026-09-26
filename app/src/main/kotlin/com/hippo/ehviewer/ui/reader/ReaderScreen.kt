@@ -1296,6 +1296,7 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
                 null
             },
             showScaleFitCycle = !isWebtoon && (!pagerDual || !dualPageGap),
+            showLandscapeCover = pagerDual,
         )
         if (photoGridOpen) {
             val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
