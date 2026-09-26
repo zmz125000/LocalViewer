@@ -62,6 +62,7 @@
     <string name="browse_folder_gallery_pages">%d pages</string>
     <string name="browse_folder_gallery_pages_many">∞ pages</string>
     <string name="browse_directories">Directories</string>
+    <string name="browse_recent">Recent</string>
     <string name="browse_galleries">Galleries</string>
     <string name="browse_photos">Photos</string>
     <string name="browse_favorites">Favorites</string>

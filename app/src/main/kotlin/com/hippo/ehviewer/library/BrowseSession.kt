@@ -654,4 +654,24 @@ object BrowseSession {
             collapsedBrowseSectionsByFolder[folderKey] = names
         }
     }
+
+    /**
+     * Sections the user has tapped in this folder. Untouched sections follow
+     * [defaultCollapsed] (Recent lock/tick); touched sections follow [collapsedBrowseSections].
+     */
+    private val collapsedBrowseTouchedByFolder = ConcurrentHashMap<String, Set<String>>()
+
+    fun collapsedBrowseTouched(folderKey: String): Set<String> {
+        if (folderKey.isEmpty()) return emptySet()
+        return collapsedBrowseTouchedByFolder[folderKey].orEmpty()
+    }
+
+    fun setCollapsedBrowseTouched(folderKey: String, names: Set<String>) {
+        if (folderKey.isEmpty()) return
+        if (names.isEmpty()) {
+            collapsedBrowseTouchedByFolder.remove(folderKey)
+        } else {
+            collapsedBrowseTouchedByFolder[folderKey] = names
+        }
+    }
 }

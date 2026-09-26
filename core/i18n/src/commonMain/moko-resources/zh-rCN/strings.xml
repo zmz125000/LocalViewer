@@ -58,6 +58,7 @@
     <string name="browse_folder_gallery_pages">%d 页</string>
     <string name="browse_folder_gallery_pages_many">∞ 页</string>
     <string name="browse_directories">目录</string>
+    <string name="browse_recent">最近打开</string>
     <string name="browse_galleries">图库</string>
     <string name="browse_photos">照片</string>
     <string name="browse_favorites">收藏</string>

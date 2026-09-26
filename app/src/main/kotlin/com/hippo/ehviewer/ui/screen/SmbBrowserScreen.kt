@@ -2010,8 +2010,37 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                         )
                     // In-memory only; resets when dirKey changes. No prefs / no ripple on header.
                     val animateItems by Settings.animateItems.collectAsState()
+                    val browseRecentOpen by Settings.browseRecentOpen.collectAsState()
+                    val browseRecentExpanded by Settings.browseRecentExpanded.collectAsState()
+                    val historyTimeByGid = rememberHistoryTimeByGid()
+                    val recentEntries = remember(
+                        dirs,
+                        galleries,
+                        documents,
+                        videos,
+                        files,
+                        historyTimeByGid,
+                        sourceId,
+                        dirKey,
+                    ) {
+                        recentBrowseEntries(
+                            buildList {
+                                addAll(dirs)
+                                addAll(galleries)
+                                addAll(documents)
+                                addAll(videos)
+                                addAll(files)
+                            },
+                            historyTimeByGid,
+                            gidsOf = {
+                                remoteBrowseHistoryGids(it, sourceId, dirKey, smb = true)
+                            },
+                            nameOf = { it.name },
+                        )
+                    }
                     val (collapsedSections, toggleSection) = rememberBrowseSectionCollapse(
                         BrowseSession.smbListingKey(sourceId, dirKey),
+                        if (browseRecentExpanded) emptySet() else setOf(BrowseFolderSection.Recent),
                     )
 
                     // Keys must stay unique when dual-list + "this folder as gallery" share a name
@@ -2082,6 +2111,201 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                         is BrowseEntryRemote.VideoFile -> "v-${entry.fileName}"
                         is BrowseEntryRemote.RegularFile -> "f-${entry.fileName}"
                     }
+                    val renderBrowseRow: @Composable (BrowseEntryRemote, Boolean, Boolean, Modifier) -> Unit = { entry, grid, fromSearch, itemMod ->
+                        when (entry) {
+                            is BrowseEntryRemote.Directory -> if (grid) {
+                                BrowseDirectoryGridItem(
+                                    modifier = itemMod,
+                                    name = entry.name,
+                                    onClick = { enterDir(entry.relativeName, fromSearch = fromSearch) },
+                                    onLongClick = {
+                                        toggleDirFavorite(entry.relativeName, entry.coverFileName)
+                                    },
+                                    showFavoriteStar = isDirFavorite(entry.relativeName),
+                                    cover = dirCoverFor(entry),
+                                    showFolderThumb = browseFolderThumbs,
+                                    thumbRetryKey = refreshToken,
+                                    allowRemoteFetch = allowRemoteThumbs,
+                                    overflow = dirOverflow(entry.relativeName, entry.coverFileName, entry.virtual),
+                                )
+                            } else {
+                                BrowseDirectoryRow(
+                                    modifier = itemMod,
+                                    name = entry.name,
+                                    onClick = { enterDir(entry.relativeName, fromSearch = fromSearch) },
+                                    onLongClick = {
+                                        toggleDirFavorite(entry.relativeName, entry.coverFileName)
+                                    },
+                                    cover = dirCoverFor(entry),
+                                    showFolderThumb = browseFolderThumbs,
+                                    thumbRetryKey = refreshToken,
+                                    allowRemoteFetch = allowRemoteThumbs,
+                                    lastModifiedMs = entry.lastModifiedMs,
+                                    sizeBytes = entry.size,
+                                    typeLabel = browseZipAsDirTypeLabel(
+                                        entry.relativeName,
+                                        entry.name,
+                                    ) ?: "Dir",
+                                    overflow = dirOverflow(entry.relativeName, entry.coverFileName, entry.virtual),
+                                    showFavoriteStar = isDirFavorite(entry.relativeName),
+                                )
+                            }
+                            is BrowseEntryRemote.FolderGallery -> if (grid) {
+                                BrowseFolderGalleryGridItem(
+                                    modifier = itemMod,
+                                    name = entry.name,
+                                    pageCount = entry.pageCount,
+                                    pageCountCapped = entry.pageCountCapped,
+                                    cover = coverFor(entry),
+                                    progressGid = folderEntryProgressGid(entry),
+                                    thumbRetryKey = refreshToken,
+                                    allowRemoteFetch = allowRemoteThumbs,
+                                    showPages = showGalleryPages,
+                                    onClick = { openFolderGalleryPrimary(entry) },
+                                    onLongClick = { openFolderGallerySecondary(entry) },
+                                    overflow = folderGalleryOverflow(entry),
+                                )
+                            } else {
+                                BrowseFolderGalleryRow(
+                                    modifier = itemMod,
+                                    name = entry.name,
+                                    pageCount = entry.pageCount,
+                                    pageCountCapped = entry.pageCountCapped,
+                                    cover = coverFor(entry),
+                                    progressGid = folderEntryProgressGid(entry),
+                                    thumbRetryKey = refreshToken,
+                                    allowRemoteFetch = allowRemoteThumbs,
+                                    showPages = showGalleryPages,
+                                    onClick = { openFolderGalleryPrimary(entry) },
+                                    onLongClick = { openFolderGallerySecondary(entry) },
+                                    lastModifiedMs = entry.lastModifiedMs,
+                                    sizeBytes = entry.size,
+                                    typeLabel = browseZipAsDirTypeLabel(
+                                        entry.relativeName,
+                                        entry.name,
+                                    ) ?: "Folder",
+                                    overflow = folderGalleryOverflow(entry),
+                                )
+                            }
+                            is BrowseEntryRemote.ArchiveGallery -> if (grid) {
+                                BrowseArchiveGridItem(
+                                    modifier = itemMod,
+                                    name = entry.name,
+                                    cover = archiveCoverFor(entry),
+                                    thumbRetryKey = refreshToken,
+                                    allowRemoteFetch = allowRemoteThumbs,
+                                    onClick = { openArchive(entry) },
+                                    onLongClick = { openArchiveSecondary(entry) },
+                                    overflow = archiveOverflow(entry),
+                                )
+                            } else {
+                                BrowseArchiveGalleryRow(
+                                    modifier = itemMod,
+                                    name = entry.name,
+                                    cover = archiveCoverFor(entry),
+                                    thumbRetryKey = refreshToken,
+                                    allowRemoteFetch = allowRemoteThumbs,
+                                    onClick = { openArchive(entry) },
+                                    onLongClick = { openArchiveSecondary(entry) },
+                                    fileName = entry.fileName,
+                                    sizeBytes = entry.size,
+                                    lastModifiedMs = entry.lastModifiedMs,
+                                    pageCount = entry.pageCount,
+                                    showPages = showGalleryPages,
+                                    overflow = archiveOverflow(entry),
+                                )
+                            }
+                            is BrowseEntryRemote.VideoFile -> if (grid) {
+                                BrowseVideoGridItem(
+                                    modifier = itemMod,
+                                    name = entry.name,
+                                    thumbnailSource = VideoThumbnailSource.Smb(
+                                        sourceId = sourceId,
+                                        remoteRelativeFile = joinRemoteArchivePath(
+                                            relativeDir,
+                                            "",
+                                            entry.fileName,
+                                        ),
+                                        knownSizeBytes = entry.size,
+                                    ),
+                                    allowRemoteFetch = allowRemoteThumbs,
+                                    onClick = { openVideoPrimary(entry.fileName) },
+                                    onLongClick = { openVideoSecondary(entry.fileName) },
+                                    overflow = videoOverflow(entry.fileName, entry.virtual),
+                                )
+                            } else {
+                                BrowseVideoRow(
+                                    modifier = itemMod,
+                                    name = entry.name,
+                                    thumbnailSource = VideoThumbnailSource.Smb(
+                                        sourceId = sourceId,
+                                        remoteRelativeFile = joinRemoteArchivePath(
+                                            relativeDir,
+                                            "",
+                                            entry.fileName,
+                                        ),
+                                        knownSizeBytes = entry.size,
+                                    ),
+                                    allowRemoteFetch = allowRemoteThumbs,
+                                    onClick = { openVideoPrimary(entry.fileName) },
+                                    onLongClick = { openVideoSecondary(entry.fileName) },
+                                    fileName = entry.fileName,
+                                    sizeBytes = entry.size,
+                                    lastModifiedMs = entry.lastModifiedMs,
+                                    overflow = videoOverflow(entry.fileName, entry.virtual),
+                                )
+                            }
+                            is BrowseEntryRemote.RegularFile -> {
+                                val isImage = isImageFileName(
+                                    entry.fileName.substringAfterLast('/'),
+                                )
+                                if (grid) {
+                                    if (isImage) {
+                                        BrowsePhotoGridImageItem(
+                                            modifier = itemMod,
+                                            name = entry.name,
+                                            cover = imageCoverFor(entry),
+                                            showPhotoThumb = true,
+                                            thumbRetryKey = refreshToken,
+                                            allowRemoteFetch = allowRemoteThumbs,
+                                            onClick = { openFolderImage(entry) },
+                                            onLongClick = { openExternalFile(entry.fileName) },
+                                            overflow = fileOverflow(entry.fileName),
+                                        )
+                                    } else {
+                                        BrowseFileGridItem(
+                                            modifier = itemMod,
+                                            name = entry.name,
+                                            onClick = { openListedFile(entry.fileName) },
+                                            onLongClick = { openExternalFile(entry.fileName) },
+                                            overflow = fileOverflow(entry.fileName),
+                                        )
+                                    }
+                                } else {
+                                    BrowseFileRow(
+                                        modifier = itemMod,
+                                        name = entry.name,
+                                        cover = if (isImage) imageCoverFor(entry) else null,
+                                        showPhotoThumb = isImage,
+                                        thumbRetryKey = refreshToken,
+                                        allowRemoteFetch = allowRemoteThumbs,
+                                        onClick = {
+                                            if (isImage) {
+                                                openFolderImage(entry)
+                                            } else {
+                                                openListedFile(entry.fileName)
+                                            }
+                                        },
+                                        onLongClick = { openExternalFile(entry.fileName) },
+                                        fileName = entry.fileName,
+                                        sizeBytes = entry.size,
+                                        lastModifiedMs = entry.lastModifiedMs,
+                                        overflow = fileOverflow(entry.fileName),
+                                    )
+                                }
+                            }
+                        }
+                    }
                     fun LazyGridScope.searchSection(grid: Boolean) {
                         if (search.submittedKeyword.isEmpty() && !searching) return
                         item(key = "hdr-search", span = { GridItemSpan(maxLineSpan) }) {
@@ -2107,202 +2331,24 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                             return
                         }
                         items(searchHits, key = { "s-${searchHitKey(it)}" }) { entry ->
-                            val itemMod = Modifier.thenIf(animateItems) { animateItem() }
-                            when (entry) {
-                                is BrowseEntryRemote.Directory -> if (grid) {
-                                    BrowseDirectoryGridItem(
-                                        modifier = itemMod,
-                                        name = entry.name,
-                                        onClick = { enterDir(entry.relativeName, fromSearch = true) },
-                                        onLongClick = {
-                                            toggleDirFavorite(entry.relativeName, entry.coverFileName)
-                                        },
-                                        showFavoriteStar = isDirFavorite(entry.relativeName),
-                                        cover = dirCoverFor(entry),
-                                        showFolderThumb = browseFolderThumbs,
-                                        thumbRetryKey = refreshToken,
-                                        allowRemoteFetch = allowRemoteThumbs,
-                                        overflow = dirOverflow(entry.relativeName, entry.coverFileName, entry.virtual),
-                                    )
-                                } else {
-                                    BrowseDirectoryRow(
-                                        modifier = itemMod,
-                                        name = entry.name,
-                                        onClick = { enterDir(entry.relativeName, fromSearch = true) },
-                                        onLongClick = {
-                                            toggleDirFavorite(entry.relativeName, entry.coverFileName)
-                                        },
-                                        cover = dirCoverFor(entry),
-                                        showFolderThumb = browseFolderThumbs,
-                                        thumbRetryKey = refreshToken,
-                                        allowRemoteFetch = allowRemoteThumbs,
-                                        lastModifiedMs = entry.lastModifiedMs,
-                                        sizeBytes = entry.size,
-                                        typeLabel = browseZipAsDirTypeLabel(
-                                            entry.relativeName,
-                                            entry.name,
-                                        ) ?: "Dir",
-                                        overflow = dirOverflow(entry.relativeName, entry.coverFileName, entry.virtual),
-                                        showFavoriteStar = isDirFavorite(entry.relativeName),
-                                    )
-                                }
-                                is BrowseEntryRemote.FolderGallery -> if (grid) {
-                                    BrowseFolderGalleryGridItem(
-                                        modifier = itemMod,
-                                        name = entry.name,
-                                        pageCount = entry.pageCount,
-                                        pageCountCapped = entry.pageCountCapped,
-                                        cover = coverFor(entry),
-                                        progressGid = folderEntryProgressGid(entry),
-                                        thumbRetryKey = refreshToken,
-                                        allowRemoteFetch = allowRemoteThumbs,
-                                        showPages = showGalleryPages,
-                                        onClick = { openFolderGalleryPrimary(entry) },
-                                        onLongClick = { openFolderGallerySecondary(entry) },
-                                        overflow = folderGalleryOverflow(entry),
-                                    )
-                                } else {
-                                    BrowseFolderGalleryRow(
-                                        modifier = itemMod,
-                                        name = entry.name,
-                                        pageCount = entry.pageCount,
-                                        pageCountCapped = entry.pageCountCapped,
-                                        cover = coverFor(entry),
-                                        progressGid = folderEntryProgressGid(entry),
-                                        thumbRetryKey = refreshToken,
-                                        allowRemoteFetch = allowRemoteThumbs,
-                                        showPages = showGalleryPages,
-                                        onClick = { openFolderGalleryPrimary(entry) },
-                                        onLongClick = { openFolderGallerySecondary(entry) },
-                                        lastModifiedMs = entry.lastModifiedMs,
-                                        sizeBytes = entry.size,
-                                        typeLabel = browseZipAsDirTypeLabel(
-                                            entry.relativeName,
-                                            entry.name,
-                                        ) ?: "Folder",
-                                        overflow = folderGalleryOverflow(entry),
-                                    )
-                                }
-                                is BrowseEntryRemote.ArchiveGallery -> if (grid) {
-                                    BrowseArchiveGridItem(
-                                        modifier = itemMod,
-                                        name = entry.name,
-                                        cover = archiveCoverFor(entry),
-                                        thumbRetryKey = refreshToken,
-                                        allowRemoteFetch = allowRemoteThumbs,
-                                        onClick = { openArchive(entry) },
-                                        onLongClick = { openArchiveSecondary(entry) },
-                                        overflow = archiveOverflow(entry),
-                                    )
-                                } else {
-                                    BrowseArchiveGalleryRow(
-                                        modifier = itemMod,
-                                        name = entry.name,
-                                        cover = archiveCoverFor(entry),
-                                        thumbRetryKey = refreshToken,
-                                        allowRemoteFetch = allowRemoteThumbs,
-                                        onClick = { openArchive(entry) },
-                                        onLongClick = { openArchiveSecondary(entry) },
-                                        fileName = entry.fileName,
-                                        sizeBytes = entry.size,
-                                        lastModifiedMs = entry.lastModifiedMs,
-                                        pageCount = entry.pageCount,
-                                        showPages = showGalleryPages,
-                                        overflow = archiveOverflow(entry),
-                                    )
-                                }
-                                is BrowseEntryRemote.VideoFile -> if (grid) {
-                                    BrowseVideoGridItem(
-                                        modifier = itemMod,
-                                        name = entry.name,
-                                        thumbnailSource = VideoThumbnailSource.Smb(
-                                            sourceId = sourceId,
-                                            remoteRelativeFile = joinRemoteArchivePath(
-                                                relativeDir,
-                                                "",
-                                                entry.fileName,
-                                            ),
-                                            knownSizeBytes = entry.size,
-                                        ),
-                                        allowRemoteFetch = allowRemoteThumbs,
-                                        onClick = { openVideoPrimary(entry.fileName) },
-                                        onLongClick = { openVideoSecondary(entry.fileName) },
-                                        overflow = videoOverflow(entry.fileName, entry.virtual),
-                                    )
-                                } else {
-                                    BrowseVideoRow(
-                                        modifier = itemMod,
-                                        name = entry.name,
-                                        thumbnailSource = VideoThumbnailSource.Smb(
-                                            sourceId = sourceId,
-                                            remoteRelativeFile = joinRemoteArchivePath(
-                                                relativeDir,
-                                                "",
-                                                entry.fileName,
-                                            ),
-                                            knownSizeBytes = entry.size,
-                                        ),
-                                        allowRemoteFetch = allowRemoteThumbs,
-                                        onClick = { openVideoPrimary(entry.fileName) },
-                                        onLongClick = { openVideoSecondary(entry.fileName) },
-                                        fileName = entry.fileName,
-                                        sizeBytes = entry.size,
-                                        lastModifiedMs = entry.lastModifiedMs,
-                                        overflow = videoOverflow(entry.fileName, entry.virtual),
-                                    )
-                                }
-                                is BrowseEntryRemote.RegularFile -> {
-                                    val isImage = isImageFileName(
-                                        entry.fileName.substringAfterLast('/'),
-                                    )
-                                    if (grid) {
-                                        if (isImage) {
-                                            BrowsePhotoGridImageItem(
-                                                modifier = itemMod,
-                                                name = entry.name,
-                                                cover = imageCoverFor(entry),
-                                                showPhotoThumb = true,
-                                                thumbRetryKey = refreshToken,
-                                                allowRemoteFetch = allowRemoteThumbs,
-                                                onClick = { openFolderImage(entry) },
-                                                onLongClick = { openExternalFile(entry.fileName) },
-                                                overflow = fileOverflow(entry.fileName),
-                                            )
-                                        } else {
-                                            BrowseFileGridItem(
-                                                modifier = itemMod,
-                                                name = entry.name,
-                                                onClick = { openListedFile(entry.fileName) },
-                                                onLongClick = { openExternalFile(entry.fileName) },
-                                                overflow = fileOverflow(entry.fileName),
-                                            )
-                                        }
-                                    } else {
-                                        BrowseFileRow(
-                                            modifier = itemMod,
-                                            name = entry.name,
-                                            cover = if (isImage) imageCoverFor(entry) else null,
-                                            showPhotoThumb = isImage,
-                                            thumbRetryKey = refreshToken,
-                                            allowRemoteFetch = allowRemoteThumbs,
-                                            onClick = {
-                                                if (isImage) {
-                                                    openFolderImage(entry)
-                                                } else {
-                                                    openListedFile(entry.fileName)
-                                                }
-                                            },
-                                            onLongClick = { openExternalFile(entry.fileName) },
-                                            fileName = entry.fileName,
-                                            sizeBytes = entry.size,
-                                            lastModifiedMs = entry.lastModifiedMs,
-                                            overflow = fileOverflow(entry.fileName),
-                                        )
-                                    }
-                                }
-                            }
+                            renderBrowseRow(entry, grid, true, Modifier.thenIf(animateItems) { animateItem() })
                         }
                     }
+
+                    fun LazyGridScope.recentSection(grid: Boolean) {
+                        if (!browseRecentOpen || recentEntries.isEmpty()) return
+                        item(key = "hdr-recent", span = { GridItemSpan(maxLineSpan) }) {
+                            BrowseSectionHeader(
+                                stringResource(R.string.browse_recent),
+                                onClick = { toggleSection(BrowseFolderSection.Recent) },
+                            )
+                        }
+                        if (BrowseFolderSection.Recent in collapsedSections) return
+                        items(recentEntries, key = { "r-${searchHitKey(it)}" }) { entry ->
+                            renderBrowseRow(entry, grid, false, Modifier.thenIf(animateItems) { animateItem() })
+                        }
+                    }
+
                     fun LazyGridScope.documentSection(grid: Boolean) {
                         if (documents.isEmpty()) return
                         item(key = "hdr-docs", span = { GridItemSpan(maxLineSpan) }) {
@@ -2428,6 +2474,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                             verticalArrangement = gridSpacing,
                         ) {
                             searchSection(grid = true)
+                            recentSection(grid = true)
                             if (dirs.isNotEmpty()) {
                                 item(
                                     key = "hdr-dirs",
@@ -2576,6 +2623,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                             modifier = Modifier.nestedScroll(scrollBehavior.nestedScrollConnection).fillMaxSize(),
                         ) {
                             searchSection(grid = false)
+                            recentSection(grid = false)
                             if (dirs.isNotEmpty()) {
                                 item(
                                     key = "hdr-dirs",

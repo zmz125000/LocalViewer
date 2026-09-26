@@ -1849,6 +1849,7 @@ fun BrowseSearchSectionHeader(
 
 /** In-memory collapse keys for folder-view section headers (not disk-persisted). */
 enum class BrowseFolderSection {
+    Recent,
     Search,
     Directories,
     Galleries,
@@ -1861,23 +1862,42 @@ enum class BrowseFolderSection {
  * Section collapse for **one folder** ([folderKey] = path / SMB-WebDAV dir key).
  * Hide Videos here does not collapse Videos in other directories. Process memory only
  * (return to the same folder restores; process death clears).
+ *
+ * [defaultCollapsed] applies only to sections the user has not tapped in this folder.
+ * Recent uses that for the Last open lock (expanded) vs tick (collapsed).
  */
 @Composable
 fun rememberBrowseSectionCollapse(
     folderKey: Any? = null,
+    defaultCollapsed: Set<BrowseFolderSection> = emptySet(),
 ): Pair<Set<BrowseFolderSection>, (BrowseFolderSection) -> Unit> {
     val key = folderKey?.toString().orEmpty()
-    var collapsed by remember(key) {
-        mutableStateOf(
-            BrowseSession.collapsedBrowseSections(key).mapNotNull { name ->
-                runCatching { BrowseFolderSection.valueOf(name) }.getOrNull()
-            }.toSet(),
-        )
+    var stored by remember(key) {
+        mutableStateOf(BrowseSession.collapsedBrowseSections(key))
+    }
+    var touched by remember(key) {
+        mutableStateOf(BrowseSession.collapsedBrowseTouched(key))
+    }
+    val collapsed = remember(stored, touched, defaultCollapsed) {
+        buildSet {
+            for (section in BrowseFolderSection.entries) {
+                val isCollapsed = if (section.name in touched) {
+                    section.name in stored
+                } else {
+                    section in defaultCollapsed
+                }
+                if (isCollapsed) add(section)
+            }
+        }
     }
     val toggle: (BrowseFolderSection) -> Unit = { section ->
-        val next = if (section in collapsed) collapsed - section else collapsed + section
-        collapsed = next
-        BrowseSession.setCollapsedBrowseSections(key, next.map { it.name }.toSet())
+        val next = stored.toMutableSet()
+        if (section in collapsed) next.remove(section.name) else next.add(section.name)
+        val nextTouched = touched + section.name
+        stored = next
+        touched = nextTouched
+        BrowseSession.setCollapsedBrowseSections(key, next)
+        BrowseSession.setCollapsedBrowseTouched(key, nextTouched)
     }
     return collapsed to toggle
 }

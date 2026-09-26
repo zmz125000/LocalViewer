@@ -106,17 +106,14 @@ fun AnimatedVisibilityScope.PrivacyScreen(navigator: DestinationsNavigator) = Sc
                 Column {
                     SwitchPreference(
                         title = stringResource(id = R.string.settings_privacy_save_file_history),
-                        summary = stringResource(id = R.string.settings_privacy_save_file_history_summary),
                         state = Settings.saveFileHistory.asMutableState(),
                     )
                     SwitchPreference(
                         title = stringResource(id = R.string.settings_privacy_save_ebook_history),
-                        summary = stringResource(id = R.string.settings_privacy_save_ebook_history_summary),
                         state = Settings.saveEbookHistory.asMutableState(),
                     )
                     SwitchPreference(
                         title = stringResource(id = R.string.settings_privacy_save_gallery_history),
-                        summary = stringResource(id = R.string.settings_privacy_save_gallery_history_summary),
                         state = Settings.saveGalleryHistory.asMutableState(),
                     )
                 }
@@ -134,12 +131,10 @@ fun AnimatedVisibilityScope.PrivacyScreen(navigator: DestinationsNavigator) = Sc
             val scanHiddenFiles = Settings.scanHiddenFiles.asMutableState()
             SwitchPreference(
                 title = stringResource(id = R.string.settings_privacy_clear_history_on_startup),
-                summary = stringResource(id = R.string.settings_privacy_clear_history_on_startup_summary),
                 state = Settings.clearHistoryOnStartup.asMutableState(),
             )
             SwitchPreference(
                 title = stringResource(id = R.string.settings_privacy_clear_search_on_startup),
-                summary = stringResource(id = R.string.settings_privacy_clear_search_on_startup_summary),
                 state = Settings.clearSearchOnStartup.asMutableState(),
             )
             SwitchPreference(
