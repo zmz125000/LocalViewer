@@ -65,13 +65,37 @@ private val DarkGrey = Color(0xFF2A2A2A)
 private val OnDarkGrey = Color(0xFFECECEC)
 private val OnDarkGreyMuted = Color(0xFFC8C8C8)
 
-/** Action label on a snackbar. Inverse primary when it contrasts; otherwise plain light or dark. */
-@Composable
-fun snackbarActionContentColor(): Color = snackbarOnBarColor(MaterialTheme.colorScheme.inversePrimary)
+/** Dark-mode snackbar. Lighter than the page, still dark. */
+private val SnackbarDark = Color(0xFF4A4A4A)
 
-/** Dismiss label, same bar as the message. */
 @Composable
-fun snackbarDismissContentColor(): Color = snackbarOnBarColor(MaterialTheme.colorScheme.inverseOnSurface)
+fun snackbarContainerColor(): Color = if (isSystemInDarkTheme()) {
+    SnackbarDark
+} else {
+    MaterialTheme.colorScheme.inverseSurface
+}
+
+/** Action label on a snackbar. Accent when it contrasts; otherwise plain light or dark. */
+@Composable
+fun snackbarActionContentColor(): Color {
+    val preferred = if (isSystemInDarkTheme()) {
+        MaterialTheme.colorScheme.primary
+    } else {
+        MaterialTheme.colorScheme.inversePrimary
+    }
+    return snackbarOnBarColor(preferred)
+}
+
+/** Message and dismiss label. */
+@Composable
+fun snackbarDismissContentColor(): Color {
+    val preferred = if (isSystemInDarkTheme()) {
+        OnDarkGrey
+    } else {
+        MaterialTheme.colorScheme.inverseOnSurface
+    }
+    return snackbarOnBarColor(preferred)
+}
 
 @Composable
 fun snackbarActionButtonColors() = ButtonDefaults.textButtonColors(contentColor = snackbarActionContentColor())
@@ -81,7 +105,7 @@ fun snackbarDismissButtonColors() = ButtonDefaults.textButtonColors(contentColor
 
 @Composable
 private fun snackbarOnBarColor(preferred: Color): Color {
-    val bar = MaterialTheme.colorScheme.inverseSurface
+    val bar = snackbarContainerColor()
     if (contrastRatio(preferred, bar) >= 4.5f) return preferred
     return if (bar.luminance() < 0.5f) Color.White else Color(0xFF1A1A1A)
 }
