@@ -17,6 +17,7 @@ import androidx.compose.ui.unit.dp
 import com.ehviewer.core.i18n.R
 import com.hippo.ehviewer.library.OPEN_CACHE_WARN_BYTES
 import com.hippo.ehviewer.ui.theme.snackbarActionButtonColors
+import com.hippo.ehviewer.ui.theme.snackbarContainerColor
 import com.hippo.ehviewer.ui.theme.snackbarDismissButtonColors
 import com.hippo.ehviewer.ui.theme.snackbarDismissContentColor
 import com.hippo.ehviewer.util.FileUtils
@@ -246,6 +247,7 @@ fun BrowseSaveSnackbars(modifier: Modifier = Modifier) {
         items.forEach { item ->
             Snackbar(
                 modifier = Modifier.padding(bottom = 8.dp),
+                containerColor = snackbarContainerColor(),
                 contentColor = snackbarDismissContentColor(),
                 action = {
                     when (val st = item.status) {

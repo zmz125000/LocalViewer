@@ -34,6 +34,7 @@ import com.hippo.ehviewer.smb.SmbPasswordStore
 import com.hippo.ehviewer.smb.SmbRepository
 import com.hippo.ehviewer.ui.OpenFileExternally
 import com.hippo.ehviewer.ui.theme.snackbarActionButtonColors
+import com.hippo.ehviewer.ui.theme.snackbarContainerColor
 import com.hippo.ehviewer.ui.theme.snackbarDismissButtonColors
 import com.hippo.ehviewer.ui.theme.snackbarDismissContentColor
 import com.hippo.ehviewer.ui.tools.DialogState
@@ -319,6 +320,7 @@ fun HttpShareSnackbars(
         items.forEach { item ->
             Snackbar(
                 modifier = Modifier.padding(bottom = 8.dp),
+                containerColor = snackbarContainerColor(),
                 contentColor = snackbarDismissContentColor(),
                 action = {
                     TextButton(
