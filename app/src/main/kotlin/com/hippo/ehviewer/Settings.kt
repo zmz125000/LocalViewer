@@ -663,8 +663,11 @@ object Settings : DataStorePreferences(null) {
     /** 0=start, 1=justify. */
     val ebookAlign = intPref("pref_ebook_align", EBOOK_ALIGN_START)
 
-    /** Page margin as percent of page width (4–12). Default 7. */
+    /** Left and right page margin as percent of page width (4–12). Default 7. */
     val ebookMargin = intPref("pref_ebook_margin", 7)
+
+    /** Top and bottom inset as percent of page height (0–12). Default 2. */
+    val ebookVerticalMargin = intPref("pref_ebook_vertical_margin", 2)
     val orientationMode = intPref("pref_default_orientation_type_key", OrientationType.DEFAULT.prefValue)
     val showReaderSeekbar = boolPref("pref_show_reader_seekbar", true)
     val showPageNumber = boolPref("pref_show_page_number_key", true)

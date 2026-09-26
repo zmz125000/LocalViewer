@@ -920,6 +920,7 @@
     <string name="ebook_align_start">左齐</string>
     <string name="ebook_align_justify">两端对齐</string>
     <string name="pref_ebook_margin">页边距</string>
+    <string name="pref_ebook_vertical_margin">上下边距</string>
     <string name="pref_eink_refresh">电子墨水屏刷新</string>
     <string name="pref_eink_refresh_summary">翻页后闪烁屏幕，以减少电子墨水屏残影。仅适用于画廊模式。</string>
     <string name="pref_eink_refresh_duration">刷新闪烁时长</string>

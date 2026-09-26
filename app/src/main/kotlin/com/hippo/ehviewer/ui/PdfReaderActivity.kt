@@ -1117,6 +1117,7 @@ private fun ebookStyleFromSettings(landscape: Boolean): EbookStyle = EbookStyle(
     paragraphPercent = Settings.ebookParagraphSpacing.value.coerceIn(0, 200),
     indentEm = Settings.ebookIndent.value.coerceIn(0, 2),
     marginPercent = Settings.ebookMargin.value.coerceIn(4, 12),
+    verticalMarginPercent = Settings.ebookVerticalMargin.value.coerceIn(0, 12),
     justify = Settings.ebookAlign.value == Settings.EBOOK_ALIGN_JUSTIFY,
     paragraphMode = Settings.ebookParagraphMode.value.coerceIn(0, 2),
 )
@@ -1150,8 +1151,9 @@ private fun drawEbookPage(bitmap: Bitmap, page: EbookPage, style: EbookStyle, co
     bitmap.eraseColor(colors.bg)
     val w = bitmap.width.toFloat().coerceAtLeast(1f)
     val h = bitmap.height.toFloat().coerceAtLeast(1f)
-    val pad = w * style.margin
-    val contentW = (w - 2f * pad).coerceAtLeast(1f)
+    val padX = w * style.margin
+    val padY = h * style.verticalMargin
+    val contentW = (w - 2f * padX).coerceAtLeast(1f)
     val fontSize = w * style.fontFraction
     val baseFace = ebookTypeface(colors.font)
     val paint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -1159,8 +1161,8 @@ private fun drawEbookPage(bitmap: Bitmap, page: EbookPage, style: EbookStyle, co
         textSize = fontSize
         typeface = baseFace
     }
-    var y = pad
-    val maxY = h - pad
+    var y = padY
+    val maxY = h - padY
     for (line in page.lines) {
         if (line.text.isEmpty()) {
             y += fontSize * line.heightEm
@@ -1169,7 +1171,7 @@ private fun drawEbookPage(bitmap: Bitmap, page: EbookPage, style: EbookStyle, co
         val scale = line.scale.coerceAtLeast(0.5f)
         y += fontSize * scale
         if (y > maxY) break
-        drawEbookLine(canvas, line, pad, y, contentW, fontSize, paint, baseFace)
+        drawEbookLine(canvas, line, padX, y, contentW, fontSize, paint, baseFace)
         y += fontSize * (line.heightEm - scale).coerceAtLeast(0f)
     }
 }
@@ -1304,6 +1306,7 @@ private fun PdfReaderScreen(
     val ebookIndent by Settings.ebookIndent.collectAsState()
     val ebookAlign by Settings.ebookAlign.collectAsState()
     val ebookMargin by Settings.ebookMargin.collectAsState()
+    val ebookVerticalMargin by Settings.ebookVerticalMargin.collectAsState()
     val ebookParaMode by Settings.ebookParagraphMode.collectAsState()
     val ebookTheme by Settings.ebookTheme.collectAsState()
     val isLandscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
@@ -1325,6 +1328,7 @@ private fun PdfReaderScreen(
         ebookIndent,
         ebookAlign,
         ebookMargin,
+        ebookVerticalMargin,
         ebookParaMode,
         isLandscape,
     ) {
@@ -1334,6 +1338,7 @@ private fun PdfReaderScreen(
             paragraphPercent = ebookParagraph.coerceIn(0, 200),
             indentEm = ebookIndent.coerceIn(0, 2),
             marginPercent = ebookMargin.coerceIn(4, 12),
+            verticalMarginPercent = ebookVerticalMargin.coerceIn(0, 12),
             justify = ebookAlign == Settings.EBOOK_ALIGN_JUSTIFY,
             paragraphMode = ebookParaMode.coerceIn(0, 2),
         )

@@ -897,6 +897,7 @@
     <string name="ebook_align_start">靠左</string>
     <string name="ebook_align_justify">左右對齊</string>
     <string name="pref_ebook_margin">頁邊距</string>
+    <string name="pref_ebook_vertical_margin">上下邊距</string>
     <string name="pref_eink_refresh">電子墨水螢幕刷新</string>
     <string name="pref_eink_refresh_summary">翻頁後閃爍螢幕，以減少電子墨水螢幕殘影。僅適用於畫廊模式。</string>
     <string name="pref_eink_refresh_duration">刷新閃爍時長</string>

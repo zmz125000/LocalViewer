@@ -195,6 +195,14 @@ class EbookEngineTest {
     }
 
     @Test
+    fun verticalMarginChangesPageHeightOnly() {
+        val tight = EbookStyle(fontSize = 18, verticalMarginPercent = 0)
+        val wide = EbookStyle(fontSize = 18, verticalMarginPercent = 12)
+        assertEquals(EbookPaginator.lineCapacity(tight), EbookPaginator.lineCapacity(wide), 0.01f)
+        assertTrue(EbookPaginator.contentHeightEm(wide) < EbookPaginator.contentHeightEm(tight))
+    }
+
+    @Test
     fun marginDoesNotChangeFontFraction() {
         val tight = EbookStyle(fontSize = 18, marginPercent = 4)
         val wide = EbookStyle(fontSize = 18, marginPercent = 12)
