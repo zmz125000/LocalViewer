@@ -47,6 +47,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
@@ -152,7 +153,9 @@ import com.hippo.ehviewer.ui.main.HttpShareItem
 import com.hippo.ehviewer.ui.main.awaitHttpShareQr
 import com.hippo.ehviewer.ui.main.browseRecentPreviewLimit
 import com.hippo.ehviewer.ui.main.browseZipAsDirTypeLabel
+import com.hippo.ehviewer.ui.main.onRecentHeaderGesture
 import com.hippo.ehviewer.ui.main.rememberBrowseSectionCollapse
+import com.hippo.ehviewer.ui.main.rememberRecentStripExpanded
 import com.hippo.ehviewer.ui.navToLocalFolderReader
 import com.hippo.ehviewer.ui.navToLocalZipFolderReader
 import com.hippo.ehviewer.ui.navToReader
@@ -2293,11 +2296,10 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                     val animateItems by Settings.animateItems.collectAsState()
                     val browseRecentOpen by Settings.browseRecentOpen.collectAsState()
                     val browseRecentExpanded by Settings.browseRecentExpanded.collectAsState()
-                    // Lock is the default when this folder opens. Header taps stay in memory.
-                    var recentPreviewExpanded by remember(pathKey) { mutableStateOf(browseRecentExpanded) }
-                    LaunchedEffect(browseRecentExpanded) {
-                        recentPreviewExpanded = browseRecentExpanded
-                    }
+                    val (recentPreviewExpanded, setRecentPreviewExpanded) = rememberRecentStripExpanded(
+                        pathKey,
+                        browseRecentExpanded,
+                    )
                     val recentGridColumns = GalleryGridDefaults.columnCount()
                     val recentListColumns = GalleryGridDefaults.listColumnCount()
                     val historyTimeByGid = rememberHistoryTimeByGid()
@@ -2334,7 +2336,11 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                             nameOf = { it.name },
                         )
                     }
-                    val (collapsedSections, toggleSection) = rememberBrowseSectionCollapse(pathKey)
+                    val (collapsedSections, toggleSection, setSectionCollapsed) = rememberBrowseSectionCollapse(pathKey)
+                    val recentCollapsedNow = rememberUpdatedState(BrowseFolderSection.Recent in collapsedSections)
+                    val setRecentCollapsedNow = rememberUpdatedState(setSectionCollapsed)
+                    val recentExpandedNow = rememberUpdatedState(recentPreviewExpanded)
+                    val setRecentExpandedNow = rememberUpdatedState(setRecentPreviewExpanded)
                     fun searchHitKey(entry: BrowseEntry): String = when (entry) {
                         is BrowseEntry.Directory -> "d-${entry.path}|${entry.relativeName}"
                         is BrowseEntry.FolderGallery -> "g-${entry.path}|${entry.relativeName}"
@@ -2542,18 +2548,26 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                             BrowseSectionHeader(
                                 stringResource(R.string.browse_recent),
                                 onClick = {
-                                    if (sectionCollapsed) {
-                                        toggleSection(BrowseFolderSection.Recent)
-                                        recentPreviewExpanded = browseRecentExpanded
-                                    } else if (recentEntries.size > previewLimit) {
-                                        recentPreviewExpanded = !recentPreviewExpanded
-                                    }
+                                    onRecentHeaderGesture(
+                                        collapsed = recentCollapsedNow.value,
+                                        longPress = false,
+                                        setCollapsed = { setRecentCollapsedNow.value(BrowseFolderSection.Recent, it) },
+                                        expanded = recentExpandedNow.value,
+                                        setExpanded = setRecentExpandedNow.value,
+                                        entryCount = recentEntries.size,
+                                        previewLimit = previewLimit,
+                                    )
                                 },
                                 onLongClick = {
-                                    if (!sectionCollapsed) {
-                                        recentPreviewExpanded = browseRecentExpanded
-                                        toggleSection(BrowseFolderSection.Recent)
-                                    }
+                                    onRecentHeaderGesture(
+                                        collapsed = recentCollapsedNow.value,
+                                        longPress = true,
+                                        setCollapsed = { setRecentCollapsedNow.value(BrowseFolderSection.Recent, it) },
+                                        expanded = recentExpandedNow.value,
+                                        setExpanded = setRecentExpandedNow.value,
+                                        entryCount = recentEntries.size,
+                                        previewLimit = previewLimit,
+                                    )
                                 },
                             )
                         }

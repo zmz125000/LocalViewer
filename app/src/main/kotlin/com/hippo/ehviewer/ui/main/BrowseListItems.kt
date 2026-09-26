@@ -1889,6 +1889,53 @@ fun browseRecentPreviewLimit(grid: Boolean, gridColumnCount: Int, listColumnCoun
 }
 
 /**
+ * Two rows vs full Recent list for one folder. [defaultExpanded] (the lock) applies
+ * only until the header is tapped here. Process memory, same as section collapse.
+ */
+@Composable
+fun rememberRecentStripExpanded(
+    folderKey: Any?,
+    defaultExpanded: Boolean,
+): Pair<Boolean, (Boolean) -> Unit> {
+    val key = folderKey?.toString().orEmpty()
+    var expanded by remember(key) {
+        mutableStateOf(BrowseSession.recentStripExpanded(key) ?: defaultExpanded)
+    }
+    LaunchedEffect(key, defaultExpanded) {
+        if (BrowseSession.recentStripExpanded(key) == null) expanded = defaultExpanded
+    }
+    val setExpanded: (Boolean) -> Unit = { value ->
+        expanded = value
+        BrowseSession.setRecentStripExpanded(key, value)
+    }
+    return expanded to setExpanded
+}
+
+/**
+ * Header gestures for Recent. A fully collapsed section opens on tap or long-press.
+ * Otherwise tap switches two rows / full list, and long-press collapses the section.
+ */
+fun onRecentHeaderGesture(
+    collapsed: Boolean,
+    longPress: Boolean,
+    setCollapsed: (Boolean) -> Unit,
+    expanded: Boolean,
+    setExpanded: (Boolean) -> Unit,
+    entryCount: Int,
+    previewLimit: Int,
+) {
+    if (collapsed) {
+        setCollapsed(false)
+        return
+    }
+    if (longPress) {
+        setCollapsed(true)
+        return
+    }
+    if (entryCount > previewLimit) setExpanded(!expanded)
+}
+
+/**
  * Section collapse for **one folder** ([folderKey] = path / SMB-WebDAV dir key).
  * Hide Videos here does not collapse Videos in other directories. Process memory only
  * (return to the same folder restores; process death clears).
@@ -1899,7 +1946,7 @@ fun browseRecentPreviewLimit(grid: Boolean, gridColumnCount: Int, listColumnCoun
 fun rememberBrowseSectionCollapse(
     folderKey: Any? = null,
     defaultCollapsed: Set<BrowseFolderSection> = emptySet(),
-): Pair<Set<BrowseFolderSection>, (BrowseFolderSection) -> Unit> {
+): Triple<Set<BrowseFolderSection>, (BrowseFolderSection) -> Unit, (BrowseFolderSection, Boolean) -> Unit> {
     val key = folderKey?.toString().orEmpty()
     var stored by remember(key) {
         mutableStateOf(BrowseSession.collapsedBrowseSections(key))
@@ -1919,16 +1966,19 @@ fun rememberBrowseSectionCollapse(
             }
         }
     }
-    val toggle: (BrowseFolderSection) -> Unit = { section ->
+    val apply: (BrowseFolderSection, Boolean) -> Unit = { section, wantCollapsed ->
         val next = stored.toMutableSet()
-        if (section in collapsed) next.remove(section.name) else next.add(section.name)
+        if (wantCollapsed) next.add(section.name) else next.remove(section.name)
         val nextTouched = touched + section.name
         stored = next
         touched = nextTouched
         BrowseSession.setCollapsedBrowseSections(key, next)
         BrowseSession.setCollapsedBrowseTouched(key, nextTouched)
     }
-    return collapsed to toggle
+    val toggle: (BrowseFolderSection) -> Unit = { section ->
+        apply(section, section !in collapsed)
+    }
+    return Triple(collapsed, toggle, apply)
 }
 
 @Composable

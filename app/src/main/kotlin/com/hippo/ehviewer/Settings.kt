@@ -688,6 +688,12 @@ object Settings : DataStorePreferences(null) {
     /** EPUB/MOBI pictures. Off shows text only. Default on. */
     val ebookShowPictures = boolPref("pref_ebook_show_pictures", true)
 
+    /**
+     * PDF/text continuous scroll. Off (default): compose a page when it reaches the screen.
+     * On: compose and draw the next page before it scrolls in.
+     */
+    val vectorComposeAhead = boolPref("pref_vector_compose_ahead", false)
+
     /** Left and right page margin as percent of page width (4–12). Default 7. */
     val ebookMargin = intPref("pref_ebook_margin", 7)
 

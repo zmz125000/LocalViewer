@@ -153,7 +153,9 @@ import com.hippo.ehviewer.ui.main.HttpShareItem
 import com.hippo.ehviewer.ui.main.awaitHttpShareQr
 import com.hippo.ehviewer.ui.main.browseRecentPreviewLimit
 import com.hippo.ehviewer.ui.main.browseZipAsDirTypeLabel
+import com.hippo.ehviewer.ui.main.onRecentHeaderGesture
 import com.hippo.ehviewer.ui.main.rememberBrowseSectionCollapse
+import com.hippo.ehviewer.ui.main.rememberRecentStripExpanded
 import com.hippo.ehviewer.ui.navToReader
 import com.hippo.ehviewer.ui.navToSmbFolderReader
 import com.hippo.ehviewer.ui.reader.ReaderScreenArgs
@@ -2013,11 +2015,10 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                     val animateItems by Settings.animateItems.collectAsState()
                     val browseRecentOpen by Settings.browseRecentOpen.collectAsState()
                     val browseRecentExpanded by Settings.browseRecentExpanded.collectAsState()
-                    // Lock is the default when this folder opens. Header taps stay in memory.
-                    var recentPreviewExpanded by remember(dirKey) { mutableStateOf(browseRecentExpanded) }
-                    LaunchedEffect(browseRecentExpanded) {
-                        recentPreviewExpanded = browseRecentExpanded
-                    }
+                    val (recentPreviewExpanded, setRecentPreviewExpanded) = rememberRecentStripExpanded(
+                        BrowseSession.smbListingKey(sourceId, dirKey),
+                        browseRecentExpanded,
+                    )
                     val recentGridColumns = GalleryGridDefaults.columnCount()
                     val recentListColumns = GalleryGridDefaults.listColumnCount()
                     val historyTimeByGid = rememberHistoryTimeByGid()
@@ -2046,9 +2047,13 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                             nameOf = { it.name },
                         )
                     }
-                    val (collapsedSections, toggleSection) = rememberBrowseSectionCollapse(
+                    val (collapsedSections, toggleSection, setSectionCollapsed) = rememberBrowseSectionCollapse(
                         BrowseSession.smbListingKey(sourceId, dirKey),
                     )
+                    val recentCollapsedNow = rememberUpdatedState(BrowseFolderSection.Recent in collapsedSections)
+                    val setRecentCollapsedNow = rememberUpdatedState(setSectionCollapsed)
+                    val recentExpandedNow = rememberUpdatedState(recentPreviewExpanded)
+                    val setRecentExpandedNow = rememberUpdatedState(setRecentPreviewExpanded)
 
                     // Keys must stay unique when dual-list + "this folder as gallery" share a name
                     // (e.g. parent/ff has images and a child dir also named ff → g-self vs g-child-ff).
@@ -2350,18 +2355,26 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                             BrowseSectionHeader(
                                 stringResource(R.string.browse_recent),
                                 onClick = {
-                                    if (sectionCollapsed) {
-                                        toggleSection(BrowseFolderSection.Recent)
-                                        recentPreviewExpanded = browseRecentExpanded
-                                    } else if (recentEntries.size > previewLimit) {
-                                        recentPreviewExpanded = !recentPreviewExpanded
-                                    }
+                                    onRecentHeaderGesture(
+                                        collapsed = recentCollapsedNow.value,
+                                        longPress = false,
+                                        setCollapsed = { setRecentCollapsedNow.value(BrowseFolderSection.Recent, it) },
+                                        expanded = recentExpandedNow.value,
+                                        setExpanded = setRecentExpandedNow.value,
+                                        entryCount = recentEntries.size,
+                                        previewLimit = previewLimit,
+                                    )
                                 },
                                 onLongClick = {
-                                    if (!sectionCollapsed) {
-                                        recentPreviewExpanded = browseRecentExpanded
-                                        toggleSection(BrowseFolderSection.Recent)
-                                    }
+                                    onRecentHeaderGesture(
+                                        collapsed = recentCollapsedNow.value,
+                                        longPress = true,
+                                        setCollapsed = { setRecentCollapsedNow.value(BrowseFolderSection.Recent, it) },
+                                        expanded = recentExpandedNow.value,
+                                        setExpanded = setRecentExpandedNow.value,
+                                        entryCount = recentEntries.size,
+                                        previewLimit = previewLimit,
+                                    )
                                 },
                             )
                         }

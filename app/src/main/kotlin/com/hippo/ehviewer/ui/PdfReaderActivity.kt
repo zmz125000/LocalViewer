@@ -1506,14 +1506,30 @@ private fun PdfReaderScreen(
     val dualActive = dualPageActive(dualPagePref, isLandscape)
     val pagerDual = isPagerDual(dualActive, readingMode)
     val webtoonHorizontal = isWebtoonHorizontal(dualActive, readingMode)
-    // Same look-ahead as the image reader: compose and render the next page before
-    // it scrolls in. Default prefetch starts that work on the scroll frame itself.
-    val webtoonCacheFraction =
-        if (webtoonHorizontal) WEBTOON_HORIZONTAL_CACHE_FRACTION else SCROLL_FRACTION
-    val listState = rememberLazyListState(
-        LazyLayoutCacheWindow(webtoonCacheFraction, webtoonCacheFraction),
-        initial,
-    )
+    // Off (default): compose a page as it reaches the screen. On: keep the next page composed.
+    val composeAhead by Settings.vectorComposeAhead.collectAsState()
+    var keptIndex by remember { mutableIntStateOf(initial) }
+    var keptOffset by remember { mutableIntStateOf(0) }
+    val listState = key(composeAhead, if (composeAhead) webtoonHorizontal else false) {
+        if (composeAhead) {
+            val fraction = if (webtoonHorizontal) {
+                WEBTOON_HORIZONTAL_CACHE_FRACTION
+            } else {
+                SCROLL_FRACTION
+            }
+            rememberLazyListState(
+                LazyLayoutCacheWindow(fraction, fraction),
+                keptIndex,
+                keptOffset,
+            )
+        } else {
+            rememberLazyListState(keptIndex, keptOffset)
+        }
+    }
+    SideEffect {
+        keptIndex = listState.firstVisibleItemIndex
+        keptOffset = listState.firstVisibleItemScrollOffset
+    }
     val tapRtl = readingMode == ReadingModeType.RIGHT_TO_LEFT || webtoonHorizontal
     val landscapeCoverMode by Settings.landscapeCover.collectAsState()
     var page0Landscape by remember(doc, imageLoader) { mutableStateOf(false) }
