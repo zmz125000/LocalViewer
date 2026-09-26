@@ -908,6 +908,7 @@ private fun FavoriteSourceGridCell(
         onClick = onClick,
         onLongClick = onLongClick,
         modifier = Modifier.fillMaxWidth().aspectRatio(1f),
+        colors = GalleryGridDefaults.cardColors(),
     ) {
         if (useGalleryThumbStyle) {
             // Full-bleed thumb; name on a highly transparent bottom bar.

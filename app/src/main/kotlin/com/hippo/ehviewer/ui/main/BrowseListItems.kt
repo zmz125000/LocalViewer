@@ -751,6 +751,7 @@ fun BrowseDirectoryGridItem(
         onClick = onClick,
         onLongClick = onLongClick ?: onClick,
         modifier = modifier.fillMaxWidth().aspectRatio(1f),
+        colors = GalleryGridDefaults.cardColors(),
     ) {
         Box(Modifier.fillMaxSize()) {
             if (useThumbStyle) {
@@ -1171,6 +1172,7 @@ private fun BrowseGridCell(
         modifier = modifier.fillMaxWidth(),
         onClick = onClick,
         onLongClick = longClick,
+        colors = GalleryGridDefaults.cardColors(),
     ) {
         Column(Modifier.fillMaxWidth()) {
             Box(

@@ -409,6 +409,7 @@ fun HistoryGridItem(
         modifier = modifier.fillMaxWidth(),
         onClick = onClick,
         onLongClick = onLongClick,
+        colors = GalleryGridDefaults.cardColors(),
     ) {
         Column(Modifier.fillMaxWidth()) {
             Box(
@@ -525,6 +526,7 @@ fun HistoryDirectoryGridItem(
         onClick = onClick,
         onLongClick = onLongClick,
         modifier = modifier.fillMaxWidth().aspectRatio(1f),
+        colors = GalleryGridDefaults.cardColors(),
     ) {
         if (useThumbStyle) {
             Box(Modifier.fillMaxSize().clip(ShapeDefaults.Medium)) {
@@ -642,6 +644,7 @@ fun LocalGalleryGridItem(
         modifier = modifier.fillMaxWidth(),
         onClick = onClick,
         onLongClick = onLongClick,
+        colors = GalleryGridDefaults.cardColors(),
     ) {
         Column(Modifier.fillMaxWidth()) {
             Box(
