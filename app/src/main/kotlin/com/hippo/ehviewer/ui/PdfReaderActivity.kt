@@ -13,6 +13,8 @@ import android.graphics.pdf.PdfRenderer
 import android.net.Uri
 import android.os.Bundle
 import android.os.ParcelFileDescriptor
+import android.system.ErrnoException
+import android.system.Os
 import android.text.TextPaint
 import androidx.activity.enableEdgeToEdge
 import androidx.appcompat.app.AppCompatActivity
@@ -151,6 +153,7 @@ import com.hippo.ehviewer.library.PdfTocCache
 import com.hippo.ehviewer.library.PfdArchiveByteSource
 import com.hippo.ehviewer.library.ReaderPageThumb
 import com.hippo.ehviewer.library.ZipPaths
+import com.hippo.ehviewer.library.document.BrokenPdfXref
 import com.hippo.ehviewer.library.document.EbookChapter
 import com.hippo.ehviewer.library.document.EbookEngine
 import com.hippo.ehviewer.library.document.EbookImages
@@ -166,6 +169,7 @@ import com.hippo.ehviewer.library.document.PdfTocEntry
 import com.hippo.ehviewer.library.document.TextCharset
 import com.hippo.ehviewer.library.document.ebookDisplayFontSize
 import com.hippo.ehviewer.library.document.pdfTocWithFileName
+import com.hippo.ehviewer.library.document.pdfXrefLoadable
 import com.hippo.ehviewer.library.document.readPdfChapters
 import com.hippo.ehviewer.library.isEbookFileName
 import com.hippo.ehviewer.library.openLocalArchiveByteSource
@@ -439,6 +443,11 @@ class PdfReaderActivity : AppCompatActivity() {
                 pfd?.let { runCatching { it.close() } }
                 direct?.let { runCatching { it.close() } }
                 throw e
+            } catch (_: BrokenPdfXref) {
+                pfd?.let { runCatching { it.close() } }
+                direct?.let { runCatching { it.close() } }
+                closeSession()
+                openBrokenPdfInImageReader()
             } catch (e: Throwable) {
                 logcat("PdfReader", e)
                 pfd?.let { runCatching { it.close() } }
@@ -483,6 +492,27 @@ class PdfReaderActivity : AppCompatActivity() {
     private fun reloadForDirectImage() {
         intent.putExtra(EXTRA_START_PAGE, lastVisiblePage.coerceAtLeast(0))
         openFromIntent(intent, replace = true)
+    }
+
+    /**
+     * PdfRenderer would scan the whole file. Open the same document in the image
+     * reader instead, from the start, and say why.
+     */
+    private fun openBrokenPdfInImageReader() {
+        val args = readerArgsFromIntent(intent).asImageReader()
+        if (args == null) {
+            error = getString(R.string.pdf_reader_open_failed, "broken xref")
+            return
+        }
+        PendingReaderOpen.offer(args, getString(R.string.pdf_broken_xref_image_reader))
+        startActivity(
+            Intent(this, MainActivity::class.java).apply {
+                action = PendingReaderOpen.ACTION
+                addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
+                addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
+            },
+        )
+        finish()
     }
 
     private fun stopOpenEngines() {
@@ -592,6 +622,13 @@ class PdfReaderActivity : AppCompatActivity() {
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
     }
+}
+
+private fun ReaderScreenArgs?.asImageReader(): ReaderScreenArgs? = when (this) {
+    is ReaderScreenArgs.Archive -> copy(skipPdfPrimary = true)
+    is ReaderScreenArgs.SmbStreamArchive -> copy(skipPdfPrimary = true)
+    is ReaderScreenArgs.WebDavStreamArchive -> copy(skipPdfPrimary = true)
+    else -> null
 }
 
 private fun readerArgsFromIntent(intent: Intent): ReaderScreenArgs? {
@@ -735,6 +772,12 @@ private fun openPdfDocument(
     // Do not walk the page tree before the first page. Contents load after open.
     // On success PdfRenderer owns [pfd] and closes it from PdfSession.close().
     // On failure the caller still owns [pfd] and must close it.
+    // A stale startxref makes PdfRenderer scan the whole file to rebuild the xref.
+    // That heap is collected on the main thread when the reader closes.
+    if (!pdfXrefLoadable(pfd.statSize) { offset, length -> preadPdf(pfd, offset, length) }) {
+        logcat("PdfReader") { "skip PdfRenderer; startxref is not an xref" }
+        throw BrokenPdfXref()
+    }
     val renderer = PdfRenderer(pfd)
     logcat("PdfReader") { "vector PDF pages=${renderer.pageCount}" }
     val pages = renderer.pageCount
@@ -742,6 +785,22 @@ private fun openPdfDocument(
         { stillWanted -> load(pages, stillWanted) }
     }
     return PdfDocumentModel.Vector(PdfSession(renderer), emptyList(), loader)
+}
+
+private fun preadPdf(pfd: ParcelFileDescriptor, offset: Long, length: Int): ByteArray? {
+    if (offset < 0L || length <= 0) return null
+    val buf = ByteArray(length)
+    var got = 0
+    try {
+        while (got < length) {
+            val n = Os.pread(pfd.fileDescriptor, buf, got, length - got, offset + got)
+            if (n <= 0) return null
+            got += n
+        }
+    } catch (_: ErrnoException) {
+        return null
+    }
+    return buf
 }
 
 /**

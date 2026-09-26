@@ -327,6 +327,7 @@
     <string name="open_pdf_no_app">No app found to open PDF</string>
     <string name="open_pdf_external_failed">Could not open PDF externally: %s</string>
     <string name="pdf_reader_open_failed">Could not open PDF: %s</string>
+    <string name="pdf_broken_xref_image_reader">This PDF\'s index is damaged. Opened in the image reader.</string>
     <string name="pdf_reader_page">Page %1$d of %2$d</string>
     <string name="pdf_reader_contents">Table of contents</string>
     <string name="pdf_reader_pages">Pages</string>
