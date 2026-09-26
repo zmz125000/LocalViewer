@@ -146,8 +146,9 @@ object Settings : DataStorePreferences(null) {
 
     /**
      * When true (default): tap HTML → loopback HTTP + default browser, serving the
-     * parent directory (relative CSS/JS/images and subdir listings).
-     * When false: tap treats HTML as a regular file (current open-with / streamdoc).
+     * parent directory (relative CSS/JS/images and subdir listings). Incognito
+     * follows [openHtmlInIncognito].
+     * When false: tap opens the built-in reader. Overflow still has both.
      */
     val openHtmlWithBrowser = boolPref("open_html_with_browser", true)
 

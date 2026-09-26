@@ -1312,16 +1312,6 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
         }
     }
 
-    fun openListedFile(fileName: String) {
-        search.recordOpenedResult()
-        val leaf = fileName.substringAfterLast('/').substringAfterLast('\\')
-        if (isPdfOrEbookFileName(leaf)) {
-            openInternalDocument(fileName)
-        } else {
-            openExternalFile(fileName)
-        }
-    }
-
     fun openSmbHtml(fileName: String, incognito: Boolean) {
         val src = source ?: return
         val actualName = fileName.substringAfterLast('/').substringAfterLast('\\')
@@ -1344,6 +1334,18 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                     context.getString(R.string.browse_open_failed) + " " + (e.message ?: e.toString()),
                 )
             }
+        }
+    }
+
+    fun openListedFile(fileName: String) {
+        search.recordOpenedResult()
+        val leaf = fileName.substringAfterLast('/').substringAfterLast('\\')
+        if (OpenFileExternally.shouldOpenHtmlInBrowser(leaf)) {
+            openSmbHtml(fileName, incognito = Settings.openHtmlInIncognito.value)
+        } else if (isPdfOrEbookFileName(leaf)) {
+            openInternalDocument(fileName)
+        } else {
+            openExternalFile(fileName)
         }
     }
 
@@ -1414,6 +1416,10 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
     fun openArchive(entry: BrowseEntryRemote.ArchiveGallery, skipPdfPrimary: Boolean = false) {
         search.recordOpenedResult()
         val src = source ?: return
+        if (!skipPdfPrimary && OpenFileExternally.shouldOpenHtmlInBrowser(entry.fileName)) {
+            openSmbHtml(entry.fileName, incognito = Settings.openHtmlInIncognito.value)
+            return
+        }
         if (!skipPdfPrimary && isEbookFileName(entry.fileName)) {
             openPdfReader(entry)
             return
@@ -1780,6 +1786,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
             kind = BrowseOverflowKind.Webpage,
             onOpenInBrowser = { openSmbHtml(fileName, incognito = false) },
             onOpenIncognito = { openSmbHtml(fileName, incognito = true) },
+            onPlay = { openInternalDocument(fileName) },
             onCopyUrl = { copySmbHtmlUrl(fileName) },
             onOpenWith = { openExternalFile(fileName, asFile = true) },
             onSaveAs = { saveSmbFile(fileName) },

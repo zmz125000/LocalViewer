@@ -195,6 +195,9 @@ object OpenFileExternally {
         playEbookWebDav(context, sourceId, remoteRelativeFile, displayName)
     }
 
+    /** Tap HTML follows Settings → General. Overflow browser items ignore this. */
+    fun shouldOpenHtmlInBrowser(displayName: String): Boolean = isHtmlFileName(displayName) && Settings.openHtmlWithBrowser.value
+
     private fun shouldOpenInBuiltinPdfReader(displayName: String): Boolean {
         if (isEbookFileName(displayName)) return true
         return isPdfFileName(displayName) && Settings.pdfReaderMode.value != PdfReaderMode.EXTERNAL
@@ -333,6 +336,22 @@ object OpenFileExternally {
             )
             return
         }
+        if (isPdfFileName(displayName)) {
+            // Open with other app sets asFile, which used to fall through to a full
+            // origin-cache download. External PDF viewers read the streamdoc instead.
+            if (!asFile && Settings.pdfReaderMode.value != PdfReaderMode.EXTERNAL) {
+                playEbookSmb(context, sourceId, remoteRelativeFile, displayName)
+            } else {
+                openExternalPdfSmb(
+                    context,
+                    sourceId,
+                    remoteRelativeFile,
+                    displayName,
+                    usePreferredReader = usePreferredPlayer,
+                )
+            }
+            return
+        }
         if (!asFile && shouldOpenInBuiltinPdfReader(displayName)) {
             playEbookSmb(context, sourceId, remoteRelativeFile, displayName)
             return
@@ -406,6 +425,20 @@ object OpenFileExternally {
                 mimeType,
                 incognito = Settings.openHtmlInIncognito.value,
             )
+            return
+        }
+        if (isPdfFileName(displayName)) {
+            if (!asFile && Settings.pdfReaderMode.value != PdfReaderMode.EXTERNAL) {
+                playEbookWebDav(context, sourceId, remoteRelativeFile, displayName)
+            } else {
+                openExternalPdfWebDav(
+                    context,
+                    sourceId,
+                    remoteRelativeFile,
+                    displayName,
+                    usePreferredReader = usePreferredPlayer,
+                )
+            }
             return
         }
         if (!asFile && shouldOpenInBuiltinPdfReader(displayName)) {

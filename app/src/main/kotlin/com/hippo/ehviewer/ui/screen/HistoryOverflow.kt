@@ -165,7 +165,7 @@ internal fun historyOverflowActions(
         },
         onPhotoGrid = if (historyOverflowHasPhotoGrid(info)) openPhotoGrid else null,
         onPlay = when (kind) {
-            BrowseOverflowKind.Video, BrowseOverflowKind.Pdf -> ({ env.play(info) })
+            BrowseOverflowKind.Video, BrowseOverflowKind.Pdf, BrowseOverflowKind.Webpage -> ({ env.play(info) })
             else -> null
         },
         onExternalPlayer = when (kind) {

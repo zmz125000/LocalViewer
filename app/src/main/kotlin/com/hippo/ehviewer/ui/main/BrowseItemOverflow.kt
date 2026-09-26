@@ -140,6 +140,10 @@ fun BrowseItemOverflowButton(
                         onClick = { run(actions.onOpenIncognito) },
                     )
                     DropdownMenuItem(
+                        text = { Text(stringResource(R.string.browse_pdf_reader)) },
+                        onClick = { run(actions.onPlay) },
+                    )
+                    DropdownMenuItem(
                         text = { Text(stringResource(R.string.browse_copy_url)) },
                         onClick = { run(actions.onCopyUrl) },
                     )

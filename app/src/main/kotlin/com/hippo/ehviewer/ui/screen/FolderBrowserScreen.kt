@@ -1602,7 +1602,33 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         }
     }
 
+    fun openLocalHtml(path: okio.Path, incognito: Boolean) {
+        val pathStr = path.toString()
+        val actualName = ZipPaths.memberLeafName(pathStr) ?: path.name
+        launchIO {
+            recordCurrentBrowseFolderHistory()
+            LocalHistory.recordLocalFile(pathStr, title = actualName)
+            try {
+                OpenFileExternally.openLocalHtml(
+                    context = context,
+                    pathStr = pathStr,
+                    displayName = actualName,
+                    mimeType = mimeTypeForFileName(actualName),
+                    incognito = incognito,
+                )
+            } catch (e: Throwable) {
+                snackbar(
+                    context.getString(R.string.browse_open_failed) + " " + (e.message ?: e.toString()),
+                )
+            }
+        }
+    }
+
     fun openPdfPrimary(entry: BrowseEntry.ArchiveGallery) {
+        if (OpenFileExternally.shouldOpenHtmlInBrowser(entry.name)) {
+            openLocalHtml(entry.path, incognito = Settings.openHtmlInIncognito.value)
+            return
+        }
         if (isEbookFileName(entry.name)) {
             openPdfReader(entry)
             return
@@ -1748,32 +1774,12 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
     fun openListedFile(path: okio.Path) {
         search.recordOpenedResult()
         val name = ZipPaths.memberLeafName(path.toString()) ?: path.name
-        if (isPdfOrEbookFileName(name)) {
+        if (OpenFileExternally.shouldOpenHtmlInBrowser(name)) {
+            openLocalHtml(path, incognito = Settings.openHtmlInIncognito.value)
+        } else if (isPdfOrEbookFileName(name)) {
             openInternalDocument(path)
         } else {
             openExternalFile(path)
-        }
-    }
-
-    fun openLocalHtml(path: okio.Path, incognito: Boolean) {
-        val pathStr = path.toString()
-        val actualName = ZipPaths.memberLeafName(pathStr) ?: path.name
-        launchIO {
-            recordCurrentBrowseFolderHistory()
-            LocalHistory.recordLocalFile(pathStr, title = actualName)
-            try {
-                OpenFileExternally.openLocalHtml(
-                    context = context,
-                    pathStr = pathStr,
-                    displayName = actualName,
-                    mimeType = mimeTypeForFileName(actualName),
-                    incognito = incognito,
-                )
-            } catch (e: Throwable) {
-                snackbar(
-                    context.getString(R.string.browse_open_failed) + " " + (e.message ?: e.toString()),
-                )
-            }
         }
     }
 
@@ -2042,6 +2048,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                 kind = BrowseOverflowKind.Webpage,
                 onOpenInBrowser = { openLocalHtml(path, incognito = false) },
                 onOpenIncognito = { openLocalHtml(path, incognito = true) },
+                onPlay = { openInternalDocument(path) },
                 onCopyUrl = { copyLocalHtmlUrl(path) },
                 onOpenWith = { openExternalFile(path, asFile = true) },
                 onSaveAs = { saveLocalFile(path) },
