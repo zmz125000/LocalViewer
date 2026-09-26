@@ -13,6 +13,8 @@ import android.graphics.pdf.PdfRenderer
 import android.net.Uri
 import android.os.Bundle
 import android.os.ParcelFileDescriptor
+import android.system.ErrnoException
+import android.system.Os
 import android.text.TextPaint
 import androidx.activity.enableEdgeToEdge
 import androidx.appcompat.app.AppCompatActivity
@@ -166,6 +168,7 @@ import com.hippo.ehviewer.library.document.PdfTocEntry
 import com.hippo.ehviewer.library.document.TextCharset
 import com.hippo.ehviewer.library.document.ebookDisplayFontSize
 import com.hippo.ehviewer.library.document.pdfTocWithFileName
+import com.hippo.ehviewer.library.document.pdfXrefLoadable
 import com.hippo.ehviewer.library.document.readPdfChapters
 import com.hippo.ehviewer.library.isEbookFileName
 import com.hippo.ehviewer.library.openLocalArchiveByteSource
@@ -208,6 +211,7 @@ import eu.kanade.tachiyomi.ui.reader.setting.TappingInvertMode
 import eu.kanade.tachiyomi.ui.reader.viewer.ViewerNavigation
 import eu.kanade.tachiyomi.ui.reader.viewer.ViewerNavigation.NavigationRegion
 import eu.kanade.tachiyomi.ui.reader.viewer.getAction
+import java.io.IOException
 import kotlin.coroutines.resume
 import kotlin.math.abs
 import kotlin.math.roundToInt
@@ -735,6 +739,12 @@ private fun openPdfDocument(
     // Do not walk the page tree before the first page. Contents load after open.
     // On success PdfRenderer owns [pfd] and closes it from PdfSession.close().
     // On failure the caller still owns [pfd] and must close it.
+    // A stale startxref makes PdfRenderer scan the whole file to rebuild the xref.
+    // That heap is collected on the main thread when the reader closes.
+    if (!pdfXrefLoadable(pfd.statSize) { offset, length -> preadPdf(pfd, offset, length) }) {
+        logcat("PdfReader") { "skip PdfRenderer; startxref is not an xref" }
+        throw IOException("broken xref")
+    }
     val renderer = PdfRenderer(pfd)
     logcat("PdfReader") { "vector PDF pages=${renderer.pageCount}" }
     val pages = renderer.pageCount
@@ -742,6 +752,22 @@ private fun openPdfDocument(
         { stillWanted -> load(pages, stillWanted) }
     }
     return PdfDocumentModel.Vector(PdfSession(renderer), emptyList(), loader)
+}
+
+private fun preadPdf(pfd: ParcelFileDescriptor, offset: Long, length: Int): ByteArray? {
+    if (offset < 0L || length <= 0) return null
+    val buf = ByteArray(length)
+    var got = 0
+    try {
+        while (got < length) {
+            val n = Os.pread(pfd.fileDescriptor, buf, got, length - got, offset + got)
+            if (n <= 0) return null
+            got += n
+        }
+    } catch (_: ErrnoException) {
+        return null
+    }
+    return buf
 }
 
 /**
