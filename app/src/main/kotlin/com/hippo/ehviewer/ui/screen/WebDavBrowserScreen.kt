@@ -1193,16 +1193,6 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
         }
     }
 
-    fun openListedFile(fileName: String) {
-        search.recordOpenedResult()
-        val leaf = fileName.substringAfterLast('/').substringAfterLast('\\')
-        if (isPdfOrEbookFileName(leaf)) {
-            openInternalDocument(fileName)
-        } else {
-            openExternalFile(fileName)
-        }
-    }
-
     fun openWebDavHtml(fileName: String, incognito: Boolean) {
         val src = source ?: return
         val actualName = fileName.substringAfterLast('/').substringAfterLast('\\')
@@ -1225,6 +1215,18 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                     context.getString(R.string.browse_open_failed) + " " + (e.message ?: e.toString()),
                 )
             }
+        }
+    }
+
+    fun openListedFile(fileName: String) {
+        search.recordOpenedResult()
+        val leaf = fileName.substringAfterLast('/').substringAfterLast('\\')
+        if (OpenFileExternally.shouldOpenHtmlInBrowser(leaf)) {
+            openWebDavHtml(fileName, incognito = Settings.openHtmlInIncognito.value)
+        } else if (isPdfOrEbookFileName(leaf)) {
+            openInternalDocument(fileName)
+        } else {
+            openExternalFile(fileName)
         }
     }
 
@@ -1295,6 +1297,10 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
     fun openArchive(entry: BrowseEntryRemote.ArchiveGallery, skipPdfPrimary: Boolean = false) {
         search.recordOpenedResult()
         val src = source ?: return
+        if (!skipPdfPrimary && OpenFileExternally.shouldOpenHtmlInBrowser(entry.fileName)) {
+            openWebDavHtml(entry.fileName, incognito = Settings.openHtmlInIncognito.value)
+            return
+        }
         if (!skipPdfPrimary && isEbookFileName(entry.fileName)) {
             openPdfReader(entry)
             return
@@ -1658,6 +1664,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
             kind = BrowseOverflowKind.Webpage,
             onOpenInBrowser = { openWebDavHtml(fileName, incognito = false) },
             onOpenIncognito = { openWebDavHtml(fileName, incognito = true) },
+            onPlay = { openInternalDocument(fileName) },
             onCopyUrl = { copyWebDavHtmlUrl(fileName) },
             onOpenWith = { openExternalFile(fileName, asFile = true) },
             onSaveAs = { saveWebDavFile(fileName) },

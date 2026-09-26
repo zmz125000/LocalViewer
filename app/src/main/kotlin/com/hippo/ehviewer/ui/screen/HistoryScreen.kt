@@ -727,6 +727,28 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
                         navToReader(path)
                         return@launch
                     }
+                    if (OpenFileExternally.shouldOpenHtmlInBrowser(name) ||
+                        OpenFileExternally.shouldOpenHtmlInBrowser(path)
+                    ) {
+                        withIOContext {
+                            LocalHistory.recordLocalFile(path, title = name, thumbKey = info.thumbKey)
+                            try {
+                                OpenFileExternally.openLocalHtml(
+                                    context,
+                                    path,
+                                    displayName = name,
+                                    mimeType = mimeTypeForFileName(name),
+                                    incognito = Settings.openHtmlInIncognito.value,
+                                )
+                            } catch (e: Throwable) {
+                                snackbar(
+                                    context.getString(R.string.browse_open_failed) +
+                                        " " + (e.message ?: e.toString()),
+                                )
+                            }
+                        }
+                        return@launch
+                    }
                     if (isEbookFileName(name) || isEbookFileName(path)) {
                         val gid = stableGalleryId(0L, "local-file:$path")
                         val page = withIOContext {
@@ -786,6 +808,34 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
                             }
                         }
                         navToSmbStreamArchiveReader(source.id, remote)
+                        return@launch
+                    }
+                    if (OpenFileExternally.shouldOpenHtmlInBrowser(name) ||
+                        OpenFileExternally.shouldOpenHtmlInBrowser(remote)
+                    ) {
+                        withIOContext {
+                            LocalHistory.recordSmbFile(
+                                source.id,
+                                remote,
+                                title = name,
+                                thumbKey = info.thumbKey,
+                            )
+                            try {
+                                OpenFileExternally.openSmbHtml(
+                                    context,
+                                    source.id,
+                                    remote,
+                                    displayName = name,
+                                    mimeType = mimeTypeForFileName(name),
+                                    incognito = Settings.openHtmlInIncognito.value,
+                                )
+                            } catch (e: Throwable) {
+                                snackbar(
+                                    context.getString(R.string.browse_open_failed) +
+                                        " " + (e.message ?: e.toString()),
+                                )
+                            }
+                        }
                         return@launch
                     }
                     if (isEbookFileName(name) || isEbookFileName(remote)) {
@@ -870,6 +920,34 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
                             }
                         }
                         navToWebDavStreamArchiveReader(source.id, remote)
+                        return@launch
+                    }
+                    if (OpenFileExternally.shouldOpenHtmlInBrowser(name) ||
+                        OpenFileExternally.shouldOpenHtmlInBrowser(remote)
+                    ) {
+                        withIOContext {
+                            LocalHistory.recordWebDavFile(
+                                source.id,
+                                remote,
+                                title = name,
+                                thumbKey = info.thumbKey,
+                            )
+                            try {
+                                OpenFileExternally.openWebDavHtml(
+                                    context,
+                                    source.id,
+                                    remote,
+                                    displayName = name,
+                                    mimeType = mimeTypeForFileName(name),
+                                    incognito = Settings.openHtmlInIncognito.value,
+                                )
+                            } catch (e: Throwable) {
+                                snackbar(
+                                    context.getString(R.string.browse_open_failed) +
+                                        " " + (e.message ?: e.toString()),
+                                )
+                            }
+                        }
                         return@launch
                     }
                     if (isEbookFileName(name) || isEbookFileName(remote)) {
