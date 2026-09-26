@@ -54,6 +54,9 @@ internal object EbookPaginator {
     const val LINE_HEIGHT_EM = 1.5f
     const val MARGIN = 0.07f
 
+    /** Pixel width of one em at a typical phone reading size. */
+    private const val INLINE_PX_PER_EM = 36f
+
     fun lineCapacity(style: EbookStyle = EbookStyle.DEFAULT): Float {
         val content = (1f - 2f * style.margin).coerceAtLeast(0.2f)
         return content / style.fontFraction.coerceAtLeast(0.01f)
@@ -165,13 +168,26 @@ internal object EbookPaginator {
 
     private fun imageLine(ref: EbookImages.Ref, style: EbookStyle): EbookLine {
         val aspect = ref.aspect.takeIf { it > 0.05f } ?: 0.75f
-        val inline = (lineCapacity(style) / aspect).coerceIn(2f, contentHeightEm(style))
+        val page = ref.fullPage && EbookImages.countsAsPage(ref.widthPx, aspect)
+        val column = lineCapacity(style)
+        val height = if (page) {
+            contentHeightEm(style)
+        } else {
+            // One em is about a reading-size glyph. A 48px icon stays near that,
+            // and a wide illustration stops at the text column.
+            val widthEm = if (ref.widthPx > 0) {
+                (ref.widthPx / INLINE_PX_PER_EM).coerceAtMost(column)
+            } else {
+                column
+            }
+            (widthEm / aspect).coerceIn(1f, contentHeightEm(style))
+        }
         return EbookLine(
             text = "",
-            heightEm = if (ref.fullPage) contentHeightEm(style) else inline,
+            heightEm = height,
             imageKey = ref.key,
             imageAspect = aspect,
-            fullPage = ref.fullPage,
+            fullPage = page,
         )
     }
 

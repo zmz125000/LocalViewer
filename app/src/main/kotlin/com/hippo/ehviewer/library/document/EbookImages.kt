@@ -20,12 +20,28 @@ internal object EbookImages {
         val key: String,
         val aspect: Float,
         val fullPage: Boolean,
+        /** Pixel width from the image header. 0 when the file did not say. */
+        val widthPx: Int = 0,
     )
 
-    fun marker(key: String, aspect: Float, fullPage: Boolean): String {
+    fun marker(key: String, aspect: Float, fullPage: Boolean, widthPx: Int = 0): String {
         val a = aspect.takeIf { it.isFinite() && it > 0.05f } ?: 0.75f
         val flag = if (fullPage) '1' else '0'
-        return "$START$key$MID${String.format(Locale.US, "%.4f", a)}$MID$flag$END"
+        val width = widthPx.coerceAtLeast(0)
+        return "$START$key$MID${String.format(Locale.US, "%.4f", a)}$MID$flag$MID$width$END"
+    }
+
+    /**
+     * A comic page is large on both axes. A novel icon or ornament is not,
+     * even when the file listed the picture as its own spine item.
+     */
+    fun countsAsPage(widthPx: Int, aspect: Float): Boolean {
+        if (widthPx <= 0 || aspect <= 0.05f || !aspect.isFinite()) return true
+        val heightPx = (widthPx / aspect).toInt()
+        if (heightPx <= 0) return true
+        val longEdge = maxOf(widthPx, heightPx)
+        val shortEdge = minOf(widthPx, heightPx)
+        return longEdge >= PAGE_LONG_EDGE && shortEdge >= PAGE_SHORT_EDGE
     }
 
     fun hasMarker(text: String): Boolean = text.indexOf(START) >= 0
@@ -51,24 +67,39 @@ internal object EbookImages {
             val key = text.substring(start + 1, mid1)
             val aspect = text.substring(mid1 + 1, mid2).toFloatOrNull() ?: 0.75f
             val full = text.getOrNull(mid2 + 1) == '1'
-            if (key.isNotEmpty()) out += Part.Image(Ref(key, aspect, full))
-            i = end + 1
+            var widthPx = 0
+            var bodyEnd = end
+            if (text.getOrNull(mid2 + 2) == MID) {
+                val widthEnd = text.indexOf(END, mid2 + 3)
+                if (widthEnd >= 0) {
+                    widthPx = text.substring(mid2 + 3, widthEnd).toIntOrNull()?.coerceAtLeast(0) ?: 0
+                    bodyEnd = widthEnd
+                }
+            }
+            if (key.isNotEmpty()) out += Part.Image(Ref(key, aspect, full, widthPx))
+            i = bodyEnd + 1
         }
         return out
     }
 
     /** Width / height from a PNG, GIF, JPEG, or WebP header. 0 when unknown. */
     fun aspectOf(bytes: ByteArray): Float {
+        val size = sizeOf(bytes) ?: return 0f
+        return ratio(size.first, size.second)
+    }
+
+    /** Pixel width and height from a PNG, GIF, JPEG, or WebP header. */
+    fun sizeOf(bytes: ByteArray): Pair<Int, Int>? {
         if (bytes.size >= 24 &&
             bytes[0] == 0x89.toByte() && bytes[1] == 'P'.code.toByte() &&
             bytes[2] == 'N'.code.toByte() && bytes[3] == 'G'.code.toByte()
         ) {
-            return ratio(u32be(bytes, 16), u32be(bytes, 20))
+            return positive(u32be(bytes, 16), u32be(bytes, 20))
         }
         if (bytes.size >= 10 &&
             bytes[0] == 'G'.code.toByte() && bytes[1] == 'I'.code.toByte() && bytes[2] == 'F'.code.toByte()
         ) {
-            return ratio(u16le(bytes, 6), u16le(bytes, 8))
+            return positive(u16le(bytes, 6), u16le(bytes, 8))
         }
         if (bytes.size >= 12 &&
             bytes[0] == 'R'.code.toByte() && bytes[1] == 'I'.code.toByte() &&
@@ -79,22 +110,24 @@ internal object EbookImages {
         if (bytes.size >= 4 && bytes[0] == 0xFF.toByte() && bytes[1] == 0xD8.toByte()) {
             jpeg(bytes)?.let { return it }
         }
-        return 0f
+        return null
     }
 
-    private fun webp(bytes: ByteArray): Float? {
+    private fun positive(w: Int, h: Int): Pair<Int, Int>? = if (w > 0 && h > 0) w to h else null
+
+    private fun webp(bytes: ByteArray): Pair<Int, Int>? {
         if (bytes.size >= 30 &&
             bytes[12] == 'V'.code.toByte() && bytes[13] == 'P'.code.toByte() &&
             bytes[14] == '8'.code.toByte() && bytes[15] == 'X'.code.toByte()
         ) {
             val w = 1 + (u24le(bytes, 24))
             val h = 1 + (u24le(bytes, 27))
-            return ratio(w, h)
+            return positive(w, h)
         }
         return null
     }
 
-    private fun jpeg(bytes: ByteArray): Float? {
+    private fun jpeg(bytes: ByteArray): Pair<Int, Int>? {
         var i = 2
         while (i + 8 < bytes.size) {
             if (bytes[i] != 0xFF.toByte()) {
@@ -113,7 +146,7 @@ internal object EbookImages {
             if (sof && i + 7 < bytes.size) {
                 val h = u16be(bytes, i + 3)
                 val w = u16be(bytes, i + 5)
-                return ratio(w, h)
+                return positive(w, h)
             }
             i += len
         }
@@ -133,6 +166,9 @@ internal object EbookImages {
         ((b[i + 2].toInt() and 0xFF) shl 8) or (b[i + 3].toInt() and 0xFF)
 
     private fun u24le(b: ByteArray, i: Int): Int = (b[i].toInt() and 0xFF) or ((b[i + 1].toInt() and 0xFF) shl 8) or ((b[i + 2].toInt() and 0xFF) shl 16)
+
+    private const val PAGE_LONG_EDGE = 800
+    private const val PAGE_SHORT_EDGE = 400
 
     sealed interface Part {
         class Text(val text: String) : Part

@@ -156,6 +156,51 @@ class DirectoryListingDocumentTagTest {
         assertTrue(sections.videos.isEmpty())
     }
 
+    @Test
+    fun plainDocumentInsidePhotoFolderStaysAHiddenLeaf() {
+        val entries = classifyRemoteListingWithPeeks(
+            currentDirName = "Library",
+            entries = listOf(RemoteChild(name = "Album", isDirectory = true)),
+            childPeeks = mapOf(
+                "Album" to listOf(
+                    RemoteChild(name = "01.jpg", isDirectory = false),
+                    RemoteChild(name = "readme.txt", isDirectory = false),
+                    RemoteChild(name = "notes.html", isDirectory = false),
+                    RemoteChild(name = "memo.docx", isDirectory = false),
+                ),
+            ),
+        )
+        val album = entries.filterIsInstance<BrowseEntryRemote.Directory>().single { it.name == "Album" }
+        assertEquals(DirPresence.LeafImages, album.presence)
+        assertTrue(album.hasDocument)
+        val photo = entries.filterRemoteByContentMode(BrowseContentMode.Galleries)
+        assertFalse(photo.any { it is BrowseEntryRemote.Directory && it.name == "Album" })
+        assertTrue(photo.any { it is BrowseEntryRemote.FolderGallery && it.relativeName == "Album" })
+    }
+
+    @Test
+    fun archiveInsidePhotoFolderStaysNavigable() {
+        val entries = classifyRemoteListingWithPeeks(
+            currentDirName = "Library",
+            entries = listOf(RemoteChild(name = "Album", isDirectory = true)),
+            childPeeks = mapOf(
+                "Album" to listOf(
+                    RemoteChild(name = "01.jpg", isDirectory = false),
+                    RemoteChild(name = "book.epub", isDirectory = false),
+                    RemoteChild(name = "page.pdf", isDirectory = false),
+                    RemoteChild(name = "vol.rar", isDirectory = false),
+                ),
+            ),
+        )
+        val album = entries.filterIsInstance<BrowseEntryRemote.Directory>().single { it.name == "Album" }
+        assertEquals(DirPresence.Navigable, album.presence)
+        assertTrue(album.hasGallery)
+        assertTrue(album.hasDocument)
+        val photo = entries.filterRemoteByContentMode(BrowseContentMode.Galleries)
+        assertTrue(photo.any { it is BrowseEntryRemote.Directory && it.name == "Album" })
+        assertTrue(photo.any { it is BrowseEntryRemote.FolderGallery && it.relativeName == "Album" })
+    }
+
     fun emptyPdfDemotesToDocumentFileNotGallery() {
         val key = "smb:9:empty-guide.pdf"
         EmptyArchiveRegistry.mark(key)

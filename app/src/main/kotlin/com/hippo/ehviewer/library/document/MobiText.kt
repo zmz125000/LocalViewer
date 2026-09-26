@@ -66,15 +66,18 @@ internal object MobiText {
                 imageRecs[index] = chunk
             }
         }
-        val marked = markRecindex(html, imageRecs.keys)
+        val marked = markRecindex(html, imageRecs)
         val visible = marked.replace(Regex("\uE000[^\uE002]*\uE002"), "")
         val comic = imageRecs.size >= 3 && visible.length <= imageRecs.size * 40
         val blobs = LinkedHashMap<String, ByteArray>()
         val chapters = if (comic) {
             imageRecs.keys.sorted().map { idx ->
                 val key = key(idx)
-                blobs[key] = imageRecs.getValue(idx)
-                EbookChapter("", EbookImages.marker(key, 0.75f, fullPage = true), 0)
+                val bytes = imageRecs.getValue(idx)
+                blobs[key] = bytes
+                val size = EbookImages.sizeOf(bytes)
+                val aspect = if (size != null) size.first.toFloat() / size.second else 0.75f
+                EbookChapter("", EbookImages.marker(key, aspect, fullPage = true, size?.first ?: 0), 0)
             }
         } else {
             for (idx in imageRecs.keys) {
@@ -122,13 +125,16 @@ internal object MobiText {
         return out.toByteArray()
     }
 
-    private fun markRecindex(html: String, indexes: Set<Int>): String {
+    private fun markRecindex(html: String, images: Map<Int, ByteArray>): String {
         val img = Regex("""(?is)<img\b([^>]*)/?>""")
         return img.replace(html) { m ->
             val attrs = attrs(m.groupValues[1])
             val rec = attrs["recindex"]?.toIntOrNull()
-            if (rec != null && rec in indexes) {
-                "\n\n${EbookImages.marker(key(rec), 0.75f, fullPage = false)}\n\n"
+            val bytes = if (rec != null) images[rec] else null
+            if (rec != null && bytes != null) {
+                val size = EbookImages.sizeOf(bytes)
+                val aspect = if (size != null) size.first.toFloat() / size.second else 0.75f
+                "\n\n${EbookImages.marker(key(rec), aspect, fullPage = false, size?.first ?: 0)}\n\n"
             } else {
                 ""
             }

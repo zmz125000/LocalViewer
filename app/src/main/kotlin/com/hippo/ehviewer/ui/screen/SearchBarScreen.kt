@@ -8,7 +8,6 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -43,7 +42,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.InputChip
-import androidx.compose.material3.InputChipDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SearchBarDefaults
@@ -367,26 +365,18 @@ fun SearchBarScreen(
                                         searchFieldState.setTextAndPlaceCursorAtEnd(tag)
                                         onFilterChange(normalizeQuery(tag))
                                     },
+                                    modifier = Modifier.longPressDelete {
+                                        scope.launch(Dispatchers.IO) {
+                                            mSearchDatabase.deleteQuery(tag, SEARCH_KIND_LIBRARY)
+                                            historyTags =
+                                                mSearchDatabase.list(SEARCH_KIND_LIBRARY, SEARCH_HISTORY_LIMIT)
+                                        }
+                                    },
                                     label = {
                                         Text(
                                             text = tag,
                                             maxLines = 1,
                                             overflow = TextOverflow.Ellipsis,
-                                        )
-                                    },
-                                    trailingIcon = {
-                                        Icon(
-                                            imageVector = Icons.Default.Close,
-                                            contentDescription = stringResource(R.string.delete),
-                                            modifier = Modifier
-                                                .size(InputChipDefaults.IconSize)
-                                                .clickable {
-                                                    scope.launch(Dispatchers.IO) {
-                                                        mSearchDatabase.deleteQuery(tag, SEARCH_KIND_LIBRARY)
-                                                        historyTags =
-                                                            mSearchDatabase.list(SEARCH_KIND_LIBRARY, SEARCH_HISTORY_LIMIT)
-                                                    }
-                                                },
                                         )
                                     },
                                 )

@@ -7,14 +7,15 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.input.TextFieldLineLimits
 import androidx.compose.foundation.text.input.TextFieldState
@@ -28,7 +29,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.InputChip
-import androidx.compose.material3.InputChipDefaults
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
@@ -53,12 +53,14 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
@@ -76,6 +78,7 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 
 private val WHITESPACE_REGEX = Regex("\\s+")
 private const val SEARCH_HISTORY_LIMIT = 24
@@ -464,24 +467,41 @@ fun BrowseFolderSearchHistory(state: BrowseFolderSearchState) {
                 InputChip(
                     selected = false,
                     onClick = { state.textFieldState.setTextAndPlaceCursorAtEnd(tag) },
+                    modifier = Modifier.longPressDelete {
+                        scope.launch(Dispatchers.IO) {
+                            dao.deleteQuery(tag, SEARCH_KIND_FOLDER)
+                            historyTags = dao.list(SEARCH_KIND_FOLDER, SEARCH_HISTORY_LIMIT)
+                        }
+                    },
                     label = {
                         Text(text = tag, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     },
-                    trailingIcon = {
-                        Icon(
-                            imageVector = Icons.Default.Close,
-                            contentDescription = stringResource(R.string.delete),
-                            modifier = Modifier
-                                .size(InputChipDefaults.IconSize)
-                                .clickable {
-                                    scope.launch(Dispatchers.IO) {
-                                        dao.deleteQuery(tag, SEARCH_KIND_FOLDER)
-                                        historyTags = dao.list(SEARCH_KIND_FOLDER, SEARCH_HISTORY_LIMIT)
-                                    }
-                                },
-                        )
-                    },
                 )
+            }
+        }
+    }
+}
+
+/** Long-press deletes a history chip. A short tap still reaches [InputChip] onClick. */
+@Composable
+internal fun Modifier.longPressDelete(onDelete: () -> Unit): Modifier {
+    val haptic = LocalHapticFeedback.current
+    val delete by rememberUpdatedState(onDelete)
+    return pointerInput(Unit) {
+        awaitEachGesture {
+            awaitFirstDown(requireUnconsumed = false)
+            var timedOut = true
+            withTimeoutOrNull(viewConfiguration.longPressTimeoutMillis) {
+                waitForUpOrCancellation()
+                timedOut = false
+            }
+            if (timedOut) {
+                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                delete()
+                do {
+                    val event = awaitPointerEvent(PointerEventPass.Initial)
+                    event.changes.forEach { it.consume() }
+                } while (event.changes.any { it.pressed })
             }
         }
     }

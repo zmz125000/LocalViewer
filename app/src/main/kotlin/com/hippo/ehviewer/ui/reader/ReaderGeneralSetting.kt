@@ -72,9 +72,9 @@ fun ReaderGeneralSetting(isDocument: Boolean = false) = Column(modifier = Modifi
         field = Settings.pdfDirectImage.asMutableState(),
     )
     SwitchChoice(
-            title = stringResource(id = R.string.pref_vector_compose_ahead),
-            summary = stringResource(id = R.string.pref_vector_compose_ahead_summary),
-            field = Settings.vectorComposeAhead.asMutableState(),
+        title = stringResource(id = R.string.pref_vector_compose_ahead),
+        summary = stringResource(id = R.string.pref_vector_compose_ahead_summary),
+        field = Settings.vectorComposeAhead.asMutableState(),
     )
     SwitchChoice(
         title = stringResource(id = R.string.pref_reader_photo_grid),

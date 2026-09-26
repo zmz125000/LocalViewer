@@ -360,6 +360,19 @@ class EbookEngineTest {
     }
 
     @Test
+    fun smallInlineImageStaysSmallAndLargeComicFillsThePage() {
+        val icon = EbookImages.marker("icon.png", 1f, fullPage = true, widthPx = 48)
+        val page = EbookImages.marker("page.jpg", 0.7f, fullPage = true, widthPx = 1200)
+        val lines = EbookPaginator.wrapLines("$icon\n$page", EbookStyle.DEFAULT)
+        val iconLine = lines.single { it.imageKey == "icon.png" }
+        val pageLine = lines.single { it.imageKey == "page.jpg" }
+        assertFalse(iconLine.fullPage)
+        assertTrue(iconLine.heightEm < 4f)
+        assertTrue(pageLine.fullPage)
+        assertEquals(EbookPaginator.contentHeightEm(EbookStyle.DEFAULT), pageLine.heightEm, 0.01f)
+    }
+
+    @Test
     fun pngHeaderAspect() {
         val png = ByteArray(24)
         png[0] = 0x89.toByte()
