@@ -5,6 +5,8 @@ package com.hippo.ehviewer.library.document
  * - [HARD]: old files wrap each line to a fixed width. Join consecutive lines
  *   (trim extra spaces at the join). A new paragraph starts on a blank line,
  *   a leading indent, or a short last line of the previous paragraph.
+ *   Some hard-clip files put one blank line between every wrapped line; those
+ *   blanks are not paragraph breaks, and the shorter line ends the paragraph.
  * - [SOFT]: each non-blank line is already a paragraph (no blank line required).
  *   Extra blank lines are not vertical space — they only separate paragraphs.
  * [AUTO] picks from a sample of the chapter.
@@ -48,6 +50,11 @@ internal object EbookParagraph {
         val widths = nonempty.map { lineWidth(it.trimEnd()) }.sorted()
         val med = widths[widths.size / 2]
         val p75 = widths[(widths.size * 3) / 4]
+        // Blank line between every wrapped line, short line ends the paragraph.
+        if (blankSeparatedLines(lines) && med in 16f..80f) {
+            val short = widths.count { it < med * 0.62f }
+            if (short >= nonempty.size * 0.08f) return HARD
+        }
         val meanRun = if (runs == 0) 1f else runSum.toFloat() / runs
         if (med in 16f..80f && p75 <= 90f && meanRun >= 2.4f) {
             val near = widths.count { it >= p75 * 0.72f }
@@ -81,6 +88,7 @@ internal object EbookParagraph {
             nonempty.sorted()[(nonempty.size * 3) / 4]
         }
         val shortLimit = typical * 0.62f
+        val blanksAreLineBreaks = blankSeparatedLines(lines)
         val out = ArrayList<String>()
         val buf = StringBuilder()
         var prevShort = false
@@ -92,7 +100,7 @@ internal object EbookParagraph {
         }
         for (ln in lines) {
             if (ln.isBlank()) {
-                flush()
+                if (!blanksAreLineBreaks) flush()
                 continue
             }
             val width = lineWidth(ln.trimEnd())
@@ -145,6 +153,37 @@ internal object EbookParagraph {
             if (em >= 1f) return true
         }
         return em >= 1f
+    }
+
+    /** True when a blank line sits between almost every content line. */
+    private fun blankSeparatedLines(lines: List<String>): Boolean {
+        var adjacent = 0
+        var single = 0
+        var wider = 0
+        var i = 0
+        var seen = 0
+        while (i < lines.size && seen < 400) {
+            if (lines[i].isBlank()) {
+                i++
+                continue
+            }
+            seen++
+            var j = i + 1
+            var blanks = 0
+            while (j < lines.size && lines[j].isBlank()) {
+                blanks++
+                j++
+            }
+            if (j >= lines.size) break
+            when (blanks) {
+                0 -> adjacent++
+                1 -> single++
+                else -> wider++
+            }
+            i = j
+        }
+        val gaps = adjacent + single + wider
+        return gaps >= 6 && single >= gaps * 0.7f && adjacent <= gaps * 0.15f
     }
 
     private fun endsSentence(line: String): Boolean {

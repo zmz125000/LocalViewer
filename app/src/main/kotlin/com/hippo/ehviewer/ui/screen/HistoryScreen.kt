@@ -577,6 +577,18 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
                     )
                 }
                 is LocalHistoryTarget.LocalArchive -> {
+                    val ebookName = info.title
+                        ?: target.path.substringAfterLast('/').substringAfterLast('\\')
+                    if (isEbookFileName(ebookName) || isEbookFileName(target.path)) {
+                        withIOContext {
+                            LocalHistory.recordLocalArchive(
+                                target.path,
+                                title = ebookName,
+                                coverPath = info.thumbKey,
+                                pages = info.pages,
+                            )
+                        }
+                    }
                     // Optional parent browse path under alwaysExitToDir
                     // (fromHistory FAB still jumps straight to History).
                     val parent = withIOContext {
@@ -628,6 +640,18 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
                         uploader = "${source.id}\u0000$remote",
                         category = 1,
                     )
+                    if (isEbookFileName(gi.title.orEmpty()) || isEbookFileName(remote)) {
+                        withIOContext {
+                            LocalHistory.recordSmbStreamArchive(
+                                source.id,
+                                remote,
+                                title = gi.title,
+                                pages = gi.pages,
+                                info = gi,
+                                thumbKey = gi.thumbKey,
+                            )
+                        }
+                    }
                     openFromHistoryWithBackStack(
                         pushParentDir = {
                             openSmbBrowseDir(
@@ -663,6 +687,18 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
                         uploader = "${source.id}\u0000$remote",
                         category = 1,
                     )
+                    if (isEbookFileName(gi.title.orEmpty()) || isEbookFileName(remote)) {
+                        withIOContext {
+                            LocalHistory.recordWebDavStreamArchive(
+                                source.id,
+                                remote,
+                                title = gi.title,
+                                pages = gi.pages,
+                                info = gi,
+                                thumbKey = gi.thumbKey,
+                            )
+                        }
+                    }
                     openFromHistoryWithBackStack(
                         pushParentDir = {
                             openWebDavBrowseDir(
@@ -683,6 +719,11 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
                     if (isPdfFileName(name) || isPdfFileName(path) ||
                         isEpubFileName(name) || isEpubFileName(path)
                     ) {
+                        if (isEbookFileName(name) || isEbookFileName(path)) {
+                            withIOContext {
+                                LocalHistory.recordLocalFile(path, title = name, thumbKey = info.thumbKey)
+                            }
+                        }
                         navToReader(path)
                         return@launch
                     }
@@ -692,6 +733,7 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
                             runCatching { EhDB.getReadProgress(gid) }.getOrDefault(0)
                         }
                         withIOContext {
+                            LocalHistory.recordLocalFile(path, title = name, thumbKey = info.thumbKey)
                             OpenPdfExternally.openInternalLocal(
                                 context,
                                 path,
@@ -733,6 +775,16 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
                     if (isPdfFileName(name) || isPdfFileName(remote) ||
                         isEpubFileName(name) || isEpubFileName(remote)
                     ) {
+                        if (isEbookFileName(name) || isEbookFileName(remote)) {
+                            withIOContext {
+                                LocalHistory.recordSmbFile(
+                                    source.id,
+                                    remote,
+                                    title = name,
+                                    thumbKey = info.thumbKey,
+                                )
+                            }
+                        }
                         navToSmbStreamArchiveReader(source.id, remote)
                         return@launch
                     }
@@ -742,6 +794,12 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
                             runCatching { EhDB.getReadProgress(gid) }.getOrDefault(0)
                         }
                         withIOContext {
+                            LocalHistory.recordSmbFile(
+                                source.id,
+                                remote,
+                                title = name,
+                                thumbKey = info.thumbKey,
+                            )
                             OpenPdfExternally.openInternalSmb(
                                 context,
                                 source.id,
@@ -801,6 +859,16 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
                     if (isPdfFileName(name) || isPdfFileName(remote) ||
                         isEpubFileName(name) || isEpubFileName(remote)
                     ) {
+                        if (isEbookFileName(name) || isEbookFileName(remote)) {
+                            withIOContext {
+                                LocalHistory.recordWebDavFile(
+                                    source.id,
+                                    remote,
+                                    title = name,
+                                    thumbKey = info.thumbKey,
+                                )
+                            }
+                        }
                         navToWebDavStreamArchiveReader(source.id, remote)
                         return@launch
                     }
@@ -810,6 +878,12 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
                             runCatching { EhDB.getReadProgress(gid) }.getOrDefault(0)
                         }
                         withIOContext {
+                            LocalHistory.recordWebDavFile(
+                                source.id,
+                                remote,
+                                title = name,
+                                thumbKey = info.thumbKey,
+                            )
                             OpenPdfExternally.openInternalWebDav(
                                 context,
                                 source.id,
