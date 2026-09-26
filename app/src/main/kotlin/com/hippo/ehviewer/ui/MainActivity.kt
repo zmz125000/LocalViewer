@@ -68,6 +68,7 @@ import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationRail
 import androidx.compose.material3.NavigationRailItem
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Snackbar
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.SnackbarResult
@@ -150,6 +151,8 @@ import com.hippo.ehviewer.ui.screen.toggleHistorySection
 import com.hippo.ehviewer.ui.screen.toggleLibraryFlattenMode
 import com.hippo.ehviewer.ui.screen.toggleLibrarySection
 import com.hippo.ehviewer.ui.settings.showNewVersion
+import com.hippo.ehviewer.ui.theme.snackbarActionContentColor
+import com.hippo.ehviewer.ui.theme.snackbarDismissContentColor
 import com.hippo.ehviewer.ui.tools.DialogState
 import com.hippo.ehviewer.ui.tools.awaitConfirmationOrCancel
 import com.hippo.ehviewer.ui.tools.awaitInputText
@@ -583,7 +586,15 @@ class MainActivity : AppCompatActivity() {
                                     }
                                 },
                             )
-                            SnackbarHost(hostState = snackbarState)
+                            SnackbarHost(hostState = snackbarState) { data ->
+                                val message = snackbarDismissContentColor()
+                                Snackbar(
+                                    snackbarData = data,
+                                    contentColor = message,
+                                    actionContentColor = snackbarActionContentColor(),
+                                    dismissActionContentColor = message,
+                                )
+                            }
                         }
                     },
                     bottomBar = {
