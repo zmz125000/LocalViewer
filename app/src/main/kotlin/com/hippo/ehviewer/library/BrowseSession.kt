@@ -674,4 +674,24 @@ object BrowseSession {
             collapsedBrowseTouchedByFolder[folderKey] = names
         }
     }
+
+    /**
+     * Recent strip full-list vs two rows, per folder. Null means the user has not
+     * chosen, so the Last opened lock is the default. Same lifetime as section collapse.
+     */
+    private val recentStripExpandedByFolder = ConcurrentHashMap<String, Boolean>()
+
+    fun recentStripExpanded(folderKey: String): Boolean? {
+        if (folderKey.isEmpty()) return null
+        return if (recentStripExpandedByFolder.containsKey(folderKey)) {
+            recentStripExpandedByFolder[folderKey]
+        } else {
+            null
+        }
+    }
+
+    fun setRecentStripExpanded(folderKey: String, expanded: Boolean) {
+        if (folderKey.isEmpty()) return
+        recentStripExpandedByFolder[folderKey] = expanded
+    }
 }
