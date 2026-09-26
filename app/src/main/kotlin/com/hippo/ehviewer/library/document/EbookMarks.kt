@@ -11,6 +11,16 @@ internal object EbookMarks {
     const val QUOTE = '\uE011'
     const val CODE_LINE = '\uE012'
 
+    /** Paragraph alignment from the book: [ALIGN] plus [BOOK_START]..[BOOK_JUSTIFY]. */
+    const val ALIGN = '\uE013'
+    const val BOOK_START = 1
+    const val BOOK_CENTER = 2
+    const val BOOK_END = 3
+    const val BOOK_JUSTIFY = 4
+    const val LINE_START = 0
+    const val LINE_CENTER = 1
+    const val LINE_END = 2
+
     const val BOLD = 1
     const val ITALIC = 2
     const val UNDER = 4
@@ -45,19 +55,24 @@ internal object EbookMarks {
         else -> 1f
     }
 
+    fun bookAlignChar(align: Int): Char = ('0'.code + align).toChar()
+
+    fun bookAlignOf(c: Char): Int {
+        val n = c.code - '0'.code
+        return if (n in BOOK_START..BOOK_JUSTIFY) n else 0
+    }
+
     fun strip(s: String): String {
-        if (s.indexOf(STYLE) < 0 && s.indexOf(QUOTE) < 0 && s.indexOf(CODE_LINE) < 0) return s
+        if (!hasMarks(s)) return s
         val sb = StringBuilder(s.length)
         var i = 0
         while (i < s.length) {
-            val c = s[i]
-            when {
-                c == STYLE && i + 1 < s.length -> i += 2
-                c == QUOTE || c == CODE_LINE -> i++
-                else -> {
-                    sb.append(c)
-                    i++
-                }
+            val next = skipMark(s, i)
+            if (next != i) {
+                i = next
+            } else {
+                sb.append(s[i])
+                i++
             }
         }
         return sb.toString()
@@ -66,20 +81,22 @@ internal object EbookMarks {
     fun hasVisible(s: CharSequence): Boolean {
         var i = 0
         while (i < s.length) {
-            val c = s[i]
-            when {
-                c == STYLE && i + 1 < s.length -> i += 2
-                c == QUOTE || c == CODE_LINE -> i++
-                else -> return true
+            val next = skipMark(s, i)
+            if (next != i) {
+                i = next
+            } else {
+                return true
             }
         }
         return false
     }
 
+    private fun hasMarks(s: String): Boolean = s.indexOf(STYLE) >= 0 || s.indexOf(QUOTE) >= 0 || s.indexOf(CODE_LINE) >= 0 || s.indexOf(ALIGN) >= 0
+
     data class Run(val text: String, val bits: Int)
 
     fun runs(text: String): List<Run> {
-        if (text.indexOf(STYLE) < 0 && text.indexOf(QUOTE) < 0 && text.indexOf(CODE_LINE) < 0) {
+        if (!hasMarks(text)) {
             return if (text.isEmpty()) emptyList() else listOf(Run(text, 0))
         }
         val out = ArrayList<Run>()
@@ -101,6 +118,7 @@ internal object EbookMarks {
                     i += 2
                 }
                 c == QUOTE || c == CODE_LINE -> i++
+                c == ALIGN && i + 1 < text.length -> i += 2
                 else -> {
                     sb.append(c)
                     i++
@@ -117,10 +135,11 @@ internal object EbookMarks {
         val c = s[i]
         return when {
             c == STYLE && i + 1 < s.length -> i + 2
+            c == ALIGN && i + 1 < s.length -> i + 2
             c == QUOTE || c == CODE_LINE -> i + 1
             else -> i
         }
     }
 
-    fun isMarkStart(c: Char): Boolean = c == STYLE || c == QUOTE || c == CODE_LINE
+    fun isMarkStart(c: Char): Boolean = c == STYLE || c == QUOTE || c == CODE_LINE || c == ALIGN
 }

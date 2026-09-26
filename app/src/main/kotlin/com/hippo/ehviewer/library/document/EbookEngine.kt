@@ -267,6 +267,8 @@ internal object EbookEngine {
                 i = if (end < 0) marked.length else end + 1
             } else if (marked[i] == EbookMarks.STYLE && i + 1 < marked.length) {
                 i += 2
+            } else if (marked[i] == EbookMarks.ALIGN && i + 1 < marked.length) {
+                i += 2
             } else if (marked[i] == EbookMarks.QUOTE || marked[i] == EbookMarks.CODE_LINE) {
                 i++
             } else {

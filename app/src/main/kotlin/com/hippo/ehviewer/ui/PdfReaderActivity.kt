@@ -1279,6 +1279,7 @@ private fun ebookStyleFromSettings(landscape: Boolean): EbookStyle = EbookStyle(
     verticalMarginPercent = Settings.ebookVerticalMargin.value.coerceIn(0, 12),
     justify = ebookAlignJustifies(Settings.ebookAlign.value),
     hyphenate = ebookAlignHyphenates(Settings.ebookAlign.value),
+    bookFormat = Settings.ebookBookAlign.value,
     latinScale = ebookLatinScale(Settings.ebookFont.value),
     showPictures = Settings.ebookShowPictures.value,
     paragraphMode = Settings.ebookParagraphMode.value.coerceIn(0, 2),
@@ -1436,7 +1437,16 @@ private fun drawEbookLine(
             else -> baseFace
         }
         paint.isFakeBoldText = line.bold && !line.code
-        drawPlainRun(canvas, text, x0, y, contentW - line.indentEm * fontSize, line.justify, paint)
+        drawPlainRun(
+            canvas,
+            text,
+            x0,
+            y,
+            contentW - line.indentEm * fontSize,
+            line.justify,
+            line.align,
+            paint,
+        )
         return
     }
     val runs = EbookMarks.runs(text)
@@ -1449,9 +1459,8 @@ private fun drawEbookLine(
         natural += paint.measureText(run.text)
         for (c in run.text) if (c == ' ') spaces++
     }
-    val extra = if (line.justify) (avail - natural).coerceAtLeast(0f) else 0f
-    val gap = if (line.justify && extra > 1f && spaces > 0) extra / spaces else 0f
-    var x = x0
+    val gap = justifyGap(line.justify, natural, avail, spaces)
+    var x = lineOrigin(x0, natural, avail, if (gap > 0f) EbookMarks.LINE_START else line.align)
     for (run in runs) {
         applyRun(paint, baseFace, line, run.bits, size)
         val dy = when {
@@ -1504,6 +1513,29 @@ private fun applyRun(paint: TextPaint, baseFace: Typeface, line: EbookLine, bits
     paint.textSize = size * EbookMarks.sizeScale(bits)
 }
 
+/** A short line must stay ragged. Stretching a few leftover words opens huge gaps. */
+private const val JUSTIFY_MIN_FILL = 0.82f
+
+private fun lineOrigin(x0: Float, natural: Float, avail: Float, align: Int): Float {
+    val slack = (avail - natural).coerceAtLeast(0f)
+    return when (align) {
+        EbookMarks.LINE_CENTER -> x0 + slack / 2f
+        EbookMarks.LINE_END -> x0 + slack
+        else -> x0
+    }
+}
+
+private fun shouldJustify(justify: Boolean, natural: Float, avail: Float): Boolean {
+    if (!justify || avail <= 1f) return false
+    if (natural < avail * JUSTIFY_MIN_FILL) return false
+    return avail - natural > 1f
+}
+
+private fun justifyGap(justify: Boolean, natural: Float, avail: Float, spaces: Int): Float {
+    if (!shouldJustify(justify, natural, avail) || spaces <= 0) return 0f
+    return (avail - natural) / spaces
+}
+
 private fun drawPlainRun(
     canvas: Canvas,
     text: String,
@@ -1511,22 +1543,18 @@ private fun drawPlainRun(
     y: Float,
     avail: Float,
     justify: Boolean,
+    align: Int,
     paint: TextPaint,
 ) {
-    if (!justify) {
-        canvas.drawText(text, x0, y, paint)
-        return
-    }
     val natural = paint.measureText(text)
-    val extra = avail - natural
-    if (extra <= 1f) {
-        canvas.drawText(text, x0, y, paint)
-        return
-    }
     var spaces = 0
     for (c in text) if (c == ' ') spaces++
+    if (!shouldJustify(justify, natural, avail)) {
+        canvas.drawText(text, lineOrigin(x0, natural, avail, align), y, paint)
+        return
+    }
     if (spaces > 0) {
-        val gap = extra / spaces
+        val gap = (avail - natural) / spaces
         var x = x0
         var start = 0
         while (start < text.length) {
@@ -1547,12 +1575,12 @@ private fun drawPlainRun(
         canvas.drawText(text, x0, y, paint)
         return
     }
-    val gap = extra / (text.length - 1)
+    val charGap = (avail - natural) / (text.length - 1)
     var x = x0
     for (i in text.indices) {
         val s = text[i].toString()
         canvas.drawText(s, x, y, paint)
-        x += paint.measureText(s) + gap
+        x += paint.measureText(s) + charGap
     }
 }
 
@@ -1623,6 +1651,7 @@ private fun PdfReaderScreen(
     val ebookParagraph by Settings.ebookParagraphSpacing.collectAsState()
     val ebookIndent by Settings.ebookIndent.collectAsState()
     val ebookAlign by Settings.ebookAlign.collectAsState()
+    val ebookBookAlign by Settings.ebookBookAlign.collectAsState()
     val ebookShowPictures by Settings.ebookShowPictures.collectAsState()
     val ebookMargin by Settings.ebookMargin.collectAsState()
     val ebookVerticalMargin by Settings.ebookVerticalMargin.collectAsState()
@@ -1647,6 +1676,7 @@ private fun PdfReaderScreen(
         ebookIndent,
         ebookFont,
         ebookAlign,
+        ebookBookAlign,
         ebookShowPictures,
         ebookMargin,
         ebookVerticalMargin,
@@ -1662,6 +1692,7 @@ private fun PdfReaderScreen(
             verticalMarginPercent = ebookVerticalMargin.coerceIn(0, 12),
             justify = ebookAlignJustifies(ebookAlign),
             hyphenate = ebookAlignHyphenates(ebookAlign),
+            bookFormat = ebookBookAlign,
             latinScale = ebookLatinScale(ebookFont),
             showPictures = ebookShowPictures,
             paragraphMode = ebookParaMode.coerceIn(0, 2),

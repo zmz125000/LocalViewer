@@ -29,6 +29,8 @@ internal data class EbookStyle(
     val verticalMarginPercent: Int = 2,
     val justify: Boolean = false,
     val hyphenate: Boolean = false,
+    /** When on, a paragraph's own alignment replaces [justify]. */
+    val bookFormat: Boolean = true,
     /** Multiply Latin advances so they match the face used to draw. CJK stays 1 em. */
     val latinScale: Float = 1f,
     /** EPUB/MOBI pictures. Off keeps the text and drops image slots. */
@@ -292,6 +294,7 @@ internal object EbookPaginator {
         var i = 0
         var quote = 0
         var codeLine = false
+        var bookAlign = 0
         while (i < para.length) {
             when (para[i]) {
                 EbookMarks.QUOTE -> {
@@ -302,11 +305,35 @@ internal object EbookPaginator {
                     codeLine = true
                     i++
                 }
+                EbookMarks.ALIGN -> {
+                    if (i + 1 < para.length) {
+                        bookAlign = EbookMarks.bookAlignOf(para[i + 1])
+                        i += 2
+                    } else {
+                        i++
+                    }
+                }
                 else -> break
             }
         }
+        val useBook = style.bookFormat && bookAlign != 0
+        val lineAlign = when {
+            useBook && bookAlign == EbookMarks.BOOK_CENTER -> EbookMarks.LINE_CENTER
+            useBook && bookAlign == EbookMarks.BOOK_END -> EbookMarks.LINE_END
+            else -> EbookMarks.LINE_START
+        }
+        val justifyPara = when {
+            codeLine -> false
+            useBook && bookAlign == EbookMarks.BOOK_JUSTIFY -> true
+            useBook -> false
+            else -> style.justify
+        }
         val full = lineCapacity(style)
-        val firstIndent = if (quote > 0 || codeLine) 0f else style.indentEm.toFloat().coerceAtLeast(0f)
+        val firstIndent = if (quote > 0 || codeLine || lineAlign != EbookMarks.LINE_START) {
+            0f
+        } else {
+            style.indentEm.toFloat().coerceAtLeast(0f)
+        }
         val quoteIndent = quote * 1.15f
         var first = true
         var bits = 0
@@ -332,9 +359,10 @@ internal object EbookPaginator {
                 text = text,
                 indentEm = indentOf(),
                 heightEm = style.lineHeightEm,
-                justify = style.justify && !last && !codeLine && EbookMarks.hasVisible(text),
+                justify = justifyPara && !last && EbookMarks.hasVisible(text),
                 quote = quote > 0,
                 code = codeLine,
+                align = lineAlign,
             )
             first = false
             sb.clear()
@@ -456,6 +484,10 @@ internal object EbookPaginator {
                 i += 2
                 continue
             }
+            if (c == EbookMarks.ALIGN && i + 1 < to) {
+                i += 2
+                continue
+            }
             if (c == EbookMarks.QUOTE || c == EbookMarks.CODE_LINE) {
                 i++
                 continue
@@ -485,6 +517,8 @@ internal data class EbookLine(
     val quote: Boolean = false,
     /** Preformatted / fenced code: monospace, no justify. */
     val code: Boolean = false,
+    /** [EbookMarks.LINE_START], [EbookMarks.LINE_CENTER], or [EbookMarks.LINE_END]. */
+    val align: Int = EbookMarks.LINE_START,
     val imageKey: String? = null,
     val imageAspect: Float = 1f,
     val fullPage: Boolean = false,

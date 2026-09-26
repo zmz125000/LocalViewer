@@ -165,7 +165,7 @@ internal object EbookParagraph {
         var i = 0
         while (i < line.length && line[i].isWhitespace()) i++
         if (i >= line.length) return false
-        return line[i] == EbookMarks.QUOTE || line[i] == EbookMarks.CODE_LINE
+        return line[i] == EbookMarks.QUOTE || line[i] == EbookMarks.CODE_LINE || line[i] == EbookMarks.ALIGN
     }
 
     private fun startsIndented(line: String): Boolean {
@@ -287,7 +287,7 @@ internal object EbookParagraph {
         var i = 0
         while (i < s.length) {
             val c = s[i]
-            if (c == EbookMarks.STYLE && i + 1 < s.length) {
+            if ((c == EbookMarks.STYLE || c == EbookMarks.ALIGN) && i + 1 < s.length) {
                 i += 2
                 continue
             }

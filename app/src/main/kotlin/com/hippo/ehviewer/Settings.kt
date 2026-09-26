@@ -686,6 +686,12 @@ object Settings : DataStorePreferences(null) {
     /** 0=start, 1=justify, 2=start with hyphenation, 3=justify with hyphenation. */
     val ebookAlign = intPref("pref_ebook_align", EBOOK_ALIGN_JUSTIFY_HYPHEN)
 
+    /**
+     * When on, left / center / right / justify in the book replaces [ebookAlign]
+     * for that paragraph. Off keeps the reader alignment for every paragraph.
+     */
+    val ebookBookAlign = boolPref("pref_ebook_book_align", true)
+
     /** EPUB/MOBI pictures. Off shows text only. Default on. */
     val ebookShowPictures = boolPref("pref_ebook_show_pictures", true)
 
