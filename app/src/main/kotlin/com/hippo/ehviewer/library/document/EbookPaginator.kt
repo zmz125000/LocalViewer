@@ -132,15 +132,42 @@ internal object EbookPaginator {
     fun wrap(text: String, style: EbookStyle = EbookStyle.DEFAULT): List<String> = wrapLines(text, style).map { it.text }
 
     fun wrapLines(text: String, style: EbookStyle = EbookStyle.DEFAULT): List<EbookLine> {
-        val paras = EbookParagraph.paragraphs(text, style.paragraphMode)
         val out = ArrayList<EbookLine>()
-        for ((i, para) in paras.withIndex()) {
-            wrapParagraph(para, style, out)
-            if (i != paras.lastIndex && style.paragraphEm > 0f) {
-                out += EbookLine("", heightEm = style.paragraphEm)
+        val parts = EbookImages.split(text)
+        for ((p, part) in parts.withIndex()) {
+            when (part) {
+                is EbookImages.Part.Image -> out += imageLine(part.ref, style)
+                is EbookImages.Part.Text -> {
+                    if (part.text.isBlank()) continue
+                    val paras = EbookParagraph.paragraphs(part.text, style.paragraphMode)
+                    for ((i, para) in paras.withIndex()) {
+                        wrapParagraph(para, style, out)
+                        if (i != paras.lastIndex && style.paragraphEm > 0f) {
+                            out += EbookLine("", heightEm = style.paragraphEm)
+                        }
+                    }
+                }
+            }
+            if (p != parts.lastIndex && out.isNotEmpty() && style.paragraphEm > 0f) {
+                val last = out.last()
+                if (last.text.isNotEmpty() || last.imageKey != null) {
+                    out += EbookLine("", heightEm = style.paragraphEm)
+                }
             }
         }
         return out
+    }
+
+    private fun imageLine(ref: EbookImages.Ref, style: EbookStyle): EbookLine {
+        val aspect = ref.aspect.takeIf { it > 0.05f } ?: 0.75f
+        val inline = (lineCapacity(style) / aspect).coerceIn(2f, contentHeightEm(style))
+        return EbookLine(
+            text = "",
+            heightEm = if (ref.fullPage) contentHeightEm(style) else inline,
+            imageKey = ref.key,
+            imageAspect = aspect,
+            fullPage = ref.fullPage,
+        )
     }
 
     fun charEm(c: Char): Float {
@@ -194,6 +221,11 @@ internal object EbookPaginator {
             used = 0f
         }
         for (line in lines) {
+            if (line.fullPage && line.imageKey != null) {
+                flush()
+                pages += EbookPage(listOf(line), chapterIndex, line.offset, aspect = 0f)
+                continue
+            }
             val h = line.heightEm.coerceAtLeast(0.01f)
             if (chunk.isNotEmpty() && used + h > budget) flush()
             chunk += line
@@ -284,10 +316,15 @@ internal data class EbookLine(
     val offset: Int = 0,
     val scale: Float = 1f,
     val bold: Boolean = false,
+    val imageKey: String? = null,
+    val imageAspect: Float = 1f,
+    val fullPage: Boolean = false,
 )
 
 internal data class EbookPage(
     val lines: List<EbookLine>,
     val chapterIndex: Int = 0,
     val charOffset: Int = 0,
+    /** 0 = a full-page picture whose aspect is read from the image. */
+    val aspect: Float = EbookPaginator.ASPECT,
 )

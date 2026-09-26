@@ -154,6 +154,9 @@ fun isMobiFileName(name: String): Boolean {
  */
 val EBOOK_READER_EXTENSIONS = setOf(
     "epub",
+    "mobi",
+    "azw",
+    "azw3",
     "txt",
     "text",
     "html",

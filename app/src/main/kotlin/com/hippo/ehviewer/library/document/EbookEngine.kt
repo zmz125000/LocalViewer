@@ -2,15 +2,21 @@ package com.hippo.ehviewer.library.document
 
 import com.ehviewer.core.util.logcat
 import com.hippo.ehviewer.library.ArchiveByteSource
+import com.hippo.ehviewer.library.IMAGE_EXTENSIONS
 import com.hippo.ehviewer.library.ZipCentralDirectory
 import com.hippo.ehviewer.util.FileUtils
 import java.nio.charset.Charset
 
 /**
- * Text ebook for [com.hippo.ehviewer.ui.PdfReaderActivity]: EPUB / TXT / HTML / FB2 / Markdown.
- * [body] is the parsed chapter text; [pages] / [chapters] are a pagination of [body]
- * at a given [EbookStyle] (re-paginated when the reader style prefs change).
+ * Ebook for [com.hippo.ehviewer.ui.PdfReaderActivity]: EPUB (text, pictures,
+ * comics), MOBI/AZW, TXT, HTML, FB2, Markdown.
+ * [EbookParse.resources] stays open when the book has images.
  */
+internal class EbookParse(
+    val chapters: List<EbookChapter>,
+    val resources: EbookResources? = null,
+)
+
 internal class EbookDocument(
     val body: List<EbookChapter>,
     val pages: List<EbookPage>,
@@ -30,7 +36,7 @@ internal object EbookEngine {
         style: EbookStyle = EbookStyle.DEFAULT,
         stillWanted: () -> Boolean = { true },
     ): EbookDocument? {
-        val chapters = parse(source, fileName, stillWanted) ?: return null
+        val chapters = parseBook(source, fileName, stillWanted)?.chapters ?: return null
         if (chapters.isEmpty() || !stillWanted()) return null
         val (pages, toc) = EbookPaginator.paginate(chapters, style, stillWanted)
         if (!stillWanted() || pages.isEmpty()) return null
@@ -46,21 +52,37 @@ internal object EbookEngine {
         stillWanted: () -> Boolean = { true },
         charset: Charset? = null,
         charsetPref: Int = TextCharset.PREF_AUTO,
-    ): List<EbookChapter>? {
+    ): List<EbookChapter>? = parseBook(source, fileName, stillWanted, charset, charsetPref)?.chapters
+
+    fun parseBook(
+        source: ArchiveByteSource,
+        fileName: String,
+        stillWanted: () -> Boolean = { true },
+        charset: Charset? = null,
+        charsetPref: Int = TextCharset.PREF_AUTO,
+    ): EbookParse? {
         if (!stillWanted()) return null
         val ext = FileUtils.getExtensionFromFilename(fileName)?.lowercase().orEmpty()
-        val chapters = runCatching {
+        val book = runCatching {
             when (ext) {
                 "epub" -> parseEpub(source, stillWanted)
-                "txt", "text" -> parseTxt(source, stillWanted, charset, charsetPref)
-                "html", "htm", "xhtml" -> parseHtml(source, fileName, charset, charsetPref)
-                "fb2" -> parseFb2(source, fileName, charset, charsetPref)
-                "md", "markdown" -> parseMarkdown(source, fileName, charset, charsetPref)
-                else -> parseTxt(source, stillWanted, charset, charsetPref)
+                "mobi", "azw", "azw3" -> parseMobi(source, fileName)
+                "txt", "text" -> EbookParse(parseTxt(source, stillWanted, charset, charsetPref))
+                "html", "htm", "xhtml" -> EbookParse(parseHtml(source, fileName, charset, charsetPref))
+                "fb2" -> EbookParse(parseFb2(source, fileName, charset, charsetPref))
+                "md", "markdown" -> EbookParse(parseMarkdown(source, fileName, charset, charsetPref))
+                else -> EbookParse(parseTxt(source, stillWanted, charset, charsetPref))
             }
         }.onFailure { logcat("Ebook", it) }.getOrNull() ?: return null
         if (!stillWanted()) return null
-        return chapters
+        return book
+    }
+
+    private fun parseMobi(source: ArchiveByteSource, fileName: String): EbookParse {
+        val bytes = source.readFully(48L * 1024L * 1024L) ?: return EbookParse(emptyList())
+        val book = MobiText.parse(bytes, titleFromName(fileName)) ?: return EbookParse(emptyList())
+        val resources = if (book.images.isEmpty()) null else EbookResources.mobi(book.images)
+        return EbookParse(book.chapters, resources)
     }
 
     private fun parseTxt(
@@ -113,15 +135,27 @@ internal object EbookEngine {
     private fun parseEpub(
         source: ArchiveByteSource,
         stillWanted: () -> Boolean,
-    ): List<EbookChapter> {
-        if (!stillWanted()) return emptyList()
-        val zip = ZipCentralDirectory.open(source) ?: return emptyList()
-        val opf = parseOpf(zip) ?: return fallbackEpubText(zip)
+    ): EbookParse {
+        if (!stillWanted()) return EbookParse(emptyList())
+        val zip = ZipCentralDirectory.open(source) ?: return EbookParse(emptyList())
+        val resources = EbookResources.epub(source, zip)
+        val opf = parseOpf(zip) ?: return EbookParse(fallbackEpubText(zip, resources), resources.takeIf { it.hasImages })
         val byHref = HashMap<String, EbookChapter>()
+        val spineOrder = ArrayList<String>()
+        var textChars = 0
+        var imageCount = 0
         var total = 0
         for (item in opf.spine) {
-            if (!stillWanted()) return emptyList()
+            if (!stillWanted()) return EbookParse(emptyList())
             if (total >= MAX_TEXT_BYTES) break
+            val key = normHref(item.href)
+            if (isImageItem(item)) {
+                val marker = imageMarker(resources, item.href, fullPage = true) ?: continue
+                imageCount++
+                byHref[key] = EbookChapter("", marker, 0)
+                spineOrder += key
+                continue
+            }
             val entry = zip.find(item.href) ?: continue
             if (entry.isDirectory || entry.isEncrypted) continue
             if (entry.uncompressedSize > MAX_CHAPTER_BYTES) continue
@@ -129,10 +163,40 @@ internal object EbookEngine {
             total += bytes.size
             val html = TextCharset.decode(bytes, htmlHint = true)
             val title = firstHeading(html) ?: titleFromName(item.href)
-            val text = EbookHtml.toText(html)
-            byHref[normHref(item.href)] = EbookChapter(title, text, 0)
+            val base = item.href.substringBeforeLast('/', missingDelimiterValue = "")
+            val text = markHtmlImages(html, base, resources)
+            textChars += visibleChars(text)
+            imageCount += EbookImages.split(text).count { it is EbookImages.Part.Image }
+            byHref[key] = EbookChapter(title, text, 0)
+            spineOrder += key
         }
-        if (byHref.isEmpty()) return fallbackEpubText(zip)
+        if (byHref.isEmpty()) {
+            val fallback = fallbackEpubText(zip, resources)
+            return EbookParse(fallback, resources.takeIf { it.hasImages })
+        }
+        val comic = imageCount >= 4 && textChars <= imageCount * 40
+        if (comic) {
+            val pages = ArrayList<EbookChapter>()
+            val seen = HashSet<String>()
+            fun add(path: String) {
+                if (!seen.add(path)) return
+                val marker = imageMarker(resources, path, fullPage = true) ?: return
+                pages += EbookChapter("", marker, 0)
+            }
+            opf.coverHref?.let { add(it) }
+            for (key in spineOrder) {
+                val ch = byHref[key] ?: continue
+                val item = opf.spine.firstOrNull { normHref(it.href) == key }
+                if (item != null && isImageItem(item)) {
+                    add(item.href)
+                } else {
+                    for (part in EbookImages.split(ch.text)) {
+                        if (part is EbookImages.Part.Image) add(part.ref.key)
+                    }
+                }
+            }
+            if (pages.isNotEmpty()) return EbookParse(pages, resources)
+        }
         fun lookup(href: String): Pair<String, EbookChapter>? {
             val raw = normHref(href.substringBefore('#'))
             byHref[raw]?.let { return raw to it }
@@ -144,26 +208,71 @@ internal object EbookEngine {
             return hit.key to hit.value
         }
         val toc = opf.toc
-        if (toc.isEmpty()) {
-            return opf.spine.mapNotNull { byHref[normHref(it.href)] }
+        val out = if (toc.isEmpty()) {
+            spineOrder.mapNotNull { byHref[it] }
+        } else {
+            val used = HashSet<String>()
+            val built = ArrayList<EbookChapter>(toc.size)
+            for (t in toc) {
+                val (key, ch) = lookup(t.href) ?: continue
+                if (!used.add(key)) continue
+                val title = t.title.ifBlank { ch.title }
+                built += EbookChapter(title, ch.text, t.depth)
+            }
+            for (key in spineOrder) {
+                if (key in used) continue
+                byHref[key]?.let { built += it }
+            }
+            built.ifEmpty { byHref.values.toList() }
         }
-        val used = HashSet<String>()
-        val out = ArrayList<EbookChapter>(toc.size)
-        for (t in toc) {
-            val (key, ch) = lookup(t.href) ?: continue
-            if (!used.add(key)) continue
-            val title = t.title.ifBlank { ch.title }
-            out += EbookChapter(title, ch.text, t.depth)
+        val cover = opf.coverHref?.let { imageMarker(resources, it, fullPage = true) }
+        val coverHref = opf.coverHref
+        val withCover = if (cover != null && coverHref != null && out.none { it.text.contains(coverHref) }) {
+            listOf(EbookChapter("", cover, 0)) + out
+        } else {
+            out
         }
-        for (item in opf.spine) {
-            val key = normHref(item.href)
-            if (key in used) continue
-            byHref[key]?.let { out += it }
-        }
-        return out.ifEmpty { byHref.values.toList() }
+        return EbookParse(withCover, resources.takeIf { it.hasImages })
     }
 
-    private fun fallbackEpubText(zip: ZipCentralDirectory): List<EbookChapter> {
+    private fun isImageItem(item: ManifestItem): Boolean = item.media.startsWith("image/") || extOf(item.href) in IMAGE_EXTENSIONS
+
+    private fun imageMarker(resources: EbookResources, path: String, fullPage: Boolean): String? {
+        val bytes = resources.bytes(path) ?: return null
+        val aspect = resources.remember(path, bytes)
+        return EbookImages.marker(path, aspect, fullPage)
+    }
+
+    private fun markHtmlImages(html: String, baseDir: String, resources: EbookResources): String {
+        val replaced = IMG_TAG.replace(html) { m ->
+            val attrs = parseAttrs(m.groupValues[1])
+            val raw = attrs["src"] ?: attrs["href"] ?: attrs["xlink:href"] ?: return@replace ""
+            if (raw.startsWith("data:", true) || raw.startsWith("http://", true) || raw.startsWith("https://", true)) {
+                return@replace ""
+            }
+            val path = resolveZipPath(baseDir, raw.substringBefore('#').substringBefore('?'))
+            val marker = imageMarker(resources, path, fullPage = false) ?: return@replace ""
+            "\n\n$marker\n\n"
+        }
+        return EbookHtml.toText(replaced)
+    }
+
+    private fun visibleChars(marked: String): Int {
+        var n = 0
+        var i = 0
+        while (i < marked.length) {
+            if (marked[i] == EbookImages.START) {
+                val end = marked.indexOf(EbookImages.END, i + 1)
+                i = if (end < 0) marked.length else end + 1
+            } else {
+                n++
+                i++
+            }
+        }
+        return n
+    }
+
+    private fun fallbackEpubText(zip: ZipCentralDirectory, resources: EbookResources): List<EbookChapter> {
         val out = ArrayList<EbookChapter>()
         for (e in zip.entries) {
             if (e.isDirectory || e.isEncrypted) continue
@@ -173,7 +282,8 @@ internal object EbookEngine {
             if (e.uncompressedSize > MAX_CHAPTER_BYTES) continue
             val bytes = zip.extract(e, MAX_CHAPTER_BYTES) ?: continue
             val html = TextCharset.decode(bytes, htmlHint = true)
-            val text = EbookHtml.toText(html).ifBlank { continue }
+            val base = e.name.substringBeforeLast('/', missingDelimiterValue = "")
+            val text = markHtmlImages(html, base, resources).ifBlank { continue }
             out += EbookChapter(titleFromName(e.name), text, 0)
         }
         return out
@@ -202,14 +312,20 @@ internal object EbookEngine {
         val spine = SPINE_ITEMREF.findAll(opf).mapNotNull { m ->
             val idref = parseAttrs(m.groupValues[1])["idref"] ?: return@mapNotNull null
             manifest[idref]?.takeIf { item ->
-                item.media.contains("html") ||
+                item.media.startsWith("image/") ||
+                    extOf(item.href) in IMAGE_EXTENSIONS ||
+                    item.media.contains("html") ||
                     item.media.contains("xml") ||
                     extOf(item.href) in setOf("xhtml", "html", "htm", "xml", "txt")
             }
         }.toList()
         if (spine.isEmpty()) return null
         val toc = parseEpubToc(zip, opf, opfDir, manifest)
-        return OpfDoc(spine, toc)
+        val coverId = META_COVER.find(opf)?.let { mr ->
+            mr.groupValues[1].ifBlank { mr.groupValues[2] }
+        }?.takeIf { it.isNotBlank() }
+        val coverHref = coverId?.let { manifest[it]?.href }
+        return OpfDoc(spine, toc, coverHref)
     }
 
     private fun parseEpubToc(
@@ -455,8 +571,17 @@ internal object EbookEngine {
     internal data class TocHref(val title: String, val href: String, val depth: Int)
 
     private data class ManifestItem(val id: String, val href: String, val media: String)
-    private data class OpfDoc(val spine: List<ManifestItem>, val toc: List<TocHref>)
+    private data class OpfDoc(
+        val spine: List<ManifestItem>,
+        val toc: List<TocHref>,
+        val coverHref: String? = null,
+    )
 
+    private val IMG_TAG = Regex("""(?is)<(?:img|image)\b([^>]*)/?>""")
+    private val META_COVER = Regex(
+        """(?is)<meta\b[^>]*name\s*=\s*["']cover["'][^>]*content\s*=\s*["']([^"']+)["']""" +
+            """|(?is)<meta\b[^>]*content\s*=\s*["']([^"']+)["'][^>]*name\s*=\s*["']cover["']""",
+    )
     private val CONTAINER_ROOTFILE = Regex(
         """(?is)<rootfile[^>]*full-path\s*=\s*["']([^"']+)["']""",
     )

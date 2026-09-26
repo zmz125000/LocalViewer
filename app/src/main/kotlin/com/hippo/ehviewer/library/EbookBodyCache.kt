@@ -19,7 +19,7 @@ import splitties.init.appCtx
  * A stopped scan is not written.
  */
 internal object EbookBodyCache {
-    private const val FORMAT_VERSION = 2
+    private const val FORMAT_VERSION = 3
 
     private val json = Json {
         ignoreUnknownKeys = true

@@ -8,6 +8,7 @@ import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -292,6 +293,52 @@ class EbookEngineTest {
     }
 
     @Test
+    fun inlineImageStaysItsOwnLine() {
+        val marker = EbookImages.marker("img/a.jpg", 2f, fullPage = false)
+        val text = "前文。\n\n$marker\n\n后文。"
+        val lines = EbookPaginator.wrapLines(text, EbookStyle(paragraphMode = EbookParagraph.SOFT))
+        val image = lines.single { it.imageKey == "img/a.jpg" }
+        assertEquals(2f, image.imageAspect, 0.01f)
+        assertFalse(image.fullPage)
+        assertTrue(lines.any { it.text.contains("前文") })
+        assertTrue(lines.any { it.text.contains("后文") })
+    }
+
+    @Test
+    fun pngHeaderAspect() {
+        val png = ByteArray(24)
+        png[0] = 0x89.toByte()
+        png[1] = 'P'.code.toByte()
+        png[2] = 'N'.code.toByte()
+        png[3] = 'G'.code.toByte()
+        png[16] = 0
+        png[17] = 0
+        png[18] = 0
+        png[19] = 100
+        png[20] = 0
+        png[21] = 0
+        png[22] = 0
+        png[23] = 50
+        assertEquals(2f, EbookImages.aspectOf(png), 0.01f)
+    }
+
+    @Test
+    fun basicMobiTextAndImage() {
+        val html = "Hello <b>world</b><img recindex=\"00001\" />"
+        val png = ByteArray(24)
+        png[0] = 0x89.toByte()
+        png[1] = 'P'.code.toByte()
+        png[2] = 'N'.code.toByte()
+        png[3] = 'G'.code.toByte()
+        val file = mobiFile(html, listOf(png))
+        val book = MobiText.parse(file, "Story")
+        assertNotNull(book)
+        assertTrue(book!!.chapters.any { it.text.contains("Hello") && it.text.contains("world") })
+        assertTrue(book.chapters.any { EbookImages.hasMarker(it.text) })
+        assertTrue(book.images.containsKey("mobi:1"))
+    }
+
+    @Test
     fun softKeepsOneLineParagraphsWithoutBlankLines() {
         val text = "i am paragraph one.\ni am paragraph 2 hello every good morning"
         val paras = EbookParagraph.paragraphs(text, EbookParagraph.SOFT)
@@ -445,6 +492,46 @@ class EbookEngineTest {
         assertTrue(chapters.size >= 2)
         assertTrue(chapters.any { it.title.contains("Intro") })
         assertTrue(chapters.any { it.text.contains("aaa") })
+    }
+
+    private fun putInt(buf: ByteArray, at: Int, value: Int) {
+        buf[at] = (value ushr 24).toByte()
+        buf[at + 1] = (value ushr 16).toByte()
+        buf[at + 2] = (value ushr 8).toByte()
+        buf[at + 3] = value.toByte()
+    }
+
+    private fun mobiFile(html: String, images: List<ByteArray>): ByteArray {
+        val text = html.toByteArray(StandardCharsets.UTF_8)
+        val rec0 = ByteArray(16 + 232)
+        rec0[1] = 1
+        putInt(rec0, 4, text.size)
+        rec0[9] = 1
+        rec0[16] = 'M'.code.toByte()
+        rec0[17] = 'O'.code.toByte()
+        rec0[18] = 'B'.code.toByte()
+        rec0[19] = 'I'.code.toByte()
+        putInt(rec0, 20, 232)
+        putInt(rec0, 16 + 12, 65001)
+        putInt(rec0, 16 + 108, if (images.isEmpty()) -1 else 2)
+        val records = ArrayList<ByteArray>()
+        records += rec0
+        records += text
+        records += images
+        val n = records.size
+        val header = 78 + n * 8
+        var cursor = header
+        val offsets = IntArray(n)
+        for (i in records.indices) {
+            offsets[i] = cursor
+            cursor += records[i].size
+        }
+        val out = ByteArray(cursor)
+        out[76] = (n ushr 8).toByte()
+        out[77] = n.toByte()
+        for (i in records.indices) putInt(out, 78 + i * 8, offsets[i])
+        for (i in records.indices) records[i].copyInto(out, offsets[i])
+        return out
     }
 
     private fun writeEpub(): File {
