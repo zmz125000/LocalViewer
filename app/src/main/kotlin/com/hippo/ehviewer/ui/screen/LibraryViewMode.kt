@@ -237,7 +237,7 @@ fun sortLibraryItems(
 
 /**
  * Library search-bar view menu (standalone from folder [BrowseViewModeMenu]):
- * - Top: Name / Date sort + Last open
+ * - Top: Name / Date sort + Last opened
  *   - Name + Last open: HISTORY pin, then title
  *   - Date + Last open: blend max(last-open, scan mtime), then title
  * - Mid: List / Grid layout

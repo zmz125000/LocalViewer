@@ -57,11 +57,11 @@
     <string name="library_gallery_archive">アーカイブ</string>
     <string name="library_sort_name">名前</string>
     <string name="library_sort_date">日付</string>
-    <string name="library_sort_last_open">最近開いた順</string>
+    <string name="library_sort_last_open">最近開いた</string>
     <string name="library_view_mode">ライブラリ表示</string>
     <string name="library_sort_name">名前</string>
     <string name="library_sort_date">日付</string>
-    <string name="library_sort_last_open">最近開いた順</string>
+    <string name="library_sort_last_open">最近開いた</string>
     <string name="library_view_mode">ライブラリ表示</string>
     <string name="browse_directory">ディレクトリ</string>
     <string name="browse_folder_gallery_pages">%d ページ</string>

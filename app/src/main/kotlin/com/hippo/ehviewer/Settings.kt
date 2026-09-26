@@ -97,16 +97,17 @@ object Settings : DataStorePreferences(null) {
 
     /**
      * Folder-view Recent section. On (default): show items in the current directory
-     * that have a history row, duplicated above the other sections.
+     * that have a history row, two rows until the header is tapped.
      * Off: hide that section. Empty history also hides it.
      */
     val browseRecentOpen = boolPref("browse_recent_open", true)
 
     /**
-     * Long-press of the folder Last open toggle. On (default, lock icon): Recent
-     * starts expanded. Off (tick): Recent starts collapsed until the header is tapped.
+     * Long-press of the folder Last opened toggle. Default for a folder you just opened.
+     * On (lock): Recent starts with every item. Off (default, tick): Recent starts at two rows.
+     * Tapping the header changes only the folder you are in.
      */
-    val browseRecentExpanded = boolPref("browse_recent_expanded", true)
+    val browseRecentExpanded = boolPref("browse_recent_expanded", false)
 
     /**
      * When true, folder browser directory grid cells show a cover thumb from lazy-scan
