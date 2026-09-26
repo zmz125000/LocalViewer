@@ -2031,7 +2031,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                                 addAll(videos)
                                 addAll(files)
                             },
-                            historyTimeByGid,
+                            historyTimeByGid.orEmpty(),
                             gidsOf = {
                                 remoteBrowseHistoryGids(it, sourceId, dirKey, smb = true)
                             },
@@ -2425,7 +2425,11 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                             }
                         }
                     }
-                    if (photoGrid) {
+                    if (browseRecentOpen && historyTimeByGid == null && !photoGrid) {
+                        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            CircularWavyProgressIndicator()
+                        }
+                    } else if (photoGrid) {
                         val progressGid = stableGalleryId(sourceId, "smb:$relativeDir")
                         val gridState = rememberSmbPhotoGridState(
                             sourceId = sourceId,

@@ -18,7 +18,8 @@ import okio.Path
  *
  * Targets scan/comic PDFs (typically one full-page DCT/Flate/JPX image per page).
  * JPEG 2000 is decoded with OpenJPEG and stored as WebP (ImageDecoder cannot open JP2).
- * Text-only or unsupported streams → [pageCount] 0 (NoImages).
+ * Text-only or unsupported streams → [pageCount] 0. Cover extract treats that as
+ * Skip so a document without an embedded image keeps its PDF tag.
  * Encrypted PDFs → open returns null (caller treats as Skip).
  */
 class PdfImageEngine private constructor(

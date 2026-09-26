@@ -1909,7 +1909,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                                 addAll(videos)
                                 addAll(files)
                             },
-                            historyTimeByGid,
+                            historyTimeByGid.orEmpty(),
                             gidsOf = {
                                 remoteBrowseHistoryGids(it, sourceId, dirKey, smb = false)
                             },
@@ -2303,7 +2303,11 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                             }
                         }
                     }
-                    if (photoGrid) {
+                    if (browseRecentOpen && historyTimeByGid == null && !photoGrid) {
+                        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            CircularWavyProgressIndicator()
+                        }
+                    } else if (photoGrid) {
                         val progressGid = stableGalleryId(sourceId, "webdav:$relativeDir")
                         val gridState = rememberSmbPhotoGridState(
                             sourceId = sourceId,

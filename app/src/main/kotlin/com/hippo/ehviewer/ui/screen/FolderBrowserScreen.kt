@@ -2321,7 +2321,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                 addAll(videos)
                                 addAll(files)
                             },
-                            historyTimeByGid,
+                            historyTimeByGid.orEmpty(),
                             gidsOf = { localBrowseHistoryGids(it, ctx) },
                             nameOf = { it.name },
                         )
@@ -2614,7 +2614,11 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                             }
                         }
                     }
-                    if (photoGrid) {
+                    if (browseRecentOpen && historyTimeByGid == null && !photoGrid) {
+                        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            CircularWavyProgressIndicator()
+                        }
+                    } else if (photoGrid) {
                         // Virtual image-only grid for a folder gallery (long-press).
                         val frame = stack.lastOrNull()
                         val progressGid = frame?.let {

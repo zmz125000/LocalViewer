@@ -101,9 +101,13 @@ fun remoteBrowseHistoryGids(
     }
 }
 
+/**
+ * History times, or null until the first read finishes.
+ * Folder lists wait on this so the Recent section does not insert after scroll.
+ */
 @Composable
-fun rememberHistoryTimeByGid(): Map<Long, Long> {
-    val times by produceState(initialValue = emptyMap<Long, Long>()) {
+fun rememberHistoryTimeByGid(): Map<Long, Long>? {
+    val times by produceState<Map<Long, Long>?>(initialValue = null) {
         EhDB.historyTimeListFlow.collect { rows ->
             value = rows.associate { it.gid to it.time }
         }

@@ -29,6 +29,10 @@ internal data class EbookStyle(
     val verticalMarginPercent: Int = 2,
     val justify: Boolean = false,
     val hyphenate: Boolean = false,
+    /** Multiply Latin advances so they match the face used to draw. CJK stays 1 em. */
+    val latinScale: Float = 1f,
+    /** EPUB/MOBI pictures. Off keeps the text and drops image slots. */
+    val showPictures: Boolean = true,
     val paragraphMode: Int = EbookParagraph.AUTO,
 ) {
     val lineHeightEm: Float get() = lineHeightPercent / 100f
@@ -137,7 +141,7 @@ internal object EbookPaginator {
         val parts = EbookImages.split(text)
         for ((p, part) in parts.withIndex()) {
             when (part) {
-                is EbookImages.Part.Image -> out += imageLine(part.ref, style)
+                is EbookImages.Part.Image -> if (style.showPictures) out += imageLine(part.ref, style)
                 is EbookImages.Part.Text -> {
                     if (part.text.isBlank()) continue
                     val paras = EbookParagraph.paragraphs(part.text, style.paragraphMode)
@@ -295,14 +299,14 @@ internal object EbookPaginator {
                 i++
                 continue
             }
-            val em = charEm(c)
+            val em = glyphEm(c, style.latinScale)
             if (em == 0f) {
                 i++
                 continue
             }
             if (width + em > limit() && sb.isNotEmpty()) {
                 val cut = if (style.hyphenate && isHyphenLetter(c)) {
-                    hyphenCut(para, i, sb, limit())
+                    hyphenCut(para, i, sb, limit(), style.latinScale)
                 } else {
                     -1
                 }
@@ -314,7 +318,7 @@ internal object EbookPaginator {
                     if (kept.isNotEmpty() && !kept.endsWith('-')) sb.append('-')
                     emit(last = false)
                     sb.append(rest)
-                    width = lineEm(sb)
+                    width = lineEm(sb, style.latinScale)
                     continue
                 }
                 val breakAt = lastBreak(sb)
@@ -325,7 +329,7 @@ internal object EbookPaginator {
                     sb.append(kept)
                     emit(last = false)
                     sb.append(rest)
-                    width = lineEm(sb)
+                    width = lineEm(sb, style.latinScale)
                 } else {
                     emit(last = false)
                 }
@@ -348,7 +352,7 @@ internal object EbookPaginator {
      * [i] is the paragraph index of the character that does not fit.
      * At least two letters stay on this line and two continue on the next.
      */
-    private fun hyphenCut(para: String, i: Int, sb: StringBuilder, limit: Float): Int {
+    private fun hyphenCut(para: String, i: Int, sb: StringBuilder, limit: Float, latinScale: Float): Int {
         var wordStart = sb.length
         while (wordStart > 0 && isHyphenLetter(sb[wordStart - 1])) wordStart--
         val onLine = sb.length - wordStart
@@ -362,7 +366,7 @@ internal object EbookPaginator {
         if (maxK < wordStart + 2) return -1
         var k = maxK
         while (k >= wordStart + 2) {
-            if (lineEmRange(sb, 0, k) + charEm('-') <= limit) return k
+            if (lineEmRange(sb, 0, k, latinScale) + glyphEm('-', latinScale) <= limit) return k
             k--
         }
         return -1
@@ -376,11 +380,18 @@ internal object EbookPaginator {
         return -1
     }
 
-    private fun lineEm(sb: StringBuilder): Float = lineEmRange(sb, 0, sb.length)
+    /** CJK stays 1 em. Latin uses [latinScale] from the face that draws the page. */
+    private fun glyphEm(c: Char, latinScale: Float): Float {
+        val w = charEm(c)
+        if (w <= 0f || w >= 1f) return w
+        return w * latinScale
+    }
 
-    private fun lineEmRange(sb: StringBuilder, from: Int, to: Int): Float {
+    private fun lineEm(sb: StringBuilder, latinScale: Float): Float = lineEmRange(sb, 0, sb.length, latinScale)
+
+    private fun lineEmRange(sb: StringBuilder, from: Int, to: Int, latinScale: Float): Float {
         var w = 0f
-        for (i in from until to) w += charEm(sb[i])
+        for (i in from until to) w += glyphEm(sb[i], latinScale)
         return w
     }
 }

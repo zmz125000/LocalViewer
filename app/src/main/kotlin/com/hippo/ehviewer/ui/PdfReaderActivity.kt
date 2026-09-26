@@ -1172,8 +1172,28 @@ private fun ebookStyleFromSettings(landscape: Boolean): EbookStyle = EbookStyle(
     verticalMarginPercent = Settings.ebookVerticalMargin.value.coerceIn(0, 12),
     justify = ebookAlignJustifies(Settings.ebookAlign.value),
     hyphenate = ebookAlignHyphenates(Settings.ebookAlign.value),
+    latinScale = ebookLatinScale(Settings.ebookFont.value),
+    showPictures = Settings.ebookShowPictures.value,
     paragraphMode = Settings.ebookParagraphMode.value.coerceIn(0, 2),
 )
+
+/**
+ * Ratio of measured Latin advances to [EbookPaginator.charEm].
+ * The table is narrower than the serif used to draw, which pushed English
+ * past the right margin. CJK stays 1 em and is not scaled.
+ */
+private fun ebookLatinScale(font: Int): Float {
+    val paint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
+        textSize = 1000f
+        typeface = ebookTypeface(font)
+    }
+    val sample = "The quick brown fox jumps over the lazy dog."
+    var estimated = 0f
+    for (c in sample) estimated += EbookPaginator.charEm(c)
+    if (estimated <= 0.01f) return 1f
+    val measured = paint.measureText(sample) / 1000f
+    return (measured / estimated).coerceIn(0.75f, 2f)
+}
 
 private fun ebookPaintFromSettings(dark: Boolean): EbookPaint {
     val (bg, fg) = ebookPageColors(Settings.ebookTheme.value, dark)
@@ -1402,6 +1422,7 @@ private fun PdfReaderScreen(
     val ebookParagraph by Settings.ebookParagraphSpacing.collectAsState()
     val ebookIndent by Settings.ebookIndent.collectAsState()
     val ebookAlign by Settings.ebookAlign.collectAsState()
+    val ebookShowPictures by Settings.ebookShowPictures.collectAsState()
     val ebookMargin by Settings.ebookMargin.collectAsState()
     val ebookVerticalMargin by Settings.ebookVerticalMargin.collectAsState()
     val ebookParaMode by Settings.ebookParagraphMode.collectAsState()
@@ -1423,7 +1444,9 @@ private fun PdfReaderScreen(
         ebookLineHeight,
         ebookParagraph,
         ebookIndent,
+        ebookFont,
         ebookAlign,
+        ebookShowPictures,
         ebookMargin,
         ebookVerticalMargin,
         ebookParaMode,
@@ -1438,6 +1461,8 @@ private fun PdfReaderScreen(
             verticalMarginPercent = ebookVerticalMargin.coerceIn(0, 12),
             justify = ebookAlignJustifies(ebookAlign),
             hyphenate = ebookAlignHyphenates(ebookAlign),
+            latinScale = ebookLatinScale(ebookFont),
+            showPictures = ebookShowPictures,
             paragraphMode = ebookParaMode.coerceIn(0, 2),
         )
     }

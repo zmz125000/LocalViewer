@@ -24,6 +24,12 @@ fun ReaderGeneralSetting(isDocument: Boolean = false) = Column(modifier = Modifi
         values = integerArrayResource(id = com.hippo.ehviewer.R.array.reader_themes_values).toList(),
         field = if (isDocument) Settings.ebookTheme.asMutableState() else Settings.readerTheme.asMutableState(),
     )
+    if (isDocument) {
+        SwitchChoice(
+            title = stringResource(id = R.string.pref_ebook_show_pictures),
+            field = Settings.ebookShowPictures.asMutableState(),
+        )
+    }
     val hdrDisplay = Settings.readerHdrDisplay.asMutableState()
     SwitchChoice(
         title = stringResource(id = R.string.pref_reader_hdr_display),

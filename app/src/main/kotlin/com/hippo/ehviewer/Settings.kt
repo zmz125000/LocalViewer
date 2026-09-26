@@ -684,6 +684,9 @@ object Settings : DataStorePreferences(null) {
     /** 0=start, 1=justify, 2=start with hyphenation, 3=justify with hyphenation. */
     val ebookAlign = intPref("pref_ebook_align", EBOOK_ALIGN_START)
 
+    /** EPUB/MOBI pictures. Off shows text only. Default on. */
+    val ebookShowPictures = boolPref("pref_ebook_show_pictures", true)
+
     /** Left and right page margin as percent of page width (4–12). Default 7. */
     val ebookMargin = intPref("pref_ebook_margin", 7)
 
