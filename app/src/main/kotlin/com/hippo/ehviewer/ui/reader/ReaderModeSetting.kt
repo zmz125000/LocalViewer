@@ -191,6 +191,10 @@ private fun DocumentStyleSetting() = Column {
         ),
         field = Settings.ebookAlign.asMutableState(),
     )
+    SwitchChoice(
+        title = stringResource(id = R.string.pref_ebook_book_align),
+        field = Settings.ebookBookAlign.asMutableState(),
+    )
     val lineHeight = Settings.ebookLineHeight.asMutableState()
     Text(
         text = stringResource(id = R.string.pref_ebook_line_height),

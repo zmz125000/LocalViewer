@@ -67,6 +67,23 @@ internal object EbookBodyCache {
         return body.chapters.map { EbookChapter(it.title, it.text, it.depth) }
     }
 
+    /**
+     * Last saved body when the share cannot be sized (offline history).
+     * A live size still goes through [load], which misses when the file changed.
+     */
+    fun loadLast(cacheKey: String, charset: String = "auto"): List<EbookChapter>? {
+        if (cacheKey.isEmpty()) return null
+        val file = fileFor(cacheKey, charset)
+        if (!file.isFile || file.length() <= 0L) return null
+        val body = runCatching {
+            json.decodeFromString(FileBody.serializer(), file.readText())
+        }.getOrNull() ?: return null
+        if (body.v != FORMAT_VERSION || body.charset != charset || body.chapters.isEmpty()) {
+            return null
+        }
+        return body.chapters.map { EbookChapter(it.title, it.text, it.depth) }
+    }
+
     fun save(cacheKey: String, fileSize: Long, chapters: List<EbookChapter>, charset: String = "auto") {
         if (cacheKey.isEmpty() || fileSize <= 0L || chapters.isEmpty()) return
         val lock = locks.computeIfAbsent("$cacheKey\u0000$charset") { Any() }

@@ -30,6 +30,8 @@ class EbookBodyCacheTest {
         assertEquals(chapters, EbookBodyCache.load(key, fileSize = 1000, charset = "auto"))
         assertNull(EbookBodyCache.load(key, fileSize = 1001, charset = "auto"))
         assertNull(EbookBodyCache.load(key, fileSize = 1000, charset = "gbk"))
+        assertEquals(chapters, EbookBodyCache.loadLast(key, charset = "auto"))
+        assertNull(EbookBodyCache.loadLast(key, charset = "gbk"))
 
         val file = EbookBodyCache.fileFor(key, "auto")
         assertEquals(root, file.parentFile)

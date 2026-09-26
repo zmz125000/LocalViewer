@@ -100,6 +100,8 @@ internal object EbookHtml {
         val quotes = ArrayDeque<String>()
         val pres = ArrayDeque<String>()
         val lists = ArrayDeque<Int>()
+        val alignStack = ArrayDeque<AlignFrame>()
+        var paraAlign = 0
         var bits = 0
         var writtenBits = 0
         var atParaStart = true
@@ -188,7 +190,12 @@ internal object EbookHtml {
                 "img", "image", "meta", "link", "input", "source", "wbr", "col" -> return
             }
             val blockCite = name == "cite" && nextIsTag(after)
-            if (name in BLOCK || blockCite) breakPara()
+            if (name in BLOCK || blockCite) {
+                breakPara()
+                val align = alignValue(raw)
+                alignStack.addLast(AlignFrame(name, paraAlign))
+                if (align != 0) paraAlign = align
+            }
             when {
                 name == "ul" -> lists.addLast(-1)
                 name == "ol" -> lists.addLast(1)
@@ -236,6 +243,9 @@ internal object EbookHtml {
                 while (styles.size > idx) styles.removeLast()
                 bits = restore
             }
+            if (alignStack.isNotEmpty() && alignStack.last().name == name) {
+                paraAlign = alignStack.removeLast().previous
+            }
         }
 
         private fun emit(c: Char) {
@@ -260,6 +270,10 @@ internal object EbookHtml {
             if (atParaStart) {
                 repeat(quotes.size) { sb.append(EbookMarks.QUOTE) }
                 if (pres.isNotEmpty()) sb.append(EbookMarks.CODE_LINE)
+                if (paraAlign != 0) {
+                    sb.append(EbookMarks.ALIGN)
+                    sb.append(EbookMarks.bookAlignChar(paraAlign))
+                }
                 val lead = prefix
                 if (lead != null) {
                     sb.append(lead)
@@ -324,6 +338,21 @@ internal object EbookHtml {
     }
 
     private data class StyleFrame(val name: String, val bits: Int)
+    private data class AlignFrame(val name: String, val previous: Int)
+
+    private fun alignValue(raw: String): Int {
+        fun map(token: String): Int = when (token) {
+            "left", "start" -> EbookMarks.BOOK_START
+            "center" -> EbookMarks.BOOK_CENTER
+            "right", "end" -> EbookMarks.BOOK_END
+            "justify" -> EbookMarks.BOOK_JUSTIFY
+            else -> 0
+        }
+        attr(raw, "align")?.let { map(it.lowercase()) }?.takeIf { it != 0 }?.let { return it }
+        val css = attr(raw, "style")?.lowercase() ?: return 0
+        val match = CSS_ALIGN.find(css) ?: return 0
+        return map(match.groupValues[1])
+    }
 
     private fun render(html: String): String {
         val r = Render(html)
@@ -393,6 +422,7 @@ internal object EbookHtml {
     private val ENTITY = Regex(
         """&([a-zA-Z][a-zA-Z0-9]+);|&#([0-9]{1,7});|&#x([0-9a-fA-F]{1,6});""",
     )
+    private val CSS_ALIGN = Regex("""text-align\s*:\s*(left|right|center|justify|start|end)\b""")
     private val CSS_BOLD = Regex("""font-weight\s*:\s*(bold|[6-9]00)\b""")
     private val CSS_ITALIC = Regex("""font-style\s*:\s*(italic|oblique)\b""")
     private val CSS_UNDER = Regex("""text-decoration[^;]*underline""")

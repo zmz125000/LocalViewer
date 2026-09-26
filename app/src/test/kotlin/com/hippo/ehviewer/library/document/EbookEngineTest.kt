@@ -273,6 +273,32 @@ class EbookEngineTest {
     }
 
     @Test
+    fun bookAlignmentOverridesReaderJustify() {
+        val body = "word ".repeat(40).trim()
+        val html = """<p style="text-align:left">$body</p><p align="center">Mid</p><p align="right">End</p>"""
+        val text = EbookHtml.toText(html)
+        val on = EbookPaginator.wrapLines(
+            text,
+            EbookStyle(justify = true, indentEm = 0, paragraphMode = EbookParagraph.SOFT, bookFormat = true),
+        ).filter { EbookMarks.hasVisible(it.text) }
+        val left = on.filter { EbookMarks.strip(it.text).startsWith("word") }
+        assertTrue(left.isNotEmpty())
+        assertTrue(left.none { it.justify })
+        assertTrue(left.all { it.align == EbookMarks.LINE_START })
+        val mid = on.first { EbookMarks.strip(it.text) == "Mid" }
+        assertEquals(EbookMarks.LINE_CENTER, mid.align)
+        assertTrue(!mid.justify)
+        val end = on.first { EbookMarks.strip(it.text) == "End" }
+        assertEquals(EbookMarks.LINE_END, end.align)
+        val off = EbookPaginator.wrapLines(
+            text,
+            EbookStyle(justify = true, indentEm = 0, paragraphMode = EbookParagraph.SOFT, bookFormat = false),
+        ).filter { EbookMarks.strip(it.text).startsWith("word") }
+        assertTrue(off.dropLast(1).all { it.justify })
+        assertTrue(off.all { it.align == EbookMarks.LINE_START })
+    }
+
+    @Test
     fun justifyMarksWrappedLinesOnly() {
         val lines = EbookPaginator.wrapLines(
             "测".repeat(80),

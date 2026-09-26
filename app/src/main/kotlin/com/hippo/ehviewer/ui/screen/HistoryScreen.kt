@@ -850,14 +850,21 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
                                 title = name,
                                 thumbKey = info.thumbKey,
                             )
-                            OpenPdfExternally.openInternalSmb(
-                                context,
-                                source.id,
-                                remote,
-                                displayName = name,
-                                progressGid = gid,
-                                startPage = page,
-                            )
+                            try {
+                                OpenPdfExternally.openInternalSmb(
+                                    context,
+                                    source.id,
+                                    remote,
+                                    displayName = name,
+                                    progressGid = gid,
+                                    startPage = page,
+                                )
+                            } catch (e: Throwable) {
+                                snackbar(
+                                    context.getString(R.string.browse_open_failed) +
+                                        " " + (e.message ?: e.toString()),
+                                )
+                            }
                         }
                         return@launch
                     }
@@ -962,14 +969,21 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
                                 title = name,
                                 thumbKey = info.thumbKey,
                             )
-                            OpenPdfExternally.openInternalWebDav(
-                                context,
-                                source.id,
-                                remote,
-                                displayName = name,
-                                progressGid = gid,
-                                startPage = page,
-                            )
+                            try {
+                                OpenPdfExternally.openInternalWebDav(
+                                    context,
+                                    source.id,
+                                    remote,
+                                    displayName = name,
+                                    progressGid = gid,
+                                    startPage = page,
+                                )
+                            } catch (e: Throwable) {
+                                snackbar(
+                                    context.getString(R.string.browse_open_failed) +
+                                        " " + (e.message ?: e.toString()),
+                                )
+                            }
                         }
                         return@launch
                     }

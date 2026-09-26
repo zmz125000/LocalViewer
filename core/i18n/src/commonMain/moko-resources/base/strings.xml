@@ -977,6 +977,7 @@
     <string name="ebook_align_justify">Justify</string>
     <string name="ebook_align_start_hyphen">Start, hyphenate</string>
     <string name="ebook_align_justify_hyphen">Justify, hyphenate</string>
+    <string name="pref_ebook_book_align">Allow style override</string>
     <string name="pref_ebook_margin">Page margin</string>
     <string name="pref_ebook_vertical_margin">Top and bottom</string>
     <string name="pref_eink_refresh">E-Ink display refresh</string>
