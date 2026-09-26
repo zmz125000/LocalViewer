@@ -52,7 +52,7 @@
     <string name="library_gallery_archive">压缩包</string>
     <string name="library_sort_name">名称</string>
     <string name="library_sort_date">日期</string>
-    <string name="library_sort_last_open">最近打开</string>
+    <string name="library_sort_last_open">上次打开</string>
     <string name="library_view_mode">图库视图</string>
     <string name="browse_directory">目录</string>
     <string name="browse_folder_gallery_pages">%d 页</string>

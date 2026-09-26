@@ -150,6 +150,7 @@ import com.hippo.ehviewer.ui.main.GalleryGridDefaults
 import com.hippo.ehviewer.ui.main.HttpShare
 import com.hippo.ehviewer.ui.main.HttpShareItem
 import com.hippo.ehviewer.ui.main.awaitHttpShareQr
+import com.hippo.ehviewer.ui.main.browseRecentPreviewLimit
 import com.hippo.ehviewer.ui.main.browseZipAsDirTypeLabel
 import com.hippo.ehviewer.ui.main.rememberBrowseSectionCollapse
 import com.hippo.ehviewer.ui.navToLocalFolderReader
@@ -2292,6 +2293,13 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                     val animateItems by Settings.animateItems.collectAsState()
                     val browseRecentOpen by Settings.browseRecentOpen.collectAsState()
                     val browseRecentExpanded by Settings.browseRecentExpanded.collectAsState()
+                    // Lock is the default when this folder opens. Header taps stay in memory.
+                    var recentPreviewExpanded by remember(pathKey) { mutableStateOf(browseRecentExpanded) }
+                    LaunchedEffect(browseRecentExpanded) {
+                        recentPreviewExpanded = browseRecentExpanded
+                    }
+                    val recentGridColumns = GalleryGridDefaults.columnCount()
+                    val recentListColumns = GalleryGridDefaults.listColumnCount()
                     val historyTimeByGid = rememberHistoryTimeByGid()
                     val recentFrame = stack.lastOrNull()
                     val recentEntries = remember(
@@ -2326,10 +2334,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                             nameOf = { it.name },
                         )
                     }
-                    val (collapsedSections, toggleSection) = rememberBrowseSectionCollapse(
-                        pathKey,
-                        if (browseRecentExpanded) emptySet() else setOf(BrowseFolderSection.Recent),
-                    )
+                    val (collapsedSections, toggleSection) = rememberBrowseSectionCollapse(pathKey)
                     fun searchHitKey(entry: BrowseEntry): String = when (entry) {
                         is BrowseEntry.Directory -> "d-${entry.path}|${entry.relativeName}"
                         is BrowseEntry.FolderGallery -> "g-${entry.path}|${entry.relativeName}"
@@ -2531,14 +2536,34 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
 
                     fun LazyGridScope.recentSection(grid: Boolean) {
                         if (!browseRecentOpen || recentEntries.isEmpty()) return
+                        val sectionCollapsed = BrowseFolderSection.Recent in collapsedSections
+                        val previewLimit = browseRecentPreviewLimit(grid, recentGridColumns, recentListColumns)
                         item(key = "hdr-recent", span = { GridItemSpan(maxLineSpan) }) {
                             BrowseSectionHeader(
                                 stringResource(R.string.browse_recent),
-                                onClick = { toggleSection(BrowseFolderSection.Recent) },
+                                onClick = {
+                                    if (sectionCollapsed) {
+                                        toggleSection(BrowseFolderSection.Recent)
+                                        recentPreviewExpanded = browseRecentExpanded
+                                    } else if (recentEntries.size > previewLimit) {
+                                        recentPreviewExpanded = !recentPreviewExpanded
+                                    }
+                                },
+                                onLongClick = {
+                                    if (!sectionCollapsed) {
+                                        recentPreviewExpanded = browseRecentExpanded
+                                        toggleSection(BrowseFolderSection.Recent)
+                                    }
+                                },
                             )
                         }
-                        if (BrowseFolderSection.Recent in collapsedSections) return
-                        items(recentEntries, key = { "r-${searchHitKey(it)}" }) { entry ->
+                        if (sectionCollapsed) return
+                        val shown = if (recentPreviewExpanded) {
+                            recentEntries
+                        } else {
+                            recentEntries.take(previewLimit)
+                        }
+                        items(shown, key = { "r-${searchHitKey(it)}" }) { entry ->
                             renderBrowseRow(entry, grid, false, Modifier.thenIf(animateItems) { animateItem() })
                         }
                     }

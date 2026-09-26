@@ -56,7 +56,7 @@
     <string name="library_gallery_archive">壓縮檔</string>
     <string name="library_sort_name">名稱</string>
     <string name="library_sort_date">日期</string>
-    <string name="library_sort_last_open">最近開啟</string>
+    <string name="library_sort_last_open">上次開啟</string>
     <string name="library_view_mode">圖庫檢視</string>
     <string name="browse_directory">目錄</string>
     <string name="browse_folder_gallery_pages">%d 頁</string>

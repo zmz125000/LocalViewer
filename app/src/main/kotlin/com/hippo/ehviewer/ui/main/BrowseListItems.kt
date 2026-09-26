@@ -1858,13 +1858,21 @@ enum class BrowseFolderSection {
     Files,
 }
 
+/** Rows of the folder Recent strip before the header is tapped. Same in list and grid. */
+const val BROWSE_RECENT_PREVIEW_ROWS = 2
+
+/** Item cap for the collapsed Recent strip (two rows × the current column count). */
+fun browseRecentPreviewLimit(grid: Boolean, gridColumnCount: Int, listColumnCount: Int): Int {
+    val columns = (if (grid) gridColumnCount else listColumnCount).coerceAtLeast(1)
+    return columns * BROWSE_RECENT_PREVIEW_ROWS
+}
+
 /**
  * Section collapse for **one folder** ([folderKey] = path / SMB-WebDAV dir key).
  * Hide Videos here does not collapse Videos in other directories. Process memory only
  * (return to the same folder restores; process death clears).
  *
  * [defaultCollapsed] applies only to sections the user has not tapped in this folder.
- * Recent uses that for the Last open lock (expanded) vs tick (collapsed).
  */
 @Composable
 fun rememberBrowseSectionCollapse(

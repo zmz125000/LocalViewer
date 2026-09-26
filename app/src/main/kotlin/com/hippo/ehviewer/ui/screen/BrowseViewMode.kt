@@ -248,7 +248,8 @@ fun BrowseViewModeMenu(
                 ascending = browseSortAscending,
                 onClick = { selectBrowseSort(BrowseSortMode.Date) },
             )
-            // Tap: show / hide Recent. Long-press: lock = start expanded, tick = start collapsed.
+            // Tap shows or hides Recent and does not change the lock.
+            // Long-press sets the default for a newly opened folder: lock = full list, tick = two rows.
             ContentModeItem(
                 label = stringResource(R.string.library_sort_last_open),
                 mark = when {
