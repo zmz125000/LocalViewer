@@ -315,51 +315,82 @@ class PdfReaderActivity : AppCompatActivity() {
         stopOpenEngines()
         val generation = ++openGeneration
         openJob = lifecycleScope.launch {
+            // Drop the live session before opening the next file. Doing this inside
+            // the job on IO avoids Main-thread stalls while a page finishes rendering,
+            // and prevents deferred close-after-open from racing with cancel.
+            if (replace) {
+                val oldLoader = imageLoader
+                val oldDoc = doc
+                imageLoader = null
+                doc = null
+                oldLoader?.close()
+                if (oldDoc != null) {
+                    withContext(Dispatchers.IO) { oldDoc.close() }
+                }
+            }
             var pfd: ParcelFileDescriptor? = null
             var opened: PdfDocumentModel? = null
             var direct: ArchiveByteSource? = null
             try {
                 val cacheKey = pdfCacheKeyFromIntent(intent)
                 val directImage = Settings.pdfDirectImage.value
-                opened = withContext(Dispatchers.IO) {
-                    val docName = documentNameFromIntent(intent, nextTitle)
-                    if (isEbookFileName(docName)) {
-                        return@withContext openEbookDocument(
-                            intent,
-                            token,
-                            docName,
-                            cacheKey,
-                            startPage = nextStart,
-                            landscape = resources.configuration.orientation ==
-                                Configuration.ORIENTATION_LANDSCAPE,
-                            stillWanted = { isActive },
-                        )
-                    }
-                    if (directImage) {
-                        direct = runCatching { openDirectArchiveSource(intent, token) }
-                            .onFailure { logcat("PdfReader", it) }
-                            .getOrNull()
-                    }
-                    val fromDirect = if (directImage) {
-                        direct?.let { src ->
-                            tryOpenImagePdf(src, nextStart, cacheKey)
+                withContext(Dispatchers.IO) {
+                    var created: PdfDocumentModel? = null
+                    try {
+                        val docName = documentNameFromIntent(intent, nextTitle)
+                        if (isEbookFileName(docName)) {
+                            created = openEbookDocument(
+                                intent,
+                                token,
+                                docName,
+                                cacheKey,
+                                startPage = nextStart,
+                                landscape = resources.configuration.orientation ==
+                                    Configuration.ORIENTATION_LANDSCAPE,
+                                stillWanted = { isActive },
+                            )
+                            // Publish before returning so a cancelled withContext resume
+                            // still leaves a closable handle for finally.
+                            opened = created
+                            return@withContext
                         }
-                    } else {
-                        null
-                    }
-                    if (fromDirect != null) {
+                        if (directImage) {
+                            direct = runCatching { openDirectArchiveSource(intent, token) }
+                                .onFailure { logcat("PdfReader", it) }
+                                .getOrNull()
+                        }
+                        val fromDirect = if (directImage) {
+                            direct?.let { src ->
+                                tryOpenImagePdf(src, nextStart, cacheKey)
+                            }
+                        } else {
+                            null
+                        }
+                        if (fromDirect != null) {
+                            direct = null
+                            created = fromDirect
+                            opened = created
+                            return@withContext
+                        }
+                        runCatching { direct?.close() }
                         direct = null
-                        return@withContext fromDirect
-                    }
-                    runCatching { direct?.close() }
-                    direct = null
-                    val descriptor = runCatching {
-                        contentResolver.openFileDescriptor(uri, "r")
-                    }.getOrNull()
-                    pfd = descriptor
-                    if (descriptor == null) return@withContext null
-                    openPdfDocument(descriptor) { pageCount, stillWanted ->
-                        loadPdfChapters(intent, token, cacheKey, pageCount, stillWanted)
+                        val descriptor = runCatching {
+                            contentResolver.openFileDescriptor(uri, "r")
+                        }.getOrNull()
+                        pfd = descriptor
+                        if (descriptor == null) return@withContext
+                        // PdfRenderer takes ownership of [descriptor]; clear [pfd] so
+                        // cancel/error handlers do not close the fd without close()-ing
+                        // the renderer (StrictMode LeakedClosableViolation).
+                        created = openPdfDocument(descriptor) { pageCount, stillWanted ->
+                            loadPdfChapters(intent, token, cacheKey, pageCount, stillWanted)
+                        }
+                        pfd = null
+                        opened = created
+                    } catch (e: Throwable) {
+                        created?.close()
+                        if (opened === created) opened = null
+                        throw e
                     }
                 }
                 val model = opened
@@ -370,8 +401,6 @@ class PdfReaderActivity : AppCompatActivity() {
                     return@launch
                 }
                 val oldToken = streamToken
-                val oldDoc = doc
-                val oldLoader = imageLoader
                 if (oldToken != null && oldToken != token) StreamDocumentRegistry.remove(oldToken)
                 streamToken = token
                 title = nextTitle.ifBlank { uri.lastPathSegment.orEmpty() }
@@ -380,7 +409,6 @@ class PdfReaderActivity : AppCompatActivity() {
                 lastVisiblePage = nextStart
                 sourceArgs = nextArgs
                 error = null
-                pfd = null
                 doc = model
                 imageLoader = (model as? PdfDocumentModel.Images)?.let { images ->
                     PdfRamPageLoader(
@@ -393,8 +421,6 @@ class PdfReaderActivity : AppCompatActivity() {
                     )
                 }
                 opened = null
-                oldLoader?.close()
-                oldDoc?.close()
                 if (model is PdfDocumentModel.Vector) {
                     // Outline page numbers that are already in the file finish quickly.
                     // Page-object destinations walk the page tree. This child is cancelled
@@ -402,6 +428,7 @@ class PdfReaderActivity : AppCompatActivity() {
                     launch { model.ensureChapters() }
                 }
             } catch (e: kotlinx.coroutines.CancellationException) {
+                // Only close [pfd] when openPdfDocument never took ownership.
                 pfd?.let { runCatching { it.close() } }
                 direct?.let { runCatching { it.close() } }
                 throw e
@@ -414,7 +441,14 @@ class PdfReaderActivity : AppCompatActivity() {
                 streamToken = null
                 error = getString(R.string.pdf_reader_open_failed, e.message ?: e.toString())
             } finally {
-                opened?.close()
+                // Superseded / cancelled opens: close exactly once here.
+                val leftover = opened
+                opened = null
+                if (leftover != null) {
+                    withContext(NonCancellable + Dispatchers.IO) {
+                        leftover.close()
+                    }
+                }
             }
         }
     }
@@ -430,8 +464,9 @@ class PdfReaderActivity : AppCompatActivity() {
     private fun closeSession(removeToken: Boolean = true) {
         imageLoader?.close()
         imageLoader = null
-        doc?.close()
+        val toClose = doc
         doc = null
+        toClose?.close()
         if (removeToken) {
             streamToken?.let(StreamDocumentRegistry::remove)
             streamToken = null
@@ -458,6 +493,17 @@ class PdfReaderActivity : AppCompatActivity() {
                 } ?: return@launch
                 flushProgress()
                 stopOpenEngines()
+                // Detach and close the current session on IO before the next
+                // open/handoff so hops cannot pile up unclosed PdfRenderers or
+                // block the main thread on an in-flight page render.
+                val oldLoader = imageLoader
+                val oldDoc = doc
+                imageLoader = null
+                doc = null
+                oldLoader?.close()
+                if (oldDoc != null) {
+                    withContext(Dispatchers.IO) { oldDoc.close() }
+                }
                 when {
                     OpenPdfBySettings.shouldOpenInternal(sibling) -> {
                         val hopIntent = OpenPdfBySettings.prepareInternal(
@@ -468,7 +514,8 @@ class PdfReaderActivity : AppCompatActivity() {
                         openFromIntent(hopIntent, replace = true)
                     }
                     OpenPdfBySettings.shouldRedirect(sibling) -> {
-                        closeSession()
+                        streamToken?.let(StreamDocumentRegistry::remove)
+                        streamToken = null
                         when (val outcome = OpenPdfBySettings.open(this@PdfReaderActivity, sibling)) {
                             is OpenPdfBySettings.Outcome.Gallery -> {
                                 OpenPdfBySettings.handoffGallery(
@@ -481,7 +528,8 @@ class PdfReaderActivity : AppCompatActivity() {
                         finish()
                     }
                     else -> {
-                        closeSession()
+                        streamToken?.let(StreamDocumentRegistry::remove)
+                        streamToken = null
                         PendingReaderOpen.offer(sibling)
                         startActivity(
                             Intent(this@PdfReaderActivity, MainActivity::class.java).apply {
@@ -678,10 +726,9 @@ private fun openPdfDocument(
     loadChapters: (suspend (pageCount: Int, stillWanted: () -> Boolean) -> List<PdfTocEntry>)? = null,
 ): PdfDocumentModel {
     // Do not walk the page tree before the first page. Contents load after open.
-    val renderer = runCatching { PdfRenderer(pfd) }.getOrElse { e ->
-        runCatching { pfd.close() }
-        throw e
-    }
+    // On success PdfRenderer owns [pfd] and closes it from PdfSession.close().
+    // On failure the caller still owns [pfd] and must close it.
+    val renderer = PdfRenderer(pfd)
     logcat("PdfReader") { "vector PDF pages=${renderer.pageCount}" }
     val pages = renderer.pageCount
     val loader: (suspend (() -> Boolean) -> List<PdfTocEntry>)? = loadChapters?.let { load ->
@@ -859,34 +906,46 @@ private interface PageBitmapSession {
 
 private class PdfSession(private val renderer: PdfRenderer) : PageBitmapSession {
     override val pageCount: Int get() = renderer.pageCount
-    private val mutex = Mutex()
+
+    /**
+     * Serializes openPage / render / close. A plain monitor (not [Mutex] +
+     * [runBlocking]) so [close] from the main thread cannot deadlock against a
+     * coroutine that needs the main dispatcher to finish and release a Mutex.
+     */
+    private val lock = Any()
     private val aspects = java.util.concurrent.ConcurrentHashMap<Int, Float>()
 
     @Volatile private var closed = false
 
-    override suspend fun render(index: Int, widthPx: Int): Bitmap = mutex.withLock {
-        if (closed) error("closed")
-        renderer.openPage(index).use { page ->
-            noteAspect(index, page)
-            renderOpened(page, widthPx)
+    override suspend fun render(index: Int, widthPx: Int): Bitmap = withContext(Dispatchers.IO) {
+        synchronized(lock) {
+            if (closed) error("closed")
+            renderer.openPage(index).use { page ->
+                noteAspect(index, page)
+                renderOpened(page, widthPx)
+            }
         }
     }
 
     /** One [PdfRenderer.Page] open. Long edge is [edge] px (photo-grid thumb). */
-    override suspend fun renderLongEdge(index: Int, edge: Int): Bitmap = mutex.withLock {
-        if (closed) error("closed")
-        renderer.openPage(index).use { page ->
-            val aspect = noteAspect(index, page)
-            val width = if (aspect >= 1f) edge else (edge * aspect).roundToInt().coerceAtLeast(1)
-            renderOpened(page, width)
+    override suspend fun renderLongEdge(index: Int, edge: Int): Bitmap = withContext(Dispatchers.IO) {
+        synchronized(lock) {
+            if (closed) error("closed")
+            renderer.openPage(index).use { page ->
+                val aspect = noteAspect(index, page)
+                val width = if (aspect >= 1f) edge else (edge * aspect).roundToInt().coerceAtLeast(1)
+                renderOpened(page, width)
+            }
         }
     }
 
     override suspend fun pageAspect(index: Int): Float {
         aspects[index]?.let { return it }
-        return mutex.withLock {
-            if (closed) error("closed")
-            aspects[index] ?: renderer.openPage(index).use { page -> noteAspect(index, page) }
+        return withContext(Dispatchers.IO) {
+            synchronized(lock) {
+                if (closed) error("closed")
+                aspects[index] ?: renderer.openPage(index).use { page -> noteAspect(index, page) }
+            }
         }
     }
 
@@ -909,13 +968,10 @@ private class PdfSession(private val renderer: PdfRenderer) : PageBitmapSession 
     }
 
     override fun close() {
-        if (closed) return
-        runBlocking {
-            mutex.withLock {
-                if (closed) return@withLock
-                closed = true
-                runCatching { renderer.close() }
-            }
+        synchronized(lock) {
+            if (closed) return
+            closed = true
+            runCatching { renderer.close() }
         }
     }
 }
