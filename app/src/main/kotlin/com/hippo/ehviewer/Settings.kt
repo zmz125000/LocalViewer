@@ -634,6 +634,8 @@ object Settings : DataStorePreferences(null) {
     const val EBOOK_FONT_SYSTEM = 2
     const val EBOOK_ALIGN_START = 0
     const val EBOOK_ALIGN_JUSTIFY = 1
+    const val EBOOK_ALIGN_START_HYPHEN = 2
+    const val EBOOK_ALIGN_JUSTIFY_HYPHEN = 3
 
     /** Ebook text font: 0=serif, 1=sans, 2=system. PDF reader ebooks only. */
     val ebookFont = intPref("pref_ebook_font", EBOOK_FONT_SERIF)
@@ -679,7 +681,7 @@ object Settings : DataStorePreferences(null) {
     /** First-line indent in em (0 / 1 / 2). Default 2. */
     val ebookIndent = intPref("pref_ebook_indent", 2)
 
-    /** 0=start, 1=justify. */
+    /** 0=start, 1=justify, 2=start with hyphenation, 3=justify with hyphenation. */
     val ebookAlign = intPref("pref_ebook_align", EBOOK_ALIGN_START)
 
     /** Left and right page margin as percent of page width (4–12). Default 7. */

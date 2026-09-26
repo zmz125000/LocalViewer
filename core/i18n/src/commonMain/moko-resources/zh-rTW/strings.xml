@@ -901,6 +901,8 @@
     <string name="pref_ebook_align">對齊</string>
     <string name="ebook_align_start">靠左</string>
     <string name="ebook_align_justify">左右對齊</string>
+    <string name="ebook_align_start_hyphen">靠左，斷詞</string>
+    <string name="ebook_align_justify_hyphen">左右對齊，斷詞</string>
     <string name="pref_ebook_margin">頁邊距</string>
     <string name="pref_ebook_vertical_margin">上下邊距</string>
     <string name="pref_eink_refresh">電子墨水螢幕刷新</string>

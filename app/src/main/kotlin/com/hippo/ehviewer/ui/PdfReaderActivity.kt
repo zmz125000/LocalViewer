@@ -1159,6 +1159,10 @@ private data class EbookPaint(
     val fg: Int,
 )
 
+private fun ebookAlignJustifies(align: Int): Boolean = align == Settings.EBOOK_ALIGN_JUSTIFY || align == Settings.EBOOK_ALIGN_JUSTIFY_HYPHEN
+
+private fun ebookAlignHyphenates(align: Int): Boolean = align == Settings.EBOOK_ALIGN_START_HYPHEN || align == Settings.EBOOK_ALIGN_JUSTIFY_HYPHEN
+
 private fun ebookStyleFromSettings(landscape: Boolean): EbookStyle = EbookStyle(
     fontSize = ebookDisplayFontSize(Settings.ebookFontSize.value, landscape),
     lineHeightPercent = Settings.ebookLineHeight.value.coerceIn(100, 200),
@@ -1166,7 +1170,8 @@ private fun ebookStyleFromSettings(landscape: Boolean): EbookStyle = EbookStyle(
     indentEm = Settings.ebookIndent.value.coerceIn(0, 2),
     marginPercent = Settings.ebookMargin.value.coerceIn(4, 12),
     verticalMarginPercent = Settings.ebookVerticalMargin.value.coerceIn(0, 12),
-    justify = Settings.ebookAlign.value == Settings.EBOOK_ALIGN_JUSTIFY,
+    justify = ebookAlignJustifies(Settings.ebookAlign.value),
+    hyphenate = ebookAlignHyphenates(Settings.ebookAlign.value),
     paragraphMode = Settings.ebookParagraphMode.value.coerceIn(0, 2),
 )
 
@@ -1431,7 +1436,8 @@ private fun PdfReaderScreen(
             indentEm = ebookIndent.coerceIn(0, 2),
             marginPercent = ebookMargin.coerceIn(4, 12),
             verticalMarginPercent = ebookVerticalMargin.coerceIn(0, 12),
-            justify = ebookAlign == Settings.EBOOK_ALIGN_JUSTIFY,
+            justify = ebookAlignJustifies(ebookAlign),
+            hyphenate = ebookAlignHyphenates(ebookAlign),
             paragraphMode = ebookParaMode.coerceIn(0, 2),
         )
     }

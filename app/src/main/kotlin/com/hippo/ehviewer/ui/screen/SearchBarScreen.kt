@@ -78,6 +78,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.coerceAtMost
 import androidx.compose.ui.unit.dp
+import com.ehviewer.core.database.model.SEARCH_KIND_LIBRARY
 import com.ehviewer.core.database.model.Search
 import com.ehviewer.core.i18n.R
 import com.hippo.ehviewer.EhApplication.Companion.searchDatabase
@@ -101,13 +102,13 @@ private const val HISTORY_TAG_MAX_ROWS = 2
  * Persist a device search query when Privacy → Save history is enabled.
  * No-op when the toggle is off (same gate as browse/library history).
  */
-suspend fun recordDeviceSearchHistory(raw: String) {
+suspend fun recordDeviceSearchHistory(raw: String, kind: Int = SEARCH_KIND_LIBRARY) {
     if (!Settings.saveHistory.value) return
     val query = raw.trim().replace(WHITESPACE_REGEX, " ")
     if (query.isEmpty()) return
     val dao = searchDatabase.searchDao()
-    dao.deleteQuery(query)
-    dao.insert(Search(System.currentTimeMillis(), query))
+    dao.deleteQuery(query, kind)
+    dao.insert(Search(System.currentTimeMillis(), query, kind))
 }
 
 @OptIn(ExperimentalLayoutApi::class)
@@ -144,7 +145,7 @@ fun SearchBarScreen(
         }
         scope.launch {
             historyTags = withContext(Dispatchers.IO) {
-                mSearchDatabase.list(SEARCH_HISTORY_LIMIT)
+                mSearchDatabase.list(SEARCH_KIND_LIBRARY, SEARCH_HISTORY_LIMIT)
             }
         }
     }
@@ -167,7 +168,7 @@ fun SearchBarScreen(
         scope.launch(Dispatchers.IO) {
             recordDeviceSearchHistory(query)
             if (searchFocused) {
-                historyTags = mSearchDatabase.list(SEARCH_HISTORY_LIMIT)
+                historyTags = mSearchDatabase.list(SEARCH_KIND_LIBRARY, SEARCH_HISTORY_LIMIT)
             }
         }
     }
@@ -381,9 +382,9 @@ fun SearchBarScreen(
                                                 .size(InputChipDefaults.IconSize)
                                                 .clickable {
                                                     scope.launch(Dispatchers.IO) {
-                                                        mSearchDatabase.deleteQuery(tag)
+                                                        mSearchDatabase.deleteQuery(tag, SEARCH_KIND_LIBRARY)
                                                         historyTags =
-                                                            mSearchDatabase.list(SEARCH_HISTORY_LIMIT)
+                                                            mSearchDatabase.list(SEARCH_KIND_LIBRARY, SEARCH_HISTORY_LIMIT)
                                                     }
                                                 },
                                         )

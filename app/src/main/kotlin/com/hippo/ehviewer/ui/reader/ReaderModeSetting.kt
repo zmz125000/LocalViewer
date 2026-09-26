@@ -183,7 +183,12 @@ private fun DocumentStyleSetting() = Column {
     SpinnerChoice(
         title = stringResource(id = R.string.pref_ebook_align),
         entries = stringArrayResource(id = com.hippo.ehviewer.R.array.ebook_align),
-        values = listOf(Settings.EBOOK_ALIGN_START, Settings.EBOOK_ALIGN_JUSTIFY),
+        values = listOf(
+            Settings.EBOOK_ALIGN_START,
+            Settings.EBOOK_ALIGN_JUSTIFY,
+            Settings.EBOOK_ALIGN_START_HYPHEN,
+            Settings.EBOOK_ALIGN_JUSTIFY_HYPHEN,
+        ),
         field = Settings.ebookAlign.asMutableState(),
     )
     val lineHeight = Settings.ebookLineHeight.asMutableState()
