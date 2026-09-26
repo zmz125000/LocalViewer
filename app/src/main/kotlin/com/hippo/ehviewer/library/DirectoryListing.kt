@@ -1422,6 +1422,7 @@ fun classifyRemoteListingWithPeeks(
                             name = e.name,
                             hasVideo = kind.hasVideo && singleVideo == null,
                             hasGallery = true,
+                            hasDocument = kind.hasDocument,
                             presence = DirPresence.LeafImages,
                             coverFileName = kind.coverFileName,
                             lastModifiedMs = e.lastModifiedMs,
@@ -1741,12 +1742,13 @@ private fun classifyRemoteChild(
         null
     }
 
-    // Never promote archives or documents. Folder with archives → navigable (open to see them).
+    // Archives that can hold pictures (pdf/epub/rar/zip/…) stay enterable.
+    // Word, text, and HTML do not turn a photo folder into a directory.
     // Video-bearing leaves (with or without images) promote at parent as @ virtual dirs
     // or single-file @ video rows; navigable leaves only tag hasVideo on the parent path.
     // Document files stay in their folder (Document filter shows the dir, not a lifted file).
-    // Other non-video files (nfo/srt/txt/…) never block single-video file promote.
-    if (sawSubdir || sawArchive || sawDocument) {
+    // Other non-video files (nfo/srt/…) never block single-video file promote.
+    if (sawSubdir || sawArchive || (sawDocument && gallery == null)) {
         return RemoteChildKind.Navigable(
             gallery = gallery,
             // Deep folders (and archive folders for gallery) are conservative
@@ -1756,7 +1758,7 @@ private fun classifyRemoteChild(
             hasDocument = sawDocument || sawSubdir,
         )
     }
-    if (gallery != null) return gallery
+    if (gallery != null) return gallery.copy(hasDocument = sawDocument)
     if (sawVideo) return RemoteChildKind.VideoOnly(videoFileNames = videos)
     return RemoteChildKind.Empty()
 }
