@@ -22,6 +22,7 @@ import com.hippo.ehviewer.EhDB
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.library.BrowseEntryRemote
 import com.hippo.ehviewer.library.BrowseSession
+import com.hippo.ehviewer.library.EbookBodyCache
 import com.hippo.ehviewer.library.HISTORY_FILE_CATEGORY_OTHER
 import com.hippo.ehviewer.library.LOCAL_FILE_TOKEN
 import com.hippo.ehviewer.library.LocalFolderListing
@@ -38,6 +39,7 @@ import com.hippo.ehviewer.library.WEBDAV_FILE_TOKEN
 import com.hippo.ehviewer.library.ZipAsDirListing
 import com.hippo.ehviewer.library.ZipMemberByteSource
 import com.hippo.ehviewer.library.ZipPaths
+import com.hippo.ehviewer.library.document.TextCharset
 import com.hippo.ehviewer.library.isBrowseVideoFileName
 import com.hippo.ehviewer.library.isEbookFileName
 import com.hippo.ehviewer.library.isHtmlFileName
@@ -2071,6 +2073,20 @@ object OpenFileExternally {
         }
     }
 
+    /**
+     * A positive size opens the file. A missing size opens a saved ebook body.
+     * Empty or unreachable with no saved body throws, so the browser snackbar
+     * runs and the reader stays closed.
+     */
+    private fun streamSizeOrCachedEbook(probed: Long?, displayName: String, cacheKey: String): Long {
+        if (probed != null && probed > 0L) return probed
+        if (probed == null && isEbookFileName(displayName)) {
+            val charset = TextCharset.cacheLabel(Settings.ebookCharset.value)
+            if (!EbookBodyCache.loadLast(cacheKey, charset).isNullOrEmpty()) return -1L
+        }
+        error("empty or unreachable file")
+    }
+
     private suspend fun registerSmbStreamdoc(
         sourceId: Long,
         remoteRelativeFile: String,
@@ -2088,10 +2104,8 @@ object OpenFileExternally {
             -1L
         } else {
             withIOContext {
-                // Offline history cannot STAT. -1 still registers so a saved ebook body can open.
-                SmbGateway.fileSizeOrNull(source, password, remoteRelativeFile)
-                    ?.takeIf { it > 0L }
-                    ?: -1L
+                val probed = SmbGateway.fileSizeOrNull(source, password, remoteRelativeFile)
+                streamSizeOrCachedEbook(probed, displayName, "smb:$sourceId:${remoteRelativeFile.trim('/')}")
             }
         }
         return StreamDocumentRegistry.register(
@@ -2125,14 +2139,19 @@ object OpenFileExternally {
             WebDavRepository.load(sourceId) ?: throw IOException("WebDAV source missing")
         }
         val password = WebDavPasswordStore.get(sourceId)
-        val sizeBytes = withIOContext {
-            // Offline history cannot PROPFIND. -1 still registers so a saved ebook body can open.
-            WebDavClient.fileSizeOrNull(
-                source,
-                password,
-                remoteRelativeFile,
-                sticky = true,
-            )?.takeIf { it > 0L } ?: -1L
+        val isVideo = DefaultVideoPlayer.isVideoMime(mimeType) || isBrowseVideoFileName(displayName)
+        val sizeBytes = if (isVideo) {
+            -1L
+        } else {
+            withIOContext {
+                val probed = WebDavClient.fileSizeOrNull(
+                    source,
+                    password,
+                    remoteRelativeFile,
+                    sticky = true,
+                )
+                streamSizeOrCachedEbook(probed, displayName, "webdav:$sourceId:${remoteRelativeFile.trim('/')}")
+            }
         }
         return StreamDocumentRegistry.register(
             displayName = displayName,
