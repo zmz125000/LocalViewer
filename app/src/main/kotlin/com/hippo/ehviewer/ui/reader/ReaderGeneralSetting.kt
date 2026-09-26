@@ -29,6 +29,11 @@ fun ReaderGeneralSetting(isDocument: Boolean = false) = Column(modifier = Modifi
             title = stringResource(id = R.string.pref_ebook_show_pictures),
             field = Settings.ebookShowPictures.asMutableState(),
         )
+        SwitchChoice(
+            title = stringResource(id = R.string.pref_vector_compose_ahead),
+            summary = stringResource(id = R.string.pref_vector_compose_ahead_summary),
+            field = Settings.vectorComposeAhead.asMutableState(),
+        )
     }
     val hdrDisplay = Settings.readerHdrDisplay.asMutableState()
     SwitchChoice(

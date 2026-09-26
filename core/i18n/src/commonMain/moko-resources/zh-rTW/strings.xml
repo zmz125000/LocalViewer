@@ -899,6 +899,8 @@
     <string name="ebook_indent_1">1 em</string>
     <string name="ebook_indent_2">2 em</string>
     <string name="pref_ebook_show_pictures">顯示圖片</string>
+    <string name="pref_vector_compose_ahead">提前排版下一頁</string>
+    <string name="pref_vector_compose_ahead_summary">在捲入畫面之前先排版下一頁文字或 PDF</string>
     <string name="pref_ebook_align">對齊</string>
     <string name="ebook_align_start">靠左</string>
     <string name="ebook_align_justify">左右對齊</string>

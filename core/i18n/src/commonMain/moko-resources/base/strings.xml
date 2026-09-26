@@ -967,6 +967,8 @@
     <string name="ebook_indent_1">1 em</string>
     <string name="ebook_indent_2">2 em</string>
     <string name="pref_ebook_show_pictures">Show pictures</string>
+    <string name="pref_vector_compose_ahead">Compose next page</string>
+    <string name="pref_vector_compose_ahead_summary">Draw the next text or PDF page before it scrolls in</string>
     <string name="pref_ebook_align">Alignment</string>
     <string name="ebook_align_start">Start</string>
     <string name="ebook_align_justify">Justify</string>
