@@ -163,6 +163,14 @@ class EhApplication : Application(), SingletonImageLoader.Factory {
                 if (!Settings.libraryStartupScan.value) return@launch
                 runCatching { LocalLibrary.startupMaintenance() }.onFailure { logcat(it) }
             }
+            launch {
+                if (Settings.clearHistoryOnStartup.value) {
+                    runCatching { EhDB.clearHistoryInfo() }.onFailure { logcat(it) }
+                }
+                if (Settings.clearSearchOnStartup.value) {
+                    runCatching { searchDatabase.searchDao().clear() }.onFailure { logcat(it) }
+                }
+            }
         }
         if (BuildConfig.DEBUG) {
             StrictMode.enableDefaults()

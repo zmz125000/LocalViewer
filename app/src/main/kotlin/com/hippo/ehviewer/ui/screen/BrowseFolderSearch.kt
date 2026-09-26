@@ -1,7 +1,20 @@
 package com.hippo.ehviewer.ui.screen
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.MutableTransitionState
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.input.TextFieldLineLimits
 import androidx.compose.foundation.text.input.TextFieldState
@@ -14,6 +27,8 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
+import androidx.compose.material3.InputChip
+import androidx.compose.material3.InputChipDefaults
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
@@ -27,9 +42,11 @@ import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -44,20 +61,31 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.ehviewer.core.i18n.R
+import com.ehviewer.core.util.launchIO
+import com.hippo.ehviewer.EhApplication.Companion.searchDatabase
+import com.hippo.ehviewer.Settings
+import com.hippo.ehviewer.collectAsState
 import com.hippo.ehviewer.library.BrowseSession
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 private val WHITESPACE_REGEX = Regex("\\s+")
+private const val SEARCH_HISTORY_LIMIT = 24
+private const val HISTORY_TAG_MAX_ROWS = 2
 
 /** Same normalize rules as [SearchBarScreen] live filter. */
 fun normalizeBrowseSearchQuery(raw: CharSequence): String = raw.trim().toString().replace(WHITESPACE_REGEX, " ")
 
 /**
  * Top-bar instant filter for folder browsers (local / SMB / WebDAV).
- * No search history — only in-list name filtering.
+ * Keyword history is one shared device list (same store as Library and History).
  */
 @Stable
 class BrowseFolderSearchState internal constructor(
@@ -171,9 +199,20 @@ class BrowseFolderSearchState internal constructor(
         focused = false
     }
 
+    /** Query to store when a result is opened. Field text wins; otherwise the last submit. */
+    fun openedSearchKeyword(): String = keyword.ifBlank { submittedKeyword }.trim()
+
     internal fun syncKeywordFromField() {
         keyword = normalizeBrowseSearchQuery(textFieldState.text)
     }
+}
+
+/** Save the active folder query when a search result is opened. No-op when the field is idle. */
+context(_: CoroutineScope)
+fun BrowseFolderSearchState.recordOpenedResult() {
+    val q = openedSearchKeyword()
+    if (q.isEmpty()) return
+    launchIO { recordDeviceSearchHistory(q) }
 }
 
 @Composable
@@ -299,6 +338,7 @@ fun BrowseTopBarSearchField(
     focusRequester: FocusRequester = remember { FocusRequester() },
 ) {
     val focusManager = LocalFocusManager.current
+    val scope = rememberCoroutineScope()
     // Only auto-focus when the user taps search ([BrowseFolderSearchState.open]),
     // not when restoring a filter after go-back / reader return.
     LaunchedEffect(state.active, state.wantFocus) {
@@ -328,6 +368,10 @@ fun BrowseTopBarSearchField(
         onKeyboardAction = {
             state.submit()
             focusManager.clearFocus()
+            val submitted = state.submittedKeyword
+            if (submitted.isNotEmpty()) {
+                scope.launch(Dispatchers.IO) { recordDeviceSearchHistory(submitted) }
+            }
         },
         colors = TextFieldDefaults.colors(
             focusedContainerColor = Color.Transparent,
@@ -371,6 +415,72 @@ fun BrowseTopBarSearchAction(
                 imageVector = Icons.Default.Search,
                 contentDescription = stringResource(R.string.keyword_search),
             )
+        }
+    }
+}
+
+/**
+ * Keyword chips under the folder search field. One list for every folder.
+ * Shown while the field is focused and Privacy → Save history is on.
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+fun BrowseFolderSearchHistory(state: BrowseFolderSearchState) {
+    val saveHistory by Settings.saveHistory.collectAsState()
+    val scope = rememberCoroutineScope()
+    val dao = searchDatabase.searchDao()
+    var historyTags by remember { mutableStateOf<List<String>>(emptyList()) }
+    val barColor = adaptiveTopAppBarColors().containerColor
+
+    LaunchedEffect(state.focused, saveHistory) {
+        if (state.focused && saveHistory) {
+            historyTags = withContext(Dispatchers.IO) { dao.list(SEARCH_HISTORY_LIMIT) }
+        } else if (!saveHistory) {
+            historyTags = emptyList()
+        }
+    }
+
+    val wantHistory = state.active && state.focused && saveHistory && historyTags.isNotEmpty()
+    val historyVisibleState = remember { MutableTransitionState(false) }
+    historyVisibleState.targetState = wantHistory
+
+    AnimatedVisibility(
+        visibleState = historyVisibleState,
+        enter = expandVertically(expandFrom = Alignment.Top) + fadeIn(),
+        exit = shrinkVertically(shrinkTowards = Alignment.Top) + fadeOut(),
+    ) {
+        FlowRow(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(barColor)
+                .padding(start = 12.dp, end = 12.dp, bottom = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+            maxLines = HISTORY_TAG_MAX_ROWS,
+        ) {
+            historyTags.forEach { tag ->
+                InputChip(
+                    selected = false,
+                    onClick = { state.textFieldState.setTextAndPlaceCursorAtEnd(tag) },
+                    label = {
+                        Text(text = tag, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    },
+                    trailingIcon = {
+                        Icon(
+                            imageVector = Icons.Default.Close,
+                            contentDescription = stringResource(R.string.delete),
+                            modifier = Modifier
+                                .size(InputChipDefaults.IconSize)
+                                .clickable {
+                                    scope.launch(Dispatchers.IO) {
+                                        dao.deleteQuery(tag)
+                                        historyTags = dao.list(SEARCH_HISTORY_LIMIT)
+                                    }
+                                },
+                        )
+                    },
+                )
+            }
         }
     }
 }

@@ -225,9 +225,9 @@ internal object EbookEngine {
             }
             built.ifEmpty { byHref.values.toList() }
         }
-        val cover = opf.coverHref?.let { imageMarker(resources, it, fullPage = true) }
         val coverHref = opf.coverHref
-        val withCover = if (cover != null && coverHref != null && out.none { it.text.contains(coverHref) }) {
+        val cover = coverHref?.let { imageMarker(resources, it, fullPage = true) }
+        val withCover = if (cover != null && out.none { it.text.contains(coverHref) }) {
             listOf(EbookChapter("", cover, 0)) + out
         } else {
             out

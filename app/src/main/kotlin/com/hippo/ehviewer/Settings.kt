@@ -444,6 +444,12 @@ object Settings : DataStorePreferences(null) {
      */
     val saveEbookHistory = boolPref("save_ebook_history", true)
 
+    /** Each process start deletes browse and reading history. */
+    val clearHistoryOnStartup = boolPref("privacy_clear_history_on_startup", false)
+
+    /** Each process start deletes device search keywords (library, history, and folders). */
+    val clearSearchOnStartup = boolPref("privacy_clear_search_on_startup", false)
+
     /**
      * Back to upper directory when opening from History / Library / Favourites.
      * On: system back from reader or a dir pin walks the parent browse path.

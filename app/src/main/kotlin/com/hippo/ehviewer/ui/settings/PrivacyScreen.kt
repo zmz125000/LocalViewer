@@ -133,6 +133,16 @@ fun AnimatedVisibilityScope.PrivacyScreen(navigator: DestinationsNavigator) = Sc
             }
             val scanHiddenFiles = Settings.scanHiddenFiles.asMutableState()
             SwitchPreference(
+                title = stringResource(id = R.string.settings_privacy_clear_history_on_startup),
+                summary = stringResource(id = R.string.settings_privacy_clear_history_on_startup_summary),
+                state = Settings.clearHistoryOnStartup.asMutableState(),
+            )
+            SwitchPreference(
+                title = stringResource(id = R.string.settings_privacy_clear_search_on_startup),
+                summary = stringResource(id = R.string.settings_privacy_clear_search_on_startup_summary),
+                state = Settings.clearSearchOnStartup.asMutableState(),
+            )
+            SwitchPreference(
                 title = stringResource(id = R.string.settings_privacy_scan_hidden_files),
                 state = scanHiddenFiles,
             )
