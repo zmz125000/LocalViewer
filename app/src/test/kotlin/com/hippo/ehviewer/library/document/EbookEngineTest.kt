@@ -351,6 +351,12 @@ class EbookEngineTest {
         assertFalse(image.fullPage)
         assertTrue(lines.any { it.text.contains("前文") })
         assertTrue(lines.any { it.text.contains("后文") })
+        val textOnly = EbookPaginator.wrapLines(
+            text,
+            EbookStyle(paragraphMode = EbookParagraph.SOFT, showPictures = false),
+        )
+        assertTrue(textOnly.none { it.imageKey != null })
+        assertTrue(textOnly.any { it.text.contains("前文") })
     }
 
     @Test
