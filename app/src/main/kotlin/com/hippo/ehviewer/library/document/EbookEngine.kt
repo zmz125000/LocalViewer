@@ -265,6 +265,10 @@ internal object EbookEngine {
             if (marked[i] == EbookImages.START) {
                 val end = marked.indexOf(EbookImages.END, i + 1)
                 i = if (end < 0) marked.length else end + 1
+            } else if (marked[i] == EbookMarks.STYLE && i + 1 < marked.length) {
+                i += 2
+            } else if (marked[i] == EbookMarks.QUOTE || marked[i] == EbookMarks.CODE_LINE) {
+                i++
             } else {
                 n++
                 i++
@@ -373,7 +377,7 @@ internal object EbookEngine {
                 else -> {
                     val attrs = parseAttrs(m.groupValues[1])
                     val href = attrs["href"] ?: continue
-                    val title = EbookHtml.toText(m.groupValues[2]).ifBlank { continue }
+                    val title = EbookHtml.toPlain(m.groupValues[2]).ifBlank { continue }
                     out += TocHref(title, href, (depth - 1).coerceAtLeast(0))
                 }
             }
@@ -396,7 +400,7 @@ internal object EbookEngine {
             val inner = xml.substring(openEnd + 1, end.coerceAtMost(xml.length))
             val nestedAt = indexOfTag(inner, "navPoint", 0)
             val own = if (nestedAt != null) inner.substring(0, nestedAt) else inner
-            val title = NCX_LABEL.find(own)?.groupValues?.get(1)?.let { EbookHtml.toText(it) }.orEmpty()
+            val title = NCX_LABEL.find(own)?.groupValues?.get(1)?.let { EbookHtml.toPlain(it) }.orEmpty()
             val href = NCX_CONTENT.find(own)?.groupValues?.get(1).orEmpty()
             if (title.isNotBlank() && href.isNotBlank()) {
                 out += TocHref(title, href, depth)
@@ -522,7 +526,12 @@ internal object EbookEngine {
         return CONTENTS_HEADER.matches(title) || CONTENTS_HEADER.matches(body) || CONTENTS_HEADER.matches(first)
     }
 
-    internal fun chaptersFromMarkdown(text: String, fallbackTitle: String): List<EbookChapter> = chaptersFromPlain(text, fallbackTitle)
+    internal fun chaptersFromMarkdown(text: String, fallbackTitle: String): List<EbookChapter> = chaptersFromPlain(text, fallbackTitle).map { ch ->
+        ch.copy(
+            title = EbookMarkdown.styleTitle(ch.title),
+            text = EbookMarkdown.styleBody(ch.text),
+        )
+    }
 
     internal fun chaptersFromFb2(xml: String, fallbackTitle: String): List<EbookChapter> {
         val out = ArrayList<EbookChapter>()
@@ -543,7 +552,7 @@ internal object EbookEngine {
             val nextClose = Regex("""(?i)</section\s*>""").find(xml, openEnd + 1)?.range?.first ?: xml.length
             val ownEnd = minOf(nextSection ?: xml.length, nextClose)
             val own = xml.substring(openEnd + 1, ownEnd)
-            val title = FB2_TITLE.find(own)?.groupValues?.get(1)?.let { EbookHtml.toText(it) }
+            val title = FB2_TITLE.find(own)?.groupValues?.get(1)?.let { EbookHtml.toPlain(it) }
                 ?: fallbackTitle
             val body = EbookHtml.toText(FB2_TITLE.replace(own, ""))
             if (title.isNotBlank() || body.isNotBlank()) {
@@ -573,7 +582,7 @@ internal object EbookEngine {
 
     private fun firstHeading(html: String): String? {
         val m = FIRST_H.find(html) ?: return null
-        return EbookHtml.toText(m.groupValues[1]).ifBlank { null }
+        return EbookHtml.toPlain(m.groupValues[1]).ifBlank { null }
     }
 
     private fun titleFromName(path: String): String {

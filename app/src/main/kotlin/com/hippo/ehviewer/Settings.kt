@@ -684,7 +684,7 @@ object Settings : DataStorePreferences(null) {
     val ebookIndent = intPref("pref_ebook_indent", 2)
 
     /** 0=start, 1=justify, 2=start with hyphenation, 3=justify with hyphenation. */
-    val ebookAlign = intPref("pref_ebook_align", EBOOK_ALIGN_START)
+    val ebookAlign = intPref("pref_ebook_align", EBOOK_ALIGN_JUSTIFY_HYPHEN)
 
     /** EPUB/MOBI pictures. Off shows text only. Default on. */
     val ebookShowPictures = boolPref("pref_ebook_show_pictures", true)
