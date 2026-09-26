@@ -269,6 +269,29 @@ class EbookEngineTest {
     }
 
     @Test
+    fun hardClipClusterIgnoresSentenceAndIndentRatio() {
+        val full = "测".repeat(34)
+        val block = "　　$full \n$full\n结束语。\n\n　　单独一句。\n\n　　再一句。\n\n"
+        val text = block.repeat(10)
+        assertEquals(EbookParagraph.HARD, EbookParagraph.detect(text))
+        val paras = EbookParagraph.paragraphs(text, EbookParagraph.AUTO)
+        assertEquals(30, paras.size)
+        assertEquals(full + full + "结束语。", paras[0])
+        assertEquals("单独一句。", paras[1])
+        assertEquals("再一句。", paras[2])
+        assertTrue(paras.none { it.contains('　') || it.endsWith(' ') })
+    }
+
+    @Test
+    fun longLinesAreNotHardClip() {
+        val text = buildString {
+            repeat(8) { append("文".repeat(110)).append('\n') }
+            repeat(4) { append("短句。").append('\n') }
+        }
+        assertEquals(EbookParagraph.SOFT, EbookParagraph.detect(text))
+    }
+
+    @Test
     fun softKeepsOneLineParagraphsWithoutBlankLines() {
         val text = "i am paragraph one.\ni am paragraph 2 hello every good morning"
         val paras = EbookParagraph.paragraphs(text, EbookParagraph.SOFT)
