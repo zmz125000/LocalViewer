@@ -16,6 +16,9 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.ehviewer.core.i18n.R
 import com.hippo.ehviewer.library.OPEN_CACHE_WARN_BYTES
+import com.hippo.ehviewer.ui.theme.snackbarActionButtonColors
+import com.hippo.ehviewer.ui.theme.snackbarDismissButtonColors
+import com.hippo.ehviewer.ui.theme.snackbarDismissContentColor
 import com.hippo.ehviewer.util.FileUtils
 import java.io.FilterOutputStream
 import java.io.OutputStream
@@ -243,15 +246,22 @@ fun BrowseSaveSnackbars(modifier: Modifier = Modifier) {
         items.forEach { item ->
             Snackbar(
                 modifier = Modifier.padding(bottom = 8.dp),
+                contentColor = snackbarDismissContentColor(),
                 action = {
                     when (val st = item.status) {
                         is SaveTransferStatus.Confirming -> {
-                            TextButton(onClick = { BrowseSaveTransfers.confirm(item.id) }) {
+                            TextButton(
+                                onClick = { BrowseSaveTransfers.confirm(item.id) },
+                                colors = snackbarActionButtonColors(),
+                            ) {
                                 Text(st.action)
                             }
                         }
                         is SaveTransferStatus.Running, is SaveTransferStatus.Failed -> {
-                            TextButton(onClick = { BrowseSaveTransfers.cancel(item.id) }) {
+                            TextButton(
+                                onClick = { BrowseSaveTransfers.cancel(item.id) },
+                                colors = snackbarActionButtonColors(),
+                            ) {
                                 Text(stringResource(android.R.string.cancel))
                             }
                         }
@@ -260,7 +270,10 @@ fun BrowseSaveSnackbars(modifier: Modifier = Modifier) {
                 },
                 dismissAction = if (item.status is SaveTransferStatus.Confirming) {
                     {
-                        TextButton(onClick = { BrowseSaveTransfers.cancel(item.id) }) {
+                        TextButton(
+                            onClick = { BrowseSaveTransfers.cancel(item.id) },
+                            colors = snackbarDismissButtonColors(),
+                        ) {
                             Text(stringResource(android.R.string.cancel))
                         }
                     }

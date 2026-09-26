@@ -33,6 +33,9 @@ import com.hippo.ehviewer.provider.requestStreamNotificationPermission
 import com.hippo.ehviewer.smb.SmbPasswordStore
 import com.hippo.ehviewer.smb.SmbRepository
 import com.hippo.ehviewer.ui.OpenFileExternally
+import com.hippo.ehviewer.ui.theme.snackbarActionButtonColors
+import com.hippo.ehviewer.ui.theme.snackbarDismissButtonColors
+import com.hippo.ehviewer.ui.theme.snackbarDismissContentColor
 import com.hippo.ehviewer.ui.tools.DialogState
 import com.hippo.ehviewer.ui.tools.dialog
 import com.hippo.ehviewer.util.addTextToClipboard
@@ -316,13 +319,20 @@ fun HttpShareSnackbars(
         items.forEach { item ->
             Snackbar(
                 modifier = Modifier.padding(bottom = 8.dp),
+                contentColor = snackbarDismissContentColor(),
                 action = {
-                    TextButton(onClick = { onShare(item) }) {
+                    TextButton(
+                        onClick = { onShare(item) },
+                        colors = snackbarActionButtonColors(),
+                    ) {
                         Text(stringResource(R.string.share))
                     }
                 },
                 dismissAction = {
-                    TextButton(onClick = { HttpShare.stop(item.id) }) {
+                    TextButton(
+                        onClick = { HttpShare.stop(item.id) },
+                        colors = snackbarDismissButtonColors(),
+                    ) {
                         Text(stringResource(R.string.browse_http_share_stop))
                     }
                 },
