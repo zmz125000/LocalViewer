@@ -373,7 +373,7 @@ object LocalFolderListing {
             val previous = BrowseSession.getLocalFolderCachedListing(rootId, dirKey)?.entries
             val t0 = System.nanoTime()
             val children = listChildrenRemote(effective, preferMediaStore)
-            val dirName = effective.name.ifEmpty { "Gallery" }
+            val dirName = localFolderTitle(effective)
             val shallow = ZipAsDirListing.applyZipAsDirPreferenceLocal(
                 classifyChildren(effective, dirName, children, emptyMap(), emptyMap()),
                 effective,
@@ -454,7 +454,7 @@ object LocalFolderListing {
             children.filter { it.name in zipFileNames && it.name !in cachedZipAsDir }
         }
         val toClassify = (plan.addedDirectories + deepHidden + newZips).distinctBy { it.name }
-        val dirName = dir.name.ifEmpty { "Gallery" }
+        val dirName = localFolderTitle(dir)
         val zipAdjustedUnreachable = plan.unreachableDirectoryNames - zipFileNames
         val recovered = plan.recoveredDirectoryNames
         val dirsUnchanged = plan.addedDirectories.isEmpty() &&
@@ -551,7 +551,7 @@ object LocalFolderListing {
             }
         }
 
-        val dirName = humanizePathName(dir.name).ifEmpty { "Gallery" }
+        val dirName = localFolderTitle(dir)
         val classified = classifyChildren(dir, dirName, children, peeks, grandPeeks, zipInteriors)
         // Cache/toggle fallback: leftover zip ArchiveGallery rows (unreadable CD, old cache).
         return withLocalArchivePageCounts(
@@ -956,6 +956,9 @@ internal object LocalListingJobs {
         }
     }!!
 }
+
+/** SAF tree roots expose the encoded document id as [Path.name]. Keep the folder label. */
+internal fun localFolderTitle(dir: Path): String = humanizePathName(dir.name).ifEmpty { "Gallery" }
 
 /** Join relative segments onto [base] (accepts `/` or `\`). */
 fun Path.resolveRelative(relative: String): Path {
