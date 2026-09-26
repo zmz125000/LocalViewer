@@ -212,6 +212,7 @@ import eu.kanade.tachiyomi.ui.reader.setting.TappingInvertMode
 import eu.kanade.tachiyomi.ui.reader.viewer.ViewerNavigation
 import eu.kanade.tachiyomi.ui.reader.viewer.ViewerNavigation.NavigationRegion
 import eu.kanade.tachiyomi.ui.reader.viewer.getAction
+import java.util.concurrent.Executors
 import kotlin.coroutines.resume
 import kotlin.math.abs
 import kotlin.math.roundToInt
@@ -478,11 +479,19 @@ class PdfReaderActivity : AppCompatActivity() {
     }
 
     private fun closeSession(removeToken: Boolean = true) {
-        imageLoader?.close()
-        imageLoader = null
+        val loader = imageLoader
         val toClose = doc
+        imageLoader = null
         doc = null
-        toClose?.close()
+        // Page render holds PdfSession's lock until PdfRenderer returns. Waiting
+        // for that on the main thread freezes the process if the user leaves
+        // while the page spinner is still up.
+        if (loader != null || toClose != null) {
+            pdfReleaseExecutor.execute {
+                runCatching { loader?.close() }
+                runCatching { toClose?.close() }
+            }
+        }
         if (removeToken) {
             streamToken?.let(StreamDocumentRegistry::remove)
             streamToken = null
@@ -987,13 +996,21 @@ private interface PageBitmapSession {
     }
 }
 
+/** Closes a reader session without blocking the main thread on [PdfRenderer.Page.render]. */
+private val pdfReleaseExecutor = Executors.newSingleThreadExecutor { runnable ->
+    Thread(runnable, "pdf-release").apply { isDaemon = true }
+}
+
 private class PdfSession(private val renderer: PdfRenderer) : PageBitmapSession {
     override val pageCount: Int get() = renderer.pageCount
 
     /**
      * Serializes openPage / render / close. A plain monitor (not [Mutex] +
-     * [runBlocking]) so [close] from the main thread cannot deadlock against a
-     * coroutine that needs the main dispatcher to finish and release a Mutex.
+     * [runBlocking]) so [close] cannot deadlock against a coroutine that needs
+     * the main dispatcher to finish and release a Mutex.
+     *
+     * Do not take this lock on the main thread. [PdfRenderer.Page.render] holds
+     * it for the whole draw, and [closeSession] therefore runs on [pdfReleaseExecutor].
      */
     private val lock = Any()
     private val aspects = java.util.concurrent.ConcurrentHashMap<Int, Float>()
@@ -2576,10 +2593,13 @@ private fun PdfSingleVectorPage(
         var next: Bitmap? = null
         try {
             next = withContext(Dispatchers.IO) {
-                runCatching { session.render(index, renderWidth) }.getOrNull()
+                runCatching { session.render(index, renderWidth) }.getOrNull()?.also {
+                    // Upload off the main thread. The page spinner is still up until
+                    // this returns, and a main-thread upload freezes the process.
+                    it.prepareToDraw()
+                }
             }
             if (next != null) {
-                next.prepareToDraw()
                 val prev = bitmap
                 bitmap = next
                 next = null
@@ -2654,10 +2674,13 @@ private fun PdfVectorPage(
         var next: Bitmap? = null
         try {
             next = withContext(Dispatchers.IO) {
-                runCatching { session.render(index, renderWidth) }.getOrNull()
+                runCatching { session.render(index, renderWidth) }.getOrNull()?.also {
+                    // Upload off the main thread. The page spinner is still up until
+                    // this returns, and a main-thread upload freezes the process.
+                    it.prepareToDraw()
+                }
             }
             if (next != null) {
-                next.prepareToDraw()
                 val prev = bitmap
                 bitmap = next
                 next = null
