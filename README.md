@@ -84,12 +84,14 @@ Build with Grok 4.5.
 
 ## Features
 * Webtoon gallery reader.
+* Local photo/video/comic/ebook library.
+* Instant scanning for media files in local and network folder, no more library setup.
 * Native Android app (Kotlin + Jetpack Compose).
 * Double tap to go to next folder.
 * Material Design 3 Navigation bar.
 * Optimized navigation flow for deep folder path.
 * ZIP/RAR/CBZ/CBR/CBT/PDF/EPUB support over network share.
-* Ebook support with text formatting (PDF/EPUB/MOBI/FB2/TXT/Markdown).
+* PDF/EPUB/MOBI/FB2/TXT/Markdown Ebook support with text formatting.
 * JXL/JXR/JPG/AVIF/HEIC HDR support.
 * Compatible with Oppo/OnePlus ProXDR HEIC format.
 * SMB signing JCE AESCMAC hardware acceleration support.
