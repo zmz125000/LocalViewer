@@ -240,7 +240,8 @@ internal object EbookEngine {
     private fun imageMarker(resources: EbookResources, path: String, fullPage: Boolean): String? {
         val bytes = resources.bytes(path) ?: return null
         val aspect = resources.remember(path, bytes)
-        return EbookImages.marker(path, aspect, fullPage)
+        val width = EbookImages.sizeOf(bytes)?.first ?: 0
+        return EbookImages.marker(path, aspect, fullPage, width)
     }
 
     private fun markHtmlImages(html: String, baseDir: String, resources: EbookResources): String {
