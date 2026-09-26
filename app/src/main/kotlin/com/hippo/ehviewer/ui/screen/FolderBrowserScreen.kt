@@ -8,6 +8,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.fillMaxSize
@@ -763,6 +764,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         fromSearch: Boolean = false,
         keepVideoOverlay: Boolean = true,
     ) {
+        search.recordOpenedResult()
         val frame = stack.lastOrNull() ?: return
         if (fromSearch) {
             if (searchReturnStackSize < 0) searchReturnStackSize = stack.size
@@ -1308,10 +1310,12 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
 
     /** Primary / secondary open for folder galleries based on [Settings.photoGridMode]. */
     fun openFolderGalleryPrimary(entry: BrowseEntry.FolderGallery) {
+        search.recordOpenedResult()
         if (photoGridMode) openFolderGalleryPhotoGrid(entry) else openFolderGallery(entry)
     }
 
     fun openFolderGallerySecondary(entry: BrowseEntry.FolderGallery) {
+        search.recordOpenedResult()
         if (photoGridMode) openFolderGallery(entry) else openFolderGalleryPhotoGrid(entry)
     }
 
@@ -1423,6 +1427,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
      * Same page list / cover keys as the photo-grid path.
      */
     fun openFolderImage(file: BrowseEntry.RegularFile) {
+        search.recordOpenedResult()
         val frame = stack.lastOrNull() ?: return
         val rel = file.name.replace('\\', '/').trim('/')
         val fileName = FolderSearch.baseName(rel).ifEmpty { file.path.name }
@@ -1647,6 +1652,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
     }
 
     fun openArchiveSecondary(entry: BrowseEntry.ArchiveGallery) {
+        search.recordOpenedResult()
         if (isPdfOrEbookFileName(entry.name)) {
             openPdfSecondary(entry)
         } else {
@@ -1655,6 +1661,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
     }
 
     fun openArchive(entry: BrowseEntry.ArchiveGallery) {
+        search.recordOpenedResult()
         if (isPdfOrEbookFileName(entry.name)) {
             openPdfPrimary(entry)
             return
@@ -1706,6 +1713,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
     }
 
     fun openExternalFile(path: okio.Path, asFile: Boolean = false, usePreferredPlayer: Boolean = true) {
+        search.recordOpenedResult()
         // Always launch with the real path basename — promoted VideoFile rows use a
         // virtual `@dir` display name without extension (wrong MIME / player title).
         val pathStr = path.toString()
@@ -1734,6 +1742,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
     }
 
     fun openListedFile(path: okio.Path) {
+        search.recordOpenedResult()
         val name = ZipPaths.memberLeafName(path.toString()) ?: path.name
         if (isPdfOrEbookFileName(name)) {
             openInternalDocument(path)
@@ -1787,6 +1796,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
 
     /** In-app Media3 player. */
     fun playVideo(path: okio.Path) {
+        search.recordOpenedResult()
         val pathStr = path.toString()
         val actualName = ZipPaths.memberLeafName(pathStr) ?: path.name
         launchIO {
@@ -2093,45 +2103,48 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
     Scaffold(
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
         topBar = {
-            TopAppBar(
-                title = {
-                    if (search.active) {
-                        BrowseTopBarSearchField(state = search, hint = searchHint)
-                    } else {
-                        Text(title, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    }
-                },
-                windowInsets = WindowInsets.safeDrawing.only(WindowInsetsSides.Top),
-                colors = adaptiveTopAppBarColors(),
-                navigationIcon = {
-                    IconButton(onClick = { onTopBarBack() }, shapes = IconButtonDefaults.shapes()) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null)
-                    }
-                },
-                actions = {
-                    BrowseTopBarSearchAction(
-                        state = search,
-                        onBeforeClose = { focusManager.clearFocus() },
-                    )
-                    BrowseViewModeMenu(
-                        folder = if (virtual.isVirtual) null else folderId,
-                        hideContentModes = virtual.hideContentModes,
-                    )
-                    IconButton(
-                        onClick = {
-                            launch {
-                                refreshing = true
-                                reload(force = true)
-                                refreshing = false
-                            }
-                        },
-                        shapes = IconButtonDefaults.shapes(),
-                    ) {
-                        Icon(Icons.Default.Refresh, contentDescription = stringResource(R.string.library_rescan))
-                    }
-                },
-                scrollBehavior = scrollBehavior,
-            )
+            Column(Modifier.fillMaxWidth()) {
+                TopAppBar(
+                    title = {
+                        if (search.active) {
+                            BrowseTopBarSearchField(state = search, hint = searchHint)
+                        } else {
+                            Text(title, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
+                    },
+                    windowInsets = WindowInsets.safeDrawing.only(WindowInsetsSides.Top),
+                    colors = adaptiveTopAppBarColors(),
+                    navigationIcon = {
+                        IconButton(onClick = { onTopBarBack() }, shapes = IconButtonDefaults.shapes()) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null)
+                        }
+                    },
+                    actions = {
+                        BrowseTopBarSearchAction(
+                            state = search,
+                            onBeforeClose = { focusManager.clearFocus() },
+                        )
+                        BrowseViewModeMenu(
+                            folder = if (virtual.isVirtual) null else folderId,
+                            hideContentModes = virtual.hideContentModes,
+                        )
+                        IconButton(
+                            onClick = {
+                                launch {
+                                    refreshing = true
+                                    reload(force = true)
+                                    refreshing = false
+                                }
+                            },
+                            shapes = IconButtonDefaults.shapes(),
+                        ) {
+                            Icon(Icons.Default.Refresh, contentDescription = stringResource(R.string.library_rescan))
+                        }
+                    },
+                    scrollBehavior = scrollBehavior,
+                )
+                BrowseFolderSearchHistory(search)
+            }
         },
         floatingActionButton = {
             // Compact phones without persistent main nav: shortcut FAB.

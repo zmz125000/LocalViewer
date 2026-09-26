@@ -681,6 +681,10 @@
     <string name="clear_search_history">清除裝置上的搜尋記錄</string>
     <string name="clear_search_history_summary">移除曾在此裝置上進行過的搜尋</string>
     <string name="search_history_cleared">已清除搜尋記錄</string>
+    <string name="settings_privacy_clear_history_on_startup">啟動時清除歷史</string>
+    <string name="settings_privacy_clear_history_on_startup_summary">每次啟動應用時清除瀏覽與閱讀歷史</string>
+    <string name="settings_privacy_clear_search_on_startup">啟動時清除搜尋</string>
+    <string name="settings_privacy_clear_search_on_startup_summary">每次啟動應用時清除裝置上的搜尋關鍵字</string>
     <string name="settings_privacy_clear_folder_browse_mode">清除資料夾瀏覽模式</string>
     <string name="settings_privacy_clear_folder_browse_mode_summary">刪除已鎖定在資料夾上的媒體 / 圖庫 / 影片 / 文件 / 資料夾模式</string>
     <string name="folder_browse_mode_cleared">已清除資料夾瀏覽模式</string>

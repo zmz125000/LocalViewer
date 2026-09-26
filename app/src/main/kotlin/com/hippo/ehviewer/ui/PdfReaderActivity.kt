@@ -7,6 +7,7 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Paint
+import android.graphics.RectF
 import android.graphics.Typeface
 import android.graphics.pdf.PdfRenderer
 import android.net.Uri
@@ -151,9 +152,12 @@ import com.hippo.ehviewer.library.ReaderPageThumb
 import com.hippo.ehviewer.library.ZipPaths
 import com.hippo.ehviewer.library.document.EbookChapter
 import com.hippo.ehviewer.library.document.EbookEngine
+import com.hippo.ehviewer.library.document.EbookImages
 import com.hippo.ehviewer.library.document.EbookLine
 import com.hippo.ehviewer.library.document.EbookPage
 import com.hippo.ehviewer.library.document.EbookPaginator
+import com.hippo.ehviewer.library.document.EbookParse
+import com.hippo.ehviewer.library.document.EbookResources
 import com.hippo.ehviewer.library.document.EbookStyle
 import com.hippo.ehviewer.library.document.PdfContentKind
 import com.hippo.ehviewer.library.document.PdfImageEngine
@@ -807,6 +811,7 @@ private fun openEbookDocument(
                 ?: return null
             PfdArchiveByteSource(pfd, ownsPfd = true).also { owned = it }
         }
+    var sourceHeld = false
     return try {
         val size = runCatching { source.size }.getOrDefault(-1L)
         val charsetPref = Settings.ebookCharset.value
@@ -817,14 +822,28 @@ private fun openEbookDocument(
         } else {
             null
         }
-        val chapters = cached ?: EbookEngine.parse(source, fileName, stillWanted, forced, charsetPref)
-        if (chapters.isNullOrEmpty() || !stillWanted()) return null
-        if (cached == null && cacheKey != null && size > 0L && stillWanted()) {
+        val book = if (cached != null) {
+            EbookParse(cached, null)
+        } else {
+            EbookEngine.parseBook(source, fileName, stillWanted, forced, charsetPref)
+        }
+        val chapters = book?.chapters
+        if (chapters.isNullOrEmpty() || !stillWanted()) {
+            book?.resources?.close()
+            sourceHeld = book?.resources != null
+            return null
+        }
+        val pictured = chapters.any { EbookImages.hasMarker(it.text) }
+        if (cached == null && !pictured && cacheKey != null && size > 0L && stillWanted()) {
             EbookBodyCache.save(cacheKey, size, chapters, charsetKey)
         }
         val style = ebookStyleFromSettings(landscape)
-        val session = EbookSession(chapters, style, ebookPaintFromSettings(dark = false))
-        if (!session.ensurePagesThrough(startPage.coerceAtLeast(0), stillWanted)) return null
+        val session = EbookSession(chapters, style, ebookPaintFromSettings(dark = false), book.resources)
+        sourceHeld = book.resources != null
+        if (!session.ensurePagesThrough(startPage.coerceAtLeast(0), stillWanted)) {
+            session.close()
+            return null
+        }
         logcat("PdfReader") {
             "ebook pages=${session.pageCount} chapters=${chapters.size} cached=${cached != null}"
         }
@@ -835,8 +854,10 @@ private fun openEbookDocument(
             isEbook = true,
         )
     } finally {
-        runCatching { source.close() }
-        if (owned !== source) runCatching { owned?.close() }
+        if (!sourceHeld) {
+            runCatching { source.close() }
+            if (owned !== source) runCatching { owned?.close() }
+        }
     }
 }
 
@@ -980,6 +1001,7 @@ private class EbookSession(
     body: List<EbookChapter>,
     initialStyle: EbookStyle,
     initialPaint: EbookPaint,
+    private val resources: EbookResources? = null,
 ) : PageBitmapSession {
     private val source = body
     private val mutex = Mutex()
@@ -996,6 +1018,8 @@ private class EbookSession(
         private set
 
     @Volatile private var closed = false
+
+    private val imageAspects = HashMap<Int, Float>()
 
     private var pageCountState by mutableIntStateOf(0)
     override val pageCount: Int get() = pageCountState
@@ -1078,6 +1102,7 @@ private class EbookSession(
     suspend fun applyLayout(next: EbookStyle): Boolean = mutex.withLock {
         if (next == style) return false
         style = next
+        imageAspects.clear()
         val (nextPages, nextToc) = EbookPaginator.paginate(source, next)
         pages = nextPages
         toc = nextToc
@@ -1091,17 +1116,40 @@ private class EbookSession(
         if (closed) error("closed")
         val page = pages.getOrNull(index) ?: error("page")
         val w = widthPx.coerceAtLeast(1)
-        val h = (w / EbookPaginator.ASPECT.coerceAtLeast(0.01f)).toInt().coerceAtLeast(1)
+        val aspect = aspectOf(index, page)
+        val h = (w / aspect.coerceAtLeast(0.01f)).toInt().coerceAtLeast(1)
         val (rw, rh) = cappedBitmapSize(w, h)
         Bitmap.createBitmap(rw, rh, Bitmap.Config.ARGB_8888).also { bitmap ->
-            drawEbookPage(bitmap, page, style, paint)
+            drawEbookPage(bitmap, page, style, paint) { key ->
+                if (closed) null else resources?.bytes(key)
+            }
         }
     }
 
-    override suspend fun pageAspect(index: Int): Float = EbookPaginator.ASPECT
+    override suspend fun pageAspect(index: Int): Float = mutex.withLock {
+        if (closed) error("closed")
+        val page = pages.getOrNull(index) ?: return@withLock EbookPaginator.ASPECT
+        aspectOf(index, page)
+    }
+
+    private fun aspectOf(index: Int, page: EbookPage): Float {
+        imageAspects[index]?.let { return it }
+        val picture = page.lines.singleOrNull()?.takeIf { it.fullPage && it.imageKey != null }
+        val aspect = if (picture == null) {
+            EbookPaginator.ASPECT
+        } else {
+            val bytes = resources?.bytes(picture.imageKey!!)
+            val raw = bytes?.let { EbookImages.aspectOf(it) } ?: picture.imageAspect
+            raw.takeIf { it > 0.05f } ?: EbookPaginator.ASPECT
+        }
+        imageAspects[index] = aspect
+        return aspect
+    }
 
     override fun close() {
+        if (closed) return
         closed = true
+        resources?.close()
     }
 }
 
@@ -1146,7 +1194,13 @@ private fun ebookTypeface(font: Int): Typeface = when (font) {
     else -> Typeface.SERIF
 }
 
-private fun drawEbookPage(bitmap: Bitmap, page: EbookPage, style: EbookStyle, colors: EbookPaint) {
+private fun drawEbookPage(
+    bitmap: Bitmap,
+    page: EbookPage,
+    style: EbookStyle,
+    colors: EbookPaint,
+    imageBytes: (String) -> ByteArray? = { null },
+) {
     val canvas = Canvas(bitmap)
     bitmap.eraseColor(colors.bg)
     val w = bitmap.width.toFloat().coerceAtLeast(1f)
@@ -1161,9 +1215,22 @@ private fun drawEbookPage(bitmap: Bitmap, page: EbookPage, style: EbookStyle, co
         textSize = fontSize
         typeface = baseFace
     }
+    val onlyPicture = page.lines.singleOrNull()?.takeIf { it.fullPage && it.imageKey != null }
+    if (onlyPicture != null) {
+        drawEbookImage(canvas, imageBytes(onlyPicture.imageKey!!), 0f, 0f, w, h)
+        return
+    }
     var y = padY
     val maxY = h - padY
     for (line in page.lines) {
+        val imageKey = line.imageKey
+        if (imageKey != null) {
+            val boxH = fontSize * line.heightEm
+            if (y + boxH > maxY && y > padY) break
+            drawEbookImage(canvas, imageBytes(imageKey), padX, y, contentW, boxH)
+            y += boxH
+            continue
+        }
         if (line.text.isEmpty()) {
             y += fontSize * line.heightEm
             continue
@@ -1174,6 +1241,31 @@ private fun drawEbookPage(bitmap: Bitmap, page: EbookPage, style: EbookStyle, co
         drawEbookLine(canvas, line, padX, y, contentW, fontSize, paint, baseFace)
         y += fontSize * (line.heightEm - scale).coerceAtLeast(0f)
     }
+}
+
+private fun drawEbookImage(
+    canvas: Canvas,
+    bytes: ByteArray?,
+    left: Float,
+    top: Float,
+    width: Float,
+    height: Float,
+) {
+    if (bytes == null || bytes.isEmpty() || width < 1f || height < 1f) return
+    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+    BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+    var sample = 1
+    val srcW = bounds.outWidth.coerceAtLeast(1)
+    val srcH = bounds.outHeight.coerceAtLeast(1)
+    while (srcW / sample > width * 2 && srcH / sample > height * 2 && sample < 32) sample *= 2
+    val opts = BitmapFactory.Options().apply { inSampleSize = sample }
+    val bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opts) ?: return
+    val scale = minOf(width / bmp.width.coerceAtLeast(1), height / bmp.height.coerceAtLeast(1))
+    val dw = bmp.width * scale
+    val dh = bmp.height * scale
+    val dest = RectF(left + (width - dw) / 2f, top + (height - dh) / 2f, left + (width + dw) / 2f, top + (height + dh) / 2f)
+    canvas.drawBitmap(bmp, null, dest, Paint(Paint.FILTER_BITMAP_FLAG))
+    bmp.recycle()
 }
 
 private fun drawEbookLine(

@@ -8,6 +8,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.fillMaxSize
@@ -796,6 +797,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
      * never use display names like `@S-leaf` as path segments.
      */
     fun enterDir(relativeName: String, fromSearch: Boolean = false) {
+        search.recordOpenedResult()
         val parts = relativeName.split('/').filter { it.isNotEmpty() }
         if (parts.isEmpty()) return
         setPhotoGrid(null)
@@ -1022,10 +1024,12 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
 
     /** Primary / secondary open for folder galleries based on [Settings.photoGridMode]. */
     fun openFolderGalleryPrimary(entry: BrowseEntryRemote.FolderGallery) {
+        search.recordOpenedResult()
         if (photoGridMode) openFolderGalleryPhotoGrid(entry) else openFolderGallery(entry)
     }
 
     fun openFolderGallerySecondary(entry: BrowseEntryRemote.FolderGallery) {
+        search.recordOpenedResult()
         if (photoGridMode) openFolderGallery(entry) else openFolderGalleryPhotoGrid(entry)
     }
 
@@ -1085,6 +1089,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
      * Same page list / [HistoryThumbKey] cover path as the photo-grid path.
      */
     fun openFolderImage(file: BrowseEntryRemote.RegularFile) {
+        search.recordOpenedResult()
         val src = source ?: return
         val rel = file.fileName.replace('\\', '/').trim('/')
         val fileName = FolderSearch.baseName(rel)
@@ -1275,6 +1280,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
     }
 
     fun openExternalFile(fileName: String, asFile: Boolean = false, usePreferredPlayer: Boolean = true) {
+        search.recordOpenedResult()
         val src = source ?: return
         // fileName may be multi-segment for promoted single-video rows (`S/leaf/movie.mp4`).
         // Launch with the real basename so MIME and player title stay correct.
@@ -1304,6 +1310,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
     }
 
     fun openListedFile(fileName: String) {
+        search.recordOpenedResult()
         val leaf = fileName.substringAfterLast('/').substringAfterLast('\\')
         if (isPdfOrEbookFileName(leaf)) {
             openInternalDocument(fileName)
@@ -1364,6 +1371,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
 
     /** In-app Media3 player. */
     fun playVideo(fileName: String) {
+        search.recordOpenedResult()
         val src = source ?: return
         val actualName = fileName.substringAfterLast('/').substringAfterLast('\\')
         val remote = if (relativeDir.isEmpty()) fileName else SmbGateway.joinRelativePath(relativeDir, fileName)
@@ -1401,6 +1409,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
     }
 
     fun openArchive(entry: BrowseEntryRemote.ArchiveGallery, skipPdfPrimary: Boolean = false) {
+        search.recordOpenedResult()
         val src = source ?: return
         if (!skipPdfPrimary && isEbookFileName(entry.fileName)) {
             openPdfReader(entry)
@@ -1520,6 +1529,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
     }
 
     fun openArchiveSecondary(entry: BrowseEntryRemote.ArchiveGallery) {
+        search.recordOpenedResult()
         if (isPdfOrEbookFileName(entry.fileName)) {
             openPdfSecondary(entry)
         } else {
@@ -1839,45 +1849,48 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
     Scaffold(
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
         topBar = {
-            TopAppBar(
-                title = {
-                    if (search.active) {
-                        BrowseTopBarSearchField(state = search, hint = searchHint)
-                    } else {
-                        Text(title, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    }
-                },
-                windowInsets = WindowInsets.safeDrawing.only(WindowInsetsSides.Top),
-                colors = adaptiveTopAppBarColors(),
-                navigationIcon = {
-                    IconButton(onClick = { onTopBarBack() }, shapes = IconButtonDefaults.shapes()) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null)
-                    }
-                },
-                actions = {
-                    BrowseTopBarSearchAction(
-                        state = search,
-                        onBeforeClose = { focusManager.clearFocus() },
-                    )
-                    BrowseViewModeMenu(
-                        // Virtual layers: list/grid + toggles only (no content-mode persist).
-                        folder = if (virtual.isVirtual) null else folderId,
-                        skipAncestorKeys = smbModeSkipAncestors,
-                        hideContentModes = virtual.hideContentModes,
-                    )
-                    IconButton(
-                        enabled = refreshEnabled,
-                        onClick = {
-                            refreshing = true
-                            requestForceReload()
-                        },
-                        shapes = IconButtonDefaults.shapes(),
-                    ) {
-                        Icon(Icons.Default.Refresh, contentDescription = null)
-                    }
-                },
-                scrollBehavior = scrollBehavior,
-            )
+            Column(Modifier.fillMaxWidth()) {
+                TopAppBar(
+                    title = {
+                        if (search.active) {
+                            BrowseTopBarSearchField(state = search, hint = searchHint)
+                        } else {
+                            Text(title, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
+                    },
+                    windowInsets = WindowInsets.safeDrawing.only(WindowInsetsSides.Top),
+                    colors = adaptiveTopAppBarColors(),
+                    navigationIcon = {
+                        IconButton(onClick = { onTopBarBack() }, shapes = IconButtonDefaults.shapes()) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null)
+                        }
+                    },
+                    actions = {
+                        BrowseTopBarSearchAction(
+                            state = search,
+                            onBeforeClose = { focusManager.clearFocus() },
+                        )
+                        BrowseViewModeMenu(
+                            // Virtual layers: list/grid + toggles only (no content-mode persist).
+                            folder = if (virtual.isVirtual) null else folderId,
+                            skipAncestorKeys = smbModeSkipAncestors,
+                            hideContentModes = virtual.hideContentModes,
+                        )
+                        IconButton(
+                            enabled = refreshEnabled,
+                            onClick = {
+                                refreshing = true
+                                requestForceReload()
+                            },
+                            shapes = IconButtonDefaults.shapes(),
+                        ) {
+                            Icon(Icons.Default.Refresh, contentDescription = null)
+                        }
+                    },
+                    scrollBehavior = scrollBehavior,
+                )
+                BrowseFolderSearchHistory(search)
+            }
         },
         floatingActionButton = {
             // Compact phones without persistent main nav: shortcut FAB.

@@ -98,7 +98,7 @@ internal object EbookHtml {
     }
 
     private val SCRIPT_STYLE = Regex(
-        """(?is)<(script|style|svg|head)\b[^>]*>.*?</\1>""",
+        """(?is)<(script|style|head)\b[^>]*>.*?</\1>""",
     )
     private val BR = Regex("""(?is)<br\s*/?>""")
     private val BLOCK = Regex(

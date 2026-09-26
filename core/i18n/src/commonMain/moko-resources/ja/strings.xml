@@ -679,6 +679,10 @@
     <string name="clear_search_history">デバイスの検索履歴を消去</string>
     <string name="clear_search_history_summary">このデバイスから検索履歴を消去します</string>
     <string name="search_history_cleared">検索履歴を消去しました</string>
+    <string name="settings_privacy_clear_history_on_startup">起動時に履歴を消去</string>
+    <string name="settings_privacy_clear_history_on_startup_summary">アプリ起動のたびに閲覧・読書履歴を消去します</string>
+    <string name="settings_privacy_clear_search_on_startup">起動時に検索を消去</string>
+    <string name="settings_privacy_clear_search_on_startup_summary">アプリ起動のたびに端末の検索キーワードを消去します</string>
     <string name="settings_privacy_clear_folder_browse_mode">フォルダ閲覧モードを消去</string>
     <string name="settings_privacy_clear_folder_browse_mode_summary">フォルダにロックしたメディア／画像／動画／ドキュメント／フォルダモードを削除します</string>
     <string name="folder_browse_mode_cleared">フォルダ閲覧モードを消去しました</string>

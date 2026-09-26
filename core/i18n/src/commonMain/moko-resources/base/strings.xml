@@ -727,6 +727,10 @@
     <string name="clear_search_history">Clear device search history</string>
     <string name="clear_search_history_summary">Remove searches you have performed from this device</string>
     <string name="search_history_cleared">Search history cleared</string>
+    <string name="settings_privacy_clear_history_on_startup">Clear history on startup</string>
+    <string name="settings_privacy_clear_history_on_startup_summary">Remove browse and reading history each time the app starts</string>
+    <string name="settings_privacy_clear_search_on_startup">Clear search on startup</string>
+    <string name="settings_privacy_clear_search_on_startup_summary">Remove device search keywords each time the app starts</string>
     <string name="settings_privacy_clear_folder_browse_mode">Clear folder browse modes</string>
     <string name="settings_privacy_clear_folder_browse_mode_summary">Remove locked Media / Photo / Video / Document / Folder modes saved on folders</string>
     <string name="folder_browse_mode_cleared">Folder browse modes cleared</string>

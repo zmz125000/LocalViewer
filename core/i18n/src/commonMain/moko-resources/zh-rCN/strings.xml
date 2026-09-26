@@ -692,6 +692,10 @@
     <string name="clear_search_history">清除设备上的搜索记录</string>
     <string name="clear_search_history_summary">移除您在此设备上执行过的搜索查询的记录</string>
     <string name="search_history_cleared">已清除搜索记录</string>
+    <string name="settings_privacy_clear_history_on_startup">启动时清除历史</string>
+    <string name="settings_privacy_clear_history_on_startup_summary">每次启动应用时清除浏览与阅读历史</string>
+    <string name="settings_privacy_clear_search_on_startup">启动时清除搜索</string>
+    <string name="settings_privacy_clear_search_on_startup_summary">每次启动应用时清除设备上的搜索关键词</string>
     <string name="settings_privacy_clear_folder_browse_mode">清除文件夹浏览模式</string>
     <string name="settings_privacy_clear_folder_browse_mode_summary">删除已锁定在文件夹上的媒体 / 图库 / 视频 / 文档 / 文件夹模式</string>
     <string name="folder_browse_mode_cleared">已清除文件夹浏览模式</string>
