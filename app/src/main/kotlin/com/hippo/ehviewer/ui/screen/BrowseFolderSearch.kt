@@ -63,6 +63,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.ehviewer.core.database.model.SEARCH_KIND_FOLDER
 import com.ehviewer.core.i18n.R
 import com.ehviewer.core.util.launchIO
 import com.hippo.ehviewer.EhApplication.Companion.searchDatabase
@@ -212,7 +213,7 @@ context(_: CoroutineScope)
 fun BrowseFolderSearchState.recordOpenedResult() {
     val q = openedSearchKeyword()
     if (q.isEmpty()) return
-    launchIO { recordDeviceSearchHistory(q) }
+    launchIO { recordDeviceSearchHistory(q, SEARCH_KIND_FOLDER) }
 }
 
 @Composable
@@ -370,7 +371,7 @@ fun BrowseTopBarSearchField(
             focusManager.clearFocus()
             val submitted = state.submittedKeyword
             if (submitted.isNotEmpty()) {
-                scope.launch(Dispatchers.IO) { recordDeviceSearchHistory(submitted) }
+                scope.launch(Dispatchers.IO) { recordDeviceSearchHistory(submitted, SEARCH_KIND_FOLDER) }
             }
         },
         colors = TextFieldDefaults.colors(
@@ -420,7 +421,8 @@ fun BrowseTopBarSearchAction(
 }
 
 /**
- * Keyword chips under the folder search field. One list for every folder.
+ * Keyword chips under the folder search field. One list for every folder,
+ * separate from Library and History search history.
  * Shown while the field is focused and Privacy → Save history is on.
  */
 @OptIn(ExperimentalLayoutApi::class)
@@ -434,7 +436,7 @@ fun BrowseFolderSearchHistory(state: BrowseFolderSearchState) {
 
     LaunchedEffect(state.focused, saveHistory) {
         if (state.focused && saveHistory) {
-            historyTags = withContext(Dispatchers.IO) { dao.list(SEARCH_HISTORY_LIMIT) }
+            historyTags = withContext(Dispatchers.IO) { dao.list(SEARCH_KIND_FOLDER, SEARCH_HISTORY_LIMIT) }
         } else if (!saveHistory) {
             historyTags = emptyList()
         }
@@ -473,8 +475,8 @@ fun BrowseFolderSearchHistory(state: BrowseFolderSearchState) {
                                 .size(InputChipDefaults.IconSize)
                                 .clickable {
                                     scope.launch(Dispatchers.IO) {
-                                        dao.deleteQuery(tag)
-                                        historyTags = dao.list(SEARCH_HISTORY_LIMIT)
+                                        dao.deleteQuery(tag, SEARCH_KIND_FOLDER)
+                                        historyTags = dao.list(SEARCH_KIND_FOLDER, SEARCH_HISTORY_LIMIT)
                                     }
                                 },
                         )

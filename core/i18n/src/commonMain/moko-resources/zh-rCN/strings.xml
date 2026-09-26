@@ -924,6 +924,8 @@
     <string name="pref_ebook_align">对齐</string>
     <string name="ebook_align_start">左齐</string>
     <string name="ebook_align_justify">两端对齐</string>
+    <string name="ebook_align_start_hyphen">左齐，断词</string>
+    <string name="ebook_align_justify_hyphen">两端对齐，断词</string>
     <string name="pref_ebook_margin">页边距</string>
     <string name="pref_ebook_vertical_margin">上下边距</string>
     <string name="pref_eink_refresh">电子墨水屏刷新</string>

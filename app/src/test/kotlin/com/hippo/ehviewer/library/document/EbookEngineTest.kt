@@ -72,6 +72,55 @@ class EbookEngineTest {
     }
 
     @Test
+    fun contentsListingStaysOneSection() {
+        val text = buildString {
+            appendLine("目录")
+            for (n in 1..8) appendLine("第${n}章 标题$n")
+            appendLine("Chapter 9 ........ 40")
+            appendLine()
+            appendLine("第1章 标题1")
+            append("正文".repeat(40))
+        }
+        val chapters = EbookEngine.chaptersFromPlain(text, "book")
+        assertEquals(1, chapters.count { it.title.startsWith("第") })
+        assertTrue(chapters.any { it.text.contains("正文") })
+        assertTrue(chapters.any { it.text.contains("第8章") })
+        val (pages, _) = EbookPaginator.paginate(chapters)
+        assertTrue("pages=${pages.size}", pages.size < 8)
+    }
+
+    @Test
+    fun englishLinesUseTheMeasure() {
+        val style = EbookStyle(indentEm = 0, paragraphMode = EbookParagraph.SOFT)
+        val cap = EbookPaginator.lineCapacity(style)
+        val text = "The quick brown fox jumps over the lazy dog. ".repeat(12)
+        val lines = EbookPaginator.wrapLines(text, style).filter { it.text.isNotBlank() }
+        assertTrue(lines.size >= 3)
+        for (line in lines.dropLast(1)) {
+            val w = line.text.sumOf { EbookPaginator.charEm(it).toDouble() }
+            assertTrue("w=$w cap=$cap text=${line.text}", w >= cap * 0.82)
+        }
+    }
+
+    @Test
+    fun hyphenateSplitsALongLatinWord() {
+        val style = EbookStyle(
+            fontSize = 30,
+            marginPercent = 12,
+            indentEm = 0,
+            paragraphMode = EbookParagraph.SOFT,
+            hyphenate = true,
+        )
+        val word = "a".repeat(40)
+        val lines = EbookPaginator.wrapLines(word, style).map { it.text }
+        assertTrue(lines.any { '-' in it })
+        val joined = lines.joinToString("") { it.removeSuffix("-") }
+        assertTrue(joined.contains(word))
+        val plain = EbookPaginator.wrapLines("测".repeat(80), style.copy(hyphenate = true))
+        assertTrue(plain.none { '-' in it.text })
+    }
+
+    @Test
     fun firstChapterPaginateIsNotTheWholeBook() {
         val chapters = EbookEngine.chaptersFromPlain(
             """

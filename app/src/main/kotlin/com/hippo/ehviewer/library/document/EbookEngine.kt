@@ -107,7 +107,7 @@ internal object EbookEngine {
     ): List<EbookChapter> {
         val bytes = source.readFully(MAX_TEXT_BYTES) ?: return emptyList()
         val html = TextCharset.decode(bytes, htmlHint = true, forced = charset, pref = charsetPref)
-        return EbookHtml.chaptersFromHtml(html, titleFromName(fileName))
+        return collapseContentsRuns(EbookHtml.chaptersFromHtml(html, titleFromName(fileName)))
     }
 
     private fun parseMarkdown(
@@ -441,8 +441,84 @@ internal object EbookEngine {
         return if (!sawHeading && parts.size <= 1) {
             listOf(EbookChapter(fallbackTitle, text.trim(), 0))
         } else {
-            parts
+            collapseContentsRuns(parts)
         }
+    }
+
+    /**
+     * A printed contents page is a run of chapter-shaped lines with no prose
+     * between them. Those stay one chapter so each entry is not its own page.
+     * A later "Chapter N" with a real body is still a chapter break.
+     */
+    internal fun collapseContentsRuns(parts: List<EbookChapter>): List<EbookChapter> {
+        if (parts.size < 3) return parts
+        val out = ArrayList<EbookChapter>(parts.size)
+        var i = 0
+        while (i < parts.size) {
+            if (!isContentsStub(parts[i])) {
+                out += parts[i]
+                i++
+                continue
+            }
+            var j = i + 1
+            while (j < parts.size && isContentsStub(parts[j])) j++
+            if (j - i < 3) {
+                while (i < j) {
+                    out += parts[i]
+                    i++
+                }
+                continue
+            }
+            val block = buildString {
+                for (k in i until j) {
+                    val ch = parts[k]
+                    if (ch.title.isNotBlank()) append(ch.title.trim()).append('\n')
+                    val body = ch.text.trim()
+                    if (body.isNotEmpty()) append(body).append('\n')
+                }
+            }.trimEnd()
+            val prev = out.lastOrNull()
+            if (prev != null && isContentsHeader(prev)) {
+                val merged = listOf(prev.text.trim(), block).filter { it.isNotEmpty() }.joinToString("\n")
+                out[out.lastIndex] = prev.copy(text = merged)
+            } else {
+                out += EbookChapter("", block, 0)
+            }
+            i = j
+        }
+        return out
+    }
+
+    private fun isContentsStub(ch: EbookChapter): Boolean {
+        if (!CHAPTER_HEADING.matches(ch.title.trim())) return false
+        val body = ch.text.trim()
+        if (body.isEmpty()) return true
+        if (body.length > 60) return false
+        val lines = body.lines().map { it.trim() }.filter { it.isNotEmpty() }
+        if (lines.size > 2) return false
+        return lines.all { isContentsTail(it) }
+    }
+
+    /** A dotted leader or a bare page number under a contents entry. */
+    private fun isContentsTail(line: String): Boolean {
+        if (line.length > 48) return false
+        if (line.any { it in "。！？!?" }) return false
+        val leaders = line.count {
+            it == '.' || it == '·' || it == '…' || it == '．' || it == '-' || it.isDigit() || it == ' '
+        }
+        if (leaders >= line.length * 0.5f && line.any { it.isDigit() || it == '.' || it == '·' || it == '…' }) {
+            return true
+        }
+        return line.length <= 8 && line.any { it.isDigit() } && line.none { it.isLetter() }
+    }
+
+    private fun isContentsHeader(ch: EbookChapter): Boolean {
+        val title = ch.title.trim()
+        val body = ch.text.trim()
+        if (CONTENTS_HEADER.matches(title) && body.length < 200) return true
+        if (body.length > 80) return false
+        val first = body.lineSequence().firstOrNull { it.isNotBlank() }?.trim().orEmpty()
+        return CONTENTS_HEADER.matches(title) || CONTENTS_HEADER.matches(body) || CONTENTS_HEADER.matches(first)
     }
 
     internal fun chaptersFromMarkdown(text: String, fallbackTitle: String): List<EbookChapter> = chaptersFromPlain(text, fallbackTitle)
@@ -598,6 +674,9 @@ internal object EbookEngine {
     private val MD_HEADING = Regex("""^(#{1,6})\s+(.+)$""")
     private val CHAPTER_HEADING = Regex(
         """^(?:第[0-9一二三四五六七八九十百千零〇两]+[章节回部卷篇]|Chapter\s+\d+|CHAPTER\s+\d+)(?:\s+.*)?$""",
+    )
+    private val CONTENTS_HEADER = Regex(
+        """(?i)^(?:contents|table\s+of\s+contents|toc|目录|目錄|目次|目\s*录)$""",
     )
 }
 

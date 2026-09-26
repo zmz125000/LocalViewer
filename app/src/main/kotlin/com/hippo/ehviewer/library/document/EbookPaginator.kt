@@ -28,6 +28,7 @@ internal data class EbookStyle(
     val marginPercent: Int = 7,
     val verticalMarginPercent: Int = 2,
     val justify: Boolean = false,
+    val hyphenate: Boolean = false,
     val paragraphMode: Int = EbookParagraph.AUTO,
 ) {
     val lineHeightEm: Float get() = lineHeightPercent / 100f
@@ -174,7 +175,7 @@ internal object EbookPaginator {
         val n = c.code
         return when {
             n <= 0x1F || n == 0x7F -> 0f
-            n < 0x7F -> 0.55f
+            n < 0x7F -> ASCII_EM[n]
             n in 0x2E80..0x9FFF -> 1f
             n in 0xF900..0xFAFF -> 1f
             n in 0xFE30..0xFE4F -> 1f
@@ -184,8 +185,41 @@ internal object EbookPaginator {
             n in 0xAC00..0xD7AF -> 1f
             n in 0x1100..0x11FF -> 1f
             n in 0x3130..0x318F -> 1f
-            else -> 0.7f
+            else -> 0.55f
         }
+    }
+
+    /**
+     * Advance widths in em for a typical serif. A flat 0.55 for every ASCII
+     * glyph counted spaces like letters, so English wrapped early and justify
+     * stretched the few gaps on the line.
+     */
+    private val ASCII_EM = FloatArray(0x80).apply {
+        for (i in 0x21..0x7E) this[i] = 0.50f
+        this[' '.code] = 0.28f
+        for (ch in "ijl.,:;!'`|") this[ch.code] = 0.28f
+        this['I'.code] = 0.32f
+        this['J'.code] = 0.40f
+        this['f'.code] = 0.32f
+        this['t'.code] = 0.34f
+        this['r'.code] = 0.36f
+        this['s'.code] = 0.40f
+        this['c'.code] = 0.44f
+        this['('.code] = 0.32f
+        this[')'.code] = 0.32f
+        this['['.code] = 0.32f
+        this[']'.code] = 0.32f
+        this['{'.code] = 0.34f
+        this['}'.code] = 0.34f
+        this['-'.code] = 0.32f
+        this['"'.code] = 0.36f
+        for (ch in 'A'..'Z') if (this[ch.code] == 0.50f) this[ch.code] = 0.66f
+        for (ch in "mw") this[ch.code] = 0.78f
+        this['M'.code] = 0.84f
+        this['W'.code] = 0.90f
+        this['@'.code] = 0.90f
+        this['%'.code] = 0.80f
+        for (ch in '0'..'9') this[ch.code] = 0.52f
     }
 
     private fun wrapHeading(title: String, depth: Int, style: EbookStyle, out: MutableList<EbookLine>) {
@@ -267,6 +301,22 @@ internal object EbookPaginator {
                 continue
             }
             if (width + em > limit() && sb.isNotEmpty()) {
+                val cut = if (style.hyphenate && isHyphenLetter(c)) {
+                    hyphenCut(para, i, sb, limit())
+                } else {
+                    -1
+                }
+                if (cut >= 2) {
+                    val kept = sb.substring(0, cut).trimEnd()
+                    val rest = sb.substring(cut)
+                    sb.clear()
+                    sb.append(kept)
+                    if (kept.isNotEmpty() && !kept.endsWith('-')) sb.append('-')
+                    emit(last = false)
+                    sb.append(rest)
+                    width = lineEm(sb)
+                    continue
+                }
                 val breakAt = lastBreak(sb)
                 if (breakAt > 0 && breakAt < sb.length) {
                     val kept = sb.substring(0, breakAt).trimEnd()
@@ -287,6 +337,37 @@ internal object EbookPaginator {
         if (sb.isNotEmpty()) emit(last = true)
     }
 
+    /** Latin letters that may take a line-end hyphen. CJK already breaks per glyph. */
+    private fun isHyphenLetter(c: Char): Boolean {
+        val n = c.code
+        return n in 'A'.code..'Z'.code || n in 'a'.code..'z'.code || n in 0x00C0..0x024F
+    }
+
+    /**
+     * Index in [sb] where a hyphenated word should break, or -1.
+     * [i] is the paragraph index of the character that does not fit.
+     * At least two letters stay on this line and two continue on the next.
+     */
+    private fun hyphenCut(para: String, i: Int, sb: StringBuilder, limit: Float): Int {
+        var wordStart = sb.length
+        while (wordStart > 0 && isHyphenLetter(sb[wordStart - 1])) wordStart--
+        val onLine = sb.length - wordStart
+        if (onLine < 2) return -1
+        var end = i
+        while (end < para.length && isHyphenLetter(para[end])) end++
+        val remain = end - i
+        if (onLine + remain < 6) return -1
+        // Keep at least two letters for the next line, pulling back if only one overflows.
+        val maxK = minOf(sb.length, sb.length + remain - 2)
+        if (maxK < wordStart + 2) return -1
+        var k = maxK
+        while (k >= wordStart + 2) {
+            if (lineEmRange(sb, 0, k) + charEm('-') <= limit) return k
+            k--
+        }
+        return -1
+    }
+
     private fun lastBreak(sb: StringBuilder): Int {
         for (i in sb.lastIndex downTo 1) {
             val c = sb[i]
@@ -295,9 +376,11 @@ internal object EbookPaginator {
         return -1
     }
 
-    private fun lineEm(sb: StringBuilder): Float {
+    private fun lineEm(sb: StringBuilder): Float = lineEmRange(sb, 0, sb.length)
+
+    private fun lineEmRange(sb: StringBuilder, from: Int, to: Int): Float {
         var w = 0f
-        for (i in 0 until sb.length) w += charEm(sb[i])
+        for (i in from until to) w += charEm(sb[i])
         return w
     }
 }

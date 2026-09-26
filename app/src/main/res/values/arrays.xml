@@ -270,6 +270,8 @@
     <string-array name="ebook_align">
         <item>@string/ebook_align_start</item>
         <item>@string/ebook_align_justify</item>
+        <item>@string/ebook_align_start_hyphen</item>
+        <item>@string/ebook_align_justify_hyphen</item>
     </string-array>
 
     <string-array name="ebook_paragraph_mode">
