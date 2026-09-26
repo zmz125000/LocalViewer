@@ -129,6 +129,8 @@ fun BrowseViewModeMenu(
     var showVirtualGalleries by Settings.browseShowVirtualGalleries.asMutableState()
     var favoritesOnTop by Settings.browseFavoritesOnTop.asMutableState()
     var photoGridMode by Settings.photoGridMode.asMutableState()
+    var browseRecentOpen by Settings.browseRecentOpen.asMutableState()
+    var browseRecentExpanded by Settings.browseRecentExpanded.asMutableState()
     val haptic = LocalHapticFeedback.current
 
     fun selectBrowseSort(mode: BrowseSortMode) {
@@ -245,6 +247,24 @@ fun BrowseViewModeMenu(
                 selected = browseSortMode == BrowseSortMode.Date,
                 ascending = browseSortAscending,
                 onClick = { selectBrowseSort(BrowseSortMode.Date) },
+            )
+            // Tap: show / hide Recent. Long-press: lock = start expanded, tick = start collapsed.
+            ContentModeItem(
+                label = stringResource(R.string.library_sort_last_open),
+                mark = when {
+                    !browseRecentOpen -> ModeMark.None
+                    browseRecentExpanded -> ModeMark.Lock
+                    else -> ModeMark.Tick
+                },
+                onClick = { browseRecentOpen = !browseRecentOpen },
+                onLongClick = {
+                    if (!browseRecentOpen || !browseRecentExpanded) {
+                        browseRecentOpen = true
+                        browseRecentExpanded = true
+                    } else {
+                        browseRecentExpanded = false
+                    }
+                },
             )
             HorizontalDivider()
             ToggleMenuItem(
