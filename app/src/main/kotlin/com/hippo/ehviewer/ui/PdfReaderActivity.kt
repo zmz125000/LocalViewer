@@ -63,6 +63,7 @@ import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.layout.LazyLayoutCacheWindow
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.VerticalPager
@@ -176,7 +177,9 @@ import com.hippo.ehviewer.ui.reader.NavigationOverlay
 import com.hippo.ehviewer.ui.reader.PagerItem
 import com.hippo.ehviewer.ui.reader.PendingReaderOpen
 import com.hippo.ehviewer.ui.reader.ReaderScreenArgs
+import com.hippo.ehviewer.ui.reader.SCROLL_FRACTION
 import com.hippo.ehviewer.ui.reader.SettingsPager
+import com.hippo.ehviewer.ui.reader.WEBTOON_HORIZONTAL_CACHE_FRACTION
 import com.hippo.ehviewer.ui.reader.applyPagerContentAlignment
 import com.hippo.ehviewer.ui.reader.doubleTapAction
 import com.hippo.ehviewer.ui.reader.dualFirstPageIndex
@@ -1389,7 +1392,6 @@ private fun PdfReaderScreen(
 ) {
     val pageCount = imageLoader?.size ?: (doc?.pageCount ?: 0)
     val initial = startPage.coerceIn(0, (pageCount - 1).coerceAtLeast(0))
-    val listState = rememberLazyListState(initialFirstVisibleItemIndex = initial)
     val scope = rememberCoroutineScope()
     val showSeekbar by Settings.showReaderSeekbar.collectAsState()
     val hideTopBar by Settings.readerHideTopBar.collectAsState()
@@ -1504,6 +1506,14 @@ private fun PdfReaderScreen(
     val dualActive = dualPageActive(dualPagePref, isLandscape)
     val pagerDual = isPagerDual(dualActive, readingMode)
     val webtoonHorizontal = isWebtoonHorizontal(dualActive, readingMode)
+    // Same look-ahead as the image reader: compose and render the next page before
+    // it scrolls in. Default prefetch starts that work on the scroll frame itself.
+    val webtoonCacheFraction =
+        if (webtoonHorizontal) WEBTOON_HORIZONTAL_CACHE_FRACTION else SCROLL_FRACTION
+    val listState = rememberLazyListState(
+        LazyLayoutCacheWindow(webtoonCacheFraction, webtoonCacheFraction),
+        initial,
+    )
     val tapRtl = readingMode == ReadingModeType.RIGHT_TO_LEFT || webtoonHorizontal
     val landscapeCoverMode by Settings.landscapeCover.collectAsState()
     var page0Landscape by remember(doc, imageLoader) { mutableStateOf(false) }
@@ -2494,6 +2504,7 @@ private fun PdfSingleVectorPage(
                 runCatching { session.render(index, renderWidth) }.getOrNull()
             }
             if (next != null) {
+                next.prepareToDraw()
                 val prev = bitmap
                 bitmap = next
                 next = null
@@ -2571,6 +2582,7 @@ private fun PdfVectorPage(
                 runCatching { session.render(index, renderWidth) }.getOrNull()
             }
             if (next != null) {
+                next.prepareToDraw()
                 val prev = bitmap
                 bitmap = next
                 next = null
