@@ -26,12 +26,14 @@ internal data class EbookStyle(
     val paragraphPercent: Int = 100,
     val indentEm: Int = 2,
     val marginPercent: Int = 7,
+    val verticalMarginPercent: Int = 2,
     val justify: Boolean = false,
     val paragraphMode: Int = EbookParagraph.AUTO,
 ) {
     val lineHeightEm: Float get() = lineHeightPercent / 100f
     val paragraphEm: Float get() = paragraphPercent / 100f
     val margin: Float get() = marginPercent / 100f
+    val verticalMargin: Float get() = verticalMarginPercent / 100f
 
     // Landscape may exceed the slider max (30 × 1.4). Do not clamp that back to 30.
     val fontFraction: Float get() = fontSize.coerceAtLeast(EBOOK_FONT_SIZE_MIN) / 560f
@@ -54,8 +56,8 @@ internal object EbookPaginator {
 
     fun contentHeightEm(style: EbookStyle = EbookStyle.DEFAULT): Float {
         val invAspect = 1f / ASPECT
-        val m = style.margin
-        return (invAspect - 2f * m).coerceAtLeast(0.2f) / style.fontFraction.coerceAtLeast(0.01f)
+        val v = style.verticalMargin.coerceIn(0f, 0.45f)
+        return (invAspect * (1f - 2f * v)).coerceAtLeast(0.2f) / style.fontFraction.coerceAtLeast(0.01f)
     }
 
     fun headingScale(depth: Int): Float = when (depth.coerceAtLeast(0)) {

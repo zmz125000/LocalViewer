@@ -222,6 +222,18 @@ private fun DocumentStyleSetting() = Column {
         range = 4..12,
         field = margin,
     )
+    val verticalMargin = Settings.ebookVerticalMargin.asMutableState()
+    Text(
+        text = stringResource(id = R.string.pref_ebook_vertical_margin),
+        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    SliderChoice(
+        startSlot = {},
+        endSlot = { Text(text = "${verticalMargin.value}%") },
+        range = 0..12,
+        field = verticalMargin,
+    )
 }
 
 @Composable

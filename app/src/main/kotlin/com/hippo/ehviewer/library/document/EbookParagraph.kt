@@ -5,8 +5,11 @@ package com.hippo.ehviewer.library.document
  * - [HARD]: old files wrap each line to a fixed width. Join consecutive lines
  *   (trim extra spaces at the join). A new paragraph starts on a blank line,
  *   a leading indent, or a short last line of the previous paragraph.
- *   Some hard-clip files put one blank line between every wrapped line; those
- *   blanks are not paragraph breaks, and the shorter line ends the paragraph.
+ *   Strip edge spaces first. Full lines then differ by only a couple of
+ *   characters (34, 35, 36, 34); that spread is still one wrapped line. A
+ *   shorter line ends the paragraph. A blank line between paragraphs does
+ *   too. Some files instead put one blank between every wrapped line; there
+ *   a wider gap is the paragraph break.
  * - [SOFT]: each non-blank line is already a paragraph (no blank line required).
  *   Extra blank lines are not vertical space — they only separate paragraphs.
  * [AUTO] picks from a sample of the chapter.
@@ -43,18 +46,28 @@ internal object EbookParagraph {
             runs++
         }
         if (nonempty.size < 6) return SOFT
+        val prepared = nonempty.map { trimJoinEdge(it) }.filter { it.isNotEmpty() }
+        val counts = prepared.map { it.length }
+        // Fixed-width wraps stay near one character count. Paragraph tails and
+        // indented sentence endings must not hide that cluster.
+        if (clusteredHard(counts)) return HARD
         val ended = nonempty.count { endsSentence(it) }
         if (ended >= nonempty.size * 0.45f) return SOFT
         val indented = nonempty.count { startsIndented(it) }
         if (indented >= nonempty.size * 0.55f) return SOFT
-        val widths = nonempty.map { lineWidth(it.trimEnd()) }.sorted()
+        if (counts.isEmpty()) return SOFT
+        val sortedCounts = counts.sorted()
+        val medCount = sortedCounts[sortedCounts.size / 2]
+        // Blank between wrapped lines. Full lines cluster within a couple of
+        // characters; anything shorter than that cluster ends a paragraph.
+        if (blankSeparatedLines(lines) && medCount in 16..80) {
+            val full = counts.count { it >= medCount - 2 && it <= medCount + 2 }
+            val short = counts.count { it < medCount - 2 }
+            if (full >= nonempty.size * 0.55f && short >= nonempty.size * 0.04f) return HARD
+        }
+        val widths = prepared.map { lineWidth(it) }.sorted()
         val med = widths[widths.size / 2]
         val p75 = widths[(widths.size * 3) / 4]
-        // Blank line between every wrapped line, short line ends the paragraph.
-        if (blankSeparatedLines(lines) && med in 16f..80f) {
-            val short = widths.count { it < med * 0.62f }
-            if (short >= nonempty.size * 0.08f) return HARD
-        }
         val meanRun = if (runs == 0) 1f else runSum.toFloat() / runs
         if (med in 16f..80f && p75 <= 90f && meanRun >= 2.4f) {
             val near = widths.count { it >= p75 * 0.72f }
@@ -79,19 +92,24 @@ internal object EbookParagraph {
     }
 
     private fun hardParagraphs(lines: List<String>): List<String> {
-        val nonempty = lines.mapNotNull { ln ->
-            ln.takeIf { it.isNotBlank() }?.let { lineWidth(it.trimEnd()) }
-        }
-        val typical = if (nonempty.size < 4) {
-            32f
-        } else {
-            nonempty.sorted()[(nonempty.size * 3) / 4]
-        }
-        val shortLimit = typical * 0.62f
         val blanksAreLineBreaks = blankSeparatedLines(lines)
+        val prepared = lines.mapNotNull { ln ->
+            ln.takeIf { it.isNotBlank() }?.let { trimJoinEdge(it) }
+        }
+        val counts = prepared.map { it.length }
+        // A couple of characters of jitter (34, 35, 36) is still a full line.
+        val byCount = blanksAreLineBreaks || clusteredHard(counts)
+        val shortLimit = if (byCount) {
+            (wrapWidth(counts) - 2).toFloat()
+        } else {
+            val widths = prepared.map { lineWidth(it) }.sorted()
+            val typical = if (widths.size < 4) 32f else widths[(widths.size * 3) / 4]
+            typical * 0.62f
+        }
         val out = ArrayList<String>()
         val buf = StringBuilder()
         var prevShort = false
+        var blankRun = 0
         fun flush() {
             val t = buf.toString().trim()
             buf.clear()
@@ -100,13 +118,17 @@ internal object EbookParagraph {
         }
         for (ln in lines) {
             if (ln.isBlank()) {
-                if (!blanksAreLineBreaks) flush()
+                blankRun++
+                // One blank is the wrap separator. A wider gap is a paragraph break.
+                if (!blanksAreLineBreaks || blankRun >= 2) flush()
                 continue
             }
-            val width = lineWidth(ln.trimEnd())
+            blankRun = 0
+            val text = trimJoinEdge(ln)
+            val width = if (byCount) text.length.toFloat() else lineWidth(text)
             val indented = startsIndented(ln)
             if (buf.isNotEmpty() && (indented || prevShort)) flush()
-            joinLine(buf, ln)
+            joinLine(buf, text)
             prevShort = width < shortLimit
         }
         flush()
@@ -153,6 +175,47 @@ internal object EbookParagraph {
             if (em >= 1f) return true
         }
         return em >= 1f
+    }
+
+    /**
+     * True when many lines share one wrap width, give or take two characters,
+     * and shorter lines are common enough to be paragraph tails.
+     */
+    private fun clusteredHard(lengths: List<Int>): Boolean {
+        if (lengths.size < 6) return false
+        val w = wrapWidth(lengths)
+        if (w !in 16..80) return false
+        val full = lengths.count { it in (w - 2)..(w + 2) }
+        val short = lengths.count { it < w - 2 }
+        return full >= lengths.size * 0.40f && short >= lengths.size * 0.08f
+    }
+
+    /**
+     * Center of the busiest ±2 character-count band inside a hard-clip wrap
+     * (about 16–80). Longer lines, including 100+, are not a wrap width.
+     */
+    private fun wrapWidth(lengths: List<Int>): Int {
+        if (lengths.size < 6) {
+            if (lengths.isEmpty()) return 32
+            val sorted = lengths.sorted()
+            return sorted[(sorted.size * 3) / 4]
+        }
+        val hist = IntArray(81)
+        for (n in lengths) if (n in 0..80) hist[n]++
+        var bestW = 32
+        var best = -1
+        for (w in 16..78) {
+            var window = 0
+            for (d in -2..2) {
+                val i = w + d
+                if (i in 0..80) window += hist[i]
+            }
+            if (window > best) {
+                best = window
+                bestW = w
+            }
+        }
+        return bestW
     }
 
     /** True when a blank line sits between almost every content line. */

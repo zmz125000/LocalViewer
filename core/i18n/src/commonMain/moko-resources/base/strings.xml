@@ -967,6 +967,7 @@
     <string name="ebook_align_start">Start</string>
     <string name="ebook_align_justify">Justify</string>
     <string name="pref_ebook_margin">Page margin</string>
+    <string name="pref_ebook_vertical_margin">Top and bottom</string>
     <string name="pref_eink_refresh">E-Ink display refresh</string>
     <string name="pref_eink_refresh_summary">Flash the screen after page changes to reduce ghosting on E-Ink displays. Only applies to Gallery modes.</string>
     <string name="pref_eink_refresh_duration">Refresh flash duration</string>
