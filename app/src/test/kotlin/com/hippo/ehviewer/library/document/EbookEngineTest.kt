@@ -727,16 +727,110 @@ class EbookEngineTest {
         buf[at + 3] = value.toByte()
     }
 
+    @Test
+    fun mobiUsesBuiltInTocInsteadOfThePlainTextScanner() {
+        val html = "<p>Chapter 1</p><p>alpha body</p><p>Chapter 2</p><p>beta body</p>"
+        val posB = html.indexOf("<p>beta")
+        val file = mobiFile(
+            html,
+            emptyList(),
+            ncx = ncxRecords(
+                listOf("Part A" to 0, "Part B" to posB),
+                depths = listOf(0, 1),
+            ),
+        )
+        val chapters = MobiText.parse(file, "book")!!.chapters
+        assertEquals(listOf("Part A", "Part B"), chapters.map { it.title })
+        assertEquals(0, chapters[0].depth)
+        assertEquals(1, chapters[1].depth)
+        assertTrue(chapters[0].text.contains("alpha"))
+        assertTrue(chapters[1].text.contains("beta"))
+        assertTrue(chapters[0].text.contains("Chapter 1"))
+    }
+
+    private fun ncxRecords(
+        entries: List<Pair<String, Int>>,
+        depths: List<Int> = emptyList(),
+    ): List<ByteArray> {
+        val body = java.io.ByteArrayOutputStream()
+        val starts = ArrayList<Int>()
+        for (i in entries.indices) {
+            starts += body.size()
+            val title = entries[i].first.toByteArray(StandardCharsets.UTF_8)
+            body.write(title.size)
+            body.write(title)
+            body.write(0x03)
+            body.write(vwi(entries[i].second))
+            body.write(vwi(depths.getOrElse(i) { 0 }))
+        }
+        val entryStart = 56
+        val idxt = entryStart + body.size()
+        val entry = ByteArray(idxt + 4 + entries.size * 2)
+        entry[0] = 'I'.code.toByte()
+        entry[1] = 'N'.code.toByte()
+        entry[2] = 'D'.code.toByte()
+        entry[3] = 'X'.code.toByte()
+        putInt(entry, 20, idxt)
+        putInt(entry, 24, entries.size)
+        body.toByteArray().copyInto(entry, entryStart)
+        entry[idxt] = 'I'.code.toByte()
+        entry[idxt + 1] = 'D'.code.toByte()
+        entry[idxt + 2] = 'X'.code.toByte()
+        entry[idxt + 3] = 'T'.code.toByte()
+        for (i in starts.indices) {
+            val off = entryStart + starts[i]
+            entry[idxt + 4 + i * 2] = (off ushr 8).toByte()
+            entry[idxt + 5 + i * 2] = off.toByte()
+        }
+        val main = ByteArray(76)
+        main[0] = 'I'.code.toByte()
+        main[1] = 'N'.code.toByte()
+        main[2] = 'D'.code.toByte()
+        main[3] = 'X'.code.toByte()
+        putInt(main, 4, 56)
+        putInt(main, 24, 1)
+        putInt(main, 28, 65001)
+        main[56] = 'T'.code.toByte()
+        main[57] = 'A'.code.toByte()
+        main[58] = 'G'.code.toByte()
+        main[59] = 'X'.code.toByte()
+        putInt(main, 60, 20)
+        putInt(main, 64, 1)
+        main[68] = 1
+        main[69] = 1
+        main[70] = 1
+        main[72] = 4
+        main[73] = 1
+        main[74] = 2
+        return listOf(main, entry)
+    }
+
+    private fun vwi(value: Int): ByteArray {
+        if (value < 0x80) return byteArrayOf((value or 0x80).toByte())
+        val bytes = ArrayList<Int>()
+        var rest = value
+        bytes += (rest and 0x7F) or 0x80
+        rest = rest ushr 7
+        while (rest > 0) {
+            bytes += rest and 0x7F
+            rest = rest ushr 7
+        }
+        bytes.reverse()
+        return ByteArray(bytes.size) { bytes[it].toByte() }
+    }
+
     private fun mobiFile(
         html: String,
         images: List<ByteArray>,
         extraFlags: Int = 0,
         trailing: ByteArray = ByteArray(0),
         textParts: List<ByteArray>? = null,
+        ncx: List<ByteArray> = emptyList(),
     ): ByteArray {
         val text = html.toByteArray(StandardCharsets.UTF_8)
         val parts = textParts ?: listOf(text + trailing)
-        val rec0 = ByteArray(16 + 232)
+        val headerLen = if (ncx.isEmpty()) 232 else 0xF8
+        val rec0 = ByteArray(16 + headerLen)
         rec0[1] = 1
         putInt(rec0, 4, if (textParts == null) text.size else parts.sumOf { it.size })
         rec0[8] = (parts.size ushr 8).toByte()
@@ -745,9 +839,11 @@ class EbookEngineTest {
         rec0[17] = 'O'.code.toByte()
         rec0[18] = 'B'.code.toByte()
         rec0[19] = 'I'.code.toByte()
-        putInt(rec0, 20, 232)
+        putInt(rec0, 20, headerLen)
         putInt(rec0, 16 + 12, 65001)
-        putInt(rec0, 16 + 108, if (images.isEmpty()) -1 else 2)
+        val imageAt = 1 + parts.size + ncx.size
+        putInt(rec0, 16 + 108, if (images.isEmpty()) -1 else imageAt)
+        if (ncx.isNotEmpty()) putInt(rec0, 16 + 0xF4, 1 + parts.size)
         if (extraFlags != 0) {
             rec0[0xF2] = (extraFlags ushr 8).toByte()
             rec0[0xF3] = extraFlags.toByte()
@@ -755,6 +851,7 @@ class EbookEngineTest {
         val records = ArrayList<ByteArray>()
         records += rec0
         records += parts
+        records += ncx
         records += images
         val n = records.size
         val header = 78 + n * 8
