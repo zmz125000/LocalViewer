@@ -10,6 +10,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
+import org.junit.Assume.assumeTrue
 import org.junit.Test
 
 class EbookEngineTest {
@@ -746,6 +747,29 @@ class EbookEngineTest {
         assertTrue(chapters[0].text.contains("alpha"))
         assertTrue(chapters[1].text.contains("beta"))
         assertTrue(chapters[0].text.contains("Chapter 1"))
+    }
+
+    @Test
+    fun sampleMobiUsesFirstNonBookTocWhenNcxFieldIsEmpty() {
+        val samples = File("/home/zlx22/LocalViewer/samples")
+        val pride = File(samples, "PridePrejudice-MOBI.mobi")
+        val crime = File(samples, "CrimePunishment-MOBI.mobi")
+        val mars = File(samples, "PrincessOfMars-MOBI.mobi")
+        assumeTrue(pride.isFile && crime.isFile && mars.isFile)
+        val prideTitles = MobiText.parse(pride.readBytes(), "Pride")!!.chapters.map { it.title }
+        assertTrue(prideTitles.contains("Title Page"))
+        assertTrue(prideTitles.contains("Copyright Page"))
+        assertTrue(prideTitles.contains("Chapter 1"))
+        assertTrue(prideTitles.contains("Chapter 61"))
+        assertTrue(prideTitles.contains("About BB eBooks"))
+        val crimeTitles = MobiText.parse(crime.readBytes(), "Crime")!!.chapters.map { it.title }
+        assertTrue(crimeTitles.any { it.contains("Translator") && it.contains("Preface") })
+        assertTrue(crimeTitles.contains("Epilogue"))
+        assertTrue(crimeTitles.contains("About BB eBooks"))
+        val marsTitles = MobiText.parse(mars.readBytes(), "Mars")!!.chapters.map { it.title }
+        assertTrue(marsTitles.contains("Half-Title"))
+        assertTrue(marsTitles.contains("Frontispiece"))
+        assertTrue(marsTitles.contains("28. At the Arizona Cave"))
     }
 
     private fun ncxRecords(

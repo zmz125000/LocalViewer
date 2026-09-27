@@ -42,11 +42,14 @@ internal object MobiText {
         // PalmDOC emit a few garbage characters about every 4096 bytes.
         val extraFlags = if (mobi && headerLen >= 0xE4 && rec0.size >= 0xF4) u16(rec0, 0xF2) else 0
         val firstImage = if (mobi && headerLen > 112 && rec0.size >= 16 + 112) u32(rec0, 16 + 108) else -1
-        // NCX index record. Present once the MOBI header reaches 0xF8.
-        val ncxIndex = if (mobi && headerLen >= 0xF8 && rec0.size >= 16 + 0xF8) {
-            u32(rec0, 16 + 0xF4)
-        } else {
-            -1
+        // NCX index record. Present once the MOBI header reaches 0xF8. 0xFFFFFFFF means none.
+        // Hybrid files leave that field empty and keep the contents INDX at the first non-book record.
+        val ncxField = if (mobi && headerLen >= 0xF8 && rec0.size >= 16 + 0xF8) u32(rec0, 16 + 0xF4) else -1
+        val firstNonBook = if (mobi && headerLen >= 0x44 && rec0.size >= 16 + 0x44) u32(rec0, 16 + 0x40) else -1
+        val ncxIndex = when {
+            isIndx(bytes, records, ncxField) -> ncxField
+            firstNonBook > textRecords && isIndx(bytes, records, firstNonBook) -> firstNonBook
+            else -> -1
         }
 
         // PalmDOC splits the uncompressed stream every 4096 bytes, which cuts UTF-8
@@ -177,6 +180,14 @@ internal object MobiText {
     private data class NcxItem(val title: String, val pos: Int, val depth: Int)
 
     private data class TagSpec(val tag: Int, val valuesPerEntry: Int, val mask: Int, val endFlag: Int)
+
+    private fun isIndx(file: ByteArray, records: List<Int>, index: Int): Boolean {
+        if (index !in records.indices) return false
+        val start = records[index]
+        if (start < 0 || start + 4 > file.size) return false
+        return file[start] == INDX[0] && file[start + 1] == INDX[1] &&
+            file[start + 2] == INDX[2] && file[start + 3] == INDX[3]
+    }
 
     /**
      * Built-in contents (NCX index). File positions are byte offsets into the
