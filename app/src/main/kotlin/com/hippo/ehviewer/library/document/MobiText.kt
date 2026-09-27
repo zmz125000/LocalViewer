@@ -1,5 +1,6 @@
 package com.hippo.ehviewer.library.document
 
+import java.io.ByteArrayOutputStream
 import java.nio.charset.Charset
 
 /**
@@ -34,27 +35,36 @@ internal object MobiText {
             rec0[18] == 'B'.code.toByte() && rec0[19] == 'I'.code.toByte()
         val headerLen = if (mobi && rec0.size >= 24) u32(rec0, 20) else 0
         val encoding = if (mobi && headerLen >= 16 && rec0.size >= 16 + 16) u32(rec0, 16 + 12) else 1252
-        val extraFlags = if (mobi && headerLen > 0xF2 && rec0.size >= 16 + 0xF2) u16(rec0, 16 + 0xF0) else 0
+        // Extra-data flags sit at record 0 offset 0xF2 once the MOBI header is at least 0xE4.
+        // They describe trailer bytes on every text record. Leaving those bytes in makes
+        // PalmDOC emit a few garbage characters about every 4096 bytes.
+        val extraFlags = if (mobi && headerLen >= 0xE4 && rec0.size >= 0xF4) u16(rec0, 0xF2) else 0
         val firstImage = if (mobi && headerLen > 112 && rec0.size >= 16 + 112) u32(rec0, 16 + 108) else -1
 
-        val text = StringBuilder()
-        val lastText = textRecords
-        for (n in 1..lastText) {
+        // PalmDOC splits the uncompressed stream every 4096 bytes, which cuts UTF-8
+        // characters in half. Decode the joined bytes once; per-record decode turns
+        // that cut into replacement characters.
+        val raw = ByteArrayOutputStream()
+        for (n in 1..textRecords) {
             if (n >= records.size) break
             val end = records.getOrNull(n + 1) ?: bytes.size
             var chunk = slice(bytes, records[n], end) ?: continue
-            if (extraFlags != 0 && n != lastText) {
+            if (extraFlags != 0) {
                 chunk = stripExtra(chunk, extraFlags)
             }
             val plain = when (compression) {
                 COMPRESSION_NONE -> chunk
                 else -> palmdoc(chunk)
             }
-            text.append(decode(plain, encoding))
-            if (text.length >= textLen && textLen > 0) break
+            if (textLen > 0) {
+                val room = textLen - raw.size()
+                if (room <= 0) break
+                if (plain.size <= room) raw.write(plain) else raw.write(plain, 0, room)
+            } else {
+                raw.write(plain)
+            }
         }
-        var html = text.toString()
-        if (textLen in 1 until html.length) html = html.substring(0, textLen)
+        val html = decode(raw.toByteArray(), encoding)
 
         val imageRecs = LinkedHashMap<Int, ByteArray>()
         if (firstImage > 0) {

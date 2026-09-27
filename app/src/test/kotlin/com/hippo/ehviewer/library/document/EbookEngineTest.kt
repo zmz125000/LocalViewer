@@ -417,6 +417,37 @@ class EbookEngineTest {
     }
 
     @Test
+    fun mobiRecordTrailersStayOutOfTheText() {
+        val sentence = "哲学思考是一种多少有点让人感到晕眩的活动，无法得出任何东西。"
+        // Flags 0x0009: one sized trailer plus the multibyte-overlap byte in front of it.
+        val file = mobiFile(
+            sentence,
+            emptyList(),
+            extraFlags = 0x0009,
+            trailing = byteArrayOf(0x00, 0x81.toByte()),
+        )
+        val book = MobiText.parse(file, "Story")
+        assertNotNull(book)
+        val body = book!!.chapters.joinToString("") { it.text }
+        assertTrue(body.contains("感到晕眩的活动"))
+        assertTrue(body.contains("无法得出任何东西"))
+        assertFalse(body.contains('\uFFFD'))
+    }
+
+    @Test
+    fun mobiUtf8CharacterSpanningRecordsStaysIntact() {
+        val ding = "定".toByteArray(StandardCharsets.UTF_8)
+        val head = "他们就决".toByteArray(StandardCharsets.UTF_8) + byteArrayOf(ding[0])
+        val tail = byteArrayOf(ding[1], ding[2]) + "预备启程".toByteArray(StandardCharsets.UTF_8)
+        val file = mobiFile("", emptyList(), textParts = listOf(head, tail))
+        val book = MobiText.parse(file, "Story")
+        assertNotNull(book)
+        val body = book!!.chapters.joinToString("") { it.text }
+        assertTrue(body.contains("他们就决定预备启程"))
+        assertFalse(body.contains('\uFFFD'))
+    }
+
+    @Test
     fun basicMobiTextAndImage() {
         val html = "Hello <b>world</b><img recindex=\"00001\" />"
         val png = ByteArray(24)
@@ -696,12 +727,20 @@ class EbookEngineTest {
         buf[at + 3] = value.toByte()
     }
 
-    private fun mobiFile(html: String, images: List<ByteArray>): ByteArray {
+    private fun mobiFile(
+        html: String,
+        images: List<ByteArray>,
+        extraFlags: Int = 0,
+        trailing: ByteArray = ByteArray(0),
+        textParts: List<ByteArray>? = null,
+    ): ByteArray {
         val text = html.toByteArray(StandardCharsets.UTF_8)
+        val parts = textParts ?: listOf(text + trailing)
         val rec0 = ByteArray(16 + 232)
         rec0[1] = 1
-        putInt(rec0, 4, text.size)
-        rec0[9] = 1
+        putInt(rec0, 4, if (textParts == null) text.size else parts.sumOf { it.size })
+        rec0[8] = (parts.size ushr 8).toByte()
+        rec0[9] = parts.size.toByte()
         rec0[16] = 'M'.code.toByte()
         rec0[17] = 'O'.code.toByte()
         rec0[18] = 'B'.code.toByte()
@@ -709,9 +748,13 @@ class EbookEngineTest {
         putInt(rec0, 20, 232)
         putInt(rec0, 16 + 12, 65001)
         putInt(rec0, 16 + 108, if (images.isEmpty()) -1 else 2)
+        if (extraFlags != 0) {
+            rec0[0xF2] = (extraFlags ushr 8).toByte()
+            rec0[0xF3] = extraFlags.toByte()
+        }
         val records = ArrayList<ByteArray>()
         records += rec0
-        records += text
+        records += parts
         records += images
         val n = records.size
         val header = 78 + n * 8
