@@ -2255,7 +2255,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                     val browseSortModePref by Settings.browseSortMode.collectAsState()
                     val browseSortMode = BrowseSortMode.fromPref(browseSortModePref)
                     val browseSortAscending by Settings.browseSortAscending.collectAsState()
-                    val sections = filteredEntries.toBrowseSections()
+                    val sections = filteredEntries.toBrowseSections(contentMode)
                     // UI-only order; DirectoryListing / folderImages / open-gallery stay name-sorted.
                     val dirsRaw = sections.directories
                         .filterIsInstance<BrowseEntry.Directory>()

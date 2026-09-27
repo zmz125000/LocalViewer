@@ -22,10 +22,13 @@ class DirectoryListingDocumentTagTest {
         val photo = entries.filterRemoteByContentMode(BrowseContentMode.Galleries)
         assertTrue(photo.any { it is BrowseEntryRemote.ArchiveGallery && it.name == "guide.pdf" })
         assertTrue(photo.any { it is BrowseEntryRemote.ArchiveGallery && it.name == "pack.cbz" })
-        val photoSections = photo.toRemoteBrowseSections()
-        assertTrue(photoSections.documents.any { it.name == "guide.pdf" })
+        val photoSections = photo.toRemoteBrowseSections(BrowseContentMode.Galleries)
+        assertTrue(photoSections.galleries.any { it.name == "guide.pdf" })
         assertTrue(photoSections.galleries.any { it.name == "pack.cbz" })
-        assertFalse(photoSections.galleries.any { it.name == "guide.pdf" })
+        assertTrue(photoSections.documents.isEmpty())
+        val docSections = docs.toRemoteBrowseSections(BrowseContentMode.Document)
+        assertEquals(listOf("guide.pdf"), docSections.documents.map { it.name })
+        assertTrue(docSections.galleries.isEmpty())
     }
 
     @Test
@@ -149,7 +152,7 @@ class DirectoryListingDocumentTagTest {
         assertTrue(docs.any { it.name == "photo.jpg" })
         assertFalse(docs.any { it.name == "pack.cbz" })
         assertFalse(docs.any { it.name == "clip.mp4" })
-        val sections = docs.toRemoteBrowseSections()
+        val sections = docs.toRemoteBrowseSections(BrowseContentMode.Document)
         assertEquals(listOf("guide.pdf", "notes.txt"), sections.documents.map { it.name }.sorted())
         assertEquals(listOf("photo.jpg"), sections.files.map { it.name })
         assertTrue(sections.galleries.isEmpty())
@@ -271,10 +274,38 @@ class DirectoryListingDocumentTagTest {
         }
         assertTrue(out.any { it is BrowseEntryRemote.RegularFile && it.name == "empty-guide.pdf" })
         assertTrue(out.any { it is BrowseEntryRemote.ArchiveGallery && it.name == "pack.cbz" })
-        val sections = out.toRemoteBrowseSections()
+        val sections = out.toRemoteBrowseSections(BrowseContentMode.Galleries)
         assertTrue(sections.documents.any { it is BrowseEntryRemote.RegularFile && it.name == "empty-guide.pdf" })
         assertTrue(sections.galleries.any { it.name == "pack.cbz" })
         assertFalse(sections.galleries.any { it.name.endsWith(".pdf") })
+        val photo = out.filterRemoteByContentMode(BrowseContentMode.Galleries)
+        assertFalse(photo.any { it.name == "empty-guide.pdf" })
+        val docs = out.filterRemoteByContentMode(BrowseContentMode.Document)
+        assertTrue(docs.any { it is BrowseEntryRemote.RegularFile && it.name == "empty-guide.pdf" })
+        assertFalse(docs.any { it.name == "pack.cbz" })
+    }
+
+    @Test
+    fun emptyComicArchiveLeavesPhotoAndDocument() {
+        val key = "smb:9:empty-pack.cbz"
+        EmptyArchiveRegistry.mark(key)
+        val entries = listOf(
+            BrowseEntryRemote.ArchiveGallery(name = "empty-pack.cbz", fileName = "empty-pack.cbz"),
+            BrowseEntryRemote.RegularFile(name = "photo.jpg", fileName = "photo.jpg"),
+            BrowseEntryRemote.RegularFile(name = "notes.txt", fileName = "notes.txt"),
+        )
+        val out = EmptyArchiveRegistry.filterRemoteEntries(entries) { arch ->
+            "smb:9:${arch.fileName}"
+        }
+        assertTrue(out.any { it is BrowseEntryRemote.RegularFile && it.name == "empty-pack.cbz" })
+        val photo = out.filterRemoteByContentMode(BrowseContentMode.Galleries)
+        assertFalse(photo.any { it.name == "empty-pack.cbz" })
+        val docs = out.filterRemoteByContentMode(BrowseContentMode.Document)
+        assertFalse(docs.any { it.name == "empty-pack.cbz" })
+        assertTrue(docs.any { it.name == "photo.jpg" })
+        assertTrue(docs.any { it.name == "notes.txt" })
+        val folder = out.filterRemoteByContentMode(BrowseContentMode.Folder)
+        assertTrue(folder.any { it is BrowseEntryRemote.RegularFile && it.name == "empty-pack.cbz" })
     }
 
     @Test
