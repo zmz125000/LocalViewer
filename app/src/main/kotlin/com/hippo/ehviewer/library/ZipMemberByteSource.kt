@@ -174,24 +174,24 @@ class ZipMemberByteSource private constructor(
 }
 
 /**
- * Video members are ranged/prefix-read. Image members used by FUSE / reader extract
- * into [ZipMemberCover] (NAND). Explicit Open / Share uses [ZipMemberCover.materialize]
- * (any member type, origin LRU). Browse thumbs use [ZipMemberCover.ensureBrowseThumb].
+ * Video, HTML, and PDF-reader documents are ranged from the zip.
+ * Image members used by the photo reader extract into [ZipMemberCover].
+ * Explicit Open / Share of other types uses [ZipMemberCover.materialize].
  */
 fun openZipContainedFileSource(
     zipKey: String,
     memberRel: String,
     openZip: () -> ArchiveByteSource,
 ): ArchiveByteSource {
-    if (isVideoFileName(memberRel)) {
-        val zip = openZip()
-        return ZipMemberByteSource.open(zip, memberRel, ownsZip = true)
-            ?: run {
-                runCatching { zip.close() }
-                throw IOException("Cannot stream ZIP video member $memberRel")
-            }
+    if (isImageFileName(memberRel)) {
+        val local = ZipMemberCover.ensure(zipKey, memberRel) { openZip() }
+            ?: throw IOException("Cannot extract ZIP member $memberRel")
+        return FileArchiveByteSource(File(local.toString()))
     }
-    val local = ZipMemberCover.ensure(zipKey, memberRel) { openZip() }
-        ?: throw IOException("Cannot extract ZIP member $memberRel")
-    return FileArchiveByteSource(File(local.toString()))
+    val zip = openZip()
+    return ZipMemberByteSource.open(zip, memberRel, ownsZip = true)
+        ?: run {
+            runCatching { zip.close() }
+            throw IOException("Cannot stream ZIP member $memberRel")
+        }
 }
