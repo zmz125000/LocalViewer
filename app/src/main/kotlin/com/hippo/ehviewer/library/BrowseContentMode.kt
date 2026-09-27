@@ -71,13 +71,10 @@ fun DirPresence.visibleIn(
                     this != DirPresence.Empty &&
                     this != DirPresence.PromotedShell
                 )
+    // Own tag. A document does not change photo/video presence, so this
+    // includes leaves, promoted video shells, and document-only folders.
     BrowseContentMode.Document ->
-        this == DirPresence.Pending ||
-            (
-                hasDocument &&
-                    this != DirPresence.Empty &&
-                    this != DirPresence.PromotedShell
-                )
+        this == DirPresence.Pending || hasDocument
     // Folder = real FS: hide virtual promoted video dirs (PromotedShell parent stays).
     BrowseContentMode.Folder -> this != DirPresence.PromotedVideoLeaf
 }
