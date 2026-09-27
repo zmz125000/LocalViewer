@@ -451,6 +451,8 @@ internal class PdfParser(
     private val indirectLength = Regex("""/Length\s+(\d+)\s+(\d+)\s+R""")
     data class XRefEntry(val offset: Long, val gen: Int, val free: Boolean)
 
+    private data class XrefSection(val parsed: Boolean, val prev: Long?)
+
     private data class PendingPageNode(
         val value: PdfValue,
         val inheritedResources: PdfValue?,
@@ -529,6 +531,7 @@ internal class PdfParser(
         visitedXrefOffsets.clear()
         rootRef = null
         encrypted = false
+        namedDests = null
     }
 
     private fun shiftedOffset(offset: Long): Long? {
@@ -606,12 +609,15 @@ internal class PdfParser(
         val root = rootRef?.let { resolve(it) } as? PdfDict ?: return null
         val outlines = root["/Outlines"]?.let { resolveValue(it) } as? PdfDict ?: return emptyList()
         val pending = ArrayList<PendingOutline>(32)
+        val seen = HashSet<Int>()
         fun walk(node: PdfDict, depth: Int) {
-            if (!stillWanted() || depth > 12 || pending.size >= 500) return
+            if (!stillWanted() || depth > MAX_OUTLINE_DEPTH || pending.size >= MAX_OUTLINE_ENTRIES) return
             var child = node["/First"]?.let { resolveValue(it) } as? PdfDict
             var guard = 0
-            while (child != null && guard++ < 500 && pending.size < 500) {
+            while (child != null && guard++ < MAX_OUTLINE_ENTRIES && pending.size < MAX_OUTLINE_ENTRIES) {
                 if (!stillWanted()) return
+                val id = child.objNum
+                if (id != null && !seen.add(id)) return
                 val title = pdfOutlineTitle(child["/Title"])
                 val dest = outlineDest(child)
                 if (title.isNotBlank() && dest != null) {
@@ -655,7 +661,7 @@ internal class PdfParser(
             ?: return null
         // An indirect /Dest is the destination array (or a name), not the page.
         val dest = if (raw is PdfRef) resolve(raw) ?: return null else raw
-        val array = dest as? PdfArray ?: return null
+        val array = destArray(dest) ?: return null
         val first = array.items.firstOrNull() ?: return null
         return when (first) {
             is PdfRef -> OutlineDest.PageObj(first.num)
@@ -668,6 +674,88 @@ internal class PdfParser(
                 else -> null
             }
         }
+    }
+
+    /**
+     * `/D` may be an array, a destination dictionary, or a name looked up in
+     * the catalog name tree (`/Names /Dests` or the older `/Dests` dict).
+     */
+    private fun destArray(dest: PdfValue, depth: Int = 0): PdfArray? {
+        if (depth > 4) return null
+        return when (dest) {
+            is PdfArray -> dest
+            is PdfDict -> {
+                val inner = dest["/D"] ?: return null
+                val resolved = if (inner is PdfRef) resolve(inner) ?: return null else inner
+                destArray(resolved, depth + 1)
+            }
+            is PdfString, is PdfName -> {
+                val found = lookupNamedDest(dest) ?: return null
+                destArray(found, depth + 1)
+            }
+            else -> null
+        }
+    }
+
+    private var namedDests: Map<String, PdfValue>? = null
+
+    private fun lookupNamedDest(token: PdfValue): PdfValue? {
+        val key = when (token) {
+            is PdfString -> String(token.bytes, Charsets.ISO_8859_1)
+            is PdfName -> token.name.removePrefix("/")
+            else -> return null
+        }
+        if (key.isEmpty()) return null
+        val found = destinationNames()[key] ?: return null
+        return resolveValue(found) ?: found
+    }
+
+    private fun destinationNames(): Map<String, PdfValue> {
+        namedDests?.let { return it }
+        val map = HashMap<String, PdfValue>()
+        val root = rootRef?.let { resolve(it) } as? PdfDict
+        if (root != null) {
+            val names = root["/Names"]?.let { resolveValue(it) } as? PdfDict
+            val tree = names?.get("/Dests")?.let { resolveValue(it) } as? PdfDict
+            if (tree != null) collectNameTree(tree, map, 0)
+            val old = root["/Dests"]?.let { resolveValue(it) } as? PdfDict
+            if (old != null && old["/Names"] == null && old["/Kids"] == null) {
+                for ((k, v) in old.map) {
+                    if (!k.startsWith("/")) continue
+                    map.putIfAbsent(k.removePrefix("/"), v)
+                }
+            }
+        }
+        namedDests = map
+        return map
+    }
+
+    private fun collectNameTree(node: PdfDict, map: HashMap<String, PdfValue>, depth: Int) {
+        if (depth > 32) return
+        val names = node["/Names"]?.let { resolveValue(it) } as? PdfArray
+        if (names != null) {
+            val items = names.items
+            var i = 0
+            while (i + 1 < items.size) {
+                val key = nameTreeKey(items[i])
+                if (key != null) map.putIfAbsent(key, items[i + 1])
+                i += 2
+            }
+        }
+        val kids = node["/Kids"]?.let { resolveValue(it) } as? PdfArray ?: return
+        for (kid in kids.items) {
+            val dict = resolveValue(kid) as? PdfDict ?: continue
+            collectNameTree(dict, map, depth + 1)
+        }
+    }
+
+    private fun nameTreeKey(value: PdfValue): String? {
+        val text = when (val resolved = resolveValue(value) ?: value) {
+            is PdfString -> String(resolved.bytes, Charsets.ISO_8859_1)
+            is PdfName -> resolved.name.removePrefix("/")
+            else -> return null
+        }
+        return text.takeIf { it.isNotEmpty() }
     }
 
     private fun normalizeOutlinePage(raw: Int, pageCount: Int, pageOf: Map<Int, Int>): Int? {
@@ -1856,18 +1944,38 @@ internal class PdfParser(
         return Triple(offset, gen, flag == 'f')
     }
 
-    private fun loadXrefMaybeShifted(offset: Long): Boolean {
-        if (loadXref(offset)) return true
-        val shifted = shiftedOffset(offset) ?: return false
-        return loadXref(shifted)
+    /**
+     * Follow `/Prev` in a loop. Recursing once per incremental section kept a
+     * multi-megabyte xref chunk live on every frame and died at [MAX_XREF_SECTIONS].
+     */
+    private fun loadXref(start: Long): Boolean {
+        var next: Long? = start
+        while (next != null) {
+            val at = next
+            next = null
+            if (at < 0L || at >= fileSize) break
+            if (!visitedXrefOffsets.add(at)) break
+            if (visitedXrefOffsets.size > MAX_XREF_SECTIONS) break
+            var section = readXrefSection(at)
+            if (!section.parsed) {
+                val shifted = shiftedOffset(at)
+                if (shifted != null &&
+                    visitedXrefOffsets.add(shifted) &&
+                    visitedXrefOffsets.size <= MAX_XREF_SECTIONS
+                ) {
+                    section = readXrefSection(shifted)
+                }
+            }
+            if (!section.parsed) break
+            val prev = section.prev
+            if (prev != null && prev > 0L && prev != at) next = prev
+        }
+        return rootRef != null
     }
 
-    private fun loadXref(offset: Long): Boolean {
-        if (offset < 0 || offset >= fileSize) return false
-        if (!visitedXrefOffsets.add(offset)) return rootRef != null
-        if (visitedXrefOffsets.size > MAX_XREF_SECTIONS) return false
-        // Peek: "xref" vs object stream
-        val peek = readBytes(offset, minOf(64, (fileSize - offset).toInt())) ?: return false
+    private fun readXrefSection(offset: Long): XrefSection {
+        val peek = readBytes(offset, minOf(64, (fileSize - offset).toInt()))
+            ?: return XrefSection(parsed = false, prev = null)
         val peekStr = String(peek, Charsets.ISO_8859_1).trimStart()
         return if (peekStr.startsWith("xref")) {
             loadClassicXref(offset)
@@ -1876,12 +1984,12 @@ internal class PdfParser(
         }
     }
 
-    private fun loadClassicXref(offset: Long): Boolean {
+    private fun loadClassicXref(offset: Long): XrefSection {
         // Read a generous chunk for xref + trailer
         val chunkSize = minOf(fileSize - offset, 2L * 1024 * 1024).toInt().coerceAtLeast(256)
-        val data = readBytes(offset, chunkSize) ?: return false
+        val data = readBytes(offset, chunkSize) ?: return XrefSection(parsed = false, prev = null)
         val text = String(data, Charsets.ISO_8859_1)
-        if (!text.startsWith("xref")) return false
+        if (!text.startsWith("xref")) return XrefSection(parsed = false, prev = null)
         var pos = 4
         fun skipWs() {
             while (pos < text.length && text[pos].isPdfWs()) pos++
@@ -1918,10 +2026,10 @@ internal class PdfParser(
             }
         }
         val tIdx = text.indexOf("trailer")
-        if (tIdx < 0) return false
+        if (tIdx < 0) return XrefSection(parsed = false, prev = null)
         val dictStart = text.indexOf("<<", tIdx)
-        if (dictStart < 0) return false
-        val (trailer, _) = parseDict(data, dictStart) ?: return false
+        if (dictStart < 0) return XrefSection(parsed = false, prev = null)
+        val (trailer, _) = parseDict(data, dictStart) ?: return XrefSection(parsed = false, prev = null)
         if (trailer["/Encrypt"] != null) encrypted = true
         if (rootRef == null) {
             rootRef = trailer["/Root"] as? PdfRef
@@ -1930,36 +2038,33 @@ internal class PdfParser(
         // xref stream referenced by the classic trailer.
         val xrefStream = trailer.intValue("/XRefStm")?.toLong()
         if (xrefStream != null && xrefStream > 0L && xrefStream != offset) {
-            loadXrefMaybeShifted(xrefStream)
+            loadXref(xrefStream)
         }
-        // Prev chain (older xref sections)
         val prev = trailer.intValue("/Prev")?.toLong()
             ?: (trailer["/Prev"] as? PdfNumber)?.value?.toLong()
-        if (prev != null && prev > 0 && prev != offset) {
-            loadXrefMaybeShifted(prev)
-        }
-        return rootRef != null
+        return XrefSection(parsed = true, prev = prev)
     }
 
-    private fun loadXrefStream(offset: Long): Boolean {
+    private fun loadXrefStream(offset: Long): XrefSection {
+        val failed = XrefSection(parsed = false, prev = null)
         val stream = run {
-            val raw = readObjectBytes(offset) ?: return false
+            val raw = readObjectBytes(offset) ?: return failed
             val text = String(raw, Charsets.ISO_8859_1)
-            val om = Regex("""(\d+)\s+(\d+)\s+obj""").find(text) ?: return false
+            val om = Regex("""(\d+)\s+(\d+)\s+obj""").find(text) ?: return failed
             val num = om.groupValues[1].toInt()
             val gen = om.groupValues[2].toInt()
             parseStreamAt(raw, num, gen)
-        } ?: return false
+        } ?: return failed
         val dict = stream.dict
         if (dict["/Encrypt"] != null) encrypted = true
         // Prefer the most recent trailer Root (load older /Prev after this).
         if (rootRef == null) {
             rootRef = dict["/Root"] as? PdfRef
         }
-        val size = dict.intValue("/Size") ?: return false
-        val wArr = dict["/W"] as? PdfArray ?: return false
+        val size = dict.intValue("/Size") ?: return failed
+        val wArr = dict["/W"] as? PdfArray ?: return failed
         val w = wArr.items.mapNotNull { (it as? PdfNumber)?.value?.toInt() }
-        if (w.size < 3) return false
+        if (w.size < 3) return failed
         val (w1, w2, w3) = Triple(w[0], w[1], w[2])
         val indexArr = (dict["/Index"] as? PdfArray)?.items
             ?.mapNotNull { (it as? PdfNumber)?.value?.toInt() }
@@ -1969,15 +2074,15 @@ internal class PdfParser(
         val filters = filterNames(dict["/Filter"])
         for (f in filters) {
             data = when (f) {
-                "/FlateDecode", "/Fl" -> inflate(data) ?: return false
-                else -> return false
+                "/FlateDecode", "/Fl" -> inflate(data) ?: return failed
+                else -> return failed
             }
         }
         // Corel / many PDF 1.5+ producers: xref stream uses PNG predictor (Predictor 10–15).
         // Without this, every object offset is garbage → 0 page images (NoImages).
-        data = applyStreamPredictor(dict, data) ?: return false
+        data = applyStreamPredictor(dict, data) ?: return failed
         val entrySize = w1 + w2 + w3
-        if (entrySize <= 0) return false
+        if (entrySize <= 0) return failed
         var di = 0
         var ii = 0
         var type1 = 0
@@ -2028,10 +2133,7 @@ internal class PdfParser(
                 "type1=$type1 type2=$type2 root=$rootRef"
         }
         val prev = dict.intValue("/Prev")?.toLong()
-        if (prev != null && prev > 0 && prev != offset) {
-            loadXrefMaybeShifted(prev)
-        }
-        return rootRef != null
+        return XrefSection(parsed = true, prev = prev)
     }
 
     /**
@@ -2497,7 +2599,12 @@ internal class PdfParser(
         const val MAX_READ_CALLS = 8
         const val SHORT_READ_BYTES = 64 * 1024
         const val IO_FAIL_RETRIES = 3
-        const val MAX_XREF_SECTIONS = 64
+
+        // A file saved incrementally once per edit can chain well past a hundred
+        // xref sections. The visited set already stops cycles.
+        const val MAX_XREF_SECTIONS = 2048
+        const val MAX_OUTLINE_DEPTH = 48
+        const val MAX_OUTLINE_ENTRIES = 8000
         const val MAX_COVER_SCAN_PAGES = 16
         const val MAX_PAGES = 100_000
         const val MAX_STREAM_HEADER_BYTES = 32 * 1024L

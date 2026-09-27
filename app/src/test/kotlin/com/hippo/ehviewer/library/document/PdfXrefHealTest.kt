@@ -3,6 +3,7 @@ package com.hippo.ehviewer.library.document
 import com.hippo.ehviewer.library.ArchiveByteSource
 import java.io.File
 import java.io.RandomAccessFile
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
@@ -86,6 +87,50 @@ class PdfXrefHealTest {
     }
 
     @Test
+    fun namedOutlineDestinationResolvesThroughNameTree() {
+        val bytes = namedDestPdf()
+        val parser = PdfParser(ByteArraySource(bytes), bytes.size.toLong())
+        val chapters = parser.readOutlines(pageCount = 1)
+        assertNotNull(chapters)
+        assertEquals(1, chapters!!.size)
+        assertEquals("Preface", chapters[0].title)
+        assertEquals(0, chapters[0].pageIndex)
+    }
+
+    @Test
+    fun outlineSurvivesIncrementalXrefChainPastTheOldCap() {
+        // 80 updates + the original table. The bookmark object lives only in the
+        // oldest section, past the previous 64-section stop.
+        val bytes = incrementalOutlinePdf(extraSections = 80)
+        val parser = PdfParser(ByteArraySource(bytes), bytes.size.toLong())
+        val chapters = parser.readOutlines(pageCount = 1)
+        assertNotNull(chapters)
+        assertEquals(listOf("Chapter"), chapters!!.map { it.title })
+        assertEquals(0, chapters[0].pageIndex)
+    }
+
+    @Test
+    fun samplePdfsListTheirOutlinesWhenPresent() {
+        val dir = File("/home/zlx22/LocalViewer/samples")
+        val first = File(dir, "1.pdf")
+        val second = File(dir, "2.pdf")
+        assumeTrue(first.isFile && second.isFile)
+        FileSource(first).use { source ->
+            val chapters = readPdfChapters(source, source.size)
+            assertNotNull(chapters)
+            val titles = chapters!!.map { it.title }
+            check(titles.size >= 250) { "1.pdf chapters=${titles.size}" }
+            check(titles.any { it.contains("Preface") }) { titles.take(12) }
+            check(titles.any { it == "Index" }) { "missing Index in ${titles.size}" }
+        }
+        FileSource(second).use { source ->
+            val chapters = readPdfChapters(source, source.size)
+            assertNotNull(chapters)
+            check(chapters!!.size >= 250) { "2.pdf chapters=${chapters.size}" }
+        }
+    }
+
+    @Test
     fun githubSamplePdfOpensWhenPresent() {
         val file = File("../.github/1.pdf")
         assumeTrue("sample PDF not in .github", file.isFile)
@@ -127,6 +172,99 @@ class PdfXrefHealTest {
         add(o1)
         add(o2)
         add(o3)
+        add(xref)
+        return out.toByteArray()
+    }
+
+    private fun namedDestPdf(): ByteArray {
+        val objects = listOf(
+            "1 0 obj\n<< /Type /Catalog /Pages 2 0 R /Outlines 4 0 R /Names 7 0 R >>\nendobj\n",
+            "2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n",
+            "3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 10 10] >>\nendobj\n",
+            "4 0 obj\n<< /Type /Outlines /First 5 0 R /Last 5 0 R /Count 1 >>\nendobj\n",
+            "5 0 obj\n<< /Title (Preface) /Parent 4 0 R /A 6 0 R >>\nendobj\n",
+            "6 0 obj\n<< /S /GoTo /D (chap) >>\nendobj\n",
+            "7 0 obj\n<< /Dests 8 0 R >>\nendobj\n",
+            "8 0 obj\n<< /Kids [9 0 R] >>\nendobj\n",
+            "9 0 obj\n<< /Limits [(chap) (chap)] /Names [(chap) [3 0 R /XYZ 0 0 0]] >>\nendobj\n",
+        )
+        return pdfWithXref(objects)
+    }
+
+    /** Bookmark object stays in the first xref; later sections only touch a dummy. */
+    private fun incrementalOutlinePdf(extraSections: Int): ByteArray {
+        val objects = listOf(
+            "1 0 obj\n<< /Type /Catalog /Pages 2 0 R /Outlines 4 0 R >>\nendobj\n",
+            "2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n",
+            "3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 10 10] >>\nendobj\n",
+            "4 0 obj\n<< /Type /Outlines /First 5 0 R /Last 5 0 R /Count 1 >>\nendobj\n",
+            "5 0 obj\n<< /Title (Chapter) /Parent 4 0 R /Dest [3 0 R /XYZ 0 0 0] >>\nendobj\n",
+        )
+        val out = ArrayList<Byte>()
+        fun add(s: String) {
+            s.toByteArray(Charsets.ISO_8859_1).forEach { out += it }
+        }
+        add("%PDF-1.4\n")
+        val offsets = ArrayList<Long>(objects.size + 1)
+        for (obj in objects) {
+            offsets += out.size.toLong()
+            add(obj)
+        }
+        fun appendXref(prev: Long?, vararg entries: Pair<Int, Long>): Long {
+            val at = out.size.toLong()
+            val grouped = entries.sortedBy { it.first }
+            val body = buildString {
+                append("xref\n")
+                var i = 0
+                while (i < grouped.size) {
+                    val start = grouped[i].first
+                    var count = 1
+                    while (i + count < grouped.size && grouped[i + count].first == start + count) count++
+                    append(start).append(' ').append(count).append('\n')
+                    for (n in 0 until count) {
+                        append(xrefEntry(grouped[i + n].second, 0, used = true))
+                    }
+                    i += count
+                }
+                append("trailer\n<< /Size ").append(objects.size + 1).append(" /Root 1 0 R")
+                if (prev != null) append(" /Prev ").append(prev)
+                append(" >>\nstartxref\n").append(at).append("\n%%EOF\n")
+            }
+            add(body)
+            return at
+        }
+        var prev = appendXref(
+            null,
+            0 to 0L,
+            *(offsets.mapIndexed { index, off -> (index + 1) to off }.toTypedArray()),
+        )
+        for (n in 1..extraSections) {
+            val dummyAt = out.size.toLong()
+            add("6 0 obj\n<< /Piece $n >>\nendobj\n")
+            prev = appendXref(prev, 6 to dummyAt)
+        }
+        return out.toByteArray()
+    }
+
+    private fun pdfWithXref(objects: List<String>): ByteArray {
+        val out = ArrayList<Byte>()
+        fun add(s: String) {
+            s.toByteArray(Charsets.ISO_8859_1).forEach { out += it }
+        }
+        add("%PDF-1.4\n")
+        val offsets = objects.map { obj ->
+            val at = out.size.toLong()
+            add(obj)
+            at
+        }
+        val xrefAt = out.size
+        val xref = buildString {
+            append("xref\n0 ${objects.size + 1}\n")
+            append(xrefEntry(0, 65535, used = false))
+            offsets.forEach { append(xrefEntry(it, 0, used = true)) }
+            append("trailer\n<< /Size ${objects.size + 1} /Root 1 0 R >>\n")
+            append("startxref\n$xrefAt\n%%EOF\n")
+        }
         add(xref)
         return out.toByteArray()
     }
