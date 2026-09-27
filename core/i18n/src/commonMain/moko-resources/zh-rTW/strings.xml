@@ -251,11 +251,13 @@
     <string name="settings_privacy_save_history">儲存歷史</string>
     <string name="settings_privacy_save_history_summary">瀏覽資料夾、檔案與圖庫歷史的總開關。關閉後會清除既有歷史。</string>
     <string name="settings_privacy_save_file_history">儲存檔案歷史</string>
-    <string name="settings_privacy_save_file_history_summary">記錄開啟的壓縮檔、影片與其他非電子書檔案。父資料夾仍會在開啟「儲存歷史」時記錄。</string>
+    <string name="settings_privacy_save_file_history_summary">記錄開啟的壓縮檔，以及影片和電子書以外的檔案。關閉後不記錄父資料夾。</string>
+    <string name="settings_privacy_save_video_history">儲存影片歷史</string>
+    <string name="settings_privacy_save_video_history_summary">記錄開啟的影片。關閉後不記錄父資料夾。</string>
     <string name="settings_privacy_save_ebook_history">儲存電子書歷史</string>
-    <string name="settings_privacy_save_ebook_history_summary">記錄開啟的文字電子書（TXT、EPUB、HTML、FB2、Markdown）。父資料夾仍會在開啟「儲存歷史」時記錄。</string>
+    <string name="settings_privacy_save_ebook_history_summary">記錄開啟的文字電子書（TXT、EPUB、HTML、FB2、Markdown）。關閉後不記錄父資料夾。</string>
     <string name="settings_privacy_save_gallery_history">儲存圖庫歷史</string>
-    <string name="settings_privacy_save_gallery_history_summary">記錄開啟的庫圖庫與資料夾圖庫。父資料夾仍會在開啟「儲存歷史」時記錄。</string>
+    <string name="settings_privacy_save_gallery_history_summary">記錄開啟的庫圖庫與資料夾圖庫。關閉後不記錄父資料夾。</string>
     <string name="settings_general_back_to_upper_dir">返回上層目錄</string>
     <string name="settings_general_back_to_upper_dir_summary">從歷史、圖庫或收藏開啟資料夾/圖庫時，系統返回會回到上層目錄。關閉（預設）則回到列表。</string>
     <string name="settings_general_history_dir_back_to_upper">歷史資料夾返回上層</string>

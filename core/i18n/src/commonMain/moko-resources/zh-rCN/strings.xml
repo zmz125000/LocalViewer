@@ -489,11 +489,13 @@
     <string name="settings_privacy_save_history">保存历史</string>
     <string name="settings_privacy_save_history_summary">浏览文件夹、文件与图库历史的总开关。关闭后会清除已有历史。</string>
     <string name="settings_privacy_save_file_history">保存文件历史</string>
-    <string name="settings_privacy_save_file_history_summary">记录打开的压缩包、视频与其他非电子书文件。父文件夹仍会在开启“保存历史”时记录。</string>
+    <string name="settings_privacy_save_file_history_summary">记录打开的压缩包，以及视频和电子书以外的文件。关闭后不记录父文件夹。</string>
+    <string name="settings_privacy_save_video_history">保存视频历史</string>
+    <string name="settings_privacy_save_video_history_summary">记录打开的视频。关闭后不记录父文件夹。</string>
     <string name="settings_privacy_save_ebook_history">保存电子书历史</string>
-    <string name="settings_privacy_save_ebook_history_summary">记录打开的文本电子书（TXT、EPUB、HTML、FB2、Markdown）。父文件夹仍会在开启“保存历史”时记录。</string>
+    <string name="settings_privacy_save_ebook_history_summary">记录打开的文本电子书（TXT、EPUB、HTML、FB2、Markdown）。关闭后不记录父文件夹。</string>
     <string name="settings_privacy_save_gallery_history">保存图库历史</string>
-    <string name="settings_privacy_save_gallery_history_summary">记录打开的库图库与文件夹图库。父文件夹仍会在开启“保存历史”时记录。</string>
+    <string name="settings_privacy_save_gallery_history_summary">记录打开的库图库与文件夹图库。关闭后不记录父文件夹。</string>
     <string name="settings_general_back_to_upper_dir">返回上级目录</string>
     <string name="settings_general_back_to_upper_dir_summary">从历史、图库或收藏打开文件夹/图库时，系统返回会回到上级目录。关闭（默认）则回到列表。</string>
     <string name="settings_general_history_dir_back_to_upper">历史文件夹返回上级</string>

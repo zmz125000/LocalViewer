@@ -101,12 +101,16 @@ fun AnimatedVisibilityScope.PrivacyScreen(navigator: DestinationsNavigator) = Sc
                 title = stringResource(id = R.string.settings_privacy_save_history),
                 state = saveHistory,
             )
-            // Nested file / gallery toggles; browse-dir history follows the master only.
+            // Nested file / video / ebook / gallery toggles.
             AnimatedVisibility(visible = saveHistory.value) {
                 Column {
                     SwitchPreference(
                         title = stringResource(id = R.string.settings_privacy_save_file_history),
                         state = Settings.saveFileHistory.asMutableState(),
+                    )
+                    SwitchPreference(
+                        title = stringResource(id = R.string.settings_privacy_save_video_history),
+                        state = Settings.saveVideoHistory.asMutableState(),
                     )
                     SwitchPreference(
                         title = stringResource(id = R.string.settings_privacy_save_ebook_history),

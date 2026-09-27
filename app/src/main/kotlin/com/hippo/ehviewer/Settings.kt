@@ -442,11 +442,17 @@ object Settings : DataStorePreferences(null) {
 
     /**
      * When [saveHistory] is on: record opened **files** (archives, stream archives,
-     * videos, and other non-dir files, including library archive galleries). Default on.
-     * Ebooks use [saveEbookHistory] instead. Opening one of these also skips the
-     * parent directory pin when this is off.
+     * and other non-dir files, including library archive galleries). Default on.
+     * Videos use [saveVideoHistory]. Ebooks use [saveEbookHistory]. Opening one of
+     * these also skips the parent directory pin when this is off.
      */
     val saveFileHistory = boolPref("save_file_history", true)
+
+    /**
+     * When [saveHistory] is on: record opened **videos**. Default on. Independent of
+     * [saveFileHistory]. Opening a video also skips the parent directory pin when this is off.
+     */
+    val saveVideoHistory = boolPref("save_video_history", true)
 
     /**
      * When [saveHistory] is on: record opened **galleries** (library folder galleries and
