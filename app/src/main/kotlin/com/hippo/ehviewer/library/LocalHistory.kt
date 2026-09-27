@@ -373,14 +373,25 @@ object LocalHistory {
     }
 
     /**
+     * Parent browse-dir pin written because [openedName] was opened.
+     * Follows the same nested toggle as that row (ebook / gallery / file).
+     * A direct directory open does not use this.
+     */
+    fun parentBrowseHistoryAllowed(openedName: String, asGallery: Boolean = false): Boolean {
+        if (!Settings.saveHistory.value) return false
+        if (!asGallery && isEbookFileName(openedName)) return Settings.saveEbookHistory.value
+        return if (asGallery) Settings.saveGalleryHistory.value else Settings.saveFileHistory.value
+    }
+
+    /**
      * Privacy gates for HISTORY writes. Master [Settings.saveHistory] must be on.
-     * Browse-dir rows always pass when master is on; file / ebook / gallery use nested prefs.
-     * (Cover keys / parent-dir side records use the same [EhDB.putHistoryInfo] path.)
+     * Browse-dir rows pass when master is on. A dir pin caused by opening a file,
+     * ebook, or gallery is skipped by [parentBrowseHistoryAllowed] before this.
      */
     fun isHistoryWriteAllowed(info: GalleryInfo): Boolean {
         if (!Settings.saveHistory.value) return false
         return when (info.token) {
-            // Dir pins: parent of opened file/gallery — not gated by nested toggles.
+            // Direct directory opens. Content opens gate the pin first.
             LOCAL_BROWSE_TOKEN, SMB_BROWSE_TOKEN, WEBDAV_BROWSE_TOKEN -> true
             else -> if (isHistoryEbook(info)) {
                 Settings.saveEbookHistory.value

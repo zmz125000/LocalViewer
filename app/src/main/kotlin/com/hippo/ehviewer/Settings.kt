@@ -443,19 +443,22 @@ object Settings : DataStorePreferences(null) {
     /**
      * When [saveHistory] is on: record opened **files** (archives, stream archives,
      * videos, and other non-dir files, including library archive galleries). Default on.
-     * Ebooks use [saveEbookHistory] instead. Does not gate browse-dir history.
+     * Ebooks use [saveEbookHistory] instead. Opening one of these also skips the
+     * parent directory pin when this is off.
      */
     val saveFileHistory = boolPref("save_file_history", true)
 
     /**
      * When [saveHistory] is on: record opened **galleries** (library folder galleries and
-     * browse folder-galleries). Default on. Does not gate browse-dir history.
+     * browse folder-galleries). Default on. Opening a gallery also skips the
+     * parent directory pin when this is off.
      */
     val saveGalleryHistory = boolPref("save_gallery_history", true)
 
     /**
      * When [saveHistory] is on: record opened **ebooks** (TXT / EPUB / HTML / FB2 /
-     * Markdown). Default on. Independent of [saveFileHistory]. Does not gate browse-dir history.
+     * Markdown). Default on. Independent of [saveFileHistory]. Opening an ebook
+     * also skips the parent directory pin when this is off.
      */
     val saveEbookHistory = boolPref("save_ebook_history", true)
 

@@ -809,8 +809,16 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
         goUp()
     }
 
-    /** History path link for the folder currently listed (parent of the opened file). */
-    suspend fun recordCurrentBrowseFolderHistory(sourceId: Long) {
+    /**
+     * History path link for the folder currently listed (parent of the opened item).
+     * Skipped when that item's file / ebook / gallery history toggle is off.
+     */
+    suspend fun recordCurrentBrowseFolderHistory(
+        sourceId: Long,
+        openedName: String,
+        asGallery: Boolean = false,
+    ) {
+        if (!LocalHistory.parentBrowseHistoryAllowed(openedName, asGallery)) return
         val folderThumb = LocalHistory.webDavBrowseFolderThumbKey(
             sourceId = sourceId,
             relativeDir = relativeDir,
@@ -866,7 +874,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
         )
         launchIO {
             // Parent browse dir (not gated by file/gallery prefs) + gallery row.
-            recordCurrentBrowseFolderHistory(src.id)
+            recordCurrentBrowseFolderHistory(src.id, entry.name, asGallery = true)
             // History = folder gallery (open → reader). Same gid as progress.
             LocalHistory.recordWebDavFolderGallery(
                 sourceId = src.id,
@@ -953,7 +961,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                 uploader = "${src.id}\u0000${remote.trim('/')}",
                 category = 3,
             )
-            recordCurrentBrowseFolderHistory(src.id)
+            recordCurrentBrowseFolderHistory(src.id, galleryTitle, asGallery = true)
             LocalHistory.recordWebDavFolderGallery(
                 sourceId = src.id,
                 remoteDir = remote,
@@ -1010,7 +1018,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
             category = 3,
         )
         launchIO {
-            recordCurrentBrowseFolderHistory(src.id)
+            recordCurrentBrowseFolderHistory(src.id, title, asGallery = true)
             LocalHistory.recordWebDavFolderGallery(
                 sourceId = src.id,
                 remoteDir = relativeDir,
@@ -1042,7 +1050,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
         val remote = joinRemoteArchivePath(relativeDir, entry.parentRelativeName, entry.fileName)
         launchIO {
             // Parent dir + file row (non-dir open).
-            recordCurrentBrowseFolderHistory(src.id)
+            recordCurrentBrowseFolderHistory(src.id, entry.fileName)
             LocalHistory.recordWebDavFile(src.id, remote, title = entry.name)
             try {
                 OpenPdfExternally.openWebDav(
@@ -1070,7 +1078,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
         ReaderGalleryPlaylist.setFromWebDavBrowse(src.id, relativeDir, entries)
         val remote = joinRemoteArchivePath(relativeDir, entry.parentRelativeName, entry.fileName)
         launchIO {
-            recordCurrentBrowseFolderHistory(src.id)
+            recordCurrentBrowseFolderHistory(src.id, entry.name)
             val remoteNorm = remote.trim('/')
             val info = BaseGalleryInfo(
                 gid = stableGalleryId(src.id, "dava:$remoteNorm"),
@@ -1119,7 +1127,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
         val src = source ?: return
         val remote = joinRemoteArchivePath(relativeDir, entry.parentRelativeName, entry.fileName)
         launchIO {
-            recordCurrentBrowseFolderHistory(src.id)
+            recordCurrentBrowseFolderHistory(src.id, entry.name)
             LocalHistory.recordWebDavFile(src.id, remote, title = entry.name)
             try {
                 OpenFileExternally.openWebDav(
@@ -1145,7 +1153,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
         val actualName = fileName.substringAfterLast('/').substringAfterLast('\\')
         val remote = if (relativeDir.isEmpty()) fileName else WebDavGateway.joinRelative(relativeDir, fileName)
         launchIO {
-            recordCurrentBrowseFolderHistory(src.id)
+            recordCurrentBrowseFolderHistory(src.id, actualName)
             LocalHistory.recordWebDavFile(src.id, remote, title = actualName)
             try {
                 OpenFileExternally.playDocumentWebDav(
@@ -1172,7 +1180,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
         val remote = if (relativeDir.isEmpty()) fileName else WebDavGateway.joinRelative(relativeDir, fileName)
         launchIO {
             // Parent dir + file/video row (non-dir open).
-            recordCurrentBrowseFolderHistory(src.id)
+            recordCurrentBrowseFolderHistory(src.id, actualName)
             LocalHistory.recordWebDavFile(src.id, remote, title = actualName)
             try {
                 OpenFileExternally.openWebDav(
@@ -1198,7 +1206,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
         val actualName = fileName.substringAfterLast('/').substringAfterLast('\\')
         val remote = if (relativeDir.isEmpty()) fileName else WebDavGateway.joinRelative(relativeDir, fileName)
         launchIO {
-            recordCurrentBrowseFolderHistory(src.id)
+            recordCurrentBrowseFolderHistory(src.id, actualName)
             LocalHistory.recordWebDavFile(src.id, remote, title = actualName)
             try {
                 OpenFileExternally.openWebDavHtml(
@@ -1262,7 +1270,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
         val actualName = fileName.substringAfterLast('/').substringAfterLast('\\')
         val remote = if (relativeDir.isEmpty()) fileName else WebDavGateway.joinRelative(relativeDir, fileName)
         launchIO {
-            recordCurrentBrowseFolderHistory(src.id)
+            recordCurrentBrowseFolderHistory(src.id, actualName)
             LocalHistory.recordWebDavFile(src.id, remote, title = actualName)
             try {
                 OpenFileExternally.playWebDav(
@@ -1327,7 +1335,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
         launchIO {
             try {
                 // Parent browse dir (not gated by file/gallery prefs) + file row.
-                recordCurrentBrowseFolderHistory(src.id)
+                recordCurrentBrowseFolderHistory(src.id, entry.name)
                 ReaderGalleryPlaylist.setFromWebDavBrowse(src.id, relativeDir, entries)
                 if (isStreamableArchiveFileName(entry.fileName) ||
                     isSolidArchiveFileName(entry.fileName) ||
@@ -1688,7 +1696,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                         WebDavGateway.joinRelative(relativeDir, fileName)
                     }
                     launchIO {
-                        recordCurrentBrowseFolderHistory(src.id)
+                        recordCurrentBrowseFolderHistory(src.id, fileName)
                         LocalHistory.recordWebDavFile(
                             src.id,
                             remote,

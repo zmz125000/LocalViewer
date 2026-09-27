@@ -968,8 +968,12 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         goUp()
     }
 
-    /** History path link for the folder currently listed (parent of the opened file). */
-    suspend fun recordCurrentBrowseFolderHistory() {
+    /**
+     * History path link for the folder currently listed (parent of the opened item).
+     * Skipped when that item's file / ebook / gallery history toggle is off.
+     */
+    suspend fun recordCurrentBrowseFolderHistory(openedName: String, asGallery: Boolean = false) {
+        if (!LocalHistory.parentBrowseHistoryAllowed(openedName, asGallery)) return
         val frame = stack.lastOrNull() ?: return
         val parentPath = stack.getOrNull(stack.lastIndex - 1)?.path
         val folderThumb = LocalHistory.localBrowseFolderThumbKey(
@@ -1086,7 +1090,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                 uploader = "${frame.rootId}\u0000$histRel",
                 category = 0,
             )
-            recordCurrentBrowseFolderHistory()
+            recordCurrentBrowseFolderHistory(entry.name, asGallery = true)
             LocalHistory.recordLocalFolderGallery(
                 rootId = frame.rootId,
                 relativePath = histRel,
@@ -1139,7 +1143,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                 uploader = "${frame.rootId}\u0000$histRel",
                 category = 0,
             )
-            recordCurrentBrowseFolderHistory()
+            recordCurrentBrowseFolderHistory(entry.name, asGallery = true)
             LocalHistory.recordLocalFolderGallery(
                 rootId = frame.rootId,
                 relativePath = histRel,
@@ -1223,7 +1227,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         )
         launchIO {
             // Parent browse dir (not gated by file/gallery prefs) + gallery row.
-            recordCurrentBrowseFolderHistory()
+            recordCurrentBrowseFolderHistory(entry.name, asGallery = true)
             // History = folder gallery (open → reader). Same gid as progress.
             LocalHistory.recordLocalFolderGallery(
                 rootId = frame.rootId,
@@ -1363,7 +1367,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                     uploader = "${frame.rootId}\u0000$histRel",
                     category = 0,
                 )
-                recordCurrentBrowseFolderHistory()
+                recordCurrentBrowseFolderHistory(galleryTitle, asGallery = true)
                 LocalHistory.recordLocalFolderGallery(
                     rootId = frame.rootId,
                     relativePath = histRel,
@@ -1411,7 +1415,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                 uploader = "${frame.rootId}\u0000${galleryRel.trim('/')}",
                 category = 0,
             )
-            recordCurrentBrowseFolderHistory()
+            recordCurrentBrowseFolderHistory(galleryTitle, asGallery = true)
             LocalHistory.recordLocalFolderGallery(
                 rootId = frame.rootId,
                 relativePath = galleryRel,
@@ -1462,7 +1466,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                 category = 0,
             )
             launchIO {
-                recordCurrentBrowseFolderHistory()
+                recordCurrentBrowseFolderHistory(frame.title, asGallery = true)
                 LocalHistory.recordLocalFolderGallery(
                     rootId = frame.rootId,
                     relativePath = histRel,
@@ -1497,7 +1501,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
             category = 0,
         )
         launchIO {
-            recordCurrentBrowseFolderHistory()
+            recordCurrentBrowseFolderHistory(frame.title, asGallery = true)
             LocalHistory.recordLocalFolderGallery(
                 rootId = frame.rootId,
                 relativePath = frame.relativePath,
@@ -1530,7 +1534,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         val path = entry.path.toString()
         launchIO {
             // Parent browse dir (not gated by file/gallery prefs) + file row.
-            recordCurrentBrowseFolderHistory()
+            recordCurrentBrowseFolderHistory(entry.name)
             LocalHistory.recordLocalArchive(path, title = entry.name)
         }
         navToReader(path, skipPdfPrimary = skipPdfPrimary)
@@ -1541,7 +1545,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         val path = entry.path.toString()
         launchIO {
             // Parent dir + file row (non-dir open).
-            recordCurrentBrowseFolderHistory()
+            recordCurrentBrowseFolderHistory(entry.name)
             LocalHistory.recordLocalFile(path, title = entry.name)
             try {
                 OpenPdfExternally.openLocal(
@@ -1578,7 +1582,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         }
         val path = entry.path.toString()
         launchIO {
-            recordCurrentBrowseFolderHistory()
+            recordCurrentBrowseFolderHistory(entry.name)
             val info = LocalHistory.galleryInfoForLocalArchive(path, title = entry.name)
             LocalHistory.ensureGalleryForProgress(info)
             LocalHistory.recordLocalArchive(path, title = entry.name)
@@ -1606,7 +1610,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         val pathStr = path.toString()
         val actualName = ZipPaths.memberLeafName(pathStr) ?: path.name
         launchIO {
-            recordCurrentBrowseFolderHistory()
+            recordCurrentBrowseFolderHistory(actualName)
             LocalHistory.recordLocalFile(pathStr, title = actualName)
             try {
                 OpenFileExternally.openLocalHtml(
@@ -1663,7 +1667,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         val path = entry.path.toString()
         val name = entry.name
         launchIO {
-            recordCurrentBrowseFolderHistory()
+            recordCurrentBrowseFolderHistory(name)
             LocalHistory.recordLocalFile(path, title = name)
             try {
                 OpenFileExternally.openLocal(
@@ -1730,7 +1734,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         val pathStr = path.toString()
         val actualName = ZipPaths.memberLeafName(pathStr) ?: path.name
         launchIO {
-            recordCurrentBrowseFolderHistory()
+            recordCurrentBrowseFolderHistory(actualName)
             LocalHistory.recordLocalFile(pathStr, title = actualName)
             try {
                 OpenFileExternally.playDocumentLocal(context, pathStr, actualName)
@@ -1750,7 +1754,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         val actualName = ZipPaths.memberLeafName(pathStr) ?: path.name
         launchIO {
             // Parent dir + file/video row (non-dir open).
-            recordCurrentBrowseFolderHistory()
+            recordCurrentBrowseFolderHistory(actualName)
             LocalHistory.recordLocalFile(pathStr, title = actualName)
             try {
                 OpenFileExternally.openLocal(
@@ -1810,7 +1814,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         val pathStr = path.toString()
         val actualName = ZipPaths.memberLeafName(pathStr) ?: path.name
         launchIO {
-            recordCurrentBrowseFolderHistory()
+            recordCurrentBrowseFolderHistory(actualName)
             LocalHistory.recordLocalFile(pathStr, title = actualName)
             try {
                 OpenFileExternally.playLocal(
@@ -2066,7 +2070,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                 onExternalPlayer = {
                     if (isPdfFileName(leaf)) {
                         launchIO {
-                            recordCurrentBrowseFolderHistory()
+                            recordCurrentBrowseFolderHistory(leaf)
                             LocalHistory.recordLocalFile(path.toString(), title = leaf)
                             try {
                                 OpenPdfExternally.openLocal(
