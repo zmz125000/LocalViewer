@@ -53,18 +53,25 @@ internal fun xrefPeekIsLoadable(peek: ByteArray): Boolean {
 }
 
 private fun looksLikeObjHeader(text: String): Boolean {
-    var i = 0
-    if (i >= text.length || !text[i].isDigit()) return false
-    while (i < text.length && text[i].isDigit()) i++
-    if (i >= text.length || !text[i].isXrefWs()) return false
-    while (i < text.length && text[i].isXrefWs()) i++
-    if (i >= text.length || !text[i].isDigit()) return false
-    while (i < text.length && text[i].isDigit()) i++
-    if (i >= text.length || !text[i].isXrefWs()) return false
-    while (i < text.length && text[i].isXrefWs()) i++
-    if (!text.startsWith("obj", i)) return false
-    val end = i + 3
+    val afterGen = takeWs(text, takeDigits(text, 0) ?: return false) ?: return false
+    val atObj = takeWs(text, takeDigits(text, afterGen) ?: return false) ?: return false
+    if (!text.startsWith("obj", atObj)) return false
+    val end = atObj + 3
     return end >= text.length || !text[end].isLetterOrDigit()
+}
+
+private fun takeDigits(text: String, i: Int): Int? {
+    if (i >= text.length || !text[i].isDigit()) return null
+    var j = i + 1
+    while (j < text.length && text[j].isDigit()) j++
+    return j
+}
+
+private fun takeWs(text: String, i: Int): Int? {
+    if (i >= text.length || !text[i].isXrefWs()) return null
+    var j = i + 1
+    while (j < text.length && text[j].isXrefWs()) j++
+    return j
 }
 
 private fun Char.isXrefWs(): Boolean = this == ' ' || this == '\t' || this == '\n' || this == '\r' || this == '\u0000' || this == '\u000c'

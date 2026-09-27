@@ -290,7 +290,21 @@ internal object EbookPaginator {
         flush()
     }
 
+    private class ParaFlags(val index: Int, val quote: Int, val codeLine: Boolean, val bookAlign: Int)
+
+    private class WrapLayout(
+        val lineAlign: Int,
+        val justifyPara: Boolean,
+        val firstIndent: Float,
+        val quoteIndent: Float,
+    )
+
     private fun wrapParagraph(para: String, style: EbookStyle, out: MutableList<EbookLine>) {
+        val flags = readParaFlags(para)
+        WrapCursor(para, style, out, flags, wrapLayout(flags, style)).wrap()
+    }
+
+    private fun readParaFlags(para: String): ParaFlags {
         var i = 0
         var quote = 0
         var codeLine = false
@@ -305,48 +319,126 @@ internal object EbookPaginator {
                     codeLine = true
                     i++
                 }
-                EbookMarks.ALIGN -> {
-                    if (i + 1 < para.length) {
-                        bookAlign = EbookMarks.bookAlignOf(para[i + 1])
-                        i += 2
-                    } else {
-                        i++
-                    }
-                }
-                else -> break
+                EbookMarks.ALIGN -> i = takeBookAlign(para, i) { bookAlign = it }
+                else -> return ParaFlags(i, quote, codeLine, bookAlign)
             }
         }
-        val useBook = style.bookFormat && bookAlign != 0
-        val lineAlign = when {
-            useBook && bookAlign == EbookMarks.BOOK_CENTER -> EbookMarks.LINE_CENTER
-            useBook && bookAlign == EbookMarks.BOOK_END -> EbookMarks.LINE_END
-            else -> EbookMarks.LINE_START
-        }
-        val justifyPara = when {
-            codeLine -> false
-            useBook && bookAlign == EbookMarks.BOOK_JUSTIFY -> true
-            useBook -> false
-            else -> style.justify
-        }
-        val full = lineCapacity(style)
-        val firstIndent = if (quote > 0 || codeLine || lineAlign != EbookMarks.LINE_START) {
+        return ParaFlags(i, quote, codeLine, bookAlign)
+    }
+
+    private fun takeBookAlign(para: String, i: Int, setAlign: (Int) -> Unit): Int {
+        if (i + 1 >= para.length) return i + 1
+        setAlign(EbookMarks.bookAlignOf(para[i + 1]))
+        return i + 2
+    }
+
+    private fun wrapLayout(flags: ParaFlags, style: EbookStyle): WrapLayout {
+        val useBook = style.bookFormat && flags.bookAlign != 0
+        val lineAlign = bookLineAlign(useBook, flags.bookAlign)
+        val firstIndent = if (flags.quote > 0 || flags.codeLine || lineAlign != EbookMarks.LINE_START) {
             0f
         } else {
             style.indentEm.toFloat().coerceAtLeast(0f)
         }
-        val quoteIndent = quote * 1.15f
+        return WrapLayout(lineAlign, bookJustify(style, flags, useBook), firstIndent, flags.quote * 1.15f)
+    }
+
+    private fun bookLineAlign(useBook: Boolean, bookAlign: Int): Int {
+        if (useBook && bookAlign == EbookMarks.BOOK_CENTER) return EbookMarks.LINE_CENTER
+        if (useBook && bookAlign == EbookMarks.BOOK_END) return EbookMarks.LINE_END
+        return EbookMarks.LINE_START
+    }
+
+    private fun bookJustify(style: EbookStyle, flags: ParaFlags, useBook: Boolean): Boolean {
+        if (flags.codeLine) return false
+        if (useBook && flags.bookAlign == EbookMarks.BOOK_JUSTIFY) return true
+        if (useBook) return false
+        return style.justify
+    }
+
+    private class WrapCursor(
+        val para: String,
+        val style: EbookStyle,
+        val out: MutableList<EbookLine>,
+        val flags: ParaFlags,
+        val layout: WrapLayout,
+    ) {
+        var i = flags.index
         var first = true
         var bits = 0
         val sb = StringBuilder()
         var width = 0f
-        fun indentOf() = quoteIndent + if (first) firstIndent else 0f
-        fun limit() = (full - indentOf()).coerceAtLeast(4f)
-        fun prependStyle() {
-            if (bits != 0) {
-                sb.append(EbookMarks.STYLE)
-                sb.append(EbookMarks.styleChar(bits))
-            }
+
+        fun indentOf() = layout.quoteIndent + if (first) layout.firstIndent else 0f
+
+        fun limit() = (lineCapacity(style) - indentOf()).coerceAtLeast(4f)
+
+        fun wrap() {
+            while (i < para.length) consume()
+            if (sb.isNotEmpty()) emit(last = true)
         }
+
+        fun consume() {
+            val c = para[i]
+            if (takeStyle(c) || takeFormFeed(c)) return
+            val em = glyphEm(c, style.latinScale) * EbookMarks.widthScale(bits)
+            if (em == 0f) {
+                i++
+                return
+            }
+            if (width + em > limit() && EbookMarks.hasVisible(sb) && hyphenBreak(c)) return
+            if (width + em > limit() && EbookMarks.hasVisible(sb)) softBreak()
+            sb.append(c)
+            width += em
+            i++
+        }
+
+        fun takeStyle(c: Char): Boolean {
+            if (c != EbookMarks.STYLE || i + 1 >= para.length) return false
+            bits = EbookMarks.bitsOf(para[i + 1])
+            sb.append(c)
+            sb.append(para[i + 1])
+            i += 2
+            return true
+        }
+
+        fun takeFormFeed(c: Char): Boolean {
+            if (c != '\u000c') return false
+            if (sb.isNotEmpty()) emit(last = false)
+            i++
+            return true
+        }
+
+        fun hyphenBreak(c: Char): Boolean {
+            if (!style.hyphenate || flags.codeLine || !isHyphenLetter(c)) return false
+            val cut = hyphenCut(para, i, sb, limit(), style.latinScale)
+            if (cut < 2) return false
+            val kept = sb.substring(0, cut).trimEnd()
+            val rest = sb.substring(cut)
+            sb.clear()
+            sb.append(kept)
+            if (kept.isNotEmpty() && !EbookMarks.strip(kept).endsWith('-')) sb.append('-')
+            emit(last = false)
+            sb.append(rest)
+            width = lineEm(sb, style.latinScale)
+            return true
+        }
+
+        fun softBreak() {
+            val breakAt = lastBreak(sb)
+            if (breakAt <= 0 || breakAt >= sb.length) {
+                emit(last = false)
+                return
+            }
+            val kept = sb.substring(0, breakAt).trimEnd()
+            val rest = sb.substring(breakAt).trimStart()
+            sb.clear()
+            sb.append(kept)
+            emit(last = false)
+            sb.append(rest)
+            width = lineEm(sb, style.latinScale)
+        }
+
         fun emit(last: Boolean) {
             if (!EbookMarks.hasVisible(sb)) {
                 sb.clear()
@@ -359,70 +451,22 @@ internal object EbookPaginator {
                 text = text,
                 indentEm = indentOf(),
                 heightEm = style.lineHeightEm,
-                justify = justifyPara && !last && EbookMarks.hasVisible(text),
-                quote = quote > 0,
-                code = codeLine,
-                align = lineAlign,
+                justify = layout.justifyPara && !last && EbookMarks.hasVisible(text),
+                quote = flags.quote > 0,
+                code = flags.codeLine,
+                align = layout.lineAlign,
             )
             first = false
             sb.clear()
             width = 0f
             prependStyle()
         }
-        while (i < para.length) {
-            val c = para[i]
-            if (c == EbookMarks.STYLE && i + 1 < para.length) {
-                bits = EbookMarks.bitsOf(para[i + 1])
-                sb.append(c)
-                sb.append(para[i + 1])
-                i += 2
-                continue
-            }
-            if (c == '\u000c') {
-                if (sb.isNotEmpty()) emit(last = false)
-                i++
-                continue
-            }
-            val em = glyphEm(c, style.latinScale) * EbookMarks.widthScale(bits)
-            if (em == 0f) {
-                i++
-                continue
-            }
-            if (width + em > limit() && EbookMarks.hasVisible(sb)) {
-                val cut = if (style.hyphenate && !codeLine && isHyphenLetter(c)) {
-                    hyphenCut(para, i, sb, limit(), style.latinScale)
-                } else {
-                    -1
-                }
-                if (cut >= 2) {
-                    val kept = sb.substring(0, cut).trimEnd()
-                    val rest = sb.substring(cut)
-                    sb.clear()
-                    sb.append(kept)
-                    if (kept.isNotEmpty() && !EbookMarks.strip(kept).endsWith('-')) sb.append('-')
-                    emit(last = false)
-                    sb.append(rest)
-                    width = lineEm(sb, style.latinScale)
-                    continue
-                }
-                val breakAt = lastBreak(sb)
-                if (breakAt > 0 && breakAt < sb.length) {
-                    val kept = sb.substring(0, breakAt).trimEnd()
-                    val rest = sb.substring(breakAt).trimStart()
-                    sb.clear()
-                    sb.append(kept)
-                    emit(last = false)
-                    sb.append(rest)
-                    width = lineEm(sb, style.latinScale)
-                } else {
-                    emit(last = false)
-                }
-            }
-            sb.append(c)
-            width += em
-            i++
+
+        fun prependStyle() {
+            if (bits == 0) return
+            sb.append(EbookMarks.STYLE)
+            sb.append(EbookMarks.styleChar(bits))
         }
-        if (sb.isNotEmpty()) emit(last = true)
     }
 
     /** Latin letters that may take a line-end hyphen. CJK already breaks per glyph. */
