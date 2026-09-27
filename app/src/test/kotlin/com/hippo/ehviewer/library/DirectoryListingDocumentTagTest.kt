@@ -201,6 +201,64 @@ class DirectoryListingDocumentTagTest {
         assertTrue(photo.any { it is BrowseEntryRemote.FolderGallery && it.relativeName == "Album" })
     }
 
+    @Test
+    fun plainDocumentInsideVideoFolderDoesNotMakeItNavigable() {
+        val entries = classifyRemoteListingWithPeeks(
+            currentDirName = "Library",
+            entries = listOf(RemoteChild(name = "Clip", isDirectory = true)),
+            childPeeks = mapOf(
+                "Clip" to listOf(
+                    RemoteChild(name = "movie.mp4", isDirectory = false),
+                    RemoteChild(name = "readme.txt", isDirectory = false),
+                    RemoteChild(name = "notes.html", isDirectory = false),
+                    RemoteChild(name = "memo.docx", isDirectory = false),
+                ),
+            ),
+        )
+        val clip = entries.filterIsInstance<BrowseEntryRemote.Directory>().single { it.name == "Clip" }
+        assertEquals(DirPresence.PromotedShell, clip.presence)
+        assertFalse(clip.hasVideo)
+        assertFalse(clip.hasGallery)
+        assertTrue(clip.hasDocument)
+        assertTrue(entries.any { it is BrowseEntryRemote.VideoFile && it.virtual })
+        val video = entries.filterRemoteByContentMode(BrowseContentMode.Video)
+        assertFalse(video.any { it is BrowseEntryRemote.Directory && it.name == "Clip" })
+        assertTrue(video.any { it is BrowseEntryRemote.VideoFile })
+        val docs = entries.filterRemoteByContentMode(BrowseContentMode.Document)
+        assertTrue(docs.any { it is BrowseEntryRemote.Directory && it.name == "Clip" })
+        assertFalse(docs.any { it is BrowseEntryRemote.VideoFile })
+        val photo = entries.filterRemoteByContentMode(BrowseContentMode.Galleries)
+        assertFalse(photo.any { it.name == "Clip" })
+    }
+
+    @Test
+    fun archiveBesideVideoStaysPhotoNavigableOnly() {
+        val entries = classifyRemoteListingWithPeeks(
+            currentDirName = "Library",
+            entries = listOf(RemoteChild(name = "Clip", isDirectory = true)),
+            childPeeks = mapOf(
+                "Clip" to listOf(
+                    RemoteChild(name = "movie.mp4", isDirectory = false),
+                    RemoteChild(name = "vol.zip", isDirectory = false),
+                    RemoteChild(name = "book.epub", isDirectory = false),
+                ),
+            ),
+        )
+        val clip = entries.filterIsInstance<BrowseEntryRemote.Directory>().single { it.name == "Clip" }
+        assertEquals(DirPresence.Navigable, clip.presence)
+        assertTrue(clip.hasGallery)
+        assertFalse(clip.hasVideo)
+        assertTrue(clip.hasDocument)
+        assertTrue(entries.any { it is BrowseEntryRemote.VideoFile && it.virtual })
+        val video = entries.filterRemoteByContentMode(BrowseContentMode.Video)
+        assertFalse(video.any { it is BrowseEntryRemote.Directory && it.name == "Clip" })
+        assertTrue(video.any { it is BrowseEntryRemote.VideoFile })
+        val photo = entries.filterRemoteByContentMode(BrowseContentMode.Galleries)
+        assertTrue(photo.any { it is BrowseEntryRemote.Directory && it.name == "Clip" })
+        assertFalse(photo.any { it is BrowseEntryRemote.VideoFile })
+    }
+
+    @Test
     fun emptyPdfDemotesToDocumentFileNotGallery() {
         val key = "smb:9:empty-guide.pdf"
         EmptyArchiveRegistry.mark(key)
@@ -219,6 +277,7 @@ class DirectoryListingDocumentTagTest {
         assertFalse(sections.galleries.any { it.name.endsWith(".pdf") })
     }
 
+    @Test
     fun epubCountsAsDocumentZipDoesNot() {
         val entries = classifyRemoteListingWithPeeks(
             currentDirName = "Library",
