@@ -133,6 +133,12 @@ fun isBrowseDocumentFileName(name: String): Boolean {
     return ext in BROWSE_DOCUMENT_EXTENSIONS
 }
 
+/**
+ * Zip/cbz/rar/7z/tar after the thumb prefetcher finds no photo.
+ * PDF and EPUB stay documents, so a no-thumb demotion does not move them here.
+ */
+fun isNonDocumentArchiveFileName(name: String): Boolean = isArchiveFileName(name) && !isBrowseDocumentFileName(name)
+
 fun isEpubFileName(name: String): Boolean {
     if (name.startsWith('.')) return false
     return FileUtils.getExtensionFromFilename(name)?.lowercase() == "epub"

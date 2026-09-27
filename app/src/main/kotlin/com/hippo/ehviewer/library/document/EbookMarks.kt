@@ -32,7 +32,7 @@ internal object EbookMarks {
     const val MARK = 256
 
     private const val BASE = 0xE100
-    private const val MAX_BITS = MARK or (MARK - 1)
+    private const val MAX_BITS = MARK or MARK - 1
 
     fun styleChar(bits: Int): Char = (BASE + (bits and MAX_BITS)).toChar()
 

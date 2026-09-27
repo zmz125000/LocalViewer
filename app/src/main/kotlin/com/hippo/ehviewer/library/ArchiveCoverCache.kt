@@ -748,9 +748,9 @@ object ArchiveCoverCache {
                         val size = runCatching { source.size }.getOrDefault(0L)
                         val engine = openDocumentCoverEngine(cacheKey, source, size)
                             ?: return@use CoverEnsureResult.Skip
-                        // A text PDF/EPUB has no embedded page image. That is not an empty
-                        // photo archive — keep the document tag (do not de-promote).
-                        if (engine.pageCount <= 0) return@use CoverEnsureResult.Skip
+                        // Opened and no image pages: drop the photo tag. Document mode
+                        // still keeps PDF/EPUB by filename. A failed open stays Skip.
+                        if (engine.pageCount <= 0) return@use CoverEnsureResult.NoImages
                         // Extract page 0 only (coverOnly engine). Do **not** saveIndex:
                         // a 1-member incomplete index is treated as a full page list by
                         // openFromIndex and makes multi-page PDFs/EPUBs open as 1 page.
@@ -781,7 +781,9 @@ object ArchiveCoverCache {
                     PfdArchiveByteSource(pfd, ownsPfd = false).use { source ->
                         val engine = openDocumentCoverEngine(key, source, pfd.statSize)
                             ?: return@withCoverExtractSlot CoverEnsureResult.Skip
-                        if (engine.pageCount <= 0) return@withCoverExtractSlot CoverEnsureResult.Skip
+                        // Opened and no image pages: drop the photo tag. Document mode
+                        // still keeps PDF/EPUB by filename. A failed open stays Skip.
+                        if (engine.pageCount <= 0) return@withCoverExtractSlot CoverEnsureResult.NoImages
                         // Extract page 0 only; never persist coverOnly as document index
                         // (would pin multi-page docs to 1 page via openFromIndex).
                         val page = engine.extractToCache(key, 0)

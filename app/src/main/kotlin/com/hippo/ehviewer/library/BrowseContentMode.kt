@@ -27,6 +27,8 @@ enum class BrowseContentMode(val prefValue: Int) {
      * directory + dirs that lead to them. Nested documents stay in their folders
      * — unlike Video, they are not promoted onto the parent listing.
      * Also keeps leftover RegularFiles that are not documents (Files section).
+     * A no-thumb archive demotion drops only the photo tag: PDF/EPUB stay here,
+     * zip/cbz/rar do not.
      */
     Document(4),
     ;
@@ -138,8 +140,9 @@ fun List<BrowseEntry>.filterByContentMode(
                 e.presence.visibleIn(mode, e.hasGallery, e.hasVideo, e.hasDocument)
             }
             is BrowseEntry.ArchiveGallery -> isBrowseDocumentFileName(e.name)
-            // Document files go in the Documents section; leftover files stay in Files.
-            is BrowseEntry.RegularFile -> true
+            // Document names stay. Demoted comic archives are regular files with an
+            // archive extension; they leave Photo and must not land in this filter.
+            is BrowseEntry.RegularFile -> !isNonDocumentArchiveFileName(e.name)
             is BrowseEntry.FolderGallery, is BrowseEntry.VideoFile -> false
         }
         BrowseContentMode.Folder -> when (e) {
@@ -245,8 +248,9 @@ fun List<BrowseEntryRemote>.filterRemoteByContentMode(
                     e.presence.visibleIn(mode, e.hasGallery, e.hasVideo, e.hasDocument)
                 }
                 is BrowseEntryRemote.ArchiveGallery -> isBrowseDocumentFileName(e.name)
-                // Document files go in the Documents section; leftover files stay in Files.
-                is BrowseEntryRemote.RegularFile -> true
+                // Document names stay. Demoted comic archives are regular files with an
+                // archive extension; they leave Photo and must not land in this filter.
+                is BrowseEntryRemote.RegularFile -> !isNonDocumentArchiveFileName(e.name)
                 is BrowseEntryRemote.FolderGallery,
                 is BrowseEntryRemote.VideoFile,
                 -> false
@@ -272,7 +276,15 @@ data class BrowseFolderSections<T>(
     val files: List<T>,
 )
 
-fun List<BrowseEntry>.toBrowseSections(): BrowseFolderSections<BrowseEntry> {
+/**
+ * UI sections for a listing already filtered by [mode].
+ * Archives and PDFs stay in galleries until the thumb prefetcher drops the photo
+ * tag. Document mode is the only mode that sections a still-tagged PDF/EPUB as a
+ * document; Photo/Media/Folder keep it with the other galleries.
+ */
+fun List<BrowseEntry>.toBrowseSections(
+    mode: BrowseContentMode,
+): BrowseFolderSections<BrowseEntry> {
     val directories = ArrayList<BrowseEntry>()
     val galleries = ArrayList<BrowseEntry>()
     val documents = ArrayList<BrowseEntry>()
@@ -289,7 +301,7 @@ fun List<BrowseEntry>.toBrowseSections(): BrowseFolderSections<BrowseEntry> {
             }
             is BrowseEntry.ArchiveGallery -> {
                 val id = "a-${e.path}"
-                if (isBrowseDocumentFileName(e.name)) {
+                if (mode == BrowseContentMode.Document && isBrowseDocumentFileName(e.name)) {
                     if (seenDocument.add(id)) documents += e
                 } else if (seenGallery.add(id)) {
                     galleries += e
@@ -303,7 +315,10 @@ fun List<BrowseEntry>.toBrowseSections(): BrowseFolderSections<BrowseEntry> {
     return BrowseFolderSections(directories, galleries, documents, videos, files)
 }
 
-fun List<BrowseEntryRemote>.toRemoteBrowseSections(): BrowseFolderSections<BrowseEntryRemote> {
+/** Remote counterpart of [toBrowseSections]. */
+fun List<BrowseEntryRemote>.toRemoteBrowseSections(
+    mode: BrowseContentMode,
+): BrowseFolderSections<BrowseEntryRemote> {
     val directories = ArrayList<BrowseEntryRemote>()
     val galleries = ArrayList<BrowseEntryRemote>()
     val documents = ArrayList<BrowseEntryRemote>()
@@ -320,7 +335,7 @@ fun List<BrowseEntryRemote>.toRemoteBrowseSections(): BrowseFolderSections<Brows
             }
             is BrowseEntryRemote.ArchiveGallery -> {
                 val id = "a-${e.parentRelativeName}/${e.fileName}"
-                if (isBrowseDocumentFileName(e.name)) {
+                if (mode == BrowseContentMode.Document && isBrowseDocumentFileName(e.name)) {
                     if (seenDocument.add(id)) documents += e
                 } else if (seenGallery.add(id)) {
                     galleries += e

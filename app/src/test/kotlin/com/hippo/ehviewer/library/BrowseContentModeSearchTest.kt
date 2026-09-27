@@ -33,7 +33,7 @@ class BrowseContentModeSearchTest {
             allTypes = true,
         )
         assertTrue(searching.any { it is BrowseEntryRemote.RegularFile && it.name == "notes.txt" })
-        val sections = searching.toRemoteBrowseSections()
+        val sections = searching.toRemoteBrowseSections(BrowseContentMode.Media)
         assertEquals(
             listOf("notes.txt"),
             sections.documents.filterIsInstance<BrowseEntryRemote.RegularFile>().map { it.name },
@@ -78,7 +78,7 @@ class BrowseContentModeSearchTest {
         assertFalse(docs.any { it is BrowseEntryRemote.ArchiveGallery && it.name == "pack.cbz" })
         assertFalse(docs.any { it is BrowseEntryRemote.FolderGallery })
         assertFalse(docs.any { it is BrowseEntryRemote.VideoFile })
-        val sections = docs.toRemoteBrowseSections()
+        val sections = docs.toRemoteBrowseSections(BrowseContentMode.Document)
         assertTrue(sections.documents.any { it.name == "guide.pdf" })
         assertTrue(sections.documents.any { it.name == "notes.txt" })
         assertTrue(sections.galleries.isEmpty())

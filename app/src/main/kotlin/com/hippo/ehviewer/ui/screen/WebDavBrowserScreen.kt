@@ -1852,7 +1852,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                     val browseSortModePref by Settings.browseSortMode.collectAsState()
                     val browseSortMode = BrowseSortMode.fromPref(browseSortModePref)
                     val browseSortAscending by Settings.browseSortAscending.collectAsState()
-                    val sections = filteredEntries.toRemoteBrowseSections()
+                    val sections = filteredEntries.toRemoteBrowseSections(contentMode)
                     // UI-only order; listing / folderImages / open-gallery stay name-sorted.
                     val dirsRaw = sections.directories
                         .filterIsInstance<BrowseEntryRemote.Directory>()

@@ -11,74 +11,95 @@ internal object EbookMarkdown {
         val lines = raw.replace("\r\n", "\n").replace('\r', '\n').split('\n')
         val sb = StringBuilder(raw.length)
         var i = 0
-        while (i < lines.size) {
-            val line = lines[i]
-            val trimmed = line.trim()
-            if (trimmed.startsWith("```") || trimmed.startsWith("~~~")) {
-                val fence = if (trimmed.startsWith("```")) "```" else "~~~"
-                i++
-                while (i < lines.size && !lines[i].trim().startsWith(fence)) {
-                    paraBreak(sb)
-                    sb.append(EbookMarks.CODE_LINE)
-                    sb.append(EbookMarks.STYLE)
-                    sb.append(EbookMarks.styleChar(EbookMarks.CODE))
-                    sb.append(lines[i])
-                    i++
-                }
-                if (i < lines.size) i++
-                paraBreak(sb)
-                continue
-            }
-            if (line.isBlank()) {
-                paraBreak(sb)
-                i++
-                continue
-            }
-            if (isHr(trimmed)) {
-                paraBreak(sb)
-                sb.append("────────")
-                paraBreak(sb)
-                i++
-                continue
-            }
-            val quote = quoteOf(line)
-            if (quote != null) {
-                paraBreak(sb)
-                repeat(quote.first) { sb.append(EbookMarks.QUOTE) }
-                val item = listItem(quote.second)
-                if (item != null) {
-                    sb.append(item.first)
-                    sb.append(stylePiece(item.second))
-                } else {
-                    sb.append(stylePiece(quote.second))
-                }
-                i++
-                continue
-            }
-            val list = listItem(line)
-            if (list != null) {
-                paraBreak(sb)
-                sb.append(list.first)
-                sb.append(stylePiece(list.second))
-                i++
-                continue
-            }
-            val buf = StringBuilder(line.trim())
-            i++
-            while (i < lines.size) {
-                val next = lines[i]
-                if (next.isBlank()) break
-                val t = next.trim()
-                if (t.startsWith("```") || t.startsWith("~~~") || isHr(t)) break
-                if (quoteOf(next) != null || listItem(next) != null) break
-                buf.append(' ')
-                buf.append(t)
-                i++
-            }
-            paraBreak(sb)
-            sb.append(stylePiece(buf.toString()))
-        }
+        while (i < lines.size) i = appendBlock(lines, i, sb)
         return sb.toString().trim()
+    }
+
+    private fun appendBlock(lines: List<String>, i: Int, sb: StringBuilder): Int {
+        val line = lines[i]
+        val trimmed = line.trim()
+        if (trimmed.startsWith("```") || trimmed.startsWith("~~~")) return appendFence(lines, i, trimmed, sb)
+        if (line.isBlank()) {
+            paraBreak(sb)
+            return i + 1
+        }
+        if (isHr(trimmed)) return appendRule(sb, i)
+        val quote = quoteOf(line)
+        if (quote != null) return appendQuote(quote, sb, i)
+        val list = listItem(line)
+        if (list != null) return appendListItem(list, sb, i)
+        return appendParagraph(lines, i, sb)
+    }
+
+    private fun appendFence(lines: List<String>, start: Int, trimmed: String, sb: StringBuilder): Int {
+        val fence = if (trimmed.startsWith("```")) "```" else "~~~"
+        var i = start + 1
+        while (i < lines.size && !lines[i].trim().startsWith(fence)) {
+            appendCodeLine(sb, lines[i])
+            i++
+        }
+        if (i < lines.size) i++
+        paraBreak(sb)
+        return i
+    }
+
+    private fun appendCodeLine(sb: StringBuilder, line: String) {
+        paraBreak(sb)
+        sb.append(EbookMarks.CODE_LINE)
+        sb.append(EbookMarks.STYLE)
+        sb.append(EbookMarks.styleChar(EbookMarks.CODE))
+        sb.append(line)
+    }
+
+    private fun appendRule(sb: StringBuilder, i: Int): Int {
+        paraBreak(sb)
+        sb.append("────────")
+        paraBreak(sb)
+        return i + 1
+    }
+
+    private fun appendQuote(quote: Pair<Int, String>, sb: StringBuilder, i: Int): Int {
+        paraBreak(sb)
+        repeat(quote.first) { sb.append(EbookMarks.QUOTE) }
+        appendMaybeList(sb, quote.second)
+        return i + 1
+    }
+
+    private fun appendListItem(list: Pair<String, String>, sb: StringBuilder, i: Int): Int {
+        paraBreak(sb)
+        sb.append(list.first)
+        sb.append(stylePiece(list.second))
+        return i + 1
+    }
+
+    private fun appendMaybeList(sb: StringBuilder, text: String) {
+        val item = listItem(text)
+        if (item != null) {
+            sb.append(item.first)
+            sb.append(stylePiece(item.second))
+        } else {
+            sb.append(stylePiece(text))
+        }
+    }
+
+    private fun appendParagraph(lines: List<String>, start: Int, sb: StringBuilder): Int {
+        val buf = StringBuilder(lines[start].trim())
+        var i = start + 1
+        while (i < lines.size && paragraphContinues(lines[i])) {
+            buf.append(' ')
+            buf.append(lines[i].trim())
+            i++
+        }
+        paraBreak(sb)
+        sb.append(stylePiece(buf.toString()))
+        return i
+    }
+
+    private fun paragraphContinues(next: String): Boolean {
+        if (next.isBlank()) return false
+        val t = next.trim()
+        if (t.startsWith("```") || t.startsWith("~~~") || isHr(t)) return false
+        return quoteOf(next) == null && listItem(next) == null
     }
 
     private fun stylePiece(s: String): String {
@@ -132,8 +153,32 @@ internal object EbookMarkdown {
     }
 
     private fun writeInline(s: String, from: Int, to: Int, bits: Int, sb: StringBuilder) {
+        val writer = InlineWriter(s, to, bits, sb)
         var i = from
+        while (i < to) i = writer.advance(i)
+    }
+
+    private class InlineWriter(
+        val s: String,
+        val to: Int,
+        val bits: Int,
+        val sb: StringBuilder,
+    ) {
         var styled = false
+
+        fun advance(i: Int): Int {
+            val c = s[i]
+            escapeAt(i, c)?.let { return it }
+            codeAt(i, c)?.let { return it }
+            imageAt(i, c)?.let { return it }
+            linkAt(i, c)?.let { return it }
+            htmlAt(i, c)?.let { return it }
+            delimAt(i)?.let { return it }
+            mark()
+            sb.append(c)
+            return i + 1
+        }
+
         fun mark() {
             if (styled) return
             if (bits != 0) {
@@ -142,95 +187,91 @@ internal object EbookMarkdown {
             }
             styled = true
         }
+
         fun restore() {
             sb.append(EbookMarks.STYLE)
             sb.append(EbookMarks.styleChar(bits))
             styled = true
         }
-        while (i < to) {
-            val c = s[i]
-            if (c == '\\' && i + 1 < to) {
-                mark()
-                sb.append(s[i + 1])
-                i += 2
-                continue
-            }
-            if (c == '`') {
-                val end = indexOfToken(s, "`", i + 1, to)
-                if (end > i + 1) {
-                    sb.append(EbookMarks.STYLE)
-                    sb.append(EbookMarks.styleChar(bits or EbookMarks.CODE))
-                    sb.append(s, i + 1, end)
-                    restore()
-                    i = end + 1
-                    continue
-                }
-            }
-            if (c == '!' && i + 1 < to && s[i + 1] == '[') {
-                val link = linkSpan(s, i + 1, to)
-                if (link != null) {
-                    writeInline(s, link.textFrom, link.textTo, bits, sb)
-                    restore()
-                    i = link.after
-                    continue
-                }
-            }
-            if (c == '[') {
-                val link = linkSpan(s, i, to)
-                if (link != null) {
-                    writeInline(s, link.textFrom, link.textTo, bits or EbookMarks.UNDER, sb)
-                    restore()
-                    i = link.after
-                    continue
-                }
-            }
-            if (c == '<' && i + 1 < to && (s[i + 1].isLetter() || s[i + 1] == '/')) {
-                val gt = s.indexOf('>', i + 1)
-                if (gt in (i + 2) until to && gt - i < 300) {
-                    val raw = s.substring(i + 1, gt).trim()
-                    val name = raw.removePrefix("/").substringBefore(' ').substringBefore('/')
-                        .substringAfter(':').lowercase()
-                    if (raw.startsWith("/")) {
-                        i = gt + 1
-                        continue
-                    }
-                    if (name == "br") {
-                        sb.append('\n')
-                        i = gt + 1
-                        continue
-                    }
-                    val add = htmlFlags(name, raw)
-                    if (add != 0 && !raw.endsWith("/")) {
-                        val close = findCloseTag(s, name, gt + 1, to)
-                        if (close > gt) {
-                            writeInline(s, gt + 1, close, bits or add, sb)
-                            restore()
-                            val after = s.indexOf('>', close).let { if (it in close until to) it + 1 else close }
-                            i = after
-                            continue
-                        }
-                    }
-                    if (name.isNotEmpty()) {
-                        i = gt + 1
-                        continue
-                    }
-                }
-            }
-            val opened = openDelim(s, i, to)
-            if (opened != null) {
-                val inner = i + opened.len
-                val close = indexOfToken(s, opened.token, inner, to)
-                if (close > inner && !s[inner].isWhitespace() && !s[close - 1].isWhitespace()) {
-                    writeInline(s, inner, close, bits or opened.flags, sb)
-                    restore()
-                    i = close + opened.len
-                    continue
-                }
-            }
+
+        fun escapeAt(i: Int, c: Char): Int? {
+            if (c != '\\' || i + 1 >= to) return null
             mark()
-            sb.append(c)
-            i++
+            sb.append(s[i + 1])
+            return i + 2
         }
+
+        fun codeAt(i: Int, c: Char): Int? {
+            if (c != '`') return null
+            val end = indexOfToken(s, "`", i + 1, to)
+            if (end <= i + 1) return null
+            sb.append(EbookMarks.STYLE)
+            sb.append(EbookMarks.styleChar(bits or EbookMarks.CODE))
+            sb.append(s, i + 1, end)
+            restore()
+            return end + 1
+        }
+
+        fun imageAt(i: Int, c: Char): Int? {
+            if (c != '!' || i + 1 >= to || s[i + 1] != '[') return null
+            return writeLink(linkSpan(s, i + 1, to), bits)
+        }
+
+        fun linkAt(i: Int, c: Char): Int? {
+            if (c != '[') return null
+            return writeLink(linkSpan(s, i, to), bits or EbookMarks.UNDER)
+        }
+
+        fun writeLink(link: Link?, linkBits: Int): Int? {
+            if (link == null) return null
+            writeInline(s, link.textFrom, link.textTo, linkBits, sb)
+            restore()
+            return link.after
+        }
+
+        fun htmlAt(i: Int, c: Char): Int? {
+            if (c != '<' || i + 1 >= to) return null
+            if (!s[i + 1].isLetter() && s[i + 1] != '/') return null
+            val gt = s.indexOf('>', i + 1)
+            if (gt !in i + 2 until to || gt - i >= 300) return null
+            return applyHtml(s.substring(i + 1, gt).trim(), gt)
+        }
+
+        fun delimAt(i: Int): Int? {
+            val opened = openDelim(s, i, to) ?: return null
+            val inner = i + opened.len
+            val close = indexOfToken(s, opened.token, inner, to)
+            if (close <= inner) return null
+            if (s[inner].isWhitespace() || s[close - 1].isWhitespace()) return null
+            writeInline(s, inner, close, bits or opened.flags, sb)
+            restore()
+            return close + opened.len
+        }
+    }
+
+    private fun InlineWriter.applyHtml(raw: String, gt: Int): Int? {
+        val name = raw.removePrefix("/").substringBefore(' ').substringBefore('/')
+            .substringAfter(':').lowercase()
+        if (raw.startsWith("/")) return gt + 1
+        if (name == "br") {
+            sb.append('\n')
+            return gt + 1
+        }
+        val spanned = htmlSpan(name, raw, gt)
+        if (spanned != null) return spanned
+        if (name.isNotEmpty()) return gt + 1
+        return null
+    }
+
+    private fun InlineWriter.htmlSpan(name: String, raw: String, gt: Int): Int? {
+        val add = htmlFlags(name, raw)
+        if (add == 0 || raw.endsWith("/")) return null
+        val close = findCloseTag(s, name, gt + 1, to)
+        if (close <= gt) return null
+        writeInline(s, gt + 1, close, bits or add, sb)
+        restore()
+        val after = s.indexOf('>', close)
+        return if (after in close until to) after + 1 else close
     }
 
     private data class Delim(val token: String, val flags: Int) {
@@ -239,22 +280,29 @@ internal object EbookMarkdown {
 
     private data class Link(val textFrom: Int, val textTo: Int, val after: Int)
 
+    private val OPEN_DELIMS = arrayOf(
+        Delim("~~", EbookMarks.STRIKE),
+        Delim("==", EbookMarks.MARK),
+        Delim("***", EbookMarks.BOLD or EbookMarks.ITALIC),
+        Delim("___", EbookMarks.BOLD or EbookMarks.ITALIC),
+        Delim("**", EbookMarks.BOLD),
+        Delim("__", EbookMarks.BOLD),
+        Delim("*", EbookMarks.ITALIC),
+    )
+
     private fun openDelim(s: String, i: Int, to: Int): Delim? {
-        fun has(token: String) = i + token.length <= to && s.startsWith(token, i)
-        if (has("~~")) return Delim("~~", EbookMarks.STRIKE)
-        if (has("==")) return Delim("==", EbookMarks.MARK)
-        if (has("***")) return Delim("***", EbookMarks.BOLD or EbookMarks.ITALIC)
-        if (has("___")) return Delim("___", EbookMarks.BOLD or EbookMarks.ITALIC)
-        if (has("**")) return Delim("**", EbookMarks.BOLD)
-        if (has("__")) return Delim("__", EbookMarks.BOLD)
-        if (has("*")) return Delim("*", EbookMarks.ITALIC)
-        if (has("_")) {
-            val prev = if (i > 0) s[i - 1] else ' '
-            if (prev.isLetterOrDigit()) return null
-            val next = if (i + 1 < to) s[i + 1] else ' '
-            if (next.isLetterOrDigit() || next == '_') return Delim("_", EbookMarks.ITALIC)
-            return null
+        for (d in OPEN_DELIMS) {
+            if (i + d.len <= to && s.startsWith(d.token, i)) return d
         }
+        if (i >= to || s[i] != '_') return null
+        return underscoreDelim(s, i, to)
+    }
+
+    private fun underscoreDelim(s: String, i: Int, to: Int): Delim? {
+        val prev = if (i > 0) s[i - 1] else ' '
+        if (prev.isLetterOrDigit()) return null
+        val next = if (i + 1 < to) s[i + 1] else ' '
+        if (next.isLetterOrDigit() || next == '_') return Delim("_", EbookMarks.ITALIC)
         return null
     }
 
@@ -295,29 +343,41 @@ internal object EbookMarkdown {
     }
 
     private fun htmlFlags(name: String, raw: String): Int {
-        var f = when (name) {
-            "b", "strong" -> EbookMarks.BOLD
-            "i", "em" -> EbookMarks.ITALIC
-            "u", "ins", "a" -> EbookMarks.UNDER
-            "s", "strike", "del" -> EbookMarks.STRIKE
-            "code", "kbd", "samp", "tt" -> EbookMarks.CODE
-            "sup" -> EbookMarks.SUP
-            "sub" -> EbookMarks.SUB
-            "small" -> EbookMarks.SMALL
-            "mark" -> EbookMarks.MARK
-            else -> 0
-        }
+        var f = HTML_FLAGS[name] ?: 0
         val style = Regex("""(?i)\bstyle\s*=\s*"([^"]*)"|style\s*=\s*'([^']*)'""").find(raw)
-        val css = style?.groupValues?.drop(1)?.firstOrNull { it.isNotEmpty() }
-        if (css != null) {
-            val lower = css.lowercase()
-            if ("font-weight" in lower && ("bold" in lower || "700" in lower)) f = f or EbookMarks.BOLD
-            if ("italic" in lower || "oblique" in lower) f = f or EbookMarks.ITALIC
-            if ("underline" in lower) f = f or EbookMarks.UNDER
-            if ("line-through" in lower) f = f or EbookMarks.STRIKE
-        }
+        val css = style?.groupValues?.drop(1)?.firstOrNull { it.isNotEmpty() } ?: return f
+        return f or cssFlags(css.lowercase())
+    }
+
+    private fun cssFlags(lower: String): Int {
+        var f = 0
+        if ("font-weight" in lower && ("bold" in lower || "700" in lower)) f = f or EbookMarks.BOLD
+        if ("italic" in lower || "oblique" in lower) f = f or EbookMarks.ITALIC
+        if ("underline" in lower) f = f or EbookMarks.UNDER
+        if ("line-through" in lower) f = f or EbookMarks.STRIKE
         return f
     }
+
+    private val HTML_FLAGS = mapOf(
+        "b" to EbookMarks.BOLD,
+        "strong" to EbookMarks.BOLD,
+        "i" to EbookMarks.ITALIC,
+        "em" to EbookMarks.ITALIC,
+        "u" to EbookMarks.UNDER,
+        "ins" to EbookMarks.UNDER,
+        "a" to EbookMarks.UNDER,
+        "s" to EbookMarks.STRIKE,
+        "strike" to EbookMarks.STRIKE,
+        "del" to EbookMarks.STRIKE,
+        "code" to EbookMarks.CODE,
+        "kbd" to EbookMarks.CODE,
+        "samp" to EbookMarks.CODE,
+        "tt" to EbookMarks.CODE,
+        "sup" to EbookMarks.SUP,
+        "sub" to EbookMarks.SUB,
+        "small" to EbookMarks.SMALL,
+        "mark" to EbookMarks.MARK,
+    )
 
     private val LIST = Regex("""^(\s*)([-*+]|\d{1,3}[.)])\s+(.*)$""")
     private val BLOCK_TAG = Regex("""(?i)<\s*(p|div|blockquote|pre|ul|ol|li|h[1-6]|table|br|hr)\b""")

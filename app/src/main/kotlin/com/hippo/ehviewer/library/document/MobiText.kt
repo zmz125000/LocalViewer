@@ -62,7 +62,7 @@ internal object MobiText {
                 val end = records.getOrNull(n + 1) ?: bytes.size
                 val chunk = slice(bytes, records[n], end) ?: continue
                 if (chunk.size < 8) continue
-                val index = (n - firstImage + 1)
+                val index = n - firstImage + 1
                 imageRecs[index] = chunk
             }
         }

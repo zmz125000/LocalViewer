@@ -40,7 +40,7 @@ private fun isAnimatedWebPHeader(bytes: ByteArray, n: Int): Boolean {
     if (!asciiEquals(bytes, 0, "RIFF", n)) return false
     if (!asciiEquals(bytes, 8, "WEBP", n)) return false
     if (!asciiEquals(bytes, 12, "VP8X", n)) return false
-    return (bytes[20].toInt() and 0x02) != 0
+    return bytes[20].toInt() and 0x02 != 0
 }
 
 private fun isApngHeader(bytes: ByteArray, n: Int): Boolean {

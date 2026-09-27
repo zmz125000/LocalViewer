@@ -25,6 +25,14 @@ internal object EbookParagraph {
     fun detect(text: String): Int {
         val lines = normalize(text).split('\n')
         val nonempty = ArrayList<String>(64)
+        val runs = countRuns(lines, nonempty)
+        if (nonempty.size < 6) return SOFT
+        val prepared = nonempty.map { trimJoinEdge(it) }.filter { it.isNotEmpty() }
+        if (hardWrapSample(lines, nonempty, prepared, runs)) return HARD
+        return SOFT
+    }
+
+    private fun countRuns(lines: List<String>, nonempty: ArrayList<String>): Pair<Int, Int> {
         var run = 0
         var runs = 0
         var runSum = 0
@@ -45,35 +53,56 @@ internal object EbookParagraph {
             runSum += run
             runs++
         }
-        if (nonempty.size < 6) return SOFT
-        val prepared = nonempty.map { trimJoinEdge(it) }.filter { it.isNotEmpty() }
+        return runs to runSum
+    }
+
+    private fun hardWrapSample(
+        lines: List<String>,
+        nonempty: List<String>,
+        prepared: List<String>,
+        runs: Pair<Int, Int>,
+    ): Boolean {
         val counts = prepared.map { it.length }
-        // Fixed-width wraps stay near one character count. Paragraph tails and
-        // indented sentence endings must not hide that cluster.
-        if (clusteredHard(counts)) return HARD
+        if (clusteredHard(counts)) return true
+        if (mostlySentences(nonempty) || mostlyIndented(nonempty)) return false
+        if (counts.isEmpty()) return false
+        if (blankClusterHard(lines, nonempty, counts)) return true
+        return widthClusterHard(prepared, nonempty, runs.first, runs.second)
+    }
+
+    private fun mostlySentences(nonempty: List<String>): Boolean {
         val ended = nonempty.count { endsSentence(it) }
-        if (ended >= nonempty.size * 0.45f) return SOFT
+        return ended >= nonempty.size * 0.45f
+    }
+
+    private fun mostlyIndented(nonempty: List<String>): Boolean {
         val indented = nonempty.count { startsIndented(it) }
-        if (indented >= nonempty.size * 0.55f) return SOFT
-        if (counts.isEmpty()) return SOFT
+        return indented >= nonempty.size * 0.55f
+    }
+
+    private fun blankClusterHard(lines: List<String>, nonempty: List<String>, counts: List<Int>): Boolean {
+        if (!blankSeparatedLines(lines)) return false
         val sortedCounts = counts.sorted()
         val medCount = sortedCounts[sortedCounts.size / 2]
-        // Blank between wrapped lines. Full lines cluster within a couple of
-        // characters; anything shorter than that cluster ends a paragraph.
-        if (blankSeparatedLines(lines) && medCount in 16..80) {
-            val full = counts.count { it >= medCount - 2 && it <= medCount + 2 }
-            val short = counts.count { it < medCount - 2 }
-            if (full >= nonempty.size * 0.55f && short >= nonempty.size * 0.04f) return HARD
-        }
+        if (medCount !in 16..80) return false
+        val full = counts.count { it >= medCount - 2 && it <= medCount + 2 }
+        val short = counts.count { it < medCount - 2 }
+        return full >= nonempty.size * 0.55f && short >= nonempty.size * 0.04f
+    }
+
+    private fun widthClusterHard(
+        prepared: List<String>,
+        nonempty: List<String>,
+        runs: Int,
+        runSum: Int,
+    ): Boolean {
         val widths = prepared.map { lineWidth(it) }.sorted()
         val med = widths[widths.size / 2]
-        val p75 = widths[(widths.size * 3) / 4]
+        val p75 = widths[widths.size * 3 / 4]
         val meanRun = if (runs == 0) 1f else runSum.toFloat() / runs
-        if (med in 16f..80f && p75 <= 90f && meanRun >= 2.4f) {
-            val near = widths.count { it >= p75 * 0.72f }
-            if (near >= nonempty.size * 0.45f) return HARD
-        }
-        return SOFT
+        if (med !in 16f..80f || p75 > 90f || meanRun < 2.4f) return false
+        val near = widths.count { it >= p75 * 0.72f }
+        return near >= nonempty.size * 0.45f
     }
 
     fun paragraphs(text: String, mode: Int): List<String> {
@@ -99,41 +128,61 @@ internal object EbookParagraph {
         val counts = prepared.map { it.length }
         // A couple of characters of jitter (34, 35, 36) is still a full line.
         val byCount = blanksAreLineBreaks || clusteredHard(counts)
-        val shortLimit = if (byCount) {
-            (wrapWidth(counts) - 2).toFloat()
-        } else {
-            val widths = prepared.map { lineWidth(it) }.sorted()
-            val typical = if (widths.size < 4) 32f else widths[(widths.size * 3) / 4]
-            typical * 0.62f
-        }
+        return joinHardLines(lines, blanksAreLineBreaks, byCount, hardShortLimit(prepared, counts, byCount))
+    }
+
+    private fun hardShortLimit(prepared: List<String>, counts: List<Int>, byCount: Boolean): Float {
+        if (byCount) return (wrapWidth(counts) - 2).toFloat()
+        val widths = prepared.map { lineWidth(it) }.sorted()
+        val typical = if (widths.size < 4) 32f else widths[widths.size * 3 / 4]
+        return typical * 0.62f
+    }
+
+    private fun joinHardLines(
+        lines: List<String>,
+        blanksAreLineBreaks: Boolean,
+        byCount: Boolean,
+        shortLimit: Float,
+    ): List<String> {
         val out = ArrayList<String>()
         val buf = StringBuilder()
         var prevShort = false
         var blankRun = 0
-        fun flush() {
-            val t = buf.toString().trim()
-            buf.clear()
-            if (t.isNotEmpty()) out += t
-            prevShort = false
-        }
         for (ln in lines) {
             if (ln.isBlank()) {
                 blankRun++
-                // One blank is the wrap separator. A wider gap is a paragraph break.
-                if (!blanksAreLineBreaks || blankRun >= 2) flush()
+                if (blankBreaksParagraph(blanksAreLineBreaks, blankRun)) {
+                    flushHard(buf, out)
+                    prevShort = false
+                }
                 continue
             }
             blankRun = 0
             val text = trimJoinEdge(ln)
             val width = if (byCount) text.length.toFloat() else lineWidth(text)
-            val indented = startsIndented(ln)
-            val locked = isStyledBlock(ln) || isStyledBlock(buf)
-            if (buf.isNotEmpty() && (locked || indented || prevShort)) flush()
+            if (shouldFlushHard(buf, ln, prevShort)) {
+                flushHard(buf, out)
+                prevShort = false
+            }
             joinLine(buf, text)
             prevShort = width < shortLimit
         }
-        flush()
+        flushHard(buf, out)
         return out
+    }
+
+    private fun blankBreaksParagraph(blanksAreLineBreaks: Boolean, blankRun: Int): Boolean = !blanksAreLineBreaks || blankRun >= 2
+
+    private fun shouldFlushHard(buf: StringBuilder, ln: String, prevShort: Boolean): Boolean {
+        if (buf.isEmpty()) return false
+        if (isStyledBlock(ln) || isStyledBlock(buf)) return true
+        return startsIndented(ln) || prevShort
+    }
+
+    private fun flushHard(buf: StringBuilder, out: MutableList<String>) {
+        val t = buf.toString().trim()
+        buf.clear()
+        if (t.isNotEmpty()) out += t
     }
 
     private fun joinLine(buf: StringBuilder, raw: String) {
@@ -207,7 +256,7 @@ internal object EbookParagraph {
         if (lengths.size < 6) {
             if (lengths.isEmpty()) return 32
             val sorted = lengths.sorted()
-            return sorted[(sorted.size * 3) / 4]
+            return sorted[sorted.size * 3 / 4]
         }
         val hist = IntArray(81)
         for (n in lengths) if (n in 0..80) hist[n]++

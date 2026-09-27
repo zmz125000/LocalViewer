@@ -11,9 +11,11 @@ import kotlinx.coroutines.flow.update
  * Process-lifetime set of archives confirmed to have **no playable images**
  * (libarchive "Found 0 images" / solid no playable member).
  *
- * Lazy de-promote: demote [BrowseEntry.ArchiveGallery] / [BrowseEntryRemote.ArchiveGallery]
- * to a regular file (keep the row; drop the gallery tag) without a full rescan.
- * Transient failures (busy engine, password, network blip) must **not** call [mark].
+ * Lazy de-promote: drop the photo tag on [BrowseEntry.ArchiveGallery] /
+ * [BrowseEntryRemote.ArchiveGallery] by turning the row into a regular file.
+ * Photo and Media filters then hide it. Document names (PDF/EPUB) stay in the
+ * Document filter; zip/cbz/rar do not. Transient failures (busy engine, password,
+ * network blip) must **not** call [mark].
  */
 object EmptyArchiveRegistry {
     private val keys = ConcurrentHashMap.newKeySet<String>()

@@ -120,8 +120,8 @@ internal object EbookImages {
             bytes[12] == 'V'.code.toByte() && bytes[13] == 'P'.code.toByte() &&
             bytes[14] == '8'.code.toByte() && bytes[15] == 'X'.code.toByte()
         ) {
-            val w = 1 + (u24le(bytes, 24))
-            val h = 1 + (u24le(bytes, 27))
+            val w = 1 + u24le(bytes, 24)
+            val h = 1 + u24le(bytes, 27)
             return positive(w, h)
         }
         return null

@@ -864,6 +864,28 @@ private fun documentNameFromIntent(intent: Intent, title: String): String {
     return fromPath ?: title
 }
 
+private fun unsizedEbookCache(
+    token: String?,
+    cacheKey: String?,
+    charsetKey: String,
+    landscape: Boolean,
+    startPage: Int,
+    stillWanted: () -> Boolean,
+): PdfDocumentModel.Vector? {
+    val registered = token?.let { StreamDocumentRegistry.get(it) } ?: return null
+    if (cacheKey == null || registered.sizeBytes > 0L) return null
+    val cached = EbookBodyCache.loadLast(cacheKey, charsetKey)
+    if (cached.isNullOrEmpty()) return null
+    return ebookVector(cached, resources = null, landscape, startPage, stillWanted, fromCache = true)
+}
+
+private fun shouldCacheEbook(cached: List<EbookChapter>?, chapters: List<EbookChapter>, size: Long): Boolean {
+    if (cached != null || size <= 0L) return false
+    return chapters.none { EbookImages.hasMarker(it.text) }
+}
+
+private class EbookLoad(val vector: PdfDocumentModel.Vector?, val sourceHeld: Boolean)
+
 private fun openEbookDocument(
     intent: Intent,
     token: String?,
@@ -877,62 +899,80 @@ private fun openEbookDocument(
     val charsetPref = Settings.ebookCharset.value
     val forced = TextCharset.forcedCharset(charsetPref)
     val charsetKey = TextCharset.cacheLabel(charsetPref)
-    val registered = token?.let { StreamDocumentRegistry.get(it) }
-    val registeredSize = registered?.sizeBytes ?: -1L
-    if (cacheKey != null && registered != null && registeredSize <= 0L) {
-        val cached = EbookBodyCache.loadLast(cacheKey, charsetKey)
-        if (!cached.isNullOrEmpty()) {
-            return ebookVector(cached, resources = null, landscape, startPage, stillWanted, fromCache = true)
-        }
-    }
+    unsizedEbookCache(token, cacheKey, charsetKey, landscape, startPage, stillWanted)?.let { return it }
     var owned: ArchiveByteSource? = null
-    val source = runCatching { openDirectArchiveSource(intent, token) }
-        .onFailure { logcat("PdfReader", it) }
-        .getOrNull()
-        ?: run {
-            val pfd = token?.let { StreamDocumentRegistry.get(it)?.openFileDescriptor?.invoke() }
-                ?: return null
-            PfdArchiveByteSource(pfd, ownsPfd = true).also { owned = it }
-        }
+    val source = openEbookSource(intent, token) { owned = it } ?: return null
     var sourceHeld = false
     return try {
-        val size = runCatching { source.size }.getOrDefault(-1L)
-        val cached = if (cacheKey != null && size > 0L) {
-            EbookBodyCache.load(cacheKey, size, charsetKey)
-        } else {
-            null
-        }
-        val book = if (cached != null) {
-            EbookParse(cached, null)
-        } else {
-            EbookEngine.parseBook(source, fileName, stillWanted, forced, charsetPref)
-        }
-        val chapters = book?.chapters
-        if (chapters.isNullOrEmpty() || !stillWanted()) {
-            book?.resources?.close()
-            sourceHeld = book?.resources != null
-            return null
-        }
-        val pictured = chapters.any { EbookImages.hasMarker(it.text) }
-        if (cached == null && !pictured && cacheKey != null && size > 0L && stillWanted()) {
-            EbookBodyCache.save(cacheKey, size, chapters, charsetKey)
-        }
-        val vector = ebookVector(
-            chapters,
-            book.resources,
-            landscape,
-            startPage,
-            stillWanted,
-            fromCache = cached != null,
+        val loaded = readOpenedEbook(
+            source, fileName, cacheKey, charsetKey, charsetPref, forced, landscape, startPage, stillWanted,
         )
-        sourceHeld = vector != null && book.resources != null
-        vector
+        sourceHeld = loaded.sourceHeld
+        loaded.vector
     } finally {
-        if (!sourceHeld) {
-            runCatching { source.close() }
-            if (owned !== source) runCatching { owned?.close() }
-        }
+        if (!sourceHeld) releaseUnheldEbook(source, owned)
     }
+}
+
+private fun openEbookSource(intent: Intent, token: String?, own: (ArchiveByteSource) -> Unit): ArchiveByteSource? {
+    runCatching { openDirectArchiveSource(intent, token) }
+        .onFailure { logcat("PdfReader", it) }
+        .getOrNull()
+        ?.let { return it }
+    val pfd = token?.let { StreamDocumentRegistry.get(it)?.openFileDescriptor?.invoke() } ?: return null
+    return PfdArchiveByteSource(pfd, ownsPfd = true).also(own)
+}
+
+private fun readOpenedEbook(
+    source: ArchiveByteSource,
+    fileName: String,
+    cacheKey: String?,
+    charsetKey: String,
+    charsetPref: Int,
+    forced: java.nio.charset.Charset?,
+    landscape: Boolean,
+    startPage: Int,
+    stillWanted: () -> Boolean,
+): EbookLoad {
+    val size = runCatching { source.size }.getOrDefault(-1L)
+    val cached = cachedEbookChapters(cacheKey, size, charsetKey)
+    val book = if (cached != null) {
+        EbookParse(cached, null)
+    } else {
+        EbookEngine.parseBook(source, fileName, stillWanted, forced, charsetPref)
+    }
+    val chapters = book?.chapters
+    if (chapters.isNullOrEmpty() || !stillWanted()) {
+        book?.resources?.close()
+        return EbookLoad(null, book?.resources != null)
+    }
+    saveEbookCache(cacheKey, size, chapters, charsetKey, cached, stillWanted)
+    val vector = ebookVector(chapters, book.resources, landscape, startPage, stillWanted, fromCache = cached != null)
+    return EbookLoad(vector, vector != null && book.resources != null)
+}
+
+private fun cachedEbookChapters(cacheKey: String?, size: Long, charsetKey: String): List<EbookChapter>? {
+    if (cacheKey == null || size <= 0L) return null
+    return EbookBodyCache.load(cacheKey, size, charsetKey)
+}
+
+private fun saveEbookCache(
+    cacheKey: String?,
+    size: Long,
+    chapters: List<EbookChapter>,
+    charsetKey: String,
+    cached: List<EbookChapter>?,
+    stillWanted: () -> Boolean,
+) {
+    val key = cacheKey ?: return
+    if (shouldCacheEbook(cached, chapters, size) && stillWanted()) {
+        EbookBodyCache.save(key, size, chapters, charsetKey)
+    }
+}
+
+private fun releaseUnheldEbook(source: ArchiveByteSource, owned: ArchiveByteSource?) {
+    runCatching { source.close() }
+    if (owned !== source) runCatching { owned?.close() }
 }
 
 private fun ebookVector(
@@ -1085,7 +1125,7 @@ private class PdfSession(private val renderer: PdfRenderer) : PageBitmapSession 
 
     private fun renderOpened(page: PdfRenderer.Page, widthPx: Int): Bitmap {
         val w = widthPx.coerceAtLeast(1)
-        val h = ((page.height.toFloat() / page.width.coerceAtLeast(1)) * w)
+        val h = (page.height.toFloat() / page.width.coerceAtLeast(1) * w)
             .toInt()
             .coerceAtLeast(1)
         val (rw, rh) = cappedBitmapSize(w, h)
@@ -1420,35 +1460,64 @@ private fun drawEbookLine(
     paint.isStrikeThruText = false
     paint.bgColor = 0
     val x0 = left + line.indentEm * fontSize
-    if (line.quote) {
-        val bar = x0 - fontSize * 0.5f
-        val stroke = paint.strokeWidth
-        val style = paint.style
-        paint.style = Paint.Style.STROKE
-        paint.strokeWidth = (fontSize * 0.07f).coerceAtLeast(1f)
-        canvas.drawLine(bar, y - size * 0.9f, bar, y + size * 0.22f, paint)
-        paint.style = style
-        paint.strokeWidth = stroke
-    }
+    if (line.quote) drawQuoteBar(canvas, paint, x0, y, size, fontSize)
     if (text.indexOf(EbookMarks.STYLE) < 0) {
-        paint.typeface = when {
-            line.code -> Typeface.MONOSPACE
-            line.bold -> Typeface.create(baseFace, Typeface.BOLD)
-            else -> baseFace
-        }
-        paint.isFakeBoldText = line.bold && !line.code
-        drawPlainRun(
-            canvas,
-            text,
-            x0,
-            y,
-            contentW - line.indentEm * fontSize,
-            line.justify,
-            line.align,
-            paint,
-        )
+        drawUnstyledEbookLine(canvas, line, text, x0, y, contentW, fontSize, paint, baseFace)
         return
     }
+    drawStyledEbookLine(canvas, line, text, x0, y, contentW, fontSize, size, ink, paint, baseFace)
+    paint.color = ink
+    paint.isUnderlineText = false
+    paint.isStrikeThruText = false
+    paint.textSize = size
+}
+
+private fun drawQuoteBar(canvas: Canvas, paint: TextPaint, x0: Float, y: Float, size: Float, fontSize: Float) {
+    val bar = x0 - fontSize * 0.5f
+    val stroke = paint.strokeWidth
+    val style = paint.style
+    paint.style = Paint.Style.STROKE
+    paint.strokeWidth = (fontSize * 0.07f).coerceAtLeast(1f)
+    canvas.drawLine(bar, y - size * 0.9f, bar, y + size * 0.22f, paint)
+    paint.style = style
+    paint.strokeWidth = stroke
+}
+
+private fun drawUnstyledEbookLine(
+    canvas: Canvas,
+    line: EbookLine,
+    text: String,
+    x0: Float,
+    y: Float,
+    contentW: Float,
+    fontSize: Float,
+    paint: TextPaint,
+    baseFace: Typeface,
+) {
+    paint.typeface = plainEbookFace(line, baseFace)
+    paint.isFakeBoldText = line.bold && !line.code
+    drawPlainRun(canvas, text, x0, y, contentW - line.indentEm * fontSize, line.justify, line.align, paint)
+}
+
+private fun plainEbookFace(line: EbookLine, baseFace: Typeface): Typeface {
+    if (line.code) return Typeface.MONOSPACE
+    if (line.bold) return Typeface.create(baseFace, Typeface.BOLD)
+    return baseFace
+}
+
+private fun drawStyledEbookLine(
+    canvas: Canvas,
+    line: EbookLine,
+    text: String,
+    x0: Float,
+    y: Float,
+    contentW: Float,
+    fontSize: Float,
+    size: Float,
+    ink: Int,
+    paint: TextPaint,
+    baseFace: Typeface,
+) {
     val runs = EbookMarks.runs(text)
     if (runs.isEmpty()) return
     val avail = (contentW - line.indentEm * fontSize).coerceAtLeast(1f)
@@ -1457,42 +1526,73 @@ private fun drawEbookLine(
     for (run in runs) {
         applyRun(paint, baseFace, line, run.bits, size)
         natural += paint.measureText(run.text)
-        for (c in run.text) if (c == ' ') spaces++
+        spaces += countSpaces(run.text)
     }
     val gap = justifyGap(line.justify, natural, avail, spaces)
-    var x = lineOrigin(x0, natural, avail, if (gap > 0f) EbookMarks.LINE_START else line.align)
+    val align = if (gap > 0f) EbookMarks.LINE_START else line.align
+    var x = lineOrigin(x0, natural, avail, align)
     for (run in runs) {
-        applyRun(paint, baseFace, line, run.bits, size)
-        val dy = when {
-            run.bits and EbookMarks.SUP != 0 -> -size * 0.34f
-            run.bits and EbookMarks.SUB != 0 -> size * 0.16f
-            else -> 0f
-        }
-        var start = 0
-        val body = run.text
-        while (start < body.length) {
-            val sp = body.indexOf(' ', start)
-            val end = if (sp < 0) body.length else sp
-            if (end > start) {
-                val word = body.substring(start, end)
-                val w = paint.measureText(word)
-                if (run.bits and EbookMarks.MARK != 0) {
-                    paint.color = 0x55F6D56A
-                    canvas.drawRect(x, y + dy - paint.textSize * 0.92f, x + w, y + dy + paint.textSize * 0.22f, paint)
-                    paint.color = ink
-                }
-                canvas.drawText(word, x, y + dy, paint)
-                x += w
-            }
-            if (sp < 0) break
-            x += paint.measureText(" ") + gap
-            start = sp + 1
-        }
+        x = drawStyledRun(canvas, paint, baseFace, line, run, x, y, size, gap, ink)
     }
-    paint.color = ink
-    paint.isUnderlineText = false
-    paint.isStrikeThruText = false
-    paint.textSize = size
+}
+
+private fun countSpaces(text: String): Int {
+    var n = 0
+    for (c in text) if (c == ' ') n++
+    return n
+}
+
+private fun drawStyledRun(
+    canvas: Canvas,
+    paint: TextPaint,
+    baseFace: Typeface,
+    line: EbookLine,
+    run: EbookMarks.Run,
+    x0: Float,
+    y: Float,
+    size: Float,
+    gap: Float,
+    ink: Int,
+): Float {
+    applyRun(paint, baseFace, line, run.bits, size)
+    val dy = runBaselineShift(run.bits, size)
+    var x = x0
+    var start = 0
+    val body = run.text
+    while (start < body.length) {
+        val sp = body.indexOf(' ', start)
+        val end = if (sp < 0) body.length else sp
+        if (end > start) x = drawStyledWord(canvas, paint, body.substring(start, end), x, y + dy, run.bits, ink)
+        if (sp < 0) break
+        x += paint.measureText(" ") + gap
+        start = sp + 1
+    }
+    return x
+}
+
+private fun runBaselineShift(bits: Int, size: Float): Float {
+    if (bits and EbookMarks.SUP != 0) return -size * 0.34f
+    if (bits and EbookMarks.SUB != 0) return size * 0.16f
+    return 0f
+}
+
+private fun drawStyledWord(
+    canvas: Canvas,
+    paint: TextPaint,
+    word: String,
+    x: Float,
+    y: Float,
+    bits: Int,
+    ink: Int,
+): Float {
+    val w = paint.measureText(word)
+    if (bits and EbookMarks.MARK != 0) {
+        paint.color = 0x55F6D56A
+        canvas.drawRect(x, y - paint.textSize * 0.92f, x + w, y + paint.textSize * 0.22f, paint)
+        paint.color = ink
+    }
+    canvas.drawText(word, x, y, paint)
+    return x + w
 }
 
 private fun applyRun(paint: TextPaint, baseFace: Typeface, line: EbookLine, bits: Int, size: Float) {

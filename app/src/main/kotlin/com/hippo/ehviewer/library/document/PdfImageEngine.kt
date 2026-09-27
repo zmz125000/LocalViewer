@@ -697,7 +697,7 @@ internal class PdfParser(
         var n = 0
         var steps = 0
         while (pending.isNotEmpty() && n < 100_000) {
-            if ((steps++ and 31) == 0 && !stillWanted()) return emptyMap()
+            if (steps++ and 31 == 0 && !stillWanted()) return emptyMap()
             val node = resolveValue(pending.removeFirst()) as? PdfDict ?: continue
             val id = node.objNum
             if (id != null && !seen.add(id)) continue

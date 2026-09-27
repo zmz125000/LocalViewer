@@ -136,20 +136,26 @@ internal object EbookHtml {
         }
 
         private fun onTag(at: Int): Int {
-            if (html.startsWith("<!--", at)) {
-                val end = html.indexOf("-->", at + 4)
-                return if (end < 0) html.length else end + 3
-            }
-            if (html.startsWith("<!", at) || html.startsWith("<?", at)) {
-                val end = html.indexOf('>', at + 2)
-                return if (end < 0) html.length else end + 1
-            }
+            skipCommentOrDecl(at)?.let { return it }
             val gt = html.indexOf('>', at + 1)
             if (gt < 0) {
                 emit('<')
                 return at + 1
             }
-            val raw = html.substring(at + 1, gt).trim()
+            return dispatchTag(html.substring(at + 1, gt).trim(), gt)
+        }
+
+        private fun skipCommentOrDecl(at: Int): Int? {
+            if (html.startsWith("<!--", at)) {
+                val end = html.indexOf("-->", at + 4)
+                return if (end < 0) html.length else end + 3
+            }
+            if (!html.startsWith("<!", at) && !html.startsWith("<?", at)) return null
+            val end = html.indexOf('>', at + 2)
+            return if (end < 0) html.length else end + 1
+        }
+
+        private fun dispatchTag(raw: String, gt: Int): Int {
             if (raw.isEmpty()) return gt + 1
             val closing = raw[0] == '/'
             val body = if (closing) raw.substring(1).trim() else raw
@@ -158,15 +164,7 @@ internal object EbookHtml {
             val name = localName(namePart.substringBefore(' ').substringBefore('\t').substringBefore('\n'))
             if (name.isEmpty()) return gt + 1
             val after = gt + 1
-            when (name) {
-                "script", "style", "head" -> {
-                    if (!closing && !selfClose) {
-                        val close = indexOfClose(name, after)
-                        return close
-                    }
-                    return after
-                }
-            }
+            if (isSkippedTag(name)) return skipOrPass(name, closing, selfClose, after)
             if (closing) {
                 closeTag(name)
                 return after
@@ -175,77 +173,105 @@ internal object EbookHtml {
             return after
         }
 
+        private fun isSkippedTag(name: String): Boolean = name == "script" || name == "style" || name == "head"
+
+        private fun skipOrPass(name: String, closing: Boolean, selfClose: Boolean, after: Int): Int {
+            if (!closing && !selfClose) return indexOfClose(name, after)
+            return after
+        }
+
         private fun openTag(name: String, raw: String, after: Int, selfClose: Boolean) {
-            when (name) {
-                "br", "empty-line" -> {
-                    breakPara()
-                    return
-                }
-                "hr" -> {
-                    breakPara()
-                    appendRule()
-                    breakPara()
-                    return
-                }
-                "img", "image", "meta", "link", "input", "source", "wbr", "col" -> return
-            }
+            if (openBreak(name) || name in VOID_TAGS) return
             val blockCite = name == "cite" && nextIsTag(after)
-            if (name in BLOCK || blockCite) {
+            openBlockFrame(name, raw, blockCite)
+            openListFrame(name, blockCite)
+            openStyleFrame(name, raw, blockCite)
+            if (selfClose) closeTag(name)
+        }
+
+        private fun openBreak(name: String): Boolean {
+            if (name == "br" || name == "empty-line") {
                 breakPara()
-                val align = alignValue(raw)
-                alignStack.addLast(AlignFrame(name, paraAlign))
-                if (align != 0) paraAlign = align
+                return true
             }
-            when {
-                name == "ul" -> lists.addLast(-1)
-                name == "ol" -> lists.addLast(1)
-                name == "li" -> {
-                    val n = lists.lastOrNull() ?: -1
-                    prefix = if (n < 0) {
-                        "• "
-                    } else {
-                        lists[lists.lastIndex] = n + 1
-                        "$n. "
-                    }
-                }
-                name == "pre" -> pres.addLast(name)
-                name == "blockquote" || name == "poem" || name == "epigraph" || name == "stanza" || blockCite -> {
-                    quotes.addLast(name)
-                }
+            if (name != "hr") return false
+            breakPara()
+            appendRule()
+            breakPara()
+            return true
+        }
+
+        private fun openBlockFrame(name: String, raw: String, blockCite: Boolean) {
+            if (name !in BLOCK && !blockCite) return
+            breakPara()
+            val align = alignValue(raw)
+            alignStack.addLast(AlignFrame(name, paraAlign))
+            if (align != 0) paraAlign = align
+        }
+
+        private fun openListFrame(name: String, blockCite: Boolean) {
+            when (name) {
+                "ul" -> lists.addLast(-1)
+                "ol" -> lists.addLast(1)
+                "li" -> prefix = nextListPrefix()
+                "pre" -> pres.addLast(name)
+                else -> if (isQuoteBlock(name, blockCite)) quotes.addLast(name)
             }
+        }
+
+        private fun nextListPrefix(): String {
+            val n = lists.lastOrNull() ?: -1
+            if (n < 0) return "• "
+            lists[lists.lastIndex] = n + 1
+            return "$n. "
+        }
+
+        private fun isQuoteBlock(name: String, blockCite: Boolean): Boolean = name == "blockquote" || name == "poem" || name == "epigraph" || name == "stanza" || blockCite
+
+        private fun openStyleFrame(name: String, raw: String, blockCite: Boolean) {
             var add = flagsFor(name) or flagsFromCss(attr(raw, "style"))
             if (name == "cite" && !blockCite) add = add or EbookMarks.ITALIC
             if (name == "q") add = add or EbookMarks.ITALIC
             if (add != 0) {
                 styles.addLast(StyleFrame(name, bits))
                 bits = bits or add
-            } else if (name in STYLE_WRAP) {
-                styles.addLast(StyleFrame(name, bits))
+                return
             }
-            if (selfClose) closeTag(name)
+            if (name in STYLE_WRAP) styles.addLast(StyleFrame(name, bits))
         }
 
         private fun closeTag(name: String) {
-            val closingQuote = name == "blockquote" || name == "poem" || name == "epigraph" ||
-                name == "stanza" || (name == "cite" && quotes.any { it == name })
-            if (name in BLOCK || closingQuote) breakPara()
-            when (name) {
-                "ul", "ol" -> if (lists.isNotEmpty()) lists.removeLast()
-                "pre" -> if (pres.isNotEmpty()) pres.removeLast()
-                "blockquote", "poem", "epigraph", "stanza", "cite" -> {
-                    val idx = quotes.indexOfLast { it == name }
-                    if (idx >= 0) while (quotes.size > idx) quotes.removeLast()
-                }
-            }
-            val idx = styles.indexOfLast { it.name == name }
-            if (idx >= 0) {
-                val restore = styles[idx].bits
-                while (styles.size > idx) styles.removeLast()
-                bits = restore
-            }
+            if (name in BLOCK || isClosingQuote(name)) breakPara()
+            popStructure(name)
+            popStyle(name)
             if (alignStack.isNotEmpty() && alignStack.last().name == name) {
                 paraAlign = alignStack.removeLast().previous
             }
+        }
+
+        private fun isClosingQuote(name: String): Boolean = name == "blockquote" || name == "poem" || name == "epigraph" ||
+            name == "stanza" || (name == "cite" && quotes.any { it == name })
+
+        private fun popStructure(name: String) {
+            when (name) {
+                "ul", "ol" -> if (lists.isNotEmpty()) lists.removeLast()
+                "pre" -> if (pres.isNotEmpty()) pres.removeLast()
+                "blockquote", "poem", "epigraph", "stanza", "cite" -> popQuote(name)
+            }
+        }
+
+        private fun popQuote(name: String) {
+            val idx = quotes.indexOfLast { it == name }
+            if (idx < 0) return
+            while (quotes.size > idx) quotes.removeLast()
+        }
+
+        private fun popStyle(name: String) {
+            val idx = styles.indexOfLast { it.name == name }
+            if (idx < 0) return
+            val restore = styles[idx].bits
+            while (styles.size > idx) styles.removeLast()
+            bits = restore
         }
 
         private fun emit(c: Char) {
@@ -402,6 +428,16 @@ internal object EbookHtml {
         return f
     }
 
+    private val VOID_TAGS = setOf(
+        "img",
+        "image",
+        "meta",
+        "link",
+        "input",
+        "source",
+        "wbr",
+        "col",
+    )
     private val BLOCK = setOf(
         "p", "div", "h1", "h2", "h3", "h4", "h5", "h6",
         "li", "tr", "section", "article", "blockquote", "table",
