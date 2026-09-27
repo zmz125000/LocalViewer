@@ -922,8 +922,16 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
         goUp()
     }
 
-    /** History path link for the folder currently listed (parent of the opened file). */
-    suspend fun recordCurrentBrowseFolderHistory(sourceId: Long) {
+    /**
+     * History path link for the folder currently listed (parent of the opened item).
+     * Skipped when that item's file / ebook / gallery history toggle is off.
+     */
+    suspend fun recordCurrentBrowseFolderHistory(
+        sourceId: Long,
+        openedName: String,
+        asGallery: Boolean = false,
+    ) {
+        if (!LocalHistory.parentBrowseHistoryAllowed(openedName, asGallery)) return
         val folderThumb = LocalHistory.smbBrowseFolderThumbKey(
             sourceId = sourceId,
             relativeDir = relativeDir,
@@ -979,7 +987,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
         )
         launchIO {
             // Parent browse dir (not gated by file/gallery prefs) + gallery row.
-            recordCurrentBrowseFolderHistory(src.id)
+            recordCurrentBrowseFolderHistory(src.id, entry.name, asGallery = true)
             // History = folder gallery (open → reader). Same gid as progress.
             LocalHistory.recordSmbFolderGallery(
                 sourceId = src.id,
@@ -1072,7 +1080,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                 uploader = "${src.id}\u0000${remote.trim('/')}",
                 category = 2,
             )
-            recordCurrentBrowseFolderHistory(src.id)
+            recordCurrentBrowseFolderHistory(src.id, galleryTitle, asGallery = true)
             LocalHistory.recordSmbFolderGallery(
                 sourceId = src.id,
                 remoteDir = remote,
@@ -1129,7 +1137,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
             category = 2,
         )
         launchIO {
-            recordCurrentBrowseFolderHistory(src.id)
+            recordCurrentBrowseFolderHistory(src.id, title, asGallery = true)
             LocalHistory.recordSmbFolderGallery(
                 sourceId = src.id,
                 remoteDir = relativeDir,
@@ -1161,7 +1169,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
         val remote = joinRemoteArchivePath(relativeDir, entry.parentRelativeName, entry.fileName)
         launchIO {
             // Parent dir + file row (non-dir open).
-            recordCurrentBrowseFolderHistory(src.id)
+            recordCurrentBrowseFolderHistory(src.id, entry.fileName)
             LocalHistory.recordSmbFile(src.id, remote, title = entry.name)
             try {
                 OpenPdfExternally.openSmb(
@@ -1189,7 +1197,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
         ReaderGalleryPlaylist.setFromSmbBrowse(src.id, relativeDir, entries)
         val remote = joinRemoteArchivePath(relativeDir, entry.parentRelativeName, entry.fileName)
         launchIO {
-            recordCurrentBrowseFolderHistory(src.id)
+            recordCurrentBrowseFolderHistory(src.id, entry.name)
             val remoteNorm = remote.trim('/')
             val info = BaseGalleryInfo(
                 gid = stableGalleryId(src.id, "smba:$remoteNorm"),
@@ -1238,7 +1246,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
         val src = source ?: return
         val remote = joinRemoteArchivePath(relativeDir, entry.parentRelativeName, entry.fileName)
         launchIO {
-            recordCurrentBrowseFolderHistory(src.id)
+            recordCurrentBrowseFolderHistory(src.id, entry.name)
             LocalHistory.recordSmbFile(src.id, remote, title = entry.name)
             try {
                 OpenFileExternally.openSmb(
@@ -1264,7 +1272,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
         val actualName = fileName.substringAfterLast('/').substringAfterLast('\\')
         val remote = if (relativeDir.isEmpty()) fileName else SmbGateway.joinRelativePath(relativeDir, fileName)
         launchIO {
-            recordCurrentBrowseFolderHistory(src.id)
+            recordCurrentBrowseFolderHistory(src.id, actualName)
             LocalHistory.recordSmbFile(src.id, remote, title = actualName)
             try {
                 OpenFileExternally.playDocumentSmb(
@@ -1291,7 +1299,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
         val remote = if (relativeDir.isEmpty()) fileName else SmbGateway.joinRelativePath(relativeDir, fileName)
         launchIO {
             // Parent dir + file/video row (non-dir open).
-            recordCurrentBrowseFolderHistory(src.id)
+            recordCurrentBrowseFolderHistory(src.id, actualName)
             LocalHistory.recordSmbFile(src.id, remote, title = actualName)
             try {
                 OpenFileExternally.openSmb(
@@ -1317,7 +1325,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
         val actualName = fileName.substringAfterLast('/').substringAfterLast('\\')
         val remote = if (relativeDir.isEmpty()) fileName else SmbGateway.joinRelativePath(relativeDir, fileName)
         launchIO {
-            recordCurrentBrowseFolderHistory(src.id)
+            recordCurrentBrowseFolderHistory(src.id, actualName)
             LocalHistory.recordSmbFile(src.id, remote, title = actualName)
             try {
                 OpenFileExternally.openSmbHtml(
@@ -1381,7 +1389,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
         val actualName = fileName.substringAfterLast('/').substringAfterLast('\\')
         val remote = if (relativeDir.isEmpty()) fileName else SmbGateway.joinRelativePath(relativeDir, fileName)
         launchIO {
-            recordCurrentBrowseFolderHistory(src.id)
+            recordCurrentBrowseFolderHistory(src.id, actualName)
             LocalHistory.recordSmbFile(src.id, remote, title = actualName)
             try {
                 OpenFileExternally.playSmb(
@@ -1446,7 +1454,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
         launchIO {
             try {
                 // Parent browse dir (not gated by file/gallery prefs) + file row.
-                recordCurrentBrowseFolderHistory(src.id)
+                recordCurrentBrowseFolderHistory(src.id, entry.name)
                 ReaderGalleryPlaylist.setFromSmbBrowse(src.id, relativeDir, entries)
                 // Stream ZIP/CBZ/TAR/CBT/EPUB, solid RAR/CBR/7z, or document extract.
                 if (isStreamableArchiveFileName(entry.fileName) ||
@@ -1810,7 +1818,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                         SmbGateway.joinRelativePath(relativeDir, fileName)
                     }
                     launchIO {
-                        recordCurrentBrowseFolderHistory(src.id)
+                        recordCurrentBrowseFolderHistory(src.id, fileName)
                         LocalHistory.recordSmbFile(src.id, remote, title = fileName.substringAfterLast('/'))
                         try {
                             OpenPdfExternally.openSmb(

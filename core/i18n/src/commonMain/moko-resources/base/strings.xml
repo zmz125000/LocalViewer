@@ -712,11 +712,13 @@
     <string name="settings_privacy_save_history">Save history</string>
     <string name="settings_privacy_save_history_summary">Master switch for browse folders, files, and galleries. Turning this off clears existing history.</string>
     <string name="settings_privacy_save_file_history">Save file history</string>
-    <string name="settings_privacy_save_file_history_summary">Record opened archives, videos, and other non-ebook files. Parent folders are still recorded when Save history is on.</string>
+    <string name="settings_privacy_save_file_history_summary">Record opened archives and other files that are not videos or ebooks. The parent folder is not recorded when this is off.</string>
+    <string name="settings_privacy_save_video_history">Save video history</string>
+    <string name="settings_privacy_save_video_history_summary">Record opened videos. The parent folder is not recorded when this is off.</string>
     <string name="settings_privacy_save_ebook_history">Save ebook history</string>
-    <string name="settings_privacy_save_ebook_history_summary">Record opened text ebooks (TXT, EPUB, HTML, FB2, Markdown). Parent folders are still recorded when Save history is on.</string>
+    <string name="settings_privacy_save_ebook_history_summary">Record opened text ebooks (TXT, EPUB, HTML, FB2, Markdown). The parent folder is not recorded when this is off.</string>
     <string name="settings_privacy_save_gallery_history">Save gallery history</string>
-    <string name="settings_privacy_save_gallery_history_summary">Record opened library and folder galleries. Parent folders are still recorded when Save history is on.</string>
+    <string name="settings_privacy_save_gallery_history_summary">Record opened library and folder galleries. The parent folder is not recorded when this is off.</string>
     <string name="settings_general_back_to_upper_dir">Back to upper dir</string>
     <string name="settings_general_back_to_upper_dir_summary">When opening a folder or gallery from History, Library, or Favourites, system back walks to the parent directory. Turn off (default) to return to that list instead.</string>
     <string name="settings_general_history_dir_back_to_upper">History dir back to upper</string>

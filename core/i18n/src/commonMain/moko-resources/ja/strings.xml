@@ -222,11 +222,13 @@
     <string name="settings_privacy_save_history">履歴を保存</string>
     <string name="settings_privacy_save_history_summary">ブラウズフォルダ・ファイル・ギャラリー履歴のマスタースイッチです。オフにすると既存の履歴も消去されます。</string>
     <string name="settings_privacy_save_file_history">ファイル履歴を保存</string>
-    <string name="settings_privacy_save_file_history_summary">開いたアーカイブ・動画・電子書籍以外のファイルを記録します。親フォルダは「履歴を保存」がオンなら引き続き記録されます。</string>
+    <string name="settings_privacy_save_file_history_summary">開いたアーカイブと、動画・電子書籍以外のファイルを記録します。オフのときは親フォルダも記録しません。</string>
+    <string name="settings_privacy_save_video_history">動画履歴を保存</string>
+    <string name="settings_privacy_save_video_history_summary">開いた動画を記録します。オフのときは親フォルダも記録しません。</string>
     <string name="settings_privacy_save_ebook_history">電子書籍の履歴を保存</string>
-    <string name="settings_privacy_save_ebook_history_summary">開いたテキスト電子書籍（TXT、EPUB、HTML、FB2、Markdown）を記録します。親フォルダは「履歴を保存」がオンなら引き続き記録されます。</string>
+    <string name="settings_privacy_save_ebook_history_summary">開いたテキスト電子書籍（TXT、EPUB、HTML、FB2、Markdown）を記録します。オフのときは親フォルダも記録しません。</string>
     <string name="settings_privacy_save_gallery_history">ギャラリー履歴を保存</string>
-    <string name="settings_privacy_save_gallery_history_summary">開いたライブラリ／フォルダギャラリーを記録します。親フォルダは「履歴を保存」がオンなら引き続き記録されます。</string>
+    <string name="settings_privacy_save_gallery_history_summary">開いたライブラリ／フォルダギャラリーを記録します。オフのときは親フォルダも記録しません。</string>
     <string name="settings_general_back_to_upper_dir">上位ディレクトリに戻る</string>
     <string name="settings_general_back_to_upper_dir_summary">履歴・ライブラリ・お気に入りからフォルダ/ギャラリーを開いたとき、システム戻るで親フォルダに戻ります。オフ（既定）では一覧に戻ります。</string>
     <string name="settings_general_history_dir_back_to_upper">履歴フォルダは上位へ</string>

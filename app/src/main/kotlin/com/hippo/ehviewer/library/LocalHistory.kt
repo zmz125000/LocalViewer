@@ -174,14 +174,7 @@ object LocalHistory {
         LOCAL_FOLDER_TOKEN, LOCAL_BROWSE_TOKEN -> KindLabel.Folder
         LOCAL_ARCHIVE_TOKEN, SMB_ARCHIVE_TOKEN, WEBDAV_ARCHIVE_TOKEN -> KindLabel.Archive
         LOCAL_FILE_TOKEN, SMB_FILE_TOKEN, WEBDAV_FILE_TOKEN ->
-            if (info.category == HISTORY_FILE_CATEGORY_VIDEO ||
-                isVideoFileName(info.title.orEmpty()) ||
-                isVideoFileName(fileNameOfHistory(info))
-            ) {
-                KindLabel.Video
-            } else {
-                KindLabel.File
-            }
+            if (isHistoryVideo(info)) KindLabel.Video else KindLabel.File
         SMB_BROWSE_TOKEN, SMB_FOLDER_TOKEN -> KindLabel.Smb
         WEBDAV_BROWSE_TOKEN, WEBDAV_FOLDER_TOKEN -> KindLabel.WebDav
         else -> KindLabel.Unknown
@@ -215,6 +208,16 @@ object LocalHistory {
         val title = info.title.orEmpty()
         val name = fileNameOfHistory(info)
         return isBrowseDocumentFileName(title) || isBrowseDocumentFileName(name)
+    }
+
+    /**
+     * Video file row. Used by the Privacy “save video history” gate.
+     * Directory pins are never videos.
+     */
+    fun isHistoryVideo(info: GalleryInfo): Boolean {
+        if (isBrowseDirectory(info)) return false
+        if (info.category == HISTORY_FILE_CATEGORY_VIDEO) return true
+        return isVideoFileName(info.title.orEmpty()) || isVideoFileName(fileNameOfHistory(info))
     }
 
     /**
@@ -373,20 +376,34 @@ object LocalHistory {
     }
 
     /**
+     * Parent browse-dir pin written because [openedName] was opened.
+     * Follows the same nested toggle as that row (ebook / video / gallery / file).
+     * A direct directory open does not use this.
+     */
+    fun parentBrowseHistoryAllowed(openedName: String, asGallery: Boolean = false): Boolean {
+        if (!Settings.saveHistory.value) return false
+        if (!asGallery && isEbookFileName(openedName)) return Settings.saveEbookHistory.value
+        if (!asGallery && isVideoFileName(openedName)) return Settings.saveVideoHistory.value
+        return if (asGallery) Settings.saveGalleryHistory.value else Settings.saveFileHistory.value
+    }
+
+    /**
      * Privacy gates for HISTORY writes. Master [Settings.saveHistory] must be on.
-     * Browse-dir rows always pass when master is on; file / ebook / gallery use nested prefs.
-     * (Cover keys / parent-dir side records use the same [EhDB.putHistoryInfo] path.)
+     * Browse-dir rows pass when master is on. A dir pin caused by opening a file,
+     * ebook, or gallery is skipped by [parentBrowseHistoryAllowed] before this.
      */
     fun isHistoryWriteAllowed(info: GalleryInfo): Boolean {
         if (!Settings.saveHistory.value) return false
         return when (info.token) {
-            // Dir pins: parent of opened file/gallery — not gated by nested toggles.
+            // Direct directory opens. Content opens gate the pin first.
             LOCAL_BROWSE_TOKEN, SMB_BROWSE_TOKEN, WEBDAV_BROWSE_TOKEN -> true
             else -> if (isHistoryEbook(info)) {
                 Settings.saveEbookHistory.value
+            } else if (isHistoryVideo(info)) {
+                Settings.saveVideoHistory.value
             } else {
                 when (info.token) {
-                    // Files (archives, videos, regular/external files). Ebooks already handled.
+                    // Files (archives and other non-video files). Ebooks and videos already handled.
                     LOCAL_ARCHIVE_TOKEN, SMB_ARCHIVE_TOKEN, WEBDAV_ARCHIVE_TOKEN,
                     LOCAL_FILE_TOKEN, SMB_FILE_TOKEN, WEBDAV_FILE_TOKEN,
                     -> Settings.saveFileHistory.value
