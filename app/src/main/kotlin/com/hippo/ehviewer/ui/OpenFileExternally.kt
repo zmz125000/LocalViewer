@@ -20,6 +20,7 @@ import com.ehviewer.core.util.withIOContext
 import com.ehviewer.core.util.withUIContext
 import com.hippo.ehviewer.EhDB
 import com.hippo.ehviewer.Settings
+import com.hippo.ehviewer.library.ArchiveByteSource
 import com.hippo.ehviewer.library.BrowseEntryRemote
 import com.hippo.ehviewer.library.BrowseSession
 import com.hippo.ehviewer.library.EbookBodyCache
@@ -37,6 +38,7 @@ import com.hippo.ehviewer.library.SidecarSubtitles
 import com.hippo.ehviewer.library.VideoDirectLinkByteSource
 import com.hippo.ehviewer.library.WEBDAV_FILE_TOKEN
 import com.hippo.ehviewer.library.ZipAsDirListing
+import com.hippo.ehviewer.library.ZipCentralDirectory
 import com.hippo.ehviewer.library.ZipMemberByteSource
 import com.hippo.ehviewer.library.ZipPaths
 import com.hippo.ehviewer.library.document.TextCharset
@@ -133,11 +135,7 @@ object OpenFileExternally {
         asFile: Boolean = false,
         usePreferredPlayer: Boolean = true,
     ) {
-        if (!asFile &&
-            isHtmlFileName(displayName) &&
-            Settings.openHtmlWithBrowser.value &&
-            ZipPaths.parse(pathStr) == null
-        ) {
+        if (!asFile && shouldOpenHtmlInBrowser(displayName)) {
             openLocalHtml(
                 context,
                 pathStr,
@@ -323,11 +321,7 @@ object OpenFileExternally {
         asFile: Boolean = false,
         usePreferredPlayer: Boolean = true,
     ) {
-        if (!asFile &&
-            isHtmlFileName(displayName) &&
-            Settings.openHtmlWithBrowser.value &&
-            ZipAsDirListing.zipMemberPath(remoteRelativeFile) == null
-        ) {
+        if (!asFile && shouldOpenHtmlInBrowser(displayName)) {
             openSmbHtml(
                 context,
                 sourceId,
@@ -414,11 +408,7 @@ object OpenFileExternally {
         asFile: Boolean = false,
         usePreferredPlayer: Boolean = true,
     ) {
-        if (!asFile &&
-            isHtmlFileName(displayName) &&
-            Settings.openHtmlWithBrowser.value &&
-            ZipAsDirListing.zipMemberPath(remoteRelativeFile) == null
-        ) {
+        if (!asFile && shouldOpenHtmlInBrowser(displayName)) {
             openWebDavHtml(
                 context,
                 sourceId,
@@ -1733,11 +1723,29 @@ object OpenFileExternally {
         displayName: String,
         mimeType: String,
     ): PreparedHttpHtml {
-        val parent = localFilesystemParent(pathStr)
+        val zip = ZipPaths.parse(pathStr)
+        val parent = if (zip == null) localFilesystemParent(pathStr) else null
         val dirKey = htmlSessionKey(localDirKey(pathStr))
         val (session, reused) = withIOContext {
             withDirHttpSession(network = false, dirKey = dirKey) { session, _ ->
-                session.dirSource = parent?.let { localHtmlDirSource(it) }
+                session.dirSource = if (zip != null) {
+                    val (zipAbs, member) = zip
+                    zipHtmlDirSource(
+                        innerPrefix = member.substringBeforeLast('/', ""),
+                        openZip = {
+                            openLocalArchiveByteSource(zipAbs.toPath()) ?: error("ZIP missing: $zipAbs")
+                        },
+                        openMember = { memberRel, displayRel ->
+                            localFileEntry(
+                                ZipPaths.encode(zipAbs, memberRel),
+                                displayRel,
+                                mimeTypeForFileName(displayRel),
+                            )
+                        },
+                    )
+                } else {
+                    parent?.let { localHtmlDirSource(it) }
+                }
                 session.put(localFileEntry(pathStr, displayName, mimeType))
             }
         }
@@ -1760,10 +1768,38 @@ object OpenFileExternally {
         val (session, reused) = withIOContext {
             val source = SmbRepository.load(sourceId) ?: throw IOException("SMB source missing")
             val password = SmbPasswordStore.get(sourceId)
+            val zip = ZipAsDirListing.zipMemberPath(remoteRelativeFile)
             val parentDir = parentRelative(remoteRelativeFile)
             val dirKey = htmlSessionKey(smbDirKey(sourceId, parentDir))
             withDirHttpSession(network = true, dirKey = dirKey) { session, _ ->
-                session.dirSource = smbHtmlDirSource(source, password, parentDir)
+                session.dirSource = if (zip != null) {
+                    val (zipRel, member) = zip
+                    zipHtmlDirSource(
+                        innerPrefix = member.substringBeforeLast('/', ""),
+                        openZip = {
+                            SmbArchiveByteSource(
+                                source,
+                                password,
+                                zipRel,
+                                pipeline = false,
+                                yieldable = true,
+                                readahead = false,
+                            )
+                        },
+                        openMember = { memberRel, displayRel ->
+                            smbFileEntry(
+                                source,
+                                password,
+                                ZipAsDirListing.joinPrefix(zipRel, memberRel),
+                                displayRel,
+                                mimeTypeForFileName(displayRel),
+                                sizeBytes = -1L,
+                            )
+                        },
+                    )
+                } else {
+                    smbHtmlDirSource(source, password, parentDir)
+                }
                 session.put(
                     smbFileEntry(source, password, remoteRelativeFile, displayName, mimeType, sizeBytes = -1L),
                 )
@@ -1787,10 +1823,37 @@ object OpenFileExternally {
         val (session, reused) = withIOContext {
             val source = WebDavRepository.load(sourceId) ?: throw IOException("WebDAV source missing")
             val password = WebDavPasswordStore.get(sourceId)
+            val zip = ZipAsDirListing.zipMemberPath(remoteRelativeFile)
             val parentDir = parentRelative(remoteRelativeFile)
             val dirKey = htmlSessionKey(webDavDirKey(sourceId, parentDir))
             withDirHttpSession(network = true, dirKey = dirKey) { session, _ ->
-                session.dirSource = webDavHtmlDirSource(source, password, parentDir)
+                session.dirSource = if (zip != null) {
+                    val (zipRel, member) = zip
+                    zipHtmlDirSource(
+                        innerPrefix = member.substringBeforeLast('/', ""),
+                        openZip = {
+                            WebDavArchiveByteSource(
+                                source,
+                                password,
+                                zipRel,
+                                pipeline = false,
+                                readahead = false,
+                            )
+                        },
+                        openMember = { memberRel, displayRel ->
+                            webDavFileEntry(
+                                source,
+                                password,
+                                ZipAsDirListing.joinPrefix(zipRel, memberRel),
+                                displayRel,
+                                mimeTypeForFileName(displayRel),
+                                sizeBytes = -1L,
+                            )
+                        },
+                    )
+                } else {
+                    webDavHtmlDirSource(source, password, parentDir)
+                }
                 session.put(
                     webDavFileEntry(source, password, remoteRelativeFile, displayName, mimeType, sizeBytes = -1L),
                 )
@@ -1801,6 +1864,50 @@ object OpenFileExternally {
             reused,
             ExternalHttpStreamServer.uriFor(session.id, displayName),
         )
+    }
+
+    /**
+     * HTML site root inside a zip. [innerPrefix] is the directory of the opened page.
+     * Relative CSS, images, and links resolve there without extracting the zip.
+     */
+    private fun zipHtmlDirSource(
+        innerPrefix: String,
+        openZip: () -> ArchiveByteSource,
+        openMember: (memberRel: String, displayRel: String) -> ExternalHttpStreamServer.FileEntry,
+    ): ExternalHttpStreamServer.HttpDirSource {
+        val lock = Any()
+        var cached: ZipCentralDirectory? = null
+        fun directory(): ZipCentralDirectory? {
+            synchronized(lock) {
+                cached?.let { return it }
+                val source = runCatching { openZip() }.getOrNull() ?: return null
+                return try {
+                    ZipCentralDirectory.open(source)?.also { cached = it }
+                } finally {
+                    runCatching { source.close() }
+                }
+            }
+        }
+        return object : ExternalHttpStreamServer.HttpDirSource {
+            override fun list(relativeDir: String): ExternalHttpStreamServer.HttpDirIndex {
+                val cd = directory() ?: return ExternalHttpStreamServer.HttpDirIndex()
+                val prefix = ZipAsDirListing.joinPrefix(innerPrefix, relativeDir)
+                val children = ZipAsDirListing.listChildren(cd, prefix)
+                val files = ArrayList<String>()
+                val dirs = ArrayList<String>()
+                for (child in children) {
+                    if (!ExternalHttpStreamServer.isSafeFileName(child.name)) continue
+                    if (child.isDirectory) dirs += child.name else files += child.name
+                }
+                return ExternalHttpStreamServer.HttpDirIndex(files, dirs)
+            }
+
+            override fun open(relativeFile: String): ExternalHttpStreamServer.FileEntry? {
+                if (!ExternalHttpStreamServer.isSafeRelativePath(relativeFile)) return null
+                val member = ZipAsDirListing.joinPrefix(innerPrefix, relativeFile)
+                return runCatching { openMember(member, relativeFile) }.getOrNull()
+            }
+        }
     }
 
     private fun localFilesystemParent(pathStr: String): String? {
