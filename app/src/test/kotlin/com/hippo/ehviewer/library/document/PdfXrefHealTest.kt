@@ -110,6 +110,31 @@ class PdfXrefHealTest {
     }
 
     @Test
+    fun emptyPasswordOutlineTitlesDecrypt() {
+        val bytes = emptyPasswordOutlinePdf()
+        val parser = PdfParser(ByteArraySource(bytes), bytes.size.toLong())
+        val chapters = parser.readOutlines(pageCount = 1)
+        assertNotNull(chapters)
+        assertEquals(listOf("Chapter"), chapters!!.map { it.title })
+        assertEquals(0, chapters[0].pageIndex)
+    }
+
+    @Test
+    fun sampleEncryptedBookListsOutlineWhenPresent() {
+        val file = File("/home/zlx22/LocalViewer/samples/侯捷 - STL源码剖析.pdf")
+        assumeTrue(file.isFile)
+        FileSource(file).use { source ->
+            val chapters = readPdfChapters(source, source.size)
+            assertNotNull(chapters)
+            check(chapters!!.size >= 280) { "chapters=${chapters.size}" }
+            check(chapters.any { "封面" in it.title }) { chapters.take(8).joinToString(" | ") { it.title } }
+            check(chapters.any { it.title.contains("第5章") }) {
+                chapters.map { it.title }.filter { "章" in it }.joinToString(" | ")
+            }
+        }
+    }
+
+    @Test
     fun samplePdfsListTheirOutlinesWhenPresent() {
         val dir = File("/home/zlx22/LocalViewer/samples")
         val first = File(dir, "1.pdf")
@@ -244,6 +269,55 @@ class PdfXrefHealTest {
             prev = appendXref(prev, 6 to dummyAt)
         }
         return out.toByteArray()
+    }
+
+    private fun emptyPasswordOutlinePdf(): ByteArray {
+        val fileId = ByteArray(16) { (it + 3).toByte() }
+        val owner = ByteArray(32) { (it * 7 + 1).toByte() }
+        val (crypt, userEntry) = PdfStandardCrypt.revision2Empty(owner, fileId)
+        val title = crypt.decrypt("Chapter".toByteArray(Charsets.ISO_8859_1), objNum = 5, gen = 0)
+        val objects = listOf(
+            "1 0 obj\n<< /Type /Catalog /Pages 2 0 R /Outlines 4 0 R >>\nendobj\n",
+            "2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n",
+            "3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 10 10] >>\nendobj\n",
+            "4 0 obj\n<< /Type /Outlines /First 5 0 R /Last 5 0 R /Count 1 >>\nendobj\n",
+            "5 0 obj\n<< /Title ${pdfLiteral(title)} /Parent 4 0 R /Dest [3 0 R /XYZ 0 0 0] >>\nendobj\n",
+            "6 0 obj\n<< /Filter /Standard /V 1 /R 2 /P -4 /O ${pdfLiteral(owner)} /U ${pdfLiteral(userEntry)} >>\nendobj\n",
+        )
+        val out = ArrayList<Byte>()
+        fun add(s: String) {
+            s.toByteArray(Charsets.ISO_8859_1).forEach { out += it }
+        }
+        add("%PDF-1.4\n")
+        val offsets = objects.map { obj ->
+            val at = out.size.toLong()
+            add(obj)
+            at
+        }
+        val xrefAt = out.size
+        val idHex = fileId.joinToString("") { "%02x".format(it) }
+        val xref = buildString {
+            append("xref\n0 ${objects.size + 1}\n")
+            append(xrefEntry(0, 65535, used = false))
+            offsets.forEach { append(xrefEntry(it, 0, used = true)) }
+            append("trailer\n<< /Size ${objects.size + 1} /Root 1 0 R /Encrypt 6 0 R /ID [<$idHex><$idHex>] >>\n")
+            append("startxref\n$xrefAt\n%%EOF\n")
+        }
+        add(xref)
+        return out.toByteArray()
+    }
+
+    private fun pdfLiteral(bytes: ByteArray): String = buildString {
+        append('(')
+        for (b in bytes) {
+            val c = b.toInt() and 0xff
+            when (c) {
+                '('.code, ')'.code, '\\'.code -> append('\\').append(c.toChar())
+                in 32..126 -> append(c.toChar())
+                else -> append('\\').append(c.toString(8).padStart(3, '0'))
+            }
+        }
+        append(')')
     }
 
     private fun pdfWithXref(objects: List<String>): ByteArray {

@@ -479,6 +479,11 @@ internal class PdfParser(
     private var shiftDelta: Long = 0L
     var encrypted: Boolean = false
         private set
+    private var encryptRef: PdfRef? = null
+    private var fileId: ByteArray? = null
+    private var stringCrypt: PdfStandardCrypt? = null
+    private var cryptObjNum: Int = -1
+    private var cryptGen: Int = 0
     val xrefCount: Int get() = xref.size
     val objStreamMemberCount: Int get() = objStreamOf.size
 
@@ -520,6 +525,7 @@ internal class PdfParser(
                 }
             }
         }
+        if (bootstrapOk) openStringCrypt()
         return bootstrapOk
     }
 
@@ -532,6 +538,50 @@ internal class PdfParser(
         rootRef = null
         encrypted = false
         namedDests = null
+        encryptRef = null
+        fileId = null
+        stringCrypt = null
+        cryptObjNum = -1
+    }
+
+    private fun noteTrailer(trailer: PdfDict) {
+        if (trailer["/Encrypt"] != null) encrypted = true
+        val enc = trailer["/Encrypt"]
+        if (enc is PdfRef && encryptRef == null) encryptRef = enc
+        if (rootRef == null) rootRef = trailer["/Root"] as? PdfRef
+        if (fileId == null) {
+            val id = (trailer["/ID"] as? PdfArray)?.items?.firstOrNull() as? PdfString
+            if (id != null && id.bytes.isNotEmpty()) fileId = id.bytes
+        }
+    }
+
+    /** Empty user password: decrypt strings. A real password leaves [stringCrypt] null. */
+    private fun openStringCrypt() {
+        if (!encrypted || stringCrypt != null) return
+        val id = fileId ?: return
+        val ref = encryptRef ?: return
+        val dict = resolve(ref) as? PdfDict ?: return
+        stringCrypt = PdfStandardCrypt.openEmptyPassword(dict, id)
+    }
+
+    private inline fun <T> withStringCrypt(objNum: Int, gen: Int, block: () -> T): T {
+        val prevNum = cryptObjNum
+        val prevGen = cryptGen
+        cryptObjNum = if (stringCrypt != null && encryptRef?.num == objNum) -1 else objNum
+        cryptGen = gen
+        return try {
+            block()
+        } finally {
+            cryptObjNum = prevNum
+            cryptGen = prevGen
+        }
+    }
+
+    private fun finishString(bytes: ByteArray): PdfString {
+        val crypt = stringCrypt
+        val num = cryptObjNum
+        if (crypt == null || num < 0) return PdfString(bytes)
+        return PdfString(crypt.decrypt(bytes, num, cryptGen))
     }
 
     private fun shiftedOffset(offset: Long): Long? {
@@ -605,7 +655,10 @@ internal class PdfParser(
     ): List<PdfTocEntry>? {
         // null = stopped or failed (do not cache). Empty = this file has no bookmarks.
         if (!stillWanted()) return null
-        if (!bootstrap() || encrypted) return null
+        if (!bootstrap()) return null
+        // A user password still blocks the outline. An empty password does not:
+        // the strings are ciphertext, and [stringCrypt] reads them.
+        if (encrypted && stringCrypt == null) return null
         val root = rootRef?.let { resolve(it) } as? PdfDict ?: return null
         val outlines = root["/Outlines"]?.let { resolveValue(it) } as? PdfDict ?: return emptyList()
         val pending = ArrayList<PendingOutline>(32)
@@ -619,9 +672,10 @@ internal class PdfParser(
                 val id = child.objNum
                 if (id != null && !seen.add(id)) return
                 val title = pdfOutlineTitle(child["/Title"])
-                val dest = outlineDest(child)
-                if (title.isNotBlank() && dest != null) {
-                    pending += PendingOutline(title, depth, dest)
+                if (title.isNotBlank()) {
+                    // A heading with no /Dest still belongs in the list. The page is
+                    // filled from a neighbor after the walk.
+                    pending += PendingOutline(title, depth, outlineDest(child))
                 }
                 if (child["/First"] != null) walk(child, depth + 1)
                 child = child["/Next"]?.let { resolveValue(it) } as? PdfDict
@@ -630,6 +684,15 @@ internal class PdfParser(
         walk(outlines, 0)
         if (!stillWanted()) return null
         if (pending.isEmpty()) return emptyList()
+        var carry: OutlineDest? = null
+        val firstKnown = pending.firstOrNull { it.dest != null }?.dest
+        for (item in pending) {
+            if (item.dest != null) {
+                carry = item.dest
+            } else {
+                item.dest = carry ?: firstKnown
+            }
+        }
         val pageOf = if (pending.any { it.dest is OutlineDest.PageObj }) {
             pageObjectIndex(stillWanted)
         } else {
@@ -641,13 +704,14 @@ internal class PdfParser(
             val page = when (val dest = item.dest) {
                 is OutlineDest.Index -> normalizeOutlinePage(dest.raw, pageCount, pageOf)
                 is OutlineDest.PageObj -> pageOf[dest.num]
+                null -> null
             } ?: continue
             out += PdfTocEntry(item.title, page, item.depth)
         }
         return out
     }
 
-    private data class PendingOutline(val title: String, val depth: Int, val dest: OutlineDest)
+    private data class PendingOutline(val title: String, val depth: Int, var dest: OutlineDest?)
 
     private sealed interface OutlineDest {
         data class Index(val raw: Int) : OutlineDest
@@ -2030,10 +2094,7 @@ internal class PdfParser(
         val dictStart = text.indexOf("<<", tIdx)
         if (dictStart < 0) return XrefSection(parsed = false, prev = null)
         val (trailer, _) = parseDict(data, dictStart) ?: return XrefSection(parsed = false, prev = null)
-        if (trailer["/Encrypt"] != null) encrypted = true
-        if (rootRef == null) {
-            rootRef = trailer["/Root"] as? PdfRef
-        }
+        noteTrailer(trailer)
         // Hybrid-reference PDFs keep compressed-object entries in a supplemental
         // xref stream referenced by the classic trailer.
         val xrefStream = trailer.intValue("/XRefStm")?.toLong()
@@ -2056,11 +2117,8 @@ internal class PdfParser(
             parseStreamAt(raw, num, gen)
         } ?: return failed
         val dict = stream.dict
-        if (dict["/Encrypt"] != null) encrypted = true
         // Prefer the most recent trailer Root (load older /Prev after this).
-        if (rootRef == null) {
-            rootRef = dict["/Root"] as? PdfRef
-        }
+        noteTrailer(dict)
         val size = dict.intValue("/Size") ?: return failed
         val wArr = dict["/W"] as? PdfArray ?: return failed
         val w = wArr.items.mapNotNull { (it as? PdfNumber)?.value?.toInt() }
@@ -2219,7 +2277,10 @@ internal class PdfParser(
         val end = if (idx + 1 < pairs.size) first + pairs[idx + 1].second else data.size
         if (off < 0 || end > data.size || off >= end) return null
         val slice = data.copyOfRange(off, end)
-        val (value, _) = parseValue(slice, 0) ?: return null
+        // Strings inside an object stream are encrypted with the stream's number.
+        val (value, _) = withStringCrypt(streamObjNum, 0) {
+            parseValue(slice, 0)
+        } ?: return null
         objCache[targetNum.toLong()] = value
         if (value is PdfDict) {
             value.objNum = targetNum
@@ -2229,6 +2290,15 @@ internal class PdfParser(
     }
 
     private fun parseObjectBody(
+        raw: ByteArray,
+        objNum: Int,
+        gen: Int,
+        objectOffset: Long = -1L,
+    ): PdfValue? = withStringCrypt(objNum, gen) {
+        parseObjectBodyEncrypted(raw, objNum, gen, objectOffset)
+    }
+
+    private fun parseObjectBodyEncrypted(
         raw: ByteArray,
         objNum: Int,
         gen: Int,
@@ -2414,6 +2484,12 @@ internal class PdfParser(
                                 'b' -> bos.write('\b'.code)
                                 'f' -> bos.write(0x0c)
                                 '(', ')', '\\' -> bos.write(e.code)
+                                // \<EOL> continues the string. The break is not a data byte.
+                                '\r', '\n' -> {
+                                    if (e == '\r' && i + 1 < data.size && data[i + 1] == '\n'.code.toByte()) {
+                                        i++
+                                    }
+                                }
                                 in '0'..'7' -> {
                                     var v = e - '0'
                                     var n = 1
@@ -2446,7 +2522,7 @@ internal class PdfParser(
                         }
                     }
                 }
-                PdfString(bos.toByteArray()) to i
+                finishString(bos.toByteArray()) to i
             }
             c == '<' -> {
                 if (i + 1 < data.size && data[i + 1] == '<'.code.toByte()) {
@@ -2481,7 +2557,7 @@ internal class PdfParser(
                         i++
                     }
                     if (hi >= 0) bos.write(hi shl 4)
-                    PdfString(bos.toByteArray()) to i
+                    finishString(bos.toByteArray()) to i
                 }
             }
             c == '[' -> {
