@@ -97,7 +97,10 @@ fun remoteBrowseHistoryGids(
             listOf(gid(archive + r), gid(file + r))
         }
         is BrowseEntryRemote.VideoFile -> listOf(gid(file + rel(entry.fileName)))
-        is BrowseEntryRemote.RegularFile -> listOf(gid(file + rel(entry.fileName)))
+        is BrowseEntryRemote.RegularFile -> {
+            val r = rel(entry.fileName)
+            listOf(gid(file + r), gid(archive + r))
+        }
     }
 }
 
@@ -193,6 +196,9 @@ private fun localMediaFileHistoryGids(
     val rel = localChildRel(ctx, name)
     return buildList {
         add(stableGalleryId(0L, "local-file:$absolutePath"))
+        // Ebook hop records the reader archive id. TXT is a regular file, so the
+        // folder row must see that id too (PDF/FB2/MOBI already do, as archives).
+        add(stableGalleryId(0L, "local-archive:$absolutePath"))
         if (video || isVideoFileName(name)) add(libraryVideoFileId(ctx.rootId, rel))
         if (isImageFileName(name)) add(libraryImageFileId(ctx.rootId, rel))
     }

@@ -84,7 +84,7 @@ Build with Grok 4.5.
 
 ## Features
 * Webtoon gallery reader.
-* Local and network photo/video/comic/ebook libraries.
+* Local and network libraries for photo/video/comic/ebook.
 * Easy to use, just add your folders and done.
 * Instant scanning and classification for media files in local and network folders.
 * One for all folder listing mode (Videos/Photos/Documents all with their own tags and filters).

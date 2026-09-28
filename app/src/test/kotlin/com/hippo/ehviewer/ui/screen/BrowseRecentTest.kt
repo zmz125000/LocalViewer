@@ -85,6 +85,22 @@ class BrowseRecentTest {
     }
 
     @Test
+    fun txtHopArchiveHistoryShowsInFolderRecent() {
+        val path = "/sdcard/books/b.txt"
+        val file = BrowseEntry.RegularFile(name = "b.txt", path = path.toPath())
+        val archiveGid = stableGalleryId(0L, "local-archive:$path")
+        assertEquals(
+            listOf("b.txt"),
+            recentBrowseEntries(
+                listOf(file),
+                mapOf(archiveGid to 4L),
+                gidsOf = { localBrowseHistoryGids(it, ctx) },
+                nameOf = { it.name },
+            ).map { it.name },
+        )
+    }
+
+    @Test
     fun smbGalleryAndFileUseSourcePrefixes() {
         val gallery = BrowseEntryRemote.FolderGallery(
             name = "Album",
@@ -105,6 +121,17 @@ class BrowseRecentTest {
             nameOf = { it.name },
         )
         assertEquals(listOf("clip.mp4", "Album"), recent.map { it.name })
+        val txt = BrowseEntryRemote.RegularFile(name = "b.txt", fileName = "b.txt")
+        val hopped = mapOf(stableGalleryId(4L, "smba:share/b.txt") to 11L)
+        assertEquals(
+            listOf("b.txt"),
+            recentBrowseEntries(
+                listOf(txt),
+                hopped,
+                gidsOf = { remoteBrowseHistoryGids(it, sourceId = 4L, relativeDir = "share", smb = true) },
+                nameOf = { it.name },
+            ).map { it.name },
+        )
     }
 
     private fun dir(name: String) = BrowseEntry.Directory(
