@@ -507,8 +507,9 @@ class Image private constructor(
 
             var image = runDecode(effectiveMode, hdrSafe, platformHbd)
 
-            // Sniff miss: platform still attached a gain map after a downscale decode → re-do ORIGIN.
-            if (isAtLeastU && !effectiveMode.isOriginal) {
+            // Sniff miss: a downscale can still attach a gain map. Redo at file
+            // resolution only while HDR display is on. Off keeps the reduced decode.
+            if (isAtLeastU && !effectiveMode.isOriginal && Settings.readerHdrDisplay.value) {
                 val bm = image.asBitmapImage()
                 if (bm != null && bm.detectGainmap()) {
                     image.recycleBitmaps()
