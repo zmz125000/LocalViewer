@@ -151,6 +151,7 @@ import eu.kanade.tachiyomi.ui.reader.PageIndicatorText
 import eu.kanade.tachiyomi.ui.reader.ReaderAppBars
 import eu.kanade.tachiyomi.ui.reader.ReaderContentOverlay
 import eu.kanade.tachiyomi.ui.reader.ReaderPageSheetMeta
+import eu.kanade.tachiyomi.ui.reader.setting.DecodeSizeType
 import eu.kanade.tachiyomi.ui.reader.setting.ReadingModeType
 import java.io.File
 import java.util.concurrent.atomic.AtomicInteger
@@ -160,6 +161,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.flow.onCompletion
 import kotlinx.coroutines.flow.sample
@@ -548,7 +550,11 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
                 readerPlatformHighDepth.changesFlow(),
                 // ProXDR HEIC → UHDR convert path changes display file.
                 readerOppoProxdr.changesFlow(),
-                // readerHdrDisplay only toggles window COLOR_MODE_HDR — no page restart.
+                // HDR display changes whether a non-original decode is redone at
+                // file resolution. Original size is already full-res, so skip it.
+                readerHdrDisplay.changesFlow().filter {
+                    !DecodeSizeType.fromPreference(readerDecodeSize.value).isOriginal
+                },
             ).collect {
                 pageLoader.restart()
             }

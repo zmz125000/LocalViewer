@@ -42,6 +42,22 @@ class PdfXrefLoadTest {
     }
 
     @Test
+    fun longIndexXrefStreamIsLoadable() {
+        val index = buildString { repeat(800) { append("${it * 2} 1 ") } }
+        val body = "9 0 obj\n<< /Filter /FlateDecode /Index [$index] /Type /XRef /Size 10 >>\nstream\n"
+        assertTrue(body.indexOf("/XRef") > 4096)
+        val bytes = ("%PDF-1.4\n$body" + "startxref\n9\n%%EOF\n").toByteArray(Charsets.ISO_8859_1)
+        assertTrue(loadable(bytes))
+    }
+
+    @Test
+    fun aimBasicStaysInPdfReader() {
+        val file = File("/home/zlx22/LocalViewer/samples/aim_basic_6_17_21.pdf")
+        assumeTrue(file.isFile)
+        assertTrue(loadable(file))
+    }
+
+    @Test
     fun samplePdfsMatchRendererGuard() {
         val dir = File("/home/zlx22/LocalViewer/samples")
         val good = File(dir, "1.pdf")
