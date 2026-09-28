@@ -54,6 +54,19 @@ class EbookEngineTest {
     }
 
     @Test
+    fun plainTxtPrefaceIsNotNamedText() {
+        val chapters = EbookEngine.chaptersFromPlain("1984\n\n作者\n第1节\n正文", "一九八四")
+        val (_, toc) = EbookPaginator.paginate(chapters)
+        assertTrue(toc.isNotEmpty())
+        assertFalse(toc.any { it.title.equals("Text", ignoreCase = true) })
+        assertEquals("第1节", toc.first().title)
+        assertTrue(chapters.any { it.text.contains("1984") })
+        assertTrue(chapters.any { it.text.contains("正文") })
+        val whole = EbookEngine.chaptersFromPlain("no headings here", "book.txt")
+        assertEquals("book.txt", whole.single().title)
+    }
+
+    @Test
     fun plainTxtChapterHeadingsBecomeToc() {
         val text = """
             preface line
@@ -596,6 +609,42 @@ class EbookEngineTest {
         assertTrue(text.contains("&"))
         assertTrue(text.contains("world"))
         assertTrue(text.contains("Next"))
+    }
+
+    @Test
+    fun fb2KeepsImagesAndTitles() {
+        val png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+        val xml = """
+            <FictionBook xmlns:xlink="http://www.w3.org/1999/xlink">
+              <description><title-info>
+                <coverpage><image xlink:href="#cover.png"/></coverpage>
+              </title-info></description>
+              <body>
+                <section>
+                  <title><p>Intro</p></title>
+                  <p>see <image xlink:href="#pic.png"/></p>
+                </section>
+                <section>
+                  <p>Chapter II The Pool</p>
+                  <p>after</p>
+                </section>
+              </body>
+              <binary id="pic.png" content-type="image/png">$png</binary>
+              <binary id="cover.png" content-type="image/png">$png</binary>
+            </FictionBook>
+        """.trimIndent()
+        val images = EbookEngine.fb2Images(xml)
+        assertEquals(2, images.size)
+        val chapters = EbookEngine.chaptersFromFb2(xml, "book", images)
+        val intro = chapters.first { it.title == "Intro" }
+        assertTrue(EbookImages.hasMarker(intro.text))
+        assertTrue(EbookImages.split(intro.text).any { it is EbookImages.Part.Image && it.ref.key == "pic.png" })
+        val pool = chapters.first { it.title.contains("Chapter II") }
+        assertTrue(pool.text.contains("after"))
+        assertFalse(pool.text.contains("Chapter II"))
+        assertTrue(EbookImages.hasMarker(chapters.first().text))
+        val (_, toc) = EbookPaginator.paginate(chapters)
+        assertEquals(listOf("Intro", "Chapter II The Pool"), toc.map { it.title })
     }
 
     @Test

@@ -216,8 +216,8 @@ internal class EbookResources(
     }
 
     companion object {
-        private const val MAX_BLOB = 2 * 1024 * 1024
-        private const val MAX_BLOBS = 24 * 1024 * 1024
+        private const val MAX_BLOB = 8 * 1024 * 1024
+        private const val MAX_BLOBS = 64 * 1024 * 1024
 
         fun epub(source: ArchiveByteSource, zip: ZipCentralDirectory) = EbookResources(source, zip)
 

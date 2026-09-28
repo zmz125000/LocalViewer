@@ -28,6 +28,7 @@ internal class EbookDocument(
 
 internal object EbookEngine {
     private const val MAX_TEXT_BYTES = 8L * 1024L * 1024L
+    private const val MAX_FB2_BYTES = 64L * 1024L * 1024L
     private const val MAX_CHAPTER_BYTES = 2L * 1024L * 1024L
 
     fun open(
@@ -67,11 +68,11 @@ internal object EbookEngine {
             when (ext) {
                 "epub" -> parseEpub(source, stillWanted)
                 "mobi", "azw", "azw3" -> parseMobi(source, fileName)
-                "txt", "text" -> EbookParse(parseTxt(source, stillWanted, charset, charsetPref))
+                "txt", "text" -> EbookParse(parseTxt(source, fileName, stillWanted, charset, charsetPref))
                 "html", "htm", "xhtml" -> EbookParse(parseHtml(source, fileName, charset, charsetPref))
-                "fb2" -> EbookParse(parseFb2(source, fileName, charset, charsetPref))
+                "fb2" -> parseFb2(source, fileName, charset, charsetPref)
                 "md", "markdown" -> EbookParse(parseMarkdown(source, fileName, charset, charsetPref))
-                else -> EbookParse(parseTxt(source, stillWanted, charset, charsetPref))
+                else -> EbookParse(parseTxt(source, fileName, stillWanted, charset, charsetPref))
             }
         }.onFailure { logcat("Ebook", it) }.getOrNull() ?: return null
         if (!stillWanted()) return null
@@ -87,6 +88,7 @@ internal object EbookEngine {
 
     private fun parseTxt(
         source: ArchiveByteSource,
+        fileName: String,
         stillWanted: () -> Boolean,
         charset: Charset?,
         charsetPref: Int,
@@ -96,7 +98,7 @@ internal object EbookEngine {
         if (!stillWanted()) return emptyList()
         val text = TextCharset.decode(bytes, forced = charset, pref = charsetPref)
         if (!stillWanted()) return emptyList()
-        return chaptersFromPlain(text, "Text")
+        return chaptersFromPlain(text, titleFromName(fileName))
     }
 
     private fun parseHtml(
@@ -126,10 +128,12 @@ internal object EbookEngine {
         fileName: String,
         charset: Charset?,
         charsetPref: Int,
-    ): List<EbookChapter> {
-        val bytes = source.readFully(MAX_TEXT_BYTES) ?: return emptyList()
+    ): EbookParse {
+        val bytes = source.readFully(MAX_FB2_BYTES) ?: return EbookParse(emptyList())
         val xml = TextCharset.decode(bytes, htmlHint = true, forced = charset, pref = charsetPref)
-        return chaptersFromFb2(xml, titleFromName(fileName))
+        val images = fb2Images(xml)
+        val resources = if (images.isEmpty()) null else EbookResources.mobi(images)
+        return EbookParse(chaptersFromFb2(xml, titleFromName(fileName), images), resources)
     }
 
     private fun parseEpub(
@@ -417,14 +421,15 @@ internal object EbookEngine {
     internal fun chaptersFromPlain(text: String, fallbackTitle: String): List<EbookChapter> {
         val parts = ArrayList<EbookChapter>()
         val lines = text.replace("\r\n", "\n").replace('\r', '\n').split('\n')
-        var title = fallbackTitle
+        var title = ""
         var depth = 0
+        var inToc = false
         val buf = StringBuilder()
         fun flush() {
             val body = buf.toString().trim()
             buf.clear()
             if (title.isBlank() && body.isEmpty()) return
-            parts += EbookChapter(title.ifBlank { fallbackTitle }, body, depth)
+            parts += EbookChapter(title, body, depth, inToc = inToc && title.isNotBlank())
         }
         var sawHeading = false
         for (line in lines) {
@@ -434,10 +439,12 @@ internal object EbookEngine {
                 flush()
                 title = heading.first
                 depth = heading.second
+                inToc = true
             } else if (line == "\u000c" || line.contains('\u000c')) {
                 flush()
-                title = fallbackTitle
+                title = ""
                 depth = 0
+                inToc = false
                 val rest = line.replace("\u000c", "")
                 if (rest.isNotBlank()) buf.append(rest).append('\n')
             } else {
@@ -446,7 +453,8 @@ internal object EbookEngine {
         }
         flush()
         return if (!sawHeading && parts.size <= 1) {
-            listOf(EbookChapter(fallbackTitle, text.trim(), 0))
+            val body = text.trim()
+            if (body.isEmpty()) emptyList() else listOf(EbookChapter(fallbackTitle, body, 0))
         } else {
             collapseContentsRuns(parts)
         }
@@ -535,38 +543,129 @@ internal object EbookEngine {
         )
     }
 
-    internal fun chaptersFromFb2(xml: String, fallbackTitle: String): List<EbookChapter> {
-        val out = ArrayList<EbookChapter>()
-        var depth = 0
-        var i = 0
-        while (i < xml.length) {
-            val open = indexOfTag(xml, "section", i)
-            val close = Regex("""(?i)</section\s*>""").find(xml, i)
-            if (open == null) break
-            if (close != null && close.range.first < open) {
-                depth = (depth - 1).coerceAtLeast(0)
-                i = close.range.last + 1
-                continue
-            }
-            val openEnd = xml.indexOf('>', open).takeIf { it >= 0 } ?: break
-            depth++
-            val nextSection = indexOfTag(xml, "section", openEnd + 1)
-            val nextClose = Regex("""(?i)</section\s*>""").find(xml, openEnd + 1)?.range?.first ?: xml.length
-            val ownEnd = minOf(nextSection ?: xml.length, nextClose)
-            val own = xml.substring(openEnd + 1, ownEnd)
-            val title = FB2_TITLE.find(own)?.groupValues?.get(1)?.let { EbookHtml.toPlain(it) }
-                ?: fallbackTitle
-            val body = EbookHtml.toText(FB2_TITLE.replace(own, ""))
-            if (title.isNotBlank() || body.isNotBlank()) {
-                out += EbookChapter(title.ifBlank { fallbackTitle }, body, (depth - 1).coerceAtLeast(0))
-            }
-            i = openEnd + 1
-        }
-        if (out.isEmpty()) {
-            val text = EbookHtml.toText(xml)
-            if (text.isNotBlank()) out += EbookChapter(fallbackTitle, text, 0)
+    internal fun fb2Images(xml: String): Map<String, ByteArray> {
+        val out = LinkedHashMap<String, ByteArray>()
+        for (m in FB2_BINARY.findAll(xml)) {
+            val attrs = parseAttrs(m.groupValues[1])
+            val id = attrs["id"]?.trim().orEmpty()
+            if (id.isEmpty()) continue
+            val type = attrs["content-type"].orEmpty()
+            if (type.isNotEmpty() && !type.startsWith("image/", ignoreCase = true)) continue
+            val bytes = decodeBase64(m.groupValues[2]) ?: continue
+            if (bytes.isNotEmpty()) out[id] = bytes
         }
         return out
+    }
+
+    internal fun chaptersFromFb2(
+        xml: String,
+        fallbackTitle: String,
+        images: Map<String, ByteArray> = emptyMap(),
+    ): List<EbookChapter> {
+        val storyEnd = indexOfTag(xml, "binary", 0) ?: xml.length
+        val story = xml.substring(0, storyEnd)
+        val out = ArrayList<EbookChapter>()
+        var i = 0
+        while (i < story.length) {
+            val open = indexOfTag(story, "body", i) ?: break
+            val openEnd = story.indexOf('>', open).takeIf { it >= 0 } ?: break
+            val end = findMatchingClose(story, open, "body")
+            walkFb2(story.substring(openEnd + 1, end.coerceAtMost(story.length)), 0, images, out)
+            i = end
+        }
+        if (out.isEmpty()) {
+            val text = fb2Text(FB2_BINARY.replace(xml, ""), images)
+            if (text.isNotBlank()) out += EbookChapter(fallbackTitle, text, 0)
+        }
+        val coverId = fb2CoverId(story)
+        val cover = coverId?.let { fb2Marker(it, images, fullPage = true) }
+        val seen = coverId?.let { "${EbookImages.START}$it${EbookImages.MID}" }
+        if (cover != null && seen != null && out.none { it.text.contains(seen) }) {
+            out.add(0, EbookChapter("", cover, 0, inToc = false))
+        }
+        return out
+    }
+
+    private fun walkFb2(xml: String, depth: Int, images: Map<String, ByteArray>, out: MutableList<EbookChapter>) {
+        var i = 0
+        val lead = StringBuilder()
+        fun emitLead() {
+            val text = fb2Text(lead.toString(), images)
+            lead.clear()
+            if (text.isNotBlank()) out += EbookChapter("", text, depth, inToc = false)
+        }
+        while (i < xml.length) {
+            val open = indexOfTag(xml, "section", i)
+            if (open == null) {
+                lead.append(xml.substring(i))
+                break
+            }
+            lead.append(xml.substring(i, open))
+            emitLead()
+            val openEnd = xml.indexOf('>', open).takeIf { it >= 0 } ?: break
+            val closeAt = findMatchingClose(xml, open, "section")
+            val inner = xml.substring(openEnd + 1, closeAt.coerceAtMost(xml.length))
+            val nested = indexOfTag(inner, "section", 0)
+            val own = if (nested != null) inner.substring(0, nested) else inner
+            fb2Chapter(own, depth, images)?.let { out += it }
+            if (nested != null) walkFb2(inner.substring(nested), depth + 1, images, out)
+            i = closeAt
+        }
+        emitLead()
+    }
+
+    private fun fb2Chapter(own: String, depth: Int, images: Map<String, ByteArray>): EbookChapter? {
+        val titled = FB2_TITLE.find(own)
+        var rest = own
+        val title = if (titled != null) {
+            rest = rest.removeRange(titled.range)
+            EbookHtml.toPlain(titled.groupValues[1]).trim()
+        } else {
+            val implicit = FB2_P.find(rest)
+            val plain = implicit?.let { EbookHtml.toPlain(it.groupValues[1]).replace(Regex("\\s+"), " ").trim() }.orEmpty()
+            if (implicit != null && FB2_IMPLICIT_TITLE.matches(plain)) {
+                rest = rest.removeRange(implicit.range)
+                plain
+            } else {
+                ""
+            }
+        }
+        val body = fb2Text(rest, images)
+        if (title.isBlank() && body.isBlank()) return null
+        return EbookChapter(title, body, depth, inToc = title.isNotBlank())
+    }
+
+    private fun fb2Text(xml: String, images: Map<String, ByteArray>): String {
+        if (xml.isBlank()) return ""
+        val marked = FB2_IMAGE.replace(xml) { m ->
+            val attrs = parseAttrs(m.groupValues[1])
+            val href = attrs["xlink:href"] ?: attrs["l:href"] ?: attrs["href"] ?: return@replace ""
+            val id = href.substringAfter('#').trim()
+            val marker = fb2Marker(id, images, fullPage = false) ?: return@replace ""
+            "\n\n$marker\n\n"
+        }
+        return EbookHtml.toText(marked)
+    }
+
+    private fun fb2Marker(id: String, images: Map<String, ByteArray>, fullPage: Boolean): String? {
+        if (id.isEmpty()) return null
+        val bytes = images[id] ?: return null
+        val aspect = EbookImages.aspectOf(bytes).takeIf { it > 0.05f } ?: 0.75f
+        val width = EbookImages.sizeOf(bytes)?.first ?: 0
+        return EbookImages.marker(id, aspect, fullPage, width)
+    }
+
+    private fun fb2CoverId(xml: String): String? {
+        val block = FB2_COVER.find(xml) ?: return null
+        val attrs = parseAttrs(block.groupValues[1])
+        val href = attrs["xlink:href"] ?: attrs["l:href"] ?: attrs["href"] ?: return null
+        return href.substringAfter('#').trim().ifBlank { null }
+    }
+
+    private fun decodeBase64(raw: String): ByteArray? = try {
+        java.util.Base64.getMimeDecoder().decode(raw)
+    } catch (_: IllegalArgumentException) {
+        null
     }
 
     private fun headingOf(line: String): Pair<String, Int>? {
@@ -683,9 +782,16 @@ internal object EbookEngine {
     private val NAV_TOKEN = Regex("""(?is)</?ol\b[^>]*>|<a\b([^>]*?)>(.*?)</a>""")
     private val FIRST_H = Regex("""(?is)<h[1-3]\b[^>]*>(.*?)</h[1-3]>""")
     private val FB2_TITLE = Regex("""(?is)<title\b[^>]*>(.*?)</title>""")
+    private val FB2_P = Regex("""(?is)<p\b[^>]*>(.*?)</p>""")
+    private val FB2_IMAGE = Regex("""(?is)<image\b([^>]*)/?>""")
+    private val FB2_BINARY = Regex("""(?is)<binary\b([^>]*)>(.*?)</binary>""")
+    private val FB2_COVER = Regex("""(?is)<coverpage\b[^>]*>.*?<image\b([^>]*)/?>.*?</coverpage>""")
+    private val FB2_IMPLICIT_TITLE = Regex(
+        """(?i)^(?:chapter\s+[0-9ivxlc]+\b.*|第[0-9一二三四五六七八九十百千零〇两]+[章节回部卷篇节].*)$""",
+    )
     private val MD_HEADING = Regex("""^(#{1,6})\s+(.+)$""")
     private val CHAPTER_HEADING = Regex(
-        """^(?:第[0-9一二三四五六七八九十百千零〇两]+[章节回部卷篇]|Chapter\s+\d+|CHAPTER\s+\d+)(?:\s+.*)?$""",
+        """^(?:第[0-9一二三四五六七八九十百千零〇两]+[章节回部卷篇节]|Chapter\s+\d+|CHAPTER\s+\d+)(?:\s+.*)?$""",
     )
     private val CONTENTS_HEADER = Regex(
         """(?i)^(?:contents|table\s+of\s+contents|toc|目录|目錄|目次|目\s*录)$""",
