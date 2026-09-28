@@ -84,27 +84,31 @@ Build with Grok 4.5.
 
 ## Features
 * Webtoon gallery reader.
-* Local photo/video/comic/ebook library.
-* Instant scanning for media files in local and network folder, no more library setup.
+* Local and network photo/video/comic/ebook libraries.
+* Easy to use, just add your folders and done.
+* Instant scanning and classification for media files in local and network folders.
+* One for all folder listing mode (Videos/Photos/Documents all with their own tags and filters).
+* Open or share files like a file manager.
+* Gallery folder covers and reading progress.
 * Native Android app (Kotlin + Jetpack Compose).
-* Double tap to go to next folder.
 * Material Design 3 Navigation bar.
-* Optimized navigation flow for deep folder path.
+* Highly optimized network image loading, with high-quality rendering.
+* HDR, Wide Color Gamut and 10-bit color mode support.
 * ZIP/RAR/CBZ/CBR/CBT/PDF/EPUB support over network share.
 * PDF/EPUB/MOBI/FB2/TXT/Markdown Ebook support with text formatting.
 * JXL/JXR/JPG/AVIF/HEIC HDR support.
 * Compatible with Oppo/OnePlus ProXDR HEIC format.
-* SMB signing JCE AESCMAC hardware acceleration support.
-* Optimized Async TCP connection poll.
-* Full feature network folder listing mode (Videos/Photos/Files listing).
+* Open offline html website archive in your browser with built-in HTTP server.
 * Network folder playback for MPV/MX Player/VLC with subtitles and external autio track. 
-* Wide Color Gamut and 10-bit color mode support.
-* Fast smbj client with concurrent connections support.
+* Optimized Async TCP connection poll.
+* Fast smbj client with concurrent connections.
+* SMB signing JCE AESCMAC hardware acceleration.
 * Ktor OkHttp WebDAV client with HTTP/2 (default) and CIO HTTP/1.1 fallback.
-* Network gallery folders recognition with fast cover loading.
 * High performance reader with network cache from EhViewer.
+* Reader double tap to open previous/next gallery.
 * Reader allow full size image decode.
 * Reader auto rotate image.
+* Reader comic dual pages mode.
 * E-Ink mode support (ported from [venera-next](https://github.com/cyrilpeng/venera-next)).
 * EasyTier support (ported from [moonlight-vplus](https://github.com/qiin2333/moonlight-vplus)).
 
@@ -169,6 +173,32 @@ Here is the libraries
 - [Compose Destinations](https://composedestinations.rafaelcosta.xyz/)
 - [libarchive](https://www.libarchive.org/)
 - [libultrahdr](https://github.com/google/libultrahdr)
+- [EasyTier](https://github.com/EasyTier/Easytier)
+
+**App libraries**
+
+- [smbj](https://github.com/hierynomus/smbj) — SMB client
+- [ZXing](https://github.com/zxing/zxing) — QR codes
+- [Telephoto](https://github.com/saket/telephoto) — zoomable images
+- [MaterialKolor](https://github.com/jordond/materialkolor) — dynamic color
+- [Material Motion](https://github.com/fornewid/material-motion-compose) — transitions
+- [Compose Preference](https://github.com/zhanghai/ComposePreference) — settings UI
+- [AboutLibraries](https://github.com/mikepenz/AboutLibraries) — license screen
+- [moko-resources](https://github.com/icerockdev/moko-resources) — strings
+- [Reorderable](https://github.com/Calvin-LL/Reorderable) — drag-to-reorder lists
+- [xmlutil](https://github.com/pdvrieze/xmlutil) — XML
+- [kotlin-multiplatform-diff](https://github.com/petertrr/kotlin-multiplatform-diff) — text diff
+- [Splitties](https://github.com/LouisCAD/Splitties) and [Okio](https://square.github.io/okio/)
+
+**Native codecs**
+
+- [libwebp](https://github.com/webmproject/libwebp)
+- [libjxl](https://github.com/libjxl/libjxl)
+- [libavif](https://github.com/AOMediaCodec/libavif) and [dav1d](https://code.videolan.org/videolan/dav1d)
+- [jpegxr](https://github.com/bvibber/jpegxr)
+- [OpenJPEG](https://github.com/uclouvain/openjpeg)
+- [XZ](https://github.com/tukaani-project/xz) and [Nettle](https://gitlab.com/gnutls/nettle)
+
 
 # License
 

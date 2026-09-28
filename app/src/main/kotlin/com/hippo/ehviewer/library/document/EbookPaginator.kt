@@ -121,7 +121,9 @@ internal object EbookPaginator {
         }
         // [pages] may be only this chapter. [pageBase] is the pages already published.
         val startPage = pageBase + pages.size
-        toc += PdfTocEntry(title.ifBlank { "${startPage + 1}" }, startPage, ch.depth.coerceAtLeast(0))
+        if (ch.inToc) {
+            toc += PdfTocEntry(title.ifBlank { "${startPage + 1}" }, startPage, ch.depth.coerceAtLeast(0))
+        }
         packPages(lines, chIndex, contentHeightEm(style), pages)
     }
 
@@ -547,6 +549,8 @@ internal data class EbookChapter(
     val title: String,
     val text: String,
     val depth: Int = 0,
+    /** Preface before the first heading stays in the book and out of the contents. */
+    val inToc: Boolean = true,
 )
 
 internal data class EbookLine(
