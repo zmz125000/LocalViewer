@@ -88,6 +88,7 @@ Build with Grok 4.5.
 * Easy to use, just add your folders and done.
 * Instant scanning and classification for media files in local and network folders.
 * One for all folder listing mode (Videos/Photos/Documents all with their own tags and filters).
+* Fully working on Quest 3.
 * Open or share files like a file manager.
 * Gallery folder covers and reading progress.
 * Native Android app (Kotlin + Jetpack Compose).
