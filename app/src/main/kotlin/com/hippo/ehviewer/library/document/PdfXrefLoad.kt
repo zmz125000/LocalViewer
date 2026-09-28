@@ -49,7 +49,19 @@ internal fun xrefPeekIsLoadable(peek: ByteArray): Boolean {
     val text = String(peek, i, peek.size - i, Charsets.ISO_8859_1)
     if (text.startsWith("xref") && (text.length == 4 || text[4].isXrefWs())) return true
     if (!looksLikeObjHeader(text)) return false
-    return text.contains("/XRef")
+    // /Type /XRef often follows a long /Index array and can sit past this peek.
+    if (text.contains("/XRef")) return true
+    return xrefStreamIndex(text)
+}
+
+/** `/Index [` in the stream dictionary is an xref stream, even without `/Type` in the peek. */
+private fun xrefStreamIndex(text: String): Boolean {
+    val at = text.indexOf("/Index")
+    if (at < 0) return false
+    val after = at + "/Index".length
+    if (after < text.length && text[after].isLetterOrDigit()) return false
+    val stream = text.indexOf("stream")
+    return stream < 0 || stream > at
 }
 
 private fun looksLikeObjHeader(text: String): Boolean {
