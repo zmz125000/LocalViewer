@@ -781,9 +781,9 @@ object Settings : DataStorePreferences(null) {
     val readerHardwareBitmap = boolPref("pref_reader_hardware_bitmap", true)
 
     /**
-     * Page very large stills from a ≤4096px texture so a fitted frame does not sample
-     * a 48MP bitmap. Pinch zoom past that texture draws the original again.
-     * Default off.
+     * Cap still decodes at 4096 px on the long edge. Pinch-zoom past that size
+     * decodes the file again at full resolution, and zooming back out drops it.
+     * Only one of those bitmaps is kept. Default off.
      */
     val readerHiResOptimize = boolPref("pref_reader_hi_res_optimize", false)
 

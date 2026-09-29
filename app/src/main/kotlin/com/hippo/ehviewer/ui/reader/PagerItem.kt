@@ -1,8 +1,6 @@
 package com.hippo.ehviewer.ui.reader
 
-import android.graphics.Bitmap
 import android.graphics.drawable.Animatable
-import android.view.Choreographer
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Box
@@ -22,12 +20,12 @@ import androidx.compose.material3.WavyProgressIndicatorDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Size
@@ -58,19 +56,15 @@ import com.hippo.ehviewer.gallery.PageStatus
 import com.hippo.ehviewer.gallery.ReaderSession
 import com.hippo.ehviewer.gallery.progressObserved
 import com.hippo.ehviewer.gallery.statusObserved
+import com.hippo.ehviewer.image.HiResTier
 import com.hippo.ehviewer.image.Image
 import com.hippo.ehviewer.ui.tools.DrawablePainter
 import com.hippo.ehviewer.util.AdsPlaceholderFile
-import kotlin.coroutines.coroutineContext
+import kotlin.math.max
 import kotlin.math.roundToInt
-import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.awaitCancellation
-import kotlinx.coroutines.ensureActive
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
-import kotlinx.coroutines.withContext
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.filterNotNull
 
 @Composable
 fun PagerItem(
@@ -123,12 +117,8 @@ fun PagerItem(
         is PageStatus.Ready -> {
             val image = state.image
             var painter by remember(image) { mutableStateOf<Painter?>(null) }
-            val preview = remember(image) { mutableStateOf<Bitmap?>(null) }
             val optimize by Settings.readerHiResOptimize.collectAsState()
             val drawScale = LocalReaderDrawScale.current
-            DisposableEffect(preview) {
-                onDispose { preview.recycleAndClear() }
-            }
             LaunchedEffect(image) {
                 if (!image.pin()) {
                     // Recycled / dead image still marked Ready — force a clean reload.
@@ -138,16 +128,7 @@ fun PagerItem(
                 }
                 // Reuse the same painter for this Image. A new DrawablePainter on every
                 // effect start raced with the old onForgotten(stop) after scroll.
-                if (painter == null) {
-                    val created = if (Settings.readerHiResOptimize.value) image.loadHiResPreview() else null
-                    ensureActive()
-                    if (Settings.readerHiResOptimize.value) {
-                        preview.value = created
-                    } else {
-                        created?.recycle()
-                    }
-                    painter = image.toPainter(preview, drawScale)
-                }
+                if (painter == null) painter = image.toPainter()
                 try {
                     awaitCancellation()
                 } finally {
@@ -156,24 +137,41 @@ fun PagerItem(
                     image.unpin()
                 }
             }
-            LaunchedEffect(image, optimize) {
-                if (painter == null) return@LaunchedEffect
-                if (!optimize) {
-                    preview.recycleAndClear()
-                    return@LaunchedEffect
-                }
-                if (preview.value != null) return@LaunchedEffect
-                val created = image.loadHiResPreview()
-                try {
-                    ensureActive()
-                    if (preview.value == null) {
-                        preview.value = created
-                    } else {
-                        created?.recycle()
+            // Preview decode stays until pinch-zoom draws the page larger than 4096 px.
+            // Zooming back replaces the full bitmap so both are not kept.
+            if (optimize && image.hiResTier != HiResTier.Normal) {
+                LaunchedEffect(image, viewportSize, contentScale, horizontalStrip) {
+                    snapshotFlow {
+                        val scale = drawScale() ?: return@snapshotFlow null
+                        val src = image.intrinsicSize
+                        if (src.width <= 0 || src.height <= 0 || viewportSize == Size.Zero) {
+                            return@snapshotFlow null
+                        }
+                        val factor = contentScale.computeScaleFactor(
+                            Size(src.width.toFloat(), src.height.toFloat()),
+                            viewportSize,
+                        )
+                        val destLong = max(
+                            src.width * factor.scaleX,
+                            src.height * factor.scaleY,
+                        )
+                        zoomPastHiResPreview(destLong, scale)
+                    }.filterNotNull().distinctUntilChanged().collect { past ->
+                        when (image.hiResTier) {
+                            HiResTier.Preview -> if (past) pageLoader.redecodeHiRes(page.index, full = true)
+                            HiResTier.Full -> if (!past) pageLoader.redecodeHiRes(page.index, full = false)
+                            HiResTier.Normal -> Unit
+                        }
                     }
-                } catch (cancelled: CancellationException) {
-                    created?.recycle()
-                    throw cancelled
+                }
+                DisposableEffect(image) {
+                    onDispose {
+                        if (image.hiResTier != HiResTier.Full) return@onDispose
+                        // Zoom-out already published the preview. Leaving the page still drops the full frame.
+                        val current = page.statusFlow.value
+                        if (current is PageStatus.Ready && current.image !== image) return@onDispose
+                        pageLoader.redecodeHiRes(page.index, full = false)
+                    }
                 }
             }
             painter?.let { painter ->
@@ -402,55 +400,10 @@ private fun Modifier.rotate90FitLayout(
     }
 }
 
-private fun Image.toPainter(preview: MutableState<Bitmap?>, layerScale: () -> Float) = when (val image = innerImage) {
-    is BitmapImage -> BitmapPainter(image.bitmap, intrinsicSize.toSize(), preview, layerScale)
+private fun Image.toPainter() = when (val image = innerImage) {
+    is BitmapImage -> BitmapPainter(image.bitmap, intrinsicSize.toSize())
     is DrawableImage -> DrawablePainter(image.drawable)
     else -> unreachable()
-}
-
-private val hiResPreviewMutex = Mutex()
-
-private suspend fun Image.loadHiResPreview(): Bitmap? {
-    if (hasGainmap) return null
-    val bitmap = (innerImage as? BitmapImage)?.bitmap ?: return null
-    if (!bitmap.canHiResPreview()) return null
-    val created = hiResPreviewMutex.withLock {
-        withContext(Dispatchers.Default) {
-            if (bitmap.isRecycled) {
-                null
-            } else {
-                val scaled = bitmap.createHiResPreview()
-                if (coroutineContext[Job]?.isActive == false) {
-                    scaled?.recycle()
-                    null
-                } else {
-                    scaled
-                }
-            }
-        }
-    }
-    if (coroutineContext[Job]?.isActive == false) {
-        created?.recycle()
-        return null
-    }
-    return created
-}
-
-private fun MutableState<Bitmap?>.recycleAndClear() {
-    val old = value
-    value = null
-    old?.releaseAfterDraw()
-}
-
-/** The display list may still sample this bitmap for a frame after it leaves composition. */
-private fun Bitmap.releaseAfterDraw() {
-    if (isRecycled) return
-    val choreographer = Choreographer.getInstance()
-    choreographer.postFrameCallback {
-        choreographer.postFrameCallback {
-            if (!isRecycled) recycle()
-        }
-    }
 }
 
 private const val DEFAULT_ASPECT = 1 / 1.4125f

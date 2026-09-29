@@ -19,6 +19,12 @@ interface ReaderSession : AutoCloseable {
     /** Flush [startPage] to DB. Safe to call often; no-op without [info]. */
     fun persistProgress()
     fun retryPage(index: Int, orgImg: Boolean = false)
+
+    /**
+     * Replace the decoded bitmap without clearing the page to Loading.
+     * [full] true decodes the file resolution; false decodes the 4096 px cap.
+     */
+    fun redecodeHiRes(index: Int, full: Boolean) = Unit
     fun getImageFilename(index: Int): String?
     fun save(index: Int, file: Path): Boolean
 

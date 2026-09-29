@@ -2012,6 +2012,7 @@ private fun PdfReaderScreen(
                 readerHardwareBitmap.changesFlow(),
                 readerLibDirectBitmap.changesFlow(),
                 readerDecodeSize.changesFlow(),
+                readerHiResOptimize.changesFlow(),
                 readerAdvancedColor.changesFlow(),
                 readerPlatformHighDepth.changesFlow(),
                 readerOppoProxdr.changesFlow(),

@@ -115,6 +115,8 @@ abstract class PageLoader(
         }
 
     private val jobs = HashMap<Int, Job>()
+    private val hiResEpoch = ConcurrentHashMap<Int, Int>()
+    private val hiResWant = ConcurrentHashMap<Int, Boolean>()
 
     /**
      * Indices that have entered [onRequest] / decode and are not yet Ready/Error/cancelled.
@@ -202,32 +204,7 @@ abstract class PageLoader(
         bracketCase(
             { openSource(index) },
             { raw ->
-                val checkAds = hasAds && detectAds(index, size)
-                val hint = getImageExtension(index)?.let { "page.$it" } ?: "page.bin"
-                val persistTo = if (Settings.disableReaderNetworkCache.value) {
-                    convertDestPath(index)
-                } else {
-                    null
-                }
-                val image = tryDecodeLibDirect(index, raw, forceOriginal, hint)
-                    ?: run {
-                        val ready = DisplaySource.ensureReady(raw, hint, persistTo = persistTo)
-                        if (ready is PathSource) {
-                            exportFiles[index] = ready.source
-                        }
-                        if (persistTo != null && ready is PathSource) {
-                            releaseRamPage(index)
-                        }
-                        Image.decode(
-                            ready,
-                            checkExtraneousAds = checkAds,
-                            forceOriginal = forceOriginal,
-                        )
-                    }
-                // Compressed ramPages are only needed until decode. Keep them while this
-                // index is still demanded (save / retry); drop as soon as the bitmap exists
-                // if navigation already moved on.
-                if (!isDecodedDemand(index)) releaseRamPage(index)
+                val image = decodeOpened(index, raw, forceOriginal)
                 try {
                     currentCoroutineContext().ensureActive()
                 } catch (e: CancellationException) {
@@ -244,6 +221,36 @@ abstract class PageLoader(
             },
             { src, case -> if (case !is ExitCase.Completed) src.close() },
         )
+    }
+
+    private suspend fun decodeOpened(index: Int, raw: ImageSource, forceOriginal: Boolean): Image {
+        val checkAds = hasAds && detectAds(index, size)
+        val hint = getImageExtension(index)?.let { "page.$it" } ?: "page.bin"
+        val persistTo = if (Settings.disableReaderNetworkCache.value) {
+            convertDestPath(index)
+        } else {
+            null
+        }
+        val image = tryDecodeLibDirect(index, raw, forceOriginal, hint)
+            ?: run {
+                val ready = DisplaySource.ensureReady(raw, hint, persistTo = persistTo)
+                if (ready is PathSource) {
+                    exportFiles[index] = ready.source
+                }
+                if (persistTo != null && ready is PathSource) {
+                    releaseRamPage(index)
+                }
+                Image.decode(
+                    ready,
+                    checkExtraneousAds = checkAds,
+                    forceOriginal = forceOriginal,
+                )
+            }
+        // Compressed ramPages are only needed until decode. Keep them while this
+        // index is still demanded (save / retry); drop as soon as the bitmap exists
+        // if navigation already moved on.
+        if (!isDecodedDemand(index)) releaseRamPage(index)
+        return image
     }
 
     /**
@@ -269,7 +276,9 @@ abstract class PageLoader(
         val maxEdge = Image.maxEdgeForReader(forceOriginal)
         val direct = LibDirectDecode.decode(raw, nameHint, maxEdge) ?: return null
         thumbSoftwareBitmapBeforeHardware(index, raw, direct.bitmap)
-        return Image.fromLibDirect(direct, raw)
+        return Image.fromLibDirect(direct, raw).also {
+            it.noteHiResPreview(Image.hiResPreviewCapEdge(forceOriginal) > 0)
+        }
     }
 
     /**
@@ -470,6 +479,54 @@ abstract class PageLoader(
 
     private fun ownsDecodeSlot(index: Int, job: Job?): Boolean = synchronized(jobs) {
         job != null && jobs[index] === job
+    }
+
+    override fun redecodeHiRes(index: Int, full: Boolean) {
+        if (index !in 0 until size || !Settings.readerHiResOptimize.value) return
+        // Same direction already running. A zoom jitter must not decode two full frames.
+        if (hiResWant.put(index, full) == full) return
+        val epoch = hiResEpoch.merge(index, 1) { prev, _ -> prev + 1 }
+        scope.launch {
+            try {
+                if (!hiResPageStillResident(index)) return@launch
+                val image = try {
+                    mutex.withLock(index) {
+                        bracketCase(
+                            { openSource(index) },
+                            { raw -> decodeOpened(index, raw, forceOriginal = full) to raw },
+                            { src, case -> if (case !is ExitCase.Completed) src.close() },
+                        )
+                    }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Throwable) {
+                    logcat(e)
+                    return@launch
+                }
+                val (decoded, raw) = image
+                try {
+                    currentCoroutineContext().ensureActive()
+                    if (hiResEpoch[index] != epoch || !hiResPageStillResident(index)) {
+                        decoded.unpin()
+                        return@launch
+                    }
+                    if (full) decoded.noteHiResFull()
+                    publishPageSucceed(index, decoded, replaceCache = true)
+                    schedulePhotoGridThumb(index, raw, decoded)
+                } catch (e: CancellationException) {
+                    decoded.unpin()
+                    throw e
+                }
+            } finally {
+                hiResWant.remove(index, full)
+            }
+        }
+    }
+
+    /** False after the page was dropped from the decode window, so a late zoom decode is not published. */
+    private fun hiResPageStillResident(index: Int): Boolean {
+        val status = pages.getOrNull(index)?.status
+        return status is PageStatus.Ready || status is PageStatus.Blocked || isDecodeDemanded(index)
     }
 
     override fun retryPage(index: Int, orgImg: Boolean) {
