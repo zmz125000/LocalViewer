@@ -781,6 +781,13 @@ object Settings : DataStorePreferences(null) {
     val readerHardwareBitmap = boolPref("pref_reader_hardware_bitmap", true)
 
     /**
+     * Cap the first still decode at 4096 px on the long edge. Pinch-zoom past that
+     * decodes the file once more and keeps it until the page leaves the viewport.
+     * Zooming back shows the 4096 px bitmap without decoding again.
+     */
+    val readerHiResOptimize = boolPref("pref_reader_hi_res_optimize", true)
+
+    /**
      * Lib stills (JXL / JXR / PQ-AVIF): decode to Bitmap and skip Ultra HDR JPEG convert.
      * Default off = convert + Coil (deep color reduced; WCG only as encode tags).
      * When on: [com.hippo.ehviewer.image.hdr.LibDirectDecode]; with [readerAdvancedColor]

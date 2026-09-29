@@ -11,13 +11,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.input.pointer.AwaitPointerEventScope
-import androidx.compose.ui.input.pointer.PointerEvent
-import androidx.compose.ui.input.pointer.PointerEventType
-import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.unit.Density
-import androidx.compose.ui.unit.dp
-import androidx.compose.ui.util.fastFold
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.collectAsState
 import com.hippo.ehviewer.gallery.Page
@@ -28,9 +21,6 @@ import eu.kanade.tachiyomi.ui.reader.setting.ReadingModeType.RIGHT_TO_LEFT
 import eu.kanade.tachiyomi.ui.reader.setting.ReadingModeType.VERTICAL
 import eu.kanade.tachiyomi.ui.reader.setting.TappingInvertMode
 import eu.kanade.tachiyomi.ui.reader.viewer.ViewerNavigation
-import kotlinx.coroutines.channels.Channel
-import kotlinx.coroutines.flow.collectLatest
-import kotlinx.coroutines.flow.receiveAsFlow
 
 @Composable
 fun GalleryPager(
@@ -87,14 +77,6 @@ fun GalleryPager(
         if (!isPagerType) onNavModeChange()
     }
     if (isPagerType) {
-        val channel = remember { Channel<Float>(Channel.CONFLATED) }
-        LaunchedEffect(channel) {
-            channel.receiveAsFlow().collectLatest { delta ->
-                if (delta != 0f) {
-                    if (delta < 0) pagerState.moveToNext() else pagerState.moveToPrevious()
-                }
-            }
-        }
         PagerViewer(
             pagerState = pagerState,
             isRtl = type == RIGHT_TO_LEFT,
@@ -108,14 +90,8 @@ fun GalleryPager(
             onBack = onBack,
             dualPage = pagerDual,
             landscapeCover = landscapeCover,
-            modifier = modifier.pointerInput(channel) {
-                awaitPointerEventScope {
-                    while (true) {
-                        val event = awaitScrollEvent()
-                        val delta = calculateMouseWheelScroll(event)
-                        channel.trySend(delta)
-                    }
-                }
+            modifier = modifier.readerMouseWheelPages { forward ->
+                if (forward) pagerState.moveToNext() else pagerState.moveToPrevious()
             },
         )
     } else {
@@ -130,7 +106,7 @@ fun GalleryPager(
             onNextFolder = onNextFolder,
             onBack = onBack,
             horizontal = webtoonHorizontal,
-            modifier = modifier,
+            modifier = modifier.readerMouseWheelList(lazyListState),
         )
     }
     NavigationOverlay(showNavigationOverlay, regions, modifier = Modifier.fillMaxSize())
@@ -139,17 +115,4 @@ fun GalleryPager(
     if (isPagerType) {
         EInkRefreshOverlay(pagerState = pagerState)
     }
-}
-
-private suspend fun AwaitPointerEventScope.awaitScrollEvent(): PointerEvent {
-    var event: PointerEvent
-    do {
-        event = awaitPointerEvent()
-    } while (event.type != PointerEventType.Scroll)
-    return event
-}
-
-private fun Density.calculateMouseWheelScroll(event: PointerEvent): Float {
-    // 64 dp value is taken from ViewConfiguration.java, replace with better solution
-    return event.changes.fastFold(0f) { acc, c -> acc + c.scrollDelta.y } * -64.dp.toPx()
 }

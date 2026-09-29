@@ -13,9 +13,11 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -240,6 +242,9 @@ private fun DualPageContainer(
         unscaledSpreadSize(leftDecoded, rightDecoded, leftAspect, rightAspect)
             .takeIf { it != Size.Zero } ?: fittedSpread
     }
+    // 4096 ↔ file resolution keeps this size. A new content location cancels the pinch
+    // and the pager turns the page.
+    val zoomSpread = rememberStableZoomSize(unscaledSpread)
 
     if (layoutSize != Size.Zero) {
         if (gap) {
@@ -255,17 +260,17 @@ private fun DualPageContainer(
                 val raw = leftDecoded ?: rightDecoded
                 raw != null && shouldAutoRotate(raw, layoutSize, autoRotateMode)
             }
-            val contentScale = ContentScale.fromPreferences(scaleType, unscaledSpread, layoutSize)
+            val contentScale = ContentScale.fromPreferences(scaleType, zoomSpread, layoutSize)
             zoomableState.contentScale = contentScale
-            LaunchedEffect(unscaledSpread, contentScale, alignment) {
-                zoomableState.applyPagerContentAlignment(unscaledSpread, contentScale, layoutSize, alignment)
+            LaunchedEffect(zoomSpread, contentScale, alignment) {
+                zoomableState.applyPagerContentAlignment(zoomSpread, contentScale, layoutSize, alignment)
             }
-            LaunchedEffect(unscaledSpread) {
+            LaunchedEffect(zoomSpread) {
                 zoomableState.setContentLocation(
-                    ZoomableContentLocation.scaledInsideAndCenterAligned(unscaledSpread),
+                    ZoomableContentLocation.scaledInsideAndCenterAligned(zoomSpread),
                 )
             }
-            if (landscapeZoom && !rotate && contentScale == ContentScale.Fit && unscaledSpread.width > unscaledSpread.height) {
+            if (landscapeZoom && !rotate && contentScale == ContentScale.Fit && zoomSpread.width > zoomSpread.height) {
                 LaunchedEffect(alignment) {
                     val zoomFraction = snapshotFlow { zoomableState.zoomFraction }.first { it != null }
                     if (zoomFraction == 0f) {
@@ -327,103 +332,105 @@ private fun DualPageContainer(
         }
     }
 
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .pointerInput(onTap) {
-                detectTapGestures(onLongPress = onLongClick, onTap = onTap.partially1(null))
-            },
-        contentAlignment = Alignment.Center,
-    ) {
-        val zoomMod = Modifier.zoomable(
-            state = zoomableState,
-            onClick = onTap.partially1(zoomableState),
-            onLongClick = onLongClick,
-            onDoubleClick = onDoubleClick,
-        )
-        if (solo) {
-            val page = leftPage ?: rightPage!!
-            // Odd last page: full-viewport single page (same as pre-gap). Zoom viewport
-            // must be the pager slot, matching paired pages after the pinch-zoom fix.
-            Box(
-                modifier = Modifier.fillMaxSize().then(zoomMod),
-                contentAlignment = Alignment.Center,
-            ) {
-                PagerItem(
-                    page = page,
-                    pageLoader = pageLoader,
-                    contentScale = ContentScale.Inside,
-                    modifier = Modifier.fillMaxSize(),
-                    viewportSize = layoutSize,
-                )
-            }
-        } else if (gap) {
-            Row(
-                modifier = Modifier.fillMaxSize().then(zoomMod),
-            ) {
-                Box(Modifier.weight(1f).fillMaxHeight(), contentAlignment = Alignment.Center) {
-                    if (leftPage != null) {
-                        PagerItem(
-                            page = leftPage,
-                            pageLoader = pageLoader,
-                            contentScale = ContentScale.Fit,
-                            viewportSize = halfSize,
-                        )
-                    }
-                }
-                Box(Modifier.weight(1f).fillMaxHeight(), contentAlignment = Alignment.Center) {
-                    if (rightPage != null) {
-                        PagerItem(
-                            page = rightPage,
-                            pageLoader = pageLoader,
-                            contentScale = ContentScale.Fit,
-                            viewportSize = halfSize,
-                        )
-                    }
-                }
-            }
-        } else {
-            val spreadPx = insideSpreadSize(unscaledSpread, layoutSize).takeIf { it != Size.Zero }
-                ?: fittedSpread
-            val leftCell = Size(
-                (spreadPx.width * leftAspect / combinedAspect).coerceAtLeast(1f),
-                spreadPx.height.coerceAtLeast(1f),
+    readerDrawScaleProvider(zoomableState) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .pointerInput(onTap) {
+                    detectTapGestures(onLongPress = onLongClick, onTap = onTap.partially1(null))
+                },
+            contentAlignment = Alignment.Center,
+        ) {
+            val zoomMod = Modifier.zoomable(
+                state = zoomableState,
+                onClick = onTap.partially1(zoomableState),
+                onLongClick = onLongClick,
+                onDoubleClick = onDoubleClick,
             )
-            val rightCell = Size(
-                (spreadPx.width * rightAspect / combinedAspect).coerceAtLeast(1f),
-                spreadPx.height.coerceAtLeast(1f),
-            )
-            // Zoom viewport must be the full pager slot. Putting zoomable on the image
-            // box made pinch-zoom scale inside the pair instead of the screen.
-            Box(
-                modifier = Modifier.fillMaxSize().then(zoomMod),
-                contentAlignment = Alignment.Center,
-            ) {
-                Row(
-                    modifier = if (spreadPx != Size.Zero) {
-                        Modifier.fixedPxSize(spreadPx)
-                    } else {
-                        Modifier.aspectRatio(combinedAspect, matchHeightConstraintsFirst = true)
-                    },
+            if (solo) {
+                val page = leftPage ?: rightPage!!
+                // Odd last page: full-viewport single page (same as pre-gap). Zoom viewport
+                // must be the pager slot, matching paired pages after the pinch-zoom fix.
+                Box(
+                    modifier = Modifier.fillMaxSize().then(zoomMod),
+                    contentAlignment = Alignment.Center,
                 ) {
-                    if (leftPage != null) {
-                        PagerItem(
-                            page = leftPage,
-                            pageLoader = pageLoader,
-                            // Fill the unscaled cell (height-matched). Telephoto Fits the pair.
-                            contentScale = ContentScale.Fit,
-                            modifier = Modifier.weight(leftAspect).fillMaxHeight(),
-                            viewportSize = leftCell,
-                        )
+                    PagerItem(
+                        page = page,
+                        pageLoader = pageLoader,
+                        contentScale = ContentScale.Inside,
+                        modifier = Modifier.fillMaxSize(),
+                        viewportSize = layoutSize,
+                    )
+                }
+            } else if (gap) {
+                Row(
+                    modifier = Modifier.fillMaxSize().then(zoomMod),
+                ) {
+                    Box(Modifier.weight(1f).fillMaxHeight(), contentAlignment = Alignment.Center) {
+                        if (leftPage != null) {
+                            PagerItem(
+                                page = leftPage,
+                                pageLoader = pageLoader,
+                                contentScale = ContentScale.Fit,
+                                viewportSize = halfSize,
+                            )
+                        }
                     }
-                    if (rightPage != null) {
-                        PagerItem(
-                            page = rightPage,
-                            pageLoader = pageLoader,
-                            contentScale = ContentScale.Fit,
-                            modifier = Modifier.weight(rightAspect).fillMaxHeight(),
-                            viewportSize = rightCell,
-                        )
+                    Box(Modifier.weight(1f).fillMaxHeight(), contentAlignment = Alignment.Center) {
+                        if (rightPage != null) {
+                            PagerItem(
+                                page = rightPage,
+                                pageLoader = pageLoader,
+                                contentScale = ContentScale.Fit,
+                                viewportSize = halfSize,
+                            )
+                        }
+                    }
+                }
+            } else {
+                val spreadPx = insideSpreadSize(zoomSpread, layoutSize).takeIf { it != Size.Zero }
+                    ?: fittedSpread
+                val leftCell = Size(
+                    (spreadPx.width * leftAspect / combinedAspect).coerceAtLeast(1f),
+                    spreadPx.height.coerceAtLeast(1f),
+                )
+                val rightCell = Size(
+                    (spreadPx.width * rightAspect / combinedAspect).coerceAtLeast(1f),
+                    spreadPx.height.coerceAtLeast(1f),
+                )
+                // Zoom viewport must be the full pager slot. Putting zoomable on the image
+                // box made pinch-zoom scale inside the pair instead of the screen.
+                Box(
+                    modifier = Modifier.fillMaxSize().then(zoomMod),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Row(
+                        modifier = if (spreadPx != Size.Zero) {
+                            Modifier.fixedPxSize(spreadPx)
+                        } else {
+                            Modifier.aspectRatio(combinedAspect, matchHeightConstraintsFirst = true)
+                        },
+                    ) {
+                        if (leftPage != null) {
+                            PagerItem(
+                                page = leftPage,
+                                pageLoader = pageLoader,
+                                // Fill the unscaled cell (height-matched). Telephoto Fits the pair.
+                                contentScale = ContentScale.Fit,
+                                modifier = Modifier.weight(leftAspect).fillMaxHeight(),
+                                viewportSize = leftCell,
+                            )
+                        }
+                        if (rightPage != null) {
+                            PagerItem(
+                                page = rightPage,
+                                pageLoader = pageLoader,
+                                contentScale = ContentScale.Fit,
+                                modifier = Modifier.weight(rightAspect).fillMaxHeight(),
+                                viewportSize = rightCell,
+                            )
+                        }
                     }
                 }
             }
@@ -459,7 +466,7 @@ private fun PageContainer(
         val raw = status.image.intrinsicSize.toSize()
         // Must match PagerItem / FitPageImage (shouldAutoRotate) so draw + contentLocation lockstep.
         val rotate = shouldAutoRotate(raw, layoutSize, autoRotateMode)
-        val size = fitDisplaySize(raw, rotate)
+        val size = rememberStableZoomSize(fitDisplaySize(raw, rotate))
         val contentScale = ContentScale.fromPreferences(scaleType, size, layoutSize)
         zoomableState.contentScale = contentScale
         LaunchedEffect(size, contentScale, alignment) {
@@ -524,22 +531,24 @@ private fun PageContainer(
             }
         }
     }
-    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        PagerItem(
-            page = page,
-            pageLoader = pageLoader,
-            contentScale = ContentScale.Inside,
-            viewportSize = layoutSize,
-            modifier = Modifier.pointerInput(onTap) {
-                detectTapGestures(onLongPress = onLongClick, onTap = onTap.partially1(null))
-            },
-            contentModifier = Modifier.zoomable(
-                state = zoomableState,
-                onClick = onTap.partially1(zoomableState),
-                onLongClick = onLongClick,
-                onDoubleClick = onDoubleClick,
-            ),
-        )
+    readerDrawScaleProvider(zoomableState) {
+        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            PagerItem(
+                page = page,
+                pageLoader = pageLoader,
+                contentScale = ContentScale.Inside,
+                viewportSize = layoutSize,
+                modifier = Modifier.pointerInput(onTap) {
+                    detectTapGestures(onLongPress = onLongClick, onTap = onTap.partially1(null))
+                },
+                contentModifier = Modifier.zoomable(
+                    state = zoomableState,
+                    onClick = onTap.partially1(zoomableState),
+                    onLongClick = onLongClick,
+                    onDoubleClick = onDoubleClick,
+                ),
+            )
+        }
     }
 }
 
@@ -570,6 +579,19 @@ private val PagerZoomSpec = ZoomSpec(
     maximum = ZoomLimit(factor = 5f),
     minimum = ZoomLimit(factor = 1f, overzoomEffect = OverzoomEffect.Disabled),
 )
+
+/**
+ * First decoded size wins while the aspect stays put. A 4096 px preview and the
+ * file-resolution decode are the same photo, so telephoto must not rebuild zoom.
+ */
+@Composable
+private fun rememberStableZoomSize(size: Size): Size {
+    var locked by remember { mutableStateOf(Size.Zero) }
+    if (size.width > 0f && size.height > 0f && !size.keepsZoomContent(locked)) {
+        locked = size
+    }
+    return if (locked.width > 0f && locked.height > 0f) locked else size
+}
 
 /** Lay out [size] in pixels so the no-gap pair matches telephoto's unscaled content. */
 private fun Modifier.fixedPxSize(size: Size) = layout { measurable, _ ->

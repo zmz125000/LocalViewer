@@ -1,6 +1,7 @@
 package com.hippo.ehviewer.ui.reader
 
 import android.graphics.drawable.Animatable
+import android.view.Choreographer
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Box
@@ -18,12 +19,15 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.WavyProgressIndicatorDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Size
@@ -54,11 +58,16 @@ import com.hippo.ehviewer.gallery.PageStatus
 import com.hippo.ehviewer.gallery.ReaderSession
 import com.hippo.ehviewer.gallery.progressObserved
 import com.hippo.ehviewer.gallery.statusObserved
+import com.hippo.ehviewer.image.HiResTier
 import com.hippo.ehviewer.image.Image
 import com.hippo.ehviewer.ui.tools.DrawablePainter
 import com.hippo.ehviewer.util.AdsPlaceholderFile
+import kotlin.math.max
 import kotlin.math.roundToInt
 import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.filterNotNull
 
 @Composable
 fun PagerItem(
@@ -110,23 +119,89 @@ fun PagerItem(
         }
         is PageStatus.Ready -> {
             val image = state.image
-            var painter by remember(image) { mutableStateOf<Painter?>(null) }
-            LaunchedEffect(image) {
-                if (!image.pin()) {
+            val optimize by Settings.readerHiResOptimize.collectAsState()
+            val drawScale = LocalReaderDrawScale.current
+            val fullFlow = remember(page.index, pageLoader) { pageLoader.hiResFullFlow(page.index) }
+            val full by fullFlow.collectAsState()
+            var zoomPast by remember(page.index) { mutableStateOf(false) }
+            var inViewport by remember(page.index) { mutableStateOf(true) }
+            // File resolution stays beside the 4096 preview. Pinch switches painters.
+            val display = if (zoomPast && full != null) full!! else image
+            // Keep the previous painter until the replacement is ready. Clearing it
+            // removes zoomable for a frame, and the pager turns the page.
+            val shown = remember { ShownImage() }
+            var painter by remember { mutableStateOf<Painter?>(null) }
+            DisposableEffect(shown) {
+                onDispose {
+                    val current = shown.image
+                    val retiring = shown.retiring
+                    shown.image = null
+                    shown.retiring = null
+                    // The display list can sample this bitmap for a frame after the page leaves.
+                    current.releaseAfterFrames()
+                    retiring.releaseAfterFrames()
+                }
+            }
+            LaunchedEffect(display) {
+                if (!display.pin()) {
                     // Recycled / dead image still marked Ready — force a clean reload.
-                    painter = null
-                    pageLoader.retryPage(page.index)
+                    if (painter == null) pageLoader.retryPage(page.index)
                     return@LaunchedEffect
                 }
-                // Reuse the same painter for this Image. A new DrawablePainter on every
-                // effect start raced with the old onForgotten(stop) after scroll.
-                if (painter == null) painter = image.toPainter()
-                try {
-                    awaitCancellation()
-                } finally {
-                    // Drop display pin only. Do not notifyPageWait — that turned visible
-                    // pages into forever-Queued when the cache also released its pin.
-                    image.unpin()
+                val previous = shown.image
+                shown.image = display
+                painter = display.toPainter()
+                if (previous != null && previous !== display) {
+                    // The display list can sample the old bitmap for a frame after the swap.
+                    shown.retiring = previous
+                    try {
+                        withFrameNanos { }
+                        withFrameNanos { }
+                    } finally {
+                        if (shown.retiring === previous) {
+                            shown.retiring = null
+                            previous.unpin()
+                        }
+                    }
+                }
+                awaitCancellation()
+            }
+            if (optimize && image.hiResTier == HiResTier.Preview) {
+                LaunchedEffect(image, viewportSize, contentScale, horizontalStrip) {
+                    snapshotFlow {
+                        val scale = drawScale() ?: return@snapshotFlow null
+                        val src = image.intrinsicSize
+                        if (src.width <= 0 || src.height <= 0 || viewportSize == Size.Zero) {
+                            return@snapshotFlow null
+                        }
+                        val factor = contentScale.computeScaleFactor(
+                            Size(src.width.toFloat(), src.height.toFloat()),
+                            viewportSize,
+                        )
+                        val destLong = max(
+                            src.width * factor.scaleX,
+                            src.height * factor.scaleY,
+                        )
+                        zoomPastHiResPreview(destLong, scale)
+                    }.filterNotNull().distinctUntilChanged().collect { zoomPast = it }
+                }
+                LaunchedEffect(zoomPast, inViewport) {
+                    if (zoomPast && inViewport) pageLoader.retainHiResFull(page.index)
+                }
+                LaunchedEffect(page.index) {
+                    var seen = false
+                    snapshotFlow { inViewport }
+                        .debounce(200)
+                        .collect { visible ->
+                            if (visible) {
+                                seen = true
+                            } else if (seen) {
+                                pageLoader.releaseHiResFull(page.index)
+                            }
+                        }
+                }
+                DisposableEffect(page.index) {
+                    onDispose { pageLoader.releaseHiResFull(page.index) }
                 }
             }
             painter?.let { painter ->
@@ -152,19 +227,24 @@ fun PagerItem(
                     contentScale = contentScale,
                     colorFilter = colorFilter,
                     horizontalStrip = horizontalStrip,
-                    modifier = Modifier.thenIf(drawable is Animatable) {
-                        // Any on-screen pixel is enough. minFractionVisible = 0 treats a
-                        // fully off-screen cache-window item as visible and keeps GIF/WebP
-                        // decoding. Off-screen pager/webtoon neighbours stay composed.
-                        onVisibilityChanged(
+                    modifier = Modifier
+                        .onVisibilityChanged(
                             minDurationMs = 0,
                             minFractionVisible = MIN_ONSCREEN_FRACTION,
-                        ) { visible ->
-                            drawable!!.setVisible(visible, false)
-                            val anim = drawable as Animatable
-                            if (visible) anim.start() else anim.stop()
-                        }
-                    }.then(modifier),
+                        ) { inViewport = it }
+                        .thenIf(drawable is Animatable) {
+                            // Any on-screen pixel is enough. minFractionVisible = 0 treats a
+                            // fully off-screen cache-window item as visible and keeps GIF/WebP
+                            // decoding. Off-screen pager/webtoon neighbours stay composed.
+                            onVisibilityChanged(
+                                minDurationMs = 0,
+                                minFractionVisible = MIN_ONSCREEN_FRACTION,
+                            ) { visible ->
+                                drawable!!.setVisible(visible, false)
+                                val anim = drawable as Animatable
+                                if (visible) anim.start() else anim.stop()
+                            }
+                        }.then(modifier),
                     contentModifier = contentModifier,
                 )
             } ?: Spacer(modifier = placeholderMod)
@@ -351,6 +431,21 @@ private fun Modifier.rotate90FitLayout(
                 x = (layoutW - preW) / 2,
                 y = (layoutH - preH) / 2,
             )
+        }
+    }
+}
+
+private class ShownImage {
+    var image: Image? = null
+    var retiring: Image? = null
+}
+
+private fun Image?.releaseAfterFrames() {
+    val image = this ?: return
+    val choreographer = Choreographer.getInstance()
+    choreographer.postFrameCallback {
+        choreographer.postFrameCallback {
+            image.unpin()
         }
     }
 }

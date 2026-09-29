@@ -66,7 +66,7 @@ import com.hippo.ehviewer.image.hdr.shouldPlatformHighDepthDecode
 import com.hippo.ehviewer.jni.isGif
 import com.hippo.ehviewer.jni.mmap
 import com.hippo.ehviewer.jni.munmap
-import com.hippo.ehviewer.jni.rewriteGifSource
+import com.hippo.ehviewer.jni.rewriteGifDelay
 import com.hippo.ehviewer.ktbuilder.execute
 import com.hippo.ehviewer.ktbuilder.imageRequest
 import com.hippo.ehviewer.util.FileUtils
@@ -111,6 +111,26 @@ class Image private constructor(
 
     val intrinsicSize = with(image) { IntSize(width, height) }
     val allocationSize = image.size
+
+    /**
+     * Set when [com.hippo.ehviewer.Settings.readerHiResOptimize] capped this decode,
+     * or when pinch-zoom replaced that cap with a full decode.
+     */
+    var hiResTier: HiResTier = HiResTier.Normal
+        private set
+
+    fun noteHiResPreview(capped: Boolean) {
+        if (!capped) return
+        val longEdge = maxOf(intrinsicSize.width, intrinsicSize.height)
+        // Gain-map redo can replace the cap with the file frame. That is not a preview.
+        if (longEdge > HI_RES_PREVIEW_EDGE + 2) return
+        if (longEdge >= HI_RES_PREVIEW_EDGE - 2) hiResTier = HiResTier.Preview
+    }
+
+    fun noteHiResFull() {
+        val longEdge = maxOf(intrinsicSize.width, intrinsicSize.height)
+        hiResTier = if (longEdge > HI_RES_PREVIEW_EDGE) HiResTier.Full else HiResTier.Normal
+    }
 
     /**
      * LRU weight. HARDWARE bitmaps may report 0 Java bytes; animated drawables
@@ -335,11 +355,15 @@ class Image private constructor(
             asBitmapImage()?.bitmap?.recycle()
         }
 
+        private class CoilDecoded(val image: CoilImage, val capped: Boolean)
+
         private suspend fun Either<ByteBufferSource, PathSource>.decodeCoilOnce(
             mode: DecodeSizeType,
             checkExtraneousAds: Boolean,
             /** Prefer hardware + no crop/QR so gain maps are not stripped. */
             hdrSafe: Boolean,
+            /** Long-edge cap. 0 keeps [mode]. */
+            longEdgeCap: Int = 0,
             /**
              * PNG high bit depth: software [BitmapFactory] + preferred [Bitmap.Config.RGBA_F16]
              * (bypasses Coil hardware-direct / ImageDecoder, which often keep only 8-bit).
@@ -353,13 +377,22 @@ class Image private constructor(
                 imageRequest {
                     onLeft { data(it.source) }
                     onRight { data(it.source.toUri()) }
-                    if (mode.isOriginal) {
-                        size(Size.ORIGINAL)
-                        precision(Precision.EXACT)
-                    } else {
-                        size(sizeResolverFor(mode))
-                        scale(Scale.FILL)
-                        precision(Precision.INEXACT)
+                    when {
+                        longEdgeCap > 0 -> {
+                            // Fit inside the square so the long edge, not the short edge, is capped.
+                            size(Size(longEdgeCap, longEdgeCap))
+                            scale(Scale.FIT)
+                            precision(Precision.INEXACT)
+                        }
+                        mode.isOriginal -> {
+                            size(Size.ORIGINAL)
+                            precision(Precision.EXACT)
+                        }
+                        else -> {
+                            size(sizeResolverFor(mode))
+                            scale(Scale.FILL)
+                            precision(Precision.INEXACT)
+                        }
                     }
                     maxBitmapSize(Size.ORIGINAL)
                     // No forced colorSpace(DISPLAY_P3): preserves embedded ICC under the
@@ -482,7 +515,7 @@ class Image private constructor(
         private suspend fun Either<ByteBufferSource, PathSource>.decodeCoil(
             checkExtraneousAds: Boolean,
             forceOriginal: Boolean,
-        ): CoilImage {
+        ): CoilDecoded {
             // Gain-map Ultra HDR + animated GIF/WebP/APNG: always ORIGIN.
             val mode = decodeMode(forceOriginal)
             val looksHdr = isAtLeastU && sourceLooksLikeHdrGainMap(this)
@@ -495,14 +528,19 @@ class Image private constructor(
             val hdrSafe = looksHdr
             // APNG must not take the still PNG F16 BitmapFactory path.
             val platformHbd = !looksAnimated && resolvePlatformHbd(gainMap = looksHdr)
+            val longEdgeCap = if (forceOriginal || looksHdr || looksAnimated || platformHbd) {
+                0
+            } else {
+                hiResPreviewCapEdge(false)
+            }
 
             suspend fun runDecode(m: DecodeSizeType, hdr: Boolean, hbd: Boolean): CoilImage = if (hbd) {
                 // Full-res F16: share lib-direct serialize lock.
                 LibDirectDecode.heavyDecode.withPermit {
-                    decodeCoilOnce(m, checkExtraneousAds, hdrSafe = hdr, platformHbd = true)
+                    decodeCoilOnce(m, checkExtraneousAds, hdrSafe = hdr, platformHbd = true, longEdgeCap = longEdgeCap)
                 }
             } else {
-                decodeCoilOnce(m, checkExtraneousAds, hdrSafe = hdr, platformHbd = false)
+                decodeCoilOnce(m, checkExtraneousAds, hdrSafe = hdr, platformHbd = false, longEdgeCap = longEdgeCap)
             }
 
             var image = runDecode(effectiveMode, hdrSafe, platformHbd)
@@ -527,9 +565,9 @@ class Image private constructor(
             // Annotate gain map when the hardware path skipped MapExtraInfoInterceptor.
             val bitmapImage = image.asBitmapImage()
             if (bitmapImage != null && image !is BitmapImageWithExtraInfo && bitmapImage.detectGainmap()) {
-                return BitmapImageWithExtraInfo(image = bitmapImage, hasGainmap = true)
+                return CoilDecoded(BitmapImageWithExtraInfo(image = bitmapImage, hasGainmap = true), longEdgeCap > 0)
             }
-            return image
+            return CoilDecoded(image, longEdgeCap > 0)
         }
 
         /**
@@ -572,12 +610,12 @@ class Image private constructor(
                 }
                 is ByteBufferSource -> {
                     if (!isAtLeastU) {
-                        rewriteGifSource(src.source)
+                        rewriteGifDelay(src.source)
                     }
                     src.left().decodeCoil(checkExtraneousAds, forceOriginal)
                 }
             }
-            return Image(image, src)
+            return Image(image.image, src).also { it.noteHiResPreview(image.capped) }
         }
 
         /**
@@ -612,6 +650,27 @@ class Image private constructor(
          * Long-edge target for lib-direct decode (0 = full file resolution).
          */
         fun maxEdgeForReader(forceOriginal: Boolean): Int {
+            val requested = requestedDecodeEdge(forceOriginal)
+            val cap = hiResPreviewCapEdge(forceOriginal)
+            return when {
+                cap <= 0 -> requested
+                requested <= 0 -> cap
+                else -> minOf(requested, cap)
+            }
+        }
+
+        /**
+         * Long-edge cap for [Settings.readerHiResOptimize], or 0 when this decode
+         * should follow [readerDecodeSize] unchanged. 0 from [requestedDecodeEdge]
+         * means original.
+         */
+        fun hiResPreviewCapEdge(forceOriginal: Boolean): Int {
+            if (forceOriginal || !Settings.readerHiResOptimize.value) return 0
+            val requested = requestedDecodeEdge(false)
+            return if (requested <= 0 || requested > HI_RES_PREVIEW_EDGE) HI_RES_PREVIEW_EDGE else 0
+        }
+
+        private fun requestedDecodeEdge(forceOriginal: Boolean): Int {
             val mode = decodeMode(forceOriginal)
             if (mode.isOriginal) return 0
             val scale = mode.scale ?: return 0
