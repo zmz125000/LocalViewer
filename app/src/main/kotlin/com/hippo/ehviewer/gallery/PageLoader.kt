@@ -15,6 +15,7 @@ import com.ehviewer.core.util.logcat
 import com.hippo.ehviewer.EhDB
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.image.ByteBufferSource
+import com.hippo.ehviewer.image.HiResTier
 import com.hippo.ehviewer.image.Image
 import com.hippo.ehviewer.image.ImageSource
 import com.hippo.ehviewer.image.PathSource
@@ -45,6 +46,7 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -117,6 +119,8 @@ abstract class PageLoader(
     private val jobs = HashMap<Int, Job>()
     private val hiResEpoch = ConcurrentHashMap<Int, Int>()
     private val hiResWant = ConcurrentHashMap<Int, Boolean>()
+    private val hiResFull = ConcurrentHashMap<Int, Image>()
+    private val hiResFullFlows = ConcurrentHashMap<Int, MutableStateFlow<Image?>>()
 
     /**
      * Indices that have entered [onRequest] / decode and are not yet Ready/Error/cancelled.
@@ -425,6 +429,7 @@ abstract class PageLoader(
 
     override fun restart() {
         cancelDecodeJobs()
+        releaseAllHiResFull()
         exportFiles.clear()
         sourceReady.clear()
         lock.write { cache.evictAll() }
@@ -481,19 +486,29 @@ abstract class PageLoader(
         job != null && jobs[index] === job
     }
 
-    override fun redecodeHiRes(index: Int, full: Boolean) {
+    override fun hiResFullFlow(index: Int): StateFlow<Image?> = hiResFullState(index)
+
+    private fun hiResFullState(index: Int): MutableStateFlow<Image?> = synchronized(hiResFullFlows) {
+        hiResFullFlows.getOrPut(index) { MutableStateFlow(hiResFull[index]) }
+    }
+
+    override fun retainHiResFull(index: Int) {
         if (index !in 0 until size || !Settings.readerHiResOptimize.value) return
-        // Same direction already running. A zoom jitter must not decode two full frames.
-        if (hiResWant.put(index, full) == full) return
+        if (hiResFull.containsKey(index)) return
+        // One decode per page. Zooming in again reuses the bitmap until release.
+        if (hiResWant.put(index, true) == true) return
         val epoch = hiResEpoch.merge(index, 1) { prev, _ -> prev + 1 }
         scope.launch {
             try {
                 if (!hiResPageStillResident(index)) return@launch
-                val image = try {
+                val decoded = try {
                     mutex.withLock(index) {
                         bracketCase(
                             { openSource(index) },
-                            { raw -> decodeOpened(index, raw, forceOriginal = full) to raw },
+                            { raw ->
+                                val image = decodeOpened(index, raw, forceOriginal = true)
+                                image to raw
+                            },
                             { src, case -> if (case !is ExitCase.Completed) src.close() },
                         )
                     }
@@ -503,27 +518,50 @@ abstract class PageLoader(
                     logcat(e)
                     return@launch
                 }
-                val (decoded, raw) = image
+                val (image, raw) = decoded
                 try {
                     currentCoroutineContext().ensureActive()
-                    if (hiResEpoch[index] != epoch || !hiResPageStillResident(index)) {
-                        decoded.unpin()
+                    image.noteHiResFull()
+                    val keep = hiResEpoch[index] == epoch &&
+                        hiResWant[index] == true &&
+                        hiResPageStillResident(index) &&
+                        image.hiResTier == HiResTier.Full
+                    if (!keep) {
+                        image.unpin()
                         return@launch
                     }
-                    if (full) decoded.noteHiResFull()
-                    publishPageSucceed(index, decoded, replaceCache = true)
-                    schedulePhotoGridThumb(index, raw, decoded)
+                    val replaced = hiResFull.put(index, image)
+                    hiResFullState(index).value = image
+                    replaced?.unpin()
+                    schedulePhotoGridThumb(index, raw, image)
                 } catch (e: CancellationException) {
-                    decoded.unpin()
+                    image.unpin()
                     throw e
                 }
             } finally {
-                hiResWant.remove(index, full)
+                // A newer retain/release owns the flag once the epoch moves on.
+                if (hiResEpoch[index] == epoch) hiResWant.remove(index, true)
             }
         }
     }
 
-    /** False after the page was dropped from the decode window, so a late zoom decode is not published. */
+    override fun releaseHiResFull(index: Int) {
+        hiResWant.remove(index)
+        hiResEpoch.merge(index, 1) { prev, _ -> prev + 1 }
+        val removed = hiResFull.remove(index) ?: return
+        hiResFullFlows[index]?.value = null
+        removed.unpin()
+    }
+
+    private fun releaseAllHiResFull() {
+        hiResWant.clear()
+        val held = hiResFull.values.toList()
+        hiResFull.clear()
+        hiResFullFlows.values.forEach { it.value = null }
+        held.forEach { it.unpin() }
+    }
+
+    /** False after the page was dropped from the decode window, so a late zoom decode is discarded. */
     private fun hiResPageStillResident(index: Int): Boolean {
         val status = pages.getOrNull(index)?.status
         return status is PageStatus.Ready || status is PageStatus.Blocked || isDecodeDemanded(index)
@@ -631,6 +669,7 @@ abstract class PageLoader(
 
     override fun close() {
         cancelDecodeJobs()
+        releaseAllHiResFull()
         exportFiles.clear()
         sourceReady.clear()
         lock.write { cache.evictAll() }

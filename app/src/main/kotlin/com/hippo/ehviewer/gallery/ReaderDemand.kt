@@ -1,6 +1,9 @@
 package com.hippo.ehviewer.gallery
 
 import com.ehviewer.core.model.GalleryInfo
+import com.hippo.ehviewer.image.Image
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import okio.Path
 
 /** Small reader-facing seam; source/decode callbacks remain private to its implementation. */
@@ -21,10 +24,16 @@ interface ReaderSession : AutoCloseable {
     fun retryPage(index: Int, orgImg: Boolean = false)
 
     /**
-     * Replace the decoded bitmap without clearing the page to Loading.
-     * [full] true decodes the file resolution; false decodes the 4096 px cap.
+     * Decode file resolution once and keep it beside the 4096 px page.
+     * Zoom in and out switch those two; [releaseHiResFull] drops the original.
      */
-    fun redecodeHiRes(index: Int, full: Boolean) = Unit
+    fun retainHiResFull(index: Int) = Unit
+
+    /** Drop a bitmap held by [retainHiResFull]. The 4096 px page stays. */
+    fun releaseHiResFull(index: Int) = Unit
+
+    /** File-resolution bitmap for [index], or null until [retainHiResFull] finishes. */
+    fun hiResFullFlow(index: Int): StateFlow<Image?> = MutableStateFlow(null)
     fun getImageFilename(index: Int): String?
     fun save(index: Int, file: Path): Boolean
 

@@ -832,7 +832,7 @@
     <string name="pref_reader_hardware_bitmap">硬件位图解码</string>
     <string name="pref_reader_hardware_bitmap_summary">更快的 Coil 路径（GPU 位图）。会关闭裁边与二维码广告检测，避免先软件解码再拷贝。</string>
     <string name="pref_reader_hi_res_optimize">高分辨率优化渲染</string>
-    <string name="pref_reader_hi_res_optimize_summary">超大照片先按 4096 像素解码。捏合放大超过该尺寸后再解码原图，同一时间只保留一张位图。</string>
+    <string name="pref_reader_hi_res_optimize_summary">超大照片先按 4096 像素解码。捏合放大超过该尺寸后解码原图，并保留到离开页面。缩回时不用再次解码。</string>
     <string name="pref_reader_lib_direct_bitmap">解码直出位图</string>
     <string name="pref_reader_lib_direct_bitmap_summary">将 JXL / JXR / PQ-AVIF 直接解码为 Bitmap，跳过 Ultra HDR JPEG 转换。</string>
     <string name="pref_reader_hdr_display">HDR 显示</string>
