@@ -54,9 +54,14 @@ Java_com_hippo_ehviewer_jni_GifUtilsKt_isGif(JNIEnv *env, jclass clazz, jint fd)
 
 JNIEXPORT void JNICALL
 Java_com_hippo_ehviewer_jni_GifUtilsKt_rewriteGifSource(JNIEnv *env, jclass clazz, jobject buffer) {
+    // Heap ByteBuffer.wrap (archive / cache-off pages) is not direct.
+    // GetDirectBufferAddress returns NULL and doRewrite would SIGSEGV.
+    if (buffer == NULL) return;
     byte *addr = (*env)->GetDirectBufferAddress(env, buffer);
-    size_t size = (*env)->GetDirectBufferCapacity(env, buffer);
-    doRewrite(addr, size);
+    if (addr == NULL) return;
+    jlong cap = (*env)->GetDirectBufferCapacity(env, buffer);
+    if (cap <= 0) return;
+    doRewrite(addr, (size_t) cap);
 }
 
 JNIEXPORT jobject JNICALL

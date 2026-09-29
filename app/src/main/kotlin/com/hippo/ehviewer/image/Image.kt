@@ -66,7 +66,7 @@ import com.hippo.ehviewer.image.hdr.shouldPlatformHighDepthDecode
 import com.hippo.ehviewer.jni.isGif
 import com.hippo.ehviewer.jni.mmap
 import com.hippo.ehviewer.jni.munmap
-import com.hippo.ehviewer.jni.rewriteGifSource
+import com.hippo.ehviewer.jni.rewriteGifDelay
 import com.hippo.ehviewer.ktbuilder.execute
 import com.hippo.ehviewer.ktbuilder.imageRequest
 import com.hippo.ehviewer.util.FileUtils
@@ -610,7 +610,7 @@ class Image private constructor(
                 }
                 is ByteBufferSource -> {
                     if (!isAtLeastU) {
-                        rewriteGifSource(src.source)
+                        rewriteGifDelay(src.source)
                     }
                     src.left().decodeCoil(checkExtraneousAds, forceOriginal)
                 }
