@@ -785,7 +785,7 @@ object Settings : DataStorePreferences(null) {
      * decodes the file again at full resolution, and zooming back out drops it.
      * Only one of those bitmaps is kept. Default off.
      */
-    val readerHiResOptimize = boolPref("pref_reader_hi_res_optimize", false)
+    val readerHiResOptimize = boolPref("pref_reader_hi_res_optimize", true)
 
     /**
      * Lib stills (JXL / JXR / PQ-AVIF): decode to Bitmap and skip Ultra HDR JPEG convert.
