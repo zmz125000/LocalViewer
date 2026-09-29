@@ -29,7 +29,7 @@ import splitties.init.appCtx
  * as soon as it arrives, IPv4 and IPv6 in parallel. The first TCP success is the
  * socket used for that connection. A success is stored per family, so the cache
  * can hold both an IPv4 and an IPv6 address. Later sockets use that cache.
- * [SmbMdns.clear] drops it on a network change; process exit drops it too.
+ * [SmbMdns.clear] drops it when mDNS is toggled, on a network change, and on process exit.
  *
  * Queries set the QU bit so the peer unicasts the A/AAAA answer to our ephemeral
  * port. Android's mDNS daemon already owns UDP 5353, so we do not bind that port.
