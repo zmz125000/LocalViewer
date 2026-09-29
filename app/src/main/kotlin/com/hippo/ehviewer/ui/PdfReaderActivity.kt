@@ -197,6 +197,8 @@ import com.hippo.ehviewer.ui.reader.insideSpreadSize
 import com.hippo.ehviewer.ui.reader.isPagerDual
 import com.hippo.ehviewer.ui.reader.isWebtoonHorizontal
 import com.hippo.ehviewer.ui.reader.readerDrawScaleProvider
+import com.hippo.ehviewer.ui.reader.readerMouseWheelList
+import com.hippo.ehviewer.ui.reader.readerMouseWheelPages
 import com.hippo.ehviewer.ui.reader.readerPdfCacheKey
 import com.hippo.ehviewer.ui.reader.readerPhotoGridSheetMaxWidth
 import com.hippo.ehviewer.ui.reader.readerSheetBox
@@ -2229,6 +2231,13 @@ private fun PdfReaderScreen(
                                 onDoubleClick = doubleTap,
                             )
                         }
+                        .then(
+                            if (isWebtoon) {
+                                Modifier.readerMouseWheelList(listState)
+                            } else {
+                                Modifier.readerMouseWheelPages { forward -> stepPdfPage(forward) }
+                            },
+                        )
                     val sidePadding = with(LocalDensity.current) {
                         val edge = if (webtoonHorizontal) heightPx else widthPx
                         (edge * Settings.webtoonSidePadding.value / 100f).toDp()
