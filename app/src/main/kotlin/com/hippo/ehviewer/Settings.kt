@@ -409,6 +409,13 @@ object Settings : DataStorePreferences(null) {
     val smbAsyncTransport = boolPref("smb_async_transport", true).observed {
         com.hippo.ehviewer.smb.SmbGateway.onProtocolSettingsChanged()
     }
+
+    /**
+     * Multicast DNS for SMB hostnames (Advanced). Default off.
+     * On: `.local` and single-label names are resolved with mDNS before system DNS.
+     * IP literals and other dotted names stay on system DNS. WebDAV is unchanged.
+     */
+    val smbMdns = boolPref("smb_mdns", false)
     val downloadDelay = intPref("download_delay_3", 1000)
     val timeoutSpeed = intPref("timeout_speed_level", 6)
 

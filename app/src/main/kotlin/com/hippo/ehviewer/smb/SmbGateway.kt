@@ -59,11 +59,9 @@ import com.hippo.ehviewer.util.PrivacyLog
 import java.io.IOException
 import java.io.OutputStream
 import java.io.RandomAccessFile
-import java.net.Inet4Address
 import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.Socket
-import java.net.UnknownHostException
 import java.util.ArrayDeque
 import java.util.Collections
 import java.util.EnumSet
@@ -1535,7 +1533,7 @@ object SmbGateway {
         fun elapsedMs() = (System.nanoTime() - t0) / 1_000_000L
         try {
             // Skip session.logoff after IPC$ enum — LOGOFF can wait full transactTimeout.
-            val connection = smbClient.connect(host, source.port)
+            val connection = smbClient.connectSmb(host, source.port)
             try {
                 val session = connection.authenticate(auth(source, password))
                 val names = listDiskShareNamesOnSession(session)
@@ -1717,6 +1715,7 @@ object SmbGateway {
      * never run on the main thread.
      */
     fun onNetworkPathChanged(reason: String) {
+        SmbMdns.clear()
         val now = System.currentTimeMillis()
         val prev = lastPathChangeMs.getAndSet(now)
         val debounced = prev != 0L && now - prev < PATH_CHANGE_DEBOUNCE_MS
@@ -1804,7 +1803,7 @@ object SmbGateway {
             val connecting = AtomicReference<SMBClient?>(smbClient)
             val cancelClose = coroutineContext[Job]?.closeFileOnCancelling(connecting)
             try {
-                val connection = smbClient.connect(host, source.port)
+                val connection = smbClient.connectSmb(host, source.port)
                 try {
                     val session = connection.authenticate(auth(source, password))
                     if (fixed.isNotEmpty()) {
@@ -3396,7 +3395,7 @@ object SmbGateway {
         block: (file: com.hierynomus.smbj.share.File, size: Long) -> T,
     ): T {
         val smbClient = SMBClient(smbConfig(TransportRole.Video))
-        val connection = smbClient.connect(host, source.port)
+        val connection = smbClient.connectSmb(host, source.port)
         stickyConnections.add(connection)
         val videoSticky = videoPlayEpoch?.let { VideoSticky(it, connection) }
         videoSticky?.let { videoStickies.add(it) }
@@ -3794,7 +3793,7 @@ object SmbGateway {
             val prevTag = TrafficStats.getThreadStatsTag()
             TrafficStats.setThreadStatsTag(KeepAliveSocketFactory.SMB_TRAFFIC_TAG)
             try {
-                val connection = smbClient.connect(host, source.port)
+                val connection = smbClient.connectSmb(host, source.port)
                 try {
                     val session = connection.authenticate(auth(source, password))
                     connecting.set(null)
@@ -4153,12 +4152,17 @@ private fun isIgnorableListError(e: SMBApiException): Boolean {
         status == NtStatus.STATUS_OBJECT_NAME_INVALID
 }
 
+private fun SMBClient.connectSmb(host: String, port: Int): Connection {
+    SmbDualStack.prefetch(host)
+    return connect(host, port)
+}
+
 /**
  * Standard socket options + bounded connect for smbj DirectTcp.
  * `SO_RCVBUF`/`SO_SNDBUF` sized for gigabit × Wi-Fi RTT (see [SO_RCVBUF]).
  *
- * IPv4-first host connect (same order as [SmbAsyncTransport]) with a finite timeout so
- * dual-stack LAN names cannot sit on a dead AAAA until the OS default.
+ * Dual stack: IPv4 and IPv6 are dialed together. A dead family does not block the other.
+ * With mDNS on, a late multicast address is dialed as soon as it arrives.
  *
  * TrafficStats: StrictMode [UntaggedSocketViolation] fires at native socket *create*,
  * so [TrafficStats.setThreadStatsTag] must run **before** [SocketFactory.createSocket].
@@ -4198,27 +4202,11 @@ internal object KeepAliveSocketFactory : SocketFactory() {
         runCatching { sendBufferSize = SO_SNDBUF }
     }
 
-    private fun connectPreferIpv4(host: String, port: Int): Socket {
+    private fun connectDualStack(host: String, port: Int): Socket {
         LocalNetworkPermission.requireGranted()
-        val addrs = InetAddress.getAllByName(host)
-        if (addrs.isEmpty()) throw UnknownHostException(host)
-        val ordered = buildList {
-            for (a in addrs) if (a is Inet4Address) add(a)
-            for (a in addrs) if (a !is Inet4Address) add(a)
+        return SmbDualStack.open(host, port, CONNECT_TIMEOUT_MS) {
+            defaultFactory.createSocket().configure()
         }
-        var last: IOException? = null
-        for (addr in ordered) {
-            val socket = defaultFactory.createSocket()
-            try {
-                socket.configure()
-                socket.connect(InetSocketAddress(addr, port), CONNECT_TIMEOUT_MS)
-                return socket
-            } catch (e: IOException) {
-                last = e
-                runCatching { socket.close() }
-            }
-        }
-        throw last ?: IOException("SMB connect failed: $host:$port")
     }
 
     override fun createSocket(): Socket = withSmbTrafficTag {
@@ -4226,19 +4214,16 @@ internal object KeepAliveSocketFactory : SocketFactory() {
     }
 
     override fun createSocket(host: String, port: Int): Socket = withSmbTrafficTag {
-        connectPreferIpv4(host, port)
+        connectDualStack(host, port)
     }
 
     override fun createSocket(host: String, port: Int, localHost: InetAddress, localPort: Int): Socket = withSmbTrafficTag {
         LocalNetworkPermission.requireGranted()
-        val addrs = InetAddress.getAllByName(host)
-        val remote = addrs.firstOrNull { it is Inet4Address } ?: addrs.firstOrNull()
-            ?: throw UnknownHostException(host)
-        val socket = defaultFactory.createSocket()
-        socket.configure()
-        socket.bind(InetSocketAddress(localHost, localPort))
-        socket.connect(InetSocketAddress(remote, port), CONNECT_TIMEOUT_MS)
-        socket
+        SmbDualStack.open(host, port, CONNECT_TIMEOUT_MS) {
+            defaultFactory.createSocket().configure().apply {
+                bind(InetSocketAddress(localHost, localPort))
+            }
+        }
     }
 
     override fun createSocket(host: InetAddress, port: Int): Socket = withSmbTrafficTag {

@@ -13,11 +13,9 @@ import com.hierynomus.smbj.transport.tcp.async.AsyncDirectTcpTransport
 import com.hierynomus.smbj.transport.tcp.async.AsyncPacketReader
 import com.hippo.ehviewer.util.LocalNetworkPermission
 import java.io.IOException
-import java.net.Inet4Address
-import java.net.InetAddress
 import java.net.InetSocketAddress
+import java.net.Socket
 import java.net.StandardSocketOptions
-import java.net.UnknownHostException
 import java.nio.channels.AsynchronousChannelGroup
 import java.nio.channels.AsynchronousSocketChannel
 import java.util.concurrent.ExecutionException
@@ -49,6 +47,8 @@ import java.util.concurrent.atomic.AtomicInteger
  * Connect is implemented here (not [AsyncDirectTcpTransport.connect]): Android
  * leaves failed DNS unresolved (NIO throws [java.nio.channels.UnresolvedAddressException]),
  * and smbj's async connect is hard-capped at 5s (EasyTier / VPN SYN often needs longer).
+ * mDNS names are resolved again even when system DNS already returned an address,
+ * matching share-enum's socket factory.
  */
 internal object SmbAsyncTransport {
     /**
@@ -159,10 +159,14 @@ internal object SmbAsyncTransport {
             } catch (e: IOException) {
                 throw TransportException.Wrapper.wrap(e)
             }
-            val resolved = resolve(remoteAddress)
+            val probed = SmbDualStack.open(remoteAddress.hostString, remoteAddress.port, CONNECT_TIMEOUT_MS.toInt()) {
+                Socket()
+            }
+            val winner = probed.remoteSocketAddress as InetSocketAddress
+            runCatching { probed.close() }
             val channel = socketChannel(inner)
                 ?: throw TransportException("async transport has no socketChannel")
-            val future = channel.connect(resolved)
+            val future = channel.connect(InetSocketAddress(winner.address, remoteAddress.port))
             try {
                 future.get(CONNECT_TIMEOUT_MS, TimeUnit.MILLISECONDS)
             } catch (e: TimeoutException) {
@@ -215,14 +219,5 @@ internal object SmbAsyncTransport {
     private fun socketChannel(transport: AsyncDirectTcpTransport<*, *>): AsynchronousSocketChannel? = runCatching { socketChannelField.get(transport) as AsynchronousSocketChannel }.getOrElse { e ->
         logcat { "SmbAsyncTransport: no socketChannel (${e.message})" }
         null
-    }
-
-    private fun resolve(remote: InetSocketAddress): InetSocketAddress {
-        if (!remote.isUnresolved && remote.address != null) return remote
-        val host = remote.hostString
-        val addrs = InetAddress.getAllByName(host)
-        if (addrs.isEmpty()) throw UnknownHostException(host)
-        val chosen = addrs.firstOrNull { it is Inet4Address } ?: addrs[0]
-        return InetSocketAddress(chosen, remote.port)
     }
 }
