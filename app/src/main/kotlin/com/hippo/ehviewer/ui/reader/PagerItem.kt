@@ -26,6 +26,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Size
@@ -116,26 +117,43 @@ fun PagerItem(
         }
         is PageStatus.Ready -> {
             val image = state.image
-            var painter by remember(image) { mutableStateOf<Painter?>(null) }
+            // Keep the previous painter until the replacement is ready. Clearing it
+            // removes zoomable for a frame, and the pager turns the page.
+            val shown = remember { ShownImage() }
+            var painter by remember { mutableStateOf<Painter?>(null) }
             val optimize by Settings.readerHiResOptimize.collectAsState()
             val drawScale = LocalReaderDrawScale.current
+            DisposableEffect(shown) {
+                onDispose {
+                    shown.image?.unpin()
+                    shown.image = null
+                    shown.retiring?.unpin()
+                    shown.retiring = null
+                }
+            }
             LaunchedEffect(image) {
                 if (!image.pin()) {
                     // Recycled / dead image still marked Ready — force a clean reload.
-                    painter = null
-                    pageLoader.retryPage(page.index)
+                    if (painter == null) pageLoader.retryPage(page.index)
                     return@LaunchedEffect
                 }
-                // Reuse the same painter for this Image. A new DrawablePainter on every
-                // effect start raced with the old onForgotten(stop) after scroll.
-                if (painter == null) painter = image.toPainter()
-                try {
-                    awaitCancellation()
-                } finally {
-                    // Drop display pin only. Do not notifyPageWait — that turned visible
-                    // pages into forever-Queued when the cache also released its pin.
-                    image.unpin()
+                val previous = shown.image
+                shown.image = image
+                painter = image.toPainter()
+                if (previous != null && previous !== image) {
+                    // The display list can sample the old bitmap for a frame after the swap.
+                    shown.retiring = previous
+                    try {
+                        withFrameNanos { }
+                        withFrameNanos { }
+                    } finally {
+                        if (shown.retiring === previous) {
+                            shown.retiring = null
+                            previous.unpin()
+                        }
+                    }
                 }
+                awaitCancellation()
             }
             // Preview decode stays until pinch-zoom draws the page larger than 4096 px.
             // Zooming back replaces the full bitmap so both are not kept.
@@ -398,6 +416,11 @@ private fun Modifier.rotate90FitLayout(
             )
         }
     }
+}
+
+private class ShownImage {
+    var image: Image? = null
+    var retiring: Image? = null
 }
 
 private fun Image.toPainter() = when (val image = innerImage) {

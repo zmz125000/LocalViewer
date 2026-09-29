@@ -13,9 +13,11 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -240,6 +242,9 @@ private fun DualPageContainer(
         unscaledSpreadSize(leftDecoded, rightDecoded, leftAspect, rightAspect)
             .takeIf { it != Size.Zero } ?: fittedSpread
     }
+    // 4096 ↔ file resolution keeps this size. A new content location cancels the pinch
+    // and the pager turns the page.
+    val zoomSpread = rememberStableZoomSize(unscaledSpread)
 
     if (layoutSize != Size.Zero) {
         if (gap) {
@@ -255,17 +260,17 @@ private fun DualPageContainer(
                 val raw = leftDecoded ?: rightDecoded
                 raw != null && shouldAutoRotate(raw, layoutSize, autoRotateMode)
             }
-            val contentScale = ContentScale.fromPreferences(scaleType, unscaledSpread, layoutSize)
+            val contentScale = ContentScale.fromPreferences(scaleType, zoomSpread, layoutSize)
             zoomableState.contentScale = contentScale
-            LaunchedEffect(unscaledSpread, contentScale, alignment) {
-                zoomableState.applyPagerContentAlignment(unscaledSpread, contentScale, layoutSize, alignment)
+            LaunchedEffect(zoomSpread, contentScale, alignment) {
+                zoomableState.applyPagerContentAlignment(zoomSpread, contentScale, layoutSize, alignment)
             }
-            LaunchedEffect(unscaledSpread) {
+            LaunchedEffect(zoomSpread) {
                 zoomableState.setContentLocation(
-                    ZoomableContentLocation.scaledInsideAndCenterAligned(unscaledSpread),
+                    ZoomableContentLocation.scaledInsideAndCenterAligned(zoomSpread),
                 )
             }
-            if (landscapeZoom && !rotate && contentScale == ContentScale.Fit && unscaledSpread.width > unscaledSpread.height) {
+            if (landscapeZoom && !rotate && contentScale == ContentScale.Fit && zoomSpread.width > zoomSpread.height) {
                 LaunchedEffect(alignment) {
                     val zoomFraction = snapshotFlow { zoomableState.zoomFraction }.first { it != null }
                     if (zoomFraction == 0f) {
@@ -384,7 +389,7 @@ private fun DualPageContainer(
                     }
                 }
             } else {
-                val spreadPx = insideSpreadSize(unscaledSpread, layoutSize).takeIf { it != Size.Zero }
+                val spreadPx = insideSpreadSize(zoomSpread, layoutSize).takeIf { it != Size.Zero }
                     ?: fittedSpread
                 val leftCell = Size(
                     (spreadPx.width * leftAspect / combinedAspect).coerceAtLeast(1f),
@@ -461,7 +466,7 @@ private fun PageContainer(
         val raw = status.image.intrinsicSize.toSize()
         // Must match PagerItem / FitPageImage (shouldAutoRotate) so draw + contentLocation lockstep.
         val rotate = shouldAutoRotate(raw, layoutSize, autoRotateMode)
-        val size = fitDisplaySize(raw, rotate)
+        val size = rememberStableZoomSize(fitDisplaySize(raw, rotate))
         val contentScale = ContentScale.fromPreferences(scaleType, size, layoutSize)
         zoomableState.contentScale = contentScale
         LaunchedEffect(size, contentScale, alignment) {
@@ -574,6 +579,19 @@ private val PagerZoomSpec = ZoomSpec(
     maximum = ZoomLimit(factor = 5f),
     minimum = ZoomLimit(factor = 1f, overzoomEffect = OverzoomEffect.Disabled),
 )
+
+/**
+ * First decoded size wins while the aspect stays put. A 4096 px preview and the
+ * file-resolution decode are the same photo, so telephoto must not rebuild zoom.
+ */
+@Composable
+private fun rememberStableZoomSize(size: Size): Size {
+    var locked by remember { mutableStateOf(Size.Zero) }
+    if (size.width > 0f && size.height > 0f && !size.keepsZoomContent(locked)) {
+        locked = size
+    }
+    return if (locked.width > 0f && locked.height > 0f) locked else size
+}
 
 /** Lay out [size] in pixels so the no-gap pair matches telephoto's unscaled content. */
 private fun Modifier.fixedPxSize(size: Size) = layout { measurable, _ ->

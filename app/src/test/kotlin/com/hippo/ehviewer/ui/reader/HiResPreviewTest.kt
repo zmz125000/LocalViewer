@@ -1,5 +1,6 @@
 package com.hippo.ehviewer.ui.reader
 
+import androidx.compose.ui.geometry.Size
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -20,5 +21,13 @@ class HiResPreviewTest {
     fun unknownScaleDoesNotUpgrade() {
         assertFalse(zoomPastHiResPreview(destLongPx = 1440f, layerScale = 0f))
         assertFalse(zoomPastHiResPreview(destLongPx = 1440f, layerScale = Float.NaN))
+    }
+
+    @Test
+    fun fullDecodeKeepsPreviewZoomContent() {
+        val preview = Size(4096f, 3072f)
+        val full = Size(8064f, 6048f)
+        assertTrue(full.keepsZoomContent(preview))
+        assertFalse(Size(1000f, 2000f).keepsZoomContent(preview))
     }
 }

@@ -4,7 +4,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.remember
+import androidx.compose.ui.geometry.Size
 import com.hippo.ehviewer.image.HI_RES_PREVIEW_EDGE
+import kotlin.math.abs
 import me.saket.telephoto.zoomable.ZoomableState
 
 internal val LocalReaderDrawScale = compositionLocalOf<() -> Float?> { { 1f } }
@@ -32,4 +34,14 @@ internal fun zoomPastHiResPreview(
     if (destLongPx <= 0f || limitPx <= 0) return false
     if (!layerScale.isFinite() || layerScale <= 0f) return false
     return destLongPx * layerScale > limitPx.toFloat()
+}
+
+/**
+ * 4096 px and file-resolution decodes of one photo share an aspect.
+ * Telephoto must keep the first content size or the zoom gesture is cancelled
+ * and the pager turns the page.
+ */
+internal fun Size.keepsZoomContent(previous: Size): Boolean {
+    if (width <= 0f || height <= 0f || previous.width <= 0f || previous.height <= 0f) return false
+    return abs(width / height - previous.width / previous.height) < 0.002f
 }
