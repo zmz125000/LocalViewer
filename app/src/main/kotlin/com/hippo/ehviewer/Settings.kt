@@ -781,6 +781,13 @@ object Settings : DataStorePreferences(null) {
     val readerHardwareBitmap = boolPref("pref_reader_hardware_bitmap", true)
 
     /**
+     * Page very large stills from a ≤4096px texture so a fitted frame does not sample
+     * a 48MP bitmap. Pinch zoom past that texture draws the original again.
+     * Default off.
+     */
+    val readerHiResOptimize = boolPref("pref_reader_hi_res_optimize", false)
+
+    /**
      * Lib stills (JXL / JXR / PQ-AVIF): decode to Bitmap and skip Ultra HDR JPEG convert.
      * Default off = convert + Coil (deep color reduced; WCG only as encode tags).
      * When on: [com.hippo.ehviewer.image.hdr.LibDirectDecode]; with [readerAdvancedColor]

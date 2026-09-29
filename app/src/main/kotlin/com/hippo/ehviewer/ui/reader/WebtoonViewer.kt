@@ -183,50 +183,52 @@ fun WebtoonViewer(
     val contentScale = if (horizontal) ContentScale.FillHeight else ContentScale.FillWidth
 
     // key axis so LazyColumn ↔ LazyRow swap does not reuse incompatible item measure.
-    key(horizontal) {
-        if (horizontal) {
-            LazyRow(
-                modifier = listModifier,
-                state = lazyListState,
-                reverseLayout = true,
-                userScrollEnabled = !multiTouch,
-                contentPadding = PaddingValues(vertical = sidePadding),
-                horizontalArrangement = Arrangement.spacedBy(gap),
-            ) {
-                items(
-                    count = pageCount,
-                    key = { index -> items.getOrNull(index)?.index ?: index },
-                ) { index ->
-                    val page = items.getOrNull(index) ?: return@items
-                    PagerItem(
-                        page = page,
-                        pageLoader = pageLoader,
-                        contentScale = contentScale,
-                        viewportSize = viewportSize,
-                        horizontalStrip = true,
-                        modifier = Modifier.fillMaxHeight(),
-                    )
+    readerDrawScaleProvider(zoomableState) {
+        key(horizontal) {
+            if (horizontal) {
+                LazyRow(
+                    modifier = listModifier,
+                    state = lazyListState,
+                    reverseLayout = true,
+                    userScrollEnabled = !multiTouch,
+                    contentPadding = PaddingValues(vertical = sidePadding),
+                    horizontalArrangement = Arrangement.spacedBy(gap),
+                ) {
+                    items(
+                        count = pageCount,
+                        key = { index -> items.getOrNull(index)?.index ?: index },
+                    ) { index ->
+                        val page = items.getOrNull(index) ?: return@items
+                        PagerItem(
+                            page = page,
+                            pageLoader = pageLoader,
+                            contentScale = contentScale,
+                            viewportSize = viewportSize,
+                            horizontalStrip = true,
+                            modifier = Modifier.fillMaxHeight(),
+                        )
+                    }
                 }
-            }
-        } else {
-            LazyColumn(
-                modifier = listModifier,
-                state = lazyListState,
-                userScrollEnabled = !multiTouch,
-                contentPadding = PaddingValues(horizontal = sidePadding),
-                verticalArrangement = Arrangement.spacedBy(gap),
-            ) {
-                items(
-                    count = pageCount,
-                    key = { index -> items.getOrNull(index)?.index ?: index },
-                ) { index ->
-                    val page = items.getOrNull(index) ?: return@items
-                    PagerItem(
-                        page = page,
-                        pageLoader = pageLoader,
-                        contentScale = contentScale,
-                        viewportSize = viewportSize,
-                    )
+            } else {
+                LazyColumn(
+                    modifier = listModifier,
+                    state = lazyListState,
+                    userScrollEnabled = !multiTouch,
+                    contentPadding = PaddingValues(horizontal = sidePadding),
+                    verticalArrangement = Arrangement.spacedBy(gap),
+                ) {
+                    items(
+                        count = pageCount,
+                        key = { index -> items.getOrNull(index)?.index ?: index },
+                    ) { index ->
+                        val page = items.getOrNull(index) ?: return@items
+                        PagerItem(
+                            page = page,
+                            pageLoader = pageLoader,
+                            contentScale = contentScale,
+                            viewportSize = viewportSize,
+                        )
+                    }
                 }
             }
         }

@@ -67,6 +67,11 @@ fun ReaderGeneralSetting(isDocument: Boolean = false) = Column(modifier = Modifi
         field = Settings.readerHardwareBitmap.asMutableState(),
     )
     SwitchChoice(
+        title = stringResource(id = R.string.pref_reader_hi_res_optimize),
+        summary = stringResource(id = R.string.pref_reader_hi_res_optimize_summary),
+        field = Settings.readerHiResOptimize.asMutableState(),
+    )
+    SwitchChoice(
         title = stringResource(id = R.string.pref_pdf_direct_image),
         summary = stringResource(id = R.string.pref_pdf_direct_image_summary),
         field = Settings.pdfDirectImage.asMutableState(),

@@ -1,6 +1,8 @@
 package com.hippo.ehviewer.ui.reader
 
+import android.graphics.Bitmap
 import android.graphics.drawable.Animatable
+import android.view.Choreographer
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Box
@@ -18,7 +20,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.WavyProgressIndicatorDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -57,8 +61,16 @@ import com.hippo.ehviewer.gallery.statusObserved
 import com.hippo.ehviewer.image.Image
 import com.hippo.ehviewer.ui.tools.DrawablePainter
 import com.hippo.ehviewer.util.AdsPlaceholderFile
+import kotlin.coroutines.coroutineContext
 import kotlin.math.roundToInt
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 
 @Composable
 fun PagerItem(
@@ -111,6 +123,12 @@ fun PagerItem(
         is PageStatus.Ready -> {
             val image = state.image
             var painter by remember(image) { mutableStateOf<Painter?>(null) }
+            val preview = remember(image) { mutableStateOf<Bitmap?>(null) }
+            val optimize by Settings.readerHiResOptimize.collectAsState()
+            val drawScale = LocalReaderDrawScale.current
+            DisposableEffect(preview) {
+                onDispose { preview.recycleAndClear() }
+            }
             LaunchedEffect(image) {
                 if (!image.pin()) {
                     // Recycled / dead image still marked Ready — force a clean reload.
@@ -120,13 +138,42 @@ fun PagerItem(
                 }
                 // Reuse the same painter for this Image. A new DrawablePainter on every
                 // effect start raced with the old onForgotten(stop) after scroll.
-                if (painter == null) painter = image.toPainter()
+                if (painter == null) {
+                    val created = if (Settings.readerHiResOptimize.value) image.loadHiResPreview() else null
+                    ensureActive()
+                    if (Settings.readerHiResOptimize.value) {
+                        preview.value = created
+                    } else {
+                        created?.recycle()
+                    }
+                    painter = image.toPainter(preview, drawScale)
+                }
                 try {
                     awaitCancellation()
                 } finally {
                     // Drop display pin only. Do not notifyPageWait — that turned visible
                     // pages into forever-Queued when the cache also released its pin.
                     image.unpin()
+                }
+            }
+            LaunchedEffect(image, optimize) {
+                if (painter == null) return@LaunchedEffect
+                if (!optimize) {
+                    preview.recycleAndClear()
+                    return@LaunchedEffect
+                }
+                if (preview.value != null) return@LaunchedEffect
+                val created = image.loadHiResPreview()
+                try {
+                    ensureActive()
+                    if (preview.value == null) {
+                        preview.value = created
+                    } else {
+                        created?.recycle()
+                    }
+                } catch (cancelled: CancellationException) {
+                    created?.recycle()
+                    throw cancelled
                 }
             }
             painter?.let { painter ->
@@ -355,10 +402,55 @@ private fun Modifier.rotate90FitLayout(
     }
 }
 
-private fun Image.toPainter() = when (val image = innerImage) {
-    is BitmapImage -> BitmapPainter(image.bitmap, intrinsicSize.toSize())
+private fun Image.toPainter(preview: MutableState<Bitmap?>, layerScale: () -> Float) = when (val image = innerImage) {
+    is BitmapImage -> BitmapPainter(image.bitmap, intrinsicSize.toSize(), preview, layerScale)
     is DrawableImage -> DrawablePainter(image.drawable)
     else -> unreachable()
+}
+
+private val hiResPreviewMutex = Mutex()
+
+private suspend fun Image.loadHiResPreview(): Bitmap? {
+    if (hasGainmap) return null
+    val bitmap = (innerImage as? BitmapImage)?.bitmap ?: return null
+    if (!bitmap.canHiResPreview()) return null
+    val created = hiResPreviewMutex.withLock {
+        withContext(Dispatchers.Default) {
+            if (bitmap.isRecycled) {
+                null
+            } else {
+                val scaled = bitmap.createHiResPreview()
+                if (coroutineContext[Job]?.isActive == false) {
+                    scaled?.recycle()
+                    null
+                } else {
+                    scaled
+                }
+            }
+        }
+    }
+    if (coroutineContext[Job]?.isActive == false) {
+        created?.recycle()
+        return null
+    }
+    return created
+}
+
+private fun MutableState<Bitmap?>.recycleAndClear() {
+    val old = value
+    value = null
+    old?.releaseAfterDraw()
+}
+
+/** The display list may still sample this bitmap for a frame after it leaves composition. */
+private fun Bitmap.releaseAfterDraw() {
+    if (isRecycled) return
+    val choreographer = Choreographer.getInstance()
+    choreographer.postFrameCallback {
+        choreographer.postFrameCallback {
+            if (!isRecycled) recycle()
+        }
+    }
 }
 
 private const val DEFAULT_ASPECT = 1 / 1.4125f

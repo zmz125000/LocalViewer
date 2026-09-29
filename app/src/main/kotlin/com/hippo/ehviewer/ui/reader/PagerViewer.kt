@@ -327,103 +327,105 @@ private fun DualPageContainer(
         }
     }
 
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .pointerInput(onTap) {
-                detectTapGestures(onLongPress = onLongClick, onTap = onTap.partially1(null))
-            },
-        contentAlignment = Alignment.Center,
-    ) {
-        val zoomMod = Modifier.zoomable(
-            state = zoomableState,
-            onClick = onTap.partially1(zoomableState),
-            onLongClick = onLongClick,
-            onDoubleClick = onDoubleClick,
-        )
-        if (solo) {
-            val page = leftPage ?: rightPage!!
-            // Odd last page: full-viewport single page (same as pre-gap). Zoom viewport
-            // must be the pager slot, matching paired pages after the pinch-zoom fix.
-            Box(
-                modifier = Modifier.fillMaxSize().then(zoomMod),
-                contentAlignment = Alignment.Center,
-            ) {
-                PagerItem(
-                    page = page,
-                    pageLoader = pageLoader,
-                    contentScale = ContentScale.Inside,
-                    modifier = Modifier.fillMaxSize(),
-                    viewportSize = layoutSize,
-                )
-            }
-        } else if (gap) {
-            Row(
-                modifier = Modifier.fillMaxSize().then(zoomMod),
-            ) {
-                Box(Modifier.weight(1f).fillMaxHeight(), contentAlignment = Alignment.Center) {
-                    if (leftPage != null) {
-                        PagerItem(
-                            page = leftPage,
-                            pageLoader = pageLoader,
-                            contentScale = ContentScale.Fit,
-                            viewportSize = halfSize,
-                        )
-                    }
-                }
-                Box(Modifier.weight(1f).fillMaxHeight(), contentAlignment = Alignment.Center) {
-                    if (rightPage != null) {
-                        PagerItem(
-                            page = rightPage,
-                            pageLoader = pageLoader,
-                            contentScale = ContentScale.Fit,
-                            viewportSize = halfSize,
-                        )
-                    }
-                }
-            }
-        } else {
-            val spreadPx = insideSpreadSize(unscaledSpread, layoutSize).takeIf { it != Size.Zero }
-                ?: fittedSpread
-            val leftCell = Size(
-                (spreadPx.width * leftAspect / combinedAspect).coerceAtLeast(1f),
-                spreadPx.height.coerceAtLeast(1f),
+    readerDrawScaleProvider(zoomableState) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .pointerInput(onTap) {
+                    detectTapGestures(onLongPress = onLongClick, onTap = onTap.partially1(null))
+                },
+            contentAlignment = Alignment.Center,
+        ) {
+            val zoomMod = Modifier.zoomable(
+                state = zoomableState,
+                onClick = onTap.partially1(zoomableState),
+                onLongClick = onLongClick,
+                onDoubleClick = onDoubleClick,
             )
-            val rightCell = Size(
-                (spreadPx.width * rightAspect / combinedAspect).coerceAtLeast(1f),
-                spreadPx.height.coerceAtLeast(1f),
-            )
-            // Zoom viewport must be the full pager slot. Putting zoomable on the image
-            // box made pinch-zoom scale inside the pair instead of the screen.
-            Box(
-                modifier = Modifier.fillMaxSize().then(zoomMod),
-                contentAlignment = Alignment.Center,
-            ) {
-                Row(
-                    modifier = if (spreadPx != Size.Zero) {
-                        Modifier.fixedPxSize(spreadPx)
-                    } else {
-                        Modifier.aspectRatio(combinedAspect, matchHeightConstraintsFirst = true)
-                    },
+            if (solo) {
+                val page = leftPage ?: rightPage!!
+                // Odd last page: full-viewport single page (same as pre-gap). Zoom viewport
+                // must be the pager slot, matching paired pages after the pinch-zoom fix.
+                Box(
+                    modifier = Modifier.fillMaxSize().then(zoomMod),
+                    contentAlignment = Alignment.Center,
                 ) {
-                    if (leftPage != null) {
-                        PagerItem(
-                            page = leftPage,
-                            pageLoader = pageLoader,
-                            // Fill the unscaled cell (height-matched). Telephoto Fits the pair.
-                            contentScale = ContentScale.Fit,
-                            modifier = Modifier.weight(leftAspect).fillMaxHeight(),
-                            viewportSize = leftCell,
-                        )
+                    PagerItem(
+                        page = page,
+                        pageLoader = pageLoader,
+                        contentScale = ContentScale.Inside,
+                        modifier = Modifier.fillMaxSize(),
+                        viewportSize = layoutSize,
+                    )
+                }
+            } else if (gap) {
+                Row(
+                    modifier = Modifier.fillMaxSize().then(zoomMod),
+                ) {
+                    Box(Modifier.weight(1f).fillMaxHeight(), contentAlignment = Alignment.Center) {
+                        if (leftPage != null) {
+                            PagerItem(
+                                page = leftPage,
+                                pageLoader = pageLoader,
+                                contentScale = ContentScale.Fit,
+                                viewportSize = halfSize,
+                            )
+                        }
                     }
-                    if (rightPage != null) {
-                        PagerItem(
-                            page = rightPage,
-                            pageLoader = pageLoader,
-                            contentScale = ContentScale.Fit,
-                            modifier = Modifier.weight(rightAspect).fillMaxHeight(),
-                            viewportSize = rightCell,
-                        )
+                    Box(Modifier.weight(1f).fillMaxHeight(), contentAlignment = Alignment.Center) {
+                        if (rightPage != null) {
+                            PagerItem(
+                                page = rightPage,
+                                pageLoader = pageLoader,
+                                contentScale = ContentScale.Fit,
+                                viewportSize = halfSize,
+                            )
+                        }
+                    }
+                }
+            } else {
+                val spreadPx = insideSpreadSize(unscaledSpread, layoutSize).takeIf { it != Size.Zero }
+                    ?: fittedSpread
+                val leftCell = Size(
+                    (spreadPx.width * leftAspect / combinedAspect).coerceAtLeast(1f),
+                    spreadPx.height.coerceAtLeast(1f),
+                )
+                val rightCell = Size(
+                    (spreadPx.width * rightAspect / combinedAspect).coerceAtLeast(1f),
+                    spreadPx.height.coerceAtLeast(1f),
+                )
+                // Zoom viewport must be the full pager slot. Putting zoomable on the image
+                // box made pinch-zoom scale inside the pair instead of the screen.
+                Box(
+                    modifier = Modifier.fillMaxSize().then(zoomMod),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Row(
+                        modifier = if (spreadPx != Size.Zero) {
+                            Modifier.fixedPxSize(spreadPx)
+                        } else {
+                            Modifier.aspectRatio(combinedAspect, matchHeightConstraintsFirst = true)
+                        },
+                    ) {
+                        if (leftPage != null) {
+                            PagerItem(
+                                page = leftPage,
+                                pageLoader = pageLoader,
+                                // Fill the unscaled cell (height-matched). Telephoto Fits the pair.
+                                contentScale = ContentScale.Fit,
+                                modifier = Modifier.weight(leftAspect).fillMaxHeight(),
+                                viewportSize = leftCell,
+                            )
+                        }
+                        if (rightPage != null) {
+                            PagerItem(
+                                page = rightPage,
+                                pageLoader = pageLoader,
+                                contentScale = ContentScale.Fit,
+                                modifier = Modifier.weight(rightAspect).fillMaxHeight(),
+                                viewportSize = rightCell,
+                            )
+                        }
                     }
                 }
             }
@@ -524,22 +526,24 @@ private fun PageContainer(
             }
         }
     }
-    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        PagerItem(
-            page = page,
-            pageLoader = pageLoader,
-            contentScale = ContentScale.Inside,
-            viewportSize = layoutSize,
-            modifier = Modifier.pointerInput(onTap) {
-                detectTapGestures(onLongPress = onLongClick, onTap = onTap.partially1(null))
-            },
-            contentModifier = Modifier.zoomable(
-                state = zoomableState,
-                onClick = onTap.partially1(zoomableState),
-                onLongClick = onLongClick,
-                onDoubleClick = onDoubleClick,
-            ),
-        )
+    readerDrawScaleProvider(zoomableState) {
+        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            PagerItem(
+                page = page,
+                pageLoader = pageLoader,
+                contentScale = ContentScale.Inside,
+                viewportSize = layoutSize,
+                modifier = Modifier.pointerInput(onTap) {
+                    detectTapGestures(onLongPress = onLongClick, onTap = onTap.partially1(null))
+                },
+                contentModifier = Modifier.zoomable(
+                    state = zoomableState,
+                    onClick = onTap.partially1(zoomableState),
+                    onLongClick = onLongClick,
+                    onDoubleClick = onDoubleClick,
+                ),
+            )
+        }
     }
 }
 

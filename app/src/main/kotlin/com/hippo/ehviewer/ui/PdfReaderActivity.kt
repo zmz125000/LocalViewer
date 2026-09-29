@@ -196,6 +196,7 @@ import com.hippo.ehviewer.ui.reader.fromPreferences
 import com.hippo.ehviewer.ui.reader.insideSpreadSize
 import com.hippo.ehviewer.ui.reader.isPagerDual
 import com.hippo.ehviewer.ui.reader.isWebtoonHorizontal
+import com.hippo.ehviewer.ui.reader.readerDrawScaleProvider
 import com.hippo.ehviewer.ui.reader.readerPdfCacheKey
 import com.hippo.ehviewer.ui.reader.readerPhotoGridSheetMaxWidth
 import com.hippo.ehviewer.ui.reader.readerSheetBox
@@ -2336,30 +2337,32 @@ private fun PdfReaderScreen(
                             }
                         }
                     if (isWebtoon) {
-                        key(webtoonHorizontal) {
-                            if (webtoonHorizontal) {
-                                LazyRow(
-                                    state = listState,
-                                    reverseLayout = true,
-                                    userScrollEnabled = !multiTouch,
-                                    contentPadding = PaddingValues(vertical = sidePadding),
-                                    horizontalArrangement = Arrangement.spacedBy(pageGap),
-                                    modifier = viewerModifier,
-                                ) {
-                                    items(pageCount, key = { it }) { index ->
-                                        pageAt(index, PdfPageBox.Strip, widthPx, heightPx)
+                        readerDrawScaleProvider(zoomableState) {
+                            key(webtoonHorizontal) {
+                                if (webtoonHorizontal) {
+                                    LazyRow(
+                                        state = listState,
+                                        reverseLayout = true,
+                                        userScrollEnabled = !multiTouch,
+                                        contentPadding = PaddingValues(vertical = sidePadding),
+                                        horizontalArrangement = Arrangement.spacedBy(pageGap),
+                                        modifier = viewerModifier,
+                                    ) {
+                                        items(pageCount, key = { it }) { index ->
+                                            pageAt(index, PdfPageBox.Strip, widthPx, heightPx)
+                                        }
                                     }
-                                }
-                            } else {
-                                LazyColumn(
-                                    state = listState,
-                                    userScrollEnabled = !multiTouch,
-                                    contentPadding = PaddingValues(horizontal = sidePadding),
-                                    verticalArrangement = Arrangement.spacedBy(pageGap),
-                                    modifier = viewerModifier,
-                                ) {
-                                    items(pageCount, key = { it }) { index ->
-                                        pageAt(index, PdfPageBox.Webtoon, widthPx, heightPx)
+                                } else {
+                                    LazyColumn(
+                                        state = listState,
+                                        userScrollEnabled = !multiTouch,
+                                        contentPadding = PaddingValues(horizontal = sidePadding),
+                                        verticalArrangement = Arrangement.spacedBy(pageGap),
+                                        modifier = viewerModifier,
+                                    ) {
+                                        items(pageCount, key = { it }) { index ->
+                                            pageAt(index, PdfPageBox.Webtoon, widthPx, heightPx)
+                                        }
                                     }
                                 }
                             }
@@ -2640,22 +2643,24 @@ private fun PdfSingleImagePage(
         appliedScale = scaleType
         zoomableState.resetZoom()
     }
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .zoomable(
-                state = zoomableState,
-                onClick = onClick,
-                onDoubleClick = onDoubleClick,
-            ),
-    ) {
-        PagerItem(
-            page = page,
-            pageLoader = pageLoader,
-            contentScale = ContentScale.Inside,
-            viewportSize = viewport,
-            modifier = Modifier.fillMaxSize(),
-        )
+    readerDrawScaleProvider(zoomableState) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .zoomable(
+                    state = zoomableState,
+                    onClick = onClick,
+                    onDoubleClick = onDoubleClick,
+                ),
+        ) {
+            PagerItem(
+                page = page,
+                pageLoader = pageLoader,
+                contentScale = ContentScale.Inside,
+                viewportSize = viewport,
+                modifier = Modifier.fillMaxSize(),
+            )
+        }
     }
 }
 
@@ -2750,33 +2755,35 @@ private fun PdfDualSpread(
     val leftW = (spreadPx.width * if (gap) 0.5f else leftAspect / combined).roundToInt().coerceAtLeast(1)
     val rightW = (spreadPx.width.roundToInt() - leftW).coerceAtLeast(1)
     val cellH = spreadPx.height.roundToInt().coerceAtLeast(1)
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .zoomable(
-                state = zoomableState,
-                onClick = onClick,
-                onDoubleClick = onDoubleClick,
-            ),
-        contentAlignment = Alignment.Center,
-    ) {
-        Row(
-            modifier = if (gap) {
-                Modifier.fillMaxSize()
-            } else {
-                Modifier.layout { measurable, _ ->
-                    val w = spreadPx.width.roundToInt().coerceAtLeast(1)
-                    val h = spreadPx.height.roundToInt().coerceAtLeast(1)
-                    val placeable = measurable.measure(Constraints.fixed(w, h))
-                    layout(w, h) { placeable.place(0, 0) }
-                }
-            },
+    readerDrawScaleProvider(zoomableState) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .zoomable(
+                    state = zoomableState,
+                    onClick = onClick,
+                    onDoubleClick = onDoubleClick,
+                ),
+            contentAlignment = Alignment.Center,
         ) {
-            Box(Modifier.weight(if (gap) 1f else leftAspect).fillMaxHeight()) {
-                pageAt(left, PdfPageBox.Cell, leftW, cellH)
-            }
-            Box(Modifier.weight(if (gap) 1f else rightAspect).fillMaxHeight()) {
-                pageAt(right, PdfPageBox.Cell, rightW, cellH)
+            Row(
+                modifier = if (gap) {
+                    Modifier.fillMaxSize()
+                } else {
+                    Modifier.layout { measurable, _ ->
+                        val w = spreadPx.width.roundToInt().coerceAtLeast(1)
+                        val h = spreadPx.height.roundToInt().coerceAtLeast(1)
+                        val placeable = measurable.measure(Constraints.fixed(w, h))
+                        layout(w, h) { placeable.place(0, 0) }
+                    }
+                },
+            ) {
+                Box(Modifier.weight(if (gap) 1f else leftAspect).fillMaxHeight()) {
+                    pageAt(left, PdfPageBox.Cell, leftW, cellH)
+                }
+                Box(Modifier.weight(if (gap) 1f else rightAspect).fillMaxHeight()) {
+                    pageAt(right, PdfPageBox.Cell, rightW, cellH)
+                }
             }
         }
     }
