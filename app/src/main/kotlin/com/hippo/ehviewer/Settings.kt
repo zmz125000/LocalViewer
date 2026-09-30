@@ -764,6 +764,7 @@ object Settings : DataStorePreferences(null) {
      * Coil decode size vs shorter screen edge:
      * 0=1.5x, 1=2x, 2=2.5x, 3=3x, 4=original
      * ([eu.kanade.tachiyomi.ui.reader.setting.DecodeSizeType]). Default 1.5x.
+     * Ignored while [readerHiResOptimize] is on; that path decodes as original.
      * One-shot full-res: page menu "View original image".
      */
     val readerDecodeSize = intPref("pref_reader_decode_size", 4)

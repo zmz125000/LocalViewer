@@ -241,7 +241,7 @@
     <string name="pref_reader_hardware_bitmap">ハードウェアビットマップデコード</string>
     <string name="pref_reader_hardware_bitmap_summary">より高速な Coil 経路（GPU ビットマップ）。余白切り取りと QR 広告検出を無効化し、ソフトウェアコピーを避けます。</string>
     <string name="pref_reader_hi_res_optimize">高解像度の最適化描画</string>
-    <string name="pref_reader_hi_res_optimize_summary">非常に大きい写真は 4096 px でデコードします。ピンチズームがそれを超えると原寸をデコードし、ページを離れるまで保持します。縮小しても再デコードしません。</string>
+    <string name="pref_reader_hi_res_optimize_summary">大きい写真は 4096 px でデコードします。ズームインすると原寸を読み込みます。</string>
     <string name="pref_pdf_direct_image">PDF 直接画像</string>
     <string name="pref_pdf_direct_image_summary">PDF リーダーの画像 PDF は埋め込み画像でページとフォトグリッドを表示します。オフでは各ページを PDF レンダラーで描画します。</string>
     <string name="pref_reader_lib_direct_bitmap">UHDR 変換をバイパス</string>

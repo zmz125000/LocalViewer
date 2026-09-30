@@ -261,7 +261,8 @@ class Image private constructor(
         }
 
         private fun decodeMode(forceOriginal: Boolean): DecodeSizeType {
-            if (forceOriginal) return DecodeSizeType.ORIGIN
+            // Hi-res optimize always starts from the file, then caps the first decode at 4096 px.
+            if (forceOriginal || Settings.readerHiResOptimize.value) return DecodeSizeType.ORIGIN
             return DecodeSizeType.fromPreference(Settings.readerDecodeSize.value)
         }
 

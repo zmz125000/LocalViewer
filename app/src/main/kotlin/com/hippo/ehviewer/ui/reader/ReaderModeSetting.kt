@@ -78,18 +78,6 @@ fun ReaderModeSetting(isWebtoon: Boolean, isDocument: Boolean = false) = Column(
         values = listOf(0, 1, 2),
         field = Settings.autoRotateMode.asMutableState(),
     )
-    SpinnerChoice(
-        title = stringResource(id = R.string.pref_decode_size),
-        entries = arrayOf(
-            stringResource(id = R.string.pref_decode_size_1_5x),
-            stringResource(id = R.string.pref_decode_size_2x),
-            stringResource(id = R.string.pref_decode_size_2_5x),
-            stringResource(id = R.string.pref_decode_size_3x),
-            stringResource(id = R.string.pref_decode_size_origin),
-        ),
-        values = listOf(0, 1, 2, 3, 4),
-        field = Settings.readerDecodeSize.asMutableState(),
-    )
     if (isDocument) {
         Spacer(modifier = Modifier.size(8.dp))
         DocumentStyleSetting()

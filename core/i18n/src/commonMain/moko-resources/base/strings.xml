@@ -877,7 +877,7 @@
     <string name="pref_reader_hardware_bitmap">Hardware bitmap decode</string>
     <string name="pref_reader_hardware_bitmap_summary">Disables crop borders and QR ad detection to avoid a software copy.</string>
     <string name="pref_reader_hi_res_optimize">Optimized high-res render</string>
-    <string name="pref_reader_hi_res_optimize_summary">Decode very large photos at 4096 px. Pinch zoom past that decodes the original and keeps it until the page leaves. Zooming back does not decode again.</string>
+    <string name="pref_reader_hi_res_optimize_summary">Decode large photos at 4096 px. Zooming in loads the original size.</string>
     <string name="pref_reader_lib_direct_bitmap">Bypass UHDR conversion</string>
     <string name="pref_reader_lib_direct_bitmap_summary">Decode to Bitmap and skip Ultra HDR JPEG conversion for advanced formats.</string>
     <string name="pref_reader_hdr_display">HDR display</string>

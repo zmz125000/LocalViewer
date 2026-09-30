@@ -554,7 +554,8 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
                 // HDR display changes whether a non-original decode is redone at
                 // file resolution. Original size is already full-res, so skip it.
                 readerHdrDisplay.changesFlow().filter {
-                    !DecodeSizeType.fromPreference(readerDecodeSize.value).isOriginal
+                    !readerHiResOptimize.value &&
+                        !DecodeSizeType.fromPreference(readerDecodeSize.value).isOriginal
                 },
             ).collect {
                 pageLoader.restart()
