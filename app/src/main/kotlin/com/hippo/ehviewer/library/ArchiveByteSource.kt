@@ -20,6 +20,12 @@ interface ArchiveByteSource : AutoCloseable {
     fun readAt(offset: Long, buf: ByteArray, off: Int, len: Int): Int
 
     /**
+     * Speculative fill. Sticky SMB keeps this off the demand path so a seek read
+     * is sent while this one is still in flight.
+     */
+    fun prefetchReadAt(offset: Long, buf: ByteArray, off: Int, len: Int): Int = readAt(offset, buf, off, len)
+
+    /**
      * Optional readahead fill at [offset] (next page / sequential warm).
      * Default no-op; [ReadAheadArchiveByteSource] implements it.
      */
@@ -35,9 +41,9 @@ interface ArchiveByteSource : AutoCloseable {
     fun requestReconnect() = Unit
 
     /**
-     * Playback seek on the external HTTP sticky lane.
-     * Until [untilEpochMs] (epoch millis) reads stay sequential 256 KiB, then the
-     * steady 4×1 MiB pipeline resumes. Header / moov probes must not call this.
+     * External HTTP playhead jump. Until [untilEpochMs] (epoch millis) the video
+     * window reads at most 256 KiB and does not arm the 4×1 MiB runway.
+     * Header / moov probes must not call this.
      */
     fun noteSeek(untilEpochMs: Long) = Unit
 

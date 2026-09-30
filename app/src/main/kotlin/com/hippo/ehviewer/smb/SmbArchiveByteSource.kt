@@ -10,7 +10,7 @@ import com.hippo.ehviewer.library.ZipAsDirListing
 import com.hippo.ehviewer.library.openZipContainedFileSource
 import java.io.IOException
 import java.util.concurrent.atomic.AtomicBoolean
-import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -24,6 +24,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.withTimeoutOrNull
 
 /**
@@ -147,6 +148,8 @@ class SmbArchiveByteSource(
 
     override fun readAt(offset: Long, buf: ByteArray, off: Int, len: Int): Int = inner.readAt(offset, buf, off, len)
 
+    override fun prefetchReadAt(offset: Long, buf: ByteArray, off: Int, len: Int): Int = inner.prefetchReadAt(offset, buf, off, len)
+
     override fun warm(offset: Long, length: Int) = inner.warm(offset, length)
 
     override fun dropQueuedReads() {
@@ -154,11 +157,6 @@ class SmbArchiveByteSource(
         // Zip-as-dir: [raw] is null; the keep-open handle lives under [inner]
         // ([ZipMemberByteSource] → nested [SmbArchiveByteSource]).
         if (raw == null) inner.dropQueuedReads()
-    }
-
-    override fun noteSeek(untilEpochMs: Long) {
-        raw?.noteSeek(untilEpochMs)
-        if (raw == null) inner.noteSeek(untilEpochMs)
     }
 
     /** Re-open the remote handle after the browse pool's TCP died in the background. */
@@ -199,16 +197,13 @@ private class KeepOpenSmbFileSource(
 
     /** Active handle so close/deadline cancellation interrupts a blocking smbj read. */
     private val activeFile = AtomicReference<File?>(null)
-
-    /**
-     * Epoch millis. After an external HTTP seek, READs are one 256 KiB at a time
-     * until this instant, then the steady 4×1 MiB pipeline resumes.
-     */
-    private val seekSequentialUntilMs = AtomicLong(0L)
     private val sizeReady = CompletableDeferred<Long>().also { deferred ->
         if (knownSize > 0L) deferred.complete(knownSize)
     }
     private val ops = Channel<Op>(capacity = 64)
+
+    /** Seek / player / header reads. Sticky mode starts these without waiting for [ops]. */
+    private val urgent = Channel<Op>(capacity = 64)
 
     /** Opens/reopens the remote handle only when size/read demand exists. */
     private val demand = Channel<Unit>(capacity = Channel.CONFLATED)
@@ -258,18 +253,9 @@ private class KeepOpenSmbFileSource(
                                                     op.result.complete(-1)
                                                     return
                                                 }
-                                                val sequentialSmall =
-                                                    System.currentTimeMillis() < seekSequentialUntilMs.get()
                                                 try {
                                                     op.result.complete(
-                                                        readFullyWithRetry(
-                                                            file,
-                                                            op.offset,
-                                                            op.buf,
-                                                            op.off,
-                                                            op.len,
-                                                            sequentialSmall,
-                                                        ),
+                                                        readFullyWithRetry(file, op.offset, op.buf, op.off, op.len),
                                                     )
                                                 } catch (e: Throwable) {
                                                     if (!isSmbExpectedCloseError(e)) logcat("SmbArchive", e)
@@ -282,12 +268,6 @@ private class KeepOpenSmbFileSource(
                                                 }
                                             }
                                             suspend fun runBatch(first: Op) {
-                                                // Post-seek: one READ at a time so the player gets
-                                                // the first 256 KiB without waiting on 4×1 MiB.
-                                                if (System.currentTimeMillis() < seekSequentialUntilMs.get()) {
-                                                    handle(first)
-                                                    return
-                                                }
                                                 val batch = ArrayList<Op>(READ_PIPELINE)
                                                 batch.add(first)
                                                 while (batch.size < READ_PIPELINE) {
@@ -306,12 +286,20 @@ private class KeepOpenSmbFileSource(
                                                 }
                                             }
                                             if (stickySession) {
+                                                // Launch each READ and keep receiving. A seek on [urgent]
+                                                // starts while a prefetch batch is still on the wire.
+                                                val activeReads = AtomicInteger()
                                                 while (isActive && !closed.get()) {
-                                                    val received = withTimeoutOrNull(STICKY_IDLE_PING_MS) {
-                                                        ops.receiveCatching()
-                                                    }
-                                                    if (received == null) {
+                                                    val op = urgent.tryReceive().getOrNull()
+                                                        ?: withTimeoutOrNull(STICKY_IDLE_PING_MS) {
+                                                            select {
+                                                                urgent.onReceive { it }
+                                                                ops.onReceive { it }
+                                                            }
+                                                        }
+                                                    if (op == null) {
                                                         if (closed.get()) break
+                                                        if (activeReads.get() > 0) continue
                                                         // Keepalive against NAS/NAT idle drop. Share may
                                                         // already be dead after dropStickySessions (screen
                                                         // off) — exit drain cleanly so the HTTP sticky
@@ -324,9 +312,9 @@ private class KeepOpenSmbFileSource(
                                                                 logcat("SmbArchive") {
                                                                     "sticky idle: transport gone, reconnect on demand"
                                                                 }
-                                                                // Queued reads must re-arm open (demand
-                                                                // may already have been consumed).
-                                                                if (!ops.isEmpty) demand.trySend(Unit)
+                                                                if (!ops.isEmpty || !urgent.isEmpty) {
+                                                                    demand.trySend(Unit)
+                                                                }
                                                                 break
                                                             }
                                                             logcat("SmbArchive", e)
@@ -334,8 +322,14 @@ private class KeepOpenSmbFileSource(
                                                         }
                                                         continue
                                                     }
-                                                    val op = received.getOrNull() ?: break
-                                                    runBatch(op)
+                                                    activeReads.incrementAndGet()
+                                                    launch(Dispatchers.IO) {
+                                                        try {
+                                                            handle(op)
+                                                        } finally {
+                                                            activeReads.decrementAndGet()
+                                                        }
+                                                    }
                                                 }
                                             } else {
                                                 // Do not iterate until ops.close(): that held the host-pool
@@ -434,6 +428,9 @@ private class KeepOpenSmbFileSource(
                 for (op in ops) {
                     op.result.complete(-1)
                 }
+                for (op in urgent) {
+                    op.result.complete(-1)
+                }
             } finally {
                 cancelClose.dispose()
             }
@@ -445,10 +442,6 @@ private class KeepOpenSmbFileSource(
         if (!closed.get()) demand.trySend(Unit)
     }
 
-    override fun noteSeek(untilEpochMs: Long) {
-        if (!closed.get() && untilEpochMs > 0L) seekSequentialUntilMs.set(untilEpochMs)
-    }
-
     override val size: Long
         get() {
             if (closed.get() && !sizeReady.isCompleted) {
@@ -458,7 +451,17 @@ private class KeepOpenSmbFileSource(
             return runBlocking { sizeReady.await() }
         }
 
-    override fun readAt(offset: Long, buf: ByteArray, off: Int, len: Int): Int {
+    override fun readAt(offset: Long, buf: ByteArray, off: Int, len: Int): Int = submit(offset, buf, off, len, urgentRead = true)
+
+    override fun prefetchReadAt(offset: Long, buf: ByteArray, off: Int, len: Int): Int = submit(offset, buf, off, len, urgentRead = false)
+
+    private fun submit(
+        offset: Long,
+        buf: ByteArray,
+        off: Int,
+        len: Int,
+        urgentRead: Boolean,
+    ): Int {
         if (len <= 0) return 0
         if (closed.get()) return -1
         val fileSize = try {
@@ -469,11 +472,12 @@ private class KeepOpenSmbFileSource(
         if (offset >= fileSize) return 0
         val toRead = minOf(len.toLong(), fileSize - offset).toInt()
         val result = CompletableDeferred<Int>()
+        val channel = if (urgentRead && stickySession) urgent else ops
         return try {
             runBlocking {
                 if (closed.get()) return@runBlocking -1
                 demand.trySend(Unit)
-                ops.send(Op(offset, buf, off, toRead, result))
+                channel.send(Op(offset, buf, off, toRead, result))
                 result.await()
             }
         } catch (e: Throwable) {
@@ -491,6 +495,8 @@ private class KeepOpenSmbFileSource(
 
     override fun dropQueuedReads() {
         if (closed.get()) return
+        // Prefetch only. [urgent] holds the seek, the header probe, and playback;
+        // failing those returns -1 to a read the player still needs.
         while (true) {
             val op = ops.tryReceive().getOrNull() ?: break
             op.result.complete(-1)
@@ -502,6 +508,7 @@ private class KeepOpenSmbFileSource(
         // Pool ownership ends now; smbj/file teardown below is intentionally asynchronous.
         httpStickyLease?.let { SmbGateway.cancelHttpStickyLease(it) }
         ops.close()
+        urgent.close()
         demand.close()
         failClosedSizeReady()
         activeFile.getAndSet(null)?.let { file ->
@@ -544,12 +551,6 @@ private class KeepOpenSmbFileSource(
         const val READ_PIPELINE = 4
 
         /**
-         * External HTTP seek window. One of these in flight, then back to
-         * [READ_PIPELINE] × [READ_CHUNK].
-         */
-        const val SEEK_CHUNK = 256 * 1024
-
-        /**
          * Transient SMB READ blips (credit / stall) should not surface as Fuse EIO. Retry a
          * few times on the same handle before failing the op (share-closed still reconnects).
          */
@@ -559,12 +560,11 @@ private class KeepOpenSmbFileSource(
             buf: ByteArray,
             off: Int,
             len: Int,
-            sequentialSmall: Boolean = false,
         ): Int {
             var last: Throwable? = null
             for (attempt in 0 until READ_ATTEMPTS) {
                 try {
-                    val n = readFully(file, fileOffset, buf, off, len, sequentialSmall)
+                    val n = readFully(file, fileOffset, buf, off, len)
                     // n==0 on a positive request is rare; treat as retryable empty.
                     if (n > 0 || len == 0) return n
                     last = IOException("SMB read returned 0 at offset=$fileOffset len=$len")
@@ -585,11 +585,8 @@ private class KeepOpenSmbFileSource(
             buf: ByteArray,
             off: Int,
             len: Int,
-            sequentialSmall: Boolean = false,
         ): Int {
-            val chunkSize = if (sequentialSmall) SEEK_CHUNK else READ_CHUNK
-            val pipeline = if (sequentialSmall) 1 else READ_PIPELINE
-            if (len <= chunkSize) {
+            if (len <= READ_CHUNK) {
                 return try {
                     file.read(buf, fileOffset, off, len)
                 } catch (e: Throwable) {
@@ -599,10 +596,10 @@ private class KeepOpenSmbFileSource(
             var filled = 0
             while (filled < len) {
                 val remain = len - filled
-                val batch = ArrayList<Int>(pipeline)
+                val batch = ArrayList<Int>(READ_PIPELINE)
                 var batchBytes = 0
-                while (batch.size < pipeline && batchBytes < remain) {
-                    val chunk = minOf(chunkSize, remain - batchBytes)
+                while (batch.size < READ_PIPELINE && batchBytes < remain) {
+                    val chunk = minOf(READ_CHUNK, remain - batchBytes)
                     if (chunk <= 0) break
                     batch.add(chunk)
                     batchBytes += chunk

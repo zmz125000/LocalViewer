@@ -21,13 +21,13 @@ class VideoDirectLinkByteSourceTest {
         val buf = ByteArray(16)
         assertTrue(video.readAt(0L, buf, 0, 16) > 0)
         val afterOpen = lane.reads.toList()
-        assertTrue(video.readAt(20L * 1024, buf, 0, 16) > 0)
+        val seekAt = 12L * 1024 * 1024
+        assertTrue(video.readAt(seekAt, buf, 0, 16) > 0)
         assertTrue("seek must drop queued prefetch", lane.drops.get() >= 1)
         val seekReads = lane.reads.drop(afterOpen.size)
         assertTrue(
             "first demand after jump must be the seek block, not leftover runway: $seekReads",
-            seekReads.firstOrNull() == 20L * 1024 ||
-                seekReads.any { it == 20L * 1024 },
+            seekReads.firstOrNull() == seekAt || seekReads.any { it == seekAt },
         )
         video.close()
     }
@@ -96,9 +96,30 @@ class VideoDirectLinkByteSourceTest {
             prefetchParallel = 4,
         )
         video.noteSeek(System.currentTimeMillis() - 1)
-        val buf = ByteArray(16)
-        assertTrue(video.readAt(0L, buf, 0, buf.size) > 0)
-        assertEquals(1024, lane.readLens.first())
+        val buf = ByteArray(16 * 1024)
+        assertEquals(buf.size, video.readAt(0L, buf, 0, buf.size))
+        assertEquals("steady state is one 4×1 MiB read", 4 * 1024 * 1024, lane.readLens.first())
+        video.close()
+    }
+
+    @Test
+    fun headerJumpDoesNotEnterSmallReadWindow() {
+        val lane = RecordingSource(size = 16L * 1024 * 1024)
+        val video = VideoDirectLinkByteSource(
+            demand = lane,
+            prefetch = null,
+            knownSize = lane.size,
+            blockSize = 2 * 1024 * 1024,
+            maxBlocks = 8,
+            prefetchAhead = 0,
+        )
+        val play = ByteArray(16 * 1024)
+        assertEquals(play.size, video.readAt(0L, play, 0, play.size))
+        lane.reads.clear()
+        lane.readLens.clear()
+        val header = ByteArray(32)
+        assertEquals(32, video.readAt(8L * 1024 * 1024, header, 0, header.size))
+        assertEquals(4 * 1024 * 1024, lane.readLens.first())
         video.close()
     }
 

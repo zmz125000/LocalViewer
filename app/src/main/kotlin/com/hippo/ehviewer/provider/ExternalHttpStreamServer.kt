@@ -463,9 +463,6 @@ object ExternalHttpStreamServer {
             fun touch() {
                 lastAccessMs = SystemClock.elapsedRealtime()
             }
-
-            /** Shared so concurrent Range holders serialize sticky seek/read. */
-            val readLock = Any()
         }
 
         class WarmBodyRef(
@@ -480,7 +477,9 @@ object ExternalHttpStreamServer {
 
         /**
          * Shared session body: [close] releases a ref and arms idle timeout (not immediate SMB drop).
-         * Serializes [readAt] so concurrent Ranges do not race sticky seek state.
+         * A new Range does not wait for the previous read to finish; the old playhead
+         * stops at its next call. Offset reads do not share a cursor.
+         * Short header / moov probes are not streaming, so they are not cut off.
          */
         private inner class RefBody(
             private val key: String,
@@ -497,11 +496,10 @@ object ExternalHttpStreamServer {
             override val size: Long get() = cached.body.size
             override fun readAt(offset: Long, buf: ByteArray, off: Int, len: Int): Int {
                 if (streaming && cached.playhead.get() != rangeStart) return 0
-                return synchronized(cached.readLock) {
-                    if (streaming && cached.playhead.get() != rangeStart) return 0
-                    cached.touch()
-                    cached.body.readAt(offset, buf, off, len)
-                }
+                cached.touch()
+                val n = cached.body.readAt(offset, buf, off, len)
+                if (streaming && cached.playhead.get() != rangeStart) return 0
+                return n
             }
 
             override fun warm(offset: Long, length: Int) {
