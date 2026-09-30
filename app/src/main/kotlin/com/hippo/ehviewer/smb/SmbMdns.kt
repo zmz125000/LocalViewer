@@ -29,8 +29,13 @@ import splitties.init.appCtx
  * as soon as it arrives, IPv4 and IPv6 in parallel. The first TCP success is the
  * socket used for that connection. A success is stored per family, so the cache
  * can hold both an IPv4 and an IPv6 address. Later sockets use that cache.
- * [SmbMdns.clear] drops it when mDNS is toggled, on a failed connect, on a network
- * change, and on process exit. A folder refresh only publishes addresses. The
+ * [SmbMdns.clear] drops the packet cache, both proven addresses, and staged
+ * candidates when mDNS is toggled, on a failed connect, on a network change, and
+ * on process exit. The same generation bump makes a lookup that started before
+ * the toggle discard its answers, so an mDNS address cannot become the next
+ * proven IP after the toggle is off. With the toggle off, only system DNS runs:
+ * every A and AAAA is still dialed together, and the first success in each family
+ * fills the cache again. A folder refresh only publishes addresses. The
  * browse-pool socket is the connection that tries them.
  *
  * Queries set the QU bit so the peer unicasts the A/AAAA answer to our ephemeral
@@ -295,10 +300,15 @@ internal object SmbMdns {
     fun rememberDial(host: String, address: InetAddress, gen: Int, replace: Boolean = false) {
         if (generation.get() != gen) return
         val entry = dialCaches.computeIfAbsent(dialKey(host)) { SmbDialCache() }
-        synchronized(entry) {
+        val stored = synchronized(entry) {
+            if (generation.get() != gen) {
+                if (entry.targets().isEmpty()) dialCaches.remove(dialKey(host), entry)
+                return
+            }
             if (replace) entry.replace(address) else entry.remember(address)
+            true
         }
-        logcat { "SmbMdns: cached ${address.hostAddress} for $host" }
+        if (stored) logcat { "SmbMdns: cached ${address.hostAddress} for $host" }
     }
 
     /**
@@ -322,10 +332,18 @@ internal object SmbMdns {
         synchronized(entry) { entry.forgetExact(address) }
     }
 
-    /** Same address as one already proven is ignored. A new one waits for the next pool socket. */
-    fun addCandidate(host: String, address: InetAddress) {
+    /**
+     * Same address as one already proven is ignored. A new one waits for the next
+     * pool socket. [gen] is the lookup that found [address]; a toggle or network
+     * change bumps the generation and the address is dropped.
+     */
+    fun addCandidate(host: String, address: InetAddress, gen: Int) {
+        if (generation.get() != gen) return
         val entry = offered.computeIfAbsent(dialKey(host)) { SmbAddressOffers() }
-        val added = synchronized(entry) { entry.offer(address, dialTargets(host)) }
+        val added = synchronized(entry) {
+            if (generation.get() != gen) return
+            entry.offer(address, dialTargets(host))
+        }
         if (added) logcat { "SmbMdns: candidate ${address.hostAddress} for $host" }
     }
 

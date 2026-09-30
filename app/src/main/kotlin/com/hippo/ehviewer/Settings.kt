@@ -414,8 +414,8 @@ object Settings : DataStorePreferences(null) {
      * Multicast DNS for SMB hostnames (Advanced). Default off.
      * On: `.local` and single-label names are resolved with DNS and mDNS together.
      * IP literals and other dotted names stay on system DNS. WebDAV is unchanged.
-     * Toggling drops the proven-address cache and browse pools so the next
-     * connect resolves again instead of reusing the old TCP session.
+     * Toggling drops the proven-address cache, browse pools, and sticky video/FUSE
+     * sessions so the next connect resolves again instead of reusing the old TCP.
      */
     val smbMdns = boolPref("smb_mdns", false).observed {
         com.hippo.ehviewer.smb.SmbMdns.clear()

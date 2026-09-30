@@ -47,10 +47,11 @@ internal object SmbDualStack {
      * immediately. Otherwise it waits, and the next pool socket is the attempt.
      * Nothing in the browse pool is closed from here.
      */
-    fun deliver(host: String, address: InetAddress) {
+    fun deliver(host: String, address: InetAddress, gen: Int) {
+        if (SmbMdns.generationNow() != gen) return
         val listeners = races[raceKey(host)]
         if (listeners.isNullOrEmpty()) {
-            SmbMdns.addCandidate(host, address)
+            SmbMdns.addCandidate(host, address, gen)
         } else {
             listeners.forEach { it(address) }
         }
@@ -65,14 +66,14 @@ internal object SmbDualStack {
         val gen = SmbMdns.generationNow()
         SmbMdns.systemLookup(host).whenComplete { addresses, _ ->
             if (SmbMdns.generationNow() != gen) return@whenComplete
-            addresses.orEmpty().forEach { deliver(host, it) }
+            addresses.orEmpty().forEach { deliver(host, it, gen) }
         }
         val mdnsName = if (Settings.smbMdns.value) smbMdnsQueryName(host) else null
         if (mdnsName == null) return
         pool.execute {
-            if (SmbMdns.generationNow() != gen) return@execute
+            if (SmbMdns.generationNow() != gen || !Settings.smbMdns.value) return@execute
             val found = runCatching { SmbMdns.queryFresh(mdnsName) }.getOrDefault(emptyList())
-            found.forEach { deliver(host, it) }
+            found.forEach { deliver(host, it, gen) }
         }
     }
 
@@ -138,6 +139,10 @@ internal object SmbDualStack {
 
         fun maybeFail(error: Exception) {
             if (winner.isDone) return
+            if (SmbMdns.generationNow() != gen) {
+                winner.completeExceptionally(IOException("SMB connect cancelled: $host"))
+                return
+            }
             if (resolvePending.get() != 0 || resolversLeft.get() != 0) return
             if (failed.get() != attempts.get()) return
             val cause = if (attempts.get() == 0) UnknownHostException(host) else error
@@ -145,8 +150,9 @@ internal object SmbDualStack {
         }
 
         fun start(address: InetAddress) {
+            if (SmbMdns.generationNow() != gen) return
             if (winner.isDone) {
-                SmbMdns.addCandidate(host, address)
+                SmbMdns.addCandidate(host, address, gen)
                 return
             }
             if (!smbOfferAddress(seen, address)) return
@@ -158,6 +164,13 @@ internal object SmbDualStack {
                     socket = newSocket()
                     sockets[key] = socket
                     socket.connect(InetSocketAddress(address, port), timeoutMs)
+                    if (SmbMdns.generationNow() != gen) {
+                        runCatching { socket.close() }
+                        sockets.remove(key)
+                        failed.incrementAndGet()
+                        maybeFail(IOException("SMB connect cancelled: $host"))
+                        return@execute
+                    }
                     SmbMdns.forgetCandidate(host, address)
                     if (winner.complete(socket)) {
                         SmbMdns.rememberDial(host, address, gen, replace = true)
@@ -169,8 +182,10 @@ internal object SmbDualStack {
                 } catch (e: Exception) {
                     socket?.let { runCatching { it.close() } }
                     sockets.remove(key)
-                    SmbMdns.forgetCandidate(host, address)
-                    if (key in provenKeys) SmbMdns.forgetExact(host, address)
+                    if (SmbMdns.generationNow() == gen) {
+                        SmbMdns.forgetCandidate(host, address)
+                        if (key in provenKeys) SmbMdns.forgetExact(host, address)
+                    }
                     failed.incrementAndGet()
                     maybeFail(e)
                 }
@@ -189,12 +204,13 @@ internal object SmbDualStack {
                     } catch (_: InterruptedException) {
                         Thread.currentThread().interrupt()
                     }
-                    if (winner.isDone) {
+                    if (winner.isDone || SmbMdns.generationNow() != gen) {
                         resolvePending.set(0)
+                        if (!winner.isDone) maybeFail(IOException("SMB connect cancelled: $host"))
                         return@execute
                     }
                 }
-                beginResolve(host, ::start, ::maybeFail, resolversLeft)
+                beginResolve(host, gen, ::start, ::maybeFail, resolversLeft)
                 resolvePending.set(0)
                 maybeFail(UnknownHostException(host))
             }
@@ -218,11 +234,16 @@ internal object SmbDualStack {
 
     private fun beginResolve(
         host: String,
+        gen: Int,
         start: (InetAddress) -> Unit,
         maybeFail: (Exception) -> Unit,
         resolversLeft: AtomicInteger,
     ) {
-        val mdnsName = if (Settings.smbMdns.value) smbMdnsQueryName(host) else null
+        val mdnsName = if (Settings.smbMdns.value && SmbMdns.generationNow() == gen) {
+            smbMdnsQueryName(host)
+        } else {
+            null
+        }
         if (mdnsName == null) {
             resolversLeft.set(1)
             pool.execute {
@@ -242,6 +263,7 @@ internal object SmbDualStack {
             }
             pool.execute {
                 try {
+                    if (SmbMdns.generationNow() != gen || !Settings.smbMdns.value) return@execute
                     SmbMdns.resolve(mdnsName).forEach(start)
                 } finally {
                     resolversLeft.decrementAndGet()
