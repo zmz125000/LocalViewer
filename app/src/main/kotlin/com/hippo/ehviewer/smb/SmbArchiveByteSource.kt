@@ -76,7 +76,7 @@ class SmbArchiveByteSource(
     knownSize: Long = -1L,
     /**
      * This handle belongs to a [SmbGateway.beginVideoPlay] generation. A newer play
-     * force-closes the TCP so a stale HTTP GET cannot occupy the video NIO group.
+     * leaves this TCP and file open; the next video multiplexes on the same session.
      * PDF / non-video FUSE must leave this false.
      */
     videoPlay: Boolean = false,

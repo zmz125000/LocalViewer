@@ -146,8 +146,9 @@ import kotlinx.coroutines.withTimeoutOrNull
  * ## Async transport (Advanced toggle)
  * Off: smbj [DirectTcpTransport] — one Packet Reader thread per TCP (legacy).
  * On: three [AsynchronousChannelGroup]s (list / browse / video). Sticky video uses
- * the video group so a stale play cannot stall listing or a new handshake.
- * [beginVideoPlay] evicts the previous generation; HTTP cannot signal stop.
+ * the video group so listing does not share that group with playback.
+ * A new play leaves the sticky TCP and any open file alone; the next GET
+ * multiplexes another file on the same session.
  * Browse thumbs are [ShareOp.Background]: an interactive data wait or new play
  * cancels them so they retry after the reader / video takes the slot.
  */
@@ -495,9 +496,10 @@ object SmbGateway {
     private val stickyConnections = ConcurrentHashMap.newKeySet<Connection>()
 
     /**
-     * Sticky TCPs opened for a [beginVideoPlay] generation. A newer play closes older
-     * generations so a stale HTTP GET cannot occupy the video NIO group.
-     * PDF / non-video FUSE stickies are not registered here.
+     * Sticky TCPs opened for a [beginVideoPlay] generation. A newer play does not
+     * close them: SMB multiplex keeps the current file open and the next GET opens
+     * another file on the same [DiskShare]. PDF / non-video FUSE stickies are not
+     * registered here. Screen-off still drops these via [dropStickySessions].
      */
     private data class VideoSticky(val epoch: Int, val connection: Connection)
 
@@ -506,10 +508,13 @@ object SmbGateway {
     private val videoPlayListeners = CopyOnWriteArrayList<() -> Unit>()
 
     /**
-     * Bump the video generation. Listeners close previous in-app / HTTP video bodies
-     * (lease + File). The old worker should then leave [openStickyConnection] and close
-     * the TCP itself. Force-close of leftover TCPs is **delayed** so it does not share
-     * the small video NIO group with the new handshake (next-file hop hang / ANR).
+     * Bump the video generation and yield browse thumbs. Does not close the sticky
+     * TCP or the file already open: the app calls this before the external player
+     * sends a GET, and a leftover open with no new request is harmless. When a GET
+     * does arrive, [openStickyConnection] multiplexes the next file on that session.
+     *
+     * Listeners are in-app playback only. HTTP warm bodies stay until their own
+     * idle timeout or an explicit close.
      *
      * One call per play. Prefetch shares this generation — do not invoke again for it.
      */
@@ -520,7 +525,6 @@ object SmbGateway {
             runCatching { listener.invoke() }
         }
         yieldBackgroundOps("video-play-$epoch")
-        scheduleDropVideoStickiesOlderThan(epoch)
         return epoch
     }
 
@@ -531,38 +535,10 @@ object SmbGateway {
     }
 
     /**
-     * Wait for evicted workers to close their own TCP. Only force-close stragglers.
-     * A log here means the previous hop did not finish teardown in time — not a seek.
+     * Cap concurrent **video** sticky file opens (HTTP loopback + in-app streamdoc).
+     * That many files share one sticky TCP via SMB multiplex.
      */
-    private const val VIDEO_STICKY_TEARDOWN_MS = 500L
-
-    private fun scheduleDropVideoStickiesOlderThan(epoch: Int) {
-        gatewayScope.launch {
-            delay(VIDEO_STICKY_TEARDOWN_MS)
-            dropVideoStickiesOlderThan(epoch)
-        }
-    }
-
-    private fun dropVideoStickiesOlderThan(epoch: Int) {
-        val doomed = videoStickies.filter { it.epoch < epoch }
-        if (doomed.isEmpty()) return
-        doomed.forEach { videoStickies.remove(it) }
-        logcat {
-            "SmbGateway: drop video stickies older than epoch=$epoch count=${doomed.size} " +
-                "sticky=${stickyConnectionCount()}"
-        }
-        doomed.forEach { vs ->
-            gatewayScope.launch {
-                runCatching { vs.connection.close() }
-            }
-        }
-    }
-
-    /**
-     * Cap concurrent **video** sticky TCP sessions (HTTP loopback + in-app streamdoc).
-     * One lane per video; 2 is a teardown cushion while the previous lease's TCP closes.
-     */
-    private const val HTTP_STICKY_POOL_SIZE = 2
+    private const val HTTP_STICKY_POOL_SIZE = 5
 
     /** Safety bound if an evicted SMB transport does not release its permit promptly. */
     private const val HTTP_STICKY_WAIT_TIMEOUT_MS = 10_000L
@@ -3355,6 +3331,9 @@ object SmbGateway {
                     }
                     return openFileOnShare(reused.share, path, block)
                 } catch (e: Throwable) {
+                    // Closing this file (player done, warm-cache trim) must not drop the
+                    // TCP. Other HTTP requests still have files open on it.
+                    if (e is CancellationException || isFileHandleAbortError(e)) throw e
                     if (!isShareClosedError(e) && !isTransportError(e)) throw e
                     logcat { "SmbGateway: sticky reuse failed, reconnect: ${e.message}" }
                     retireReusable(reused, "reuse-fail")
@@ -3409,16 +3388,16 @@ object SmbGateway {
         stickyConnections.add(connection)
         val videoSticky = videoPlayEpoch?.let { VideoSticky(it, connection) }
         videoSticky?.let { videoStickies.add(it) }
-        try {
+        val share = try {
             val session = connection.authenticate(auth(source, password))
             logNegotiated("sticky", host, source.port, connection, session)
-            val share = session.connectShare(shareName) as DiskShare
+            val tree = session.connectShare(shareName) as DiskShare
             val created = ReusableSticky(
                 key = stickyShareKey(source, host, shareName),
                 client = smbClient,
                 connection = connection,
                 session = session,
-                share = share,
+                share = tree,
             )
             val previous = synchronized(reusableStickyLock) {
                 reusableSticky.also { reusableSticky = created }
@@ -3426,14 +3405,21 @@ object SmbGateway {
             if (previous != null && previous.connection !== connection) {
                 retireReusable(previous, "replaced")
             }
-            return openFileOnShare(share, path, block)
+            tree
         } catch (e: Throwable) {
+            // Connect / auth / tree failed before any other file could multiplex.
             videoSticky?.let { videoStickies.remove(it) }
             stickyConnections.remove(connection)
+            synchronized(reusableStickyLock) {
+                if (reusableSticky?.connection === connection) reusableSticky = null
+            }
             runCatching { connection.close() }
             runCatching { smbClient.close() }
             throw e
         }
+        // File close and worker cancel end this open only. The TCP stays for the
+        // other files HTTP already has open on this session.
+        return openFileOnShare(share, path, block)
     }
 
     private fun <T> openFileOnShare(
