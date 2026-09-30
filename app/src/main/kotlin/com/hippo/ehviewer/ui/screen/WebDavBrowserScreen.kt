@@ -151,6 +151,8 @@ import com.hippo.ehviewer.ui.main.browseZipAsDirTypeLabel
 import com.hippo.ehviewer.ui.main.onRecentHeaderGesture
 import com.hippo.ehviewer.ui.main.rememberBrowseSectionCollapse
 import com.hippo.ehviewer.ui.main.rememberRecentStripExpanded
+import com.hippo.ehviewer.shortcuts.FolderHomeShortcut
+import com.hippo.ehviewer.shortcuts.FolderShortcutTarget
 import com.hippo.ehviewer.ui.navToReader
 import com.hippo.ehviewer.ui.navToWebDavFolderReader
 import com.hippo.ehviewer.ui.reader.ReaderScreenArgs
@@ -176,6 +178,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
     initialRelativePath: String = "",
     fromHistory: Boolean = false,
     fromLibrary: Boolean = false,
+    shortcutEpoch: Long = 0L,
     navigator: DestinationsNavigator,
 ) = Screen(navigator) {
     DrawerHandle(false)
@@ -185,7 +188,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
     // Session-scoped path. Empty list = share root and is *not* "unset":
     // do not fall back to initialRelativePath when session is empty, or returning from
     // the reader after climbing to root re-opens the History deep folder.
-    var segments by remember {
+    var segments by remember(sourceId, shortcutEpoch) {
         val stored = BrowseSession.webDavSegmentsOrNull(sourceId)
         val initial = stored ?: initialRelativePath.split('/').filter { it.isNotEmpty() }.also {
             BrowseSession.setWebDavSegments(sourceId, it)
@@ -1542,6 +1545,16 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
         }
     }
 
+    fun webDavShortcut(child: String, isDirectory: Boolean, label: String): FolderShortcutTarget? {
+        val id = source?.id ?: return null
+        return FolderShortcutTarget(
+            kind = FolderHomeShortcut.KIND_WEBDAV,
+            ownerId = id,
+            path = FolderHomeShortcut.folderPath(relativeDir, child, isDirectory),
+            label = label.substringAfterLast('/').ifBlank { label },
+        )
+    }
+
     fun dirOverflow(name: String, coverFileName: String? = null, virtual: Boolean = false) = BrowseOverflowActions(
         kind = BrowseOverflowKind.Common,
         favorited = isDirFavorite(name),
@@ -1551,6 +1564,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
         onOpenFolder = {
             openBrowseFolder(FolderSearch.openFolderTarget(name, isDirectory = true, virtual = virtual))
         },
+        shortcut = webDavShortcut(name, true, name),
         onUnsupported = { notSupportedAction() },
     )
 
@@ -1571,6 +1585,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                 ),
             )
         },
+        shortcut = webDavShortcut(entry.relativeName, true, entry.name),
         onUnsupported = { notSupportedAction() },
     )
 
@@ -1616,6 +1631,11 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                     ),
                 )
             },
+            shortcut = webDavShortcut(
+                joinRemoteArchivePath("", entry.parentRelativeName, entry.fileName),
+                false,
+                entry.fileName,
+            ),
             onUnsupported = { notSupportedAction() },
         )
     } else {
@@ -1646,6 +1666,11 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                     ),
                 )
             },
+            shortcut = webDavShortcut(
+                joinRemoteArchivePath("", entry.parentRelativeName, entry.fileName),
+                false,
+                entry.fileName,
+            ),
             onUnsupported = { notSupportedAction() },
         )
     }
@@ -1664,6 +1689,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                 FolderSearch.openFolderTarget(fileName, isDirectory = false, virtual = virtual),
             )
         },
+        shortcut = webDavShortcut(fileName, false, fileName),
         onUnsupported = { notSupportedAction() },
     )
 
@@ -1681,6 +1707,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
             onOpenFolder = {
                 openBrowseFolder(FolderSearch.openFolderTarget(fileName, isDirectory = false))
             },
+            shortcut = webDavShortcut(fileName, false, fileName),
             onUnsupported = { notSupportedAction() },
         )
     } else if (isPdfOrEbookFileName(fileName)) {
@@ -1730,6 +1757,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
             onOpenFolder = {
                 openBrowseFolder(FolderSearch.openFolderTarget(fileName, isDirectory = false))
             },
+            shortcut = webDavShortcut(fileName, false, fileName),
             onUnsupported = { notSupportedAction() },
         )
     } else {
@@ -1742,6 +1770,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
             onOpenFolder = {
                 openBrowseFolder(FolderSearch.openFolderTarget(fileName, isDirectory = false))
             },
+            shortcut = webDavShortcut(fileName, false, fileName),
             onUnsupported = { notSupportedAction() },
         )
     }

@@ -111,6 +111,8 @@
     <string name="browse_action_not_supported">This action is not supported</string>
     <string name="browse_item_info">Info</string>
     <string name="browse_open_folder">Open folder</string>
+    <string name="browse_create_shortcut">Create shortcut</string>
+    <string name="browse_shortcut_unsupported">This launcher can't pin a home screen shortcut</string>
     <string name="browse_play">Play</string>
     <string name="browse_external_player">External player</string>
     <string name="browse_image_reader">Image reader</string>
