@@ -1898,6 +1898,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                             enabled = refreshEnabled,
                             onClick = {
                                 refreshing = true
+                                source?.let { SmbGateway.refreshNameLookup(it) }
                                 requestForceReload()
                             },
                             shapes = IconButtonDefaults.shapes(),
@@ -1951,6 +1952,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
             isRefreshing = refreshing || loading,
             onRefresh = {
                 refreshing = true
+                source?.let { SmbGateway.refreshNameLookup(it) }
                 requestForceReload()
             },
             modifier = Modifier

@@ -585,6 +585,8 @@
     <string name="settings_smb_encrypt_summary">Require encrypted SMB sessions. Resets active SMB connections.</string>
     <string name="settings_smb_async_transport">SMB async transport</string>
     <string name="settings_smb_async_transport_summary">Share small NIO pools instead of one Packet Reader thread per TCP.</string>
+    <string name="settings_smb_mdns">SMB mDNS</string>
+    <string name="settings_smb_mdns_summary">Resolve .local and single-label SMB hosts on the LAN. IP addresses and other names still use system DNS.</string>
     <string name="settings_reader_preload_image">Source prefetch ahead</string>
     <string name="settings_reader_preload_image_summary">Download or extract the next %s pages in the reading direction</string>
     <string name="settings_advanced_disable_reader_network_cache">Disable reader network cache</string>

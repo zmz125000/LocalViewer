@@ -409,6 +409,18 @@ object Settings : DataStorePreferences(null) {
     val smbAsyncTransport = boolPref("smb_async_transport", true).observed {
         com.hippo.ehviewer.smb.SmbGateway.onProtocolSettingsChanged()
     }
+
+    /**
+     * Multicast DNS for SMB hostnames (Advanced). Default off.
+     * On: `.local` and single-label names are resolved with DNS and mDNS together.
+     * IP literals and other dotted names stay on system DNS. WebDAV is unchanged.
+     * Toggling drops the proven-address cache, browse pools, and sticky video/FUSE
+     * sessions so the next connect resolves again instead of reusing the old TCP.
+     */
+    val smbMdns = boolPref("smb_mdns", false).observed {
+        com.hippo.ehviewer.smb.SmbMdns.clear()
+        com.hippo.ehviewer.smb.SmbGateway.onProtocolSettingsChanged()
+    }
     val downloadDelay = intPref("download_delay_3", 1000)
     val timeoutSpeed = intPref("timeout_speed_level", 6)
 

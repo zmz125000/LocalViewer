@@ -224,6 +224,8 @@
     <string name="settings_smb_encrypt_summary">要求加密的 SMB 会话（服务器须支持 SMB 3 加密）。会重置活动 SMB 连接。</string>
     <string name="settings_smb_async_transport">SMB 异步传输</string>
     <string name="settings_smb_async_transport_summary">用少量 NIO 线程池代替每条 TCP 一个 Packet Reader。</string>
+    <string name="settings_smb_mdns">SMB mDNS</string>
+    <string name="settings_smb_mdns_summary">用多播 DNS 解析局域网中的 .local 和单标签 SMB 主机名。IP 和其他域名仍走系统 DNS。</string>
     <string name="settings_reader_preload_image">阅读器预载</string>
     <string name="settings_reader_preload_image_summary">预取后续 %s 页（SMB 会提前下载；本地按需打开）</string>
     <string name="settings_advanced_disable_reader_network_cache">禁用阅读器网络缓存</string>

@@ -11,6 +11,8 @@
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- SMB mDNS (Advanced). Receiving multicast replies needs this; it is not a runtime prompt. -->
+    <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
     <!-- Android 17+: LAN sockets (SMB / local WebDAV) require this runtime permission.
          Without it, TCP connect fails as TimeoutException instead of a permission error. -->
     <uses-permission android:name="android.permission.ACCESS_LOCAL_NETWORK" />
