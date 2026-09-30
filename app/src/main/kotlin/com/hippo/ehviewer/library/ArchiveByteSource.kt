@@ -34,6 +34,13 @@ interface ArchiveByteSource : AutoCloseable {
     /** Re-open a dead remote handle (SMB sticky). Default no-op. */
     fun requestReconnect() = Unit
 
+    /**
+     * Playback seek on the external HTTP sticky lane.
+     * Until [untilEpochMs] (epoch millis) reads stay sequential 256 KiB, then the
+     * steady 4×1 MiB pipeline resumes. Header / moov probes must not call this.
+     */
+    fun noteSeek(untilEpochMs: Long) = Unit
+
     override fun close()
 }
 

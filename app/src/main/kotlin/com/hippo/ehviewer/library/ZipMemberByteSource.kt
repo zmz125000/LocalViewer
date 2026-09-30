@@ -53,6 +53,8 @@ class ZipMemberByteSource private constructor(
 
     override fun requestReconnect() = zip.requestReconnect()
 
+    override fun noteSeek(untilEpochMs: Long) = zip.noteSeek(untilEpochMs)
+
     override fun warm(offset: Long, length: Int) {
         if (offset < 0L || length <= 0 || offset >= size) return
         zip.warm(payloadOffset + offset, length)

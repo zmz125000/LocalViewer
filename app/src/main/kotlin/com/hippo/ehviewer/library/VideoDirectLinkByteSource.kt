@@ -16,6 +16,9 @@ import java.util.concurrent.atomic.AtomicLong
  * - Prefetches several blocks **ahead** of the playhead so 4K / ~80 Mbps stays fed
  * - Prefetch uses the **same** sticky lane as demand (one handle). A seek drops
  *   queued prefetch reads so demand is not stuck behind the old runway.
+ * - [noteSeek] (external HTTP playhead jump) serves sequential 256 KiB for
+ *   [SEEK_STARTUP_MS], then returns to the 4×1 MiB pipeline. Header probes do not
+ *   call [noteSeek]; a short read during the window stays a short read.
  *
  * Not an archive readahead: no 64 KiB random-probe mode, no ZIP/TAR semantics.
  * Streamdoc uses this path for **video and all non-document files**; PDF / EPUB stay
@@ -63,6 +66,9 @@ class VideoDirectLinkByteSource(
     private val epoch = AtomicInteger(0)
     private val lastDemandBlock = AtomicLong(-1L)
 
+    /** Epoch millis. External HTTP seek: sequential 256 KiB until this time. */
+    private val seekStartupUntilMs = AtomicLong(0L)
+
     private val prefetchExecutor: ExecutorService? = if (prefetchAhead > 0 && prefetchParallel > 0) {
         val n = minOf(prefetchAhead, prefetchParallel)
         Executors.newFixedThreadPool(n) { runnable ->
@@ -88,6 +94,11 @@ class VideoDirectLinkByteSource(
         if (offset >= size) return 0
 
         val want = minOf(len.toLong(), size - offset).toInt()
+        if (inSeekStartup()) {
+            val n = readSeekStartup(offset, buf, off, want)
+            if (n > 0) lastDemandBlock.set(offset / blockSize)
+            return n
+        }
         var copied = 0
         val firstBlock = offset / blockSize
         // Detect a seek before looking at in-flight work. This lets demand cancel an old
@@ -126,6 +137,8 @@ class VideoDirectLinkByteSource(
     override fun warm(offset: Long, length: Int) {
         if (closed.get() || offset < 0L || length <= 0 || size <= 0L) return
         if (offset >= size) return
+        // Seek startup must not fill a 2 MiB block or arm the 4-wide runway.
+        if (inSeekStartup()) return
         val blockIndex = offset / blockSize
         noteDemand(blockIndex)
         // Demand-load the first block so warm is useful for open probes.
@@ -328,6 +341,50 @@ class VideoDirectLinkByteSource(
         prefetch?.requestReconnect()
     }
 
+    /**
+     * External HTTP playhead jump. Short header / moov reads keep the normal path
+     * unless they happen to arrive while this window is open, and then they are
+     * served at the requested length (not padded to 256 KiB, not a 2 MiB block).
+     */
+    override fun noteSeek(untilEpochMs: Long) {
+        if (closed.get() || untilEpochMs <= 0L) return
+        seekStartupUntilMs.set(untilEpochMs)
+        epoch.incrementAndGet()
+        cancelAllSpeculative()
+        demand.noteSeek(untilEpochMs)
+        demand.dropQueuedReads()
+        val prefetchLane = prefetch
+        if (prefetchLane != null && prefetchLane !== demand) {
+            prefetchLane.noteSeek(untilEpochMs)
+            prefetchLane.dropQueuedReads()
+        }
+    }
+
+    private fun inSeekStartup(): Boolean {
+        val until = seekStartupUntilMs.get()
+        return until > 0L && System.currentTimeMillis() < until
+    }
+
+    /** One direct read, capped at [SEEK_STARTUP_CHUNK]. No parallel prefetch. */
+    private fun readSeekStartup(offset: Long, buf: ByteArray, off: Int, want: Int): Int {
+        val chunk = minOf(want, SEEK_STARTUP_CHUNK)
+        if (chunk <= 0 || closed.get()) return if (chunk <= 0) 0 else -1
+        return try {
+            demand.readAt(offset, buf, off, chunk)
+        } catch (_: Throwable) {
+            -1
+        }
+    }
+
+    private fun cancelAllSpeculative() {
+        val doomed = synchronized(lock) {
+            val drop = inFlight.filterValues { it.speculative }
+            drop.keys.forEach { inFlight.remove(it) }
+            drop.values.map { it.future }
+        }
+        for (f in doomed) f.cancel(true)
+    }
+
     companion object {
         /** Transient mid-block SMB death: re-arm sticky open and finish the aligned fetch. */
         const val BLOCK_RECONNECT_ATTEMPTS = 4
@@ -346,6 +403,13 @@ class VideoDirectLinkByteSource(
          * on one handle ([KeepOpenSmbFileSource] pipeline = 4). Deflate ZIP stays at 1.
          */
         const val PREFETCH_PARALLEL = 4
+
+        /**
+         * External HTTP seek: sequential reads of this size for [SEEK_STARTUP_MS],
+         * then [PREFETCH_PARALLEL] × 1 MiB on the sticky SMB lane.
+         */
+        const val SEEK_STARTUP_MS = 3_000L
+        const val SEEK_STARTUP_CHUNK = 256 * 1024
 
         fun isVideo(mimeType: String, displayName: String): Boolean = mimeType.startsWith("video/", ignoreCase = true) || isVideoFileName(displayName)
 

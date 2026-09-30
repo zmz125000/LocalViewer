@@ -128,6 +128,12 @@ object ExternalHttpStreamServer {
 
         /** Re-open a dead sticky SMB/WebDAV handle. Default no-op for local bodies. */
         fun requestReconnect() = Unit
+
+        /**
+         * Playhead jump: sequential 256 KiB until [untilEpochMs], then 4×1 MiB.
+         * Header / moov / resume peeks must not call this.
+         */
+        fun noteSeek(untilEpochMs: Long) = Unit
     }
 
     class ArchiveBody(private val source: ArchiveByteSource) : StreamBody {
@@ -135,6 +141,7 @@ object ExternalHttpStreamServer {
         override fun readAt(offset: Long, buf: ByteArray, off: Int, len: Int): Int = source.readAt(offset, buf, off, len)
         override fun warm(offset: Long, length: Int) = source.warm(offset, length)
         override fun requestReconnect() = source.requestReconnect()
+        override fun noteSeek(untilEpochMs: Long) = source.noteSeek(untilEpochMs)
         override fun close() = source.close()
     }
 
@@ -509,7 +516,15 @@ object ExternalHttpStreamServer {
             fun prepareRange(start: Long, streaming: Boolean) {
                 rangeStart = start
                 this.streaming = streaming
-                if (streaming) cached.playhead.set(start)
+                if (!streaming) return
+                val previous = cached.playhead.getAndSet(start)
+                // Short header / moov / resume peeks are not streaming, so they never
+                // arm this and never move the playhead. A real seek does.
+                if (httpRangeIsPlaybackSeek(previous, start)) {
+                    cached.body.noteSeek(
+                        System.currentTimeMillis() + VideoDirectLinkByteSource.SEEK_STARTUP_MS,
+                    )
+                }
             }
 
             override fun close() {
@@ -1383,7 +1398,8 @@ object ExternalHttpStreamServer {
         }
         val contentLength = end - start + 1L
         // Open-ended / long Ranges are playback. Short finite Ranges are MX probes
-        // (header, moov, resume peek) and must not become the playhead.
+        // (header, moov, resume peek) and must not become the playhead or the
+        // post-seek 256 KiB window.
         val streaming = contentLength > VideoDirectLinkByteSource.VIDEO_BLOCK
         // History: first real playback GET (full file or long Range), not HEAD / probes.
         if (!headOnly && (range == null || streaming)) {
@@ -1686,3 +1702,14 @@ object ExternalHttpStreamServer {
  * Range, or a finished read — reconnecting the shared warm body fights the new Range.
  */
 internal fun httpBodyShouldRetryRead(n: Int, remaining: Long): Boolean = n < 0 && remaining > 0L
+
+/**
+ * True when a new **streaming** Range is a seek or a resume away from byte 0.
+ * Callers must not pass header / moov / resume peeks (those are not streaming).
+ * Playing from the start and retrying the same playhead keep the 4×1 MiB pipeline.
+ */
+internal fun httpRangeIsPlaybackSeek(previousPlayhead: Long, start: Long): Boolean {
+    if (start <= 0L) return false
+    if (previousPlayhead == Long.MIN_VALUE) return true
+    return start != previousPlayhead
+}
