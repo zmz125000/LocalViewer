@@ -15,6 +15,7 @@
 #include <cstring>
 
 #define LOG_TAG "Jp2Decode"
+#define ALOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
 #define ALOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
 
 namespace {
@@ -180,25 +181,42 @@ void* decodeJob(void* arg) {
     }
     const int fullW = static_cast<int>(image->x1 - image->x0);
     const int fullH = static_cast<int>(image->y1 - image->y0);
-    if (fullW <= 0 || fullH <= 0 || fullW > kMaxEdge || fullH > kMaxEdge ||
-        static_cast<int64_t>(fullW) * fullH > kMaxPixels || image->numcomps < 1) {
+    if (fullW <= 0 || fullH <= 0 || image->numcomps < 1) {
         opj_destroy_codec(codec);
         opj_stream_destroy(stream);
         opj_image_destroy(image);
         return nullptr;
     }
-    if (job->maxEdge > 0) {
-        int reduce = 0;
-        while (reduce < 8) {
-            const int lw = std::max(1, fullW >> reduce);
-            const int lh = std::max(1, fullH >> reduce);
-            if (lw <= job->maxEdge && lh <= job->maxEdge) break;
-            ++reduce;
+    // Drop highest wavelet levels until the frame fits the long-edge request and
+    // the decode budget. Rejecting here makes ImageDecoder report "unimplemented".
+    int reduce = 0;
+    while (reduce < 32) {
+        const int lw = std::max(1, fullW >> reduce);
+        const int lh = std::max(1, fullH >> reduce);
+        const bool edgeOk = lw <= kMaxEdge && lh <= kMaxEdge &&
+            (job->maxEdge <= 0 || (lw <= job->maxEdge && lh <= job->maxEdge));
+        if (edgeOk && static_cast<int64_t>(lw) * lh <= kMaxPixels) break;
+        if (lw == 1 && lh == 1) break;
+        ++reduce;
+    }
+    while (reduce > 0 &&
+           !opj_set_decoded_resolution_factor(codec, static_cast<OPJ_UINT32>(reduce))) {
+        --reduce;
+    }
+    {
+        const int lw = std::max(1, fullW >> reduce);
+        const int lh = std::max(1, fullH >> reduce);
+        const bool edgeOk = lw <= kMaxEdge && lh <= kMaxEdge &&
+            (job->maxEdge <= 0 || (lw <= job->maxEdge && lh <= job->maxEdge));
+        if (!edgeOk || static_cast<int64_t>(lw) * lh > kMaxPixels) {
+            opj_destroy_codec(codec);
+            opj_stream_destroy(stream);
+            opj_image_destroy(image);
+            return nullptr;
         }
-        while (reduce > 0 &&
-               !opj_set_decoded_resolution_factor(codec, static_cast<OPJ_UINT32>(reduce))) {
-            --reduce;
-        }
+    }
+    if (job->maxEdge <= 0 && reduce > 0) {
+        ALOGI("JP2 %dx%d over decode budget, discarding %d levels", fullW, fullH, reduce);
     }
     if (!opj_decode(codec, stream, image) || !opj_end_decompress(codec, stream)) {
         opj_destroy_codec(codec);
