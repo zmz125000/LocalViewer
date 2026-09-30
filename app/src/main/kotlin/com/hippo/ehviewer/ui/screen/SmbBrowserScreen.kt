@@ -113,6 +113,8 @@ import com.hippo.ehviewer.library.naturalCompare
 import com.hippo.ehviewer.library.smbBrowseVirtual
 import com.hippo.ehviewer.library.stableGalleryId
 import com.hippo.ehviewer.library.toRemoteBrowseSections
+import com.hippo.ehviewer.shortcuts.FolderHomeShortcut
+import com.hippo.ehviewer.shortcuts.FolderShortcutTarget
 import com.hippo.ehviewer.smb.SmbGateway
 import com.hippo.ehviewer.smb.SmbPasswordStore
 import com.hippo.ehviewer.smb.SmbRepository
@@ -156,8 +158,6 @@ import com.hippo.ehviewer.ui.main.browseZipAsDirTypeLabel
 import com.hippo.ehviewer.ui.main.onRecentHeaderGesture
 import com.hippo.ehviewer.ui.main.rememberBrowseSectionCollapse
 import com.hippo.ehviewer.ui.main.rememberRecentStripExpanded
-import com.hippo.ehviewer.shortcuts.FolderHomeShortcut
-import com.hippo.ehviewer.shortcuts.FolderShortcutTarget
 import com.hippo.ehviewer.ui.navToReader
 import com.hippo.ehviewer.ui.navToSmbFolderReader
 import com.hippo.ehviewer.ui.reader.ReaderScreenArgs
