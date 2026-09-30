@@ -3,13 +3,13 @@ package com.hippo.ehviewer.smb
 import android.net.TrafficStats
 import com.hippo.ehviewer.Settings
 import java.io.IOException
-import java.net.Inet4Address
 import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.Socket
 import java.net.UnknownHostException
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.ExecutionException
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
@@ -17,13 +17,13 @@ import java.util.concurrent.TimeoutException
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
- * Happy Eyeballs for SMB.
+ * Happy Eyeballs for the SMB browse socket.
  *
- * DNS and mDNS (when the toggle applies) publish addresses independently.
- * Each new address is connected immediately, so a late mDNS answer is not
- * stuck behind a slow DNS attempt. IPv4 and IPv6 run side by side. The first
- * connected socket is returned. The other family is allowed to finish so both
- * can be cached; a second success is closed after [SmbMdns.rememberDial].
+ * The socket returned here is the pool connection. DNS and mDNS publish
+ * addresses independently: the first one starts that socket, the same address
+ * is not dialed again, and a different address is another attempt on this
+ * socket only. A failed attempt is closed. A socket already returned to the
+ * pool is not closed when a later attempt loses.
  */
 internal object SmbDualStack {
     private val pool = Executors.newCachedThreadPool { runnable ->
@@ -35,6 +35,48 @@ internal object SmbDualStack {
             "smb-dial",
         ).apply { isDaemon = true }
     }
+
+    /** Pool connects currently accepting late DNS/mDNS addresses. */
+    private val races = ConcurrentHashMap<String, CopyOnWriteArrayList<(InetAddress) -> Unit>>()
+
+    /** Let a known-good address win before a fresh lookup starts another socket. */
+    private const val PROVEN_HEAD_START_MS = 300L
+
+    /**
+     * Publish a lookup result. An in-flight pool connect dials a new address
+     * immediately. Otherwise it waits, and the next pool socket is the attempt.
+     * Nothing in the browse pool is closed from here.
+     */
+    fun deliver(host: String, address: InetAddress) {
+        val listeners = races[raceKey(host)]
+        if (listeners.isNullOrEmpty()) {
+            SmbMdns.addCandidate(host, address)
+        } else {
+            listeners.forEach { it(address) }
+        }
+    }
+
+    /**
+     * Re-query DNS and mDNS for a folder refresh. Does not open a socket and
+     * does not drop a live browse session. A new address is tried by the pool
+     * connect that is already running, or by the next one.
+     */
+    fun refresh(host: String) {
+        val gen = SmbMdns.generationNow()
+        SmbMdns.systemLookup(host).whenComplete { addresses, _ ->
+            if (SmbMdns.generationNow() != gen) return@whenComplete
+            addresses.orEmpty().forEach { deliver(host, it) }
+        }
+        val mdnsName = if (Settings.smbMdns.value) smbMdnsQueryName(host) else null
+        if (mdnsName == null) return
+        pool.execute {
+            if (SmbMdns.generationNow() != gen) return@execute
+            val found = runCatching { SmbMdns.queryFresh(mdnsName) }.getOrDefault(emptyList())
+            found.forEach { deliver(host, it) }
+        }
+    }
+
+    private fun raceKey(host: String) = host.trim().lowercase()
 
     /**
      * Start DNS and mDNS before smbj builds its [java.net.InetSocketAddress].
@@ -51,24 +93,29 @@ internal object SmbDualStack {
     }
 
     fun open(host: String, port: Int, timeoutMs: Int, newSocket: () -> Socket): Socket {
-        val gen = SmbMdns.generationNow()
-        val cached = SmbMdns.dialTargets(host)
-        if (cached.isNotEmpty()) {
-            try {
-                return race(host, port, timeoutMs, gen, cached, resolve = false, newSocket)
-            } catch (_: CachedMiss) {
-                SmbMdns.forgetDial(host)
-            }
-        }
+        val proven = SmbMdns.dialTargets(host)
         return race(
             host,
             port,
             timeoutMs,
             SmbMdns.generationNow(),
-            emptyList(),
-            resolve = true,
+            dialList(host),
+            provenKeys = proven.mapNotNull { it.hostAddress }.toSet(),
+            delayResolve = proven.isNotEmpty(),
             newSocket,
         )
+    }
+
+    private fun dialList(host: String): List<InetAddress> {
+        val proven = SmbMdns.dialTargets(host)
+        val extra = SmbMdns.peekCandidates(host)
+        if (extra.isEmpty()) return proven
+        val seen = HashSet<String>()
+        return buildList {
+            for (address in proven + extra) {
+                if (smbOfferAddress(seen, address)) add(address)
+            }
+        }
     }
 
     private fun race(
@@ -77,7 +124,8 @@ internal object SmbDualStack {
         timeoutMs: Int,
         gen: Int,
         initial: List<InetAddress>,
-        resolve: Boolean,
+        provenKeys: Set<String>,
+        delayResolve: Boolean,
         newSocket: () -> Socket,
     ): Socket {
         val winner = CompletableFuture<Socket>()
@@ -85,17 +133,22 @@ internal object SmbDualStack {
         val sockets = ConcurrentHashMap<String, Socket>()
         val attempts = AtomicInteger()
         val failed = AtomicInteger()
-        val resolversLeft = AtomicInteger(if (resolve) 1 else 0)
+        val resolversLeft = AtomicInteger(0)
+        val resolvePending = AtomicInteger(1)
 
         fun maybeFail(error: Exception) {
             if (winner.isDone) return
-            if (resolversLeft.get() != 0) return
+            if (resolvePending.get() != 0 || resolversLeft.get() != 0) return
             if (failed.get() != attempts.get()) return
             val cause = if (attempts.get() == 0) UnknownHostException(host) else error
             winner.completeExceptionally(cause)
         }
 
         fun start(address: InetAddress) {
+            if (winner.isDone) {
+                SmbMdns.addCandidate(host, address)
+                return
+            }
             if (!smbOfferAddress(seen, address)) return
             val key = address.hostAddress ?: return
             attempts.incrementAndGet()
@@ -105,63 +158,96 @@ internal object SmbDualStack {
                     socket = newSocket()
                     sockets[key] = socket
                     socket.connect(InetSocketAddress(address, port), timeoutMs)
-                    SmbMdns.rememberDial(host, address, gen)
+                    SmbMdns.forgetCandidate(host, address)
                     if (winner.complete(socket)) {
-                        closeSameFamily(address, key, sockets)
+                        SmbMdns.rememberDial(host, address, gen, replace = true)
+                        closeOthers(key, sockets)
                     } else {
+                        SmbMdns.rememberDial(host, address, gen)
                         runCatching { socket.close() }
                     }
                 } catch (e: Exception) {
                     socket?.let { runCatching { it.close() } }
                     sockets.remove(key)
+                    SmbMdns.forgetCandidate(host, address)
+                    if (key in provenKeys) SmbMdns.forgetExact(host, address)
                     failed.incrementAndGet()
                     maybeFail(e)
                 }
             }
         }
 
-        initial.forEach(::start)
-        if (resolve) {
-            val mdnsName = if (Settings.smbMdns.value) smbMdnsQueryName(host) else null
-            if (mdnsName == null) {
-                pool.execute {
+        val listeners = races.computeIfAbsent(raceKey(host)) { CopyOnWriteArrayList() }
+        val listener: (InetAddress) -> Unit = { start(it) }
+        listeners.add(listener)
+        try {
+            initial.forEach(::start)
+            pool.execute {
+                if (delayResolve) {
                     try {
-                        systemAddresses(host).forEach(::start)
-                    } finally {
-                        resolversLeft.decrementAndGet()
-                        maybeFail(UnknownHostException(host))
+                        Thread.sleep(PROVEN_HEAD_START_MS)
+                    } catch (_: InterruptedException) {
+                        Thread.currentThread().interrupt()
+                    }
+                    if (winner.isDone) {
+                        resolvePending.set(0)
+                        return@execute
                     }
                 }
-            } else {
-                resolversLeft.set(2)
-                SmbMdns.systemLookup(host).whenComplete { addresses, _ ->
-                    addresses?.forEach(::start)
+                beginResolve(host, ::start, ::maybeFail, resolversLeft)
+                resolvePending.set(0)
+                maybeFail(UnknownHostException(host))
+            }
+
+            return try {
+                winner.get(timeoutMs.toLong(), TimeUnit.MILLISECONDS)
+            } catch (e: ExecutionException) {
+                sockets.values.forEach { runCatching { it.close() } }
+                val cause = e.cause
+                if (cause is IOException) throw cause
+                throw IOException(cause ?: e)
+            } catch (_: TimeoutException) {
+                sockets.values.forEach { runCatching { it.close() } }
+                throw IOException("SMB connect timed out: $host:$port")
+            }
+        } finally {
+            listeners.remove(listener)
+            if (listeners.isEmpty()) races.remove(raceKey(host), listeners)
+        }
+    }
+
+    private fun beginResolve(
+        host: String,
+        start: (InetAddress) -> Unit,
+        maybeFail: (Exception) -> Unit,
+        resolversLeft: AtomicInteger,
+    ) {
+        val mdnsName = if (Settings.smbMdns.value) smbMdnsQueryName(host) else null
+        if (mdnsName == null) {
+            resolversLeft.set(1)
+            pool.execute {
+                try {
+                    systemAddresses(host).forEach(start)
+                } finally {
                     resolversLeft.decrementAndGet()
                     maybeFail(UnknownHostException(host))
                 }
-                pool.execute {
-                    try {
-                        SmbMdns.resolve(mdnsName).forEach(::start)
-                    } finally {
-                        resolversLeft.decrementAndGet()
-                        maybeFail(UnknownHostException(host))
-                    }
+            }
+        } else {
+            resolversLeft.set(2)
+            SmbMdns.systemLookup(host).whenComplete { addresses, _ ->
+                addresses?.forEach(start)
+                resolversLeft.decrementAndGet()
+                maybeFail(UnknownHostException(host))
+            }
+            pool.execute {
+                try {
+                    SmbMdns.resolve(mdnsName).forEach(start)
+                } finally {
+                    resolversLeft.decrementAndGet()
+                    maybeFail(UnknownHostException(host))
                 }
             }
-        }
-
-        return try {
-            winner.get(timeoutMs.toLong(), TimeUnit.MILLISECONDS)
-        } catch (e: ExecutionException) {
-            sockets.values.forEach { runCatching { it.close() } }
-            val cause = e.cause
-            if (!resolve && initial.isNotEmpty()) throw CachedMiss(cause)
-            if (cause is IOException) throw cause
-            throw IOException(cause ?: e)
-        } catch (_: TimeoutException) {
-            sockets.values.forEach { runCatching { it.close() } }
-            if (!resolve && initial.isNotEmpty()) throw CachedMiss(null)
-            throw IOException("SMB connect timed out: $host:$port")
         }
     }
 
@@ -169,14 +255,9 @@ internal object SmbDualStack {
         InetAddress.getAllByName(host).toList()
     }.getOrDefault(emptyList())
 
-    private class CachedMiss(cause: Throwable?) : IOException(cause)
-
-    private fun closeSameFamily(winner: InetAddress, winnerKey: String, sockets: Map<String, Socket>) {
-        val winnerV4 = winner is Inet4Address
+    private fun closeOthers(winnerKey: String, sockets: Map<String, Socket>) {
         for ((key, socket) in sockets) {
-            if (key == winnerKey) continue
-            val otherV4 = !key.contains(':')
-            if (otherV4 == winnerV4) runCatching { socket.close() }
+            if (key != winnerKey) runCatching { socket.close() }
         }
     }
 }

@@ -29,7 +29,9 @@ import splitties.init.appCtx
  * as soon as it arrives, IPv4 and IPv6 in parallel. The first TCP success is the
  * socket used for that connection. A success is stored per family, so the cache
  * can hold both an IPv4 and an IPv6 address. Later sockets use that cache.
- * [SmbMdns.clear] drops it when mDNS is toggled, on a network change, and on process exit.
+ * [SmbMdns.clear] drops it when mDNS is toggled, on a failed connect, on a network
+ * change, and on process exit. A folder refresh only publishes addresses. The
+ * browse-pool socket is the connection that tries them.
  *
  * Queries set the QU bit so the peer unicasts the A/AAAA answer to our ephemeral
  * port. Android's mDNS daemon already owns UDP 5353, so we do not bind that port.
@@ -50,7 +52,45 @@ internal class SmbDialCache {
         }
     }
 
+    /** Replace one family after a refresh probe connected. The other family stays. */
+    fun replace(address: InetAddress) {
+        if (address is Inet4Address) ipv4 = address else ipv6 = address
+    }
+
+    /** Drop this address only. The other family, and any newer address, stay. */
+    fun forgetExact(address: InetAddress) {
+        val key = address.hostAddress ?: return
+        if (address is Inet4Address) {
+            if (ipv4?.hostAddress == key) ipv4 = null
+        } else if (ipv6?.hostAddress == key) {
+            ipv6 = null
+        }
+    }
+
     fun targets(): List<InetAddress> = listOfNotNull(ipv4, ipv6)
+}
+
+/**
+ * Addresses seen by a refresh before the browse pool connects.
+ * A proven address is not stored again. Dropping one does not touch the pool.
+ */
+internal class SmbAddressOffers {
+    private val extra = ArrayList<InetAddress>()
+
+    fun offer(address: InetAddress, proven: List<InetAddress>): Boolean {
+        val key = address.hostAddress ?: return false
+        if (proven.any { it.hostAddress == key }) return false
+        if (extra.any { it.hostAddress == key }) return false
+        extra.add(address)
+        return true
+    }
+
+    fun snapshot(): List<InetAddress> = extra.toList()
+
+    fun drop(address: InetAddress) {
+        val key = address.hostAddress ?: return
+        extra.removeAll { it.hostAddress == key }
+    }
 }
 
 /** True the first time [address] is offered. A late, different mDNS answer is dialed too. */
@@ -234,6 +274,7 @@ internal object SmbMdns {
     }
     private val cache = ConcurrentHashMap<String, Entry>()
     private val dialCaches = ConcurrentHashMap<String, SmbDialCache>()
+    private val offered = ConcurrentHashMap<String, SmbAddressOffers>()
     private val inflight = ConcurrentHashMap<String, CompletableFuture<List<InetAddress>>>()
     private val generation = AtomicInteger()
 
@@ -251,21 +292,58 @@ internal object SmbMdns {
         return synchronized(entry) { entry.targets() }
     }
 
-    fun rememberDial(host: String, address: InetAddress, gen: Int) {
+    fun rememberDial(host: String, address: InetAddress, gen: Int, replace: Boolean = false) {
         if (generation.get() != gen) return
         val entry = dialCaches.computeIfAbsent(dialKey(host)) { SmbDialCache() }
-        synchronized(entry) { entry.remember(address) }
+        synchronized(entry) {
+            if (replace) entry.replace(address) else entry.remember(address)
+        }
         logcat { "SmbMdns: cached ${address.hostAddress} for $host" }
+    }
+
+    /**
+     * Ask the network again. An empty or failed answer leaves the previous packet
+     * cache in place so a refresh cannot replace a good name with a miss.
+     */
+    fun queryFresh(qname: String): List<InetAddress> {
+        val found = query(qname)
+        if (found.addresses.isEmpty()) return emptyList()
+        val ttlMs = found.ttlSeconds.coerceIn(MIN_TTL_SEC, MAX_TTL_SEC) * 1000L
+        cache[qname] = Entry(found.addresses, System.currentTimeMillis() + ttlMs)
+        return found.addresses
     }
 
     fun forgetDial(host: String) {
         dialCaches.remove(dialKey(host))
     }
 
+    fun forgetExact(host: String, address: InetAddress) {
+        val entry = dialCaches[dialKey(host)] ?: return
+        synchronized(entry) { entry.forgetExact(address) }
+    }
+
+    /** Same address as one already proven is ignored. A new one waits for the next pool socket. */
+    fun addCandidate(host: String, address: InetAddress) {
+        val entry = offered.computeIfAbsent(dialKey(host)) { SmbAddressOffers() }
+        val added = synchronized(entry) { entry.offer(address, dialTargets(host)) }
+        if (added) logcat { "SmbMdns: candidate ${address.hostAddress} for $host" }
+    }
+
+    fun peekCandidates(host: String): List<InetAddress> {
+        val entry = offered[dialKey(host)] ?: return emptyList()
+        return synchronized(entry) { entry.snapshot() }
+    }
+
+    fun forgetCandidate(host: String, address: InetAddress) {
+        val entry = offered[dialKey(host)] ?: return
+        synchronized(entry) { entry.drop(address) }
+    }
+
     fun clear() {
         generation.incrementAndGet()
         cache.clear()
         dialCaches.clear()
+        offered.clear()
     }
 
     private fun dialKey(host: String) = host.trim().lowercase()

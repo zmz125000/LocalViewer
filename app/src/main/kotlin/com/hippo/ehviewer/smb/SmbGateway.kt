@@ -1548,6 +1548,7 @@ object SmbGateway {
             }
         } catch (e: Throwable) {
             if (e is CancellationException) throw e
+            noteConnectFailure(e)
             logcat {
                 "SmbGateway: share-enum failed host=$host ${elapsedMs()}ms: ${e.message}"
             }
@@ -1707,6 +1708,15 @@ object SmbGateway {
     }
 
     /**
+     * Background DNS/mDNS recheck for a manual folder refresh.
+     * Does not open a socket and does not close browse-pool sessions.
+     * A new address is dialed by the pool connection already in progress, or the next one.
+     */
+    fun refreshNameLookup(source: SmbSourceEntity) {
+        SmbDualStack.refresh(endpointHost(source))
+    }
+
+    /**
      * Path change (Wi‑Fi/cell/VPN/EasyTier stop). Safe to call from **main**, binder, or
      * EasyTier UI stop — pool maps are cleared immediately; socket teardown is async.
      *
@@ -1825,7 +1835,7 @@ object SmbGateway {
             }
             clearHostCircuit(host, source.port)
             Unit
-        }
+        }.onFailure { noteConnectFailure(it) }
     }
 
     /**
@@ -3710,6 +3720,7 @@ object SmbGateway {
 
             // Only wipe the host pool for true path/network loss — not every transport blip.
             if (isNetworkUnreachable(first)) {
+                noteConnectFailure(first)
                 disconnectHost(host, source.port)
                 tripHostCircuit(host, source.port, first)
                 throw first
@@ -3745,6 +3756,7 @@ object SmbGateway {
                 }
                 if (isHostCapacityError(second)) throw second
                 if (isNetworkUnreachable(second)) {
+                    noteConnectFailure(second)
                     disconnectHost(host, source.port)
                     tripHostCircuit(host, source.port, second)
                 }
@@ -3819,6 +3831,7 @@ object SmbGateway {
                 }
             } catch (e: Throwable) {
                 runCatching { smbClient.close() }
+                noteConnectFailure(e)
                 coroutineContext.ensureActive()
                 throw e
             } finally {
@@ -4019,6 +4032,41 @@ internal fun isSmbExpectedCloseError(t: Throwable): Boolean = isShareClosedError
 
 /** True only for pooled DiskShare/session death (kill TCP). File-id abort is not this. */
 internal fun isSmbShareSessionDeath(t: Throwable): Boolean = isShareClosedError(t)
+
+/**
+ * A failed TCP connect, or a lookup that produced no usable address.
+ * Wrong-password and mid-transfer SMB errors are not this.
+ */
+private fun isNameLookupFailure(t: Throwable): Boolean {
+    var cur: Throwable? = t
+    while (cur != null) {
+        when (cur) {
+            is java.net.ConnectException,
+            is java.net.UnknownHostException,
+            is java.net.NoRouteToHostException,
+            is java.net.SocketTimeoutException,
+            is java.nio.channels.UnresolvedAddressException,
+            -> return true
+        }
+        val msg = cur.message.orEmpty()
+        if (msg.contains("SMB connect timed out", ignoreCase = true) ||
+            msg.contains("SMB connect failed", ignoreCase = true) ||
+            msg.contains("failed to connect", ignoreCase = true) ||
+            msg.contains("Network is unreachable", ignoreCase = true) ||
+            msg.contains("No route to host", ignoreCase = true)
+        ) {
+            return true
+        }
+        cur = cur.cause
+    }
+    return false
+}
+
+private fun noteConnectFailure(error: Throwable) {
+    if (error is CancellationException) return
+    if (!isNameLookupFailure(error) && !isNetworkUnreachable(error)) return
+    SmbMdns.clear()
+}
 
 private fun isTransportError(t: Throwable): Boolean {
     if (isShareClosedError(t)) return true

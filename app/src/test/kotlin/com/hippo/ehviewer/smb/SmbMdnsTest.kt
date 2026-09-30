@@ -30,6 +30,23 @@ class SmbMdnsTest {
         val later = InetAddress.getByAddress(byteArrayOf(10, 0, 0, 2))
         cache.remember(later)
         assertEquals(listOf(v4, v6), cache.targets())
+        cache.replace(later)
+        assertEquals(listOf(later, v6), cache.targets())
+        cache.forgetExact(later)
+        assertEquals(listOf(v6), cache.targets())
+    }
+
+    @Test
+    fun sameAddressIsNotASecondCandidate() {
+        val proven = InetAddress.getByAddress(byteArrayOf(192.toByte(), 168.toByte(), 1, 20))
+        val other = InetAddress.getByAddress(byteArrayOf(192.toByte(), 168.toByte(), 1, 50))
+        val offers = SmbAddressOffers()
+        assertFalse(offers.offer(proven, listOf(proven)))
+        assertTrue(offers.offer(other, listOf(proven)))
+        assertFalse(offers.offer(other, listOf(proven)))
+        assertEquals(listOf(other), offers.snapshot())
+        offers.drop(other)
+        assertTrue(offers.snapshot().isEmpty())
     }
 
     @Test
