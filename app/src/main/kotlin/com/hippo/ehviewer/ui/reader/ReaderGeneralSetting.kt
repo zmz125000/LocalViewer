@@ -66,11 +66,26 @@ fun ReaderGeneralSetting(isDocument: Boolean = false) = Column(modifier = Modifi
         summary = stringResource(id = R.string.pref_reader_hardware_bitmap_summary),
         field = Settings.readerHardwareBitmap.asMutableState(),
     )
+    val hiResOptimize = Settings.readerHiResOptimize.asMutableState()
     SwitchChoice(
         title = stringResource(id = R.string.pref_reader_hi_res_optimize),
         summary = stringResource(id = R.string.pref_reader_hi_res_optimize_summary),
-        field = Settings.readerHiResOptimize.asMutableState(),
+        field = hiResOptimize,
     )
+    AnimatedVisibility(visible = !hiResOptimize.value) {
+        SpinnerChoice(
+            title = stringResource(id = R.string.pref_decode_size),
+            entries = arrayOf(
+                stringResource(id = R.string.pref_decode_size_1_5x),
+                stringResource(id = R.string.pref_decode_size_2x),
+                stringResource(id = R.string.pref_decode_size_2_5x),
+                stringResource(id = R.string.pref_decode_size_3x),
+                stringResource(id = R.string.pref_decode_size_origin),
+            ),
+            values = listOf(0, 1, 2, 3, 4),
+            field = Settings.readerDecodeSize.asMutableState(),
+        )
+    }
     SwitchChoice(
         title = stringResource(id = R.string.pref_pdf_direct_image),
         summary = stringResource(id = R.string.pref_pdf_direct_image_summary),

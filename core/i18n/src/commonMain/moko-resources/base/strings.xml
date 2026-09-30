@@ -111,6 +111,8 @@
     <string name="browse_action_not_supported">This action is not supported</string>
     <string name="browse_item_info">Info</string>
     <string name="browse_open_folder">Open folder</string>
+    <string name="browse_create_shortcut">Create shortcut</string>
+    <string name="browse_shortcut_unsupported">This launcher can't pin a home screen shortcut</string>
     <string name="browse_play">Play</string>
     <string name="browse_external_player">External player</string>
     <string name="browse_image_reader">Image reader</string>
@@ -587,6 +589,8 @@
     <string name="settings_smb_encrypt_summary">Require encrypted SMB sessions. Resets active SMB connections.</string>
     <string name="settings_smb_async_transport">SMB async transport</string>
     <string name="settings_smb_async_transport_summary">Share small NIO pools instead of one Packet Reader thread per TCP.</string>
+    <string name="settings_smb_mdns">SMB mDNS</string>
+    <string name="settings_smb_mdns_summary">Resolve .local and single-label SMB hosts on the LAN. IP addresses and other names still use system DNS.</string>
     <string name="settings_reader_preload_image">Source prefetch ahead</string>
     <string name="settings_reader_preload_image_summary">Download or extract the next %s pages in the reading direction</string>
     <string name="settings_advanced_disable_reader_network_cache">Disable reader network cache</string>
@@ -878,8 +882,8 @@
     <string name="pref_reader_original_size_summary">Decode full resolution (more RAM). Off: downscale to screen. Or use page menu View original once.</string>
     <string name="pref_reader_hardware_bitmap">Hardware bitmap decode</string>
     <string name="pref_reader_hardware_bitmap_summary">Disables crop borders and QR ad detection to avoid a software copy.</string>
-    <string name="pref_reader_hi_res_optimize">Optimized high-res render</string>
-    <string name="pref_reader_hi_res_optimize_summary">Decode very large photos at 4096 px. Pinch zoom past that decodes the original and keeps it until the page leaves. Zooming back does not decode again.</string>
+    <string name="pref_reader_hi_res_optimize">Optimized high-res rendering</string>
+    <string name="pref_reader_hi_res_optimize_summary">Decode large photos at 4096 px. Zooming in loads the original size.</string>
     <string name="pref_reader_lib_direct_bitmap">Bypass UHDR conversion</string>
     <string name="pref_reader_lib_direct_bitmap_summary">Decode to Bitmap and skip Ultra HDR JPEG conversion for advanced formats.</string>
     <string name="pref_reader_hdr_display">HDR display</string>

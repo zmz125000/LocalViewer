@@ -1,5 +1,6 @@
 package com.hippo.ehviewer.ui.main
 
+import android.widget.Toast
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
@@ -19,10 +20,13 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import com.ehviewer.core.i18n.R
+import com.hippo.ehviewer.shortcuts.FolderHomeShortcut
+import com.hippo.ehviewer.shortcuts.FolderShortcutTarget
 
 enum class BrowseOverflowKind {
     Common,
@@ -60,6 +64,8 @@ data class BrowseOverflowActions(
     val onUnsupported: () -> Unit,
     /** Null hides the item (missing remote source). */
     val onShareViaHttp: (() -> Unit)? = null,
+    /** Home-screen pin for this item. Null hides the menu row. */
+    val shortcut: FolderShortcutTarget? = null,
 )
 
 @Composable
@@ -69,6 +75,8 @@ fun BrowseItemOverflowButton(
     modifier: Modifier = Modifier,
 ) {
     var expanded by remember { mutableStateOf(false) }
+    val context = LocalContext.current
+    val shortcutUnsupported = stringResource(R.string.browse_shortcut_unsupported)
     val grid = placement == BrowseOverflowPlacement.GridBottomEnd
     val more = stringResource(R.string.browse_item_more)
     val iconSize = with(LocalDensity.current) {
@@ -205,6 +213,18 @@ fun BrowseItemOverflowButton(
                     actions.onOpenFolder?.invoke()
                 },
             )
+            val shortcut = actions.shortcut
+            if (shortcut != null) {
+                DropdownMenuItem(
+                    text = { Text(stringResource(R.string.browse_create_shortcut)) },
+                    onClick = {
+                        expanded = false
+                        if (!FolderHomeShortcut.request(context, shortcut)) {
+                            Toast.makeText(context, shortcutUnsupported, Toast.LENGTH_SHORT).show()
+                        }
+                    },
+                )
+            }
             DropdownMenuItem(
                 text = { Text(stringResource(R.string.open_in_other_app)) },
                 onClick = { run(actions.onOpenWith) },

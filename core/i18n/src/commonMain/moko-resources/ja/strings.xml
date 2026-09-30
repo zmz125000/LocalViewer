@@ -211,6 +211,8 @@
     <string name="settings_smb_encrypt_summary">暗号化 SMB セッションを要求（サーバーが SMB 3 暗号化に対応している必要あり）。有効な接続をリセットします。</string>
     <string name="settings_smb_async_transport">SMB 非同期転送</string>
     <string name="settings_smb_async_transport_summary">TCP ごとに Packet Reader を立てず、小さな NIO プールを共有します。</string>
+    <string name="settings_smb_mdns">SMB mDNS</string>
+    <string name="settings_smb_mdns_summary">LAN 上の .local と単一ラベルの SMB ホスト名をマルチキャスト DNS で解決します。IP とその他の名前はシステム DNS のままです。</string>
     <string name="settings_reader_preload_image">リーダー先読み</string>
     <string name="settings_reader_preload_image_summary">次の %s ページを先読み（SMB は先行ダウンロード、ローカルは必要時に開く）</string>
     <string name="settings_advanced_disable_reader_network_cache">リーダーのネットワークキャッシュを無効化</string>
@@ -241,7 +243,7 @@
     <string name="pref_reader_hardware_bitmap">ハードウェアビットマップデコード</string>
     <string name="pref_reader_hardware_bitmap_summary">より高速な Coil 経路（GPU ビットマップ）。余白切り取りと QR 広告検出を無効化し、ソフトウェアコピーを避けます。</string>
     <string name="pref_reader_hi_res_optimize">高解像度の最適化描画</string>
-    <string name="pref_reader_hi_res_optimize_summary">非常に大きい写真は 4096 px でデコードします。ピンチズームがそれを超えると原寸をデコードし、ページを離れるまで保持します。縮小しても再デコードしません。</string>
+    <string name="pref_reader_hi_res_optimize_summary">大きい写真は 4096 px でデコードします。ズームインすると原寸を読み込みます。</string>
     <string name="pref_pdf_direct_image">PDF 直接画像</string>
     <string name="pref_pdf_direct_image_summary">PDF リーダーの画像 PDF は埋め込み画像でページとフォトグリッドを表示します。オフでは各ページを PDF レンダラーで描画します。</string>
     <string name="pref_reader_lib_direct_bitmap">UHDR 変換をバイパス</string>

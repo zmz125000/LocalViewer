@@ -10,6 +10,7 @@ import com.hippo.ehviewer.library.ZipAsDirListing
 import com.hippo.ehviewer.library.openZipContainedFileSource
 import java.io.IOException
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -23,6 +24,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.withTimeoutOrNull
 
 /**
@@ -74,7 +76,7 @@ class SmbArchiveByteSource(
     knownSize: Long = -1L,
     /**
      * This handle belongs to a [SmbGateway.beginVideoPlay] generation. A newer play
-     * force-closes the TCP so a stale HTTP GET cannot occupy the video NIO group.
+     * leaves this TCP and file open; the next video multiplexes on the same session.
      * PDF / non-video FUSE must leave this false.
      */
     videoPlay: Boolean = false,
@@ -146,6 +148,8 @@ class SmbArchiveByteSource(
 
     override fun readAt(offset: Long, buf: ByteArray, off: Int, len: Int): Int = inner.readAt(offset, buf, off, len)
 
+    override fun prefetchReadAt(offset: Long, buf: ByteArray, off: Int, len: Int): Int = inner.prefetchReadAt(offset, buf, off, len)
+
     override fun warm(offset: Long, length: Int) = inner.warm(offset, length)
 
     override fun dropQueuedReads() {
@@ -197,6 +201,9 @@ private class KeepOpenSmbFileSource(
         if (knownSize > 0L) deferred.complete(knownSize)
     }
     private val ops = Channel<Op>(capacity = 64)
+
+    /** Seek / player / header reads. Sticky mode starts these without waiting for [ops]. */
+    private val urgent = Channel<Op>(capacity = 64)
 
     /** Opens/reopens the remote handle only when size/read demand exists. */
     private val demand = Channel<Unit>(capacity = Channel.CONFLATED)
@@ -279,12 +286,20 @@ private class KeepOpenSmbFileSource(
                                                 }
                                             }
                                             if (stickySession) {
+                                                // Launch each READ and keep receiving. A seek on [urgent]
+                                                // starts while a prefetch batch is still on the wire.
+                                                val activeReads = AtomicInteger()
                                                 while (isActive && !closed.get()) {
-                                                    val received = withTimeoutOrNull(STICKY_IDLE_PING_MS) {
-                                                        ops.receiveCatching()
-                                                    }
-                                                    if (received == null) {
+                                                    val op = urgent.tryReceive().getOrNull()
+                                                        ?: withTimeoutOrNull(STICKY_IDLE_PING_MS) {
+                                                            select {
+                                                                urgent.onReceive { it }
+                                                                ops.onReceive { it }
+                                                            }
+                                                        }
+                                                    if (op == null) {
                                                         if (closed.get()) break
+                                                        if (activeReads.get() > 0) continue
                                                         // Keepalive against NAS/NAT idle drop. Share may
                                                         // already be dead after dropStickySessions (screen
                                                         // off) — exit drain cleanly so the HTTP sticky
@@ -297,9 +312,9 @@ private class KeepOpenSmbFileSource(
                                                                 logcat("SmbArchive") {
                                                                     "sticky idle: transport gone, reconnect on demand"
                                                                 }
-                                                                // Queued reads must re-arm open (demand
-                                                                // may already have been consumed).
-                                                                if (!ops.isEmpty) demand.trySend(Unit)
+                                                                if (!ops.isEmpty || !urgent.isEmpty) {
+                                                                    demand.trySend(Unit)
+                                                                }
                                                                 break
                                                             }
                                                             logcat("SmbArchive", e)
@@ -307,8 +322,14 @@ private class KeepOpenSmbFileSource(
                                                         }
                                                         continue
                                                     }
-                                                    val op = received.getOrNull() ?: break
-                                                    runBatch(op)
+                                                    activeReads.incrementAndGet()
+                                                    launch(Dispatchers.IO) {
+                                                        try {
+                                                            handle(op)
+                                                        } finally {
+                                                            activeReads.decrementAndGet()
+                                                        }
+                                                    }
                                                 }
                                             } else {
                                                 // Do not iterate until ops.close(): that held the host-pool
@@ -407,6 +428,9 @@ private class KeepOpenSmbFileSource(
                 for (op in ops) {
                     op.result.complete(-1)
                 }
+                for (op in urgent) {
+                    op.result.complete(-1)
+                }
             } finally {
                 cancelClose.dispose()
             }
@@ -427,7 +451,17 @@ private class KeepOpenSmbFileSource(
             return runBlocking { sizeReady.await() }
         }
 
-    override fun readAt(offset: Long, buf: ByteArray, off: Int, len: Int): Int {
+    override fun readAt(offset: Long, buf: ByteArray, off: Int, len: Int): Int = submit(offset, buf, off, len, urgentRead = true)
+
+    override fun prefetchReadAt(offset: Long, buf: ByteArray, off: Int, len: Int): Int = submit(offset, buf, off, len, urgentRead = false)
+
+    private fun submit(
+        offset: Long,
+        buf: ByteArray,
+        off: Int,
+        len: Int,
+        urgentRead: Boolean,
+    ): Int {
         if (len <= 0) return 0
         if (closed.get()) return -1
         val fileSize = try {
@@ -438,11 +472,12 @@ private class KeepOpenSmbFileSource(
         if (offset >= fileSize) return 0
         val toRead = minOf(len.toLong(), fileSize - offset).toInt()
         val result = CompletableDeferred<Int>()
+        val channel = if (urgentRead && stickySession) urgent else ops
         return try {
             runBlocking {
                 if (closed.get()) return@runBlocking -1
                 demand.trySend(Unit)
-                ops.send(Op(offset, buf, off, toRead, result))
+                channel.send(Op(offset, buf, off, toRead, result))
                 result.await()
             }
         } catch (e: Throwable) {
@@ -460,6 +495,8 @@ private class KeepOpenSmbFileSource(
 
     override fun dropQueuedReads() {
         if (closed.get()) return
+        // Prefetch only. [urgent] holds the seek, the header probe, and playback;
+        // failing those returns -1 to a read the player still needs.
         while (true) {
             val op = ops.tryReceive().getOrNull() ?: break
             op.result.complete(-1)
@@ -471,6 +508,7 @@ private class KeepOpenSmbFileSource(
         // Pool ownership ends now; smbj/file teardown below is intentionally asynchronous.
         httpStickyLease?.let { SmbGateway.cancelHttpStickyLease(it) }
         ops.close()
+        urgent.close()
         demand.close()
         failClosedSizeReady()
         activeFile.getAndSet(null)?.let { file ->

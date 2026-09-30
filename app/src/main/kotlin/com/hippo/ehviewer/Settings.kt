@@ -409,6 +409,18 @@ object Settings : DataStorePreferences(null) {
     val smbAsyncTransport = boolPref("smb_async_transport", true).observed {
         com.hippo.ehviewer.smb.SmbGateway.onProtocolSettingsChanged()
     }
+
+    /**
+     * Multicast DNS for SMB hostnames (Advanced). Default off.
+     * On: `.local` and single-label names are resolved with DNS and mDNS together.
+     * IP literals and other dotted names stay on system DNS. WebDAV is unchanged.
+     * Toggling drops the proven-address cache, browse pools, and sticky video/FUSE
+     * sessions so the next connect resolves again instead of reusing the old TCP.
+     */
+    val smbMdns = boolPref("smb_mdns", false).observed {
+        com.hippo.ehviewer.smb.SmbMdns.clear()
+        com.hippo.ehviewer.smb.SmbGateway.onProtocolSettingsChanged()
+    }
     val downloadDelay = intPref("download_delay_3", 1000)
     val timeoutSpeed = intPref("timeout_speed_level", 6)
 
@@ -764,6 +776,7 @@ object Settings : DataStorePreferences(null) {
      * Coil decode size vs shorter screen edge:
      * 0=1.5x, 1=2x, 2=2.5x, 3=3x, 4=original
      * ([eu.kanade.tachiyomi.ui.reader.setting.DecodeSizeType]). Default 1.5x.
+     * Ignored while [readerHiResOptimize] is on; that path decodes as original.
      * One-shot full-res: page menu "View original image".
      */
     val readerDecodeSize = intPref("pref_reader_decode_size", 4)

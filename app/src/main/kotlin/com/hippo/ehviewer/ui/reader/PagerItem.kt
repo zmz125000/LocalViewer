@@ -131,6 +131,15 @@ fun PagerItem(
             // removes zoomable for a frame, and the pager turns the page.
             val shown = remember { ShownImage() }
             var painter by remember { mutableStateOf<Painter?>(null) }
+            // The 4096 page stays pinned while this item is composed. Showing the
+            // original used to drop that pin, the cache recycled it, and the next
+            // scroll decoded the preview again.
+            DisposableEffect(image) {
+                val held = image.pin()
+                onDispose {
+                    if (held) image.releaseAfterFrames()
+                }
+            }
             DisposableEffect(shown) {
                 onDispose {
                     val current = shown.image

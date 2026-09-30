@@ -1022,6 +1022,7 @@ object OpenFileExternally {
         usePreferredPlayer: Boolean = true,
     ) {
         val prepared = prepareSmbVideoHttp(context, sourceId, remoteRelativeFile, displayName, mimeType)
+        // No player GET yet. Leave the current sticky file open; the next Range multiplexes.
         SmbGateway.beginVideoPlay("http-open:${PrivacyLog.file(displayName)}")
         try {
             launchHttpView(
@@ -1197,7 +1198,7 @@ object OpenFileExternally {
             displayName = displayName,
             mimeType = mimeType,
             sizeBytes = sizeBytes,
-            // Warm one-lane sticky across Ranges; 60s inactive / next-file evict. Pool cap 2.
+            // Warm one-lane sticky across Ranges; 60s inactive. Cap is the HTTP sticky pool.
             cacheBody = video,
             evictOnSmbPoolPressure = video,
             onPlaybackStart = if (video) {
@@ -1218,7 +1219,7 @@ object OpenFileExternally {
                         preferSequential = false,
                         pipeline = false,
                         stickySession = true,
-                        // Video: 2-slot HTTP sticky + beginVideoPlay (seek / next-file).
+                        // Video: HTTP sticky pool; the next file multiplexes on this session.
                         // HTML/CSS/subs: dedicated sticky TCP, not the video generation.
                         httpStickyPool = video,
                         knownSize = sizeBytes.takeIf { it > 0L } ?: -1L,

@@ -107,6 +107,8 @@
     <string name="browse_action_not_supported">不支持此操作</string>
     <string name="browse_item_info">信息</string>
     <string name="browse_open_folder">打开文件夹</string>
+    <string name="browse_create_shortcut">创建快捷方式</string>
+    <string name="browse_shortcut_unsupported">此启动器无法固定主屏幕快捷方式</string>
     <string name="browse_play">播放</string>
     <string name="browse_external_player">外部播放器</string>
     <string name="browse_image_reader">图片阅读器</string>
@@ -224,6 +226,8 @@
     <string name="settings_smb_encrypt_summary">要求加密的 SMB 会话（服务器须支持 SMB 3 加密）。会重置活动 SMB 连接。</string>
     <string name="settings_smb_async_transport">SMB 异步传输</string>
     <string name="settings_smb_async_transport_summary">用少量 NIO 线程池代替每条 TCP 一个 Packet Reader。</string>
+    <string name="settings_smb_mdns">SMB mDNS</string>
+    <string name="settings_smb_mdns_summary">用多播 DNS 解析局域网中的 .local 和单标签 SMB 主机名。IP 和其他域名仍走系统 DNS。</string>
     <string name="settings_reader_preload_image">阅读器预载</string>
     <string name="settings_reader_preload_image_summary">预取后续 %s 页（SMB 会提前下载；本地按需打开）</string>
     <string name="settings_advanced_disable_reader_network_cache">禁用阅读器网络缓存</string>
@@ -832,7 +836,7 @@
     <string name="pref_reader_hardware_bitmap">硬件位图解码</string>
     <string name="pref_reader_hardware_bitmap_summary">更快的 Coil 路径（GPU 位图）。会关闭裁边与二维码广告检测，避免先软件解码再拷贝。</string>
     <string name="pref_reader_hi_res_optimize">高分辨率优化渲染</string>
-    <string name="pref_reader_hi_res_optimize_summary">超大照片先按 4096 像素解码。捏合放大超过该尺寸后解码原图，并保留到离开页面。缩回时不用再次解码。</string>
+    <string name="pref_reader_hi_res_optimize_summary">照片按 4096 像素解码。缩放时加载原始尺寸。</string>
     <string name="pref_reader_lib_direct_bitmap">解码直出位图</string>
     <string name="pref_reader_lib_direct_bitmap_summary">将 JXL / JXR / PQ-AVIF 直接解码为 Bitmap，跳过 Ultra HDR JPEG 转换。</string>
     <string name="pref_reader_hdr_display">HDR 显示</string>

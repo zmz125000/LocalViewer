@@ -119,6 +119,8 @@ import com.hippo.ehviewer.library.safFolderLabel
 import com.hippo.ehviewer.library.stableGalleryId
 import com.hippo.ehviewer.library.toBrowseSections
 import com.hippo.ehviewer.library.withLocalZipCentralDirectory
+import com.hippo.ehviewer.shortcuts.FolderHomeShortcut
+import com.hippo.ehviewer.shortcuts.FolderShortcutTarget
 import com.hippo.ehviewer.ui.LocalShowNavShortcutFab
 import com.hippo.ehviewer.ui.OpenFileExternally
 import com.hippo.ehviewer.ui.OpenPdfBySettings
@@ -179,12 +181,14 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
     fromHistory: Boolean = false,
     /** When opened from Library favourites, show a FAB to jump back to Library. */
     fromLibrary: Boolean = false,
+    /** Non-zero when opened from a home-screen shortcut; resets the path stack. */
+    shortcutEpoch: Long = 0L,
 ) = Screen(navigator) {
     val context = LocalContext.current
     val roots by LocalLibrary.rootsFlow().collectAsState(initial = emptyList())
     // Session-scoped stack survives reader navigation (unlike remember {}).
     // When opened from Browse with a pre-set stack, start inside that root (no root picker).
-    var stack by remember {
+    var stack by remember(shortcutEpoch) {
         mutableStateOf(BrowseSession.localStack)
     }
     fun updateStack(newStack: List<BrowseSession.LocalFrame>) {
@@ -1940,6 +1944,16 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         launchIO { with(context) { BrowseSaveAs.saveLocalFolder(dir, name, relativeName) } }
     }
 
+    fun localShortcut(childRelative: String, isDirectory: Boolean, label: String): FolderShortcutTarget? {
+        val frame = stack.lastOrNull() ?: return null
+        return FolderShortcutTarget(
+            kind = FolderHomeShortcut.KIND_LOCAL,
+            ownerId = frame.rootId,
+            path = FolderHomeShortcut.localPath(frame, childRelative, isDirectory),
+            label = label,
+        )
+    }
+
     fun dirOverflow(dir: BrowseEntry.Directory) = BrowseOverflowActions(
         kind = BrowseOverflowKind.Common,
         favorited = isDirFavorite(dir),
@@ -1955,6 +1969,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                 ),
             )
         },
+        shortcut = localShortcut(dir.relativeName, true, dir.name),
         onUnsupported = { notSupportedAction() },
     )
 
@@ -1975,6 +1990,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                 ),
             )
         },
+        shortcut = localShortcut(entry.relativeName, true, entry.name),
         onUnsupported = { notSupportedAction() },
     )
 
@@ -2003,6 +2019,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
             onOpenFolder = {
                 openBrowseFolder(FolderSearch.openFolderTarget(entry.name, isDirectory = false))
             },
+            shortcut = localShortcut(entry.name, false, entry.name),
             onUnsupported = { notSupportedAction() },
         )
     } else {
@@ -2016,6 +2033,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
             onOpenFolder = {
                 openBrowseFolder(FolderSearch.openFolderTarget(entry.name, isDirectory = false))
             },
+            shortcut = localShortcut(entry.name, false, entry.name),
             onUnsupported = { notSupportedAction() },
         )
     }
@@ -2042,6 +2060,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                 ),
             )
         },
+        shortcut = localShortcut(relativeName, false, path.name),
         onUnsupported = { notSupportedAction() },
     )
 
@@ -2061,6 +2080,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                 onOpenFolder = {
                     openBrowseFolder(FolderSearch.openFolderTarget(relativeName, isDirectory = false))
                 },
+                shortcut = localShortcut(relativeName, false, leaf),
                 onUnsupported = { notSupportedAction() },
             )
         } else if (isPdfOrEbookFileName(leaf)) {
@@ -2098,6 +2118,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                 onOpenFolder = {
                     openBrowseFolder(FolderSearch.openFolderTarget(relativeName, isDirectory = false))
                 },
+                shortcut = localShortcut(relativeName, false, leaf),
                 onUnsupported = { notSupportedAction() },
             )
         } else {
@@ -2110,6 +2131,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                 onOpenFolder = {
                     openBrowseFolder(FolderSearch.openFolderTarget(relativeName, isDirectory = false))
                 },
+                shortcut = localShortcut(relativeName, false, leaf),
                 onUnsupported = { notSupportedAction() },
             )
         }

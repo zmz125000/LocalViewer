@@ -54,8 +54,10 @@ import splitties.init.appCtx
  * - Session map is a **token** (pre-registered files and sizes) until idle max age.
  * - Player may re-Range anytime while the session exists (no need for a live pipe).
  * - Network video keeps a **warm** one-lane body across Ranges. No [readAt] for
- *   [INACTIVE_MS] drops the SMB lane; a new file [SmbGateway.beginVideoPlay] evicts now.
- * - At most [MAX_WARM_CACHE_FILES] warm video bodies process-wide (each holds a RAM window).
+ *   [INACTIVE_MS] drops that lane. A new play does not close it: the sticky session
+ *   stays up, and the next GET opens another file on the same share.
+ * - Warm video bodies are capped by the HTTP sticky pool. Each body is one SMB
+ *   file on the shared session.
  *
  * Slim FGS: process rank for the listener + session map. No wake lock, no idle-ping.
  * Resume is a new Range; SMB starts then. Screen off drops sticky unless a body is live.
@@ -128,6 +130,12 @@ object ExternalHttpStreamServer {
 
         /** Re-open a dead sticky SMB/WebDAV handle. Default no-op for local bodies. */
         fun requestReconnect() = Unit
+
+        /**
+         * Playhead jump: sequential 256 KiB until [untilEpochMs], then 4×1 MiB.
+         * Header / moov / resume peeks must not call this.
+         */
+        fun noteSeek(untilEpochMs: Long) = Unit
     }
 
     class ArchiveBody(private val source: ArchiveByteSource) : StreamBody {
@@ -135,6 +143,7 @@ object ExternalHttpStreamServer {
         override fun readAt(offset: Long, buf: ByteArray, off: Int, len: Int): Int = source.readAt(offset, buf, off, len)
         override fun warm(offset: Long, length: Int) = source.warm(offset, length)
         override fun requestReconnect() = source.requestReconnect()
+        override fun noteSeek(untilEpochMs: Long) = source.noteSeek(untilEpochMs)
         override fun close() = source.close()
     }
 
@@ -276,8 +285,8 @@ object ExternalHttpStreamServer {
          * Open a body for this response. Caller must [StreamBody.close] when the response ends.
          *
          * [FileEntry.cacheBody]: reuse one warm backend across Ranges (open/close is costly on
-         * SMB). No [readAt] for [INACTIVE_MS] drops the lane; next file evicts immediately.
-         * Process-wide cap: [MAX_WARM_CACHE_FILES] warm video windows.
+         * SMB). No [readAt] for [INACTIVE_MS] drops the lane. Warm bodies are capped
+         * by the HTTP sticky pool, one SMB file each.
          */
         fun acquireBody(entry: FileEntry): StreamBody {
             touch()
@@ -297,13 +306,14 @@ object ExternalHttpStreamServer {
                     return RefBody(key, cached)
                 }
             }
-            // New video file: evict other SMB videos *before* opening lanes so a stale
-            // HTTP GET cannot occupy the video NIO group. Same-file Range hits return above.
+            // New video file on an existing sticky session: multiplex, do not close
+            // the file already open. Same-file Range hits return above.
             if (entry.evictOnSmbPoolPressure) {
                 SmbGateway.beginVideoPlay("http:$id/${PrivacyLog.file(key)}")
             }
-            // Make room under the global warm-file cap before opening a new window.
-            trimWarmCacheTo(MAX_WARM_CACHE_FILES - 1, protectSessionId = id, protectKey = key)
+            // Make room under the sticky-pool cap before opening another file.
+            // Idle bodies only; a live HTTP reader keeps its SMB file.
+            trimWarmCacheTo(SmbGateway.httpStickyPoolSize() - 1, protectSessionId = id, protectKey = key)
             val body = entry.open()
             entry.publishSize(body.size)
             synchronized(bodyLock) {
@@ -456,9 +466,6 @@ object ExternalHttpStreamServer {
             fun touch() {
                 lastAccessMs = SystemClock.elapsedRealtime()
             }
-
-            /** Shared so concurrent Range holders serialize sticky seek/read. */
-            val readLock = Any()
         }
 
         class WarmBodyRef(
@@ -473,7 +480,9 @@ object ExternalHttpStreamServer {
 
         /**
          * Shared session body: [close] releases a ref and arms idle timeout (not immediate SMB drop).
-         * Serializes [readAt] so concurrent Ranges do not race sticky seek state.
+         * A new Range does not wait for the previous read to finish; the old playhead
+         * stops at its next call. Offset reads do not share a cursor.
+         * Short header / moov probes are not streaming, so they are not cut off.
          */
         private inner class RefBody(
             private val key: String,
@@ -490,11 +499,10 @@ object ExternalHttpStreamServer {
             override val size: Long get() = cached.body.size
             override fun readAt(offset: Long, buf: ByteArray, off: Int, len: Int): Int {
                 if (streaming && cached.playhead.get() != rangeStart) return 0
-                return synchronized(cached.readLock) {
-                    if (streaming && cached.playhead.get() != rangeStart) return 0
-                    cached.touch()
-                    cached.body.readAt(offset, buf, off, len)
-                }
+                cached.touch()
+                val n = cached.body.readAt(offset, buf, off, len)
+                if (streaming && cached.playhead.get() != rangeStart) return 0
+                return n
             }
 
             override fun warm(offset: Long, length: Int) {
@@ -509,7 +517,15 @@ object ExternalHttpStreamServer {
             fun prepareRange(start: Long, streaming: Boolean) {
                 rangeStart = start
                 this.streaming = streaming
-                if (streaming) cached.playhead.set(start)
+                if (!streaming) return
+                val previous = cached.playhead.getAndSet(start)
+                // Short header / moov / resume peeks are not streaming, so they never
+                // arm this and never move the playhead. A real seek does.
+                if (httpRangeIsPlaybackSeek(previous, start)) {
+                    cached.body.noteSeek(
+                        System.currentTimeMillis() + VideoDirectLinkByteSource.SEEK_STARTUP_MS,
+                    )
+                }
             }
 
             override fun close() {
@@ -524,7 +540,6 @@ object ExternalHttpStreamServer {
 
     /** LAN “Share via HTTP” sessions. Separate from loopback player tokens. */
     private val shareSessions = ConcurrentHashMap<String, Session>()
-    private val onVideoPlayGeneration: () -> Unit = { evictAllSmbVideoBodies("video-play") }
     private val tokenSaltLock = Any()
 
     @Volatile
@@ -652,7 +667,7 @@ object ExternalHttpStreamServer {
     /**
      * Free sticky SMB slots for a new demand read.
      *
-     * Idle bodies go first. Pool is 2 (one video lane + teardown cushion).
+     * Idle bodies go first. The cap is [SmbGateway.httpStickyPoolSize] files on the sticky session.
      */
     fun relieveSmbPoolPressure(): Int {
         var n = 0
@@ -716,11 +731,10 @@ object ExternalHttpStreamServer {
             runCatching { current.close() }
             acceptThread = null
         }
-        // New HTTP sticky acquires may free warm bodies via this pressure hook.
+        // New HTTP sticky acquires may free idle warm bodies via this pressure hook.
         SmbGateway.onHttpStickyPoolPressure = {
             relieveSmbPoolPressure()
         }
-        SmbGateway.addVideoPlayListener(onVideoPlayGeneration)
         val ss = createServerSocket(randomizePort)
         port = ss.localPort
         serverSocket = ss
@@ -1383,7 +1397,8 @@ object ExternalHttpStreamServer {
         }
         val contentLength = end - start + 1L
         // Open-ended / long Ranges are playback. Short finite Ranges are MX probes
-        // (header, moov, resume peek) and must not become the playhead.
+        // (header, moov, resume peek) and must not become the playhead or the
+        // post-seek 256 KiB window.
         val streaming = contentLength > VideoDirectLinkByteSource.VIDEO_BLOCK
         // History: first real playback GET (full file or long Range), not HEAD / probes.
         if (!headOnly && (range == null || streaming)) {
@@ -1674,9 +1689,6 @@ object ExternalHttpStreamServer {
      */
     private const val INACTIVE_MS = 60_000L
 
-    /** Max warm video bodies (each ≈ one VideoDirectLink RAM window) process-wide. */
-    private const val MAX_WARM_CACHE_FILES = 2
-
     /** Loopback Range body + socket buffer. 64 KiB was 80 copies/syscalls per 40 Mbps. */
     private const val HTTP_BODY_BUFFER = 256 * 1024
 }
@@ -1686,3 +1698,14 @@ object ExternalHttpStreamServer {
  * Range, or a finished read — reconnecting the shared warm body fights the new Range.
  */
 internal fun httpBodyShouldRetryRead(n: Int, remaining: Long): Boolean = n < 0 && remaining > 0L
+
+/**
+ * True when a new **streaming** Range is a seek or a resume away from byte 0.
+ * Callers must not pass header / moov / resume peeks (those are not streaming).
+ * Playing from the start and retrying the same playhead keep the 4×1 MiB pipeline.
+ */
+internal fun httpRangeIsPlaybackSeek(previousPlayhead: Long, start: Long): Boolean {
+    if (start <= 0L) return false
+    if (previousPlayhead == Long.MIN_VALUE) return true
+    return start != previousPlayhead
+}

@@ -126,6 +126,10 @@ import com.ehviewer.core.util.withIOContext
 import com.hippo.ehviewer.EhApplication.Companion.initialized
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.collectAsState
+import com.hippo.ehviewer.library.BrowseSession
+import com.hippo.ehviewer.library.LocalLibrary
+import com.hippo.ehviewer.library.buildLocalBrowseStack
+import com.hippo.ehviewer.shortcuts.FolderHomeShortcut
 import com.hippo.ehviewer.ui.destinations.AboutScreenDestination
 import com.hippo.ehviewer.ui.destinations.AdvancedScreenDestination
 import com.hippo.ehviewer.ui.destinations.BrowseScreenDestination
@@ -465,6 +469,7 @@ class MainActivity : AppCompatActivity() {
                 openPendingReader()
                 intentFlow.collect { intent ->
                     when (intent.action) {
+                        FolderHomeShortcut.ACTION -> openFolderShortcut(navigator, intent, snackbarState)
                         PendingReaderOpen.ACTION -> openPendingReader()
                         Intent.ACTION_VIEW -> with(navigator) {
                             val uri = intent.data ?: return@collect
@@ -759,6 +764,63 @@ class MainActivity : AppCompatActivity() {
                     )
                     startActivity(intent)
                 }
+            }
+        }
+    }
+
+    private suspend fun openFolderShortcut(
+        navigator: DestinationsNavigator,
+        intent: Intent,
+        snackbarState: SnackbarHostState,
+    ) {
+        val kind = intent.getStringExtra(FolderHomeShortcut.EXTRA_KIND).orEmpty()
+        val ownerId = intent.getLongExtra(FolderHomeShortcut.EXTRA_OWNER, 0L)
+        val path = intent.getStringExtra(FolderHomeShortcut.EXTRA_PATH).orEmpty()
+        val epoch = System.nanoTime()
+        when (kind) {
+            FolderHomeShortcut.KIND_LOCAL -> {
+                val root = withIOContext { LocalLibrary.loadRoot(ownerId) }
+                val rootPath = root?.let { LocalLibrary.rootPath(it) }
+                if (root == null || rootPath == null) {
+                    snackbarState.showSnackbar(getString(R.string.browse_open_failed))
+                    return
+                }
+                BrowseSession.localStack = buildLocalBrowseStack(
+                    rootId = root.id,
+                    rootDisplayName = root.displayName,
+                    rootPath = rootPath,
+                    relativePath = path,
+                    preferMediaStore = root.prefersMediaStore,
+                )
+                navigator.navigate(FolderBrowserScreenDestination(shortcutEpoch = epoch)) {
+                    launchSingleTop = true
+                }
+            }
+            FolderHomeShortcut.KIND_SMB -> {
+                val remote = path.trim('/').let { if (it == ".") "" else it }
+                BrowseSession.setSmbSegments(ownerId, remote.split('/').filter { it.isNotEmpty() })
+                BrowseSession.setSmbPhotoGrid(ownerId, null)
+                BrowseSession.setSmbExitToOrigin(ownerId, false)
+                navigator.navigate(
+                    SmbBrowserScreenDestination(
+                        sourceId = ownerId,
+                        initialRelativePath = remote,
+                        shortcutEpoch = epoch,
+                    ),
+                ) { launchSingleTop = true }
+            }
+            FolderHomeShortcut.KIND_WEBDAV -> {
+                val remote = path.trim('/').let { if (it == ".") "" else it }
+                BrowseSession.setWebDavSegments(ownerId, remote.split('/').filter { it.isNotEmpty() })
+                BrowseSession.setWebDavPhotoGrid(ownerId, null)
+                BrowseSession.setWebDavExitToOrigin(ownerId, false)
+                navigator.navigate(
+                    WebDavBrowserScreenDestination(
+                        sourceId = ownerId,
+                        initialRelativePath = remote,
+                        shortcutEpoch = epoch,
+                    ),
+                ) { launchSingleTop = true }
             }
         }
     }

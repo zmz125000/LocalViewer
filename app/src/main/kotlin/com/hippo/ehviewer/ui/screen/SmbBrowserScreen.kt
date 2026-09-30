@@ -113,6 +113,8 @@ import com.hippo.ehviewer.library.naturalCompare
 import com.hippo.ehviewer.library.smbBrowseVirtual
 import com.hippo.ehviewer.library.stableGalleryId
 import com.hippo.ehviewer.library.toRemoteBrowseSections
+import com.hippo.ehviewer.shortcuts.FolderHomeShortcut
+import com.hippo.ehviewer.shortcuts.FolderShortcutTarget
 import com.hippo.ehviewer.smb.SmbGateway
 import com.hippo.ehviewer.smb.SmbPasswordStore
 import com.hippo.ehviewer.smb.SmbRepository
@@ -181,6 +183,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
     initialRelativePath: String = "",
     fromHistory: Boolean = false,
     fromLibrary: Boolean = false,
+    shortcutEpoch: Long = 0L,
     navigator: DestinationsNavigator,
 ) = Screen(navigator) {
     DrawerHandle(false)
@@ -194,7 +197,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
     // Session-scoped path. Empty list = share root and is *not* "unset":
     // do not fall back to initialRelativePath when session is empty, or returning from
     // the reader after climbing to root re-opens the History deep folder.
-    var segments by remember {
+    var segments by remember(sourceId, shortcutEpoch) {
         val stored = BrowseSession.smbSegmentsOrNull(sourceId)
         val initial = stored ?: initialRelativePath.split('/').filter { it.isNotEmpty() }.also {
             BrowseSession.setSmbSegments(sourceId, it)
@@ -1664,6 +1667,16 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
         }
     }
 
+    fun smbShortcut(child: String, isDirectory: Boolean, label: String): FolderShortcutTarget? {
+        val id = source?.id ?: return null
+        return FolderShortcutTarget(
+            kind = FolderHomeShortcut.KIND_SMB,
+            ownerId = id,
+            path = FolderHomeShortcut.folderPath(relativeDir, child, isDirectory),
+            label = label.substringAfterLast('/').ifBlank { label },
+        )
+    }
+
     fun dirOverflow(name: String, coverFileName: String? = null, virtual: Boolean = false) = BrowseOverflowActions(
         kind = BrowseOverflowKind.Common,
         favorited = isDirFavorite(name),
@@ -1673,6 +1686,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
         onOpenFolder = {
             openBrowseFolder(FolderSearch.openFolderTarget(name, isDirectory = true, virtual = virtual))
         },
+        shortcut = smbShortcut(name, true, name),
         onUnsupported = { notSupportedAction() },
     )
 
@@ -1693,6 +1707,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                 ),
             )
         },
+        shortcut = smbShortcut(entry.relativeName, true, entry.name),
         onUnsupported = { notSupportedAction() },
     )
 
@@ -1738,6 +1753,11 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                     ),
                 )
             },
+            shortcut = smbShortcut(
+                joinRemoteArchivePath("", entry.parentRelativeName, entry.fileName),
+                false,
+                entry.fileName,
+            ),
             onUnsupported = { notSupportedAction() },
         )
     } else {
@@ -1768,6 +1788,11 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                     ),
                 )
             },
+            shortcut = smbShortcut(
+                joinRemoteArchivePath("", entry.parentRelativeName, entry.fileName),
+                false,
+                entry.fileName,
+            ),
             onUnsupported = { notSupportedAction() },
         )
     }
@@ -1786,6 +1811,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                 FolderSearch.openFolderTarget(fileName, isDirectory = false, virtual = virtual),
             )
         },
+        shortcut = smbShortcut(fileName, false, fileName),
         onUnsupported = { notSupportedAction() },
     )
 
@@ -1803,6 +1829,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
             onOpenFolder = {
                 openBrowseFolder(FolderSearch.openFolderTarget(fileName, isDirectory = false))
             },
+            shortcut = smbShortcut(fileName, false, fileName),
             onUnsupported = { notSupportedAction() },
         )
     } else if (isPdfOrEbookFileName(fileName)) {
@@ -1848,6 +1875,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
             onOpenFolder = {
                 openBrowseFolder(FolderSearch.openFolderTarget(fileName, isDirectory = false))
             },
+            shortcut = smbShortcut(fileName, false, fileName),
             onUnsupported = { notSupportedAction() },
         )
     } else {
@@ -1860,6 +1888,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
             onOpenFolder = {
                 openBrowseFolder(FolderSearch.openFolderTarget(fileName, isDirectory = false))
             },
+            shortcut = smbShortcut(fileName, false, fileName),
             onUnsupported = { notSupportedAction() },
         )
     }
@@ -1898,6 +1927,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                             enabled = refreshEnabled,
                             onClick = {
                                 refreshing = true
+                                source?.let { SmbGateway.refreshNameLookup(it) }
                                 requestForceReload()
                             },
                             shapes = IconButtonDefaults.shapes(),
@@ -1951,6 +1981,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
             isRefreshing = refreshing || loading,
             onRefresh = {
                 refreshing = true
+                source?.let { SmbGateway.refreshNameLookup(it) }
                 requestForceReload()
             },
             modifier = Modifier

@@ -107,16 +107,19 @@ fun BottomReaderBar(
             contentDescription = stringResource(R.string.browse_menu_photo_grid),
         )
     } else {
+        val hiResOptimize by Settings.readerHiResOptimize.collectAsState()
         val decodeSize by Settings.readerDecodeSize.collectAsState { DecodeSizeType.fromPreference(it) }
-        DropdownIconButton(
-            label = stringResource(R.string.pref_decode_size),
-            menuItems = DecodeSizeType.entries,
-            selectedItem = decodeSize,
-            onSelectedItemChange = {
-                Settings.readerDecodeSize.value = it.prefValue
-            },
-            minMenuWidth = 160.dp,
-        )
+        if (!hiResOptimize) {
+            DropdownIconButton(
+                label = stringResource(R.string.pref_decode_size),
+                menuItems = DecodeSizeType.entries,
+                selectedItem = decodeSize,
+                onSelectedItemChange = {
+                    Settings.readerDecodeSize.value = it.prefValue
+                },
+                minMenuWidth = 160.dp,
+            )
+        }
     }
     // 5. Settings
     ActionButton(

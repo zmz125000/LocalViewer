@@ -4,6 +4,7 @@ import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.Future
 import java.util.concurrent.FutureTask
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
@@ -13,9 +14,12 @@ import java.util.concurrent.atomic.AtomicLong
  *
  * External players issue many small Fuse reads (often ≤128 KiB). This source:
  * - Serves from an aligned multi-block sliding window (demand hits are cheap)
- * - Prefetches several blocks **ahead** of the playhead so 4K / ~80 Mbps stays fed
- * - Prefetch uses the **same** sticky lane as demand (one handle). A seek drops
- *   queued prefetch reads so demand is not stuck behind the old runway.
+ * - [noteSeek] (external HTTP playhead jump only) serves at most 256 KiB for
+ *   [SEEK_STARTUP_MS], with no 4×1 MiB runway. Header / moov probes do not call
+ *   [noteSeek]; a short read during the window stays a short read.
+ * - After those 3 s, sequential playback uses the 4×1 MiB pipeline again.
+ * - Prefetch uses the **same** sticky lane as demand (one handle) but a separate
+ *   queue. A seek drops queued prefetch and sends the new offset immediately.
  *
  * Not an archive readahead: no 64 KiB random-probe mode, no ZIP/TAR semantics.
  * Streamdoc uses this path for **video and all non-document files**; PDF / EPUB stay
@@ -36,22 +40,23 @@ class VideoDirectLinkByteSource(
      */
     private val prefetchAhead: Int
     private val prefetchParallel: Int
+    private val randomAccess: Boolean
 
     init {
         require(blockSize > 0) { "blockSize must be positive" }
         require(maxBlocks > 0) { "maxBlocks must be positive" }
         require(prefetchAhead >= 0) { "prefetchAhead must be non-negative" }
-        val sequential = !demand.isRandomAccess
-        this.prefetchAhead = if (sequential) minOf(prefetchAhead, 2) else prefetchAhead
+        randomAccess = demand.isRandomAccess
+        this.prefetchAhead = if (randomAccess) prefetchAhead else minOf(prefetchAhead, 2)
         this.prefetchParallel = when {
             this.prefetchAhead <= 0 -> 0
-            sequential -> 1
+            !randomAccess -> 1
             prefetchParallel > 0 -> prefetchParallel
             else -> PREFETCH_PARALLEL
         }
     }
 
-    private data class Block(val bytes: ByteArray, val length: Int)
+    private data class Block(val bytes: ByteArray, var length: Int)
     private data class InFlight(val future: Future<Block?>, val speculative: Boolean)
 
     private val lock = Any()
@@ -62,6 +67,9 @@ class VideoDirectLinkByteSource(
     private val closed = AtomicBoolean(false)
     private val epoch = AtomicInteger(0)
     private val lastDemandBlock = AtomicLong(-1L)
+
+    /** Nano time until which an HTTP seek keeps reads at [SEEK_STARTUP_CHUNK]. */
+    private val smallReadUntilNs = AtomicLong(Long.MIN_VALUE)
 
     private val prefetchExecutor: ExecutorService? = if (prefetchAhead > 0 && prefetchParallel > 0) {
         val n = minOf(prefetchAhead, prefetchParallel)
@@ -90,9 +98,29 @@ class VideoDirectLinkByteSource(
         val want = minOf(len.toLong(), size - offset).toInt()
         var copied = 0
         val firstBlock = offset / blockSize
-        // Detect a seek before looking at in-flight work. This lets demand cancel an old
-        // speculative runway instead of waiting for its network request to finish.
+        // A jump drops queued prefetch. The 256 KiB window is armed only by [noteSeek].
         noteDemand(firstBlock)
+        if (smallReadWindow()) {
+            // One network trip. A short return lets the HTTP socket write before the next 256 KiB.
+            var didNetwork = false
+            while (copied < want && !didNetwork) {
+                if (closed.get()) return if (copied > 0) copied else -1
+                val absolute = offset + copied
+                val blockIndex = absolute / blockSize
+                val blockStart = blockIndex * blockSize
+                val inBlock = (absolute - blockStart).toInt()
+                val need = minOf(want - copied, blockSize - inBlock, SEEK_STARTUP_CHUNK)
+                val cached = copyCached(blockIndex, inBlock, buf, off + copied, need)
+                if (cached > 0) {
+                    copied += cached
+                    continue
+                }
+                didNetwork = true
+                val n = readUncached(blockStart + inBlock, blockIndex, inBlock, buf, off + copied, need)
+                if (n > 0) copied += n else return if (copied > 0) copied else n
+            }
+            return copied
+        }
         while (copied < want) {
             if (closed.get()) return if (copied > 0) copied else -1
             val absolute = offset + copied
@@ -104,9 +132,7 @@ class VideoDirectLinkByteSource(
             } else {
                 -1
             }
-            if (inBlock >= block.length) {
-                return if (copied > 0) copied else -1
-            }
+            if (inBlock >= block.length) return if (copied > 0) copied else -1
             val n = minOf(want - copied, block.length - inBlock)
             System.arraycopy(block.bytes, inBlock, buf, off + copied, n)
             copied += n
@@ -115,11 +141,78 @@ class VideoDirectLinkByteSource(
         return copied
     }
 
+    /** Copy a cached prefix. 0 when this offset is not in the window yet. */
+    private fun copyCached(
+        blockIndex: Long,
+        inBlock: Int,
+        buf: ByteArray,
+        off: Int,
+        need: Int,
+    ): Int {
+        synchronized(lock) {
+            val slot = blocks[blockIndex] ?: return 0
+            if (slot.length <= inBlock) return 0
+            val n = minOf(need, slot.length - inBlock)
+            System.arraycopy(slot.bytes, inBlock, buf, off, n)
+            return n
+        }
+    }
+
+    /** One SMB read of the caller's span, stored when it extends the cached prefix. */
+    private fun readUncached(
+        absolute: Long,
+        blockIndex: Long,
+        inBlock: Int,
+        buf: ByteArray,
+        off: Int,
+        need: Int,
+    ): Int {
+        val n = try {
+            demand.readAt(absolute, buf, off, need)
+        } catch (_: Throwable) {
+            -1
+        }
+        if (n > 0) remember(blockIndex, inBlock, buf, off, n)
+        return n
+    }
+
+    private fun remember(
+        blockIndex: Long,
+        inBlock: Int,
+        src: ByteArray,
+        srcOff: Int,
+        n: Int,
+    ) {
+        val expected = blockBytes(blockIndex)
+        if (expected <= 0 || inBlock < 0 || n <= 0 || inBlock + n > expected) return
+        synchronized(lock) {
+            if (closed.get()) return
+            var slot = blocks[blockIndex]
+            if (slot == null) {
+                if (inBlock != 0) return
+                slot = Block(ByteArray(expected), 0)
+                blocks[blockIndex] = slot
+            }
+            if (slot.length != inBlock) return
+            System.arraycopy(src, srcOff, slot.bytes, inBlock, n)
+            slot.length += n
+        }
+    }
+
+    private fun blockBytes(blockIndex: Long): Int {
+        val blockStart = blockIndex * blockSize
+        if (blockStart >= size) return 0
+        return minOf(blockSize.toLong(), size - blockStart).toInt()
+    }
+
     /** True when the byte at [offset] is already in the in-memory video window. */
     fun isBuffered(offset: Long): Boolean {
         if (offset < 0L || offset >= size || closed.get()) return false
+        val blockIndex = offset / blockSize
+        val inBlock = (offset - blockIndex * blockSize).toInt()
         return synchronized(lock) {
-            blocks.containsKey(offset / blockSize)
+            val slot = blocks[blockIndex] ?: return false
+            slot.length > inBlock
         }
     }
 
@@ -128,25 +221,49 @@ class VideoDirectLinkByteSource(
         if (offset >= size) return
         val blockIndex = offset / blockSize
         noteDemand(blockIndex)
+        if (smallReadWindow()) return
         // Demand-load the first block so warm is useful for open probes.
         getOrLoadBlock(blockIndex, forDemand = true)
         schedulePrefetch(blockIndex)
     }
 
+    private fun smallReadWindow(): Boolean = System.nanoTime() < smallReadUntilNs.get()
+
     private fun noteDemand(blockIndex: Long) {
         val prev = lastDemandBlock.getAndSet(blockIndex)
-        if (prev >= 0L) {
-            val jump = kotlin.math.abs(blockIndex - prev)
-            // Large jump → cancel stale speculative work so seek does not wait on old runway.
-            if (jump > 2L) {
-                epoch.incrementAndGet()
-                cancelStalePrefetch(keep = blockIndex)
-                demand.dropQueuedReads()
-                val prefetchLane = prefetch
-                if (prefetchLane != null && prefetchLane !== demand) {
-                    prefetchLane.dropQueuedReads()
-                }
-            }
+        if (prev < 0L) return
+        val jump = kotlin.math.abs(blockIndex - prev)
+        // Large jump → cancel stale speculative work so seek does not wait on old runway.
+        // Does not arm the 256 KiB window: a header probe is also a jump.
+        if (jump <= 1L) return
+        epoch.incrementAndGet()
+        cancelStalePrefetch(keep = blockIndex)
+        demand.dropQueuedReads()
+        val prefetchLane = prefetch
+        if (prefetchLane != null && prefetchLane !== demand) {
+            prefetchLane.dropQueuedReads()
+        }
+    }
+
+    /**
+     * External HTTP playhead jump. Short header / moov reads keep the steady path
+     * unless they arrive while this window is already open, and then they are
+     * served at the requested length (not padded, not a 4 MiB fill).
+     */
+    override fun noteSeek(untilEpochMs: Long) {
+        if (closed.get() || untilEpochMs <= 0L) return
+        val remainMs = untilEpochMs - System.currentTimeMillis()
+        if (remainMs <= 0L) {
+            smallReadUntilNs.set(Long.MIN_VALUE)
+            return
+        }
+        smallReadUntilNs.set(System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(remainMs))
+        epoch.incrementAndGet()
+        cancelAllSpeculative()
+        demand.dropQueuedReads()
+        val prefetchLane = prefetch
+        if (prefetchLane != null && prefetchLane !== demand) {
+            prefetchLane.dropQueuedReads()
         }
     }
 
@@ -158,9 +275,11 @@ class VideoDirectLinkByteSource(
             var join: Future<Block?>? = null
             var runLocal: FutureTask<Block?>? = null
             var superseded: Future<Block?>? = null
+            val expected = blockBytes(blockIndex)
+            if (expected <= 0) return null
             synchronized(lock) {
                 if (closed.get()) return null
-                blocks[blockIndex]?.let { return it }
+                blocks[blockIndex]?.let { if (it.length >= expected) return it }
                 val existing = inFlight[blockIndex]
                 if (existing != null && (!forDemand || !existing.speculative)) {
                     join = existing.future
@@ -216,19 +335,58 @@ class VideoDirectLinkByteSource(
 
         val source = if (usePrefetchLane) prefetchSource else demand
         val bytes = ByteArray(expected)
-        var filled = 0
+        var filled = synchronized(lock) {
+            val slot = blocks[blockIndex]
+            if (slot != null && slot.length > 0) {
+                System.arraycopy(slot.bytes, 0, bytes, 0, slot.length)
+                slot.length
+            } else {
+                0
+            }
+        }
         var reconnects = 0
+        val epochAtStart = epoch.get()
         while (filled < expected && !closed.get()) {
+            if (usePrefetchLane && epoch.get() != epochAtStart) break
+            val from = blockStart + filled
+            // Random-access: 4×1 MiB in one SMB read. Deflate stays inside this block.
+            val pipeline = if (randomAccess) {
+                minOf(PIPELINE_BYTES.toLong(), size - from).toInt()
+            } else {
+                minOf((expected - filled).toLong(), size - from).toInt()
+            }
+            if (pipeline <= 0) break
+            val readBuf = ByteArray(pipeline)
             val n = try {
-                source.readAt(blockStart + filled, bytes, filled, expected - filled)
+                if (usePrefetchLane) {
+                    source.prefetchReadAt(from, readBuf, 0, pipeline)
+                } else {
+                    source.readAt(from, readBuf, 0, pipeline)
+                }
             } catch (_: Throwable) {
                 -1
             }
             if (n > 0) {
-                filled += n
+                var left = n
+                var srcOff = 0
+                var abs = from
+                while (left > 0) {
+                    val idx = abs / blockSize
+                    val inBlock = (abs - idx * blockSize).toInt()
+                    val piece = minOf(left, blockSize - inBlock)
+                    if (idx == blockIndex) {
+                        System.arraycopy(readBuf, srcOff, bytes, inBlock, piece)
+                        filled = inBlock + piece
+                    } else {
+                        remember(idx, inBlock, readBuf, srcOff, piece)
+                    }
+                    left -= piece
+                    srcOff += piece
+                    abs += piece
+                }
                 continue
             }
-            if (n == 0 && blockStart + filled >= size) break
+            if (n == 0 && from >= size) break
             if (closed.get() || reconnects >= BLOCK_RECONNECT_ATTEMPTS) break
             reconnects++
             source.requestReconnect()
@@ -238,7 +396,10 @@ class VideoDirectLinkByteSource(
         // Only cache complete blocks so a blip cannot poison the window with a short tail mid-file.
         if (filled == expected) {
             synchronized(lock) {
-                if (!closed.get()) blocks[blockIndex] = block
+                val current = blocks[blockIndex]
+                if (!closed.get() && (current == null || current.length < block.length)) {
+                    blocks[blockIndex] = block
+                }
             }
         }
         return block
@@ -248,14 +409,18 @@ class VideoDirectLinkByteSource(
         val executor = prefetchExecutor ?: return
         if (closed.get() || prefetchAhead <= 0) return
         val myEpoch = epoch.get()
-        for (i in 1..prefetchAhead) {
+        // Demand already filled this block and, on random-access, the rest of its 4 MiB pipeline.
+        val step = if (randomAccess) (PIPELINE_BYTES / blockSize).coerceAtLeast(1) else 1
+        for (i in step..prefetchAhead step step) {
             val blockIndex = fromBlock + i
             if (blockIndex * blockSize >= size) break
 
             lateinit var task: FutureTask<Block?>
             synchronized(lock) {
                 if (closed.get() || myEpoch != epoch.get()) return
-                if (blocks.containsKey(blockIndex) || inFlight.containsKey(blockIndex)) continue
+                val expected = blockBytes(blockIndex)
+                val slot = blocks[blockIndex]
+                if ((slot != null && slot.length >= expected) || inFlight.containsKey(blockIndex)) continue
                 // Cap in-flight speculative work so seek cancels stay cheap.
                 if (inFlight.values.count { it.speculative } >= prefetchAhead) return
                 task = FutureTask {
@@ -294,6 +459,15 @@ class VideoDirectLinkByteSource(
                 load.speculative && idx != keep &&
                     (idx < keep - 1L || idx > keep + prefetchAhead)
             }
+            drop.keys.forEach { inFlight.remove(it) }
+            drop.values.map { it.future }
+        }
+        for (f in doomed) f.cancel(true)
+    }
+
+    private fun cancelAllSpeculative() {
+        val doomed = synchronized(lock) {
+            val drop = inFlight.filterValues { it.speculative }
             drop.keys.forEach { inFlight.remove(it) }
             drop.values.map { it.future }
         }
@@ -342,10 +516,21 @@ class VideoDirectLinkByteSource(
         const val VIDEO_PREFETCH_AHEAD = 8
 
         /**
-         * Parallel prefetch for random-access sources. Sticky SMB multiplexes READs
-         * on one handle ([KeepOpenSmbFileSource] pipeline = 4). Deflate ZIP stays at 1.
+         * Speculative block fills kept in flight. Together with the SMB layer's
+         * four 1 MiB credits, this is the LAN read-ahead.
+         * An HTTP seek does not start these until [SEEK_STARTUP_MS] has passed.
          */
         const val PREFETCH_PARALLEL = 4
+
+        /** One steady-state SMB read: four 1 MiB credits. */
+        private const val PIPELINE_BYTES = 4 * 1024 * 1024
+
+        /**
+         * External HTTP seek: reads of at most this size for [SEEK_STARTUP_MS],
+         * then [PIPELINE_BYTES] on the sticky lane.
+         */
+        const val SEEK_STARTUP_MS = 3_000L
+        const val SEEK_STARTUP_CHUNK = 256 * 1024
 
         fun isVideo(mimeType: String, displayName: String): Boolean = mimeType.startsWith("video/", ignoreCase = true) || isVideoFileName(displayName)
 

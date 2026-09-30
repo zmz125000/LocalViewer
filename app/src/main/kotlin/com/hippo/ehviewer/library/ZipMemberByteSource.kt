@@ -49,9 +49,22 @@ class ZipMemberByteSource private constructor(
         }
     }
 
+    override fun prefetchReadAt(offset: Long, buf: ByteArray, off: Int, len: Int): Int {
+        if (len <= 0) return 0
+        if (offset < 0L || offset >= size) return 0
+        val want = minOf(len.toLong(), size - offset).toInt()
+        return if (entry.method == ZipCentralDirectory.METHOD_STORE && !entry.isEncrypted) {
+            zip.prefetchReadAt(payloadOffset + offset, buf, off, want)
+        } else {
+            readAt(offset, buf, off, len)
+        }
+    }
+
     override fun dropQueuedReads() = zip.dropQueuedReads()
 
     override fun requestReconnect() = zip.requestReconnect()
+
+    override fun noteSeek(untilEpochMs: Long) = zip.noteSeek(untilEpochMs)
 
     override fun warm(offset: Long, length: Int) {
         if (offset < 0L || length <= 0 || offset >= size) return
