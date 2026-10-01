@@ -13,16 +13,19 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.WindowInsetsSides
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
-import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.material3.ShapeDefaults
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyGridState
@@ -96,11 +99,12 @@ import com.ramcosta.composedestinations.navigation.DestinationsNavigator
 import kotlin.math.roundToInt
 import kotlinx.coroutines.launch
 
-private val PanelStrip = 48.dp
+private val WindowMaxWidth = 340.dp
+private val WindowMaxHeight = 480.dp
 
 /**
- * Right-side explorer panel. Swipe left to open, swipe right or tap the
- * remaining strip to close. Not the modal side drawer (no scrim, no blur).
+ * Small floating explorer window (dialog / in-app picture-in-picture).
+ * Swipe left to open, swipe right or tap outside to close. The page stays visible around it.
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -120,12 +124,13 @@ fun ExplorerSidePanelHost(
     }
     val density = LocalDensity.current
     BoxWithConstraints(Modifier.fillMaxSize()) {
-        val panelWidth = (maxWidth - PanelStrip).coerceAtLeast(0.dp)
-        val panelWidthPx = with(density) { panelWidth.toPx() }
+        val windowWidth = minOf(maxWidth - 16.dp, WindowMaxWidth).coerceAtLeast(0.dp)
+        val windowHeight = minOf(maxHeight - 96.dp, WindowMaxHeight).coerceAtLeast(0.dp)
+        val slidePx = with(density) { (windowWidth + 24.dp).toPx() }
         SideEffect {
             panelState.anchoredDraggableState.updateAnchors(
                 DraggableAnchors {
-                    DrawerValue.Closed at panelWidthPx
+                    DrawerValue.Closed at slidePx
                     DrawerValue.Open at 0f
                 },
             )
@@ -137,7 +142,7 @@ fun ExplorerSidePanelHost(
                     state = panelState.anchoredDraggableState,
                     enableDragFromStartToEnd = panelState.isOpen,
                     enableDragFromEndToStart = panelState.isClosed,
-                    enabled = gesturesEnabled && panelWidthPx > 0f,
+                    enabled = gesturesEnabled && slidePx > 0f,
                     flingBehavior = AnchoredDraggableDefaults.flingBehavior(
                         state = panelState.anchoredDraggableState,
                         animationSpec = androidx.compose.animation.core.tween(256),
@@ -148,9 +153,7 @@ fun ExplorerSidePanelHost(
             if (panelState.isOpen) {
                 Box(
                     Modifier
-                        .align(Alignment.CenterStart)
-                        .width(PanelStrip)
-                        .fillMaxHeight()
+                        .fillMaxSize()
                         .clickable(
                             interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
                             indication = null,
@@ -159,15 +162,18 @@ fun ExplorerSidePanelHost(
                 )
             }
             val rawOffset = panelState.currentOffset
-            val offset = if (rawOffset.isNaN()) panelWidthPx else rawOffset
+            val offset = if (rawOffset.isNaN()) slidePx else rawOffset
             Column(
                 Modifier
-                    .align(Alignment.CenterEnd)
-                    .width(panelWidth)
-                    .fillMaxHeight()
+                    .align(Alignment.TopEnd)
+                    .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.End))
+                    .padding(top = 8.dp, end = 8.dp)
+                    .width(windowWidth)
+                    .height(windowHeight)
                     .offset { IntOffset(offset.roundToInt(), 0) }
-                    .background(MaterialTheme.colorScheme.surfaceContainer)
-                    .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top)),
+                    .shadow(8.dp, ShapeDefaults.Large)
+                    .clip(ShapeDefaults.Large)
+                    .background(MaterialTheme.colorScheme.surfaceContainer),
             ) {
                 ExplorerPanel(
                     navigator = navigator,
@@ -190,6 +196,7 @@ private fun ExplorerPanel(
     var showFavorites by rememberSaveable { mutableStateOf(false) }
     val activeId = ExplorerWindows.activeId
     val windows = ExplorerWindows.windows
+    Column(Modifier.fillMaxSize()) {
     Row(
         modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -216,20 +223,23 @@ private fun ExplorerPanel(
             )
         }
     }
-    if (showFavorites) {
-        ExplorerFavoritesGrid(
-            navigator = navigator,
-            onNavigated = onNavigated,
-        )
-    } else {
-        ExplorerWindowList(
-            windows = windows,
-            activeId = activeId,
-            navigator = navigator,
-            currentDestination = currentDestination,
-            browserSourceId = browserSourceId,
-            onNavigated = onNavigated,
-        )
+    Box(Modifier.weight(1f).fillMaxWidth()) {
+        if (showFavorites) {
+            ExplorerFavoritesGrid(
+                navigator = navigator,
+                onNavigated = onNavigated,
+            )
+        } else {
+            ExplorerWindowList(
+                windows = windows,
+                activeId = activeId,
+                navigator = navigator,
+                currentDestination = currentDestination,
+                browserSourceId = browserSourceId,
+                onNavigated = onNavigated,
+            )
+        }
+    }
     }
 }
 
