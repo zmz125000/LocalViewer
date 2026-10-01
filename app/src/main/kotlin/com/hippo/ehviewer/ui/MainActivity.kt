@@ -578,7 +578,7 @@ class MainActivity : AppCompatActivity() {
                 val onBrowseRoot = item.direction == BrowseScreenDestination &&
                     currentDestination == BrowseScreenDestination
                 if (onBrowseRoot) {
-                    explorerPanel.open()
+                    explorerPanel.toggle()
                 } else {
                     explorerPanel.close()
                     navigateMainTab(navigator, item, selectedTab, currentDestination)

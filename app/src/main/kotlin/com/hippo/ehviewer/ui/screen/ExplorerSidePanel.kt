@@ -113,6 +113,7 @@ import kotlinx.coroutines.withContext
 class ExplorerPanelActions {
     var open: () -> Unit = {}
     var close: () -> Unit = {}
+    var toggle: () -> Unit = {}
 }
 
 val LocalExplorerPanel = compositionLocalOf { ExplorerPanelActions() }
@@ -171,15 +172,40 @@ fun ExplorerSidePanelHost(
         closeJob?.cancel()
         closeJob = scope.launch { panelState.open() }
     }
+    fun togglePanel() {
+        val expanded = panelState.isOpen || panelState.targetValue == DrawerValue.Open
+        if (expanded) {
+            closeGuard.snapOnCancel = true
+            closeJob?.cancel()
+            closeJob = scope.launch {
+                try {
+                    panelState.close()
+                } finally {
+                    if (!closeGuard.snapOnCancel) return@launch
+                    withContext(NonCancellable) {
+                        val offset = panelState.currentOffset
+                        val closedAt = panelState.anchoredDraggableState.anchors.positionOf(DrawerValue.Closed)
+                        if (offset.isNaN() || closedAt.isNaN() || abs(offset - closedAt) > 0.5f) {
+                            panelState.snapTo(DrawerValue.Closed)
+                        }
+                    }
+                }
+            }
+        } else {
+            openPanel()
+        }
+    }
     val panelActions = LocalExplorerPanel.current
     SideEffect {
         panelActions.open = { openPanel() }
         panelActions.close = { closePanel() }
+        panelActions.toggle = { togglePanel() }
     }
     DisposableEffect(panelActions) {
         onDispose {
             panelActions.open = {}
             panelActions.close = {}
+            panelActions.toggle = {}
         }
     }
     LaunchedEffect(gesturesEnabled) {
@@ -359,6 +385,7 @@ private fun ExplorerPanel(
                 fromHistory = fromHistory,
                 fromLibrary = fromLibrary,
                 tablet = tablet,
+                onToggleMode = { showFavorites = !showFavorites },
                 onNavigated = onNavigated,
             )
         } else {
@@ -369,6 +396,7 @@ private fun ExplorerPanel(
                 currentDestination = currentDestination,
                 browserSourceId = browserSourceId,
                 tablet = tablet,
+                onToggleMode = { showFavorites = !showFavorites },
                 onNavigated = onNavigated,
             )
         }
@@ -384,6 +412,7 @@ private fun ExplorerWindowList(
     currentDestination: Any?,
     browserSourceId: Long?,
     tablet: Boolean,
+    onToggleMode: () -> Unit,
     onNavigated: () -> Unit,
 ) {
     val roots by LocalLibrary.rootsFlow().collectAsState(initial = emptyList())
@@ -407,7 +436,7 @@ private fun ExplorerWindowList(
     ) {
         if (windows.isNotEmpty()) {
         item(key = "win-hdr") {
-            BrowseSectionHeader(stringResource(R.string.explorer_windows))
+            BrowseSectionHeader(stringResource(R.string.explorer_windows), onClick = onToggleMode)
         }
         items(windows, key = { "w-${it.id}" }) { window ->
             val source = windowSourceName(window, roots, smb, webDav)
@@ -456,7 +485,7 @@ private fun ExplorerWindowList(
         }
         }
         item(key = "saved-hdr") {
-            BrowseSectionHeader(stringResource(R.string.explorer_saved_paths))
+            BrowseSectionHeader(stringResource(R.string.explorer_saved_paths), onClick = onToggleMode)
         }
         items(saved, key = { "s-${it.key}" }) { item ->
             ExplorerPathRow(
@@ -486,6 +515,7 @@ private fun ExplorerFavoritesGrid(
     fromHistory: Boolean,
     fromLibrary: Boolean,
     tablet: Boolean,
+    onToggleMode: () -> Unit,
     onNavigated: () -> Unit,
 ) {
     val roots by LocalLibrary.rootsFlow().collectAsState(initial = emptyList())
@@ -522,7 +552,7 @@ private fun ExplorerFavoritesGrid(
         horizontalArrangement = GalleryGridDefaults.spacedBy(),
     ) {
         item(key = "fav-hdr", span = { GridItemSpan(maxLineSpan) }) {
-            BrowseSectionHeader(stringResource(R.string.browse_favorites))
+            BrowseSectionHeader(stringResource(R.string.browse_favorites), onClick = onToggleMode)
         }
         items(favorites, key = { "fav-${it.key}" }) { fav ->
             FavoriteSourceGridCell(
@@ -539,7 +569,7 @@ private fun ExplorerFavoritesGrid(
         }
         if (smb.isNotEmpty() || webDav.isNotEmpty()) {
             item(key = "src-net", span = { GridItemSpan(maxLineSpan) }) {
-                BrowseSectionHeader(stringResource(R.string.network))
+                BrowseSectionHeader(stringResource(R.string.network), onClick = onToggleMode)
             }
             items(smb, key = { "smb-${it.id}" }) { source ->
                 FavoriteSourceGridCell(
@@ -570,7 +600,7 @@ private fun ExplorerFavoritesGrid(
         }
         if (roots.isNotEmpty()) {
             item(key = "src-dir", span = { GridItemSpan(maxLineSpan) }) {
-                BrowseSectionHeader(stringResource(R.string.folder))
+                BrowseSectionHeader(stringResource(R.string.folder), onClick = onToggleMode)
             }
             items(roots, key = { "root-${it.id}" }) { root ->
                 FavoriteSourceGridCell(
