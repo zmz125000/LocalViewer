@@ -71,7 +71,6 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.ehviewer.core.database.model.LOCAL_GALLERY_KIND_ARCHIVE
 import com.ehviewer.core.i18n.R
 import com.ehviewer.core.ui.component.FastScrollLazyVerticalGrid
@@ -343,8 +342,10 @@ private fun ExplorerPanel(
         modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 12.dp, top = 8.dp, bottom = 2.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        val headerStyle = MaterialTheme.typography.titleLarge.let { style ->
-            if (tablet) style else style.copy(fontSize = 20.sp, lineHeight = 26.sp)
+        val headerStyle = if (tablet) {
+            MaterialTheme.typography.titleLarge
+        } else {
+            MaterialTheme.typography.titleMedium
         }
         val headerIconSize = with(LocalDensity.current) { headerStyle.fontSize.toDp() }
         Text(
