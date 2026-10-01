@@ -187,6 +187,8 @@ private class KeepOpenSmbFileSource(
     private val yieldable: Boolean = false,
 ) : ArchiveByteSource {
     private val remote = RemoteArchiveOpen.normalizeRemoteRelative(remoteRelativeFile)
+    /** Play generation at open. A later share switch must not be stolen back by this file. */
+    private val videoEpoch = if (videoPlay) SmbGateway.currentVideoPlayEpoch() else null
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val closed = AtomicBoolean(false)
     private val httpStickyLease = if (stickySession && httpStickyPool) {
@@ -348,7 +350,7 @@ private class KeepOpenSmbFileSource(
                                         activeFile.compareAndSet(file, null)
                                     }
                                 }
-                                val playEpoch = if (videoPlay) SmbGateway.currentVideoPlayEpoch() else null
+                                val playEpoch = videoEpoch
                                 when {
                                     stickySession && httpStickyPool -> {
                                         SmbGateway.withHttpStickyOpenFile(
@@ -382,6 +384,20 @@ private class KeepOpenSmbFileSource(
                                 }
                                 break
                             } catch (e: Throwable) {
+                                if (e is SmbStickyMovedException) {
+                                    logcat("SmbArchive") {
+                                        "sticky belongs to a newer share; not reconnecting"
+                                    }
+                                    while (true) {
+                                        val op = ops.tryReceive().getOrNull() ?: break
+                                        op.result.complete(-1)
+                                    }
+                                    while (true) {
+                                        val op = urgent.tryReceive().getOrNull() ?: break
+                                        op.result.complete(-1)
+                                    }
+                                    break
+                                }
                                 if (closed.get() || !isActive) throw e
                                 // Share/transport death mid-session is expected after screen-off
                                 // dropSticky / NAS idle; reconnect on next demand without Error spam.

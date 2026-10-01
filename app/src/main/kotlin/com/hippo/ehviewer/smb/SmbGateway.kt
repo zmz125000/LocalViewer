@@ -3292,11 +3292,13 @@ object SmbGateway {
     }
 
     /**
-     * One live video/FUSE tree per host. Next-file hop is [DiskShare.openFile] only —
-     * no new TCP / session / tree. Dropped by [dropStickySessions] (screen off / idle).
+     * One live video/FUSE tree per host. Next file on this share is [DiskShare.openFile]
+     * only — no new TCP. A newer play on a **different** share replaces it. An older
+     * play must not connect back over that replacement. Dropped by [dropStickySessions].
      */
     private data class ReusableSticky(
         val key: String,
+        val epoch: Int,
         val client: SMBClient,
         val connection: Connection,
         val session: Session,
@@ -3307,6 +3309,25 @@ object SmbGateway {
     private var reusableSticky: ReusableSticky? = null
 
     private fun stickyShareKey(source: SmbSourceEntity, host: String, share: String): String = "$host:${source.port}:${source.id}:$share"
+
+    /** True when [live] is a different share that a newer play still owns. */
+    private fun mayReplaceForeignSticky(
+        source: SmbSourceEntity,
+        host: String,
+        share: String,
+        epoch: Int?,
+    ): Boolean {
+        val live = synchronized(reusableStickyLock) { reusableSticky } ?: return true
+        if (live.key == stickyShareKey(source, host, share)) return true
+        if (!stickyStillUp(live)) return true
+        return (epoch ?: 0) >= live.epoch
+    }
+
+    private fun stickyStillUp(sticky: ReusableSticky): Boolean = try {
+        sticky.connection.isConnected && sticky.share.isConnected
+    } catch (_: Throwable) {
+        false
+    }
 
     private fun <T> openStickyConnection(
         source: SmbSourceEntity,
@@ -3333,11 +3354,18 @@ object SmbGateway {
                 } catch (e: Throwable) {
                     // Closing this file (player done, warm-cache trim) must not drop the
                     // TCP. Other HTTP requests still have files open on it.
-                    if (e is CancellationException || isFileHandleAbortError(e)) throw e
+                    if (e is CancellationException || isFileHandleAbortError(e) || e is SmbStickyMovedException) {
+                        throw e
+                    }
                     if (!isShareClosedError(e) && !isTransportError(e)) throw e
                     logcat { "SmbGateway: sticky reuse failed, reconnect: ${e.message}" }
                     retireReusable(reused, "reuse-fail")
+                    if (!mayReplaceForeignSticky(source, host, loc.share, videoPlayEpoch)) {
+                        throw SmbStickyMovedException()
+                    }
                 }
+            } else if (!mayReplaceForeignSticky(source, host, loc.share, videoPlayEpoch)) {
+                throw SmbStickyMovedException()
             }
             return connectReusableSticky(source, password, host, loc.share, path, videoPlayEpoch, block)
         } finally {
@@ -3394,13 +3422,28 @@ object SmbGateway {
             val tree = session.connectShare(shareName) as DiskShare
             val created = ReusableSticky(
                 key = stickyShareKey(source, host, shareName),
+                epoch = videoPlayEpoch ?: 0,
                 client = smbClient,
                 connection = connection,
                 session = session,
                 share = tree,
             )
             val previous = synchronized(reusableStickyLock) {
-                reusableSticky.also { reusableSticky = created }
+                val current = reusableSticky
+                if (current != null &&
+                    current.connection !== connection &&
+                    current.key != created.key &&
+                    stickyStillUp(current) &&
+                    (videoPlayEpoch ?: 0) < current.epoch
+                ) {
+                    null
+                } else {
+                    reusableSticky = created
+                    current
+                }
+            }
+            if (previous == null && reusableSticky !== created) {
+                throw SmbStickyMovedException()
             }
             if (previous != null && previous.connection !== connection) {
                 retireReusable(previous, "replaced")
@@ -4015,6 +4058,14 @@ private fun isFileHandleAbortError(t: Throwable): Boolean {
 
 /** Share death **or** file-id abort — quiet for archive reads; do not retry. */
 internal fun isSmbExpectedCloseError(t: Throwable): Boolean = isShareClosedError(t) || isFileHandleAbortError(t)
+
+/**
+ * This open lost the sticky slot to a newer play on a different share.
+ * Reconnecting would drop that share's TCP and leave it stuck at one file.
+ */
+internal class SmbStickyMovedException : IOException(
+    "SMB sticky session belongs to a newer share",
+)
 
 /** True only for pooled DiskShare/session death (kill TCP). File-id abort is not this. */
 internal fun isSmbShareSessionDeath(t: Throwable): Boolean = isShareClosedError(t)
