@@ -80,6 +80,8 @@ import com.hippo.ehviewer.library.BrowseEntry
 import com.hippo.ehviewer.library.BrowseFavorites
 import com.hippo.ehviewer.library.BrowseFolderId
 import com.hippo.ehviewer.library.BrowseSession
+import com.hippo.ehviewer.library.ExplorerWindows
+import com.hippo.ehviewer.ui.ExplorerGestureEnabled
 import com.hippo.ehviewer.library.BrowseVirtualKind
 import com.hippo.ehviewer.library.DirPresence
 import com.hippo.ehviewer.library.EmptyArchiveRegistry
@@ -188,27 +190,33 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
     val roots by LocalLibrary.rootsFlow().collectAsState(initial = emptyList())
     // Session-scoped stack survives reader navigation (unlike remember {}).
     // When opened from Browse with a pre-set stack, start inside that root (no root picker).
-    var stack by remember(shortcutEpoch) {
+    val explorerWindowId = ExplorerWindows.activeId
+    var stack by remember(shortcutEpoch, explorerWindowId) {
         mutableStateOf(BrowseSession.localStack)
     }
     fun updateStack(newStack: List<BrowseSession.LocalFrame>) {
         stack = newStack
         BrowseSession.localStack = newStack
     }
+    LaunchedEffect(explorerWindowId, stack) {
+        val id = explorerWindowId ?: return@LaunchedEffect
+        ExplorerWindows.syncLocal(id, stack)
+    }
 
     /**
      * Stack size of the listing that owned the Search section when a dir was opened
      * from that section. Next goUp jumps there. Overflow Open folder leaves this -1.
      */
-    var searchReturnStackSize by remember { mutableIntStateOf(-1) }
+    var searchReturnStackSize by remember(explorerWindowId) { mutableIntStateOf(-1) }
 
-    var entries by remember { mutableStateOf<List<BrowseEntry>>(emptyList()) }
+    var entries by remember(explorerWindowId) { mutableStateOf<List<BrowseEntry>>(emptyList()) }
     // Lazy-drop non-image archives when cover open reports 0 pages (EmptyArchiveRegistry).
     val emptyArchiveRev by EmptyArchiveRegistry.revision.collectAsState()
     val displayEntries = remember(entries, emptyArchiveRev) {
         EmptyArchiveRegistry.filterLocalEntries(entries)
     }
     val search = rememberBrowseFolderSearchState()
+    ExplorerGestureEnabled(!search.active)
     val searchFolderKey = stack.lastOrNull()?.path?.let { BrowseSession.localFolderSearchKey(it) }.orEmpty()
     var searchHits by remember(searchFolderKey) {
         mutableStateOf(BrowseSession.peekFolderSearchHits<BrowseEntry>(searchFolderKey))

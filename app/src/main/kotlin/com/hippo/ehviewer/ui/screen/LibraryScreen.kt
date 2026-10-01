@@ -109,7 +109,7 @@ import com.hippo.ehviewer.library.resolveFavoriteBrowseSources
 import com.hippo.ehviewer.library.toBaseGalleryInfo
 import com.hippo.ehviewer.library.withLocalZipCentralDirectory
 import com.hippo.ehviewer.smb.SmbRepository
-import com.hippo.ehviewer.ui.DrawerHandle
+import com.hippo.ehviewer.ui.ExplorerGestureEnabled
 import com.hippo.ehviewer.ui.OpenFileExternally
 import com.hippo.ehviewer.ui.Screen
 import com.hippo.ehviewer.ui.main.BrowseGridPlaceholderIconSize
@@ -193,7 +193,7 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
         }
     }
 
-    DrawerHandle(!searchFocused)
+    ExplorerGestureEnabled(!searchFocused)
 
     val density = LocalDensity.current
     val scanning by LocalLibrary.scanning.collectAsState()
@@ -891,7 +891,7 @@ private fun FavoriteSourceListRow(
  * label scrim (same as favourite gallery). Miss / no key keeps classic icon layout.
  */
 @Composable
-private fun FavoriteSourceGridCell(
+internal fun FavoriteSourceGridCell(
     fav: FavoriteBrowseSource,
     onClick: () -> Unit,
     onLongClick: () -> Unit = onClick,
@@ -1017,7 +1017,7 @@ private fun FavoriteSourceGridCell(
 }
 
 /** Stored cover key for folder favourites only (null for whole sources / galleries). */
-private fun folderFavoriteThumbKey(fav: FavoriteBrowseSource): String? = when (fav) {
+internal fun folderFavoriteThumbKey(fav: FavoriteBrowseSource): String? = when (fav) {
     is FavoriteBrowseSource.LocalFolder -> fav.thumbKey
     is FavoriteBrowseSource.SmbFolder -> fav.thumbKey
     is FavoriteBrowseSource.WebDavFolder -> fav.thumbKey
@@ -1068,7 +1068,7 @@ private fun favoriteMetaLine(fav: FavoriteBrowseSource): String {
 }
 
 /** Leading / center glyph for favourite grid icon layout (Folder for network folder pins). */
-private fun favoriteIcon(fav: FavoriteBrowseSource): ImageVector = when (fav) {
+internal fun favoriteIcon(fav: FavoriteBrowseSource): ImageVector = when (fav) {
     is FavoriteBrowseSource.Local ->
         if (fav.root.isLibraryRole) Icons.AutoMirrored.Filled.LibraryBooks else Icons.Default.Folder
     is FavoriteBrowseSource.Smb -> Icons.Default.Lan

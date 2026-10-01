@@ -12,6 +12,7 @@ import com.ehviewer.core.model.BaseGalleryInfo
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.download.downloadLocation
 import com.hippo.ehviewer.library.BrowseSession
+import com.hippo.ehviewer.library.ExplorerWindows
 import com.hippo.ehviewer.library.buildLocalBrowseStack
 import com.hippo.ehviewer.library.parentRelativeOfFile
 import com.hippo.ehviewer.ui.destinations.FolderBrowserScreenDestination
@@ -180,7 +181,9 @@ fun openLocalBrowseDir(
         preferMediaStore = preferMediaStore,
     )
     val walkParents = walkUpperDirsForBrowseOpen(fromHistory, fromLibrary)
+    ExplorerWindows.prepareSpawn()
     BrowseSession.localStack = if (walkParents) full else listOf(full.last())
+    ExplorerWindows.finishLocalSpawn(rootDisplayName, fromHistory, fromLibrary)
     nav.navigate(FolderBrowserScreenDestination(fromHistory = fromHistory, fromLibrary = fromLibrary)) {
         launchSingleTop = true
     }
@@ -201,9 +204,11 @@ fun openSmbBrowseDir(
     val segments = remote.split('/').filter { it.isNotEmpty() }
     val walkParents = walkUpperDirsForBrowseOpen(fromHistory, fromLibrary)
     val fromOrigin = fromHistory || fromLibrary
+    ExplorerWindows.prepareSpawn()
     BrowseSession.setSmbSegments(sourceId, segments)
     BrowseSession.setSmbPhotoGrid(sourceId, null)
     BrowseSession.setSmbExitToOrigin(sourceId, !walkParents && fromOrigin)
+    ExplorerWindows.finishSmbSpawn(sourceId, "", fromHistory, fromLibrary)
     nav.navigate(
         SmbBrowserScreenDestination(
             sourceId = sourceId,
@@ -226,9 +231,11 @@ fun openWebDavBrowseDir(
     val segments = remote.split('/').filter { it.isNotEmpty() }
     val walkParents = walkUpperDirsForBrowseOpen(fromHistory, fromLibrary)
     val fromOrigin = fromHistory || fromLibrary
+    ExplorerWindows.prepareSpawn()
     BrowseSession.setWebDavSegments(sourceId, segments)
     BrowseSession.setWebDavPhotoGrid(sourceId, null)
     BrowseSession.setWebDavExitToOrigin(sourceId, !walkParents && fromOrigin)
+    ExplorerWindows.finishWebDavSpawn(sourceId, "", fromHistory, fromLibrary)
     nav.navigate(
         WebDavBrowserScreenDestination(
             sourceId = sourceId,
@@ -266,6 +273,7 @@ fun openLocalFolderPhotoGrid(
         title = title?.takeIf { it.isNotBlank() } ?: galleryStack.last().title,
     )
     val walkParents = walkUpperDirsForBrowseOpen(fromHistory, fromLibrary)
+    ExplorerWindows.prepareSpawn()
     BrowseSession.localStack = if (walkParents) {
         val parentRel = parentRelativeOfFile(relativePath)
         val parentStack = buildLocalBrowseStack(
@@ -279,6 +287,7 @@ fun openLocalFolderPhotoGrid(
     } else {
         listOf(galleryFrame)
     }
+    ExplorerWindows.finishLocalSpawn(rootDisplayName, fromHistory, fromLibrary)
     nav.navigate(FolderBrowserScreenDestination(fromHistory = fromHistory, fromLibrary = fromLibrary)) {
         launchSingleTop = true
     }
@@ -311,6 +320,7 @@ fun openLocalVideoFolder(
         title = title?.takeIf { it.isNotBlank() } ?: folderStack.last().title,
     )
     val walkParents = walkUpperDirsForBrowseOpen(fromHistory, fromLibrary)
+    ExplorerWindows.prepareSpawn()
     BrowseSession.localStack = if (walkParents) {
         val parentRel = parentRelativeOfFile(relativePath)
         val parentStack = buildLocalBrowseStack(
@@ -324,6 +334,7 @@ fun openLocalVideoFolder(
     } else {
         listOf(overlayFrame)
     }
+    ExplorerWindows.finishLocalSpawn(rootDisplayName, fromHistory, fromLibrary)
     nav.navigate(FolderBrowserScreenDestination(fromHistory = fromHistory, fromLibrary = fromLibrary)) {
         launchSingleTop = true
     }
@@ -343,6 +354,7 @@ fun openSmbFolderPhotoGrid(
     val segments = remote.split('/').filter { it.isNotEmpty() }
     val walkParents = walkUpperDirsForBrowseOpen(fromHistory, fromLibrary)
     val fromOrigin = fromHistory || fromLibrary
+    ExplorerWindows.prepareSpawn()
     BrowseSession.setSmbSegments(sourceId, segments)
     BrowseSession.setSmbExitToOrigin(sourceId, false)
     BrowseSession.setSmbPhotoGrid(
@@ -351,6 +363,7 @@ fun openSmbFolderPhotoGrid(
         enteredFromParent = walkParents && remote.isNotEmpty(),
         exitToOrigin = !walkParents && fromOrigin,
     )
+    ExplorerWindows.finishSmbSpawn(sourceId, "", fromHistory, fromLibrary)
     nav.navigate(
         SmbBrowserScreenDestination(
             sourceId = sourceId,
@@ -373,6 +386,7 @@ fun openWebDavFolderPhotoGrid(
     val segments = remote.split('/').filter { it.isNotEmpty() }
     val walkParents = walkUpperDirsForBrowseOpen(fromHistory, fromLibrary)
     val fromOrigin = fromHistory || fromLibrary
+    ExplorerWindows.prepareSpawn()
     BrowseSession.setWebDavSegments(sourceId, segments)
     BrowseSession.setWebDavExitToOrigin(sourceId, false)
     BrowseSession.setWebDavPhotoGrid(
@@ -381,6 +395,7 @@ fun openWebDavFolderPhotoGrid(
         enteredFromParent = walkParents && remote.isNotEmpty(),
         exitToOrigin = !walkParents && fromOrigin,
     )
+    ExplorerWindows.finishWebDavSpawn(sourceId, "", fromHistory, fromLibrary)
     nav.navigate(
         WebDavBrowserScreenDestination(
             sourceId = sourceId,

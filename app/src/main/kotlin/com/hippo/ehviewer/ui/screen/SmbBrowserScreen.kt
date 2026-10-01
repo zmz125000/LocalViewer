@@ -78,6 +78,8 @@ import com.hippo.ehviewer.library.BrowseEntryRemote
 import com.hippo.ehviewer.library.BrowseFavorites
 import com.hippo.ehviewer.library.BrowseFolderId
 import com.hippo.ehviewer.library.BrowseSession
+import com.hippo.ehviewer.library.ExplorerWindows
+import com.hippo.ehviewer.ui.ExplorerGestureEnabled
 import com.hippo.ehviewer.library.BrowseVirtualKind
 import com.hippo.ehviewer.library.EmptyArchiveRegistry
 import com.hippo.ehviewer.library.FolderGalleryIndex
@@ -197,7 +199,8 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
     // Session-scoped path. Empty list = share root and is *not* "unset":
     // do not fall back to initialRelativePath when session is empty, or returning from
     // the reader after climbing to root re-opens the History deep folder.
-    var segments by remember(sourceId, shortcutEpoch) {
+    val explorerWindowId = ExplorerWindows.activeId
+    var segments by remember(sourceId, shortcutEpoch, explorerWindowId) {
         val stored = BrowseSession.smbSegmentsOrNull(sourceId)
         val initial = stored ?: initialRelativePath.split('/').filter { it.isNotEmpty() }.also {
             BrowseSession.setSmbSegments(sourceId, it)
@@ -210,14 +213,14 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
      * `S/leaf` (2); goUp pops that many so one back action returns to the listing
      * that showed the `@` row. Deep-links leave this empty → goUp drops 1.
      */
-    var enterHopStack by remember { mutableStateOf(emptyList<Int>()) }
+    var enterHopStack by remember(explorerWindowId) { mutableStateOf(emptyList<Int>()) }
 
     /**
      * Listing that owned the Search section when a dir was opened from that section.
      * Next goUp jumps here in one hop (does not walk Album → …). Overflow Open folder
      * leaves this null. Independent of [BrowseSession.smbExitToOrigin].
      */
-    var searchReturnRel by remember { mutableStateOf<String?>(null) }
+    var searchReturnRel by remember(explorerWindowId) { mutableStateOf<String?>(null) }
 
     fun updateSegments(new: List<String>) {
         segments = new
@@ -225,7 +228,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
         if (new.isEmpty()) enterHopStack = emptyList()
     }
 
-    var entries by remember { mutableStateOf<List<BrowseEntryRemote>>(emptyList()) }
+    var entries by remember(explorerWindowId) { mutableStateOf<List<BrowseEntryRemote>>(emptyList()) }
 
     /** Relative dir the current [entries] belong to. */
     var listedDir by remember { mutableStateOf<String?>(null) }
@@ -235,8 +238,12 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
     val listMode by Settings.listMode.collectAsState()
 
     /** Photo-grid overlay; session-backed so reader navigation restores it. */
-    var photoGridOverlay by remember {
+    var photoGridOverlay by remember(explorerWindowId, sourceId) {
         mutableStateOf(BrowseSession.smbPhotoGrid(sourceId))
+    }
+    LaunchedEffect(explorerWindowId, sourceId, segments, photoGridOverlay) {
+        val id = explorerWindowId ?: return@LaunchedEffect
+        ExplorerWindows.syncSmb(id, sourceId)
     }
     fun setPhotoGrid(
         dir: String?,
@@ -332,6 +339,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
         }
     }
     val search = rememberBrowseFolderSearchState()
+    ExplorerGestureEnabled(!search.active)
     val searchFolderKey = BrowseSession.smbFolderSearchKey(sourceId, relativeDir)
     var searchHits by remember(searchFolderKey) {
         mutableStateOf(BrowseSession.peekFolderSearchHits<BrowseEntryRemote>(searchFolderKey))
