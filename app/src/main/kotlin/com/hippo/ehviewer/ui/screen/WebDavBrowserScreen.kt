@@ -544,7 +544,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
     // effect and starts a new one — that is the only concurrency control we need.
     // Previous epoch/ON_RESUME races could ++epoch, early-return without clearing loading,
     // and leave History→up→up stuck on an empty infinite spinner (manual refresh worked).
-    LaunchedEffect(sourceId, relativeDir, refreshToken) {
+    LaunchedEffect(explorerWindowId, sourceId, relativeDir, refreshToken) {
         VideoThumbnail.onBrowseFolderChanged("dav:$sourceId:$relativeDir")
         ArchiveCoverCache.onBrowseFolderChanged("dav:$sourceId:$relativeDir")
         val targetDir = relativeDir

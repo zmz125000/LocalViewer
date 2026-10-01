@@ -61,6 +61,7 @@ import androidx.compose.ui.res.dimensionResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewModelScope
 import com.ehviewer.core.database.model.LOCAL_GALLERY_KIND_ARCHIVE
@@ -896,6 +897,7 @@ internal fun FavoriteSourceGridCell(
     onClick: () -> Unit,
     onLongClick: () -> Unit = onClick,
     columns: Int = GalleryGridDefaults.columnCount(),
+    iconSize: Dp = BrowseGridPlaceholderIconSize,
 ) {
     val namePadH = GalleryGridDefaults.namePaddingH()
     val namePadBottom = GalleryGridDefaults.namePaddingBottom()
@@ -934,7 +936,7 @@ internal fun FavoriteSourceGridCell(
                             } else {
                                 Icons.Default.Folder
                             },
-                            placeholderSize = BrowseGridPlaceholderIconSize,
+                            placeholderSize = iconSize,
                             modifier = Modifier.fillMaxSize(),
                         )
                     }
@@ -942,7 +944,7 @@ internal fun FavoriteSourceGridCell(
                         coverPath = folderThumbKey,
                         sizePx = gridDecodePx,
                         placeholder = Icons.Default.Folder,
-                        placeholderSize = BrowseGridPlaceholderIconSize,
+                        placeholderSize = iconSize,
                         modifier = Modifier.fillMaxSize(),
                     )
                 }
@@ -983,7 +985,7 @@ internal fun FavoriteSourceGridCell(
                 Icon(
                     favoriteIcon(fav),
                     contentDescription = null,
-                    modifier = Modifier.size(BrowseGridPlaceholderIconSize),
+                    modifier = Modifier.size(iconSize),
                     tint = MaterialTheme.colorScheme.primary,
                 )
             }

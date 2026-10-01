@@ -643,7 +643,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
     // effect and starts a new one — that is the only concurrency control we need.
     // Previous epoch/ON_RESUME races could ++epoch, early-return without clearing loading,
     // and leave History→up→up stuck on an empty infinite spinner (manual refresh worked).
-    LaunchedEffect(sourceId, relativeDir, refreshToken) {
+    LaunchedEffect(explorerWindowId, sourceId, relativeDir, refreshToken) {
         // New folder must not wait on previous folder's stuck MMR pool threads.
         VideoThumbnail.onBrowseFolderChanged("smb:$sourceId:$relativeDir")
         ArchiveCoverCache.onBrowseFolderChanged("smb:$sourceId:$relativeDir")

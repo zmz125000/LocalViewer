@@ -105,6 +105,8 @@ import kotlinx.coroutines.launch
 
 private val WindowMaxWidth = 340.dp
 private val WindowMaxHeight = 480.dp
+private val ExplorerListIconSize = 20.dp
+private val ExplorerWindowGap = 8.dp
 
 /**
  * Small floating explorer window (dialog / in-app picture-in-picture).
@@ -309,6 +311,7 @@ private fun ExplorerWindowList(
         modifier = Modifier.fillMaxSize(),
         contentPadding = GalleryGridDefaults.listVerticalContentPadding(),
     ) {
+        if (windows.isNotEmpty()) {
         item(key = "win-hdr") {
             BrowseSectionHeader(stringResource(R.string.explorer_windows))
         }
@@ -319,6 +322,7 @@ private fun ExplorerWindowList(
                 title = windowRowTitle(window, source),
                 subtitle = windowSubtitle(source, window.relativePath),
                 active = window.id == activeId,
+                modifier = Modifier.padding(bottom = ExplorerWindowGap),
                 onClick = {
                     val shown = ExplorerWindows.activate(window.id) ?: return@ExplorerPathRow
                     showWindow(navigator, shown, currentDestination, browserSourceId)
@@ -355,6 +359,7 @@ private fun ExplorerWindowList(
                     )
                 },
             )
+        }
         }
         item(key = "saved-hdr") {
             BrowseSectionHeader(stringResource(R.string.explorer_saved_paths))
@@ -413,6 +418,7 @@ private fun ExplorerFavoritesGrid(
             FavoriteSourceGridCell(
                 fav = fav,
                 columns = columnCount,
+                iconSize = ExplorerListIconSize,
                 onClick = {
                     openFavorite(navigator, fav, roots)
                     onNavigated()
@@ -428,6 +434,7 @@ private fun ExplorerFavoritesGrid(
                 FavoriteSourceGridCell(
                     fav = FavoriteBrowseSource.Smb(source),
                     columns = columnCount,
+                    iconSize = ExplorerListIconSize,
                     onClick = {
                         openSmbRoot(navigator, source)
                         onNavigated()
@@ -439,6 +446,7 @@ private fun ExplorerFavoritesGrid(
                 FavoriteSourceGridCell(
                     fav = FavoriteBrowseSource.WebDav(source),
                     columns = columnCount,
+                    iconSize = ExplorerListIconSize,
                     onClick = {
                         openWebDavRoot(navigator, source)
                         onNavigated()
@@ -455,6 +463,7 @@ private fun ExplorerFavoritesGrid(
                 FavoriteSourceGridCell(
                     fav = FavoriteBrowseSource.Local(root),
                     columns = columnCount,
+                    iconSize = ExplorerListIconSize,
                     onClick = {
                         openLocalRootWindow(navigator, root)
                         onNavigated()
@@ -484,9 +493,10 @@ private fun ExplorerPathRow(
     active: Boolean,
     onClick: () -> Unit,
     trailing: @Composable () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     Row(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .heightIn(min = 40.dp)
             .background(
@@ -499,7 +509,7 @@ private fun ExplorerPathRow(
         Icon(
             Icons.Default.Folder,
             contentDescription = null,
-            modifier = Modifier.size(20.dp),
+            modifier = Modifier.size(ExplorerListIconSize),
             tint = MaterialTheme.colorScheme.primary,
         )
         Column(Modifier.weight(1f).padding(horizontal = 10.dp)) {

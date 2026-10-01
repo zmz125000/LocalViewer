@@ -698,9 +698,12 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
 
     /** Force the next stack-driven [reload] (zip-as-dir toggle leaving a zip frame). */
     var forceNextLoad by remember { mutableStateOf(false) }
+    var listingWindowId by remember { mutableStateOf(explorerWindowId) }
 
-    LaunchedEffect(stack) {
-        if (skipNextListing && !forceNextLoad) {
+    LaunchedEffect(explorerWindowId, stack) {
+        val switchedWindow = listingWindowId != explorerWindowId
+        listingWindowId = explorerWindowId
+        if (skipNextListing && !forceNextLoad && !switchedWindow) {
             skipNextListing = false
             loading = false
             refreshing = false
