@@ -47,6 +47,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberDrawerState2
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
@@ -89,6 +90,7 @@ import com.hippo.ehviewer.ui.destinations.FolderBrowserScreenDestination
 import com.hippo.ehviewer.ui.destinations.SmbBrowserScreenDestination
 import com.hippo.ehviewer.ui.destinations.WebDavBrowserScreenDestination
 import com.hippo.ehviewer.ui.main.BrowseSectionHeader
+import com.hippo.ehviewer.ui.main.LocalBrowseListHeaderInset
 import com.hippo.ehviewer.ui.main.GalleryGridDefaults
 import com.hippo.ehviewer.ui.navToLocalFolderReader
 import com.hippo.ehviewer.ui.navToReader
@@ -302,7 +304,11 @@ private fun ExplorerWindowList(
         SavedExplorerPaths.resolve(roots, smb, webDav)
     }
     val viewingBrowser = isBrowserDestination(currentDestination)
-    LazyColumn(Modifier.fillMaxSize()) {
+    CompositionLocalProvider(LocalBrowseListHeaderInset provides GalleryGridDefaults.margin()) {
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = GalleryGridDefaults.listVerticalContentPadding(),
+    ) {
         item(key = "win-hdr") {
             BrowseSectionHeader(stringResource(R.string.explorer_windows))
         }
@@ -372,6 +378,7 @@ private fun ExplorerWindowList(
             )
         }
     }
+    }
 }
 
 @Composable
@@ -400,10 +407,7 @@ private fun ExplorerFavoritesGrid(
         horizontalArrangement = GalleryGridDefaults.spacedBy(),
     ) {
         item(key = "fav-hdr", span = { GridItemSpan(maxLineSpan) }) {
-            BrowseSectionHeader(
-                stringResource(R.string.browse_favorites),
-                modifier = Modifier.padding(horizontal = 12.dp),
-            )
+            BrowseSectionHeader(stringResource(R.string.browse_favorites))
         }
         items(favorites, key = { "fav-${it.key}" }) { fav ->
             FavoriteSourceGridCell(
@@ -418,10 +422,7 @@ private fun ExplorerFavoritesGrid(
         }
         if (smb.isNotEmpty() || webDav.isNotEmpty()) {
             item(key = "src-net", span = { GridItemSpan(maxLineSpan) }) {
-                BrowseSectionHeader(
-                    stringResource(R.string.network),
-                    modifier = Modifier.padding(horizontal = 12.dp),
-                )
+                BrowseSectionHeader(stringResource(R.string.network))
             }
             items(smb, key = { "smb-${it.id}" }) { source ->
                 FavoriteSourceGridCell(
@@ -448,10 +449,7 @@ private fun ExplorerFavoritesGrid(
         }
         if (roots.isNotEmpty()) {
             item(key = "src-dir", span = { GridItemSpan(maxLineSpan) }) {
-                BrowseSectionHeader(
-                    stringResource(R.string.folder),
-                    modifier = Modifier.padding(horizontal = 12.dp),
-                )
+                BrowseSectionHeader(stringResource(R.string.folder))
             }
             items(roots, key = { "root-${it.id}" }) { root ->
                 FavoriteSourceGridCell(
