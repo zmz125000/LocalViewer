@@ -1,5 +1,6 @@
 package com.hippo.ehviewer.ui.screen
 
+import android.content.res.Configuration
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -23,6 +24,7 @@ import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.material3.ShapeDefaults
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
@@ -60,7 +62,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
@@ -68,6 +72,8 @@ import androidx.compose.ui.unit.dp
 import com.ehviewer.core.database.model.LOCAL_GALLERY_KIND_ARCHIVE
 import com.ehviewer.core.i18n.R
 import com.ehviewer.core.ui.component.FastScrollLazyVerticalGrid
+import com.ehviewer.core.ui.util.LocalWindowSizeClass
+import com.ehviewer.core.ui.util.isMediumWidthOrWider
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.collectAsState
 import com.hippo.ehviewer.library.BrowseFavorites
@@ -123,10 +129,23 @@ fun ExplorerSidePanelHost(
         }
     }
     val density = LocalDensity.current
+    // Same width class as the bottom bar vs navigation rail.
+    val phonePortrait = !LocalWindowSizeClass.current.isMediumWidthOrWider &&
+        LocalConfiguration.current.orientation != Configuration.ORIENTATION_LANDSCAPE
+    val landscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
     BoxWithConstraints(Modifier.fillMaxSize()) {
-        val windowWidth = minOf(maxWidth - 16.dp, WindowMaxWidth).coerceAtLeast(0.dp)
+        val fitted = minOf(maxWidth - 16.dp, WindowMaxWidth).coerceAtLeast(0.dp)
+        val windowWidth = if (phonePortrait) fitted * 0.9f else fitted
         val windowHeight = minOf(maxHeight - 96.dp, WindowMaxHeight).coerceAtLeast(0.dp)
-        val slidePx = with(density) { (windowWidth + 24.dp).toPx() }
+        val endPad = if (landscape) 40.dp else 8.dp
+        val endInsetPx = WindowInsets.safeDrawing.getRight(density, LocalLayoutDirection.current)
+        val slidePx = with(density) {
+            if (phonePortrait) {
+                (maxWidth + windowWidth).toPx() / 2f + 16.dp.toPx()
+            } else {
+                windowWidth.toPx() + endPad.toPx() + endInsetPx + 16.dp.toPx()
+            }
+        }
         SideEffect {
             panelState.anchoredDraggableState.updateAnchors(
                 DraggableAnchors {
@@ -165,9 +184,17 @@ fun ExplorerSidePanelHost(
             val offset = if (rawOffset.isNaN()) slidePx else rawOffset
             Column(
                 Modifier
-                    .align(Alignment.TopEnd)
-                    .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.End))
-                    .padding(top = 8.dp, end = 8.dp)
+                    .align(if (phonePortrait) Alignment.TopCenter else Alignment.TopEnd)
+                    .windowInsetsPadding(
+                        WindowInsets.safeDrawing.only(
+                            if (phonePortrait) {
+                                WindowInsetsSides.Top
+                            } else {
+                                WindowInsetsSides.Top + WindowInsetsSides.End
+                            },
+                        ),
+                    )
+                    .padding(top = 8.dp, end = if (phonePortrait) 0.dp else endPad)
                     .width(windowWidth)
                     .height(windowHeight)
                     .offset { IntOffset(offset.roundToInt(), 0) }
@@ -202,11 +229,16 @@ private fun ExplorerPanel(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
-            text = stringResource(R.string.explorer),
+            text = stringResource(
+                if (showFavorites) R.string.explorer_quick_access else R.string.explorer,
+            ),
             style = MaterialTheme.typography.titleLarge,
             modifier = Modifier
                 .weight(1f)
-                .clickable { showFavorites = !showFavorites }
+                .clickable(
+                    interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
+                    indication = null,
+                ) { showFavorites = !showFavorites }
                 .padding(vertical = 12.dp),
         )
         IconButton(
@@ -359,9 +391,11 @@ private fun ExplorerFavoritesGrid(
     val favorites = remember(roots, smb, webDav, visibleGalleries, favoriteKeys) {
         resolveFavoriteBrowseSources(roots, smb, webDav, visibleGalleries, favoriteKeys)
     }
+    val thumbColumns by Settings.thumbColumns.collectAsState()
+    val columnCount = thumbColumns.coerceIn(1, 10)
     val gridState = remember { LazyGridState() }
     FastScrollLazyVerticalGrid(
-        columns = GalleryGridDefaults.columns(),
+        columns = GridCells.Fixed(columnCount),
         state = gridState,
         modifier = Modifier.fillMaxSize(),
         contentPadding = GalleryGridDefaults.contentPadding(androidx.compose.foundation.layout.PaddingValues(0.dp)),
@@ -377,6 +411,7 @@ private fun ExplorerFavoritesGrid(
         items(favorites, key = { "fav-${it.key}" }) { fav ->
             FavoriteSourceGridCell(
                 fav = fav,
+                columns = columnCount,
                 onClick = {
                     openFavorite(navigator, fav, roots)
                     onNavigated()

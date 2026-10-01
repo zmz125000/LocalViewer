@@ -895,6 +895,7 @@ internal fun FavoriteSourceGridCell(
     fav: FavoriteBrowseSource,
     onClick: () -> Unit,
     onLongClick: () -> Unit = onClick,
+    columns: Int = GalleryGridDefaults.columnCount(),
 ) {
     val namePadH = GalleryGridDefaults.namePaddingH()
     val namePadBottom = GalleryGridDefaults.namePaddingBottom()
@@ -915,7 +916,7 @@ internal fun FavoriteSourceGridCell(
             Box(Modifier.fillMaxSize().clip(ShapeDefaults.Medium)) {
                 val gridDecodePx = CoverThumb.gridDecodePx(
                     screenWidthDp = LocalConfiguration.current.screenWidthDp,
-                    columns = GalleryGridDefaults.columnCount(),
+                    columns = columns,
                     margin = GalleryGridDefaults.margin(),
                     gutter = GalleryGridDefaults.gutter(),
                 )

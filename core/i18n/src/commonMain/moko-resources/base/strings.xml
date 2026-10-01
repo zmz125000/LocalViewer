@@ -67,6 +67,7 @@
     <string name="browse_photos">Photos</string>
     <string name="browse_favorites">Favorites</string>
     <string name="explorer">Explorer</string>
+    <string name="explorer_quick_access">Quick access</string>
     <string name="explorer_windows">Windows</string>
     <string name="explorer_saved_paths">Saved paths</string>
     <string name="explorer_duplicate">Duplicate window</string>
