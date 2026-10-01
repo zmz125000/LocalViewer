@@ -1,5 +1,6 @@
 package com.hippo.ehviewer.library
 
+import com.hippo.ehviewer.smb.SmbReadCancelledException
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.Future
@@ -97,48 +98,53 @@ class VideoDirectLinkByteSource(
 
         val want = minOf(len.toLong(), size - offset).toInt()
         var copied = 0
-        val firstBlock = offset / blockSize
-        // A jump drops queued prefetch. The 256 KiB window is armed only by [noteSeek].
-        noteDemand(firstBlock)
-        if (smallReadWindow()) {
-            // One network trip. A short return lets the HTTP socket write before the next 256 KiB.
-            var didNetwork = false
-            while (copied < want && !didNetwork) {
+        try {
+            val firstBlock = offset / blockSize
+            // A jump drops queued prefetch. The 256 KiB window is armed only by [noteSeek].
+            noteDemand(firstBlock)
+            if (smallReadWindow()) {
+                // One network trip. A short return lets the player write before the next 256 KiB.
+                var didNetwork = false
+                while (copied < want && !didNetwork) {
+                    if (closed.get()) return if (copied > 0) copied else -1
+                    val absolute = offset + copied
+                    val blockIndex = absolute / blockSize
+                    val blockStart = blockIndex * blockSize
+                    val inBlock = (absolute - blockStart).toInt()
+                    val need = minOf(want - copied, blockSize - inBlock, SEEK_STARTUP_CHUNK)
+                    val cached = copyCached(blockIndex, inBlock, buf, off + copied, need)
+                    if (cached > 0) {
+                        copied += cached
+                        continue
+                    }
+                    didNetwork = true
+                    val n = readUncached(blockStart + inBlock, blockIndex, inBlock, buf, off + copied, need)
+                    if (n > 0) copied += n else return if (copied > 0) copied else n
+                }
+                return copied
+            }
+            while (copied < want) {
                 if (closed.get()) return if (copied > 0) copied else -1
                 val absolute = offset + copied
                 val blockIndex = absolute / blockSize
                 val blockStart = blockIndex * blockSize
                 val inBlock = (absolute - blockStart).toInt()
-                val need = minOf(want - copied, blockSize - inBlock, SEEK_STARTUP_CHUNK)
-                val cached = copyCached(blockIndex, inBlock, buf, off + copied, need)
-                if (cached > 0) {
-                    copied += cached
-                    continue
+                val block = getOrLoadBlock(blockIndex, forDemand = true) ?: return if (copied > 0) {
+                    copied
+                } else {
+                    -1
                 }
-                didNetwork = true
-                val n = readUncached(blockStart + inBlock, blockIndex, inBlock, buf, off + copied, need)
-                if (n > 0) copied += n else return if (copied > 0) copied else n
+                if (inBlock >= block.length) return if (copied > 0) copied else -1
+                val n = minOf(want - copied, block.length - inBlock)
+                System.arraycopy(block.bytes, inBlock, buf, off + copied, n)
+                copied += n
             }
+            schedulePrefetch(firstBlock)
             return copied
+        } catch (_: SmbReadCancelledException) {
+            // Seek moved the playhead. Do not prefetch or retry this old offset.
+            return -1
         }
-        while (copied < want) {
-            if (closed.get()) return if (copied > 0) copied else -1
-            val absolute = offset + copied
-            val blockIndex = absolute / blockSize
-            val blockStart = blockIndex * blockSize
-            val inBlock = (absolute - blockStart).toInt()
-            val block = getOrLoadBlock(blockIndex, forDemand = true) ?: return if (copied > 0) {
-                copied
-            } else {
-                -1
-            }
-            if (inBlock >= block.length) return if (copied > 0) copied else -1
-            val n = minOf(want - copied, block.length - inBlock)
-            System.arraycopy(block.bytes, inBlock, buf, off + copied, n)
-            copied += n
-        }
-        schedulePrefetch(firstBlock)
-        return copied
     }
 
     /** Copy a cached prefix. 0 when this offset is not in the window yet. */
@@ -169,6 +175,8 @@ class VideoDirectLinkByteSource(
     ): Int {
         val n = try {
             demand.readAt(absolute, buf, off, need)
+        } catch (e: SmbReadCancelledException) {
+            throw e
         } catch (_: Throwable) {
             -1
         }
@@ -319,9 +327,13 @@ class VideoDirectLinkByteSource(
 
     private fun awaitBlock(future: Future<Block?>): Block? = try {
         future.get()
+    } catch (e: java.util.concurrent.ExecutionException) {
+        val cause = e.cause
+        if (cause is SmbReadCancelledException) throw cause
+        null
     } catch (_: InterruptedException) {
         Thread.currentThread().interrupt()
-        null
+        throw SmbReadCancelledException()
     } catch (_: Exception) {
         null
     }
@@ -347,7 +359,7 @@ class VideoDirectLinkByteSource(
         var reconnects = 0
         val epochAtStart = epoch.get()
         while (filled < expected && !closed.get()) {
-            if (usePrefetchLane && epoch.get() != epochAtStart) break
+            if (epoch.get() != epochAtStart) break
             val from = blockStart + filled
             // Random-access: 4×1 MiB in one SMB read. Deflate stays inside this block.
             val pipeline = if (randomAccess) {
@@ -363,6 +375,8 @@ class VideoDirectLinkByteSource(
                 } else {
                     source.readAt(from, readBuf, 0, pipeline)
                 }
+            } catch (e: SmbReadCancelledException) {
+                throw e
             } catch (_: Throwable) {
                 -1
             }
@@ -387,6 +401,7 @@ class VideoDirectLinkByteSource(
                 continue
             }
             if (n == 0 && from >= size) break
+            if (epoch.get() != epochAtStart) break
             if (closed.get() || reconnects >= BLOCK_RECONNECT_ATTEMPTS) break
             reconnects++
             source.requestReconnect()
@@ -428,6 +443,8 @@ class VideoDirectLinkByteSource(
                         if (closed.get() || myEpoch != epoch.get()) return@FutureTask null
                         // Speculative fill on the same handle; demand cancels this on seek.
                         loadBlockBytes(blockIndex, usePrefetchLane = true)
+                    } catch (_: SmbReadCancelledException) {
+                        null
                     } finally {
                         synchronized(lock) {
                             removeInFlight(blockIndex, task)
