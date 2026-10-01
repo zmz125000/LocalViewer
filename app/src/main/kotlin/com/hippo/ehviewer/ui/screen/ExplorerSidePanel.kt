@@ -1,6 +1,5 @@
 package com.hippo.ehviewer.ui.screen
 
-import android.content.res.Configuration
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -13,6 +12,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.requiredWidth
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -70,11 +71,10 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.ehviewer.core.database.model.LOCAL_GALLERY_KIND_ARCHIVE
 import com.ehviewer.core.i18n.R
 import com.ehviewer.core.ui.component.FastScrollLazyVerticalGrid
-import com.ehviewer.core.ui.util.LocalWindowSizeClass
-import com.ehviewer.core.ui.util.isMediumWidthOrWider
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.collectAsState
 import com.hippo.ehviewer.library.BrowseFavorites
@@ -124,6 +124,8 @@ private class PanelCloseGuard {
 private val WindowMaxWidth = 340.dp
 private val WindowMaxHeight = 480.dp
 private val ExplorerListIconSize = 20.dp
+private val ExplorerListIconSizeTablet = 26.dp
+private val LocalExplorerTablet = compositionLocalOf { false }
 private val ExplorerWindowGap = 8.dp
 
 /**
@@ -187,10 +189,11 @@ fun ExplorerSidePanelHost(
     }
     val density = LocalDensity.current
     val configuration = LocalConfiguration.current
-    // Same width class as the bottom bar vs navigation rail.
-    val tablet = LocalWindowSizeClass.current.isMediumWidthOrWider
-    val landscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
-    val phonePortrait = !tablet && !landscape
+    // Same phone/tablet × portrait/landscape split as list-mode column count.
+    val layout = GalleryGridDefaults.listLayout()
+    val phonePortrait = layout.columns == 1
+    val phoneLandscape = !layout.capReaderSheet
+    val tablet = !phonePortrait && !phoneLandscape
     val screenW = configuration.screenWidthDp.dp
     val screenH = configuration.screenHeightDp.dp
     BoxWithConstraints(Modifier.fillMaxSize()) {
@@ -199,13 +202,15 @@ fun ExplorerSidePanelHost(
         val heightCap = (maxHeight - 16.dp).coerceAtLeast(0.dp)
         val windowWidth = when {
             phonePortrait -> minOf(maxWidth - 16.dp, WindowMaxWidth) * 0.9f
-            !tablet -> screenW * 0.5f
-            landscape -> screenW / 3f
+            phoneLandscape -> screenW * 0.5f
+            layout.columns == 3 -> screenW / 3f
             else -> screenW * 2f / 3f
-        }.coerceIn(0.dp, widthCap)
+        }.let { width ->
+            if (phoneLandscape) width else width.coerceIn(0.dp, widthCap)
+        }
         val windowHeight = when {
-            tablet && landscape -> screenH * 2f / 3f
-            tablet && !landscape -> screenH / 2f
+            layout.columns == 3 -> screenH * 2f / 3f
+            tablet -> screenH / 2f
             phonePortrait -> minOf(heightCap, WindowMaxHeight)
             else -> heightCap
         }.coerceIn(0.dp, heightCap)
@@ -268,8 +273,13 @@ fun ExplorerSidePanelHost(
                         ),
                     )
                     .padding(top = 8.dp, end = if (phonePortrait) 0.dp else endPad)
-                    .width(windowWidth)
-                    .height(windowHeight)
+                    .then(
+                        if (phoneLandscape) {
+                            Modifier.requiredWidth(windowWidth).fillMaxHeight()
+                        } else {
+                            Modifier.width(windowWidth).height(windowHeight)
+                        },
+                    )
                     .offset { IntOffset(offset.roundToInt(), 0) }
                     .shadow(8.dp, ShapeDefaults.Large)
                     .clip(ShapeDefaults.Large)
@@ -281,6 +291,7 @@ fun ExplorerSidePanelHost(
                     browserSourceId = browserSourceId,
                     fromHistory = fromHistory,
                     fromLibrary = fromLibrary,
+                    tablet = tablet,
                     onNavigated = { closePanel() },
                 )
             }
@@ -295,6 +306,7 @@ private fun ExplorerPanel(
     browserSourceId: Long?,
     fromHistory: Boolean,
     fromLibrary: Boolean,
+    tablet: Boolean,
     onNavigated: () -> Unit,
 ) {
     var showFavorites by rememberSaveable { mutableStateOf(false) }
@@ -309,7 +321,9 @@ private fun ExplorerPanel(
             text = stringResource(
                 if (showFavorites) R.string.explorer_quick_access else R.string.explorer,
             ),
-            style = MaterialTheme.typography.titleLarge,
+            style = MaterialTheme.typography.titleLarge.let { style ->
+                if (tablet) style else style.copy(fontSize = 20.sp, lineHeight = 26.sp)
+            },
             modifier = Modifier
                 .weight(1f)
                 .clickable(
@@ -338,6 +352,7 @@ private fun ExplorerPanel(
                 navigator = navigator,
                 fromHistory = fromHistory,
                 fromLibrary = fromLibrary,
+                tablet = tablet,
                 onNavigated = onNavigated,
             )
         } else {
@@ -347,6 +362,7 @@ private fun ExplorerPanel(
                 navigator = navigator,
                 currentDestination = currentDestination,
                 browserSourceId = browserSourceId,
+                tablet = tablet,
                 onNavigated = onNavigated,
             )
         }
@@ -361,6 +377,7 @@ private fun ExplorerWindowList(
     navigator: DestinationsNavigator,
     currentDestination: Any?,
     browserSourceId: Long?,
+    tablet: Boolean,
     onNavigated: () -> Unit,
 ) {
     val roots by LocalLibrary.rootsFlow().collectAsState(initial = emptyList())
@@ -371,7 +388,10 @@ private fun ExplorerWindowList(
         SavedExplorerPaths.resolve(roots, smb, webDav)
     }
     val viewingBrowser = isBrowserDestination(currentDestination)
-    CompositionLocalProvider(LocalBrowseListHeaderInset provides GalleryGridDefaults.margin()) {
+    CompositionLocalProvider(
+        LocalBrowseListHeaderInset provides GalleryGridDefaults.margin(),
+        LocalExplorerTablet provides tablet,
+    ) {
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = GalleryGridDefaults.listVerticalContentPadding(),
@@ -456,6 +476,7 @@ private fun ExplorerFavoritesGrid(
     navigator: DestinationsNavigator,
     fromHistory: Boolean,
     fromLibrary: Boolean,
+    tablet: Boolean,
     onNavigated: () -> Unit,
 ) {
     val roots by LocalLibrary.rootsFlow().collectAsState(initial = emptyList())
@@ -469,6 +490,12 @@ private fun ExplorerFavoritesGrid(
     }
     val thumbColumns by Settings.thumbColumns.collectAsState()
     val columnCount = thumbColumns.coerceIn(1, 10)
+    val iconSize = if (tablet) ExplorerListIconSizeTablet else ExplorerListIconSize
+    val labelStyle = if (tablet) {
+        MaterialTheme.typography.labelLarge
+    } else {
+        MaterialTheme.typography.labelMedium
+    }
     val gridState = remember { LazyGridState() }
     FastScrollLazyVerticalGrid(
         columns = GridCells.Fixed(columnCount),
@@ -485,7 +512,8 @@ private fun ExplorerFavoritesGrid(
             FavoriteSourceGridCell(
                 fav = fav,
                 columns = columnCount,
-                iconSize = ExplorerListIconSize,
+                iconSize = iconSize,
+                labelStyle = labelStyle,
                 onClick = {
                     openFavorite(navigator, fav, roots)
                     onNavigated()
@@ -501,7 +529,8 @@ private fun ExplorerFavoritesGrid(
                 FavoriteSourceGridCell(
                     fav = FavoriteBrowseSource.Smb(source),
                     columns = columnCount,
-                    iconSize = ExplorerListIconSize,
+                    iconSize = iconSize,
+                labelStyle = labelStyle,
                     onClick = {
                         openSmbRoot(navigator, source, fromHistory, fromLibrary)
                         onNavigated()
@@ -513,7 +542,8 @@ private fun ExplorerFavoritesGrid(
                 FavoriteSourceGridCell(
                     fav = FavoriteBrowseSource.WebDav(source),
                     columns = columnCount,
-                    iconSize = ExplorerListIconSize,
+                    iconSize = iconSize,
+                labelStyle = labelStyle,
                     onClick = {
                         openWebDavRoot(navigator, source, fromHistory, fromLibrary)
                         onNavigated()
@@ -530,7 +560,8 @@ private fun ExplorerFavoritesGrid(
                 FavoriteSourceGridCell(
                     fav = FavoriteBrowseSource.Local(root),
                     columns = columnCount,
-                    iconSize = ExplorerListIconSize,
+                    iconSize = iconSize,
+                labelStyle = labelStyle,
                     onClick = {
                         openLocalRootWindow(navigator, root, fromHistory, fromLibrary)
                         onNavigated()
@@ -548,8 +579,9 @@ private fun ExplorerRowAction(
     icon: ImageVector,
     contentDescription: String,
 ) {
-    IconButton(onClick = onClick, modifier = Modifier.size(32.dp)) {
-        Icon(icon, contentDescription = contentDescription, modifier = Modifier.size(18.dp))
+    val tablet = LocalExplorerTablet.current
+    IconButton(onClick = onClick, modifier = Modifier.size(if (tablet) 40.dp else 32.dp)) {
+        Icon(icon, contentDescription = contentDescription, modifier = Modifier.size(if (tablet) 22.dp else 18.dp))
     }
 }
 
@@ -562,10 +594,11 @@ private fun ExplorerPathRow(
     trailing: @Composable () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val tablet = LocalExplorerTablet.current
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .heightIn(min = 40.dp)
+            .heightIn(min = if (tablet) 52.dp else 40.dp)
             .background(
                 if (active) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent,
             )
@@ -576,19 +609,19 @@ private fun ExplorerPathRow(
         Icon(
             Icons.Default.Folder,
             contentDescription = null,
-            modifier = Modifier.size(ExplorerListIconSize),
+            modifier = Modifier.size(if (tablet) ExplorerListIconSizeTablet else ExplorerListIconSize),
             tint = MaterialTheme.colorScheme.primary,
         )
         Column(Modifier.weight(1f).padding(horizontal = 10.dp)) {
             Text(
                 title,
-                style = MaterialTheme.typography.bodyMedium,
+                style = if (tablet) MaterialTheme.typography.bodyLarge else MaterialTheme.typography.bodyMedium,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
             Text(
                 subtitle,
-                style = MaterialTheme.typography.bodySmall,
+                style = if (tablet) MaterialTheme.typography.bodyMedium else MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,

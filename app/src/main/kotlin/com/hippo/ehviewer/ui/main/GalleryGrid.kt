@@ -48,7 +48,7 @@ object GalleryGridDefaults {
      * (stable across rotation) plus orientation. Tablet = sw ≥ 600dp.
      */
     @Composable
-    private fun listLayout(): WindowListLayout {
+    internal fun listLayout(): WindowListLayout {
         val configuration = LocalConfiguration.current
         val smallestWidthDp = configuration.smallestScreenWidthDp
         val landscape =

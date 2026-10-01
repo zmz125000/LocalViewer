@@ -898,6 +898,7 @@ internal fun FavoriteSourceGridCell(
     onLongClick: () -> Unit = onClick,
     columns: Int = GalleryGridDefaults.columnCount(),
     iconSize: Dp = BrowseGridPlaceholderIconSize,
+    labelStyle: androidx.compose.ui.text.TextStyle = MaterialTheme.typography.labelMedium,
 ) {
     val namePadH = GalleryGridDefaults.namePaddingH()
     val namePadBottom = GalleryGridDefaults.namePaddingBottom()
@@ -950,7 +951,7 @@ internal fun FavoriteSourceGridCell(
                 }
                 Text(
                     text = fav.displayName,
-                    style = MaterialTheme.typography.labelMedium,
+                    style = labelStyle,
                     // Same default onSurface as other fav / dir cells; scrim follows theme.
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
@@ -972,7 +973,7 @@ internal fun FavoriteSourceGridCell(
                 else -> null
             }
             val labelIconSize = with(LocalDensity.current) {
-                MaterialTheme.typography.labelMedium.fontSize.toDp()
+                labelStyle.fontSize.toDp()
             }
             // ElevatedCard content is already a fillMaxSize Column.
             Box(
@@ -1008,7 +1009,7 @@ internal fun FavoriteSourceGridCell(
                 }
                 Text(
                     text = fav.displayName,
-                    style = MaterialTheme.typography.labelMedium,
+                    style = labelStyle,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                     textAlign = TextAlign.Start,
