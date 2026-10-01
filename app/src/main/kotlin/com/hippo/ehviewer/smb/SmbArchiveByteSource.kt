@@ -187,6 +187,7 @@ private class KeepOpenSmbFileSource(
     private val yieldable: Boolean = false,
 ) : ArchiveByteSource {
     private val remote = RemoteArchiveOpen.normalizeRemoteRelative(remoteRelativeFile)
+
     /** Play generation at open. A later share switch must not be stolen back by this file. */
     private val videoEpoch = if (videoPlay) SmbGateway.currentVideoPlayEpoch() else null
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)

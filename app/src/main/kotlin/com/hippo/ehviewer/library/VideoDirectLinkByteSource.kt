@@ -14,9 +14,9 @@ import java.util.concurrent.atomic.AtomicLong
  *
  * External players issue many small Fuse reads (often ≤128 KiB). This source:
  * - Serves from an aligned multi-block sliding window (demand hits are cheap)
- * - [noteSeek] (external HTTP playhead jump only) serves at most 256 KiB for
- *   [SEEK_STARTUP_MS], with no 4×1 MiB runway. Header / moov probes do not call
- *   [noteSeek]; a short read during the window stays a short read.
+ * - [noteSeek] (playback seek: external HTTP Range or in-app DataSpec) serves at most
+ *   256 KiB for [SEEK_STARTUP_MS], with no 4×1 MiB runway. Header / moov probes do not
+ *   call [noteSeek]; a short read during the window stays a short read.
  * - After those 3 s, sequential playback uses the 4×1 MiB pipeline again.
  * - Prefetch uses the **same** sticky lane as demand (one handle) but a separate
  *   queue. A seek drops queued prefetch and sends the new offset immediately.
@@ -246,9 +246,9 @@ class VideoDirectLinkByteSource(
     }
 
     /**
-     * External HTTP playhead jump. Short header / moov reads keep the steady path
-     * unless they arrive while this window is already open, and then they are
-     * served at the requested length (not padded, not a 4 MiB fill).
+     * Playback seek (external HTTP Range or in-app DataSpec). Short header / moov reads
+     * keep the steady path unless they arrive while this window is already open, and
+     * then they are served at the requested length (not padded, not a 4 MiB fill).
      */
     override fun noteSeek(untilEpochMs: Long) {
         if (closed.get() || untilEpochMs <= 0L) return
