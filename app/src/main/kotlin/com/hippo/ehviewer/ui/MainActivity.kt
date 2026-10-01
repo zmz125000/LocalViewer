@@ -729,8 +729,8 @@ class MainActivity : AppCompatActivity() {
                                 navigator = navigator,
                                 currentDestination = currentDestination,
                                 browserSourceId = browserSourceId,
-                                fromHistory = fromHistoryArg || currentDestination == HistoryScreenDestination,
-                                fromLibrary = fromLibraryArg || currentDestination == LibraryScreenDestination,
+                                activeFromHistory = fromHistoryArg,
+                                activeFromLibrary = fromLibraryArg,
                             ) {
                                 SharedTransitionLayout {
                                     CompositionLocalProvider(LocalSharedTransitionScope provides this) {
