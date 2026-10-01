@@ -127,6 +127,7 @@ import com.hippo.ehviewer.EhApplication.Companion.initialized
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.collectAsState
 import com.hippo.ehviewer.library.BrowseSession
+import com.hippo.ehviewer.library.ExplorerWindows
 import com.hippo.ehviewer.library.LocalLibrary
 import com.hippo.ehviewer.library.buildLocalBrowseStack
 import com.hippo.ehviewer.shortcuts.FolderHomeShortcut
@@ -152,6 +153,9 @@ import com.hippo.ehviewer.ui.main.HttpShareSnackbars
 import com.hippo.ehviewer.ui.main.awaitHttpShareQr
 import com.hippo.ehviewer.ui.navToReader
 import com.hippo.ehviewer.ui.reader.PendingReaderOpen
+import com.hippo.ehviewer.ui.screen.ExplorerPanelActions
+import com.hippo.ehviewer.ui.screen.ExplorerSidePanelHost
+import com.hippo.ehviewer.ui.screen.LocalExplorerPanel
 import com.hippo.ehviewer.ui.screen.toggleHistorySection
 import com.hippo.ehviewer.ui.screen.toggleLibraryFlattenMode
 import com.hippo.ehviewer.ui.screen.toggleLibrarySection
@@ -514,7 +518,16 @@ class MainActivity : AppCompatActivity() {
             }
             val currentDestination by navController.currentDestinationAsState()
             val navBackStackEntry by navController.currentBackStackEntryAsState()
-            val fromHistoryArg = when (currentDestination) {
+            // Window switches stay on the same folder route, so the route args keep the
+            // first window's origin. The active window is what the tab should follow.
+            val browserWindow = when (currentDestination) {
+                FolderBrowserScreenDestination,
+                SmbBrowserScreenDestination,
+                WebDavBrowserScreenDestination,
+                -> ExplorerWindows.active()
+                else -> null
+            }
+            val fromHistoryArg = browserWindow?.fromHistory ?: when (currentDestination) {
                 FolderBrowserScreenDestination ->
                     navBackStackEntry?.arguments
                         ?.let { FolderBrowserScreenDestination.argsFrom(it).fromHistory }
@@ -529,7 +542,7 @@ class MainActivity : AppCompatActivity() {
                         ?: false
                 else -> false
             }
-            val fromLibraryArg = when (currentDestination) {
+            val fromLibraryArg = browserWindow?.fromLibrary ?: when (currentDestination) {
                 FolderBrowserScreenDestination ->
                     navBackStackEntry?.arguments
                         ?.let { FolderBrowserScreenDestination.argsFrom(it).fromLibrary }
@@ -545,6 +558,7 @@ class MainActivity : AppCompatActivity() {
                 else -> false
             }
             val drawerHandle = remember { mutableStateListOf<Long>() }
+            val explorerGesture = remember { mutableStateListOf<Long>() }
             var snackbarFabPadding by remember { mutableStateOf(0.dp) }
             val drawerEnabled = drawerHandle.isNotEmpty()
             val density = LocalDensity.current
@@ -561,10 +575,23 @@ class MainActivity : AppCompatActivity() {
             val showMainNav = shouldShowMainNav(currentDestination, persistMainNav, useRail)
             // Shortcut FABs only on compact phones without persistent nav.
             val showNavShortcutFab = !useRail && !persistMainNav
+            val explorerPanel = remember { ExplorerPanelActions() }
+            fun onMainNavClick(item: MainNavItem) {
+                val onBrowseRoot = item.direction == BrowseScreenDestination &&
+                    currentDestination == BrowseScreenDestination
+                if (onBrowseRoot) {
+                    explorerPanel.toggle()
+                } else {
+                    explorerPanel.close()
+                    navigateMainTab(navigator, item, selectedTab, currentDestination)
+                }
+            }
             CompositionLocalProvider(
+                LocalExplorerPanel provides explorerPanel,
                 LocalNavDrawerState provides navDrawerState,
                 LocalSideSheetState provides sideSheetState,
                 LocalDrawerHandle provides drawerHandle,
+                LocalExplorerGesture provides explorerGesture,
                 LocalSnackBarHostState provides snackbarState,
                 LocalSnackBarFabPadding provides animateDpAsState(snackbarFabPadding, label = "SnackbarFabPadding"),
                 LocalWindowSizeClass provides windowSizeClass,
@@ -617,9 +644,7 @@ class MainActivity : AppCompatActivity() {
                                     val selected = selectedTab == item.direction
                                     NavigationBarItem(
                                         selected = selected,
-                                        onClick = {
-                                            navigateMainTab(navigator, item, selectedTab, currentDestination)
-                                        },
+                                        onClick = { onMainNavClick(item) },
                                         icon = {
                                             MainNavDestinationIcon(
                                                 item = item,
@@ -663,9 +688,7 @@ class MainActivity : AppCompatActivity() {
                                         val selected = selectedTab == item.direction
                                         NavigationRailItem(
                                             selected = selected,
-                                            onClick = {
-                                                navigateMainTab(navigator, item, selectedTab, currentDestination)
-                                            },
+                                            onClick = { onMainNavClick(item) },
                                             icon = {
                                                 MainNavDestinationIcon(
                                                     item = item,
@@ -694,15 +717,33 @@ class MainActivity : AppCompatActivity() {
                                 .padding(bottom = paddingValues.calculateBottomPadding()),
                             enabled = drawerEnabled,
                         ) {
-                            SharedTransitionLayout {
-                                CompositionLocalProvider(LocalSharedTransitionScope provides this) {
-                                    val start = LibraryScreenDestination
-                                    DestinationsNavHost(
-                                        navGraph = NavGraphs.root,
-                                        start = start,
-                                        defaultTransitions = rememberEhNavAnim(),
-                                        navController = navController,
-                                    )
+                            val browserSourceId = when (currentDestination) {
+                                SmbBrowserScreenDestination ->
+                                    navBackStackEntry?.arguments
+                                        ?.let { SmbBrowserScreenDestination.argsFrom(it).sourceId }
+                                WebDavBrowserScreenDestination ->
+                                    navBackStackEntry?.arguments
+                                        ?.let { WebDavBrowserScreenDestination.argsFrom(it).sourceId }
+                                else -> null
+                            }
+                            ExplorerSidePanelHost(
+                                gesturesEnabled = explorerGesture.isNotEmpty(),
+                                navigator = navigator,
+                                currentDestination = currentDestination,
+                                browserSourceId = browserSourceId,
+                                fromHistory = fromHistoryArg || currentDestination == HistoryScreenDestination,
+                                fromLibrary = fromLibraryArg || currentDestination == LibraryScreenDestination,
+                            ) {
+                                SharedTransitionLayout {
+                                    CompositionLocalProvider(LocalSharedTransitionScope provides this) {
+                                        val start = LibraryScreenDestination
+                                        DestinationsNavHost(
+                                            navGraph = NavGraphs.root,
+                                            start = start,
+                                            defaultTransitions = rememberEhNavAnim(),
+                                            navController = navController,
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -785,6 +826,7 @@ class MainActivity : AppCompatActivity() {
                     snackbarState.showSnackbar(getString(R.string.browse_open_failed))
                     return
                 }
+                ExplorerWindows.prepareSpawn()
                 BrowseSession.localStack = buildLocalBrowseStack(
                     rootId = root.id,
                     rootDisplayName = root.displayName,
@@ -792,15 +834,18 @@ class MainActivity : AppCompatActivity() {
                     relativePath = path,
                     preferMediaStore = root.prefersMediaStore,
                 )
+                ExplorerWindows.finishLocalSpawn(root.displayName)
                 navigator.navigate(FolderBrowserScreenDestination(shortcutEpoch = epoch)) {
                     launchSingleTop = true
                 }
             }
             FolderHomeShortcut.KIND_SMB -> {
                 val remote = path.trim('/').let { if (it == ".") "" else it }
+                ExplorerWindows.prepareSpawn()
                 BrowseSession.setSmbSegments(ownerId, remote.split('/').filter { it.isNotEmpty() })
                 BrowseSession.setSmbPhotoGrid(ownerId, null)
                 BrowseSession.setSmbExitToOrigin(ownerId, false)
+                ExplorerWindows.finishSmbSpawn(ownerId, "")
                 navigator.navigate(
                     SmbBrowserScreenDestination(
                         sourceId = ownerId,
@@ -811,9 +856,11 @@ class MainActivity : AppCompatActivity() {
             }
             FolderHomeShortcut.KIND_WEBDAV -> {
                 val remote = path.trim('/').let { if (it == ".") "" else it }
+                ExplorerWindows.prepareSpawn()
                 BrowseSession.setWebDavSegments(ownerId, remote.split('/').filter { it.isNotEmpty() })
                 BrowseSession.setWebDavPhotoGrid(ownerId, null)
                 BrowseSession.setWebDavExitToOrigin(ownerId, false)
+                ExplorerWindows.finishWebDavSpawn(ownerId, "")
                 navigator.navigate(
                     WebDavBrowserScreenDestination(
                         sourceId = ownerId,
@@ -846,6 +893,8 @@ val LocalShowNavShortcutFab = compositionLocalOf { true }
 val LocalNavDrawerState = compositionLocalOf<DrawerState> { error("CompositionLocal LocalNavDrawerState not present!") }
 
 val LocalDrawerHandle = compositionLocalOf<SnapshotStateList<Long>> { error("CompositionLocal LocalDrawerHandle not present!") }
+
+val LocalExplorerGesture = compositionLocalOf<SnapshotStateList<Long>> { error("CompositionLocal LocalExplorerGesture not present!") }
 val LocalSnackBarHostState = compositionLocalOf<SnackbarHostState> { error("CompositionLocal LocalSnackBarHostState not present!") }
 val LocalSharedTransitionScope = compositionLocalOf<SharedTransitionScope> { error("CompositionLocal LocalSharedTransitionScope not present!") }
 
@@ -854,6 +903,21 @@ fun DrawerHandle(enabled: Boolean) {
     if (enabled) {
         val current = currentCompositeKeyHashCode
         val handle = LocalDrawerHandle.current
+        DisposableEffect(current) {
+            handle.add(current)
+            onDispose {
+                handle.remove(current)
+            }
+        }
+    }
+}
+
+/** Swipe-left explorer panel. Off while a search field is focused or this screen opts out. */
+@Composable
+fun ExplorerGestureEnabled(enabled: Boolean) {
+    if (enabled) {
+        val current = currentCompositeKeyHashCode
+        val handle = LocalExplorerGesture.current
         DisposableEffect(current) {
             handle.add(current)
             onDispose {

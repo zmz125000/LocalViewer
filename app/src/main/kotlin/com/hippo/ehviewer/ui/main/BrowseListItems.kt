@@ -350,7 +350,7 @@ fun BrowseFavoriteTitle(
  * names top-align the thumb and title, with overflow centered on the thumb.
  */
 @Composable
-private fun BrowseFolderListItem(
+internal fun BrowseFolderListItem(
     headlineContent: @Composable () -> Unit,
     supportingContent: @Composable () -> Unit,
     leadingContent: @Composable () -> Unit,

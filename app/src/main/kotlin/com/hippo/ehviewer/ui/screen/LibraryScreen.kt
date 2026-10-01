@@ -61,6 +61,7 @@ import androidx.compose.ui.res.dimensionResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewModelScope
 import com.ehviewer.core.database.model.LOCAL_GALLERY_KIND_ARCHIVE
@@ -110,7 +111,7 @@ import com.hippo.ehviewer.library.resolveFavoriteBrowseSources
 import com.hippo.ehviewer.library.toBaseGalleryInfo
 import com.hippo.ehviewer.library.withLocalZipCentralDirectory
 import com.hippo.ehviewer.smb.SmbRepository
-import com.hippo.ehviewer.ui.DrawerHandle
+import com.hippo.ehviewer.ui.ExplorerGestureEnabled
 import com.hippo.ehviewer.ui.OpenFileExternally
 import com.hippo.ehviewer.ui.Screen
 import com.hippo.ehviewer.ui.destinations.EasyTierScreenDestination
@@ -200,7 +201,7 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
         }
     }
 
-    DrawerHandle(!searchFocused)
+    ExplorerGestureEnabled(!searchFocused)
 
     val density = LocalDensity.current
     val scanning by LocalLibrary.scanning.collectAsState()
@@ -912,10 +913,13 @@ private fun FavoriteSourceListRow(
  * label scrim (same as favourite gallery). Miss / no key keeps classic icon layout.
  */
 @Composable
-private fun FavoriteSourceGridCell(
+internal fun FavoriteSourceGridCell(
     fav: FavoriteBrowseSource,
     onClick: () -> Unit,
     onLongClick: () -> Unit = onClick,
+    columns: Int = GalleryGridDefaults.columnCount(),
+    iconSize: Dp = BrowseGridPlaceholderIconSize,
+    labelStyle: androidx.compose.ui.text.TextStyle = MaterialTheme.typography.labelMedium,
 ) {
     val namePadH = GalleryGridDefaults.namePaddingH()
     val namePadBottom = GalleryGridDefaults.namePaddingBottom()
@@ -936,7 +940,7 @@ private fun FavoriteSourceGridCell(
             Box(Modifier.fillMaxSize().clip(ShapeDefaults.Medium)) {
                 val gridDecodePx = CoverThumb.gridDecodePx(
                     screenWidthDp = LocalConfiguration.current.screenWidthDp,
-                    columns = GalleryGridDefaults.columnCount(),
+                    columns = columns,
                     margin = GalleryGridDefaults.margin(),
                     gutter = GalleryGridDefaults.gutter(),
                 )
@@ -954,7 +958,7 @@ private fun FavoriteSourceGridCell(
                             } else {
                                 Icons.Default.Folder
                             },
-                            placeholderSize = BrowseGridPlaceholderIconSize,
+                            placeholderSize = iconSize,
                             modifier = Modifier.fillMaxSize(),
                         )
                     }
@@ -962,13 +966,13 @@ private fun FavoriteSourceGridCell(
                         coverPath = folderThumbKey,
                         sizePx = gridDecodePx,
                         placeholder = Icons.Default.Folder,
-                        placeholderSize = BrowseGridPlaceholderIconSize,
+                        placeholderSize = iconSize,
                         modifier = Modifier.fillMaxSize(),
                     )
                 }
                 Text(
                     text = fav.displayName,
-                    style = MaterialTheme.typography.labelMedium,
+                    style = labelStyle,
                     // Same default onSurface as other fav / dir cells; scrim follows theme.
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
@@ -990,7 +994,7 @@ private fun FavoriteSourceGridCell(
                 else -> null
             }
             val labelIconSize = with(LocalDensity.current) {
-                MaterialTheme.typography.labelMedium.fontSize.toDp()
+                labelStyle.fontSize.toDp()
             }
             // ElevatedCard content is already a fillMaxSize Column.
             Box(
@@ -1003,7 +1007,7 @@ private fun FavoriteSourceGridCell(
                 Icon(
                     favoriteIcon(fav),
                     contentDescription = null,
-                    modifier = Modifier.size(BrowseGridPlaceholderIconSize),
+                    modifier = Modifier.size(iconSize),
                     tint = MaterialTheme.colorScheme.primary,
                 )
             }
@@ -1026,7 +1030,7 @@ private fun FavoriteSourceGridCell(
                 }
                 Text(
                     text = fav.displayName,
-                    style = MaterialTheme.typography.labelMedium,
+                    style = labelStyle,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                     textAlign = TextAlign.Start,
@@ -1038,7 +1042,7 @@ private fun FavoriteSourceGridCell(
 }
 
 /** Stored cover key for folder favourites only (null for whole sources / galleries). */
-private fun folderFavoriteThumbKey(fav: FavoriteBrowseSource): String? = when (fav) {
+internal fun folderFavoriteThumbKey(fav: FavoriteBrowseSource): String? = when (fav) {
     is FavoriteBrowseSource.LocalFolder -> fav.thumbKey
     is FavoriteBrowseSource.SmbFolder -> fav.thumbKey
     is FavoriteBrowseSource.WebDavFolder -> fav.thumbKey
@@ -1089,7 +1093,7 @@ private fun favoriteMetaLine(fav: FavoriteBrowseSource): String {
 }
 
 /** Leading / center glyph for favourite grid icon layout (Folder for network folder pins). */
-private fun favoriteIcon(fav: FavoriteBrowseSource): ImageVector = when (fav) {
+internal fun favoriteIcon(fav: FavoriteBrowseSource): ImageVector = when (fav) {
     is FavoriteBrowseSource.Local ->
         if (fav.root.isLibraryRole) Icons.AutoMirrored.Filled.LibraryBooks else Icons.Default.Folder
     is FavoriteBrowseSource.Smb -> Icons.Default.Lan

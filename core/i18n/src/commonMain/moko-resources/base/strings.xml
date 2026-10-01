@@ -66,6 +66,16 @@
     <string name="browse_galleries">Galleries</string>
     <string name="browse_photos">Photos</string>
     <string name="browse_favorites">Favorites</string>
+    <string name="explorer">Explorer</string>
+    <string name="explorer_quick_access">Quick access</string>
+    <string name="explorer_windows">Windows</string>
+    <string name="explorer_saved_paths">Saved paths</string>
+    <string name="explorer_duplicate">Duplicate window</string>
+    <string name="explorer_save_path">Save path</string>
+    <string name="browse_open_in_new_tab">Open in new tab</string>
+    <string name="browse_save_to_paths">Save to paths</string>
+    <string name="explorer_close_window">Close window</string>
+    <string name="explorer_delete_saved">Delete saved path</string>
     <string name="browse_videos">Videos</string>
     <string name="browse_files">Files</string>
     <string name="browse_documents">Documents</string>

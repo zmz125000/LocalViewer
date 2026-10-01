@@ -84,6 +84,7 @@ import com.hippo.ehviewer.library.BrowseSession
 import com.hippo.ehviewer.library.BrowseVirtualKind
 import com.hippo.ehviewer.library.DirPresence
 import com.hippo.ehviewer.library.EmptyArchiveRegistry
+import com.hippo.ehviewer.library.ExplorerWindows
 import com.hippo.ehviewer.library.FolderGalleryIndex
 import com.hippo.ehviewer.library.FolderSearch
 import com.hippo.ehviewer.library.LOCAL_FOLDER_TOKEN
@@ -94,12 +95,14 @@ import com.hippo.ehviewer.library.LocalLibrary
 import com.hippo.ehviewer.library.LocalListingJobs
 import com.hippo.ehviewer.library.MediaStoreFs
 import com.hippo.ehviewer.library.ReaderGalleryPlaylist
+import com.hippo.ehviewer.library.SavedExplorerPaths
 import com.hippo.ehviewer.library.VideoThumbnail
 import com.hippo.ehviewer.library.VideoThumbnailSource
 import com.hippo.ehviewer.library.ZipAsDirListing
 import com.hippo.ehviewer.library.ZipPaths
 import com.hippo.ehviewer.library.browseScrollLayoutKey
 import com.hippo.ehviewer.library.browseUseGrid
+import com.hippo.ehviewer.library.displayRelative
 import com.hippo.ehviewer.library.filterByContentMode
 import com.hippo.ehviewer.library.filterSmallGalleries
 import com.hippo.ehviewer.library.isEbookFileName
@@ -122,6 +125,7 @@ import com.hippo.ehviewer.library.toBrowseSections
 import com.hippo.ehviewer.library.withLocalZipCentralDirectory
 import com.hippo.ehviewer.shortcuts.FolderHomeShortcut
 import com.hippo.ehviewer.shortcuts.FolderShortcutTarget
+import com.hippo.ehviewer.ui.ExplorerGestureEnabled
 import com.hippo.ehviewer.ui.LocalShowNavShortcutFab
 import com.hippo.ehviewer.ui.OpenFileExternally
 import com.hippo.ehviewer.ui.OpenPdfBySettings
@@ -190,27 +194,35 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
     val roots by LocalLibrary.rootsFlow().collectAsState(initial = emptyList())
     // Session-scoped stack survives reader navigation (unlike remember {}).
     // When opened from Browse with a pre-set stack, start inside that root (no root picker).
-    var stack by remember(shortcutEpoch) {
+    val explorerWindowId = ExplorerWindows.activeId
+    val fromHistory = ExplorerWindows.active()?.fromHistory ?: fromHistory
+    val fromLibrary = ExplorerWindows.active()?.fromLibrary ?: fromLibrary
+    var stack by remember(shortcutEpoch, explorerWindowId) {
         mutableStateOf(BrowseSession.localStack)
     }
     fun updateStack(newStack: List<BrowseSession.LocalFrame>) {
         stack = newStack
         BrowseSession.localStack = newStack
     }
+    LaunchedEffect(explorerWindowId, stack) {
+        val id = explorerWindowId ?: return@LaunchedEffect
+        ExplorerWindows.syncLocal(id, stack)
+    }
 
     /**
      * Stack size of the listing that owned the Search section when a dir was opened
      * from that section. Next goUp jumps there. Overflow Open folder leaves this -1.
      */
-    var searchReturnStackSize by remember { mutableIntStateOf(-1) }
+    var searchReturnStackSize by remember(explorerWindowId) { mutableIntStateOf(-1) }
 
-    var entries by remember { mutableStateOf<List<BrowseEntry>>(emptyList()) }
+    var entries by remember(explorerWindowId) { mutableStateOf<List<BrowseEntry>>(emptyList()) }
     // Lazy-drop non-image archives when cover open reports 0 pages (EmptyArchiveRegistry).
     val emptyArchiveRev by EmptyArchiveRegistry.revision.collectAsState()
     val displayEntries = remember(entries, emptyArchiveRev) {
         EmptyArchiveRegistry.filterLocalEntries(entries)
     }
     val search = rememberBrowseFolderSearchState()
+    ExplorerGestureEnabled(!search.active)
     val searchFolderKey = stack.lastOrNull()?.path?.let { BrowseSession.localFolderSearchKey(it) }.orEmpty()
     var searchHits by remember(searchFolderKey) {
         mutableStateOf(BrowseSession.peekFolderSearchHits<BrowseEntry>(searchFolderKey))
@@ -690,9 +702,12 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
 
     /** Force the next stack-driven [reload] (zip-as-dir toggle leaving a zip frame). */
     var forceNextLoad by remember { mutableStateOf(false) }
+    var listingWindowId by remember { mutableStateOf(explorerWindowId) }
 
-    LaunchedEffect(stack) {
-        if (skipNextListing && !forceNextLoad) {
+    LaunchedEffect(explorerWindowId, stack) {
+        val switchedWindow = listingWindowId != explorerWindowId
+        listingWindowId = explorerWindowId
+        if (skipNextListing && !forceNextLoad && !switchedWindow) {
             skipNextListing = false
             loading = false
             refreshing = false
@@ -769,83 +784,108 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         )
     }
 
+    fun childStack(
+        name: String,
+        path: okio.Path,
+        relativeName: String,
+        keepVideoOverlay: Boolean = true,
+    ): List<BrowseSession.LocalFrame>? {
+        val frame = stack.lastOrNull() ?: return null
+        val videoOverlay = keepVideoOverlay && frame.videoFolder
+        val next = if (frame.isZipBrowse) {
+            val childInner = ZipAsDirListing.joinPrefix(
+                frame.zipInnerRel.orEmpty(),
+                relativeName.ifEmpty { name },
+            )
+            BrowseSession.LocalFrame(
+                rootId = frame.rootId,
+                path = frame.path,
+                title = name,
+                relativePath = frame.relativePath,
+                preferMediaStore = frame.preferMediaStore,
+                videoFolder = videoOverlay,
+                zipInnerRel = childInner,
+            )
+        } else {
+            // Zip-as-dir: fake-folder Directory — path is the .zip/.cbz file.
+            // Promoted Open folder targets (`pack.zip/S`) are not real directories.
+            val zipSplit = if (browseZipAsDir) {
+                ZipAsDirListing.splitZipBrowsePath(relativeName.ifEmpty { name })
+            } else {
+                null
+            }
+            if (zipSplit != null) {
+                val (zipRel, inner) = zipSplit
+                val parent = frame.relativePath.replace('\\', '/').trim('/')
+                val fullZipRel = if (parent.isEmpty()) zipRel else "$parent/$zipRel"
+                val zipPath = ZipAsDirListing.zipBrowseFilePath(
+                    frame.path.toPath(),
+                    zipRel,
+                    path,
+                )
+                BrowseSession.LocalFrame(
+                    rootId = frame.rootId,
+                    path = zipPath.toString(),
+                    title = name,
+                    relativePath = fullZipRel,
+                    preferMediaStore = frame.preferMediaStore,
+                    videoFolder = videoOverlay,
+                    zipInnerRel = inner,
+                )
+            } else {
+                // Real path segments (not virtual @display name) — same join as folderGalleryRelative.
+                val child = relativeName.replace('\\', '/').trim('/')
+                val parent = frame.relativePath.replace('\\', '/').trim('/')
+                val rel = when {
+                    child.isEmpty() -> parent
+                    parent.isEmpty() -> child
+                    else -> "$parent/$child"
+                }
+                BrowseSession.LocalFrame(
+                    rootId = frame.rootId,
+                    path = path.toString(),
+                    title = name,
+                    relativePath = rel,
+                    preferMediaStore = frame.preferMediaStore,
+                    videoFolder = videoOverlay,
+                )
+            }
+        }
+        return stack + next
+    }
+
     fun enterDir(
         entry: BrowseEntry.Directory,
         fromSearch: Boolean = false,
         keepVideoOverlay: Boolean = true,
     ) {
         search.recordOpenedResult()
-        val frame = stack.lastOrNull() ?: return
+        if (stack.lastOrNull() == null) return
         if (fromSearch) {
             if (searchReturnStackSize < 0) searchReturnStackSize = stack.size
         } else {
             searchReturnStackSize = -1
         }
-        val videoOverlay = keepVideoOverlay && frame.videoFolder
-        if (frame.isZipBrowse) {
-            val childInner = ZipAsDirListing.joinPrefix(
-                frame.zipInnerRel.orEmpty(),
-                entry.relativeName.ifEmpty { entry.name },
-            )
-            updateStack(
-                stack + BrowseSession.LocalFrame(
-                    rootId = frame.rootId,
-                    path = frame.path,
-                    title = entry.name,
-                    relativePath = frame.relativePath,
-                    preferMediaStore = frame.preferMediaStore,
-                    videoFolder = videoOverlay,
-                    zipInnerRel = childInner,
-                ),
-            )
-            return
-        }
-        // Zip-as-dir: fake-folder Directory — path is the .zip/.cbz file.
-        // Promoted Open folder targets (`pack.zip/S`) are not real directories.
-        val zipSplit = if (browseZipAsDir) {
-            ZipAsDirListing.splitZipBrowsePath(entry.relativeName.ifEmpty { entry.name })
-        } else {
-            null
-        }
-        if (zipSplit != null) {
-            val (zipRel, inner) = zipSplit
-            val parent = frame.relativePath.replace('\\', '/').trim('/')
-            val fullZipRel = if (parent.isEmpty()) zipRel else "$parent/$zipRel"
-            val zipPath = ZipAsDirListing.zipBrowseFilePath(
-                frame.path.toPath(),
-                zipRel,
-                entry.path,
-            )
-            updateStack(
-                stack + BrowseSession.LocalFrame(
-                    rootId = frame.rootId,
-                    path = zipPath.toString(),
-                    title = entry.name,
-                    relativePath = fullZipRel,
-                    preferMediaStore = frame.preferMediaStore,
-                    videoFolder = videoOverlay,
-                    zipInnerRel = inner,
-                ),
-            )
-            return
-        }
-        // Real path segments (not virtual @display name) — same join as folderGalleryRelative.
-        val child = entry.relativeName.replace('\\', '/').trim('/')
-        val parent = frame.relativePath.replace('\\', '/').trim('/')
-        val rel = when {
-            child.isEmpty() -> parent
-            parent.isEmpty() -> child
-            else -> "$parent/$child"
-        }
-        updateStack(
-            stack + BrowseSession.LocalFrame(
-                rootId = frame.rootId,
-                path = entry.path.toString(),
-                title = entry.name,
-                relativePath = rel,
-                preferMediaStore = frame.preferMediaStore,
-                videoFolder = videoOverlay,
-            ),
+        val next = childStack(entry.name, entry.path, entry.relativeName, keepVideoOverlay) ?: return
+        updateStack(next)
+    }
+
+    fun openLocalFolderInNewTab(name: String, path: okio.Path, relativeName: String) {
+        val next = childStack(name, path, relativeName) ?: return
+        ExplorerWindows.openLocalInBackground(
+            next,
+            next.first().title,
+            fromHistory,
+            fromLibrary,
+        )
+    }
+
+    fun saveLocalFolderToPaths(name: String, path: okio.Path, relativeName: String) {
+        val frame = childStack(name, path, relativeName)?.lastOrNull() ?: return
+        SavedExplorerPaths.remember(
+            ExplorerWindows.Kind.Local,
+            frame.rootId,
+            displayRelative(frame),
         )
     }
 
@@ -1971,6 +2011,8 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                 ),
             )
         },
+        onOpenInNewTab = { openLocalFolderInNewTab(dir.name, dir.path, dir.relativeName) },
+        onSaveToPaths = { saveLocalFolderToPaths(dir.name, dir.path, dir.relativeName) },
         shortcut = localShortcut(dir.relativeName, true, dir.name),
         onUnsupported = { notSupportedAction() },
     )
@@ -1992,6 +2034,8 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                 ),
             )
         },
+        onOpenInNewTab = { openLocalFolderInNewTab(entry.name, entry.path, entry.relativeName) },
+        onSaveToPaths = { saveLocalFolderToPaths(entry.name, entry.path, entry.relativeName) },
         shortcut = localShortcut(entry.relativeName, true, entry.name),
         onUnsupported = { notSupportedAction() },
     )
