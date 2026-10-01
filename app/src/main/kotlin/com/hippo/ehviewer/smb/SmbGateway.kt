@@ -1706,7 +1706,7 @@ object SmbGateway {
         val prev = lastPathChangeMs.getAndSet(now)
         val debounced = prev != 0L && now - prev < PATH_CHANGE_DEBOUNCE_MS
         val hasSticky = stickyConnections.isNotEmpty() ||
-            synchronized(reusableStickyLock) { reusableSticky != null }
+            synchronized(reusableStickyLock) { reusableStickies.isNotEmpty() }
         val hasBrowse = hostPools.isNotEmpty() || listJobs.isNotEmpty()
         val plan = planSmbNetworkPathChange(
             debounced = debounced,
@@ -3292,9 +3292,10 @@ object SmbGateway {
     }
 
     /**
-     * One live video/FUSE tree per host. Next file on this share is [DiskShare.openFile]
-     * only — no new TCP. A newer play on a **different** share replaces it. An older
-     * play must not connect back over that replacement. Dropped by [dropStickySessions].
+     * Up to [STICKY_SHARE_SLOTS] live video/FUSE trees. Each share keeps its own TCP.
+     * Next file on a share is [DiskShare.openFile] only. A third share replaces the
+     * older of the two. An older play must not connect back over that replacement.
+     * Dropped by [dropStickySessions].
      */
     private data class ReusableSticky(
         val key: String,
@@ -3305,22 +3306,39 @@ object SmbGateway {
         val share: DiskShare,
     )
 
+    private const val STICKY_SHARE_SLOTS = 2
     private val reusableStickyLock = Any()
-    private var reusableSticky: ReusableSticky? = null
+    private val reusableStickies = ArrayList<ReusableSticky>(STICKY_SHARE_SLOTS)
 
     private fun stickyShareKey(source: SmbSourceEntity, host: String, share: String): String = "$host:${source.port}:${source.id}:$share"
 
-    /** True when [live] is a different share that a newer play still owns. */
+    /**
+     * True when this share may open a TCP: its slot is free, or it is newer than the
+     * oldest of [STICKY_SHARE_SLOTS] live shares.
+     */
     private fun mayReplaceForeignSticky(
         source: SmbSourceEntity,
         host: String,
         share: String,
         epoch: Int?,
     ): Boolean {
-        val live = synchronized(reusableStickyLock) { reusableSticky } ?: return true
-        if (live.key == stickyShareKey(source, host, share)) return true
-        if (!stickyStillUp(live)) return true
-        return (epoch ?: 0) >= live.epoch
+        val key = stickyShareKey(source, host, share)
+        val live = synchronized(reusableStickyLock) {
+            reusableStickies.filter { stickyStillUp(it) }
+        }
+        if (live.any { it.key == key }) return true
+        if (live.size < STICKY_SHARE_SLOTS) return true
+        val oldest = live.minOf { it.epoch }
+        return (epoch ?: 0) >= oldest
+    }
+
+    /** Bump a share's epoch while its videos are still opening, so a third share drops the other one. */
+    private fun noteStickyUse(sticky: ReusableSticky, epoch: Int?) {
+        if (epoch == null || epoch <= sticky.epoch) return
+        synchronized(reusableStickyLock) {
+            val index = reusableStickies.indexOfFirst { it === sticky }
+            if (index >= 0) reusableStickies[index] = sticky.copy(epoch = epoch)
+        }
     }
 
     private fun stickyStillUp(sticky: ReusableSticky): Boolean = try {
@@ -3347,6 +3365,7 @@ object SmbGateway {
             if (reused != null) {
                 try {
                     adoptVideoEpoch(reused.connection, videoPlayEpoch)
+                    noteStickyUse(reused, videoPlayEpoch)
                     logcat {
                         "SmbGateway: sticky reuse ${reused.key} file=${PrivacyLog.file(path)}"
                     }
@@ -3383,23 +3402,23 @@ object SmbGateway {
         share: String,
     ): ReusableSticky? {
         val key = stickyShareKey(source, host, share)
-        val dead = synchronized(reusableStickyLock) {
-            val live = reusableSticky ?: return null
-            val connected = try {
-                live.connection.isConnected && live.share.isConnected
-            } catch (_: Throwable) {
-                false
+        val dead = ArrayList<ReusableSticky>()
+        val found = synchronized(reusableStickyLock) {
+            var match: ReusableSticky? = null
+            val iter = reusableStickies.iterator()
+            while (iter.hasNext()) {
+                val live = iter.next()
+                if (!stickyStillUp(live)) {
+                    iter.remove()
+                    dead.add(live)
+                } else if (live.key == key) {
+                    match = live
+                }
             }
-            if (live.key == key && connected) return live
-            if (!connected) {
-                reusableSticky = null
-                live
-            } else {
-                null
-            }
+            match
         }
-        if (dead != null) retireReusable(dead, "disconnected")
-        return null
+        dead.forEach { retireReusable(it, "disconnected") }
+        return found
     }
 
     private fun <T> connectReusableSticky(
@@ -3428,22 +3447,38 @@ object SmbGateway {
                 session = session,
                 share = tree,
             )
+            val dead = ArrayList<ReusableSticky>()
             val previous = synchronized(reusableStickyLock) {
-                val current = reusableSticky
-                if (current != null &&
-                    current.connection !== connection &&
-                    current.key != created.key &&
-                    stickyStillUp(current) &&
-                    (videoPlayEpoch ?: 0) < current.epoch
-                ) {
+                val gone = reusableStickies.filter { !stickyStillUp(it) }
+                if (gone.isNotEmpty()) reusableStickies.removeAll(gone.toSet())
+                dead.addAll(gone)
+                val same = reusableStickies.find { it.key == created.key }
+                if (same != null) {
+                    reusableStickies.remove(same)
+                    reusableStickies.add(created)
+                    same
+                } else if (reusableStickies.size < STICKY_SHARE_SLOTS) {
+                    reusableStickies.add(created)
                     null
                 } else {
-                    reusableSticky = created
-                    current
+                    val oldest = reusableStickies.minBy { it.epoch }
+                    if ((videoPlayEpoch ?: 0) < oldest.epoch) {
+                        null
+                    } else {
+                        reusableStickies.remove(oldest)
+                        reusableStickies.add(created)
+                        oldest
+                    }
                 }
             }
-            if (previous == null && reusableSticky !== created) {
-                throw SmbStickyMovedException()
+            dead.forEach { retireReusable(it, "disconnected") }
+            val installed = synchronized(reusableStickyLock) {
+                reusableStickies.any { it === created }
+            }
+            if (!installed) throw SmbStickyMovedException()
+            logcat {
+                val slots = synchronized(reusableStickyLock) { reusableStickies.size }
+                "SmbGateway: sticky share slot $slots/$STICKY_SHARE_SLOTS ${created.key}"
             }
             if (previous != null && previous.connection !== connection) {
                 retireReusable(previous, "replaced")
@@ -3454,7 +3489,7 @@ object SmbGateway {
             videoSticky?.let { videoStickies.remove(it) }
             stickyConnections.remove(connection)
             synchronized(reusableStickyLock) {
-                if (reusableSticky?.connection === connection) reusableSticky = null
+                reusableStickies.removeAll { it.connection === connection }
             }
             runCatching { connection.close() }
             runCatching { smbClient.close() }
@@ -3490,7 +3525,7 @@ object SmbGateway {
 
     private fun retireReusable(sticky: ReusableSticky, reason: String) {
         synchronized(reusableStickyLock) {
-            if (reusableSticky === sticky) reusableSticky = null
+            reusableStickies.removeAll { it === sticky || it.connection === sticky.connection }
         }
         videoStickies.removeIf { it.connection === sticky.connection }
         stickyConnections.remove(sticky.connection)
@@ -3510,18 +3545,18 @@ object SmbGateway {
      */
     fun dropStickySessions(reason: String) {
         val reused = synchronized(reusableStickyLock) {
-            reusableSticky.also { reusableSticky = null }
+            reusableStickies.toList().also { reusableStickies.clear() }
         }
         val list = stickyConnections.toList()
-        if (list.isEmpty() && reused == null) return
+        if (list.isEmpty() && reused.isEmpty()) return
         list.forEach { stickyConnections.remove(it) }
         videoStickies.clear()
         logcat { "SmbGateway: drop sticky sessions ($reason) count=${list.size}" }
         gatewayScope.launch {
-            if (reused != null) {
-                runCatching { reused.share.close() }
-                runCatching { reused.session.close() }
-                runCatching { reused.client.close() }
+            reused.forEach { sticky ->
+                runCatching { sticky.share.close() }
+                runCatching { sticky.session.close() }
+                runCatching { sticky.client.close() }
             }
             list.forEach { conn ->
                 runCatching { conn.close() }
@@ -4060,8 +4095,8 @@ private fun isFileHandleAbortError(t: Throwable): Boolean {
 internal fun isSmbExpectedCloseError(t: Throwable): Boolean = isShareClosedError(t) || isFileHandleAbortError(t)
 
 /**
- * This open lost the sticky slot to a newer play on a different share.
- * Reconnecting would drop that share's TCP and leave it stuck at one file.
+ * This open lost both sticky slots to newer plays on other shares.
+ * Reconnecting would drop one of those shares.
  */
 internal class SmbStickyMovedException : IOException(
     "SMB sticky session belongs to a newer share",
