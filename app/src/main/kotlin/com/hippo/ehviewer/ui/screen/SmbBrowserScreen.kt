@@ -205,6 +205,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
     val explorerWindowId = ExplorerWindows.activeId
     val fromHistory = ExplorerWindows.active()?.fromHistory ?: fromHistory
     val fromLibrary = ExplorerWindows.active()?.fromLibrary ?: fromLibrary
+    val fromSidePanel = ExplorerWindows.active()?.fromSidePanel == true
     var segments by remember(sourceId, shortcutEpoch, explorerWindowId) {
         val stored = BrowseSession.smbSegmentsOrNull(sourceId)
         val initial = stored ?: initialRelativePath.split('/').filter { it.isNotEmpty() }.also {
@@ -330,8 +331,6 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
             sourceId,
             source?.displayName.orEmpty(),
             segments,
-            fromHistory,
-            fromLibrary,
         )
     }
 
@@ -876,7 +875,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                     navigator.navigate(HistoryScreenDestination) { launchSingleTop = true }
                 }
             }
-            fromLibrary -> {
+            fromLibrary || fromSidePanel -> {
                 if (!navigator.popBackStack(LibraryScreenDestination, inclusive = false)) {
                     navigator.navigate(LibraryScreenDestination) { launchSingleTop = true }
                 }
@@ -1995,7 +1994,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                             },
                             text = { Text(stringResource(R.string.back_to_history)) },
                         )
-                        fromLibrary -> ExtendedFloatingActionButton(
+                        fromLibrary || fromSidePanel -> ExtendedFloatingActionButton(
                             onClick = { jumpBackToOrigin() },
                             icon = {
                                 Icon(Icons.AutoMirrored.Filled.LibraryBooks, contentDescription = null)

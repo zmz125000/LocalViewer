@@ -197,6 +197,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
     val explorerWindowId = ExplorerWindows.activeId
     val fromHistory = ExplorerWindows.active()?.fromHistory ?: fromHistory
     val fromLibrary = ExplorerWindows.active()?.fromLibrary ?: fromLibrary
+    val fromSidePanel = ExplorerWindows.active()?.fromSidePanel == true
     var stack by remember(shortcutEpoch, explorerWindowId) {
         mutableStateOf(BrowseSession.localStack)
     }
@@ -875,8 +876,6 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         ExplorerWindows.openLocalInBackground(
             next,
             next.first().title,
-            fromHistory,
-            fromLibrary,
         )
     }
 
@@ -988,7 +987,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                     navigator.navigate(HistoryScreenDestination) { launchSingleTop = true }
                 }
             }
-            fromLibrary -> {
+            fromLibrary || fromSidePanel -> {
                 if (!navigator.popBackStack(LibraryScreenDestination, inclusive = false)) {
                     navigator.navigate(LibraryScreenDestination) { launchSingleTop = true }
                 }
@@ -2248,7 +2247,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                             },
                             text = { Text(stringResource(R.string.back_to_history)) },
                         )
-                        fromLibrary -> ExtendedFloatingActionButton(
+                        fromLibrary || fromSidePanel -> ExtendedFloatingActionButton(
                             onClick = { jumpBackToOrigin() },
                             icon = {
                                 Icon(Icons.AutoMirrored.Filled.LibraryBooks, contentDescription = null)

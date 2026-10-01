@@ -36,6 +36,7 @@ object ExplorerWindows {
         val exitToOrigin: Boolean = false,
         val fromHistory: Boolean = false,
         val fromLibrary: Boolean = false,
+        val fromSidePanel: Boolean = false,
     )
 
     private val ids = AtomicLong(1L)
@@ -56,10 +57,11 @@ object ExplorerWindows {
         sourceName: String,
         fromHistory: Boolean = false,
         fromLibrary: Boolean = false,
+        fromSidePanel: Boolean = false,
     ) {
         val stack = BrowseSession.localStack
         if (stack.isEmpty()) return
-        adopt(windowFromLocal(stack, sourceName, fromHistory, fromLibrary))
+        adopt(windowFromLocal(stack, sourceName, fromHistory, fromLibrary, fromSidePanel))
     }
 
     fun finishSmbSpawn(
@@ -67,8 +69,9 @@ object ExplorerWindows {
         sourceName: String,
         fromHistory: Boolean = false,
         fromLibrary: Boolean = false,
+        fromSidePanel: Boolean = false,
     ) {
-        adopt(windowFromSmb(sourceId, sourceName, fromHistory, fromLibrary))
+        adopt(windowFromSmb(sourceId, sourceName, fromHistory, fromLibrary, fromSidePanel))
     }
 
     fun finishWebDavSpawn(
@@ -76,8 +79,24 @@ object ExplorerWindows {
         sourceName: String,
         fromHistory: Boolean = false,
         fromLibrary: Boolean = false,
+        fromSidePanel: Boolean = false,
     ) {
-        adopt(windowFromWebDav(sourceId, sourceName, fromHistory, fromLibrary))
+        adopt(windowFromWebDav(sourceId, sourceName, fromHistory, fromLibrary, fromSidePanel))
+    }
+
+    /**
+     * Side-panel restore replaces whatever origin this window had.
+     * History and Library flags are cleared so the previous back target is dropped.
+     */
+    fun overrideFromSidePanel(id: Long) {
+        val index = windows.indexOfFirst { it.id == id }
+        if (index < 0) return
+        val current = windows[index]
+        windows[index] = current.copy(
+            fromHistory = false,
+            fromLibrary = false,
+            fromSidePanel = true,
+        )
     }
 
     /**
@@ -92,7 +111,7 @@ object ExplorerWindows {
     ) {
         if (stack.isEmpty()) return
         captureActiveFromSession()
-        val window = windowFromLocal(stack, sourceName, fromHistory, fromLibrary)
+        val window = windowFromLocal(stack, sourceName, fromHistory, fromLibrary, false)
         if (windows.any { samePath(it, window) }) return
         windows.add(0, window)
     }
@@ -224,8 +243,15 @@ object ExplorerWindows {
         val existing = windows.firstOrNull { it.id == activeId && samePath(it, window) }
             ?: windows.firstOrNull { samePath(it, window) }
         if (existing != null) {
-            applyToSession(existing)
-            activeId = existing.id
+            val index = windows.indexOfFirst { it.id == existing.id }
+            val updated = existing.copy(
+                fromHistory = window.fromHistory,
+                fromLibrary = window.fromLibrary,
+                fromSidePanel = window.fromSidePanel,
+            )
+            if (index >= 0) windows[index] = updated
+            applyToSession(updated)
+            activeId = updated.id
             return
         }
         add(window)
@@ -314,9 +340,11 @@ object ExplorerWindows {
         sourceName: String,
         fromHistory: Boolean,
         fromLibrary: Boolean,
+        fromSidePanel: Boolean,
     ): Window {
         val frame = stack.last()
         val rootTitle = stack.first().title.safFolderLabel()
+        val origin = sidePanelOrigin(fromHistory, fromLibrary, fromSidePanel)
         return Window(
             id = ids.getAndIncrement(),
             kind = Kind.Local,
@@ -325,8 +353,9 @@ object ExplorerWindows {
             title = frame.title.safFolderLabel(),
             relativePath = displayRelative(frame),
             localStack = stack.toList(),
-            fromHistory = fromHistory,
-            fromLibrary = fromLibrary,
+            fromHistory = origin.first,
+            fromLibrary = origin.second,
+            fromSidePanel = origin.third,
         )
     }
 
@@ -335,14 +364,16 @@ object ExplorerWindows {
         sourceName: String,
         fromHistory: Boolean,
         fromLibrary: Boolean,
-    ): Window = windowFromRemote(Kind.Smb, sourceId, sourceName, fromHistory, fromLibrary)
+        fromSidePanel: Boolean,
+    ): Window = windowFromRemote(Kind.Smb, sourceId, sourceName, fromHistory, fromLibrary, fromSidePanel)
 
     private fun windowFromWebDav(
         sourceId: Long,
         sourceName: String,
         fromHistory: Boolean,
         fromLibrary: Boolean,
-    ): Window = windowFromRemote(Kind.WebDav, sourceId, sourceName, fromHistory, fromLibrary)
+        fromSidePanel: Boolean,
+    ): Window = windowFromRemote(Kind.WebDav, sourceId, sourceName, fromHistory, fromLibrary, fromSidePanel)
 
     private fun windowFromRemote(
         kind: Kind,
@@ -350,10 +381,12 @@ object ExplorerWindows {
         sourceName: String,
         fromHistory: Boolean,
         fromLibrary: Boolean,
+        fromSidePanel: Boolean,
     ): Window {
         val segments = remoteSegments(kind, sourceId)
         val photo = remotePhoto(kind, sourceId)
         val rel = displayRemote(segments, photo)
+        val origin = sidePanelOrigin(fromHistory, fromLibrary, fromSidePanel)
         return Window(
             id = ids.getAndIncrement(),
             kind = kind,
@@ -364,9 +397,21 @@ object ExplorerWindows {
             segments = segments,
             photoGrid = photo,
             exitToOrigin = remoteExit(kind, sourceId),
-            fromHistory = fromHistory,
-            fromLibrary = fromLibrary,
+            fromHistory = origin.first,
+            fromLibrary = origin.second,
+            fromSidePanel = origin.third,
         )
+    }
+
+    /** A side-panel open drops History and Library so only one back target remains. */
+    private fun sidePanelOrigin(
+        fromHistory: Boolean,
+        fromLibrary: Boolean,
+        fromSidePanel: Boolean,
+    ): Triple<Boolean, Boolean, Boolean> = if (fromSidePanel) {
+        Triple(false, false, true)
+    } else {
+        Triple(fromHistory, fromLibrary, false)
     }
 
     private fun remoteSegments(kind: Kind, sourceId: Long): List<String> = when (kind) {
