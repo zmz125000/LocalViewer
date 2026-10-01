@@ -37,6 +37,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -149,6 +150,7 @@ import com.hippo.ehviewer.ui.main.BrowsePhotoGridImageItem
 import com.hippo.ehviewer.ui.main.BrowseSaveAs
 import com.hippo.ehviewer.ui.main.BrowseSearchSectionHeader
 import com.hippo.ehviewer.ui.main.BrowseSectionHeader
+import com.hippo.ehviewer.ui.main.LocalBrowseListHeaderInset
 import com.hippo.ehviewer.ui.main.BrowseVideoGridItem
 import com.hippo.ehviewer.ui.main.BrowseVideoRow
 import com.hippo.ehviewer.ui.main.GalleryGridDefaults
@@ -2715,10 +2717,12 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                         }
                     } else {
                         val listState = rememberSmbBrowseGridState(sourceId, dirKey, scrollLayoutKey)
+                        CompositionLocalProvider(LocalBrowseListHeaderInset provides GalleryGridDefaults.margin()) {
                         FastScrollLazyVerticalGrid(
                             columns = GalleryGridDefaults.listColumns(),
                             state = listState,
                             modifier = Modifier.nestedScroll(scrollBehavior.nestedScrollConnection).fillMaxSize(),
+                            contentPadding = GalleryGridDefaults.listVerticalContentPadding(),
                         ) {
                             searchSection(grid = false)
                             recentSection(grid = false)
@@ -2874,6 +2878,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                                     }
                                 }
                             }
+                        }
                         }
                     }
                 }

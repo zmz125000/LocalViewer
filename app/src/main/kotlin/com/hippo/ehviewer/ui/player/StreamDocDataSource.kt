@@ -10,17 +10,20 @@ import com.hippo.ehviewer.library.ArchiveByteSource
 import com.hippo.ehviewer.library.VideoBackendHolder
 import com.hippo.ehviewer.library.VideoDirectLinkByteSource
 import com.hippo.ehviewer.provider.StreamDocumentRegistry
+import com.hippo.ehviewer.provider.httpRangeIsPlaybackSeek
 import com.hippo.ehviewer.smb.SmbGateway
 import java.io.IOException
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
 
 /**
  * Media3 [DataSource] that reads network stream-doc tokens **directly** via
  * [VideoDirectLinkByteSource] (RAM sliding window, one sticky lane).
  *
- * Seek reuses the token backend. [close] detaches only — SMB stays up for the
- * next Range / open. A new token [SmbGateway.beginVideoPlay]s (evicts previous).
- * 60s with no read drops the lane.
+ * Seek reuses the token backend. A long open away from the playhead arms the same
+ * 256 KiB startup window as external HTTP; short header reads do not.
+ * [close] detaches only — SMB stays up for the next open. A new token
+ * [SmbGateway.beginVideoPlay]s (evicts previous). 60s with no read drops the lane.
  *
  * Skips AppFuse [android.os.storage.StorageManager.openProxyFileDescriptor] — that path
  * is for external players only. In-app ExoPlayer should not go through FUSE: small
@@ -36,6 +39,10 @@ class StreamDocDataSource(
     private var bytesRemaining = 0L
     private var opened = false
     private var retainedToken: String? = null
+
+    /** Latest long open. Short probes must not move this or arm the seek window. */
+    private val playhead = AtomicLong(Long.MIN_VALUE)
+    private var playheadToken: String? = null
 
     override fun open(dataSpec: DataSpec): Long {
         if (opened || retainedToken != null) close()
@@ -72,6 +79,21 @@ class StreamDocDataSource(
             dataSpec.length.coerceAtMost(size - dataSpec.position)
         } else {
             size - dataSpec.position
+        }
+        if (playheadToken != token) {
+            playhead.set(Long.MIN_VALUE)
+            playheadToken = token
+        }
+        // Same rule as external HTTP: only a long / open-ended read is playback.
+        // A short DataSpec is a header or moov probe.
+        val streaming = bytesRemaining > VideoDirectLinkByteSource.VIDEO_BLOCK
+        if (video is VideoDirectLinkByteSource && streaming) {
+            val previous = playhead.getAndSet(readPosition)
+            if (httpRangeIsPlaybackSeek(previous, readPosition)) {
+                video.noteSeek(
+                    System.currentTimeMillis() + VideoDirectLinkByteSource.SEEK_STARTUP_MS,
+                )
+            }
         }
         CurrentNetworkVideoPlay.touch()
         if (video is VideoDirectLinkByteSource && !video.isBuffered(readPosition)) {

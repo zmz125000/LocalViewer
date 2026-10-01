@@ -146,10 +146,6 @@ fun AnimatedVisibilityScope.EhScreen(navigator: DestinationsNavigator) = Screen(
                 title = stringResource(id = R.string.settings_browse_archive_page_count),
                 state = Settings.browseArchivePageCount.asMutableState(),
             )
-            SwitchPreference(
-                title = stringResource(id = R.string.settings_use_media3_player),
-                state = Settings.useMedia3Player.asMutableState(),
-            )
             val context = LocalContext.current
             val pdfReaderMode = Settings.pdfReaderMode.asMutableState()
             val pdfModeEntries = stringArrayResource(id = com.hippo.ehviewer.R.array.pdf_reader_mode_entries)
@@ -212,6 +208,10 @@ fun AnimatedVisibilityScope.EhScreen(navigator: DestinationsNavigator) = Screen(
                     state = Settings.openHtmlInIncognito.asMutableState(),
                 )
             }
+            SwitchPreference(
+                title = stringResource(id = R.string.settings_use_media3_player),
+                state = Settings.useMedia3Player.asMutableState(),
+            )
             var defaultVideoPlayer by Settings.defaultVideoPlayerComponent.asMutableState()
             val alwaysAsk = stringResource(id = R.string.settings_default_video_player_always_ask)
             val noVideoApps = stringResource(id = R.string.settings_default_video_player_none)

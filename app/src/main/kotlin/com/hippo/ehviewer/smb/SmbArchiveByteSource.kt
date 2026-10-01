@@ -9,6 +9,7 @@ import com.hippo.ehviewer.library.RemoteArchiveOpen
 import com.hippo.ehviewer.library.ZipAsDirListing
 import com.hippo.ehviewer.library.openZipContainedFileSource
 import java.io.IOException
+import java.util.concurrent.CancellationException
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
@@ -187,6 +188,7 @@ private class KeepOpenSmbFileSource(
     private val yieldable: Boolean = false,
 ) : ArchiveByteSource {
     private val remote = RemoteArchiveOpen.normalizeRemoteRelative(remoteRelativeFile)
+
     /** Play generation at open. A later share switch must not be stolen back by this file. */
     private val videoEpoch = if (videoPlay) SmbGateway.currentVideoPlayEpoch() else null
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -217,6 +219,7 @@ private class KeepOpenSmbFileSource(
         val off: Int,
         val len: Int,
         val result: CompletableDeferred<Int>,
+        val cancel: java.util.concurrent.atomic.AtomicBoolean = java.util.concurrent.atomic.AtomicBoolean(false),
     )
 
     init {
@@ -256,8 +259,18 @@ private class KeepOpenSmbFileSource(
                                                     return
                                                 }
                                                 try {
+                                                    if (op.cancel.get()) {
+                                                        op.result.complete(-1)
+                                                        return
+                                                    }
                                                     op.result.complete(
-                                                        readFullyWithRetry(file, op.offset, op.buf, op.off, op.len),
+                                                        readFullyWithRetry(
+                                                            file,
+                                                            op.offset,
+                                                            op.buf,
+                                                            op.off,
+                                                            op.len,
+                                                        ) { op.cancel.get() },
                                                     )
                                                 } catch (e: Throwable) {
                                                     if (!isSmbExpectedCloseError(e)) logcat("SmbArchive", e)
@@ -489,24 +502,39 @@ private class KeepOpenSmbFileSource(
         val toRead = minOf(len.toLong(), fileSize - offset).toInt()
         val result = CompletableDeferred<Int>()
         val channel = if (urgentRead && stickySession) urgent else ops
+        val op = Op(offset, buf, off, toRead, result)
         return try {
             runBlocking {
                 if (closed.get()) return@runBlocking -1
                 demand.trySend(Unit)
-                channel.send(Op(offset, buf, off, toRead, result))
+                channel.send(op)
                 result.await()
             }
         } catch (e: Throwable) {
-            // Prefetch cancel / proxy onRelease interrupt in-flight runBlocking — not a fault.
-            if (closed.get() || e is InterruptedException || e.cause is InterruptedException) {
-                Thread.interrupted() // clear flag so pooled workers stay usable
-                return -1
+            // Player seek interrupts the loader thread. runBlocking surfaces that as
+            // InterruptedException or CancellationException. Stop this old-offset read
+            // so the next open can buffer the new position instead of retrying this one.
+            if (closed.get() || isCallerGone(e)) {
+                op.cancel.set(true)
+                Thread.interrupted()
+                throw SmbReadCancelledException()
             }
             // App background closes the browse pool under mid-read; caller soft-fails.
             if (isSmbExpectedCloseError(e)) return -1
             logcat("SmbArchive", e)
             -1
         }
+    }
+
+    /** Loader interrupt, or the coroutine cancel that runBlocking turns it into. */
+    private fun isCallerGone(e: Throwable): Boolean {
+        var current: Throwable? = e
+        var depth = 0
+        while (current != null && depth++ < 8) {
+            if (current is InterruptedException || current is CancellationException) return true
+            current = current.cause
+        }
+        return Thread.currentThread().isInterrupted
     }
 
     override fun dropQueuedReads() {
@@ -576,13 +604,15 @@ private class KeepOpenSmbFileSource(
             buf: ByteArray,
             off: Int,
             len: Int,
+            shouldAbort: () -> Boolean = { false },
         ): Int {
             var last: Throwable? = null
             for (attempt in 0 until READ_ATTEMPTS) {
+                if (shouldAbort()) return -1
                 try {
-                    val n = readFully(file, fileOffset, buf, off, len)
+                    val n = readFully(file, fileOffset, buf, off, len, shouldAbort)
                     // n==0 on a positive request is rare; treat as retryable empty.
-                    if (n > 0 || len == 0) return n
+                    if (n > 0 || len == 0 || shouldAbort()) return n
                     last = IOException("SMB read returned 0 at offset=$fileOffset len=$len")
                 } catch (e: Throwable) {
                     if (isSmbExpectedCloseError(e)) throw e
@@ -601,7 +631,9 @@ private class KeepOpenSmbFileSource(
             buf: ByteArray,
             off: Int,
             len: Int,
+            shouldAbort: () -> Boolean = { false },
         ): Int {
+            if (shouldAbort()) return -1
             if (len <= READ_CHUNK) {
                 return try {
                     file.read(buf, fileOffset, off, len)
@@ -611,6 +643,7 @@ private class KeepOpenSmbFileSource(
             }
             var filled = 0
             while (filled < len) {
+                if (shouldAbort()) return if (filled > 0) filled else -1
                 val remain = len - filled
                 val batch = ArrayList<Int>(READ_PIPELINE)
                 var batchBytes = 0
@@ -654,6 +687,11 @@ private class KeepOpenSmbFileSource(
         }
     }
 }
+
+/**
+ * The caller stopped waiting (player seek). The SMB read must not be retried at the old offset.
+ */
+internal class SmbReadCancelledException : IOException("SMB read cancelled")
 
 /**
  * Consume [channel] until it is idle for [idleMs] or closed.

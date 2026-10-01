@@ -32,6 +32,7 @@ import androidx.compose.material3.ShapeDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -1777,6 +1778,9 @@ fun BrowseCoverThumb(
     }
 }
 
+/** Horizontal inset for section titles in list mode, matching the grid margin. */
+val LocalBrowseListHeaderInset = compositionLocalOf { 0.dp }
+
 /**
  * Section label for folder browse lists (Directories / Galleries / …).
  * Optional [onClick] / [onLongClick] (e.g. collapse, library flatten) uses **no ripple**
@@ -1792,11 +1796,13 @@ fun BrowseSectionHeader(
     onLongClick: (() -> Unit)? = null,
 ) {
     val haptic = LocalHapticFeedback.current
+    val listInset = LocalBrowseListHeaderInset.current
     Text(
         text = text,
         style = MaterialTheme.typography.titleSmall,
         color = MaterialTheme.colorScheme.primary,
         modifier = modifier
+            .padding(horizontal = listInset)
             .then(
                 if (onClick != null || onLongClick != null) {
                     // fillMaxWidth so list matches grid: tap anywhere on the header band.
@@ -1827,8 +1833,10 @@ fun BrowseSearchSectionHeader(
     searching: Boolean,
     onClick: () -> Unit,
 ) {
+    val listInset = LocalBrowseListHeaderInset.current
     Row(
         modifier = Modifier
+            .padding(horizontal = listInset)
             .fillMaxWidth()
             .clickable(
                 interactionSource = null,
