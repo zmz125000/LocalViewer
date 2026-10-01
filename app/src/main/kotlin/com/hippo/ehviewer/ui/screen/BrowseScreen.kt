@@ -41,6 +41,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -86,6 +87,7 @@ import com.hippo.ehviewer.ui.destinations.WebDavBrowserScreenDestination
 import com.hippo.ehviewer.ui.main.BrowseEmptyHint
 import com.hippo.ehviewer.ui.main.BrowseFavoriteTitle
 import com.hippo.ehviewer.ui.main.BrowseSectionHeader
+import com.hippo.ehviewer.ui.main.LocalBrowseListHeaderInset
 import com.hippo.ehviewer.ui.main.GalleryGridDefaults
 import com.hippo.ehviewer.util.LocalNetworkPermission
 import com.hippo.ehviewer.util.ensureLocalNetworkPermission
@@ -488,6 +490,7 @@ fun AnimatedVisibilityScope.BrowseScreen(navigator: DestinationsNavigator) = Scr
         },
     ) { padding ->
         val empty = roots.isEmpty() && smbSources.isEmpty() && webDavSources.isEmpty()
+        val gridInset = 12.dp
         if (empty) {
             BrowseEmptyHint(
                 text = stringResource(R.string.browse_empty),
@@ -501,7 +504,7 @@ fun AnimatedVisibilityScope.BrowseScreen(navigator: DestinationsNavigator) = Scr
                     .padding(padding)
                     .nestedScroll(scrollBehavior.nestedScrollConnection)
                     .fillMaxSize(),
-                contentPadding = PaddingValues(12.dp),
+                contentPadding = PaddingValues(gridInset),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
@@ -571,6 +574,7 @@ fun AnimatedVisibilityScope.BrowseScreen(navigator: DestinationsNavigator) = Scr
                 }
             }
         } else {
+            CompositionLocalProvider(LocalBrowseListHeaderInset provides gridInset) {
             FastScrollLazyVerticalGrid(
                 columns = GalleryGridDefaults.listColumns(),
                 state = listState,
@@ -578,6 +582,7 @@ fun AnimatedVisibilityScope.BrowseScreen(navigator: DestinationsNavigator) = Scr
                     .padding(padding)
                     .nestedScroll(scrollBehavior.nestedScrollConnection)
                     .fillMaxSize(),
+                contentPadding = PaddingValues(top = gridInset, bottom = gridInset),
             ) {
                 if (smbSources.isNotEmpty() || webDavSources.isNotEmpty()) {
                     item(
@@ -669,6 +674,7 @@ fun AnimatedVisibilityScope.BrowseScreen(navigator: DestinationsNavigator) = Scr
                         )
                     }
                 }
+            }
             }
         }
     }
