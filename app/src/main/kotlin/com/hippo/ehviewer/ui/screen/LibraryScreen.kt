@@ -34,6 +34,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ShapeDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -119,6 +120,7 @@ import com.hippo.ehviewer.ui.main.BrowseGridPlaceholderIconSize
 import com.hippo.ehviewer.ui.main.BrowseListLeadingIconSize
 import com.hippo.ehviewer.ui.main.BrowseListSupportingContent
 import com.hippo.ehviewer.ui.main.BrowseSectionHeader
+import com.hippo.ehviewer.ui.main.LocalBrowseListHeaderInset
 import com.hippo.ehviewer.ui.main.CoverImage
 import com.hippo.ehviewer.ui.main.GalleryGridDefaults
 import com.hippo.ehviewer.ui.main.LocalGalleryGridItem
@@ -293,7 +295,7 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
     val showPages by Settings.showGalleryPages.collectAsState()
     val showProgress by Settings.showReadingProgress.collectAsState()
     val marginH = dimensionResource(id = com.hippo.ehviewer.R.dimen.gallery_list_margin_h)
-    val marginV = dimensionResource(id = com.hippo.ehviewer.R.dimen.gallery_list_margin_v)
+    val gridMargin = GalleryGridDefaults.margin()
 
     fun notifyFavoriteToggle(nowFavorite: Boolean) {
         // launch {
@@ -663,12 +665,13 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
             // Always keep the Lazy list/grid mounted so scroll state is not recreated when
             // empty ↔ non-empty briefly flips (e.g. re-subscribe after pop back).
             if (listMode == 0) {
-                // Match browse folder list: no extra horizontal margin (ListItem has its own
-                // inset). Only top/bottom from scaffold so the search bar does not cover rows.
+                // Rows stay full width. Section titles pick up the grid margin via
+                // LocalBrowseListHeaderInset, and the block starts at the same top inset as the grid.
                 val listPadding = PaddingValues(
-                    top = paddingValues.calculateTopPadding() + marginV,
-                    bottom = paddingValues.calculateBottomPadding() + marginV,
+                    top = paddingValues.calculateTopPadding() + gridMargin,
+                    bottom = paddingValues.calculateBottomPadding() + gridMargin,
                 )
+                CompositionLocalProvider(LocalBrowseListHeaderInset provides gridMargin) {
                 FastScrollLazyVerticalGrid(
                     columns = GalleryGridDefaults.listColumns(),
                     modifier = Modifier.nestedScroll(searchBarConnection).fillMaxSize(),
@@ -680,11 +683,8 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
                             key = "fav-hdr",
                             span = { GridItemSpan(maxLineSpan) },
                         ) {
-                            // Extra list margin so section titles are not flush to the screen edge
-                            // (rows stay edge-aligned with folder ListItems).
                             BrowseSectionHeader(
                                 stringResource(R.string.browse_favorites),
-                                modifier = Modifier.padding(horizontal = marginH),
                                 onClick = startEasyTierVpn,
                                 onLongClick = { showEasyTierDialog = true },
                             )
@@ -714,7 +714,6 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
                         ) {
                             BrowseSectionHeader(
                                 sectionHeaderText,
-                                modifier = Modifier.padding(horizontal = marginH),
                                 onClick = { toggleLibrarySection() },
                                 onLongClick = { toggleLibraryFlattenMode() },
                             )
@@ -730,6 +729,7 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
                             modifier = Modifier.fillMaxWidth(),
                         )
                     }
+                }
                 }
             } else {
                 val gridSpacing = GalleryGridDefaults.spacedBy()

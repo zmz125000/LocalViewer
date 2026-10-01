@@ -87,6 +87,13 @@ object GalleryGridDefaults {
         return scaffoldPadding + PaddingValues(m)
     }
 
+    /** Top and bottom match [contentPadding]. No horizontal inset, so list rows stay full width. */
+    @Composable
+    fun listVerticalContentPadding(): PaddingValues {
+        val m = margin()
+        return PaddingValues(top = m, bottom = m)
+    }
+
     @Composable
     fun spacedBy(): Arrangement.HorizontalOrVertical = Arrangement.spacedBy(gutter())
 
