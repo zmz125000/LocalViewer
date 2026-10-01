@@ -72,6 +72,8 @@
     <string name="explorer_saved_paths">Saved paths</string>
     <string name="explorer_duplicate">Duplicate window</string>
     <string name="explorer_save_path">Save path</string>
+    <string name="browse_open_in_new_tab">Open in new tab</string>
+    <string name="browse_save_to_paths">Save to paths</string>
     <string name="explorer_close_window">Close window</string>
     <string name="explorer_delete_saved">Delete saved path</string>
     <string name="browse_videos">Videos</string>

@@ -80,6 +80,7 @@ import com.hippo.ehviewer.library.BrowseFavorites
 import com.hippo.ehviewer.library.BrowseFolderId
 import com.hippo.ehviewer.library.BrowseSession
 import com.hippo.ehviewer.library.ExplorerWindows
+import com.hippo.ehviewer.library.SavedExplorerPaths
 import com.hippo.ehviewer.ui.ExplorerGestureEnabled
 import com.hippo.ehviewer.library.BrowseVirtualKind
 import com.hippo.ehviewer.library.EmptyArchiveRegistry
@@ -284,6 +285,26 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
     val title = segments.lastOrNull() ?: source?.displayName ?: stringResource(R.string.network)
 
     fun dirRelative(name: String): String = if (relativeDir.isEmpty()) name else WebDavGateway.joinRelative(relativeDir, name)
+
+    fun openRemoteFolderInNewTab(name: String) {
+        val segments = dirRelative(name).split('/').filter { it.isNotEmpty() }
+        ExplorerWindows.openRemoteInBackground(
+            ExplorerWindows.Kind.WebDav,
+            sourceId,
+            source?.displayName.orEmpty(),
+            segments,
+            fromHistory,
+            fromLibrary,
+        )
+    }
+
+    fun saveRemoteFolderToPaths(name: String) {
+        SavedExplorerPaths.remember(
+            ExplorerWindows.Kind.WebDav,
+            sourceId,
+            dirRelative(name),
+        )
+    }
 
     fun toggleDirFavorite(name: String, coverFileName: String? = null) {
         val rel = dirRelative(name)
@@ -1574,6 +1595,8 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
         onOpenFolder = {
             openBrowseFolder(FolderSearch.openFolderTarget(name, isDirectory = true, virtual = virtual))
         },
+        onOpenInNewTab = { openRemoteFolderInNewTab(name) },
+        onSaveToPaths = { saveRemoteFolderToPaths(name) },
         shortcut = webDavShortcut(name, true, name),
         onUnsupported = { notSupportedAction() },
     )
@@ -1595,6 +1618,8 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                 ),
             )
         },
+        onOpenInNewTab = { openRemoteFolderInNewTab(entry.relativeName) },
+        onSaveToPaths = { saveRemoteFolderToPaths(entry.relativeName) },
         shortcut = webDavShortcut(entry.relativeName, true, entry.name),
         onUnsupported = { notSupportedAction() },
     )

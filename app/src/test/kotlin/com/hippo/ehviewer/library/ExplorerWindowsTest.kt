@@ -46,6 +46,40 @@ class ExplorerWindowsTest {
     }
 
     @Test
+    fun backgroundOpenKeepsTheCurrentWindow() {
+        openLocal("photos")
+        val active = ExplorerWindows.activeId
+        val session = BrowseSession.localStack
+        ExplorerWindows.openLocalInBackground(
+            listOf(
+                BrowseSession.LocalFrame(
+                    rootId = 1L,
+                    path = "/root/videos",
+                    title = "videos",
+                    relativePath = "videos",
+                ),
+            ),
+            "Root",
+        )
+        assertEquals(2, ExplorerWindows.windows.size)
+        assertEquals(active, ExplorerWindows.activeId)
+        assertEquals("photos", ExplorerWindows.active()?.relativePath)
+        assertEquals(session, BrowseSession.localStack)
+        ExplorerWindows.openLocalInBackground(
+            listOf(
+                BrowseSession.LocalFrame(
+                    rootId = 1L,
+                    path = "/root/videos",
+                    title = "videos",
+                    relativePath = "videos",
+                ),
+            ),
+            "Root",
+        )
+        assertEquals(2, ExplorerWindows.windows.size)
+    }
+
+    @Test
     fun duplicateIsTheOnlyWayToRepeatAPath() {
         openLocal("photos")
         val first = ExplorerWindows.activeId

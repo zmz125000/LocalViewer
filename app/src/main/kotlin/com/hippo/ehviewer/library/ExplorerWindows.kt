@@ -80,6 +80,51 @@ object ExplorerWindows {
         adopt(windowFromWebDav(sourceId, sourceName, fromHistory, fromLibrary))
     }
 
+    /**
+     * Add a window for [stack] without changing the live session or the active window.
+     * A path that already has a window is left as-is.
+     */
+    fun openLocalInBackground(
+        stack: List<BrowseSession.LocalFrame>,
+        sourceName: String,
+        fromHistory: Boolean = false,
+        fromLibrary: Boolean = false,
+    ) {
+        if (stack.isEmpty()) return
+        captureActiveFromSession()
+        val window = windowFromLocal(stack, sourceName, fromHistory, fromLibrary)
+        if (windows.any { samePath(it, window) }) return
+        windows.add(0, window)
+    }
+
+    /** Add an SMB or WebDAV window without switching to it. */
+    fun openRemoteInBackground(
+        kind: Kind,
+        sourceId: Long,
+        sourceName: String,
+        segments: List<String>,
+        fromHistory: Boolean = false,
+        fromLibrary: Boolean = false,
+    ) {
+        if (kind == Kind.Local) return
+        captureActiveFromSession()
+        val rel = BrowseFavorites.normalizeRel(segments.joinToString("/"))
+        val name = sourceName.ifBlank { leafTitle(rel, sourceName) }
+        val window = Window(
+            id = ids.getAndIncrement(),
+            kind = kind,
+            sourceId = sourceId,
+            sourceName = name,
+            title = leafTitle(rel, name),
+            relativePath = rel,
+            segments = segments.toList(),
+            fromHistory = fromHistory,
+            fromLibrary = fromLibrary,
+        )
+        if (windows.any { samePath(it, window) }) return
+        windows.add(0, window)
+    }
+
     /** Copy the active window's path into a new window and make it active. */
     fun duplicateActive(): Window? {
         captureActiveFromSession()
