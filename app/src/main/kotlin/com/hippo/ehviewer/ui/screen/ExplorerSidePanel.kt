@@ -7,7 +7,6 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.AnchoredDraggableDefaults
 import androidx.compose.foundation.gestures.DraggableAnchors
 import androidx.compose.foundation.gestures.anchoredHorizontalDraggable
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
@@ -17,6 +16,7 @@ import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
@@ -34,15 +34,12 @@ import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.LibraryBooks
 import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.BookmarkBorder
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Folder
-import androidx.compose.material.icons.filled.Lan
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -62,6 +59,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
@@ -90,8 +88,6 @@ import com.hippo.ehviewer.smb.SmbRepository
 import com.hippo.ehviewer.ui.destinations.FolderBrowserScreenDestination
 import com.hippo.ehviewer.ui.destinations.SmbBrowserScreenDestination
 import com.hippo.ehviewer.ui.destinations.WebDavBrowserScreenDestination
-import com.hippo.ehviewer.ui.main.BrowseFolderListItem
-import com.hippo.ehviewer.ui.main.BrowseListLeadingIconSize
 import com.hippo.ehviewer.ui.main.BrowseSectionHeader
 import com.hippo.ehviewer.ui.main.GalleryGridDefaults
 import com.hippo.ehviewer.ui.navToLocalFolderReader
@@ -129,15 +125,29 @@ fun ExplorerSidePanelHost(
         }
     }
     val density = LocalDensity.current
+    val configuration = LocalConfiguration.current
     // Same width class as the bottom bar vs navigation rail.
-    val phonePortrait = !LocalWindowSizeClass.current.isMediumWidthOrWider &&
-        LocalConfiguration.current.orientation != Configuration.ORIENTATION_LANDSCAPE
-    val landscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
+    val tablet = LocalWindowSizeClass.current.isMediumWidthOrWider
+    val landscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+    val phonePortrait = !tablet && !landscape
+    val screenW = configuration.screenWidthDp.dp
+    val screenH = configuration.screenHeightDp.dp
     BoxWithConstraints(Modifier.fillMaxSize()) {
-        val fitted = minOf(maxWidth - 16.dp, WindowMaxWidth).coerceAtLeast(0.dp)
-        val windowWidth = if (phonePortrait) fitted * 0.9f else fitted
-        val windowHeight = minOf(maxHeight - 96.dp, WindowMaxHeight).coerceAtLeast(0.dp)
-        val endPad = if (landscape) 40.dp else 8.dp
+        val endPad = if (phonePortrait) 0.dp else 40.dp
+        val widthCap = (maxWidth - if (phonePortrait) 0.dp else endPad).coerceAtLeast(0.dp)
+        val heightCap = (maxHeight - 16.dp).coerceAtLeast(0.dp)
+        val windowWidth = when {
+            phonePortrait -> minOf(maxWidth - 16.dp, WindowMaxWidth) * 0.9f
+            !tablet -> screenW * 0.5f
+            landscape -> screenW / 3f
+            else -> screenW * 2f / 3f
+        }.coerceIn(0.dp, widthCap)
+        val windowHeight = when {
+            tablet && landscape -> screenH * 2f / 3f
+            tablet && !landscape -> screenH / 2f
+            phonePortrait -> minOf(heightCap, WindowMaxHeight)
+            else -> heightCap
+        }.coerceIn(0.dp, heightCap)
         val endInsetPx = WindowInsets.safeDrawing.getRight(density, LocalLayoutDirection.current)
         val slidePx = with(density) {
             if (phonePortrait) {
@@ -294,10 +304,7 @@ private fun ExplorerWindowList(
     val viewingBrowser = isBrowserDestination(currentDestination)
     LazyColumn(Modifier.fillMaxSize()) {
         item(key = "win-hdr") {
-            BrowseSectionHeader(
-                stringResource(R.string.explorer_windows),
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-            )
+            BrowseSectionHeader(stringResource(R.string.explorer_windows))
         }
         items(windows, key = { "w-${it.id}" }) { window ->
             val source = windowSourceName(window, roots, smb, webDav)
@@ -312,17 +319,14 @@ private fun ExplorerWindowList(
                     onNavigated()
                 },
                 trailing = {
-                    IconButton(
+                    ExplorerRowAction(
                         onClick = {
                             SavedExplorerPaths.remember(window.kind, window.sourceId, window.relativePath)
                         },
-                    ) {
-                        Icon(
-                            if (savedAlready) Icons.Default.Bookmark else Icons.Default.BookmarkBorder,
-                            contentDescription = stringResource(R.string.explorer_save_path),
-                        )
-                    }
-                    IconButton(
+                        icon = if (savedAlready) Icons.Default.Bookmark else Icons.Default.BookmarkBorder,
+                        contentDescription = stringResource(R.string.explorer_save_path),
+                    )
+                    ExplorerRowAction(
                         onClick = {
                             when (val result = ExplorerWindows.close(window.id)) {
                                 ExplorerWindows.CloseResult.Unchanged -> Unit
@@ -340,20 +344,14 @@ private fun ExplorerWindowList(
                                 }
                             }
                         },
-                    ) {
-                        Icon(
-                            Icons.Default.Close,
-                            contentDescription = stringResource(R.string.explorer_close_window),
-                        )
-                    }
+                        icon = Icons.Default.Close,
+                        contentDescription = stringResource(R.string.explorer_close_window),
+                    )
                 },
             )
         }
         item(key = "saved-hdr") {
-            BrowseSectionHeader(
-                stringResource(R.string.explorer_saved_paths),
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-            )
+            BrowseSectionHeader(stringResource(R.string.explorer_saved_paths))
         }
         items(saved, key = { "s-${it.key}" }) { item ->
             ExplorerPathRow(
@@ -365,12 +363,11 @@ private fun ExplorerWindowList(
                     onNavigated()
                 },
                 trailing = {
-                    IconButton(onClick = { SavedExplorerPaths.forget(item.key) }) {
-                        Icon(
-                            Icons.Default.Delete,
-                            contentDescription = stringResource(R.string.explorer_delete_saved),
-                        )
-                    }
+                    ExplorerRowAction(
+                        onClick = { SavedExplorerPaths.forget(item.key) },
+                        icon = Icons.Default.Delete,
+                        contentDescription = stringResource(R.string.explorer_delete_saved),
+                    )
                 },
             )
         }
@@ -427,12 +424,9 @@ private fun ExplorerFavoritesGrid(
                 )
             }
             items(smb, key = { "smb-${it.id}" }) { source ->
-                val favorited = BrowseFavorites.smbKey(source.id) in favoriteKeys
-                BrowseRootCard(
-                    title = source.displayName,
-                    subtitle = smbSubtitle(source),
-                    favorited = favorited,
-                    icon = { Icon(Icons.Default.Lan, contentDescription = null) },
+                FavoriteSourceGridCell(
+                    fav = FavoriteBrowseSource.Smb(source),
+                    columns = columnCount,
                     onClick = {
                         openSmbRoot(navigator, source)
                         onNavigated()
@@ -441,12 +435,9 @@ private fun ExplorerFavoritesGrid(
                 )
             }
             items(webDav, key = { "dav-${it.id}" }) { source ->
-                val favorited = BrowseFavorites.webDavKey(source.id) in favoriteKeys
-                BrowseRootCard(
-                    title = source.displayName,
-                    subtitle = webDavSubtitle(source),
-                    favorited = favorited,
-                    icon = { Icon(Icons.Default.Cloud, contentDescription = null) },
+                FavoriteSourceGridCell(
+                    fav = FavoriteBrowseSource.WebDav(source),
+                    columns = columnCount,
                     onClick = {
                         openWebDavRoot(navigator, source)
                         onNavigated()
@@ -463,23 +454,9 @@ private fun ExplorerFavoritesGrid(
                 )
             }
             items(roots, key = { "root-${it.id}" }) { root ->
-                val favorited = BrowseFavorites.localKey(root.id) in favoriteKeys
-                BrowseRootCard(
-                    title = root.displayName.safFolderLabel(),
-                    subtitle = stringResource(
-                        if (root.isLibraryRole) R.string.library else R.string.folder,
-                    ),
-                    favorited = favorited,
-                    icon = {
-                        Icon(
-                            if (root.isLibraryRole) {
-                                Icons.AutoMirrored.Filled.LibraryBooks
-                            } else {
-                                Icons.Default.Folder
-                            },
-                            contentDescription = null,
-                        )
-                    },
+                FavoriteSourceGridCell(
+                    fav = FavoriteBrowseSource.Local(root),
+                    columns = columnCount,
                     onClick = {
                         openLocalRootWindow(navigator, root)
                         onNavigated()
@@ -492,6 +469,17 @@ private fun ExplorerFavoritesGrid(
 }
 
 @Composable
+private fun ExplorerRowAction(
+    onClick: () -> Unit,
+    icon: ImageVector,
+    contentDescription: String,
+) {
+    IconButton(onClick = onClick, modifier = Modifier.size(32.dp)) {
+        Icon(icon, contentDescription = contentDescription, modifier = Modifier.size(18.dp))
+    }
+}
+
+@Composable
 private fun ExplorerPathRow(
     title: String,
     subtitle: String,
@@ -499,34 +487,40 @@ private fun ExplorerPathRow(
     onClick: () -> Unit,
     trailing: @Composable () -> Unit,
 ) {
-    BrowseFolderListItem(
-        headlineContent = {
-            Text(title, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        },
-        supportingContent = {
-            Text(subtitle, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        },
-        leadingContent = {
-            Box(Modifier.size(56.dp), contentAlignment = Alignment.Center) {
-                Icon(
-                    Icons.Default.Folder,
-                    contentDescription = null,
-                    modifier = Modifier.size(BrowseListLeadingIconSize),
-                    tint = MaterialTheme.colorScheme.primary,
-                )
-            }
-        },
-        trailingContent = {
-            Row(verticalAlignment = Alignment.CenterVertically) { trailing() }
-        },
-        verticalAlignment = Alignment.CenterVertically,
+    Row(
         modifier = Modifier
             .fillMaxWidth()
+            .heightIn(min = 40.dp)
             .background(
                 if (active) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent,
             )
-            .clickable(onClick = onClick),
-    )
+            .clickable(onClick = onClick)
+            .padding(start = 12.dp, end = 2.dp, top = 2.dp, bottom = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            Icons.Default.Folder,
+            contentDescription = null,
+            modifier = Modifier.size(20.dp),
+            tint = MaterialTheme.colorScheme.primary,
+        )
+        Column(Modifier.weight(1f).padding(horizontal = 10.dp)) {
+            Text(
+                title,
+                style = MaterialTheme.typography.bodyMedium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                subtitle,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        Row(verticalAlignment = Alignment.CenterVertically) { trailing() }
+    }
 }
 
 private fun showWindow(
