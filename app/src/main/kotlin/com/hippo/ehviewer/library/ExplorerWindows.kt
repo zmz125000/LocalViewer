@@ -10,9 +10,13 @@ import java.util.concurrent.atomic.AtomicLong
 /**
  * Finder-style folder windows for this process.
  *
- * [BrowseSession] stays the live state of [activeId]. Each window keeps its own
- * local stack or SMB/WebDAV segments so two windows on the same source do not
- * share a path. The list is memory-only and is empty after process death.
+ * Each window remembers which path it shows (local stack or SMB/WebDAV segments).
+ * Folder index cache and RAM file lists stay in [BrowseSession] / [FolderGalleryIndex],
+ * keyed by folder, and every window reads that same list.
+ *
+ * Opening a path switches to the window already on that path. A second window for
+ * the same path is created only by [duplicateActive]. The window list is memory-only
+ * and is empty after process death.
  */
 object ExplorerWindows {
     const val SUBTITLE_SEP = " · "
@@ -55,7 +59,7 @@ object ExplorerWindows {
     ) {
         val stack = BrowseSession.localStack
         if (stack.isEmpty()) return
-        add(windowFromLocal(stack, sourceName, fromHistory, fromLibrary))
+        adopt(windowFromLocal(stack, sourceName, fromHistory, fromLibrary))
     }
 
     fun finishSmbSpawn(
@@ -64,7 +68,7 @@ object ExplorerWindows {
         fromHistory: Boolean = false,
         fromLibrary: Boolean = false,
     ) {
-        add(windowFromSmb(sourceId, sourceName, fromHistory, fromLibrary))
+        adopt(windowFromSmb(sourceId, sourceName, fromHistory, fromLibrary))
     }
 
     fun finishWebDavSpawn(
@@ -73,7 +77,7 @@ object ExplorerWindows {
         fromHistory: Boolean = false,
         fromLibrary: Boolean = false,
     ) {
-        add(windowFromWebDav(sourceId, sourceName, fromHistory, fromLibrary))
+        adopt(windowFromWebDav(sourceId, sourceName, fromHistory, fromLibrary))
     }
 
     /** Copy the active window's path into a new window and make it active. */
@@ -166,10 +170,37 @@ object ExplorerWindows {
         )
     }
 
+    /**
+     * Switch to a window already showing [window]'s path, or append a new one.
+     * Does not recapture [BrowseSession]: [prepareSpawn] already stored the
+     * outgoing window, and the session currently holds the requested path.
+     */
+    private fun adopt(window: Window) {
+        val existing = windows.firstOrNull { it.id == activeId && samePath(it, window) }
+            ?: windows.firstOrNull { samePath(it, window) }
+        if (existing != null) {
+            applyToSession(existing)
+            activeId = existing.id
+            return
+        }
+        add(window)
+    }
+
     private fun add(window: Window) {
         windows.add(0, window)
         activeId = window.id
     }
+
+    internal fun resetForTest() {
+        windows.clear()
+        activeId = null
+    }
+
+    private fun samePath(window: Window, other: Window): Boolean =
+        window.kind == other.kind &&
+            window.sourceId == other.sourceId &&
+            BrowseFavorites.normalizeRel(window.relativePath) ==
+            BrowseFavorites.normalizeRel(other.relativePath)
 
     private fun captureActiveFromSession() {
         val id = activeId ?: return
