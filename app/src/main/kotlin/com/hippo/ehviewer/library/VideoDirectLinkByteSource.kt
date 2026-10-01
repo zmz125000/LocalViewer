@@ -15,9 +15,11 @@ import java.util.concurrent.atomic.AtomicLong
  *
  * External players issue many small Fuse reads (often ≤128 KiB). This source:
  * - Serves from an aligned multi-block sliding window (demand hits are cheap)
- * - [noteSeek] (playback seek: external HTTP Range or in-app DataSpec) serves at most
- *   256 KiB for [SEEK_STARTUP_MS], with no 4×1 MiB runway. Header / moov probes do not
- *   call [noteSeek]; a short read during the window stays a short read.
+ * - [noteSeek] (playback seek: external HTTP Range or in-app DataSpec) fetches 256 KiB
+ *   for [SEEK_STARTUP_MS], with no 4×1 MiB runway. Follow-up reads inside that chunk
+ *   are RAM hits, so Media3's few-byte NAL reads do not each pay an SMB round trip.
+ *   Header / moov probes do not call [noteSeek]; a short read away from the chunk
+ *   stays that length.
  * - After those 3 s, sequential playback uses the 4×1 MiB pipeline again.
  * - Prefetch uses the **same** sticky lane as demand (one handle) but a separate
  *   queue. A seek drops queued prefetch and sends the new offset immediately.
@@ -60,6 +62,13 @@ class VideoDirectLinkByteSource(
     private data class Block(val bytes: ByteArray, var length: Int)
     private data class InFlight(val future: Future<Block?>, val speculative: Boolean)
 
+    /** Bytes [offset, offset + length) from the last seek fetch. */
+    private class SeekChunk {
+        var offset: Long = -1L
+        var bytes: ByteArray? = null
+        var length: Int = 0
+    }
+
     private val lock = Any()
     private val blocks = object : LinkedHashMap<Long, Block>(maxBlocks, 0.75f, true) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Long, Block>?): Boolean = size > maxBlocks
@@ -69,8 +78,14 @@ class VideoDirectLinkByteSource(
     private val epoch = AtomicInteger(0)
     private val lastDemandBlock = AtomicLong(-1L)
 
-    /** Nano time until which an HTTP seek keeps reads at [SEEK_STARTUP_CHUNK]. */
+    /** Nano time until which a playback seek keeps reads at [SEEK_STARTUP_CHUNK]. */
     private val smallReadUntilNs = AtomicLong(Long.MIN_VALUE)
+
+    /**
+     * One 256 KiB span filled by the latest seek. Media3 reads NAL lengths a few
+     * bytes at a time; without this, each of those is its own WAN round trip.
+     */
+    private val seekChunk = SeekChunk()
 
     private val prefetchExecutor: ExecutorService? = if (prefetchAhead > 0 && prefetchParallel > 0) {
         val n = minOf(prefetchAhead, prefetchParallel)
@@ -104,6 +119,8 @@ class VideoDirectLinkByteSource(
             noteDemand(firstBlock)
             if (smallReadWindow()) {
                 // One network trip. A short return lets the player write before the next 256 KiB.
+                // The trip fills a whole 256 KiB chunk when it continues the seek, so later
+                // few-byte reads are copies. A short read at some other offset stays short.
                 var didNetwork = false
                 while (copied < want && !didNetwork) {
                     if (closed.get()) return if (copied > 0) copied else -1
@@ -117,8 +134,25 @@ class VideoDirectLinkByteSource(
                         copied += cached
                         continue
                     }
+                    val fromChunk = copySeekChunk(absolute, buf, off + copied, want - copied)
+                    if (fromChunk > 0) {
+                        copied += fromChunk
+                        continue
+                    }
                     didNetwork = true
-                    val n = readUncached(blockStart + inBlock, blockIndex, inBlock, buf, off + copied, need)
+                    val continues = seekChunkContinues(absolute)
+                    val playbackSized = continues || (want - copied) >= SEEK_STARTUP_CHUNK
+                    val fetch = if (playbackSized) {
+                        minOf(SEEK_STARTUP_CHUNK.toLong(), size - absolute).toInt()
+                    } else {
+                        need
+                    }
+                    if (fetch <= 0) return if (copied > 0) copied else -1
+                    val n = if (playbackSized) {
+                        readSeekChunk(absolute, blockIndex, inBlock, buf, off + copied, want - copied, fetch)
+                    } else {
+                        readUncached(blockStart + inBlock, blockIndex, inBlock, buf, off + copied, need)
+                    }
                     if (n > 0) copied += n else return if (copied > 0) copied else n
                 }
                 return copied
@@ -162,6 +196,75 @@ class VideoDirectLinkByteSource(
             System.arraycopy(slot.bytes, inBlock, buf, off, n)
             return n
         }
+    }
+
+    /** Copy a prefix of the last seek fetch. 0 when [absolute] is outside that span. */
+    private fun copySeekChunk(absolute: Long, buf: ByteArray, off: Int, need: Int): Int {
+        if (need <= 0) return 0
+        synchronized(lock) {
+            val bytes = seekChunk.bytes ?: return 0
+            val base = seekChunk.offset
+            val len = seekChunk.length
+            if (base < 0L || len <= 0 || absolute < base || absolute >= base + len) return 0
+            val n = minOf(need.toLong(), base + len - absolute).toInt()
+            if (n <= 0) return 0
+            System.arraycopy(bytes, (absolute - base).toInt(), buf, off, n)
+            return n
+        }
+    }
+
+    /** True when [absolute] should extend the seek chunk, including the first fetch. */
+    private fun seekChunkContinues(absolute: Long): Boolean {
+        synchronized(lock) {
+            val bytes = seekChunk.bytes
+            val base = seekChunk.offset
+            val len = seekChunk.length
+            if (bytes == null || base < 0L || len <= 0) return true
+            return absolute >= base && absolute <= base + len
+        }
+    }
+
+    private fun clearSeekChunk() {
+        synchronized(lock) {
+            seekChunk.offset = -1L
+            seekChunk.bytes = null
+            seekChunk.length = 0
+        }
+    }
+
+    /**
+     * One SMB read of [fetch] bytes at [absolute], kept so the next tiny read is a copy.
+     * Returns how many bytes were copied into the caller buffer (at most [want]).
+     */
+    private fun readSeekChunk(
+        absolute: Long,
+        blockIndex: Long,
+        inBlock: Int,
+        buf: ByteArray,
+        off: Int,
+        want: Int,
+        fetch: Int,
+    ): Int {
+        val scratch = ByteArray(fetch)
+        val got = try {
+            demand.readAt(absolute, scratch, 0, fetch)
+        } catch (e: SmbReadCancelledException) {
+            throw e
+        } catch (_: Throwable) {
+            -1
+        }
+        if (got <= 0) return got
+        synchronized(lock) {
+            if (!closed.get()) {
+                seekChunk.offset = absolute
+                seekChunk.bytes = scratch
+                seekChunk.length = got
+            }
+        }
+        remember(blockIndex, inBlock, scratch, 0, got)
+        val give = minOf(want, got)
+        System.arraycopy(scratch, 0, buf, off, give)
+        return give
     }
 
     /** One SMB read of the caller's span, stored when it extends the cached prefix. */
@@ -229,7 +332,14 @@ class VideoDirectLinkByteSource(
         if (offset >= size) return
         val blockIndex = offset / blockSize
         noteDemand(blockIndex)
-        if (smallReadWindow()) return
+        if (smallReadWindow()) {
+            // Start the 256 KiB at this playhead during open, before Media3's first NAL read.
+            if (!isBuffered(offset) && copySeekChunk(offset, ByteArray(1), 0, 1) == 0) {
+                val probe = ByteArray(1)
+                readAt(offset, probe, 0, 1)
+            }
+            return
+        }
         // Demand-load the first block so warm is useful for open probes.
         getOrLoadBlock(blockIndex, forDemand = true)
         schedulePrefetch(blockIndex)
@@ -266,6 +376,7 @@ class VideoDirectLinkByteSource(
             return
         }
         smallReadUntilNs.set(System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(remainMs))
+        clearSeekChunk()
         epoch.incrementAndGet()
         cancelAllSpeculative()
         demand.dropQueuedReads()
@@ -498,6 +609,9 @@ class VideoDirectLinkByteSource(
             val snapshot = inFlight.values.map { it.future }
             inFlight.clear()
             blocks.clear()
+            seekChunk.offset = -1L
+            seekChunk.bytes = null
+            seekChunk.length = 0
             snapshot
         }
         for (f in pending) f.cancel(true)
