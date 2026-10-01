@@ -49,7 +49,6 @@ import androidx.compose.material3.rememberDrawerState2
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -100,8 +99,12 @@ import com.hippo.ehviewer.ui.openSmbBrowseDir
 import com.hippo.ehviewer.ui.openWebDavBrowseDir
 import com.hippo.ehviewer.webdav.WebDavRepository
 import com.ramcosta.composedestinations.navigation.DestinationsNavigator
+import kotlin.math.abs
 import kotlin.math.roundToInt
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 private val WindowMaxWidth = 340.dp
 private val WindowMaxHeight = 480.dp
@@ -119,13 +122,33 @@ fun ExplorerSidePanelHost(
     navigator: DestinationsNavigator,
     currentDestination: Any?,
     browserSourceId: Long?,
+    fromHistory: Boolean,
+    fromLibrary: Boolean,
     content: @Composable () -> Unit,
 ) {
     val panelState = rememberDrawerState2(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
+    var closeJob by remember { mutableStateOf<Job?>(null) }
+    fun closePanel() {
+        if (closeJob?.isActive == true) return
+        closeJob = scope.launch {
+            try {
+                panelState.close()
+            } finally {
+                // A screen slide cancels this animation and leaves the offset mid-way.
+                withContext(NonCancellable) {
+                    val offset = panelState.currentOffset
+                    val closedAt = panelState.anchoredDraggableState.anchors.positionOf(DrawerValue.Closed)
+                    if (offset.isNaN() || closedAt.isNaN() || abs(offset - closedAt) > 0.5f) {
+                        panelState.snapTo(DrawerValue.Closed)
+                    }
+                }
+            }
+        }
+    }
     LaunchedEffect(gesturesEnabled) {
         if (!gesturesEnabled && panelState.isOpen) {
-            panelState.close()
+            closePanel()
         }
     }
     val density = LocalDensity.current
@@ -160,13 +183,14 @@ fun ExplorerSidePanelHost(
                 windowWidth.toPx() + endPad.toPx() + endInsetPx + 16.dp.toPx()
             }
         }
-        SideEffect {
-            panelState.anchoredDraggableState.updateAnchors(
-                DraggableAnchors {
-                    DrawerValue.Closed at slidePx
-                    DrawerValue.Open at 0f
-                },
-            )
+        val anchors = remember(slidePx) {
+            DraggableAnchors {
+                DrawerValue.Closed at slidePx
+                DrawerValue.Open at 0f
+            }
+        }
+        LaunchedEffect(anchors) {
+            panelState.anchoredDraggableState.updateAnchors(anchors)
         }
         Box(
             Modifier
@@ -176,6 +200,7 @@ fun ExplorerSidePanelHost(
                     enableDragFromStartToEnd = panelState.isOpen,
                     enableDragFromEndToStart = panelState.isClosed,
                     enabled = gesturesEnabled && slidePx > 0f,
+                    startDragImmediately = false,
                     flingBehavior = AnchoredDraggableDefaults.flingBehavior(
                         state = panelState.anchoredDraggableState,
                         animationSpec = androidx.compose.animation.core.tween(256),
@@ -190,7 +215,7 @@ fun ExplorerSidePanelHost(
                         .clickable(
                             interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
                             indication = null,
-                            onClick = { scope.launch { panelState.close() } },
+                            onClick = { closePanel() },
                         ),
                 )
             }
@@ -220,7 +245,9 @@ fun ExplorerSidePanelHost(
                     navigator = navigator,
                     currentDestination = currentDestination,
                     browserSourceId = browserSourceId,
-                    onNavigated = { scope.launch { panelState.close() } },
+                    fromHistory = fromHistory,
+                    fromLibrary = fromLibrary,
+                    onNavigated = { closePanel() },
                 )
             }
         }
@@ -232,6 +259,8 @@ private fun ExplorerPanel(
     navigator: DestinationsNavigator,
     currentDestination: Any?,
     browserSourceId: Long?,
+    fromHistory: Boolean,
+    fromLibrary: Boolean,
     onNavigated: () -> Unit,
 ) {
     var showFavorites by rememberSaveable { mutableStateOf(false) }
@@ -273,6 +302,8 @@ private fun ExplorerPanel(
         if (showFavorites) {
             ExplorerFavoritesGrid(
                 navigator = navigator,
+                fromHistory = fromHistory,
+                fromLibrary = fromLibrary,
                 onNavigated = onNavigated,
             )
         } else {
@@ -389,6 +420,8 @@ private fun ExplorerWindowList(
 @Composable
 private fun ExplorerFavoritesGrid(
     navigator: DestinationsNavigator,
+    fromHistory: Boolean,
+    fromLibrary: Boolean,
     onNavigated: () -> Unit,
 ) {
     val roots by LocalLibrary.rootsFlow().collectAsState(initial = emptyList())
@@ -436,7 +469,7 @@ private fun ExplorerFavoritesGrid(
                     columns = columnCount,
                     iconSize = ExplorerListIconSize,
                     onClick = {
-                        openSmbRoot(navigator, source)
+                        openSmbRoot(navigator, source, fromHistory, fromLibrary)
                         onNavigated()
                     },
                     onLongClick = { BrowseFavorites.toggleSmb(source.id) },
@@ -448,7 +481,7 @@ private fun ExplorerFavoritesGrid(
                     columns = columnCount,
                     iconSize = ExplorerListIconSize,
                     onClick = {
-                        openWebDavRoot(navigator, source)
+                        openWebDavRoot(navigator, source, fromHistory, fromLibrary)
                         onNavigated()
                     },
                     onLongClick = { BrowseFavorites.toggleWebDav(source.id) },
@@ -465,7 +498,7 @@ private fun ExplorerFavoritesGrid(
                     columns = columnCount,
                     iconSize = ExplorerListIconSize,
                     onClick = {
-                        openLocalRootWindow(navigator, root)
+                        openLocalRootWindow(navigator, root, fromHistory, fromLibrary)
                         onNavigated()
                     },
                     onLongClick = { BrowseFavorites.toggleLocal(root.id) },
@@ -675,6 +708,8 @@ private fun DestinationsNavigator.openGalleryFavorite(
 private fun openLocalRootWindow(
     navigator: DestinationsNavigator,
     root: com.ehviewer.core.database.model.LibraryRootEntity,
+    fromHistory: Boolean,
+    fromLibrary: Boolean,
 ) {
     val path = LocalLibrary.rootPath(root) ?: return
     ExplorerWindows.prepareSpawn()
@@ -687,32 +722,66 @@ private fun openLocalRootWindow(
             preferMediaStore = root.prefersMediaStore,
         ),
     )
-    ExplorerWindows.finishLocalSpawn(root.displayName.safFolderLabel())
-    navigator.navigate(FolderBrowserScreenDestination()) { launchSingleTop = true }
+    ExplorerWindows.finishLocalSpawn(
+        root.displayName.safFolderLabel(),
+        fromHistory = fromHistory,
+        fromLibrary = fromLibrary,
+    )
+    navigator.navigate(
+        FolderBrowserScreenDestination(fromHistory = fromHistory, fromLibrary = fromLibrary),
+    ) { launchSingleTop = true }
 }
 
 private fun openSmbRoot(
     navigator: DestinationsNavigator,
     source: com.ehviewer.core.database.model.SmbSourceEntity,
+    fromHistory: Boolean,
+    fromLibrary: Boolean,
 ) {
     ExplorerWindows.prepareSpawn()
     BrowseSession.setSmbSegments(source.id, emptyList())
     BrowseSession.setSmbPhotoGrid(source.id, null)
     BrowseSession.setSmbExitToOrigin(source.id, false)
-    ExplorerWindows.finishSmbSpawn(source.id, source.displayName)
-    navigator.navigate(SmbBrowserScreenDestination(source.id, "")) { launchSingleTop = true }
+    ExplorerWindows.finishSmbSpawn(
+        source.id,
+        source.displayName,
+        fromHistory = fromHistory,
+        fromLibrary = fromLibrary,
+    )
+    navigator.navigate(
+        SmbBrowserScreenDestination(
+            sourceId = source.id,
+            initialRelativePath = "",
+            fromHistory = fromHistory,
+            fromLibrary = fromLibrary,
+        ),
+    ) { launchSingleTop = true }
 }
 
 private fun openWebDavRoot(
     navigator: DestinationsNavigator,
     source: com.ehviewer.core.database.model.WebDavSourceEntity,
+    fromHistory: Boolean,
+    fromLibrary: Boolean,
 ) {
     ExplorerWindows.prepareSpawn()
     BrowseSession.setWebDavSegments(source.id, emptyList())
     BrowseSession.setWebDavPhotoGrid(source.id, null)
     BrowseSession.setWebDavExitToOrigin(source.id, false)
-    ExplorerWindows.finishWebDavSpawn(source.id, source.displayName)
-    navigator.navigate(WebDavBrowserScreenDestination(source.id, "")) { launchSingleTop = true }
+    ExplorerWindows.finishWebDavSpawn(
+        source.id,
+        source.displayName,
+        fromHistory = fromHistory,
+        fromLibrary = fromLibrary,
+    )
+    navigator.navigate(
+        WebDavBrowserScreenDestination(
+            sourceId = source.id,
+            initialRelativePath = "",
+            fromHistory = fromHistory,
+            fromLibrary = fromLibrary,
+        ),
+    ) { launchSingleTop = true }
 }
 
 private fun toggleFavorite(fav: FavoriteBrowseSource) {
