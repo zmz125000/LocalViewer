@@ -3,6 +3,7 @@ package com.hippo.ehviewer.ui.screen
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.AnchoredDraggableDefaults
 import androidx.compose.foundation.gestures.DraggableAnchors
 import androidx.compose.foundation.gestures.anchoredHorizontalDraggable
@@ -444,6 +445,30 @@ private fun ExplorerWindowList(
                 bottom = GalleryGridDefaults.margin(),
             ),
         ) {
+            fun closeListedWindow(id: Long) {
+                when (val result = ExplorerWindows.close(id)) {
+                    ExplorerWindows.CloseResult.Unchanged -> Unit
+                    ExplorerWindows.CloseResult.NoneLeft -> {
+                        if (viewingBrowser) {
+                            navigator.popBackStack()
+                            onNavigated()
+                        }
+                    }
+                    is ExplorerWindows.CloseResult.Switched -> {
+                        if (viewingBrowser) {
+                            showWindow(
+                                navigator,
+                                result.window,
+                                currentDestination,
+                                browserSourceId,
+                                activeFromHistory,
+                                activeFromLibrary,
+                            )
+                            onNavigated()
+                        }
+                    }
+                }
+            }
             if (windows.isNotEmpty()) {
                 item(key = "win-hdr") {
                     BrowseSectionHeader(stringResource(R.string.explorer_windows), onClick = onToggleMode)
@@ -456,6 +481,7 @@ private fun ExplorerWindowList(
                         subtitle = windowSubtitle(source, window.relativePath),
                         active = window.id == activeId,
                         modifier = Modifier.padding(bottom = ExplorerWindowGap),
+                        onLongClick = { closeListedWindow(window.id) },
                         onClick = {
                             val shown = ExplorerWindows.activate(window.id) ?: return@ExplorerPathRow
                             ExplorerWindows.overrideFromSidePanel(shown.id)
@@ -479,30 +505,7 @@ private fun ExplorerWindowList(
                                 contentDescription = stringResource(R.string.explorer_save_path),
                             )
                             ExplorerRowAction(
-                                onClick = {
-                                    when (val result = ExplorerWindows.close(window.id)) {
-                                        ExplorerWindows.CloseResult.Unchanged -> Unit
-                                        ExplorerWindows.CloseResult.NoneLeft -> {
-                                            if (viewingBrowser) {
-                                                navigator.popBackStack()
-                                                onNavigated()
-                                            }
-                                        }
-                                        is ExplorerWindows.CloseResult.Switched -> {
-                                            if (viewingBrowser) {
-                                                showWindow(
-                                                    navigator,
-                                                    result.window,
-                                                    currentDestination,
-                                                    browserSourceId,
-                                                    activeFromHistory,
-                                                    activeFromLibrary,
-                                                )
-                                                onNavigated()
-                                            }
-                                        }
-                                    }
-                                },
+                                onClick = { closeListedWindow(window.id) },
                                 icon = Icons.Default.Close,
                                 contentDescription = stringResource(R.string.explorer_close_window),
                             )
@@ -664,6 +667,7 @@ private fun ExplorerPathRow(
     onClick: () -> Unit,
     trailing: @Composable () -> Unit,
     modifier: Modifier = Modifier,
+    onLongClick: (() -> Unit)? = null,
 ) {
     val tablet = LocalExplorerTablet.current
     Row(
@@ -673,7 +677,7 @@ private fun ExplorerPathRow(
             .background(
                 if (active) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent,
             )
-            .clickable(onClick = onClick)
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick)
             .padding(start = 12.dp, end = 2.dp, top = 2.dp, bottom = 2.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
