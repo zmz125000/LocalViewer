@@ -241,11 +241,10 @@ object ExplorerWindows {
         activeId = null
     }
 
-    private fun samePath(window: Window, other: Window): Boolean =
-        window.kind == other.kind &&
-            window.sourceId == other.sourceId &&
-            BrowseFavorites.normalizeRel(window.relativePath) ==
-            BrowseFavorites.normalizeRel(other.relativePath)
+    private fun samePath(window: Window, other: Window): Boolean = window.kind == other.kind &&
+        window.sourceId == other.sourceId &&
+        BrowseFavorites.normalizeRel(window.relativePath) ==
+        BrowseFavorites.normalizeRel(other.relativePath)
 
     private fun captureActiveFromSession() {
         val id = activeId ?: return
@@ -387,7 +386,6 @@ object ExplorerWindows {
         Kind.WebDav -> BrowseSession.webDavExitToOrigin(sourceId)
         Kind.Local -> false
     }
-
 }
 
 internal fun displayRelative(frame: BrowseSession.LocalFrame): String {

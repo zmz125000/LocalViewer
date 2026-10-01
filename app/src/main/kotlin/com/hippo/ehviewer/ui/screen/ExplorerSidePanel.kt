@@ -20,16 +20,13 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.requiredWidth
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.requiredWidth
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
-import androidx.compose.foundation.lazy.grid.GridCells
-import androidx.compose.material3.ShapeDefaults
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.shadow
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.lazy.grid.items
@@ -45,6 +42,7 @@ import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ShapeDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberDrawerState2
 import androidx.compose.runtime.Composable
@@ -62,6 +60,8 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalConfiguration
@@ -91,8 +91,8 @@ import com.hippo.ehviewer.ui.destinations.FolderBrowserScreenDestination
 import com.hippo.ehviewer.ui.destinations.SmbBrowserScreenDestination
 import com.hippo.ehviewer.ui.destinations.WebDavBrowserScreenDestination
 import com.hippo.ehviewer.ui.main.BrowseSectionHeader
-import com.hippo.ehviewer.ui.main.LocalBrowseListHeaderInset
 import com.hippo.ehviewer.ui.main.GalleryGridDefaults
+import com.hippo.ehviewer.ui.main.LocalBrowseListHeaderInset
 import com.hippo.ehviewer.ui.navToLocalFolderReader
 import com.hippo.ehviewer.ui.navToReader
 import com.hippo.ehviewer.ui.openLocalBrowseDir
@@ -338,70 +338,70 @@ private fun ExplorerPanel(
     val activeId = ExplorerWindows.activeId
     val windows = ExplorerWindows.windows
     Column(Modifier.fillMaxSize()) {
-    Row(
-        modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 12.dp, top = 8.dp, bottom = 2.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        val headerStyle = if (tablet) {
-            MaterialTheme.typography.titleLarge
-        } else {
-            MaterialTheme.typography.titleMedium
-        }
-        val headerIconSize = with(LocalDensity.current) { headerStyle.fontSize.toDp() }
-        Text(
-            text = stringResource(
-                if (showFavorites) R.string.explorer_quick_access else R.string.explorer,
-            ),
-            style = headerStyle,
-            modifier = Modifier
-                .weight(1f)
-                .clickable(
-                    interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
-                    indication = null,
-                ) { showFavorites = !showFavorites },
-        )
-        val duplicateEnabled = activeId != null
-        Icon(
-            Icons.Default.ContentCopy,
-            contentDescription = stringResource(R.string.explorer_duplicate),
-            modifier = Modifier
-                .size(headerIconSize)
-                .clickable(
-                    enabled = duplicateEnabled,
-                    onClick = {
-                        val copy = ExplorerWindows.duplicateActive() ?: return@clickable
-                        showWindow(navigator, copy, currentDestination, browserSourceId)
-                        onNavigated()
-                    },
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 12.dp, top = 8.dp, bottom = 2.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            val headerStyle = if (tablet) {
+                MaterialTheme.typography.titleLarge
+            } else {
+                MaterialTheme.typography.titleMedium
+            }
+            val headerIconSize = with(LocalDensity.current) { headerStyle.fontSize.toDp() }
+            Text(
+                text = stringResource(
+                    if (showFavorites) R.string.explorer_quick_access else R.string.explorer,
                 ),
-            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(
-                alpha = if (duplicateEnabled) 1f else 0.38f,
-            ),
-        )
-    }
-    Box(Modifier.weight(1f).fillMaxWidth()) {
-        if (showFavorites) {
-            ExplorerFavoritesGrid(
-                navigator = navigator,
-                fromHistory = fromHistory,
-                fromLibrary = fromLibrary,
-                tablet = tablet,
-                onToggleMode = { showFavorites = !showFavorites },
-                onNavigated = onNavigated,
+                style = headerStyle,
+                modifier = Modifier
+                    .weight(1f)
+                    .clickable(
+                        interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
+                        indication = null,
+                    ) { showFavorites = !showFavorites },
             )
-        } else {
-            ExplorerWindowList(
-                windows = windows,
-                activeId = activeId,
-                navigator = navigator,
-                currentDestination = currentDestination,
-                browserSourceId = browserSourceId,
-                tablet = tablet,
-                onToggleMode = { showFavorites = !showFavorites },
-                onNavigated = onNavigated,
+            val duplicateEnabled = activeId != null
+            Icon(
+                Icons.Default.ContentCopy,
+                contentDescription = stringResource(R.string.explorer_duplicate),
+                modifier = Modifier
+                    .size(headerIconSize)
+                    .clickable(
+                        enabled = duplicateEnabled,
+                        onClick = {
+                            val copy = ExplorerWindows.duplicateActive() ?: return@clickable
+                            showWindow(navigator, copy, currentDestination, browserSourceId)
+                            onNavigated()
+                        },
+                    ),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(
+                    alpha = if (duplicateEnabled) 1f else 0.38f,
+                ),
             )
         }
-    }
+        Box(Modifier.weight(1f).fillMaxWidth()) {
+            if (showFavorites) {
+                ExplorerFavoritesGrid(
+                    navigator = navigator,
+                    fromHistory = fromHistory,
+                    fromLibrary = fromLibrary,
+                    tablet = tablet,
+                    onToggleMode = { showFavorites = !showFavorites },
+                    onNavigated = onNavigated,
+                )
+            } else {
+                ExplorerWindowList(
+                    windows = windows,
+                    activeId = activeId,
+                    navigator = navigator,
+                    currentDestination = currentDestination,
+                    browserSourceId = browserSourceId,
+                    tablet = tablet,
+                    onToggleMode = { showFavorites = !showFavorites },
+                    onNavigated = onNavigated,
+                )
+            }
+        }
     }
 }
 
@@ -428,85 +428,85 @@ private fun ExplorerWindowList(
         LocalBrowseListHeaderInset provides GalleryGridDefaults.margin(),
         LocalExplorerTablet provides tablet,
     ) {
-    LazyColumn(
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = androidx.compose.foundation.layout.PaddingValues(
-            top = 8.dp,
-            bottom = GalleryGridDefaults.margin(),
-        ),
-    ) {
-        if (windows.isNotEmpty()) {
-        item(key = "win-hdr") {
-            BrowseSectionHeader(stringResource(R.string.explorer_windows), onClick = onToggleMode)
-        }
-        items(windows, key = { "w-${it.id}" }) { window ->
-            val source = windowSourceName(window, roots, smb, webDav)
-            val savedAlready = SavedExplorerPaths.contains(window.kind, window.sourceId, window.relativePath)
-            ExplorerPathRow(
-                title = windowRowTitle(window, source),
-                subtitle = windowSubtitle(source, window.relativePath),
-                active = window.id == activeId,
-                modifier = Modifier.padding(bottom = ExplorerWindowGap),
-                onClick = {
-                    val shown = ExplorerWindows.activate(window.id) ?: return@ExplorerPathRow
-                    showWindow(navigator, shown, currentDestination, browserSourceId)
-                    onNavigated()
-                },
-                trailing = {
-                    ExplorerRowAction(
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(
+                top = 8.dp,
+                bottom = GalleryGridDefaults.margin(),
+            ),
+        ) {
+            if (windows.isNotEmpty()) {
+                item(key = "win-hdr") {
+                    BrowseSectionHeader(stringResource(R.string.explorer_windows), onClick = onToggleMode)
+                }
+                items(windows, key = { "w-${it.id}" }) { window ->
+                    val source = windowSourceName(window, roots, smb, webDav)
+                    val savedAlready = SavedExplorerPaths.contains(window.kind, window.sourceId, window.relativePath)
+                    ExplorerPathRow(
+                        title = windowRowTitle(window, source),
+                        subtitle = windowSubtitle(source, window.relativePath),
+                        active = window.id == activeId,
+                        modifier = Modifier.padding(bottom = ExplorerWindowGap),
                         onClick = {
-                            SavedExplorerPaths.remember(window.kind, window.sourceId, window.relativePath)
+                            val shown = ExplorerWindows.activate(window.id) ?: return@ExplorerPathRow
+                            showWindow(navigator, shown, currentDestination, browserSourceId)
+                            onNavigated()
                         },
-                        icon = if (savedAlready) Icons.Default.Bookmark else Icons.Default.BookmarkBorder,
-                        contentDescription = stringResource(R.string.explorer_save_path),
-                    )
-                    ExplorerRowAction(
-                        onClick = {
-                            when (val result = ExplorerWindows.close(window.id)) {
-                                ExplorerWindows.CloseResult.Unchanged -> Unit
-                                ExplorerWindows.CloseResult.NoneLeft -> {
-                                    if (viewingBrowser) {
-                                        navigator.popBackStack()
-                                        onNavigated()
+                        trailing = {
+                            ExplorerRowAction(
+                                onClick = {
+                                    SavedExplorerPaths.remember(window.kind, window.sourceId, window.relativePath)
+                                },
+                                icon = if (savedAlready) Icons.Default.Bookmark else Icons.Default.BookmarkBorder,
+                                contentDescription = stringResource(R.string.explorer_save_path),
+                            )
+                            ExplorerRowAction(
+                                onClick = {
+                                    when (val result = ExplorerWindows.close(window.id)) {
+                                        ExplorerWindows.CloseResult.Unchanged -> Unit
+                                        ExplorerWindows.CloseResult.NoneLeft -> {
+                                            if (viewingBrowser) {
+                                                navigator.popBackStack()
+                                                onNavigated()
+                                            }
+                                        }
+                                        is ExplorerWindows.CloseResult.Switched -> {
+                                            if (viewingBrowser) {
+                                                showWindow(navigator, result.window, currentDestination, browserSourceId)
+                                                onNavigated()
+                                            }
+                                        }
                                     }
-                                }
-                                is ExplorerWindows.CloseResult.Switched -> {
-                                    if (viewingBrowser) {
-                                        showWindow(navigator, result.window, currentDestination, browserSourceId)
-                                        onNavigated()
-                                    }
-                                }
-                            }
+                                },
+                                icon = Icons.Default.Close,
+                                contentDescription = stringResource(R.string.explorer_close_window),
+                            )
                         },
-                        icon = Icons.Default.Close,
-                        contentDescription = stringResource(R.string.explorer_close_window),
                     )
-                },
-            )
+                }
+            }
+            item(key = "saved-hdr") {
+                BrowseSectionHeader(stringResource(R.string.explorer_saved_paths), onClick = onToggleMode)
+            }
+            items(saved, key = { "s-${it.key}" }) { item ->
+                ExplorerPathRow(
+                    title = item.title,
+                    subtitle = windowSubtitle(item.sourceName, item.relativePath),
+                    active = false,
+                    onClick = {
+                        openSaved(navigator, item, roots)
+                        onNavigated()
+                    },
+                    trailing = {
+                        ExplorerRowAction(
+                            onClick = { SavedExplorerPaths.forget(item.key) },
+                            icon = Icons.Default.Delete,
+                            contentDescription = stringResource(R.string.explorer_delete_saved),
+                        )
+                    },
+                )
+            }
         }
-        }
-        item(key = "saved-hdr") {
-            BrowseSectionHeader(stringResource(R.string.explorer_saved_paths), onClick = onToggleMode)
-        }
-        items(saved, key = { "s-${it.key}" }) { item ->
-            ExplorerPathRow(
-                title = item.title,
-                subtitle = windowSubtitle(item.sourceName, item.relativePath),
-                active = false,
-                onClick = {
-                    openSaved(navigator, item, roots)
-                    onNavigated()
-                },
-                trailing = {
-                    ExplorerRowAction(
-                        onClick = { SavedExplorerPaths.forget(item.key) },
-                        icon = Icons.Default.Delete,
-                        contentDescription = stringResource(R.string.explorer_delete_saved),
-                    )
-                },
-            )
-        }
-    }
     }
 }
 
@@ -577,7 +577,7 @@ private fun ExplorerFavoritesGrid(
                     fav = FavoriteBrowseSource.Smb(source),
                     columns = columnCount,
                     iconSize = iconSize,
-                labelStyle = labelStyle,
+                    labelStyle = labelStyle,
                     onClick = {
                         openSmbRoot(navigator, source, fromHistory, fromLibrary)
                         onNavigated()
@@ -590,7 +590,7 @@ private fun ExplorerFavoritesGrid(
                     fav = FavoriteBrowseSource.WebDav(source),
                     columns = columnCount,
                     iconSize = iconSize,
-                labelStyle = labelStyle,
+                    labelStyle = labelStyle,
                     onClick = {
                         openWebDavRoot(navigator, source, fromHistory, fromLibrary)
                         onNavigated()
@@ -608,7 +608,7 @@ private fun ExplorerFavoritesGrid(
                     fav = FavoriteBrowseSource.Local(root),
                     columns = columnCount,
                     iconSize = iconSize,
-                labelStyle = labelStyle,
+                    labelStyle = labelStyle,
                     onClick = {
                         openLocalRootWindow(navigator, root, fromHistory, fromLibrary)
                         onNavigated()

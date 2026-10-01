@@ -34,8 +34,7 @@ object SavedExplorerPaths {
         .map { it.trim() }
         .filter { it.isNotEmpty() }
 
-    fun contains(kind: ExplorerWindows.Kind, sourceId: Long, relativePath: String): Boolean =
-        encode(kind, sourceId, relativePath) in keys()
+    fun contains(kind: ExplorerWindows.Kind, sourceId: Long, relativePath: String): Boolean = encode(kind, sourceId, relativePath) in keys()
 
     fun remember(kind: ExplorerWindows.Kind, sourceId: Long, relativePath: String) {
         val key = encode(kind, sourceId, relativePath)
