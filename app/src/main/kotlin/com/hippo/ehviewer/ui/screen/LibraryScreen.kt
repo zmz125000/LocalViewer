@@ -120,9 +120,9 @@ import com.hippo.ehviewer.ui.main.BrowseGridPlaceholderIconSize
 import com.hippo.ehviewer.ui.main.BrowseListLeadingIconSize
 import com.hippo.ehviewer.ui.main.BrowseListSupportingContent
 import com.hippo.ehviewer.ui.main.BrowseSectionHeader
-import com.hippo.ehviewer.ui.main.LocalBrowseListHeaderInset
 import com.hippo.ehviewer.ui.main.CoverImage
 import com.hippo.ehviewer.ui.main.GalleryGridDefaults
+import com.hippo.ehviewer.ui.main.LocalBrowseListHeaderInset
 import com.hippo.ehviewer.ui.main.LocalGalleryGridItem
 import com.hippo.ehviewer.ui.main.LocalGalleryListItem
 import com.hippo.ehviewer.ui.main.browseFileExtensionLabel
@@ -672,64 +672,64 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
                     bottom = paddingValues.calculateBottomPadding() + gridMargin,
                 )
                 CompositionLocalProvider(LocalBrowseListHeaderInset provides gridMargin) {
-                FastScrollLazyVerticalGrid(
-                    columns = GalleryGridDefaults.listColumns(),
-                    modifier = Modifier.nestedScroll(searchBarConnection).fillMaxSize(),
-                    state = listState,
-                    contentPadding = listPadding,
-                ) {
-                    if (showFavorites) {
-                        item(
-                            key = "fav-hdr",
-                            span = { GridItemSpan(maxLineSpan) },
-                        ) {
-                            BrowseSectionHeader(
-                                stringResource(R.string.browse_favorites),
-                                onClick = startEasyTierVpn,
-                                onLongClick = { showEasyTierDialog = true },
-                            )
-                        }
-                        items(favorites, key = { "fav-${it.key}" }) { fav ->
-                            when (fav) {
-                                is FavoriteBrowseSource.Gallery -> LocalGalleryListItem(
-                                    gallery = fav.gallery,
-                                    onClick = { openGalleryPrimary(fav.gallery) },
-                                    onLongClick = { toggleFavorite(fav) },
-                                    showPages = showPages,
-                                    showProgress = showProgress,
-                                    modifier = Modifier.fillMaxWidth(),
+                    FastScrollLazyVerticalGrid(
+                        columns = GalleryGridDefaults.listColumns(),
+                        modifier = Modifier.nestedScroll(searchBarConnection).fillMaxSize(),
+                        state = listState,
+                        contentPadding = listPadding,
+                    ) {
+                        if (showFavorites) {
+                            item(
+                                key = "fav-hdr",
+                                span = { GridItemSpan(maxLineSpan) },
+                            ) {
+                                BrowseSectionHeader(
+                                    stringResource(R.string.browse_favorites),
+                                    onClick = startEasyTierVpn,
+                                    onLongClick = { showEasyTierDialog = true },
                                 )
-                                else -> FavoriteSourceListRow(
-                                    fav = fav,
-                                    onClick = { openFavorite(fav) },
-                                    onLongClick = { toggleFavorite(fav) },
+                            }
+                            items(favorites, key = { "fav-${it.key}" }) { fav ->
+                                when (fav) {
+                                    is FavoriteBrowseSource.Gallery -> LocalGalleryListItem(
+                                        gallery = fav.gallery,
+                                        onClick = { openGalleryPrimary(fav.gallery) },
+                                        onLongClick = { toggleFavorite(fav) },
+                                        showPages = showPages,
+                                        showProgress = showProgress,
+                                        modifier = Modifier.fillMaxWidth(),
+                                    )
+                                    else -> FavoriteSourceListRow(
+                                        fav = fav,
+                                        onClick = { openFavorite(fav) },
+                                        onLongClick = { toggleFavorite(fav) },
+                                    )
+                                }
+                            }
+                        }
+                        if (showSectionHeader) {
+                            item(
+                                key = "gal-hdr",
+                                span = { GridItemSpan(maxLineSpan) },
+                            ) {
+                                BrowseSectionHeader(
+                                    sectionHeaderText,
+                                    onClick = { toggleLibrarySection() },
+                                    onLongClick = { toggleLibraryFlattenMode() },
                                 )
                             }
                         }
-                    }
-                    if (showSectionHeader) {
-                        item(
-                            key = "gal-hdr",
-                            span = { GridItemSpan(maxLineSpan) },
-                        ) {
-                            BrowseSectionHeader(
-                                sectionHeaderText,
-                                onClick = { toggleLibrarySection() },
-                                onLongClick = { toggleLibraryFlattenMode() },
+                        items(galleries, key = { it.id }) { gallery ->
+                            LocalGalleryListItem(
+                                gallery = gallery,
+                                onClick = { openLibraryItemPrimary(gallery) },
+                                onLongClick = { openLibraryItemSecondary(gallery) },
+                                showPages = showPages,
+                                showProgress = showProgress,
+                                modifier = Modifier.fillMaxWidth(),
                             )
                         }
                     }
-                    items(galleries, key = { it.id }) { gallery ->
-                        LocalGalleryListItem(
-                            gallery = gallery,
-                            onClick = { openLibraryItemPrimary(gallery) },
-                            onLongClick = { openLibraryItemSecondary(gallery) },
-                            showPages = showPages,
-                            showProgress = showProgress,
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-                    }
-                }
                 }
             } else {
                 val gridSpacing = GalleryGridDefaults.spacedBy()

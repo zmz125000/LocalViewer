@@ -98,8 +98,8 @@ import com.hippo.ehviewer.ui.easytier.rememberEasyTierStartButtonAction
 import com.hippo.ehviewer.ui.main.BrowseEmptyHint
 import com.hippo.ehviewer.ui.main.BrowseFavoriteTitle
 import com.hippo.ehviewer.ui.main.BrowseSectionHeader
-import com.hippo.ehviewer.ui.main.LocalBrowseListHeaderInset
 import com.hippo.ehviewer.ui.main.GalleryGridDefaults
+import com.hippo.ehviewer.ui.main.LocalBrowseListHeaderInset
 import com.hippo.ehviewer.util.LocalNetworkPermission
 import com.hippo.ehviewer.util.ensureLocalNetworkPermission
 import com.hippo.ehviewer.webdav.WebDavClient
@@ -609,106 +609,106 @@ fun AnimatedVisibilityScope.BrowseScreen(navigator: DestinationsNavigator) = Scr
             }
         } else {
             CompositionLocalProvider(LocalBrowseListHeaderInset provides gridInset) {
-            FastScrollLazyVerticalGrid(
-                columns = GalleryGridDefaults.listColumns(),
-                state = listState,
-                modifier = Modifier
-                    .padding(padding)
-                    .nestedScroll(scrollBehavior.nestedScrollConnection)
-                    .fillMaxSize(),
-                contentPadding = PaddingValues(top = gridInset, bottom = gridInset),
-            ) {
-                if (smbSources.isNotEmpty() || webDavSources.isNotEmpty()) {
-                    item(
-                        key = "hdr-net",
-                        span = { GridItemSpan(maxLineSpan) },
-                    ) {
-                        BrowseSectionHeader(stringResource(R.string.network))
-                    }
-                    items(smbSources, key = { "s-${it.id}" }) { source ->
-                        val favorited = BrowseFavorites.smbKey(source.id) in favoriteKeys
-                        ListItem(
-                            headlineContent = {
-                                BrowseFavoriteTitle(name = source.displayName, favorited = favorited)
-                            },
-                            supportingContent = { Text(smbSubtitle(source)) },
-                            leadingContent = {
-                                Icon(Icons.Default.Lan, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                            },
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .combinedClickable(
-                                    onClick = { openSmb(source) },
-                                    onLongClick = {
-                                        notifyFavoriteToggle(BrowseFavorites.toggleSmb(source.id))
-                                    },
-                                ),
-                        )
-                    }
-                    items(webDavSources, key = { "w-${it.id}" }) { source ->
-                        val favorited = BrowseFavorites.webDavKey(source.id) in favoriteKeys
-                        ListItem(
-                            headlineContent = {
-                                BrowseFavoriteTitle(name = source.displayName, favorited = favorited)
-                            },
-                            supportingContent = { Text(webDavSubtitle(source)) },
-                            leadingContent = {
-                                Icon(Icons.Default.Cloud, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                            },
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .combinedClickable(
-                                    onClick = { openWebDav(source) },
-                                    onLongClick = {
-                                        notifyFavoriteToggle(BrowseFavorites.toggleWebDav(source.id))
-                                    },
-                                ),
-                        )
-                    }
-                }
-                if (roots.isNotEmpty()) {
-                    item(
-                        key = "hdr-fol",
-                        span = { GridItemSpan(maxLineSpan) },
-                    ) {
-                        BrowseSectionHeader(stringResource(R.string.folder))
-                    }
-                    items(roots, key = { "r-${it.id}" }) { root ->
-                        val favorited = BrowseFavorites.localKey(root.id) in favoriteKeys
-                        ListItem(
-                            headlineContent = {
-                                BrowseFavoriteTitle(name = root.displayName.safFolderLabel(), favorited = favorited)
-                            },
-                            supportingContent = {
-                                Text(
-                                    stringResource(
-                                        if (root.isLibraryRole) R.string.library else R.string.folder,
+                FastScrollLazyVerticalGrid(
+                    columns = GalleryGridDefaults.listColumns(),
+                    state = listState,
+                    modifier = Modifier
+                        .padding(padding)
+                        .nestedScroll(scrollBehavior.nestedScrollConnection)
+                        .fillMaxSize(),
+                    contentPadding = PaddingValues(top = gridInset, bottom = gridInset),
+                ) {
+                    if (smbSources.isNotEmpty() || webDavSources.isNotEmpty()) {
+                        item(
+                            key = "hdr-net",
+                            span = { GridItemSpan(maxLineSpan) },
+                        ) {
+                            BrowseSectionHeader(stringResource(R.string.network))
+                        }
+                        items(smbSources, key = { "s-${it.id}" }) { source ->
+                            val favorited = BrowseFavorites.smbKey(source.id) in favoriteKeys
+                            ListItem(
+                                headlineContent = {
+                                    BrowseFavoriteTitle(name = source.displayName, favorited = favorited)
+                                },
+                                supportingContent = { Text(smbSubtitle(source)) },
+                                leadingContent = {
+                                    Icon(Icons.Default.Lan, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                                },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .combinedClickable(
+                                        onClick = { openSmb(source) },
+                                        onLongClick = {
+                                            notifyFavoriteToggle(BrowseFavorites.toggleSmb(source.id))
+                                        },
                                     ),
-                                )
-                            },
-                            leadingContent = {
-                                Icon(
-                                    if (root.isLibraryRole) {
-                                        Icons.AutoMirrored.Filled.LibraryBooks
-                                    } else {
-                                        Icons.Default.Folder
-                                    },
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.primary,
-                                )
-                            },
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .combinedClickable(
-                                    onClick = { openLocalRoot(root) },
-                                    onLongClick = {
-                                        notifyFavoriteToggle(BrowseFavorites.toggleLocal(root.id))
-                                    },
-                                ),
-                        )
+                            )
+                        }
+                        items(webDavSources, key = { "w-${it.id}" }) { source ->
+                            val favorited = BrowseFavorites.webDavKey(source.id) in favoriteKeys
+                            ListItem(
+                                headlineContent = {
+                                    BrowseFavoriteTitle(name = source.displayName, favorited = favorited)
+                                },
+                                supportingContent = { Text(webDavSubtitle(source)) },
+                                leadingContent = {
+                                    Icon(Icons.Default.Cloud, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                                },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .combinedClickable(
+                                        onClick = { openWebDav(source) },
+                                        onLongClick = {
+                                            notifyFavoriteToggle(BrowseFavorites.toggleWebDav(source.id))
+                                        },
+                                    ),
+                            )
+                        }
+                    }
+                    if (roots.isNotEmpty()) {
+                        item(
+                            key = "hdr-fol",
+                            span = { GridItemSpan(maxLineSpan) },
+                        ) {
+                            BrowseSectionHeader(stringResource(R.string.folder))
+                        }
+                        items(roots, key = { "r-${it.id}" }) { root ->
+                            val favorited = BrowseFavorites.localKey(root.id) in favoriteKeys
+                            ListItem(
+                                headlineContent = {
+                                    BrowseFavoriteTitle(name = root.displayName.safFolderLabel(), favorited = favorited)
+                                },
+                                supportingContent = {
+                                    Text(
+                                        stringResource(
+                                            if (root.isLibraryRole) R.string.library else R.string.folder,
+                                        ),
+                                    )
+                                },
+                                leadingContent = {
+                                    Icon(
+                                        if (root.isLibraryRole) {
+                                            Icons.AutoMirrored.Filled.LibraryBooks
+                                        } else {
+                                            Icons.Default.Folder
+                                        },
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary,
+                                    )
+                                },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .combinedClickable(
+                                        onClick = { openLocalRoot(root) },
+                                        onLongClick = {
+                                            notifyFavoriteToggle(BrowseFavorites.toggleLocal(root.id))
+                                        },
+                                    ),
+                            )
+                        }
                     }
                 }
-            }
             }
         }
     }
