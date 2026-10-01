@@ -314,37 +314,43 @@ private fun ExplorerPanel(
     val windows = ExplorerWindows.windows
     Column(Modifier.fillMaxSize()) {
     Row(
-        modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 4.dp),
+        modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 12.dp, top = 8.dp, bottom = 2.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        val headerStyle = MaterialTheme.typography.titleLarge.let { style ->
+            if (tablet) style else style.copy(fontSize = 20.sp, lineHeight = 26.sp)
+        }
+        val headerIconSize = with(LocalDensity.current) { headerStyle.fontSize.toDp() }
         Text(
             text = stringResource(
                 if (showFavorites) R.string.explorer_quick_access else R.string.explorer,
             ),
-            style = MaterialTheme.typography.titleLarge.let { style ->
-                if (tablet) style else style.copy(fontSize = 20.sp, lineHeight = 26.sp)
-            },
+            style = headerStyle,
             modifier = Modifier
                 .weight(1f)
                 .clickable(
                     interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
                     indication = null,
-                ) { showFavorites = !showFavorites }
-                .padding(vertical = 12.dp),
+                ) { showFavorites = !showFavorites },
         )
-        IconButton(
-            onClick = {
-                val copy = ExplorerWindows.duplicateActive() ?: return@IconButton
-                showWindow(navigator, copy, currentDestination, browserSourceId)
-                onNavigated()
-            },
-            enabled = activeId != null,
-        ) {
-            Icon(
-                Icons.Default.ContentCopy,
-                contentDescription = stringResource(R.string.explorer_duplicate),
-            )
-        }
+        val duplicateEnabled = activeId != null
+        Icon(
+            Icons.Default.ContentCopy,
+            contentDescription = stringResource(R.string.explorer_duplicate),
+            modifier = Modifier
+                .size(headerIconSize)
+                .clickable(
+                    enabled = duplicateEnabled,
+                    onClick = {
+                        val copy = ExplorerWindows.duplicateActive() ?: return@clickable
+                        showWindow(navigator, copy, currentDestination, browserSourceId)
+                        onNavigated()
+                    },
+                ),
+            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(
+                alpha = if (duplicateEnabled) 1f else 0.38f,
+            ),
+        )
     }
     Box(Modifier.weight(1f).fillMaxWidth()) {
         if (showFavorites) {
@@ -394,7 +400,9 @@ private fun ExplorerWindowList(
     ) {
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
-        contentPadding = GalleryGridDefaults.listVerticalContentPadding(),
+        contentPadding = androidx.compose.foundation.layout.PaddingValues(
+            bottom = GalleryGridDefaults.margin(),
+        ),
     ) {
         if (windows.isNotEmpty()) {
         item(key = "win-hdr") {
@@ -501,7 +509,13 @@ private fun ExplorerFavoritesGrid(
         columns = GridCells.Fixed(columnCount),
         state = gridState,
         modifier = Modifier.fillMaxSize(),
-        contentPadding = GalleryGridDefaults.contentPadding(androidx.compose.foundation.layout.PaddingValues(0.dp)),
+        contentPadding = GalleryGridDefaults.margin().let { inset ->
+            androidx.compose.foundation.layout.PaddingValues(
+                start = inset,
+                end = inset,
+                bottom = inset,
+            )
+        },
         verticalArrangement = GalleryGridDefaults.spacedBy(),
         horizontalArrangement = GalleryGridDefaults.spacedBy(),
     ) {
