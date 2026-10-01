@@ -48,8 +48,11 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.rememberDrawerState2
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -106,6 +109,18 @@ import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
+/** Open and close the explorer panel from the main navigation bar. */
+class ExplorerPanelActions {
+    var open: () -> Unit = {}
+    var close: () -> Unit = {}
+}
+
+val LocalExplorerPanel = compositionLocalOf { ExplorerPanelActions() }
+
+private class PanelCloseGuard {
+    var snapOnCancel: Boolean = true
+}
+
 private val WindowMaxWidth = 340.dp
 private val WindowMaxHeight = 480.dp
 private val ExplorerListIconSize = 20.dp
@@ -128,13 +143,16 @@ fun ExplorerSidePanelHost(
 ) {
     val panelState = rememberDrawerState2(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
+    val closeGuard = remember { PanelCloseGuard() }
     var closeJob by remember { mutableStateOf<Job?>(null) }
     fun closePanel() {
+        closeGuard.snapOnCancel = true
         if (closeJob?.isActive == true) return
         closeJob = scope.launch {
             try {
                 panelState.close()
             } finally {
+                if (!closeGuard.snapOnCancel) return@launch
                 // A screen slide cancels this animation and leaves the offset mid-way.
                 withContext(NonCancellable) {
                     val offset = panelState.currentOffset
@@ -144,6 +162,22 @@ fun ExplorerSidePanelHost(
                     }
                 }
             }
+        }
+    }
+    fun openPanel() {
+        closeGuard.snapOnCancel = false
+        closeJob?.cancel()
+        closeJob = scope.launch { panelState.open() }
+    }
+    val panelActions = LocalExplorerPanel.current
+    SideEffect {
+        panelActions.open = { openPanel() }
+        panelActions.close = { closePanel() }
+    }
+    DisposableEffect(panelActions) {
+        onDispose {
+            panelActions.open = {}
+            panelActions.close = {}
         }
     }
     LaunchedEffect(gesturesEnabled) {

@@ -147,7 +147,9 @@ import com.hippo.ehviewer.ui.destinations.ReaderScreenDestination
 import com.hippo.ehviewer.ui.destinations.SettingsScreenDestination
 import com.hippo.ehviewer.ui.destinations.SmbBrowserScreenDestination
 import com.hippo.ehviewer.ui.destinations.WebDavBrowserScreenDestination
+import com.hippo.ehviewer.ui.screen.ExplorerPanelActions
 import com.hippo.ehviewer.ui.screen.ExplorerSidePanelHost
+import com.hippo.ehviewer.ui.screen.LocalExplorerPanel
 import com.hippo.ehviewer.ui.main.BrowseSaveSnackbars
 import com.hippo.ehviewer.ui.main.HttpShareSnackbars
 import com.hippo.ehviewer.ui.main.awaitHttpShareQr
@@ -562,7 +564,19 @@ class MainActivity : AppCompatActivity() {
             val showMainNav = shouldShowMainNav(currentDestination, persistMainNav, useRail)
             // Shortcut FABs only on compact phones without persistent nav.
             val showNavShortcutFab = !useRail && !persistMainNav
+            val explorerPanel = remember { ExplorerPanelActions() }
+            fun onMainNavClick(item: MainNavItem) {
+                val onBrowseRoot = item.direction == BrowseScreenDestination &&
+                    currentDestination == BrowseScreenDestination
+                if (onBrowseRoot) {
+                    explorerPanel.open()
+                } else {
+                    explorerPanel.close()
+                    navigateMainTab(navigator, item, selectedTab, currentDestination)
+                }
+            }
             CompositionLocalProvider(
+                LocalExplorerPanel provides explorerPanel,
                 LocalNavDrawerState provides navDrawerState,
                 LocalSideSheetState provides sideSheetState,
                 LocalDrawerHandle provides drawerHandle,
@@ -619,9 +633,7 @@ class MainActivity : AppCompatActivity() {
                                     val selected = selectedTab == item.direction
                                     NavigationBarItem(
                                         selected = selected,
-                                        onClick = {
-                                            navigateMainTab(navigator, item, selectedTab, currentDestination)
-                                        },
+                                        onClick = { onMainNavClick(item) },
                                         icon = {
                                             MainNavDestinationIcon(
                                                 item = item,
@@ -665,9 +677,7 @@ class MainActivity : AppCompatActivity() {
                                         val selected = selectedTab == item.direction
                                         NavigationRailItem(
                                             selected = selected,
-                                            onClick = {
-                                                navigateMainTab(navigator, item, selectedTab, currentDestination)
-                                            },
+                                            onClick = { onMainNavClick(item) },
                                             icon = {
                                                 MainNavDestinationIcon(
                                                     item = item,
