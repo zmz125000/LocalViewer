@@ -84,6 +84,33 @@ class VideoDirectLinkByteSourceTest {
     }
 
     @Test
+    fun seekStartupChunkServesTinyFollowUpReads() {
+        val lane = RecordingSource(size = 32L * 1024 * 1024)
+        val video = VideoDirectLinkByteSource(
+            demand = lane,
+            prefetch = null,
+            knownSize = lane.size,
+            blockSize = 2 * 1024 * 1024,
+            maxBlocks = 8,
+            prefetchAhead = 0,
+        )
+        val at = 8L * 1024 * 1024 + 1000
+        video.noteSeek(System.currentTimeMillis() + 60_000)
+        video.warm(at, 16)
+        assertEquals(1, lane.reads.size)
+        assertEquals(at, lane.reads[0])
+        assertEquals(VideoDirectLinkByteSource.SEEK_STARTUP_CHUNK, lane.readLens[0])
+        val nal = ByteArray(4)
+        assertEquals(4, video.readAt(at + 4, nal, 0, nal.size))
+        assertEquals(4, video.readAt(at + 8, nal, 0, nal.size))
+        assertEquals("NAL reads stay inside the 256 KiB chunk", 1, lane.reads.size)
+        val header = ByteArray(32)
+        assertEquals(32, video.readAt(0L, header, 0, header.size))
+        assertEquals(32, lane.readLens.last())
+        video.close()
+    }
+
+    @Test
     fun expiredSeekStartupUsesBlockReadsAgain() {
         val lane = RecordingSource(size = 8L * 1024 * 1024)
         val video = VideoDirectLinkByteSource(

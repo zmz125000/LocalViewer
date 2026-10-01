@@ -9,6 +9,7 @@ import com.hippo.ehviewer.library.RemoteArchiveOpen
 import com.hippo.ehviewer.library.ZipAsDirListing
 import com.hippo.ehviewer.library.openZipContainedFileSource
 import java.io.IOException
+import java.util.concurrent.CancellationException
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
@@ -510,9 +511,10 @@ private class KeepOpenSmbFileSource(
                 result.await()
             }
         } catch (e: Throwable) {
-            // Player seek interrupts the loader thread. Stop this old-offset read so the
-            // next open can buffer the new position instead of retrying this one.
-            if (closed.get() || e is InterruptedException || e.cause is InterruptedException) {
+            // Player seek interrupts the loader thread. runBlocking surfaces that as
+            // InterruptedException or CancellationException. Stop this old-offset read
+            // so the next open can buffer the new position instead of retrying this one.
+            if (closed.get() || isCallerGone(e)) {
                 op.cancel.set(true)
                 Thread.interrupted()
                 throw SmbReadCancelledException()
@@ -522,6 +524,17 @@ private class KeepOpenSmbFileSource(
             logcat("SmbArchive", e)
             -1
         }
+    }
+
+    /** Loader interrupt, or the coroutine cancel that runBlocking turns it into. */
+    private fun isCallerGone(e: Throwable): Boolean {
+        var current: Throwable? = e
+        var depth = 0
+        while (current != null && depth++ < 8) {
+            if (current is InterruptedException || current is CancellationException) return true
+            current = current.cause
+        }
+        return Thread.currentThread().isInterrupted
     }
 
     override fun dropQueuedReads() {

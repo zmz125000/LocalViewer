@@ -3,6 +3,7 @@ package com.hippo.ehviewer.webdav
 import com.ehviewer.core.database.model.WebDavSourceEntity
 import com.ehviewer.core.util.logcat
 import com.hippo.ehviewer.library.ArchiveByteSource
+import com.hippo.ehviewer.smb.SmbReadCancelledException
 import com.hippo.ehviewer.library.ReadAheadArchiveByteSource
 import com.hippo.ehviewer.library.RemoteArchiveOpen
 import com.hippo.ehviewer.library.RemoteRangeNotSupportedException
@@ -204,9 +205,15 @@ private class RawWebDavArchiveByteSource(
         } catch (e: RemoteRangeNotSupportedException) {
             // Permanent capability failure must not be masked as EOF/-1.
             throw e
-        } catch (e: CancellationException) {
+        } catch (_: CancellationException) {
+            // Media3 seek cancels this coroutine. -1 would make the video window
+            // retry the old offset; close() still soft-fails.
+            if (!closed.get()) throw SmbReadCancelledException()
             -1
         } catch (e: Throwable) {
+            if (!closed.get() && (e is InterruptedException || e is SmbReadCancelledException)) {
+                throw SmbReadCancelledException()
+            }
             if (closed.get()) return -1
             logcat("WebDavArchive", e)
             -1
