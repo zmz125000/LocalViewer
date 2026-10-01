@@ -79,6 +79,9 @@ import com.hippo.ehviewer.library.BrowseEntryRemote
 import com.hippo.ehviewer.library.BrowseFavorites
 import com.hippo.ehviewer.library.BrowseFolderId
 import com.hippo.ehviewer.library.BrowseSession
+import com.hippo.ehviewer.library.ExplorerWindows
+import com.hippo.ehviewer.library.SavedExplorerPaths
+import com.hippo.ehviewer.ui.ExplorerGestureEnabled
 import com.hippo.ehviewer.library.BrowseVirtualKind
 import com.hippo.ehviewer.library.EmptyArchiveRegistry
 import com.hippo.ehviewer.library.FolderGalleryIndex
@@ -190,7 +193,10 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
     // Session-scoped path. Empty list = share root and is *not* "unset":
     // do not fall back to initialRelativePath when session is empty, or returning from
     // the reader after climbing to root re-opens the History deep folder.
-    var segments by remember(sourceId, shortcutEpoch) {
+    val explorerWindowId = ExplorerWindows.activeId
+    val fromHistory = ExplorerWindows.active()?.fromHistory ?: fromHistory
+    val fromLibrary = ExplorerWindows.active()?.fromLibrary ?: fromLibrary
+    var segments by remember(sourceId, shortcutEpoch, explorerWindowId) {
         val stored = BrowseSession.webDavSegmentsOrNull(sourceId)
         val initial = stored ?: initialRelativePath.split('/').filter { it.isNotEmpty() }.also {
             BrowseSession.setWebDavSegments(sourceId, it)
@@ -203,14 +209,14 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
      * `S/leaf` (2); goUp pops that many so one back action returns to the listing
      * that showed the `@` row. Deep-links leave this empty → goUp drops 1.
      */
-    var enterHopStack by remember { mutableStateOf(emptyList<Int>()) }
+    var enterHopStack by remember(explorerWindowId) { mutableStateOf(emptyList<Int>()) }
 
     /**
      * Listing that owned the Search section when a dir was opened from that section.
      * Next goUp jumps here in one hop (does not walk Album → …). Overflow Open folder
      * leaves this null. Independent of [BrowseSession.webDavExitToOrigin].
      */
-    var searchReturnRel by remember { mutableStateOf<String?>(null) }
+    var searchReturnRel by remember(explorerWindowId) { mutableStateOf<String?>(null) }
 
     fun updateSegments(new: List<String>) {
         segments = new
@@ -218,7 +224,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
         if (new.isEmpty()) enterHopStack = emptyList()
     }
 
-    var entries by remember { mutableStateOf<List<BrowseEntryRemote>>(emptyList()) }
+    var entries by remember(explorerWindowId) { mutableStateOf<List<BrowseEntryRemote>>(emptyList()) }
 
     /** Relative dir the current [entries] belong to. */
     var listedDir by remember { mutableStateOf<String?>(null) }
@@ -226,8 +232,12 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
     var refreshing by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     val listMode by Settings.listMode.collectAsState()
-    var photoGridOverlay by remember {
+    var photoGridOverlay by remember(explorerWindowId, sourceId) {
         mutableStateOf(BrowseSession.webDavPhotoGrid(sourceId))
+    }
+    LaunchedEffect(explorerWindowId, sourceId, segments, photoGridOverlay) {
+        val id = explorerWindowId ?: return@LaunchedEffect
+        ExplorerWindows.syncWebDav(id, sourceId)
     }
     fun setPhotoGrid(
         dir: String?,
@@ -278,6 +288,26 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
 
     fun dirRelative(name: String): String = if (relativeDir.isEmpty()) name else WebDavGateway.joinRelative(relativeDir, name)
 
+    fun openRemoteFolderInNewTab(name: String) {
+        val segments = dirRelative(name).split('/').filter { it.isNotEmpty() }
+        ExplorerWindows.openRemoteInBackground(
+            ExplorerWindows.Kind.WebDav,
+            sourceId,
+            source?.displayName.orEmpty(),
+            segments,
+            fromHistory,
+            fromLibrary,
+        )
+    }
+
+    fun saveRemoteFolderToPaths(name: String) {
+        SavedExplorerPaths.remember(
+            ExplorerWindows.Kind.WebDav,
+            sourceId,
+            dirRelative(name),
+        )
+    }
+
     fun toggleDirFavorite(name: String, coverFileName: String? = null) {
         val rel = dirRelative(name)
         val coverKey = coverFileName?.let { fileName ->
@@ -300,6 +330,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
         }
     }
     val search = rememberBrowseFolderSearchState()
+    ExplorerGestureEnabled(!search.active)
     val searchFolderKey = BrowseSession.webDavFolderSearchKey(sourceId, relativeDir)
     var searchHits by remember(searchFolderKey) {
         mutableStateOf(BrowseSession.peekFolderSearchHits<BrowseEntryRemote>(searchFolderKey))
@@ -536,7 +567,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
     // effect and starts a new one — that is the only concurrency control we need.
     // Previous epoch/ON_RESUME races could ++epoch, early-return without clearing loading,
     // and leave History→up→up stuck on an empty infinite spinner (manual refresh worked).
-    LaunchedEffect(sourceId, relativeDir, refreshToken) {
+    LaunchedEffect(explorerWindowId, sourceId, relativeDir, refreshToken) {
         VideoThumbnail.onBrowseFolderChanged("dav:$sourceId:$relativeDir")
         ArchiveCoverCache.onBrowseFolderChanged("dav:$sourceId:$relativeDir")
         val targetDir = relativeDir
@@ -1566,6 +1597,8 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
         onOpenFolder = {
             openBrowseFolder(FolderSearch.openFolderTarget(name, isDirectory = true, virtual = virtual))
         },
+        onOpenInNewTab = { openRemoteFolderInNewTab(name) },
+        onSaveToPaths = { saveRemoteFolderToPaths(name) },
         shortcut = webDavShortcut(name, true, name),
         onUnsupported = { notSupportedAction() },
     )
@@ -1587,6 +1620,8 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                 ),
             )
         },
+        onOpenInNewTab = { openRemoteFolderInNewTab(entry.relativeName) },
+        onSaveToPaths = { saveRemoteFolderToPaths(entry.relativeName) },
         shortcut = webDavShortcut(entry.relativeName, true, entry.name),
         onUnsupported = { notSupportedAction() },
     )

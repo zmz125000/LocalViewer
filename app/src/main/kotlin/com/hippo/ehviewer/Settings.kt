@@ -361,6 +361,13 @@ object Settings : DataStorePreferences(null) {
     val favoriteBrowseThumbs = stringSetPref("favorite_browse_thumbs", emptySet())
 
     /**
+     * Explorer side-panel saved paths, newest first, one key per line.
+     * `local:{rootId}:{rel}` / `smb:{sourceId}:{rel}` / `webdav:{sourceId}:{rel}`.
+     * In-memory windows are not stored here; they die with the process.
+     */
+    val savedExplorerPaths = stringPref("saved_explorer_paths", "")
+
+    /**
      * Per-folder browse-mode persist. Entries: `{lf|sf|wf}:{id}:{rel}={prefInt}`.
      * See [com.hippo.ehviewer.library.BrowseModePersist].
      */

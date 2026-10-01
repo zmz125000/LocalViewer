@@ -43,7 +43,8 @@ enum class BrowseOverflowPlacement {
 
 /**
  * Overflow actions for a browse list/grid cell.
- * Null callbacks still appear in the menu and call [onUnsupported] (toast).
+ * Null callbacks still appear in the menu and call [onUnsupported] (toast),
+ * except Share and Open in other app, which are hidden when unset.
  */
 data class BrowseOverflowActions(
     val kind: BrowseOverflowKind = BrowseOverflowKind.Common,
@@ -53,6 +54,10 @@ data class BrowseOverflowActions(
     val onShare: (() -> Unit)? = null,
     val onOpenWith: (() -> Unit)? = null,
     val onOpenFolder: (() -> Unit)? = null,
+    /** Open this folder as an explorer window and stay on the current one. Null hides the row. */
+    val onOpenInNewTab: (() -> Unit)? = null,
+    /** Remember this folder under explorer saved paths. Null hides the row. */
+    val onSaveToPaths: (() -> Unit)? = null,
     val onInfo: (() -> Unit)? = null,
     val onRead: (() -> Unit)? = null,
     val onPhotoGrid: (() -> Unit)? = null,
@@ -196,10 +201,24 @@ fun BrowseItemOverflowButton(
                 text = { Text(stringResource(R.string.action_save_to)) },
                 onClick = { run(actions.onSaveAs) },
             )
-            DropdownMenuItem(
-                text = { Text(stringResource(R.string.share)) },
-                onClick = { run(actions.onShare) },
-            )
+            if (actions.onOpenInNewTab != null) {
+                DropdownMenuItem(
+                    text = { Text(stringResource(R.string.browse_open_in_new_tab)) },
+                    onClick = { run(actions.onOpenInNewTab) },
+                )
+            }
+            if (actions.onSaveToPaths != null) {
+                DropdownMenuItem(
+                    text = { Text(stringResource(R.string.browse_save_to_paths)) },
+                    onClick = { run(actions.onSaveToPaths) },
+                )
+            }
+            if (actions.onShare != null) {
+                DropdownMenuItem(
+                    text = { Text(stringResource(R.string.share)) },
+                    onClick = { run(actions.onShare) },
+                )
+            }
             if (actions.onShareViaHttp != null) {
                 DropdownMenuItem(
                     text = { Text(stringResource(R.string.browse_share_via_http)) },
@@ -225,10 +244,12 @@ fun BrowseItemOverflowButton(
                     },
                 )
             }
-            DropdownMenuItem(
-                text = { Text(stringResource(R.string.open_in_other_app)) },
-                onClick = { run(actions.onOpenWith) },
-            )
+            if (actions.onOpenWith != null) {
+                DropdownMenuItem(
+                    text = { Text(stringResource(R.string.open_in_other_app)) },
+                    onClick = { run(actions.onOpenWith) },
+                )
+            }
             DropdownMenuItem(
                 text = { Text(stringResource(R.string.browse_item_info)) },
                 onClick = { run(actions.onInfo) },

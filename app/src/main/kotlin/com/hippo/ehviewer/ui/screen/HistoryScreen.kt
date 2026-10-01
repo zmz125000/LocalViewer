@@ -91,7 +91,7 @@ import com.hippo.ehviewer.library.toBaseGalleryInfo
 import com.hippo.ehviewer.library.withLocalZipCentralDirectory
 import com.hippo.ehviewer.smb.SmbGateway
 import com.hippo.ehviewer.smb.SmbRepository
-import com.hippo.ehviewer.ui.DrawerHandle
+import com.hippo.ehviewer.ui.ExplorerGestureEnabled
 import com.hippo.ehviewer.ui.OpenFileExternally
 import com.hippo.ehviewer.ui.OpenPdfExternally
 import com.hippo.ehviewer.ui.Screen
@@ -139,7 +139,7 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
     // Live filter text from the search field (updates as the user types).
     var keyword by rememberSaveable { mutableStateOf("") }
 
-    DrawerHandle(!searchFocused)
+    ExplorerGestureEnabled(!searchFocused)
 
     val density = LocalDensity.current
     // Full history stream; filter client-side so typing does not rebuild a PagingSource.

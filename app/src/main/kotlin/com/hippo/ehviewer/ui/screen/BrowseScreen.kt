@@ -72,6 +72,8 @@ import com.hippo.ehviewer.collectAsState
 import com.hippo.ehviewer.library.AddRootResult
 import com.hippo.ehviewer.library.BrowseFavorites
 import com.hippo.ehviewer.library.BrowseSession
+import com.hippo.ehviewer.library.ExplorerWindows
+import com.hippo.ehviewer.ui.ExplorerGestureEnabled
 import com.hippo.ehviewer.library.LocalLibrary
 import com.hippo.ehviewer.library.MediaPermissions
 import com.hippo.ehviewer.library.displayNameForTreeUri
@@ -112,6 +114,7 @@ private const val URI_FLAGS = FLAG_GRANT_READ_URI_PERMISSION or FLAG_GRANT_WRITE
 @Destination<RootGraph>
 @Composable
 fun AnimatedVisibilityScope.BrowseScreen(navigator: DestinationsNavigator) = Screen(navigator) {
+    ExplorerGestureEnabled(true)
     // Survive NavHost dispose/restore (enter a source → back).
     // collectAsState(initial=empty) remounted empty lists for one frame and
     // coerced LazyList scroll to top; VM-held state keeps last data + scroll.
@@ -271,6 +274,7 @@ fun AnimatedVisibilityScope.BrowseScreen(navigator: DestinationsNavigator) = Scr
 
     fun openLocalRoot(root: LibraryRootEntity) {
         val path = LocalLibrary.rootPath(root) ?: return
+        ExplorerWindows.prepareSpawn()
         BrowseSession.localStack = listOf(
             BrowseSession.LocalFrame(
                 rootId = root.id,
@@ -280,16 +284,25 @@ fun AnimatedVisibilityScope.BrowseScreen(navigator: DestinationsNavigator) = Scr
                 preferMediaStore = root.prefersMediaStore,
             ),
         )
+        ExplorerWindows.finishLocalSpawn(root.displayName.safFolderLabel())
         navigate(FolderBrowserScreenDestination())
     }
 
     fun openSmb(source: SmbSourceEntity) {
+        ExplorerWindows.prepareSpawn()
         BrowseSession.setSmbSegments(source.id, emptyList())
+        BrowseSession.setSmbPhotoGrid(source.id, null)
+        BrowseSession.setSmbExitToOrigin(source.id, false)
+        ExplorerWindows.finishSmbSpawn(source.id, source.displayName)
         navigate(SmbBrowserScreenDestination(source.id, ""))
     }
 
     fun openWebDav(source: com.ehviewer.core.database.model.WebDavSourceEntity) {
+        ExplorerWindows.prepareSpawn()
         BrowseSession.setWebDavSegments(source.id, emptyList())
+        BrowseSession.setWebDavPhotoGrid(source.id, null)
+        BrowseSession.setWebDavExitToOrigin(source.id, false)
+        ExplorerWindows.finishWebDavSpawn(source.id, source.displayName)
         navigate(WebDavBrowserScreenDestination(source.id, ""))
     }
 
@@ -710,7 +723,7 @@ fun AnimatedVisibilityScope.BrowseScreen(navigator: DestinationsNavigator) = Scr
     }
 }
 
-private fun webDavSubtitle(source: com.ehviewer.core.database.model.WebDavSourceEntity): String = buildString {
+internal fun webDavSubtitle(source: com.ehviewer.core.database.model.WebDavSourceEntity): String = buildString {
     append(source.baseUrl.trimEnd('/'))
     if (source.pathPrefix.isNotBlank()) {
         append('/')
@@ -718,7 +731,7 @@ private fun webDavSubtitle(source: com.ehviewer.core.database.model.WebDavSource
     }
 }
 
-private fun smbSubtitle(source: SmbSourceEntity): String = buildString {
+internal fun smbSubtitle(source: SmbSourceEntity): String = buildString {
     append("\\\\")
     append(source.host)
     if (source.share.isNotBlank()) {
@@ -732,7 +745,7 @@ private fun smbSubtitle(source: SmbSourceEntity): String = buildString {
 }
 
 @Composable
-private fun BrowseRootCard(
+internal fun BrowseRootCard(
     title: String,
     subtitle: String,
     favorited: Boolean,
