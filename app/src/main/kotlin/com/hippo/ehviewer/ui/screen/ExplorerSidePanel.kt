@@ -493,6 +493,7 @@ private fun ExplorerWindowList(
                     title = item.title,
                     subtitle = windowSubtitle(item.sourceName, item.relativePath),
                     active = false,
+                    modifier = Modifier.padding(bottom = ExplorerWindowGap),
                     onClick = {
                         openSaved(navigator, item, roots)
                         onNavigated()
