@@ -195,6 +195,8 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
     // Session-scoped stack survives reader navigation (unlike remember {}).
     // When opened from Browse with a pre-set stack, start inside that root (no root picker).
     val explorerWindowId = ExplorerWindows.activeId
+    val fromHistory = ExplorerWindows.active()?.fromHistory ?: fromHistory
+    val fromLibrary = ExplorerWindows.active()?.fromLibrary ?: fromLibrary
     var stack by remember(shortcutEpoch, explorerWindowId) {
         mutableStateOf(BrowseSession.localStack)
     }

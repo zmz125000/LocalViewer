@@ -401,6 +401,7 @@ private fun ExplorerWindowList(
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = androidx.compose.foundation.layout.PaddingValues(
+            top = 8.dp,
             bottom = GalleryGridDefaults.margin(),
         ),
     ) {
@@ -512,6 +513,7 @@ private fun ExplorerFavoritesGrid(
         contentPadding = GalleryGridDefaults.margin().let { inset ->
             androidx.compose.foundation.layout.PaddingValues(
                 start = inset,
+                top = 8.dp,
                 end = inset,
                 bottom = inset,
             )

@@ -516,7 +516,16 @@ class MainActivity : AppCompatActivity() {
             }
             val currentDestination by navController.currentDestinationAsState()
             val navBackStackEntry by navController.currentBackStackEntryAsState()
-            val fromHistoryArg = when (currentDestination) {
+            // Window switches stay on the same folder route, so the route args keep the
+            // first window's origin. The active window is what the tab should follow.
+            val browserWindow = when (currentDestination) {
+                FolderBrowserScreenDestination,
+                SmbBrowserScreenDestination,
+                WebDavBrowserScreenDestination,
+                -> ExplorerWindows.active()
+                else -> null
+            }
+            val fromHistoryArg = browserWindow?.fromHistory ?: when (currentDestination) {
                 FolderBrowserScreenDestination ->
                     navBackStackEntry?.arguments
                         ?.let { FolderBrowserScreenDestination.argsFrom(it).fromHistory }
@@ -531,7 +540,7 @@ class MainActivity : AppCompatActivity() {
                         ?: false
                 else -> false
             }
-            val fromLibraryArg = when (currentDestination) {
+            val fromLibraryArg = browserWindow?.fromLibrary ?: when (currentDestination) {
                 FolderBrowserScreenDestination ->
                     navBackStackEntry?.arguments
                         ?.let { FolderBrowserScreenDestination.argsFrom(it).fromLibrary }

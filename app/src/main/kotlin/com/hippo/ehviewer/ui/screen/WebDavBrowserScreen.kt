@@ -194,6 +194,8 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
     // do not fall back to initialRelativePath when session is empty, or returning from
     // the reader after climbing to root re-opens the History deep folder.
     val explorerWindowId = ExplorerWindows.activeId
+    val fromHistory = ExplorerWindows.active()?.fromHistory ?: fromHistory
+    val fromLibrary = ExplorerWindows.active()?.fromLibrary ?: fromLibrary
     var segments by remember(sourceId, shortcutEpoch, explorerWindowId) {
         val stored = BrowseSession.webDavSegmentsOrNull(sourceId)
         val initial = stored ?: initialRelativePath.split('/').filter { it.isNotEmpty() }.also {
