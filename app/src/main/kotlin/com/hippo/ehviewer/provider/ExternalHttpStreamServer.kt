@@ -368,9 +368,11 @@ object ExternalHttpStreamServer {
         /**
          * Attach this HTTP Range to the shared body.
          *
-         * A long / open-ended Range is the playhead. Older streaming Ranges then finish
-         * with EOF so MX resume (0 then saved position) and later probes do **not**
-         * close the live socket — that 4-lane kill aborted start/resume.
+         * A long / open-ended Range is the playhead. Older streaming Ranges stop at the
+         * next read so they release the SMB lane. Only that Range's socket is reset —
+         * not the session's other sockets (closing every socket aborted MX start/resume),
+         * and not a clean short 206. A clean end before Content-Length makes MX store
+         * the truncated length: the next open starts at 0 and seek closes the player.
          */
         fun prepareRange(body: StreamBody, start: Long, streaming: Boolean) {
             (body as? RefBody)?.prepareRange(start, streaming)
@@ -436,7 +438,8 @@ object ExternalHttpStreamServer {
          */
         fun closeBodies() {
             for (socket in liveSockets.toList()) {
-                runCatching { socket.close() }
+                // Mid-body FIN is a short 200/206. MX stores that length.
+                abortHttpClient(socket)
             }
             liveSockets.clear()
             synchronized(bodyLock) {
@@ -1431,6 +1434,7 @@ object ExternalHttpStreamServer {
             append("Cache-Control: no-store\r\n")
             append("\r\n")
         }
+        var bodyOpen = false
         try {
             output.write(headers.toByteArray(Charsets.US_ASCII))
             if (headOnly) {
@@ -1439,8 +1443,10 @@ object ExternalHttpStreamServer {
             }
 
             onTransferStarted(session.network)
+            bodyOpen = true
             // Player pause / stop often leaves the Range open without closing TCP; write
-            // then blocks forever and used to pin activeTransfers + FGS. Abort on no progress.
+            // then blocks forever and used to pin activeTransfers + FGS. Reset on no
+            // progress. A clean FIN here is a short body, which MX stores as the file length.
             val lastProgressMs = AtomicLong(SystemClock.elapsedRealtime())
             val stallWatch = if (session.network) {
                 scope.launch {
@@ -1451,9 +1457,9 @@ object ExternalHttpStreamServer {
                             logcat("ExtHttp") {
                                 "body stall ${idle}ms session=${session.id} " +
                                     "name=${PrivacyLog.file(entry.displayName)} — " +
-                                    "close socket (lane stays for 60s inactive)"
+                                    "reset socket (lane stays for 60s inactive)"
                             }
-                            runCatching { socket.close() }
+                            abortHttpClient(socket)
                             break
                         }
                     }
@@ -1479,11 +1485,14 @@ object ExternalHttpStreamServer {
                         session.touch()
                         continue
                     }
-                    // `-1` is a dead sticky handle (retry + reconnect). `0` is EOF, including
-                    // playhead supersede when the player seeks a new Range on this body.
+                    // `-1` is a dead sticky handle (retry + reconnect). `0` is the playhead
+                    // moving to a newer Range. Neither may finish as a short 200/206.
                     if (!httpBodyShouldRetryRead(n, remaining)) break
-                    if (SystemClock.elapsedRealtime() - lastWriteMs >= BODY_STALL_MS) break
+                    val idle = SystemClock.elapsedRealtime() - lastWriteMs
+                    if (httpReadRetryGaveUp(idle, HTTP_READ_RETRY_MS)) break
                     body.requestReconnect()
+                    // Pause watchdog stays armed only when writes block. Retries are progress
+                    // enough that a path change is not a 15s FIN.
                     lastProgressMs.set(SystemClock.elapsedRealtime())
                     try {
                         Thread.sleep(HTTP_BODY_RECONNECT_DELAY_MS)
@@ -1492,14 +1501,15 @@ object ExternalHttpStreamServer {
                         break
                     }
                 }
-                // Incomplete body → client must not reuse the connection.
-                if (remaining > 0L) {
+                if (httpIncompleteBodyAbortsClient(remaining)) {
                     runCatching { body.close() }
+                    abortHttpClient(socket)
                     return false
                 }
             } catch (e: Throwable) {
                 if (e !is IOException) logcat("ExtHttp", e)
                 runCatching { body.close() }
+                abortHttpClient(socket)
                 return false
             } finally {
                 stallWatch?.cancel()
@@ -1510,6 +1520,7 @@ object ExternalHttpStreamServer {
         } catch (e: Throwable) {
             if (e !is IOException) logcat("ExtHttp", e)
             runCatching { body.close() }
+            if (bodyOpen) abortHttpClient(socket)
             return false
         }
     }
@@ -1676,8 +1687,9 @@ object ExternalHttpStreamServer {
     private const val LAN_HTTP_TRAFFIC_TAG = 0x4C414E48
 
     /**
-     * No successful body write for this long → player paused (full buffer) or stopped.
-     * Abort the socket so [activeTransfers] and the wake lock drop; the next Range reconnects.
+     * No successful body write for this long, and no SMB retry in progress → player
+     * paused (full buffer) or stopped. Reset the socket so [activeTransfers] drops.
+     * The next Range reconnects. Reset, not FIN: a clean close is a short body.
      */
     private const val BODY_STALL_MS = 15_000L
     private const val BODY_STALL_CHECK_MS = 3_000L
@@ -1694,10 +1706,34 @@ object ExternalHttpStreamServer {
 }
 
 /**
- * Retry only transport/sticky death (`-1`). `0` is EOF: playhead supersede on a seek
+ * Retry only transport/sticky death (`-1`). `0` is the playhead moving to a newer
  * Range, or a finished read — reconnecting the shared warm body fights the new Range.
+ * The old Range's socket is reset; it is not a clean short body.
  */
 internal fun httpBodyShouldRetryRead(n: Int, remaining: Long): Boolean = n < 0 && remaining > 0L
+
+/**
+ * A 200/206 that ends before [remaining] bytes is a successful short file to MX Player.
+ * It stores that length, then the next open starts at 0 and seek closes the player.
+ * Reset the TCP connection instead.
+ */
+internal fun httpIncompleteBodyAbortsClient(remaining: Long): Boolean = remaining > 0L
+
+/**
+ * Dead sticky reads keep the Range open across a path change. The 15s pause watchdog
+ * is only a blocked write. Giving up at that same 15s used to FIN the response and
+ * poison MX playback history.
+ */
+internal fun httpReadRetryGaveUp(idleMs: Long, giveUpMs: Long): Boolean = idleMs >= giveUpMs
+
+/** TCP RST. A graceful close after a short Content-Length body is what MX records. */
+internal fun abortHttpClient(socket: Socket) {
+    runCatching { socket.setSoLinger(true, 0) }
+    runCatching { socket.close() }
+}
+
+/** How long a dead sticky read may stall one Range before [abortHttpClient]. */
+internal const val HTTP_READ_RETRY_MS = 60_000L
 
 /**
  * True when a new **streaming** Range is a seek or a resume away from byte 0.
