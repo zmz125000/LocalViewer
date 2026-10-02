@@ -80,6 +80,7 @@ import com.hippo.ehviewer.collectAsState
 import com.hippo.ehviewer.library.BrowseFavorites
 import com.hippo.ehviewer.library.BrowseSession
 import com.hippo.ehviewer.library.ExplorerWindows
+import com.hippo.ehviewer.library.NavTabWindows
 import com.hippo.ehviewer.library.FavoriteBrowseSource
 import com.hippo.ehviewer.library.LocalLibrary
 import com.hippo.ehviewer.library.SavedExplorerPaths
@@ -88,7 +89,10 @@ import com.hippo.ehviewer.library.resolveFavoriteBrowseSources
 import com.hippo.ehviewer.library.safFolderLabel
 import com.hippo.ehviewer.library.toBaseGalleryInfo
 import com.hippo.ehviewer.smb.SmbRepository
+import com.hippo.ehviewer.ui.destinations.BrowseScreenDestination
 import com.hippo.ehviewer.ui.destinations.FolderBrowserScreenDestination
+import com.hippo.ehviewer.ui.destinations.HistoryScreenDestination
+import com.hippo.ehviewer.ui.destinations.LibraryScreenDestination
 import com.hippo.ehviewer.ui.destinations.SmbBrowserScreenDestination
 import com.hippo.ehviewer.ui.destinations.WebDavBrowserScreenDestination
 import com.hippo.ehviewer.ui.main.BrowseSectionHeader
@@ -391,6 +395,7 @@ private fun ExplorerPanel(
             if (showFavorites) {
                 ExplorerFavoritesGrid(
                     navigator = navigator,
+                    home = currentDestination,
                     tablet = tablet,
                     onToggleMode = { showFavorites = !showFavorites },
                     onNavigated = onNavigated,
@@ -524,6 +529,7 @@ private fun ExplorerWindowList(
                     modifier = Modifier.padding(bottom = ExplorerWindowGap),
                     onClick = {
                         openSaved(navigator, item, roots)
+                        rememberNavTabFromHome(currentDestination)
                         onNavigated()
                     },
                     trailing = {
@@ -542,6 +548,7 @@ private fun ExplorerWindowList(
 @Composable
 private fun ExplorerFavoritesGrid(
     navigator: DestinationsNavigator,
+    home: Any?,
     tablet: Boolean,
     onToggleMode: () -> Unit,
     onNavigated: () -> Unit,
@@ -589,7 +596,7 @@ private fun ExplorerFavoritesGrid(
                 iconSize = iconSize,
                 labelStyle = labelStyle,
                 onClick = {
-                    openFavorite(navigator, fav, roots)
+                    openFavorite(navigator, fav, roots, home)
                     onNavigated()
                 },
                 onLongClick = { toggleFavorite(fav) },
@@ -607,6 +614,7 @@ private fun ExplorerFavoritesGrid(
                     labelStyle = labelStyle,
                     onClick = {
                         openSmbRoot(navigator, source)
+                        rememberNavTabFromHome(home)
                         onNavigated()
                     },
                     onLongClick = { BrowseFavorites.toggleSmb(source.id) },
@@ -620,6 +628,7 @@ private fun ExplorerFavoritesGrid(
                     labelStyle = labelStyle,
                     onClick = {
                         openWebDavRoot(navigator, source)
+                        rememberNavTabFromHome(home)
                         onNavigated()
                     },
                     onLongClick = { BrowseFavorites.toggleWebDav(source.id) },
@@ -638,6 +647,7 @@ private fun ExplorerFavoritesGrid(
                     labelStyle = labelStyle,
                     onClick = {
                         openLocalRootWindow(navigator, root)
+                        rememberNavTabFromHome(home)
                         onNavigated()
                     },
                     onLongClick = { BrowseFavorites.toggleLocal(root.id) },
@@ -762,6 +772,17 @@ private fun showWindow(
     }
 }
 
+private fun rememberNavTabFromHome(home: Any?) {
+    val tab = when (home) {
+        LibraryScreenDestination -> NavTabWindows.Tab.Library
+        BrowseScreenDestination -> NavTabWindows.Tab.Browse
+        HistoryScreenDestination -> NavTabWindows.Tab.History
+        else -> return
+    }
+    val id = ExplorerWindows.activeId ?: return
+    NavTabWindows.remember(tab, id)
+}
+
 private fun isBrowserDestination(currentDestination: Any?): Boolean = when (currentDestination) {
     FolderBrowserScreenDestination,
     SmbBrowserScreenDestination,
@@ -801,6 +822,7 @@ private fun openFavorite(
     navigator: DestinationsNavigator,
     fav: FavoriteBrowseSource,
     roots: List<com.ehviewer.core.database.model.LibraryRootEntity>,
+    home: Any?,
 ) {
     with(navigator) {
         when (fav) {
@@ -814,11 +836,16 @@ private fun openFavorite(
                     preferMediaStore = fav.root.prefersMediaStore,
                     fromSidePanel = true,
                 )
+                rememberNavTabFromHome(home)
             }
-            is FavoriteBrowseSource.Smb ->
+            is FavoriteBrowseSource.Smb -> {
                 openSmbBrowseDir(fav.source.id, "", fromSidePanel = true)
-            is FavoriteBrowseSource.WebDav ->
+                rememberNavTabFromHome(home)
+            }
+            is FavoriteBrowseSource.WebDav -> {
                 openWebDavBrowseDir(fav.source.id, "", fromSidePanel = true)
+                rememberNavTabFromHome(home)
+            }
             is FavoriteBrowseSource.LocalFolder -> {
                 val rootPath = LocalLibrary.rootPath(fav.root) ?: return
                 openLocalBrowseDir(
@@ -829,12 +856,17 @@ private fun openFavorite(
                     preferMediaStore = fav.root.prefersMediaStore,
                     fromSidePanel = true,
                 )
+                rememberNavTabFromHome(home)
             }
-            is FavoriteBrowseSource.SmbFolder ->
+            is FavoriteBrowseSource.SmbFolder -> {
                 openSmbBrowseDir(fav.source.id, fav.relativePath, fromSidePanel = true)
-            is FavoriteBrowseSource.WebDavFolder ->
+                rememberNavTabFromHome(home)
+            }
+            is FavoriteBrowseSource.WebDavFolder -> {
                 openWebDavBrowseDir(fav.source.id, fav.relativePath, fromSidePanel = true)
-            is FavoriteBrowseSource.Gallery -> openGalleryFavorite(fav, roots)
+                rememberNavTabFromHome(home)
+            }
+            is FavoriteBrowseSource.Gallery -> openGalleryFavorite(fav, roots, home)
         }
     }
 }
@@ -842,6 +874,7 @@ private fun openFavorite(
 private fun DestinationsNavigator.openGalleryFavorite(
     fav: FavoriteBrowseSource.Gallery,
     roots: List<com.ehviewer.core.database.model.LibraryRootEntity>,
+    home: Any?,
 ) {
     val gallery = fav.gallery
     if (gallery.kind != LOCAL_GALLERY_KIND_ARCHIVE && Settings.photoGridMode.value) {
@@ -856,6 +889,7 @@ private fun DestinationsNavigator.openGalleryFavorite(
             title = gallery.title,
             fromSidePanel = true,
         )
+        rememberNavTabFromHome(home)
         return
     }
     val info = gallery.toBaseGalleryInfo()

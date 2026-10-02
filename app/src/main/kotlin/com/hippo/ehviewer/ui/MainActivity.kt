@@ -129,6 +129,7 @@ import com.hippo.ehviewer.collectAsState
 import com.hippo.ehviewer.library.BrowseSession
 import com.hippo.ehviewer.library.ExplorerWindows
 import com.hippo.ehviewer.library.LocalLibrary
+import com.hippo.ehviewer.library.NavTabWindows
 import com.hippo.ehviewer.library.buildLocalBrowseStack
 import com.hippo.ehviewer.shortcuts.FolderHomeShortcut
 import com.hippo.ehviewer.ui.destinations.AboutScreenDestination
@@ -307,6 +308,95 @@ private fun shouldShowMainNav(
         return persistMainNav || useRail
     }
     return false
+}
+
+private fun navTabOf(direction: Direction): NavTabWindows.Tab? = when (direction) {
+    LibraryScreenDestination -> NavTabWindows.Tab.Library
+    BrowseScreenDestination -> NavTabWindows.Tab.Browse
+    HistoryScreenDestination -> NavTabWindows.Tab.History
+    else -> null
+}
+
+private fun isFolderNavDestination(dest: DestinationSpec?): Boolean = when (dest) {
+    FolderBrowserScreenDestination,
+    SmbBrowserScreenDestination,
+    WebDavBrowserScreenDestination,
+    -> true
+    else -> false
+}
+
+/** Back from the folder opened on this tab drops the icon's remembered window. */
+private fun clearNavTabOnReturn(previous: DestinationSpec?, current: DestinationSpec?) {
+    val tab = when (current) {
+        LibraryScreenDestination -> NavTabWindows.Tab.Library
+        BrowseScreenDestination -> NavTabWindows.Tab.Browse
+        HistoryScreenDestination -> NavTabWindows.Tab.History
+        else -> return
+    }
+    if (!isFolderNavDestination(previous)) return
+    val saved = NavTabWindows.id(tab) ?: return
+    if (saved == ExplorerWindows.activeId) NavTabWindows.clear(tab)
+}
+
+private fun showTabRoot(navigator: DestinationsNavigator, direction: Direction) {
+    if (navigator.popBackStack(direction, inclusive = false)) return
+    navigator.navigate(direction) {
+        popUpTo(LibraryScreenDestination) {
+            saveState = true
+        }
+        launchSingleTop = true
+        restoreState = false
+    }
+}
+
+private fun recallNavWindow(
+    navigator: DestinationsNavigator,
+    window: ExplorerWindows.Window,
+    currentDestination: DestinationSpec?,
+    navBackStackEntry: androidx.navigation.NavBackStackEntry?,
+) {
+    val shown = ExplorerWindows.activate(window.id) ?: return
+    val browserSourceId = when (currentDestination) {
+        SmbBrowserScreenDestination ->
+            navBackStackEntry?.arguments?.let { SmbBrowserScreenDestination.argsFrom(it).sourceId }
+        WebDavBrowserScreenDestination ->
+            navBackStackEntry?.arguments?.let { WebDavBrowserScreenDestination.argsFrom(it).sourceId }
+        else -> null
+    }
+    val same = when (shown.kind) {
+        ExplorerWindows.Kind.Local -> currentDestination == FolderBrowserScreenDestination
+        ExplorerWindows.Kind.Smb ->
+            currentDestination == SmbBrowserScreenDestination && browserSourceId == shown.sourceId
+        ExplorerWindows.Kind.WebDav ->
+            currentDestination == WebDavBrowserScreenDestination && browserSourceId == shown.sourceId
+    }
+    if (same) return
+    with(navigator) {
+        when (shown.kind) {
+            ExplorerWindows.Kind.Local -> navigate(
+                FolderBrowserScreenDestination(
+                    fromHistory = shown.fromHistory,
+                    fromLibrary = shown.fromLibrary,
+                ),
+            ) { launchSingleTop = true }
+            ExplorerWindows.Kind.Smb -> navigate(
+                SmbBrowserScreenDestination(
+                    sourceId = shown.sourceId,
+                    initialRelativePath = shown.relativePath,
+                    fromHistory = shown.fromHistory,
+                    fromLibrary = shown.fromLibrary,
+                ),
+            ) { launchSingleTop = true }
+            ExplorerWindows.Kind.WebDav -> navigate(
+                WebDavBrowserScreenDestination(
+                    sourceId = shown.sourceId,
+                    initialRelativePath = shown.relativePath,
+                    fromHistory = shown.fromHistory,
+                    fromLibrary = shown.fromLibrary,
+                ),
+            ) { launchSingleTop = true }
+        }
+    }
 }
 
 private fun navigateMainTab(
@@ -574,15 +664,53 @@ class MainActivity : AppCompatActivity() {
             // Shortcut FABs only on compact phones without persistent nav.
             val showNavShortcutFab = !useRail && !persistMainNav
             val explorerPanel = remember { ExplorerPanelActions() }
+            var previousDestination by remember { mutableStateOf<DestinationSpec?>(null) }
+            LaunchedEffect(currentDestination) {
+                val previous = previousDestination
+                previousDestination = currentDestination
+                clearNavTabOnReturn(previous, currentDestination)
+            }
             fun onMainNavClick(item: MainNavItem) {
-                val onBrowseRoot = item.direction == BrowseScreenDestination &&
-                    currentDestination == BrowseScreenDestination
-                if (onBrowseRoot) {
-                    explorerPanel.toggle()
-                } else {
+                val tab = navTabOf(item.direction)
+                if (tab != null) {
+                    val savedId = NavTabWindows.id(tab)
+                    val window = NavTabWindows.window(tab)
+                    if (savedId != null && window == null) NavTabWindows.clear(tab)
+                    if (window != null) {
+                        explorerPanel.close()
+                        val showingSaved = isFolderNavDestination(currentDestination) &&
+                            ExplorerWindows.activeId == window.id
+                        if (showingSaved) {
+                            NavTabWindows.clear(tab)
+                            showTabRoot(navigator, item.direction)
+                        } else {
+                            recallNavWindow(navigator, window, currentDestination, navBackStackEntry)
+                        }
+                        return
+                    }
+                    when {
+                        item.direction == BrowseScreenDestination &&
+                            currentDestination == BrowseScreenDestination -> {
+                            explorerPanel.toggle()
+                            return
+                        }
+                        item.direction == LibraryScreenDestination &&
+                            currentDestination == LibraryScreenDestination -> {
+                            toggleLibrarySection()
+                            return
+                        }
+                        item.direction == HistoryScreenDestination &&
+                            currentDestination == HistoryScreenDestination -> {
+                            toggleHistorySection()
+                            return
+                        }
+                    }
                     explorerPanel.close()
-                    navigateMainTab(navigator, item, selectedTab, currentDestination)
+                    showTabRoot(navigator, item.direction)
+                    return
                 }
+                explorerPanel.close()
+                navigateMainTab(navigator, item, selectedTab, currentDestination)
             }
             CompositionLocalProvider(
                 LocalExplorerPanel provides explorerPanel,
