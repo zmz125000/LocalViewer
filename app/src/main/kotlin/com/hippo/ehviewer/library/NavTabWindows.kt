@@ -15,6 +15,14 @@ object NavTabWindows {
         ids[tab] = windowId
     }
 
+    /** Point [tab] at [windowId], and drop that id from the other icons. */
+    fun claim(tab: Tab, windowId: Long) {
+        Tab.entries.forEach { other ->
+            if (other != tab && ids[other] == windowId) ids.remove(other)
+        }
+        ids[tab] = windowId
+    }
+
     fun clear(tab: Tab) {
         ids.remove(tab)
     }

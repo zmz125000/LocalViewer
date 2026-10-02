@@ -151,6 +151,7 @@ fun ExplorerSidePanelHost(
     browserSourceId: Long?,
     activeFromHistory: Boolean,
     activeFromLibrary: Boolean,
+    navTab: NavTabWindows.Tab?,
     content: @Composable () -> Unit,
 ) {
     val panelState = rememberDrawerState2(DrawerValue.Closed)
@@ -326,6 +327,7 @@ fun ExplorerSidePanelHost(
                     browserSourceId = browserSourceId,
                     activeFromHistory = activeFromHistory,
                     activeFromLibrary = activeFromLibrary,
+                    navTab = navTab,
                     tablet = tablet,
                     onNavigated = { closePanel() },
                 )
@@ -341,6 +343,7 @@ private fun ExplorerPanel(
     browserSourceId: Long?,
     activeFromHistory: Boolean,
     activeFromLibrary: Boolean,
+    navTab: NavTabWindows.Tab?,
     tablet: Boolean,
     onNavigated: () -> Unit,
 ) {
@@ -419,9 +422,10 @@ private fun ExplorerPanel(
                         enabled = duplicateEnabled,
                         onClick = {
                             val copy = ExplorerWindows.duplicateActive() ?: return@clickable
+                            bindOpenedWindow(navTab)
                             showWindow(
                                 navigator,
-                                copy,
+                                ExplorerWindows.active() ?: copy,
                                 currentDestination,
                                 browserSourceId,
                                 activeFromHistory,
@@ -439,7 +443,7 @@ private fun ExplorerPanel(
             if (showFavorites) {
                 ExplorerFavoritesGrid(
                     navigator = navigator,
-                    home = currentDestination,
+                    navTab = navTab,
                     tablet = tablet,
                     onToggleMode = { showFavorites = !showFavorites },
                     onNavigated = onNavigated,
@@ -453,6 +457,7 @@ private fun ExplorerPanel(
                     browserSourceId = browserSourceId,
                     activeFromHistory = activeFromHistory,
                     activeFromLibrary = activeFromLibrary,
+                    navTab = navTab,
                     tablet = tablet,
                     onToggleMode = { showFavorites = !showFavorites },
                     onNavigated = onNavigated,
@@ -471,6 +476,7 @@ private fun ExplorerWindowList(
     browserSourceId: Long?,
     activeFromHistory: Boolean,
     activeFromLibrary: Boolean,
+    navTab: NavTabWindows.Tab?,
     tablet: Boolean,
     onToggleMode: () -> Unit,
     onNavigated: () -> Unit,
@@ -505,9 +511,10 @@ private fun ExplorerWindowList(
                     }
                     is ExplorerWindows.CloseResult.Switched -> {
                         if (viewingBrowser) {
+                            bindOpenedWindow(navTab)
                             showWindow(
                                 navigator,
-                                result.window,
+                                ExplorerWindows.active() ?: result.window,
                                 currentDestination,
                                 browserSourceId,
                                 activeFromHistory,
@@ -533,8 +540,8 @@ private fun ExplorerWindowList(
                         onLongClick = { closeListedWindow(window.id) },
                         onClick = {
                             val shown = ExplorerWindows.activate(window.id) ?: return@ExplorerPathRow
-                            ExplorerWindows.overrideFromSidePanel(shown.id)
-                            val restored = ExplorerWindows.active() ?: return@ExplorerPathRow
+                            bindOpenedWindow(navTab)
+                            val restored = ExplorerWindows.active() ?: shown
                             showWindow(
                                 navigator,
                                 restored,
@@ -572,8 +579,7 @@ private fun ExplorerWindowList(
                     active = false,
                     modifier = Modifier.padding(bottom = ExplorerWindowGap),
                     onClick = {
-                        openSaved(navigator, item, roots)
-                        rememberNavTabFromHome(currentDestination)
+                        openSaved(navigator, item, roots, navTab)
                         onNavigated()
                     },
                     trailing = {
@@ -592,7 +598,7 @@ private fun ExplorerWindowList(
 @Composable
 private fun ExplorerFavoritesGrid(
     navigator: DestinationsNavigator,
-    home: Any?,
+    navTab: NavTabWindows.Tab?,
     tablet: Boolean,
     onToggleMode: () -> Unit,
     onNavigated: () -> Unit,
@@ -636,7 +642,7 @@ private fun ExplorerFavoritesGrid(
                 iconSize = iconSize,
                 labelStyle = labelStyle,
                 onClick = {
-                    openFavorite(navigator, fav, roots, home)
+                    openFavorite(navigator, fav, roots, navTab)
                     onNavigated()
                 },
                 onLongClick = { toggleFavorite(fav) },
@@ -653,8 +659,8 @@ private fun ExplorerFavoritesGrid(
                     iconSize = iconSize,
                     labelStyle = labelStyle,
                     onClick = {
-                        openSmbRoot(navigator, source)
-                        rememberNavTabFromHome(home)
+                        openSmbRoot(navigator, source, navTab)
+                        bindOpenedWindow(navTab)
                         onNavigated()
                     },
                     onLongClick = { BrowseFavorites.toggleSmb(source.id) },
@@ -667,8 +673,8 @@ private fun ExplorerFavoritesGrid(
                     iconSize = iconSize,
                     labelStyle = labelStyle,
                     onClick = {
-                        openWebDavRoot(navigator, source)
-                        rememberNavTabFromHome(home)
+                        openWebDavRoot(navigator, source, navTab)
+                        bindOpenedWindow(navTab)
                         onNavigated()
                     },
                     onLongClick = { BrowseFavorites.toggleWebDav(source.id) },
@@ -686,8 +692,7 @@ private fun ExplorerFavoritesGrid(
                     iconSize = iconSize,
                     labelStyle = labelStyle,
                     onClick = {
-                        openLocalRootWindow(navigator, root)
-                        rememberNavTabFromHome(home)
+                        openLocalRootWindow(navigator, root, navTab)
                         onNavigated()
                     },
                     onLongClick = { BrowseFavorites.toggleLocal(root.id) },
@@ -812,16 +817,23 @@ private fun showWindow(
     }
 }
 
-private fun rememberNavTabFromHome(home: Any?) {
-    val tab = when (home) {
-        LibraryScreenDestination -> NavTabWindows.Tab.Library
-        BrowseScreenDestination -> NavTabWindows.Tab.Browse
-        HistoryScreenDestination -> NavTabWindows.Tab.History
-        else -> return
-    }
+private fun bindOpenedWindow(tab: NavTabWindows.Tab?) {
     val id = ExplorerWindows.activeId ?: return
-    NavTabWindows.remember(tab, id)
+    if (tab == null) {
+        ExplorerWindows.overrideFromSidePanel(id)
+        return
+    }
+    ExplorerWindows.setOrigin(
+        id,
+        fromHistory = tab == NavTabWindows.Tab.History,
+        fromLibrary = tab == NavTabWindows.Tab.Library,
+    )
+    NavTabWindows.claim(tab, id)
 }
+
+private fun NavTabWindows.Tab?.fromHistoryFlag(): Boolean = this == NavTabWindows.Tab.History
+
+private fun NavTabWindows.Tab?.fromLibraryFlag(): Boolean = this == NavTabWindows.Tab.Library
 
 private fun isBrowserDestination(currentDestination: Any?): Boolean = when (currentDestination) {
     FolderBrowserScreenDestination,
@@ -835,7 +847,11 @@ private fun openSaved(
     navigator: DestinationsNavigator,
     item: SavedExplorerPaths.Resolved,
     roots: List<com.ehviewer.core.database.model.LibraryRootEntity>,
+    navTab: NavTabWindows.Tab?,
 ) {
+    val fromHistory = navTab.fromHistoryFlag()
+    val fromLibrary = navTab.fromLibraryFlag()
+    val fromSidePanel = navTab == null
     with(navigator) {
         when (item.kind) {
             ExplorerWindows.Kind.Local -> {
@@ -847,13 +863,32 @@ private fun openSaved(
                     rootPath = path,
                     relativePath = item.relativePath,
                     preferMediaStore = root.prefersMediaStore,
-                    fromSidePanel = true,
+                    fromHistory = fromHistory,
+                    fromLibrary = fromLibrary,
+                    fromSidePanel = fromSidePanel,
                 )
+                bindOpenedWindow(navTab)
             }
-            ExplorerWindows.Kind.Smb ->
-                openSmbBrowseDir(item.sourceId, item.relativePath, fromSidePanel = true)
-            ExplorerWindows.Kind.WebDav ->
-                openWebDavBrowseDir(item.sourceId, item.relativePath, fromSidePanel = true)
+            ExplorerWindows.Kind.Smb -> {
+                openSmbBrowseDir(
+                    item.sourceId,
+                    item.relativePath,
+                    fromHistory = fromHistory,
+                    fromLibrary = fromLibrary,
+                    fromSidePanel = fromSidePanel,
+                )
+                bindOpenedWindow(navTab)
+            }
+            ExplorerWindows.Kind.WebDav -> {
+                openWebDavBrowseDir(
+                    item.sourceId,
+                    item.relativePath,
+                    fromHistory = fromHistory,
+                    fromLibrary = fromLibrary,
+                    fromSidePanel = fromSidePanel,
+                )
+                bindOpenedWindow(navTab)
+            }
         }
     }
 }
@@ -862,8 +897,11 @@ private fun openFavorite(
     navigator: DestinationsNavigator,
     fav: FavoriteBrowseSource,
     roots: List<com.ehviewer.core.database.model.LibraryRootEntity>,
-    home: Any?,
+    navTab: NavTabWindows.Tab?,
 ) {
+    val fromHistory = navTab.fromHistoryFlag()
+    val fromLibrary = navTab.fromLibraryFlag()
+    val fromSidePanel = navTab == null
     with(navigator) {
         when (fav) {
             is FavoriteBrowseSource.Local -> {
@@ -874,17 +912,31 @@ private fun openFavorite(
                     rootPath = path,
                     relativePath = "",
                     preferMediaStore = fav.root.prefersMediaStore,
-                    fromSidePanel = true,
+                    fromHistory = fromHistory,
+                    fromLibrary = fromLibrary,
+                    fromSidePanel = fromSidePanel,
                 )
-                rememberNavTabFromHome(home)
+                bindOpenedWindow(navTab)
             }
             is FavoriteBrowseSource.Smb -> {
-                openSmbBrowseDir(fav.source.id, "", fromSidePanel = true)
-                rememberNavTabFromHome(home)
+                openSmbBrowseDir(
+                    fav.source.id,
+                    "",
+                    fromHistory = fromHistory,
+                    fromLibrary = fromLibrary,
+                    fromSidePanel = fromSidePanel,
+                )
+                bindOpenedWindow(navTab)
             }
             is FavoriteBrowseSource.WebDav -> {
-                openWebDavBrowseDir(fav.source.id, "", fromSidePanel = true)
-                rememberNavTabFromHome(home)
+                openWebDavBrowseDir(
+                    fav.source.id,
+                    "",
+                    fromHistory = fromHistory,
+                    fromLibrary = fromLibrary,
+                    fromSidePanel = fromSidePanel,
+                )
+                bindOpenedWindow(navTab)
             }
             is FavoriteBrowseSource.LocalFolder -> {
                 val rootPath = LocalLibrary.rootPath(fav.root) ?: return
@@ -894,19 +946,33 @@ private fun openFavorite(
                     rootPath = rootPath,
                     relativePath = fav.relativePath,
                     preferMediaStore = fav.root.prefersMediaStore,
-                    fromSidePanel = true,
+                    fromHistory = fromHistory,
+                    fromLibrary = fromLibrary,
+                    fromSidePanel = fromSidePanel,
                 )
-                rememberNavTabFromHome(home)
+                bindOpenedWindow(navTab)
             }
             is FavoriteBrowseSource.SmbFolder -> {
-                openSmbBrowseDir(fav.source.id, fav.relativePath, fromSidePanel = true)
-                rememberNavTabFromHome(home)
+                openSmbBrowseDir(
+                    fav.source.id,
+                    fav.relativePath,
+                    fromHistory = fromHistory,
+                    fromLibrary = fromLibrary,
+                    fromSidePanel = fromSidePanel,
+                )
+                bindOpenedWindow(navTab)
             }
             is FavoriteBrowseSource.WebDavFolder -> {
-                openWebDavBrowseDir(fav.source.id, fav.relativePath, fromSidePanel = true)
-                rememberNavTabFromHome(home)
+                openWebDavBrowseDir(
+                    fav.source.id,
+                    fav.relativePath,
+                    fromHistory = fromHistory,
+                    fromLibrary = fromLibrary,
+                    fromSidePanel = fromSidePanel,
+                )
+                bindOpenedWindow(navTab)
             }
-            is FavoriteBrowseSource.Gallery -> openGalleryFavorite(fav, roots, home)
+            is FavoriteBrowseSource.Gallery -> openGalleryFavorite(fav, roots, navTab)
         }
     }
 }
@@ -914,7 +980,7 @@ private fun openFavorite(
 private fun DestinationsNavigator.openGalleryFavorite(
     fav: FavoriteBrowseSource.Gallery,
     roots: List<com.ehviewer.core.database.model.LibraryRootEntity>,
-    home: Any?,
+    navTab: NavTabWindows.Tab?,
 ) {
     val gallery = fav.gallery
     if (gallery.kind != LOCAL_GALLERY_KIND_ARCHIVE && Settings.photoGridMode.value) {
@@ -927,9 +993,11 @@ private fun DestinationsNavigator.openGalleryFavorite(
             relativePath = gallery.relativePath,
             preferMediaStore = root.prefersMediaStore,
             title = gallery.title,
-            fromSidePanel = true,
+            fromHistory = navTab.fromHistoryFlag(),
+            fromLibrary = navTab.fromLibraryFlag(),
+            fromSidePanel = navTab == null,
         )
-        rememberNavTabFromHome(home)
+        bindOpenedWindow(navTab)
         return
     }
     val info = gallery.toBaseGalleryInfo()
@@ -943,8 +1011,11 @@ private fun DestinationsNavigator.openGalleryFavorite(
 private fun openLocalRootWindow(
     navigator: DestinationsNavigator,
     root: com.ehviewer.core.database.model.LibraryRootEntity,
+    navTab: NavTabWindows.Tab?,
 ) {
     val path = LocalLibrary.rootPath(root) ?: return
+    val fromHistory = navTab.fromHistoryFlag()
+    val fromLibrary = navTab.fromLibraryFlag()
     ExplorerWindows.prepareSpawn()
     BrowseSession.localStack = listOf(
         BrowseSession.LocalFrame(
@@ -957,15 +1028,23 @@ private fun openLocalRootWindow(
     )
     ExplorerWindows.finishLocalSpawn(
         root.displayName.safFolderLabel(),
-        fromSidePanel = true,
+        fromHistory = fromHistory,
+        fromLibrary = fromLibrary,
+        fromSidePanel = navTab == null,
     )
-    navigator.navigate(FolderBrowserScreenDestination()) { launchSingleTop = true }
+    navigator.navigate(
+        FolderBrowserScreenDestination(fromHistory = fromHistory, fromLibrary = fromLibrary),
+    ) { launchSingleTop = true }
+    bindOpenedWindow(navTab)
 }
 
 private fun openSmbRoot(
     navigator: DestinationsNavigator,
     source: com.ehviewer.core.database.model.SmbSourceEntity,
+    navTab: NavTabWindows.Tab?,
 ) {
+    val fromHistory = navTab.fromHistoryFlag()
+    val fromLibrary = navTab.fromLibraryFlag()
     ExplorerWindows.prepareSpawn()
     BrowseSession.setSmbSegments(source.id, emptyList())
     BrowseSession.setSmbPhotoGrid(source.id, null)
@@ -973,17 +1052,27 @@ private fun openSmbRoot(
     ExplorerWindows.finishSmbSpawn(
         source.id,
         source.displayName,
-        fromSidePanel = true,
+        fromHistory = fromHistory,
+        fromLibrary = fromLibrary,
+        fromSidePanel = navTab == null,
     )
     navigator.navigate(
-        SmbBrowserScreenDestination(sourceId = source.id, initialRelativePath = ""),
+        SmbBrowserScreenDestination(
+            sourceId = source.id,
+            initialRelativePath = "",
+            fromHistory = fromHistory,
+            fromLibrary = fromLibrary,
+        ),
     ) { launchSingleTop = true }
 }
 
 private fun openWebDavRoot(
     navigator: DestinationsNavigator,
     source: com.ehviewer.core.database.model.WebDavSourceEntity,
+    navTab: NavTabWindows.Tab?,
 ) {
+    val fromHistory = navTab.fromHistoryFlag()
+    val fromLibrary = navTab.fromLibraryFlag()
     ExplorerWindows.prepareSpawn()
     BrowseSession.setWebDavSegments(source.id, emptyList())
     BrowseSession.setWebDavPhotoGrid(source.id, null)
@@ -991,10 +1080,17 @@ private fun openWebDavRoot(
     ExplorerWindows.finishWebDavSpawn(
         source.id,
         source.displayName,
-        fromSidePanel = true,
+        fromHistory = fromHistory,
+        fromLibrary = fromLibrary,
+        fromSidePanel = navTab == null,
     )
     navigator.navigate(
-        WebDavBrowserScreenDestination(sourceId = source.id, initialRelativePath = ""),
+        WebDavBrowserScreenDestination(
+            sourceId = source.id,
+            initialRelativePath = "",
+            fromHistory = fromHistory,
+            fromLibrary = fromLibrary,
+        ),
     ) { launchSingleTop = true }
 }
 

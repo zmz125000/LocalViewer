@@ -859,6 +859,7 @@ class MainActivity : AppCompatActivity() {
                                 browserSourceId = browserSourceId,
                                 activeFromHistory = fromHistoryArg,
                                 activeFromLibrary = fromLibraryArg,
+                                navTab = selectedTab?.let(::navTabOf),
                             ) {
                                 SharedTransitionLayout {
                                     CompositionLocalProvider(LocalSharedTransitionScope provides this) {
