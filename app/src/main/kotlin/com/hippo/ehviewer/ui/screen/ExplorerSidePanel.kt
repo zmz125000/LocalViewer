@@ -63,12 +63,12 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
@@ -77,7 +77,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
-import kotlin.math.abs
 import com.ehviewer.core.database.model.LOCAL_GALLERY_KIND_ARCHIVE
 import com.ehviewer.core.i18n.R
 import com.ehviewer.core.ui.component.FastScrollLazyVerticalGrid
@@ -86,9 +85,9 @@ import com.hippo.ehviewer.collectAsState
 import com.hippo.ehviewer.library.BrowseFavorites
 import com.hippo.ehviewer.library.BrowseSession
 import com.hippo.ehviewer.library.ExplorerWindows
-import com.hippo.ehviewer.library.NavTabWindows
 import com.hippo.ehviewer.library.FavoriteBrowseSource
 import com.hippo.ehviewer.library.LocalLibrary
+import com.hippo.ehviewer.library.NavTabWindows
 import com.hippo.ehviewer.library.SavedExplorerPaths
 import com.hippo.ehviewer.library.hideDuplicateGalleriesPreferMediaStore
 import com.hippo.ehviewer.library.resolveFavoriteBrowseSources
@@ -610,11 +609,7 @@ private fun ExplorerFavoritesGrid(
     val thumbColumns by Settings.thumbColumns.collectAsState()
     val columnCount = thumbColumns.coerceIn(1, 10)
     val iconSize = if (tablet) ExplorerListIconSizeTablet else ExplorerListIconSize
-    val labelStyle = if (tablet) {
-        MaterialTheme.typography.labelLarge
-    } else {
-        MaterialTheme.typography.labelMedium
-    }
+    val labelStyle = MaterialTheme.typography.labelMedium
     val gridState = remember { LazyGridState() }
     FastScrollLazyVerticalGrid(
         columns = GridCells.Fixed(columnCount),
