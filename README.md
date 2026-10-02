@@ -90,11 +90,13 @@ Build with Grok 4.5.
 * One for all folder listing mode (Videos/Photos/Documents all with their own tags and filters).
 * Fully working on Meta Quest 3.
 * Open or share files like a file manager.
+* Fine-tuned page loader, image prefetch with no OOM crashes.
 * Gallery folder covers and reading progress.
 * Native Android app (Kotlin + Jetpack Compose).
 * Material Design 3 Navigation bar.
 * Highly optimized network image loading, with high-quality rendering.
 * HDR, Wide Color Gamut and 10-bit color mode support.
+* Instant local archive reading with mmap.
 * ZIP/RAR/CBZ/CBR/CBT/PDF/EPUB support over network share.
 * PDF/EPUB/MOBI/FB2/TXT/Markdown Ebook support with text formatting.
 * JXL/JXR/JPG/AVIF/HEIC HDR support.
