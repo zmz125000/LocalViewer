@@ -77,15 +77,18 @@ Based on [EhViewer](https://github.com/FooIbar/EhViewer)
 With [Material Design 3](https://m3.material.io/)  
 and [Dynamic Color](https://m3.material.io/styles/color/dynamic-color/overview) Support.  
 
-
 Similar to Perfect Viewer and Kuro Reader but with Hi-Res images support (no downscaling), clean UI and way better performance.
 
 Build with Grok 4.5.
+
+The app is now stable and polished, offering best-in-class performance, features, and UI/UX as a local media viewer.  
+Thank you for your support.
 
 ## Features
 * Webtoon gallery reader.
 * Local and network libraries for photo/video/comic/ebook.
 * Easy to use, just add your folders and done.
+* Window manager and folder tab, clean navigation flow between multiple sources.
 * Instant scanning and classification for media files in local and network folders.
 * One for all folder listing mode (Videos/Photos/Documents all with their own tags and filters).
 * Fully working on Meta Quest 3.
