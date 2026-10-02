@@ -7,6 +7,8 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.AnchoredDraggableDefaults
 import androidx.compose.foundation.gestures.DraggableAnchors
 import androidx.compose.foundation.gestures.anchoredHorizontalDraggable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
@@ -61,6 +63,8 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
@@ -71,7 +75,9 @@ import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
+import kotlin.math.abs
 import com.ehviewer.core.database.model.LOCAL_GALLERY_KIND_ARCHIVE
 import com.ehviewer.core.i18n.R
 import com.ehviewer.core.ui.component.FastScrollLazyVerticalGrid
@@ -342,7 +348,46 @@ private fun ExplorerPanel(
     var showFavorites by rememberSaveable { mutableStateOf(false) }
     val activeId = ExplorerWindows.activeId
     val windows = ExplorerWindows.windows
-    Column(Modifier.fillMaxSize()) {
+    val layoutDirection = LocalLayoutDirection.current
+    Column(
+        Modifier
+            .fillMaxSize()
+            .pointerInput(showFavorites, layoutDirection) {
+                val slop = viewConfiguration.touchSlop
+                val threshold = 48.dp.toPx()
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = false)
+                    var totalX = 0f
+                    var totalY = 0f
+                    var switchMode = false
+                    while (true) {
+                        val event = awaitPointerEvent()
+                        val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                        if (!switchMode && change.isConsumed) break
+                        val delta = change.positionChange()
+                        totalX += delta.x
+                        totalY += delta.y
+                        if (!switchMode && (abs(totalX) > slop || abs(totalY) > slop)) {
+                            val horizontal = abs(totalX) > abs(totalY) * 2f
+                            val closing = if (layoutDirection == LayoutDirection.Rtl) {
+                                totalX < 0f
+                            } else {
+                                totalX > 0f
+                            }
+                            if (!horizontal || closing) break
+                            switchMode = true
+                        }
+                        if (switchMode) change.consume()
+                        if (!change.pressed) {
+                            if (switchMode && abs(totalX) >= threshold) {
+                                showFavorites = !showFavorites
+                            }
+                            break
+                        }
+                    }
+                }
+            },
+    ) {
         Row(
             modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 12.dp, top = 8.dp, bottom = 2.dp),
             verticalAlignment = Alignment.CenterVertically,
