@@ -1,5 +1,14 @@
 package com.hippo.ehviewer.ui.screen
 
+import androidx.activity.OnBackPressedCallback
+import androidx.activity.compose.LocalOnBackPressedDispatcherOwner
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -44,8 +53,10 @@ import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ShapeDefaults
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberDrawerState2
@@ -57,19 +68,25 @@ import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChange
+import androidx.compose.ui.layout.layout
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
@@ -136,8 +153,11 @@ private val WindowMaxWidth = 340.dp
 private val WindowMaxHeight = 480.dp
 private val ExplorerListIconSize = 20.dp
 private val ExplorerListIconSizeTablet = 26.dp
+private val ExplorerGridIconSize = 32.dp
+private val ExplorerGridIconSizeTablet = 52.dp
 private val LocalExplorerTablet = compositionLocalOf { false }
-private val ExplorerWindowGap = 8.dp
+private val LocalExplorerActionColor = compositionLocalOf<Color?> { null }
+private val PanelMargin = 16.dp
 
 /**
  * Small floating explorer window (dialog / in-app picture-in-picture).
@@ -219,6 +239,28 @@ fun ExplorerSidePanelHost(
             panelActions.toggle = {}
         }
     }
+    val backDispatcher = LocalOnBackPressedDispatcherOwner.current?.onBackPressedDispatcher
+    val closeFromBack = rememberUpdatedState { closePanel() }
+    val backCallback = remember {
+        object : OnBackPressedCallback(false) {
+            override fun handleOnBackPressed() {
+                closeFromBack.value()
+            }
+        }
+    }
+    val panelOpen = panelState.isOpen || panelState.targetValue == DrawerValue.Open
+    SideEffect {
+        backCallback.isEnabled = panelOpen
+        // Screens register their own back handlers after this host. While the panel
+        // is open, keep this callback last so system back closes the panel first.
+        if (panelOpen && backDispatcher != null) {
+            backCallback.remove()
+            backDispatcher.addCallback(backCallback)
+        }
+    }
+    DisposableEffect(backDispatcher) {
+        onDispose { backCallback.remove() }
+    }
     LaunchedEffect(gesturesEnabled) {
         if (!gesturesEnabled && panelState.isOpen) {
             closePanel()
@@ -235,7 +277,7 @@ fun ExplorerSidePanelHost(
     val screenH = configuration.screenHeightDp.dp
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val endPad = if (phonePortrait) 0.dp else 40.dp
-        val topBarClearance = if (tablet) TopAppBarDefaults.TopAppBarExpandedHeight else 0.dp
+        val topBarClearance = if (tablet || phonePortrait) TopAppBarDefaults.TopAppBarExpandedHeight else 0.dp
         val widthCap = (maxWidth - if (phonePortrait) 0.dp else endPad).coerceAtLeast(0.dp)
         val heightCap = (maxHeight - 16.dp - topBarClearance).coerceAtLeast(0.dp)
         val windowWidth = when {
@@ -298,8 +340,16 @@ fun ExplorerSidePanelHost(
             }
             val rawOffset = panelState.currentOffset
             val offset = if (rawOffset.isNaN()) slidePx else rawOffset
-            Column(
-                Modifier
+            val page = MaterialTheme.colorScheme.background
+            val darkPage = page.luminance() < 0.5f
+            val lifted = MaterialTheme.colorScheme.surfaceContainerHighest
+            val panelColor = when {
+                !darkPage -> MaterialTheme.colorScheme.surfaceContainerHigh
+                lifted.luminance() - page.luminance() < 0.06f -> Color(0xFF424242)
+                else -> lifted
+            }
+            Surface(
+                modifier = Modifier
                     .align(if (phonePortrait) Alignment.TopCenter else Alignment.TopEnd)
                     .windowInsetsPadding(
                         WindowInsets.safeDrawing.only(
@@ -311,7 +361,8 @@ fun ExplorerSidePanelHost(
                         ),
                     )
                     .padding(
-                        top = if (tablet) topBarClearance else 8.dp,
+                        top = topBarClearance + PanelMargin,
+                        bottom = if (phoneLandscape) PanelMargin else 0.dp,
                         end = if (phonePortrait) 0.dp else endPad,
                     )
                     .then(
@@ -321,10 +372,11 @@ fun ExplorerSidePanelHost(
                             Modifier.width(windowWidth).height(windowHeight)
                         },
                     )
-                    .offset { IntOffset(offset.roundToInt(), 0) }
-                    .shadow(8.dp, ShapeDefaults.Large)
-                    .clip(ShapeDefaults.Large)
-                    .background(MaterialTheme.colorScheme.surfaceContainer),
+                    .offset { IntOffset(offset.roundToInt(), 0) },
+                shape = ShapeDefaults.ExtraLarge,
+                color = panelColor,
+                shadowElevation = 3.dp,
+                tonalElevation = 0.dp,
             ) {
                 ExplorerPanel(
                     navigator = navigator,
@@ -334,8 +386,27 @@ fun ExplorerSidePanelHost(
                     activeFromLibrary = activeFromLibrary,
                     navTab = navTab,
                     tablet = tablet,
+                    panelOpen = panelOpen,
                     onNavigated = { closePanel() },
                 )
+            }
+        }
+    }
+}
+
+private fun Modifier.explorerPane(
+    visible: Boolean,
+    translationXPx: Float,
+    alpha: Float,
+): Modifier = layout { measurable, constraints ->
+    val placeable = measurable.measure(constraints)
+    if (!visible) {
+        layout(0, 0) {}
+    } else {
+        layout(placeable.width, placeable.height) {
+            placeable.placeWithLayer(0, 0) {
+                translationX = translationXPx
+                this.alpha = alpha
             }
         }
     }
@@ -350,9 +421,22 @@ private fun ExplorerPanel(
     activeFromLibrary: Boolean,
     navTab: NavTabWindows.Tab?,
     tablet: Boolean,
+    panelOpen: Boolean,
     onNavigated: () -> Unit,
 ) {
     var showFavorites by rememberSaveable { mutableStateOf(false) }
+    var gridReady by remember { mutableStateOf(showFavorites) }
+    LaunchedEffect(panelOpen) {
+        if (panelOpen && !gridReady) {
+            withFrameNanos { }
+            gridReady = true
+        }
+    }
+    val modeProgress by animateFloatAsState(
+        targetValue = if (showFavorites) 1f else 0f,
+        animationSpec = tween(180, easing = FastOutSlowInEasing),
+        label = "explorerMode",
+    )
     val activeId = ExplorerWindows.activeId
     val windows = ExplorerWindows.windows
     val layoutDirection = LocalLayoutDirection.current
@@ -396,7 +480,9 @@ private fun ExplorerPanel(
             },
     ) {
         Row(
-            modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 12.dp, top = 8.dp, bottom = 2.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = PanelMargin, end = 8.dp, top = PanelMargin, bottom = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             val headerStyle = if (tablet) {
@@ -405,23 +491,33 @@ private fun ExplorerPanel(
                 MaterialTheme.typography.titleMedium
             }
             val headerIconSize = with(LocalDensity.current) { headerStyle.fontSize.toDp() }
-            Text(
-                text = stringResource(
-                    if (showFavorites) R.string.explorer_quick_access else R.string.explorer,
-                ),
-                style = headerStyle,
-                modifier = Modifier
-                    .weight(1f)
-                    .clickable(
-                        interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
-                        indication = null,
-                    ) { showFavorites = !showFavorites },
-            )
+            AnimatedContent(
+                targetState = showFavorites,
+                modifier = Modifier.weight(1f),
+                transitionSpec = {
+                    fadeIn(tween(160)) togetherWith fadeOut(tween(120))
+                },
+                label = "explorerTitle",
+            ) { quickAccess ->
+                Text(
+                    text = stringResource(
+                        if (quickAccess) R.string.explorer_quick_access else R.string.explorer,
+                    ),
+                    style = headerStyle,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable(
+                            interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
+                            indication = null,
+                        ) { showFavorites = !showFavorites },
+                )
+            }
             val duplicateEnabled = activeId != null
             Icon(
                 Icons.Default.ContentCopy,
                 contentDescription = stringResource(R.string.explorer_duplicate),
                 modifier = Modifier
+                    .padding(8.dp)
                     .size(headerIconSize)
                     .clickable(
                         enabled = duplicateEnabled,
@@ -444,16 +540,25 @@ private fun ExplorerPanel(
                 ),
             )
         }
-        Box(Modifier.weight(1f).fillMaxWidth()) {
-            if (showFavorites) {
-                ExplorerFavoritesGrid(
-                    navigator = navigator,
-                    navTab = navTab,
-                    tablet = tablet,
-                    onToggleMode = { showFavorites = !showFavorites },
-                    onNavigated = onNavigated,
-                )
-            } else {
+        var paneWidth by remember { mutableIntStateOf(0) }
+        val slideDirection = if (layoutDirection == LayoutDirection.Rtl) -1f else 1f
+        Box(
+            Modifier
+                .weight(1f)
+                .fillMaxWidth()
+                .clipToBounds()
+                .onSizeChanged { paneWidth = it.width },
+        ) {
+            val shift = paneWidth / 5f
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .explorerPane(
+                        visible = modeProgress < 1f,
+                        translationXPx = -modeProgress * shift * slideDirection,
+                        alpha = 1f - modeProgress,
+                    ),
+            ) {
                 ExplorerWindowList(
                     windows = windows,
                     activeId = activeId,
@@ -467,6 +572,25 @@ private fun ExplorerPanel(
                     onToggleMode = { showFavorites = !showFavorites },
                     onNavigated = onNavigated,
                 )
+            }
+            if (gridReady || showFavorites) {
+                Box(
+                    Modifier
+                        .fillMaxSize()
+                        .explorerPane(
+                            visible = modeProgress > 0f,
+                            translationXPx = (1f - modeProgress) * shift * slideDirection,
+                            alpha = modeProgress,
+                        ),
+                ) {
+                    ExplorerFavoritesGrid(
+                        navigator = navigator,
+                        navTab = navTab,
+                        tablet = tablet,
+                        onToggleMode = { showFavorites = !showFavorites },
+                        onNavigated = onNavigated,
+                    )
+                }
             }
         }
     }
@@ -541,7 +665,6 @@ private fun ExplorerWindowList(
                         title = windowRowTitle(window, source),
                         subtitle = windowSubtitle(source, window.relativePath),
                         active = window.id == activeId,
-                        modifier = Modifier.padding(bottom = ExplorerWindowGap),
                         onLongClick = { closeListedWindow(window.id) },
                         onClick = {
                             val shown = ExplorerWindows.activate(window.id) ?: return@ExplorerPathRow
@@ -582,7 +705,6 @@ private fun ExplorerWindowList(
                     title = item.title,
                     subtitle = windowSubtitle(item.sourceName, item.relativePath),
                     active = false,
-                    modifier = Modifier.padding(bottom = ExplorerWindowGap),
                     onClick = {
                         openSaved(navigator, item, roots, navTab)
                         onNavigated()
@@ -619,7 +741,7 @@ private fun ExplorerFavoritesGrid(
     }
     val thumbColumns by Settings.thumbColumns.collectAsState()
     val columnCount = thumbColumns.coerceIn(1, 10)
-    val iconSize = if (tablet) ExplorerListIconSizeTablet else ExplorerListIconSize
+    val iconSize = if (tablet) ExplorerGridIconSizeTablet else ExplorerGridIconSize
     val labelStyle = MaterialTheme.typography.labelMedium
     val gridState = remember { LazyGridState() }
     FastScrollLazyVerticalGrid(
@@ -714,7 +836,12 @@ private fun ExplorerRowAction(
     contentDescription: String,
 ) {
     val tablet = LocalExplorerTablet.current
-    IconButton(onClick = onClick, modifier = Modifier.size(if (tablet) 40.dp else 32.dp)) {
+    val tint = LocalExplorerActionColor.current ?: MaterialTheme.colorScheme.onSurfaceVariant
+    IconButton(
+        onClick = onClick,
+        modifier = Modifier.size(if (tablet) 40.dp else 32.dp),
+        colors = IconButtonDefaults.iconButtonColors(contentColor = tint),
+    ) {
         Icon(icon, contentDescription = contentDescription, modifier = Modifier.size(if (tablet) 22.dp else 18.dp))
     }
 }
@@ -730,15 +857,26 @@ private fun ExplorerPathRow(
     onLongClick: (() -> Unit)? = null,
 ) {
     val tablet = LocalExplorerTablet.current
+    val darkPage = MaterialTheme.colorScheme.background.luminance() < 0.5f
+    val activeColor = if (darkPage) {
+        MaterialTheme.colorScheme.outlineVariant
+    } else {
+        MaterialTheme.colorScheme.secondaryContainer
+    }
+    val onActive = if (darkPage) {
+        MaterialTheme.colorScheme.onSurface
+    } else {
+        MaterialTheme.colorScheme.onSecondaryContainer
+    }
     Row(
         modifier = modifier
+            .padding(horizontal = 12.dp, vertical = 2.dp)
             .fillMaxWidth()
-            .heightIn(min = if (tablet) 52.dp else 40.dp)
-            .background(
-                if (active) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent,
-            )
+            .heightIn(min = if (tablet) 64.dp else 56.dp)
+            .clip(ShapeDefaults.ExtraLarge)
+            .background(if (active) activeColor else Color.Transparent)
             .combinedClickable(onClick = onClick, onLongClick = onLongClick)
-            .padding(start = 12.dp, end = 2.dp, top = 2.dp, bottom = 2.dp),
+            .padding(start = PanelMargin, end = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Icon(
@@ -747,22 +885,27 @@ private fun ExplorerPathRow(
             modifier = Modifier.size(if (tablet) ExplorerListIconSizeTablet else ExplorerListIconSize),
             tint = MaterialTheme.colorScheme.primary,
         )
-        Column(Modifier.weight(1f).padding(horizontal = 10.dp)) {
+        Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
             Text(
                 title,
                 style = if (tablet) MaterialTheme.typography.bodyLarge else MaterialTheme.typography.bodyMedium,
+                color = if (active) onActive else Color.Unspecified,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
             Text(
                 subtitle,
                 style = if (tablet) MaterialTheme.typography.bodyMedium else MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                color = if (active) onActive else MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
         }
-        Row(verticalAlignment = Alignment.CenterVertically) { trailing() }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            CompositionLocalProvider(LocalExplorerActionColor provides if (active) onActive else null) {
+                trailing()
+            }
+        }
     }
 }
 
