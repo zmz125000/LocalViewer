@@ -47,6 +47,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ShapeDefaults
 import androidx.compose.material3.Text
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberDrawerState2
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -234,8 +235,9 @@ fun ExplorerSidePanelHost(
     val screenH = configuration.screenHeightDp.dp
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val endPad = if (phonePortrait) 0.dp else 40.dp
+        val topBarClearance = if (tablet) TopAppBarDefaults.TopAppBarExpandedHeight else 0.dp
         val widthCap = (maxWidth - if (phonePortrait) 0.dp else endPad).coerceAtLeast(0.dp)
-        val heightCap = (maxHeight - 16.dp).coerceAtLeast(0.dp)
+        val heightCap = (maxHeight - 16.dp - topBarClearance).coerceAtLeast(0.dp)
         val windowWidth = when {
             phonePortrait -> minOf(maxWidth - 16.dp, WindowMaxWidth) * 0.9f
             phoneLandscape -> screenW * 0.5f
@@ -308,7 +310,10 @@ fun ExplorerSidePanelHost(
                             },
                         ),
                     )
-                    .padding(top = 8.dp, end = if (phonePortrait) 0.dp else endPad)
+                    .padding(
+                        top = if (tablet) topBarClearance else 8.dp,
+                        end = if (phonePortrait) 0.dp else endPad,
+                    )
                     .then(
                         if (phoneLandscape) {
                             Modifier.requiredWidth(windowWidth).fillMaxHeight()
