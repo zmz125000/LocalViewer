@@ -254,12 +254,27 @@ object ExplorerWindows {
         val existing = windows.firstOrNull { it.id == activeId && samePath(it, window) }
             ?: windows.firstOrNull { samePath(it, window) }
         if (existing != null) {
-            val index = windows.indexOfFirst { it.id == existing.id }
+            val fromScreen = window.fromHistory || window.fromLibrary
             val updated = existing.copy(
                 fromHistory = window.fromHistory,
                 fromLibrary = window.fromLibrary,
                 fromSidePanel = window.fromSidePanel,
+                // A later open from History/Library rebuilds the back-to-screen flag.
+                // The saved window cleared it on the previous exit.
+                exitToOrigin = if (fromScreen) window.exitToOrigin else existing.exitToOrigin,
+                photoGrid = if (fromScreen) window.photoGrid else existing.photoGrid,
+                localStack = if (fromScreen && window.localStack.isNotEmpty()) {
+                    window.localStack
+                } else {
+                    existing.localStack
+                },
+                segments = if (fromScreen && window.kind != Kind.Local) {
+                    window.segments
+                } else {
+                    existing.segments
+                },
             )
+            val index = windows.indexOfFirst { it.id == existing.id }
             if (index >= 0) windows[index] = updated
             applyToSession(updated)
             activeId = updated.id
