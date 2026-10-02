@@ -99,6 +99,17 @@ object ExplorerWindows {
         )
     }
 
+    /** Mark [id] as opened from History, Library, or Browse. */
+    fun setOrigin(id: Long, fromHistory: Boolean, fromLibrary: Boolean) {
+        val index = windows.indexOfFirst { it.id == id }
+        if (index < 0) return
+        windows[index] = windows[index].copy(
+            fromHistory = fromHistory,
+            fromLibrary = fromLibrary,
+            fromSidePanel = false,
+        )
+    }
+
     /**
      * Add a window for [stack] without changing the live session or the active window.
      * A path that already has a window is left as-is.

@@ -83,6 +83,7 @@ import com.hippo.ehviewer.library.BrowseSession
 import com.hippo.ehviewer.library.ExplorerWindows
 import com.hippo.ehviewer.library.LocalLibrary
 import com.hippo.ehviewer.library.MediaPermissions
+import com.hippo.ehviewer.library.NavTabWindows
 import com.hippo.ehviewer.library.displayNameForTreeUri
 import com.hippo.ehviewer.library.isMediaStoreRootUri
 import com.hippo.ehviewer.library.safFolderLabel
@@ -300,6 +301,7 @@ fun AnimatedVisibilityScope.BrowseScreen(navigator: DestinationsNavigator) = Scr
             ),
         )
         ExplorerWindows.finishLocalSpawn(root.displayName.safFolderLabel())
+        ExplorerWindows.activeId?.let { NavTabWindows.remember(NavTabWindows.Tab.Browse, it) }
         navigate(FolderBrowserScreenDestination())
     }
 
@@ -309,6 +311,7 @@ fun AnimatedVisibilityScope.BrowseScreen(navigator: DestinationsNavigator) = Scr
         BrowseSession.setSmbPhotoGrid(source.id, null)
         BrowseSession.setSmbExitToOrigin(source.id, false)
         ExplorerWindows.finishSmbSpawn(source.id, source.displayName)
+        ExplorerWindows.activeId?.let { NavTabWindows.remember(NavTabWindows.Tab.Browse, it) }
         navigate(SmbBrowserScreenDestination(source.id, ""))
     }
 
@@ -318,6 +321,7 @@ fun AnimatedVisibilityScope.BrowseScreen(navigator: DestinationsNavigator) = Scr
         BrowseSession.setWebDavPhotoGrid(source.id, null)
         BrowseSession.setWebDavExitToOrigin(source.id, false)
         ExplorerWindows.finishWebDavSpawn(source.id, source.displayName)
+        ExplorerWindows.activeId?.let { NavTabWindows.remember(NavTabWindows.Tab.Browse, it) }
         navigate(WebDavBrowserScreenDestination(source.id, ""))
     }
 
