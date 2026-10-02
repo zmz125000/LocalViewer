@@ -13,6 +13,7 @@ import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.download.downloadLocation
 import com.hippo.ehviewer.library.BrowseSession
 import com.hippo.ehviewer.library.ExplorerWindows
+import com.hippo.ehviewer.library.NavTabWindows
 import com.hippo.ehviewer.library.buildLocalBrowseStack
 import com.hippo.ehviewer.library.parentRelativeOfFile
 import com.hippo.ehviewer.ui.destinations.FolderBrowserScreenDestination
@@ -185,6 +186,7 @@ fun openLocalBrowseDir(
     ExplorerWindows.prepareSpawn()
     BrowseSession.localStack = if (walkParents) full else listOf(full.last())
     ExplorerWindows.finishLocalSpawn(rootDisplayName, fromHistory, fromLibrary, fromSidePanel)
+    rememberNavTabWindow(fromHistory, fromLibrary, fromSidePanel)
     nav.navigate(FolderBrowserScreenDestination(fromHistory = fromHistory && !fromSidePanel, fromLibrary = fromLibrary && !fromSidePanel)) {
         launchSingleTop = true
     }
@@ -211,6 +213,7 @@ fun openSmbBrowseDir(
     BrowseSession.setSmbPhotoGrid(sourceId, null)
     BrowseSession.setSmbExitToOrigin(sourceId, !walkParents && fromOrigin)
     ExplorerWindows.finishSmbSpawn(sourceId, "", fromHistory, fromLibrary, fromSidePanel)
+    rememberNavTabWindow(fromHistory, fromLibrary, fromSidePanel)
     nav.navigate(
         SmbBrowserScreenDestination(
             sourceId = sourceId,
@@ -239,6 +242,7 @@ fun openWebDavBrowseDir(
     BrowseSession.setWebDavPhotoGrid(sourceId, null)
     BrowseSession.setWebDavExitToOrigin(sourceId, !walkParents && fromOrigin)
     ExplorerWindows.finishWebDavSpawn(sourceId, "", fromHistory, fromLibrary, fromSidePanel)
+    rememberNavTabWindow(fromHistory, fromLibrary, fromSidePanel)
     nav.navigate(
         WebDavBrowserScreenDestination(
             sourceId = sourceId,
@@ -292,6 +296,7 @@ fun openLocalFolderPhotoGrid(
         listOf(galleryFrame)
     }
     ExplorerWindows.finishLocalSpawn(rootDisplayName, fromHistory, fromLibrary, fromSidePanel)
+    rememberNavTabWindow(fromHistory, fromLibrary, fromSidePanel)
     nav.navigate(FolderBrowserScreenDestination(fromHistory = fromHistory && !fromSidePanel, fromLibrary = fromLibrary && !fromSidePanel)) {
         launchSingleTop = true
     }
@@ -340,6 +345,7 @@ fun openLocalVideoFolder(
         listOf(overlayFrame)
     }
     ExplorerWindows.finishLocalSpawn(rootDisplayName, fromHistory, fromLibrary, fromSidePanel)
+    rememberNavTabWindow(fromHistory, fromLibrary, fromSidePanel)
     nav.navigate(FolderBrowserScreenDestination(fromHistory = fromHistory && !fromSidePanel, fromLibrary = fromLibrary && !fromSidePanel)) {
         launchSingleTop = true
     }
@@ -370,6 +376,7 @@ fun openSmbFolderPhotoGrid(
         exitToOrigin = !walkParents && fromOrigin,
     )
     ExplorerWindows.finishSmbSpawn(sourceId, "", fromHistory, fromLibrary, fromSidePanel)
+    rememberNavTabWindow(fromHistory, fromLibrary, fromSidePanel)
     nav.navigate(
         SmbBrowserScreenDestination(
             sourceId = sourceId,
@@ -403,6 +410,7 @@ fun openWebDavFolderPhotoGrid(
         exitToOrigin = !walkParents && fromOrigin,
     )
     ExplorerWindows.finishWebDavSpawn(sourceId, "", fromHistory, fromLibrary, fromSidePanel)
+    rememberNavTabWindow(fromHistory, fromLibrary, fromSidePanel)
     nav.navigate(
         WebDavBrowserScreenDestination(
             sourceId = sourceId,
@@ -411,6 +419,15 @@ fun openWebDavFolderPhotoGrid(
             fromLibrary = fromLibrary && !fromSidePanel,
         ),
     ) { launchSingleTop = true }
+}
+
+private fun rememberNavTabWindow(fromHistory: Boolean, fromLibrary: Boolean, fromSidePanel: Boolean) {
+    if (fromSidePanel) return
+    val id = ExplorerWindows.activeId ?: return
+    when {
+        fromHistory -> NavTabWindows.remember(NavTabWindows.Tab.History, id)
+        fromLibrary -> NavTabWindows.remember(NavTabWindows.Tab.Library, id)
+    }
 }
 
 context(_: Context, _: DialogState)

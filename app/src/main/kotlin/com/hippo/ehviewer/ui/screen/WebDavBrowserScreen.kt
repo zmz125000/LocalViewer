@@ -53,7 +53,6 @@ import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -1820,7 +1819,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                         if (search.active) {
                             BrowseTopBarSearchField(state = search, hint = searchHint)
                         } else {
-                            Text(title, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            BrowseTopBarFolderTitle(title)
                         }
                     },
                     windowInsets = WindowInsets.safeDrawing.only(WindowInsetsSides.Top),

@@ -7,6 +7,8 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.waitForUpOrCancellation
@@ -331,6 +333,24 @@ fun Modifier.browseSearchClearFocusOnInteract(state: BrowseFolderSearchState): M
                 }
             }
         }
+}
+
+/** Folder name in the folder-view top bar. Tap toggles the explorer side panel. */
+@Composable
+fun BrowseTopBarFolderTitle(title: String) {
+    val panel = LocalExplorerPanel.current
+    Text(
+        title,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = { panel.toggle() },
+            ),
+    )
 }
 
 /** Inline search field for [androidx.compose.material3.TopAppBar] title slot. */
