@@ -44,8 +44,10 @@ import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ShapeDefaults
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberDrawerState2
@@ -65,7 +67,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
@@ -137,7 +138,8 @@ private val WindowMaxHeight = 480.dp
 private val ExplorerListIconSize = 20.dp
 private val ExplorerListIconSizeTablet = 26.dp
 private val LocalExplorerTablet = compositionLocalOf { false }
-private val ExplorerWindowGap = 8.dp
+private val LocalExplorerActionColor = compositionLocalOf<Color?> { null }
+private val PanelMargin = 16.dp
 
 /**
  * Small floating explorer window (dialog / in-app picture-in-picture).
@@ -298,8 +300,8 @@ fun ExplorerSidePanelHost(
             }
             val rawOffset = panelState.currentOffset
             val offset = if (rawOffset.isNaN()) slidePx else rawOffset
-            Column(
-                Modifier
+            Surface(
+                modifier = Modifier
                     .align(if (phonePortrait) Alignment.TopCenter else Alignment.TopEnd)
                     .windowInsetsPadding(
                         WindowInsets.safeDrawing.only(
@@ -311,7 +313,8 @@ fun ExplorerSidePanelHost(
                         ),
                     )
                     .padding(
-                        top = if (tablet) topBarClearance else 8.dp,
+                        top = topBarClearance + PanelMargin,
+                        bottom = if (phoneLandscape) PanelMargin else 0.dp,
                         end = if (phonePortrait) 0.dp else endPad,
                     )
                     .then(
@@ -321,10 +324,11 @@ fun ExplorerSidePanelHost(
                             Modifier.width(windowWidth).height(windowHeight)
                         },
                     )
-                    .offset { IntOffset(offset.roundToInt(), 0) }
-                    .shadow(8.dp, ShapeDefaults.Large)
-                    .clip(ShapeDefaults.Large)
-                    .background(MaterialTheme.colorScheme.surfaceContainer),
+                    .offset { IntOffset(offset.roundToInt(), 0) },
+                shape = ShapeDefaults.ExtraLarge,
+                color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                shadowElevation = 3.dp,
+                tonalElevation = 0.dp,
             ) {
                 ExplorerPanel(
                     navigator = navigator,
@@ -396,7 +400,9 @@ private fun ExplorerPanel(
             },
     ) {
         Row(
-            modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 12.dp, top = 8.dp, bottom = 2.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = PanelMargin, end = 4.dp, top = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             val headerStyle = if (tablet) {
@@ -404,7 +410,6 @@ private fun ExplorerPanel(
             } else {
                 MaterialTheme.typography.titleMedium
             }
-            val headerIconSize = with(LocalDensity.current) { headerStyle.fontSize.toDp() }
             Text(
                 text = stringResource(
                     if (showFavorites) R.string.explorer_quick_access else R.string.explorer,
@@ -418,31 +423,27 @@ private fun ExplorerPanel(
                     ) { showFavorites = !showFavorites },
             )
             val duplicateEnabled = activeId != null
-            Icon(
-                Icons.Default.ContentCopy,
-                contentDescription = stringResource(R.string.explorer_duplicate),
-                modifier = Modifier
-                    .size(headerIconSize)
-                    .clickable(
-                        enabled = duplicateEnabled,
-                        onClick = {
-                            val copy = ExplorerWindows.duplicateActive() ?: return@clickable
-                            bindOpenedWindow(navTab)
-                            showWindow(
-                                navigator,
-                                ExplorerWindows.active() ?: copy,
-                                currentDestination,
-                                browserSourceId,
-                                activeFromHistory,
-                                activeFromLibrary,
-                            )
-                            onNavigated()
-                        },
-                    ),
-                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(
-                    alpha = if (duplicateEnabled) 1f else 0.38f,
-                ),
-            )
+            IconButton(
+                onClick = {
+                    val copy = ExplorerWindows.duplicateActive() ?: return@IconButton
+                    bindOpenedWindow(navTab)
+                    showWindow(
+                        navigator,
+                        ExplorerWindows.active() ?: copy,
+                        currentDestination,
+                        browserSourceId,
+                        activeFromHistory,
+                        activeFromLibrary,
+                    )
+                    onNavigated()
+                },
+                enabled = duplicateEnabled,
+            ) {
+                Icon(
+                    Icons.Default.ContentCopy,
+                    contentDescription = stringResource(R.string.explorer_duplicate),
+                )
+            }
         }
         Box(Modifier.weight(1f).fillMaxWidth()) {
             if (showFavorites) {
@@ -541,7 +542,6 @@ private fun ExplorerWindowList(
                         title = windowRowTitle(window, source),
                         subtitle = windowSubtitle(source, window.relativePath),
                         active = window.id == activeId,
-                        modifier = Modifier.padding(bottom = ExplorerWindowGap),
                         onLongClick = { closeListedWindow(window.id) },
                         onClick = {
                             val shown = ExplorerWindows.activate(window.id) ?: return@ExplorerPathRow
@@ -582,7 +582,6 @@ private fun ExplorerWindowList(
                     title = item.title,
                     subtitle = windowSubtitle(item.sourceName, item.relativePath),
                     active = false,
-                    modifier = Modifier.padding(bottom = ExplorerWindowGap),
                     onClick = {
                         openSaved(navigator, item, roots, navTab)
                         onNavigated()
@@ -714,7 +713,12 @@ private fun ExplorerRowAction(
     contentDescription: String,
 ) {
     val tablet = LocalExplorerTablet.current
-    IconButton(onClick = onClick, modifier = Modifier.size(if (tablet) 40.dp else 32.dp)) {
+    val tint = LocalExplorerActionColor.current ?: MaterialTheme.colorScheme.onSurfaceVariant
+    IconButton(
+        onClick = onClick,
+        modifier = Modifier.size(if (tablet) 40.dp else 32.dp),
+        colors = IconButtonDefaults.iconButtonColors(contentColor = tint),
+    ) {
         Icon(icon, contentDescription = contentDescription, modifier = Modifier.size(if (tablet) 22.dp else 18.dp))
     }
 }
@@ -730,39 +734,46 @@ private fun ExplorerPathRow(
     onLongClick: (() -> Unit)? = null,
 ) {
     val tablet = LocalExplorerTablet.current
+    val activeColor = MaterialTheme.colorScheme.secondaryContainer
+    val onActive = MaterialTheme.colorScheme.onSecondaryContainer
     Row(
         modifier = modifier
+            .padding(horizontal = 12.dp, vertical = 2.dp)
             .fillMaxWidth()
-            .heightIn(min = if (tablet) 52.dp else 40.dp)
-            .background(
-                if (active) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent,
-            )
+            .heightIn(min = if (tablet) 64.dp else 56.dp)
+            .clip(ShapeDefaults.ExtraLarge)
+            .background(if (active) activeColor else Color.Transparent)
             .combinedClickable(onClick = onClick, onLongClick = onLongClick)
-            .padding(start = 12.dp, end = 2.dp, top = 2.dp, bottom = 2.dp),
+            .padding(start = PanelMargin, end = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Icon(
             Icons.Default.Folder,
             contentDescription = null,
             modifier = Modifier.size(if (tablet) ExplorerListIconSizeTablet else ExplorerListIconSize),
-            tint = MaterialTheme.colorScheme.primary,
+            tint = if (active) onActive else MaterialTheme.colorScheme.onSurfaceVariant,
         )
-        Column(Modifier.weight(1f).padding(horizontal = 10.dp)) {
+        Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
             Text(
                 title,
                 style = if (tablet) MaterialTheme.typography.bodyLarge else MaterialTheme.typography.bodyMedium,
+                color = if (active) onActive else Color.Unspecified,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
             Text(
                 subtitle,
                 style = if (tablet) MaterialTheme.typography.bodyMedium else MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                color = if (active) onActive else MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
         }
-        Row(verticalAlignment = Alignment.CenterVertically) { trailing() }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            CompositionLocalProvider(LocalExplorerActionColor provides if (active) onActive else null) {
+                trailing()
+            }
+        }
     }
 }
 
