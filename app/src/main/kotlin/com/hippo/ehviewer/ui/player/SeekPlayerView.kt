@@ -294,4 +294,4 @@ internal fun scrubSeekDeltaMs(
 }
 
 /** One full-width drag. Was 10 minutes, which made a small movement jump by a large step. */
-internal const val SCRUB_WINDOW_MS = 60L * 1000L
+internal const val SCRUB_WINDOW_MS = 2L * 60L * 1000L
