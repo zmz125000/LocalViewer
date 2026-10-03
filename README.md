@@ -77,7 +77,7 @@ Based on [EhViewer](https://github.com/FooIbar/EhViewer)
 With [Material Design 3](https://m3.material.io/)  
 and [Dynamic Color](https://m3.material.io/styles/color/dynamic-color/overview) Support.  
 
-Similar to Perfect Viewer and Kuro Reader but with Hi-Res images support (no downscaling), clean UI and way better performance.
+Similar to Perfect Viewer and Kuro Reader, with Hi-Res images support (no downscaling), clean UI and way better performance.
 
 Build with Grok 4.5.
 
