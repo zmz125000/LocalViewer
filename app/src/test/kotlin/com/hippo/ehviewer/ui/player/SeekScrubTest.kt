@@ -5,12 +5,21 @@ import org.junit.Test
 
 class SeekScrubTest {
     @Test
-    fun fullWidthDragMovesOneMinute() {
+    fun fullWidthDragDependsOnOrientation() {
         val width = 1000
         val movie = 2L * 60L * 60L * 1000L
-        assertEquals(SCRUB_WINDOW_MS, scrubSeekDeltaMs(width.toFloat(), width, movie))
-        assertEquals(-SCRUB_WINDOW_MS, scrubSeekDeltaMs(-width.toFloat(), width, movie))
-        assertEquals(60_000L, SCRUB_WINDOW_MS)
+        assertEquals(60_000L, SCRUB_WINDOW_PORTRAIT_MS)
+        assertEquals(120_000L, SCRUB_WINDOW_LANDSCAPE_MS)
+        assertEquals(SCRUB_WINDOW_PORTRAIT_MS, scrubWindowMs(viewWidthPx = 1080, viewHeightPx = 1920))
+        assertEquals(SCRUB_WINDOW_LANDSCAPE_MS, scrubWindowMs(viewWidthPx = 1920, viewHeightPx = 1080))
+        assertEquals(
+            SCRUB_WINDOW_PORTRAIT_MS,
+            scrubSeekDeltaMs(width.toFloat(), width, movie, SCRUB_WINDOW_PORTRAIT_MS),
+        )
+        assertEquals(
+            -SCRUB_WINDOW_LANDSCAPE_MS,
+            scrubSeekDeltaMs(-width.toFloat(), width, movie, SCRUB_WINDOW_LANDSCAPE_MS),
+        )
     }
 
     @Test

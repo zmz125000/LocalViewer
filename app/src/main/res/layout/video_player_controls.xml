@@ -72,7 +72,8 @@
 
                 <ImageButton
                     android:id="@id/exo_audio_track"
-                    style="@style/ExoStyledControls.Button.Bottom.AudioTrack" />
+                    style="@style/ExoStyledControls.Button.Bottom.AudioTrack"
+                    android:src="@drawable/ic_video_music" />
 
                 <ImageButton
                     android:id="@id/exo_subtitle"
