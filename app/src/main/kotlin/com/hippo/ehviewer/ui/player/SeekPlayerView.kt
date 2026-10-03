@@ -17,7 +17,7 @@ import com.hippo.ehviewer.R
 import kotlin.math.abs
 
 /**
- * Stock [PlayerView] plus surface gestures: tap toggles chrome, double-tap play/pause,
+ * Stock [PlayerView] plus surface gestures: tap toggles chrome, double-tap closes the player,
  * horizontal drag seeks (rate-limited: one minute per screen width in portrait, two in
  * landscape). Touches on the
  * visible bottom bar go to Media3.
@@ -32,6 +32,9 @@ class SeekPlayerView @JvmOverloads constructor(
     attrs: AttributeSet? = null,
     defStyleAttr: Int = 0,
 ) : PlayerView(context, attrs, defStyleAttr) {
+    /** Double-tap on the video. The activity finishes so playback and the window both go away. */
+    var onClosePlayer: (() -> Unit)? = null
+
     private val touchSlop = ViewConfiguration.get(context).scaledTouchSlop
     private val scrubStartPx = maxOf(touchSlop * 3f, 32f * resources.displayMetrics.density)
     private var downX = 0f
@@ -294,15 +297,7 @@ class SeekPlayerView @JvmOverloads constructor(
 
             override fun onDoubleTap(e: MotionEvent): Boolean {
                 if (seeking) return true
-                val current = player ?: return true
-                if (current.playbackState == Player.STATE_ENDED) {
-                    current.seekTo(0L)
-                    current.play()
-                } else if (current.isPlaying) {
-                    current.pause()
-                } else {
-                    current.play()
-                }
+                onClosePlayer?.invoke()
                 return true
             }
 

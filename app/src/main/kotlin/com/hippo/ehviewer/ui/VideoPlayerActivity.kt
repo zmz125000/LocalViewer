@@ -1,24 +1,31 @@
 package com.hippo.ehviewer.ui
 
+import android.app.PendingIntent
 import android.app.PictureInPictureParams
+import android.app.RemoteAction
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.ActivityInfo
 import android.content.pm.PackageManager
 import android.content.res.Configuration
 import android.graphics.Rect
+import android.graphics.drawable.Icon
 import android.net.Uri
 import android.os.Bundle
 import android.util.Rational
 import android.view.View
 import android.view.WindowManager
 import android.widget.ImageButton
+import androidx.core.content.ContextCompat
 import androidx.activity.SystemBarStyle
 import androidx.activity.enableEdgeToEdge
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
@@ -60,6 +67,22 @@ class VideoPlayerActivity : AppCompatActivity() {
     private var changingItem = false
     private var rotateWithVideo = true
     private var lastVideoSize: VideoSize = VideoSize.UNKNOWN
+    private var pipControlRegistered = false
+
+    private val pipControlReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            if (intent.action != ACTION_PIP_PLAY_PAUSE) return
+            val exo = player ?: return
+            when {
+                exo.playbackState == Player.STATE_ENDED -> {
+                    exo.seekTo(0L)
+                    exo.play()
+                }
+                exo.isPlaying -> exo.pause()
+                else -> exo.play()
+            }
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -76,12 +99,14 @@ class VideoPlayerActivity : AppCompatActivity() {
         view.controllerShowTimeoutMs = CONTROLLER_TIMEOUT_MS
         view.controllerAutoShow = false
 
+        view.onClosePlayer = { finish() }
         bindControls()
         hideSystemBars()
         if (!applyPlayIntent(intent, replacePlaylist = false)) {
             finish()
             return
         }
+        registerPipControl()
         view.hideController()
     }
 
@@ -146,6 +171,12 @@ class VideoPlayerActivity : AppCompatActivity() {
         newConfig: Configuration,
     ) {
         super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
+        // Closing the system window stops the activity (CREATED). Expanding it resumes first.
+        if (!isInPictureInPictureMode && lifecycle.currentState == Lifecycle.State.CREATED) {
+            finish()
+            return
+        }
+        playerView?.useController = !isInPictureInPictureMode
         if (isInPictureInPictureMode) {
             playerView?.hideController()
         } else {
@@ -156,6 +187,7 @@ class VideoPlayerActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
+        unregisterPipControl()
         releasePlayer()
         streamToken?.let(StreamDocumentRegistry::remove)
         streamToken = null
@@ -376,6 +408,7 @@ class VideoPlayerActivity : AppCompatActivity() {
         )
         val builder = PictureInPictureParams.Builder()
             .setAutoEnterEnabled(autoEnter)
+            .setActions(listOfNotNull(pipPlayPauseAction()))
         if (fraction != null) {
             builder.setAspectRatio(Rational(fraction.first, fraction.second))
         }
@@ -385,6 +418,51 @@ class VideoPlayerActivity : AppCompatActivity() {
             if (view.getGlobalVisibleRect(rect) && !rect.isEmpty) builder.setSourceRectHint(rect)
         }
         return runCatching { builder.build() }.getOrNull()
+    }
+
+    private fun registerPipControl() {
+        if (pipControlRegistered) return
+        ContextCompat.registerReceiver(
+            this,
+            pipControlReceiver,
+            IntentFilter(ACTION_PIP_PLAY_PAUSE),
+            ContextCompat.RECEIVER_NOT_EXPORTED,
+        )
+        pipControlRegistered = true
+    }
+
+    private fun unregisterPipControl() {
+        if (!pipControlRegistered) return
+        unregisterReceiver(pipControlReceiver)
+        pipControlRegistered = false
+    }
+
+    /** Play/pause on the system PiP window. The icon follows [player]. */
+    private fun pipPlayPauseAction(): RemoteAction? {
+        val exo = player ?: return null
+        val playing = exo.isPlaying
+        val title = getString(
+            if (playing) {
+                androidx.media3.ui.R.string.exo_controls_pause_description
+            } else {
+                androidx.media3.ui.R.string.exo_controls_play_description
+            },
+        )
+        val icon = Icon.createWithResource(
+            this,
+            if (playing) {
+                androidx.media3.ui.R.drawable.exo_icon_pause
+            } else {
+                androidx.media3.ui.R.drawable.exo_icon_play
+            },
+        )
+        val pending = PendingIntent.getBroadcast(
+            this,
+            0,
+            Intent(ACTION_PIP_PLAY_PAUSE).setPackage(packageName),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+        return RemoteAction(icon, title, title, pending)
     }
 
     override fun onConfigurationChanged(newConfig: Configuration) {
@@ -429,6 +507,7 @@ class VideoPlayerActivity : AppCompatActivity() {
 
         private const val CONTROLLER_TIMEOUT_MS = 2_800
         private const val SKIP_MS = 10_000L
+        private const val ACTION_PIP_PLAY_PAUSE = "com.hippo.ehviewer.action.PIP_PLAY_PAUSE"
 
         fun intent(
             context: Context,
