@@ -15,7 +15,8 @@ import kotlin.math.abs
 
 /**
  * Stock [PlayerView] plus surface gestures: tap toggles chrome, double-tap play/pause,
- * horizontal drag seeks (rate-limited). Touches on the visible bottom bar go to Media3.
+ * horizontal drag seeks (rate-limited, one minute per screen width). Touches on the
+ * visible bottom bar go to Media3.
  *
  * Media3's built-in chrome animation slides the bottom bar; we disable it and fade alpha
  * instead. Auto-hide is also owned here so the fade path is used (Media3's timeout would
@@ -212,9 +213,8 @@ class SeekPlayerView @JvmOverloads constructor(
                 }
                 val duration = current.duration
                 if (duration <= 0L || duration == C.TIME_UNSET) return true
-                val window = minOf(duration, MAX_DRAG_WINDOW_MS)
                 val target = (
-                    seekStartMs + (totalX / width.coerceAtLeast(1).toFloat() * window).toLong()
+                    seekStartMs + scrubSeekDeltaMs(totalX, width, duration)
                     ).coerceIn(0L, duration)
                 dispatchSeek(current, target)
                 return true
@@ -273,8 +273,25 @@ class SeekPlayerView @JvmOverloads constructor(
     }
 
     companion object {
-        private const val MAX_DRAG_WINDOW_MS = 10L * 60L * 1000L
         private const val SCRUB_INTERVAL_MS = 120L
         private const val FADE_MS = 200L
     }
 }
+
+/**
+ * Horizontal scrub distance mapped to a seek delta.
+ * A full screen width moves at most [SCRUB_WINDOW_MS], so a short drag does not jump minutes.
+ */
+internal fun scrubSeekDeltaMs(
+    dragXPx: Float,
+    viewWidthPx: Int,
+    durationMs: Long,
+    maxWindowMs: Long = SCRUB_WINDOW_MS,
+): Long {
+    if (durationMs <= 0L || viewWidthPx <= 0) return 0L
+    val window = minOf(durationMs, maxWindowMs)
+    return (dragXPx / viewWidthPx.toFloat() * window).toLong()
+}
+
+/** One full-width drag. Was 10 minutes, which made a small movement jump by a large step. */
+internal const val SCRUB_WINDOW_MS = 60L * 1000L

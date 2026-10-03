@@ -145,6 +145,19 @@ class VideoPlayerActivity : AppCompatActivity() {
     private fun bindControls() {
         findViewById<ImageButton>(R.id.video_previous).setOnClickListener { moveInPlaylist(-1) }
         findViewById<ImageButton>(R.id.video_next).setOnClickListener { moveInPlaylist(1) }
+        findViewById<ImageButton>(R.id.video_rewind).setOnClickListener { seekBy(-SKIP_MS) }
+        findViewById<ImageButton>(R.id.video_forward).setOnClickListener { seekBy(SKIP_MS) }
+    }
+
+    private fun seekBy(deltaMs: Long) {
+        val exo = player ?: return
+        val duration = exo.duration
+        val target = if (duration > 0L && duration != C.TIME_UNSET) {
+            (exo.currentPosition + deltaMs).coerceIn(0L, duration)
+        } else {
+            (exo.currentPosition + deltaMs).coerceAtLeast(0L)
+        }
+        exo.seekTo(target)
     }
 
     private fun moveInPlaylist(delta: Int) {
@@ -327,6 +340,7 @@ class VideoPlayerActivity : AppCompatActivity() {
         const val EXTRA_PLAYLIST_INDEX = "playlist_index"
 
         private const val CONTROLLER_TIMEOUT_MS = 2_800
+        private const val SKIP_MS = 10_000L
 
         fun intent(
             context: Context,
