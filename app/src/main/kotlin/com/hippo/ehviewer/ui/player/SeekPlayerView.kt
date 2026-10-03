@@ -11,6 +11,7 @@ import android.view.ViewGroup
 import android.widget.PopupWindow
 import androidx.media3.common.C
 import androidx.media3.common.Player
+import androidx.media3.common.Tracks
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.ui.PlayerView
 import com.hippo.ehviewer.R
@@ -67,6 +68,11 @@ class SeekPlayerView @JvmOverloads constructor(
         override fun onPlaybackStateChanged(playbackState: Int) {
             onPlaybackUiChanged()
         }
+
+        override fun onTracksChanged(tracks: Tracks) {
+            updateAudioTrackButton()
+            post { updateAudioTrackButton() }
+        }
     }
 
     init {
@@ -109,6 +115,28 @@ class SeekPlayerView @JvmOverloads constructor(
         super.setPlayer(player)
         player?.addListener(playbackListener)
         onPlaybackUiChanged()
+        updateAudioTrackButton()
+        post { updateAudioTrackButton() }
+    }
+
+    /** One supported audio track has nothing to pick. Leave the button visible and grey. */
+    private fun updateAudioTrackButton() {
+        val button = findViewById<View>(androidx.media3.ui.R.id.exo_audio_track) ?: return
+        val tracks = player?.currentTracks
+        var count = 0
+        if (tracks != null) {
+            for (group in tracks.groups) {
+                if (group.type != C.TRACK_TYPE_AUDIO) continue
+                for (index in 0 until group.length) {
+                    if (group.isTrackSupported(index)) count++
+                }
+            }
+        }
+        if (count == 0) return
+        val enabled = count > 1
+        button.visibility = VISIBLE
+        button.isEnabled = enabled
+        button.alpha = if (enabled) 1f else 0.35f
     }
 
     override fun showController() {

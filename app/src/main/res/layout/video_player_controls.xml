@@ -101,16 +101,6 @@
                     android:orientation="horizontal">
 
                     <ImageButton
-                        android:id="@+id/video_previous"
-                        android:layout_width="48dp"
-                        android:layout_height="48dp"
-                        android:background="?attr/selectableItemBackgroundBorderless"
-                        android:contentDescription="@string/exo_controls_previous_description"
-                        android:padding="12dp"
-                        android:src="@drawable/ic_video_previous"
-                        android:tint="@android:color/white" />
-
-                    <ImageButton
                         android:id="@+id/video_rewind"
                         android:layout_width="48dp"
                         android:layout_height="48dp"
@@ -118,6 +108,16 @@
                         android:contentDescription="@string/exo_controls_rewind_description"
                         android:padding="12dp"
                         android:src="@drawable/ic_video_rewind"
+                        android:tint="@android:color/white" />
+                    
+                    <ImageButton
+                        android:id="@+id/video_previous"
+                        android:layout_width="48dp"
+                        android:layout_height="48dp"
+                        android:background="?attr/selectableItemBackgroundBorderless"
+                        android:contentDescription="@string/exo_controls_previous_description"
+                        android:padding="12dp"
+                        android:src="@drawable/ic_video_previous"
                         android:tint="@android:color/white" />
 
                     <ImageButton
@@ -131,6 +131,16 @@
                         android:tint="@android:color/white" />
 
                     <ImageButton
+                        android:id="@+id/video_next"
+                        android:layout_width="48dp"
+                        android:layout_height="48dp"
+                        android:background="?attr/selectableItemBackgroundBorderless"
+                        android:contentDescription="@string/exo_controls_next_description"
+                        android:padding="12dp"
+                        android:src="@drawable/ic_video_next"
+                        android:tint="@android:color/white" />
+                    
+                    <ImageButton
                         android:id="@+id/video_forward"
                         android:layout_width="48dp"
                         android:layout_height="48dp"
@@ -140,15 +150,6 @@
                         android:src="@drawable/ic_video_fastforward"
                         android:tint="@android:color/white" />
 
-                    <ImageButton
-                        android:id="@+id/video_next"
-                        android:layout_width="48dp"
-                        android:layout_height="48dp"
-                        android:background="?attr/selectableItemBackgroundBorderless"
-                        android:contentDescription="@string/exo_controls_next_description"
-                        android:padding="12dp"
-                        android:src="@drawable/ic_video_next"
-                        android:tint="@android:color/white" />
 
                 </LinearLayout>
 

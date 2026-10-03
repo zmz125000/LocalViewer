@@ -785,6 +785,21 @@ object Settings : DataStorePreferences(null) {
      */
     val videoRotateWithVideo = boolPref("video_rotate_with_video", true)
 
+    /** Seek only when the video is longer than 3 minutes. */
+    const val MEDIA3_RESUME_AUTO = 0
+
+    /** Always seek to the saved position. */
+    const val MEDIA3_RESUME_ON = 1
+
+    /** Start at the beginning. */
+    const val MEDIA3_RESUME_OFF = 2
+
+    /**
+     * In-app player position restore. [MEDIA3_RESUME_AUTO] seeks only when the
+     * video is longer than 3 minutes. [MEDIA3_RESUME_ON] always. [MEDIA3_RESUME_OFF] starts at 0.
+     */
+    val media3PlaybackResume = intPref("media3_playback_resume", MEDIA3_RESUME_AUTO)
+
     /**
      * Coil decode size vs shorter screen edge:
      * 0=1.5x, 1=2x, 2=2.5x, 3=3x, 4=original

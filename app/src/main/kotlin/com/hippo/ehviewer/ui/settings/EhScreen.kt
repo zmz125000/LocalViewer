@@ -212,6 +212,25 @@ fun AnimatedVisibilityScope.EhScreen(navigator: DestinationsNavigator) = Screen(
                 title = stringResource(id = R.string.settings_use_media3_player),
                 state = Settings.useMedia3Player.asMutableState(),
             )
+            var playbackResume by Settings.media3PlaybackResume.asMutableState()
+            val playbackResumeEntries = listOf(
+                stringResource(id = R.string.settings_media3_playback_resume_auto),
+                stringResource(id = R.string.settings_media3_playback_resume_on),
+                stringResource(id = R.string.settings_media3_playback_resume_off),
+            )
+            Preference(
+                title = stringResource(id = R.string.settings_media3_playback_resume),
+                summary = playbackResumeEntries.getOrElse(playbackResume) { playbackResumeEntries.first() },
+            ) {
+                launchIO {
+                    val index = awaitSelectItem(
+                        items = playbackResumeEntries,
+                        title = R.string.settings_media3_playback_resume,
+                        selected = playbackResume.coerceIn(0, playbackResumeEntries.lastIndex),
+                    )
+                    playbackResume = index
+                }
+            }
             var defaultVideoPlayer by Settings.defaultVideoPlayerComponent.asMutableState()
             val alwaysAsk = stringResource(id = R.string.settings_default_video_player_always_ask)
             val noVideoApps = stringResource(id = R.string.settings_default_video_player_none)

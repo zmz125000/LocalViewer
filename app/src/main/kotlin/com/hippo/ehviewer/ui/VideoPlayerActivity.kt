@@ -18,10 +18,10 @@ import android.util.Rational
 import android.view.View
 import android.view.WindowManager
 import android.widget.ImageButton
-import androidx.core.content.ContextCompat
 import androidx.activity.SystemBarStyle
 import androidx.activity.enableEdgeToEdge
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
@@ -38,14 +38,17 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import com.ehviewer.core.util.logcat
+import com.hippo.ehviewer.EhDB
 import com.hippo.ehviewer.R
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.provider.StreamDocumentProvider
 import com.hippo.ehviewer.provider.StreamDocumentRegistry
 import com.hippo.ehviewer.ui.player.InternalVideoPlaylistRegistry
+import com.hippo.ehviewer.ui.player.InternalVideoSource
 import com.hippo.ehviewer.ui.player.PreparedInternalVideo
 import com.hippo.ehviewer.ui.player.SeekPlayerView
 import com.hippo.ehviewer.ui.player.StreamDocDataSource
+import com.hippo.ehviewer.ui.player.progressGid
 import com.hippo.ehviewer.util.setHdrColorMode
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
@@ -68,6 +71,17 @@ class VideoPlayerActivity : AppCompatActivity() {
     private var rotateWithVideo = true
     private var lastVideoSize: VideoSize = VideoSize.UNKNOWN
     private var pipControlRegistered = false
+
+    /** Gallery id of the file currently loaded. Same row as reader progress. */
+    private var progressGid = 0L
+
+    /** Non-zero until duration is known and the saved position has been applied. */
+    private var pendingResumeGid = 0L
+
+    private val progressSaveRunnable = Runnable {
+        savePlaybackProgress()
+        if (player?.isPlaying == true) scheduleProgressSave()
+    }
 
     private val pipControlReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
@@ -132,12 +146,18 @@ class VideoPlayerActivity : AppCompatActivity() {
         }
         val oldToken = streamToken
         val oldPlaylist = playlistSessionId
+        val nextSession = intent.getStringExtra(EXTRA_PLAYLIST_SESSION)
+        val nextIndex = intent.getIntExtra(EXTRA_PLAYLIST_INDEX, 0)
+        val nextSource = InternalVideoPlaylistRegistry.get(nextSession)?.items?.getOrNull(nextIndex)
+        savePlaybackProgress()
         try {
             playPrepared(
                 uri = playUri,
                 title = title,
                 mimeType = mimeType,
                 network = networkToken != null,
+                holdForResume = nextSource != null &&
+                    Settings.media3PlaybackResume.value != Settings.MEDIA3_RESUME_OFF,
             )
         } catch (e: Throwable) {
             logcat("VideoPlayer", e)
@@ -145,8 +165,9 @@ class VideoPlayerActivity : AppCompatActivity() {
             return oldToken != null
         }
         streamToken = token
-        playlistSessionId = intent.getStringExtra(EXTRA_PLAYLIST_SESSION)
-        playlistIndex = intent.getIntExtra(EXTRA_PLAYLIST_INDEX, 0)
+        playlistSessionId = nextSession
+        playlistIndex = nextIndex
+        armResume(nextSource)
         if (oldToken != null && oldToken != token) StreamDocumentRegistry.remove(oldToken)
         if (replacePlaylist && oldPlaylist != null && oldPlaylist != playlistSessionId) {
             InternalVideoPlaylistRegistry.remove(oldPlaylist)
@@ -157,10 +178,13 @@ class VideoPlayerActivity : AppCompatActivity() {
 
     override fun onStart() {
         super.onStart()
-        player?.playWhenReady = true
+        // Resume seeks once duration is known. Starting here would play from 0 first.
+        if (pendingResumeGid == 0L) player?.playWhenReady = true
     }
 
     override fun onStop() {
+        playerView?.removeCallbacks(progressSaveRunnable)
+        savePlaybackProgress()
         // PiP stays started. Pausing here would freeze the small window.
         if (!isInPictureInPictureMode) player?.playWhenReady = false
         super.onStop()
@@ -247,9 +271,10 @@ class VideoPlayerActivity : AppCompatActivity() {
         val source = session.items.getOrNull(target) ?: return
         changingItem = true
         updatePlaylistButtons()
+        savePlaybackProgress()
         lifecycleScope.launch {
             try {
-                switchToPrepared(target, OpenFileExternally.prepareInternalVideo(source))
+                switchToPrepared(target, source, OpenFileExternally.prepareInternalVideo(source))
                 // Next/prev (and end-of-file auto-next) skips browse open — record here.
                 // Parent browse-dir pin is bumped inside putHistoryInfo.
                 OpenFileExternally.recordVideoPlaybackHistory(source)
@@ -264,7 +289,7 @@ class VideoPlayerActivity : AppCompatActivity() {
         }
     }
 
-    private fun switchToPrepared(index: Int, prepared: PreparedInternalVideo) {
+    private fun switchToPrepared(index: Int, source: InternalVideoSource, prepared: PreparedInternalVideo) {
         val oldToken = streamToken
         val playUri = if (prepared.network) {
             StreamDocDataSource.uriFor(prepared.token)
@@ -277,6 +302,7 @@ class VideoPlayerActivity : AppCompatActivity() {
                 title = prepared.displayName,
                 mimeType = prepared.mimeType,
                 network = prepared.network,
+                holdForResume = Settings.media3PlaybackResume.value != Settings.MEDIA3_RESUME_OFF,
             )
         } catch (e: Throwable) {
             StreamDocumentRegistry.remove(prepared.token)
@@ -285,6 +311,7 @@ class VideoPlayerActivity : AppCompatActivity() {
         streamToken = prepared.token
         playlistIndex = index
         if (oldToken != prepared.token) oldToken?.let(StreamDocumentRegistry::remove)
+        armResume(source)
     }
 
     private fun playPrepared(
@@ -292,7 +319,12 @@ class VideoPlayerActivity : AppCompatActivity() {
         title: String?,
         mimeType: String?,
         network: Boolean,
+        holdForResume: Boolean,
     ) {
+        // Drop the previous file's id before prepare callbacks, so a reset position
+        // is not written over the progress just saved for that file.
+        progressGid = 0L
+        pendingResumeGid = 0L
         val mediaItem = MediaItem.Builder()
             .setUri(uri)
             .apply {
@@ -306,7 +338,7 @@ class VideoPlayerActivity : AppCompatActivity() {
         player?.takeIf { playerUsesNetworkSource == network }?.let { existing ->
             existing.setMediaItem(mediaItem)
             existing.prepare()
-            existing.playWhenReady = true
+            existing.playWhenReady = !holdForResume
             return
         }
 
@@ -346,9 +378,16 @@ class VideoPlayerActivity : AppCompatActivity() {
 
                 override fun onIsPlayingChanged(isPlaying: Boolean) {
                     updatePipParams()
+                    if (isPlaying) {
+                        scheduleProgressSave()
+                    } else {
+                        playerView?.removeCallbacks(progressSaveRunnable)
+                        savePlaybackProgress()
+                    }
                 }
 
                 override fun onPlaybackStateChanged(playbackState: Int) {
+                    if (playbackState == Player.STATE_READY) tryResume()
                     if (playbackState == Player.STATE_ENDED) moveInPlaylist(1)
                     updatePipParams()
                 }
@@ -363,7 +402,7 @@ class VideoPlayerActivity : AppCompatActivity() {
             playerUsesNetworkSource = network
             playerView?.player = exo
             exo.prepare()
-            exo.playWhenReady = true
+            exo.playWhenReady = !holdForResume
         } catch (e: Throwable) {
             if (player === exo) {
                 player = null
@@ -385,6 +424,82 @@ class VideoPlayerActivity : AppCompatActivity() {
             else -> ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
         }
         if (requestedOrientation != target) requestedOrientation = target
+    }
+
+    private fun currentSource(): InternalVideoSource? = InternalVideoPlaylistRegistry.get(playlistSessionId)?.items?.getOrNull(playlistIndex)
+
+    private fun armResume(source: InternalVideoSource?) {
+        val gid = source?.progressGid() ?: 0L
+        progressGid = gid
+        pendingResumeGid = if (
+            gid != 0L && Settings.media3PlaybackResume.value != Settings.MEDIA3_RESUME_OFF
+        ) {
+            gid
+        } else {
+            0L
+        }
+        tryResume()
+    }
+
+    private fun tryResume() {
+        val gid = pendingResumeGid
+        if (gid == 0L) return
+        val exo = player ?: return
+        val duration = exo.duration
+        if (duration <= 0L || duration == C.TIME_UNSET) {
+            if (exo.playbackState == Player.STATE_READY) {
+                pendingResumeGid = 0L
+                exo.playWhenReady = true
+            }
+            return
+        }
+        val mode = Settings.media3PlaybackResume.value
+        pendingResumeGid = 0L
+        val autoSkip = mode == Settings.MEDIA3_RESUME_AUTO && duration <= RESUME_AUTO_MIN_MS
+        if (mode == Settings.MEDIA3_RESUME_OFF || autoSkip) {
+            exo.playWhenReady = true
+            return
+        }
+        lifecycleScope.launch {
+            val saved = runCatching { EhDB.getReadProgress(gid) }.getOrDefault(0).toLong()
+            if (progressGid == gid && saved >= 1_000L && saved < duration - RESUME_END_MARGIN_MS) {
+                player?.seekTo(saved)
+            }
+            if (progressGid == gid) player?.playWhenReady = true
+        }
+    }
+
+    private fun scheduleProgressSave() {
+        val view = playerView ?: return
+        view.removeCallbacks(progressSaveRunnable)
+        view.postDelayed(progressSaveRunnable, PROGRESS_SAVE_INTERVAL_MS)
+    }
+
+    /** Writes the playhead into the same progress row the reader uses for this file. */
+    private fun savePlaybackProgress() {
+        val gid = progressGid
+        if (gid == 0L || pendingResumeGid == gid) return
+        val exo = player ?: return
+        val page = storedPositionMs(exo)
+        val source = currentSource()
+        lifecycleScope.launch {
+            runCatching {
+                if (source != null && EhDB.loadGalleryInfo(gid) == null) {
+                    OpenFileExternally.recordVideoPlaybackHistory(source)
+                }
+                EhDB.putReadProgress(gid, page)
+            }
+        }
+    }
+
+    private fun storedPositionMs(exo: Player): Int {
+        val position = exo.currentPosition
+        if (position < 1_000L) return 0
+        val duration = exo.duration
+        if (duration > 0L && duration != C.TIME_UNSET && position >= duration - RESUME_END_MARGIN_MS) {
+            return 0
+        }
+        return position.coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
     }
 
     private fun enterPip() {
@@ -507,6 +622,9 @@ class VideoPlayerActivity : AppCompatActivity() {
 
         private const val CONTROLLER_TIMEOUT_MS = 2_800
         private const val SKIP_MS = 10_000L
+        private const val PROGRESS_SAVE_INTERVAL_MS = 5_000L
+        private const val RESUME_AUTO_MIN_MS = 3 * 60 * 1000L
+        private const val RESUME_END_MARGIN_MS = 3_000L
         private const val ACTION_PIP_PLAY_PAUSE = "com.hippo.ehviewer.action.PIP_PLAY_PAUSE"
 
         fun intent(
