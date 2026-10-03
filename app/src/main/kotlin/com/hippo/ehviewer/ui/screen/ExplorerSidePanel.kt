@@ -154,7 +154,7 @@ private val WindowMaxHeight = 480.dp
 private val ExplorerListIconSize = 20.dp
 private val ExplorerListIconSizeTablet = 26.dp
 private val ExplorerGridIconSize = 32.dp
-private val ExplorerGridIconSizeTablet = 52.dp
+private val ExplorerGridIconSizeTablet = 32.dp
 private val LocalExplorerTablet = compositionLocalOf { false }
 private val LocalExplorerActionColor = compositionLocalOf<Color?> { null }
 private val PanelMargin = 16.dp
@@ -283,8 +283,8 @@ fun ExplorerSidePanelHost(
         val windowWidth = when {
             phonePortrait -> minOf(maxWidth - 16.dp, WindowMaxWidth) * 0.9f
             phoneLandscape -> screenW * 0.5f
-            layout.columns == 3 -> screenW / 3f
-            else -> screenW * 2f / 3f
+            layout.columns == 3 -> screenW * 2f / 5f
+            else -> screenW * 0.5f
         }.let { width ->
             if (phoneLandscape) width else width.coerceIn(0.dp, widthCap)
         }
@@ -344,7 +344,7 @@ fun ExplorerSidePanelHost(
             val darkPage = page.luminance() < 0.5f
             val lifted = MaterialTheme.colorScheme.surfaceContainerHighest
             val panelColor = when {
-                !darkPage -> MaterialTheme.colorScheme.surfaceContainerHigh
+                !darkPage -> MaterialTheme.colorScheme.surfaceContainer
                 lifted.luminance() - page.luminance() < 0.06f -> Color(0xFF424242)
                 else -> lifted
             }
@@ -740,7 +740,9 @@ private fun ExplorerFavoritesGrid(
         resolveFavoriteBrowseSources(roots, smb, webDav, visibleGalleries, favoriteKeys)
     }
     val thumbColumns by Settings.thumbColumns.collectAsState()
-    val columnCount = thumbColumns.coerceIn(1, 10)
+    val columnCount = thumbColumns.coerceIn(1, 10).let { columns ->
+        if (tablet) (columns - 1).coerceAtLeast(1) else columns
+    }
     val iconSize = if (tablet) ExplorerGridIconSizeTablet else ExplorerGridIconSize
     val labelStyle = MaterialTheme.typography.labelMedium
     val gridState = remember { LazyGridState() }
@@ -858,6 +860,8 @@ private fun ExplorerPathRow(
 ) {
     val tablet = LocalExplorerTablet.current
     val darkPage = MaterialTheme.colorScheme.background.luminance() < 0.5f
+    val rowHorizontal = if (tablet) 12.dp else 8.dp
+    val rowStart = if (tablet) PanelMargin else 8.dp
     val activeColor = if (darkPage) {
         MaterialTheme.colorScheme.outlineVariant
     } else {
@@ -870,13 +874,13 @@ private fun ExplorerPathRow(
     }
     Row(
         modifier = modifier
-            .padding(horizontal = 12.dp, vertical = 2.dp)
+            .padding(horizontal = rowHorizontal, vertical = 2.dp)
             .fillMaxWidth()
-            .heightIn(min = if (tablet) 64.dp else 56.dp)
-            .clip(ShapeDefaults.ExtraLarge)
+            .heightIn(min = if (tablet) 64.dp else 48.dp)
+            .clip(ShapeDefaults.Medium)
             .background(if (active) activeColor else Color.Transparent)
             .combinedClickable(onClick = onClick, onLongClick = onLongClick)
-            .padding(start = PanelMargin, end = 4.dp),
+            .padding(start = rowStart, end = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Icon(
