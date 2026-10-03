@@ -1,11 +1,16 @@
 package com.hippo.ehviewer.ui
 
+import android.app.PictureInPictureParams
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ActivityInfo
+import android.content.pm.PackageManager
 import android.content.res.Configuration
+import android.graphics.Rect
 import android.net.Uri
 import android.os.Bundle
+import android.util.Rational
+import android.view.View
 import android.view.WindowManager
 import android.widget.ImageButton
 import androidx.activity.SystemBarStyle
@@ -27,6 +32,7 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import com.ehviewer.core.util.logcat
 import com.hippo.ehviewer.R
+import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.provider.StreamDocumentProvider
 import com.hippo.ehviewer.provider.StreamDocumentRegistry
 import com.hippo.ehviewer.ui.player.InternalVideoPlaylistRegistry
@@ -52,6 +58,8 @@ class VideoPlayerActivity : AppCompatActivity() {
     private var playlistSessionId: String? = null
     private var playlistIndex: Int = 0
     private var changingItem = false
+    private var rotateWithVideo = true
+    private var lastVideoSize: VideoSize = VideoSize.UNKNOWN
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -128,8 +136,23 @@ class VideoPlayerActivity : AppCompatActivity() {
     }
 
     override fun onStop() {
-        player?.playWhenReady = false
+        // PiP stays started. Pausing here would freeze the small window.
+        if (!isInPictureInPictureMode) player?.playWhenReady = false
         super.onStop()
+    }
+
+    override fun onPictureInPictureModeChanged(
+        isInPictureInPictureMode: Boolean,
+        newConfig: Configuration,
+    ) {
+        super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
+        if (isInPictureInPictureMode) {
+            playerView?.hideController()
+        } else {
+            hideSystemBars()
+            applySystemOrientationForVideo(lastVideoSize)
+        }
+        updatePipParams()
     }
 
     override fun onDestroy() {
@@ -147,6 +170,31 @@ class VideoPlayerActivity : AppCompatActivity() {
         findViewById<ImageButton>(R.id.video_next).setOnClickListener { moveInPlaylist(1) }
         findViewById<ImageButton>(R.id.video_rewind).setOnClickListener { seekBy(-SKIP_MS) }
         findViewById<ImageButton>(R.id.video_forward).setOnClickListener { seekBy(SKIP_MS) }
+        rotateWithVideo = Settings.videoRotateWithVideo.value
+        findViewById<ImageButton>(R.id.video_rotate).setOnClickListener { toggleRotateWithVideo() }
+        refreshRotateButton()
+        val pip = findViewById<ImageButton>(R.id.video_pip)
+        val pipAvailable = packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)
+        pip.visibility = if (pipAvailable) View.VISIBLE else View.GONE
+        pip.setOnClickListener { enterPip() }
+    }
+
+    private fun toggleRotateWithVideo() {
+        rotateWithVideo = !rotateWithVideo
+        Settings.videoRotateWithVideo.value = rotateWithVideo
+        refreshRotateButton()
+        if (rotateWithVideo) {
+            applySystemOrientationForVideo(lastVideoSize)
+        } else {
+            requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+        }
+    }
+
+    private fun refreshRotateButton() {
+        findViewById<ImageButton>(R.id.video_rotate).apply {
+            isSelected = rotateWithVideo
+            alpha = if (rotateWithVideo) 1f else 0.4f
+        }
     }
 
     private fun seekBy(deltaMs: Long) {
@@ -259,11 +307,18 @@ class VideoPlayerActivity : AppCompatActivity() {
         exo.addListener(
             object : Player.Listener {
                 override fun onVideoSizeChanged(videoSize: VideoSize) {
+                    lastVideoSize = videoSize
                     applySystemOrientationForVideo(videoSize)
+                    updatePipParams()
+                }
+
+                override fun onIsPlayingChanged(isPlaying: Boolean) {
+                    updatePipParams()
                 }
 
                 override fun onPlaybackStateChanged(playbackState: Int) {
                     if (playbackState == Player.STATE_ENDED) moveInPlaylist(1)
+                    updatePipParams()
                 }
 
                 override fun onPlayerError(error: PlaybackException) {
@@ -289,6 +344,7 @@ class VideoPlayerActivity : AppCompatActivity() {
     }
 
     private fun applySystemOrientationForVideo(videoSize: VideoSize) {
+        if (!rotateWithVideo || isInPictureInPictureMode) return
         if (videoSize.width <= 0 || videoSize.height <= 0) return
         // Media3 applies rotation internally; width/height are already display size.
         val target = when {
@@ -297,6 +353,38 @@ class VideoPlayerActivity : AppCompatActivity() {
             else -> ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
         }
         if (requestedOrientation != target) requestedOrientation = target
+    }
+
+    private fun enterPip() {
+        if (isInPictureInPictureMode) return
+        if (!packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)) return
+        val params = pipParams(autoEnter = false) ?: return
+        enterPictureInPictureMode(params)
+    }
+
+    /** Home leaves a playing video in the system PiP window. Paused playback does not. */
+    private fun updatePipParams() {
+        val params = pipParams(autoEnter = player?.isPlaying == true) ?: return
+        runCatching { setPictureInPictureParams(params) }
+    }
+
+    private fun pipParams(autoEnter: Boolean): PictureInPictureParams? {
+        val fraction = pipAspectFraction(
+            lastVideoSize.width,
+            lastVideoSize.height,
+            lastVideoSize.pixelWidthHeightRatio,
+        )
+        val builder = PictureInPictureParams.Builder()
+            .setAutoEnterEnabled(autoEnter)
+        if (fraction != null) {
+            builder.setAspectRatio(Rational(fraction.first, fraction.second))
+        }
+        val view = playerView
+        if (view != null) {
+            val rect = Rect()
+            if (view.getGlobalVisibleRect(rect) && !rect.isEmpty) builder.setSourceRectHint(rect)
+        }
+        return runCatching { builder.build() }.getOrNull()
     }
 
     override fun onConfigurationChanged(newConfig: Configuration) {
@@ -362,3 +450,21 @@ class VideoPlayerActivity : AppCompatActivity() {
         }
     }
 }
+
+/**
+ * Android rejects a PiP aspect outside about 1:2.39 … 2.39:1.
+ * Returns numerator to 10_000, or null when the video size is unknown.
+ */
+internal fun pipAspectFraction(width: Int, height: Int, pixelWidthHeightRatio: Float): Pair<Int, Int>? {
+    if (width <= 0 || height <= 0) return null
+    val raw = width * pixelWidthHeightRatio / height.toFloat()
+    if (!raw.isFinite() || raw <= 0f) return null
+    val clamped = raw.coerceIn(PIP_ASPECT_MIN, PIP_ASPECT_MAX)
+    return (clamped * 10_000f).toInt().coerceAtLeast(1) to 10_000
+}
+
+/** Inside the platform limit so [android.util.Rational] is accepted. */
+internal const val PIP_ASPECT_MIN = 0.42f
+
+/** Inside the platform limit so [android.util.Rational] is accepted. */
+internal const val PIP_ASPECT_MAX = 2.38f

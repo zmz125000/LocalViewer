@@ -780,6 +780,12 @@ object Settings : DataStorePreferences(null) {
     val autoRotateMode = intPref("pref_auto_rotate_mode", 0)
 
     /**
+     * In-app video player: turn the screen to match the video (landscape video to landscape).
+     * Default on, which is the previous always-on behavior. The player button toggles this.
+     */
+    val videoRotateWithVideo = boolPref("video_rotate_with_video", true)
+
+    /**
      * Coil decode size vs shorter screen edge:
      * 0=1.5x, 1=2x, 2=2.5x, 3=3x, 4=original
      * ([eu.kanade.tachiyomi.ui.reader.setting.DecodeSizeType]). Default 1.5x.

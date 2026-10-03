@@ -155,19 +155,30 @@ class SeekPlayerView @JvmOverloads constructor(
     }
 
     /**
-     * Give the transport cluster a matching gap on the right when the row can hold
-     * track buttons + cluster + the same gap. Otherwise drop the gap so the buttons fit.
+     * Pad the narrower of the track buttons and the rotate/PiP buttons so the transport
+     * cluster stays centered. Drop the pad when the row cannot hold it.
      */
     private fun balanceTrackSpacer() {
         val tracks = findViewById<View>(R.id.video_track_buttons) ?: return
         val transport = findViewById<View>(R.id.video_transport) ?: return
-        val spacer = findViewById<View>(R.id.video_track_balance) ?: return
+        val actions = findViewById<View>(R.id.video_extra_buttons) ?: return
+        val start = findViewById<View>(R.id.video_balance_start) ?: return
+        val end = findViewById<View>(R.id.video_balance_end) ?: return
         val row = tracks.parent as? View ?: return
         if (tracks.width == 0 || transport.width == 0 || row.width == 0) return
         val available = row.width - row.paddingLeft - row.paddingRight
-        val want = if (available >= tracks.width * 2 + transport.width) tracks.width else 0
-        if (spacer.layoutParams.width == want) return
-        spacer.layoutParams = spacer.layoutParams.apply { width = want }
+        val diff = tracks.width - actions.width
+        val gap = abs(diff)
+        val fits = available >= tracks.width + actions.width + transport.width + gap
+        val startW = if (fits && diff < 0) -diff else 0
+        val endW = if (fits && diff > 0) diff else 0
+        if (start.layoutParams.width == startW && end.layoutParams.width == endW) return
+        if (start.layoutParams.width != startW) {
+            start.layoutParams = start.layoutParams.apply { width = startW }
+        }
+        if (end.layoutParams.width != endW) {
+            end.layoutParams = end.layoutParams.apply { width = endW }
+        }
     }
 
     private fun touchHitsTrackButton(event: MotionEvent): Boolean = trackButtonAt(event) != null
