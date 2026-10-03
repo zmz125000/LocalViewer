@@ -222,7 +222,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         EmptyArchiveRegistry.filterLocalEntries(entries)
     }
     val search = rememberBrowseFolderSearchState()
-    ExplorerGestureEnabled(!search.active)
+    ExplorerGestureEnabled(true)
     val searchFolderKey = stack.lastOrNull()?.path?.let { BrowseSession.localFolderSearchKey(it) }.orEmpty()
     var searchHits by remember(searchFolderKey) {
         mutableStateOf(BrowseSession.peekFolderSearchHits<BrowseEntry>(searchFolderKey))

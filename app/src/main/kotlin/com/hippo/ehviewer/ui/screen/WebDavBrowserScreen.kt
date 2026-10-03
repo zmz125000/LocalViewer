@@ -328,7 +328,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
         }
     }
     val search = rememberBrowseFolderSearchState()
-    ExplorerGestureEnabled(!search.active)
+    ExplorerGestureEnabled(true)
     val searchFolderKey = BrowseSession.webDavFolderSearchKey(sourceId, relativeDir)
     var searchHits by remember(searchFolderKey) {
         mutableStateOf(BrowseSession.peekFolderSearchHits<BrowseEntryRemote>(searchFolderKey))

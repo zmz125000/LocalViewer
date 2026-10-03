@@ -1030,7 +1030,7 @@ fun DrawerHandle(enabled: Boolean) {
     }
 }
 
-/** Swipe-left explorer panel. Off while a search field is focused or this screen opts out. */
+/** Swipe-left explorer panel. A screen can opt out by passing false. */
 @Composable
 fun ExplorerGestureEnabled(enabled: Boolean) {
     if (enabled) {
