@@ -7,10 +7,12 @@ import android.view.GestureDetector
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewConfiguration
+import android.view.ViewGroup
 import androidx.media3.common.C
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.ui.PlayerView
+import com.hippo.ehviewer.R
 import kotlin.math.abs
 
 /**
@@ -39,6 +41,9 @@ class SeekPlayerView @JvmOverloads constructor(
     private var controllerGesture = false
     private var shownOnThisTap = false
 
+    /** Track-popup taps must not start the auto-hide, or the window loses its anchor. */
+    private var holdChrome = false
+
     /** Caller-facing auto-hide timeout; Media3's own timer is kept at 0 (see [setControllerShowTimeoutMs]). */
     private var autoHideTimeoutMs = 0
     private var hiding = false
@@ -62,6 +67,19 @@ class SeekPlayerView @JvmOverloads constructor(
     init {
         // Media3's default chrome animation slides the bottom bar. Fade instead.
         setControllerAnimationEnabled(false)
+        // Stock layout lifts exo_progress by exo_styled_progress_margin_bottom (52dp) so it
+        // clears a separate bottom bar. That margin is reapplied on controller width changes.
+        // Our clocks sit beside the bar, so a non-zero margin stretches the row.
+        findViewById<View>(androidx.media3.ui.R.id.exo_progress)?.addOnLayoutChangeListener { v, _, _, _, _, _, _, _, _ ->
+            val lp = v.layoutParams as? ViewGroup.MarginLayoutParams ?: return@addOnLayoutChangeListener
+            if (lp.bottomMargin != 0) {
+                lp.bottomMargin = 0
+                v.layoutParams = lp
+            }
+        }
+        findViewById<View>(R.id.video_controls_buttons)?.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
+            balanceTrackSpacer()
+        }
     }
 
     private val controllerView: View?
@@ -129,9 +147,40 @@ class SeekPlayerView @JvmOverloads constructor(
 
     private fun scheduleAutoHide() {
         removeCallbacks(autoHideRunnable)
-        if (autoHideTimeoutMs <= 0 || hiding) return
+        if (holdChrome || autoHideTimeoutMs <= 0 || hiding) return
         if (!shouldAutoHide()) return
         postDelayed(autoHideRunnable, autoHideTimeoutMs.toLong())
+    }
+
+    /**
+     * Give the transport cluster a matching gap on the right when the row can hold
+     * track buttons + cluster + the same gap. Otherwise drop the gap so the buttons fit.
+     */
+    private fun balanceTrackSpacer() {
+        val tracks = findViewById<View>(R.id.video_track_buttons) ?: return
+        val transport = findViewById<View>(R.id.video_transport) ?: return
+        val spacer = findViewById<View>(R.id.video_track_balance) ?: return
+        val row = tracks.parent as? View ?: return
+        if (tracks.width == 0 || transport.width == 0 || row.width == 0) return
+        val available = row.width - row.paddingLeft - row.paddingRight
+        val want = if (available >= tracks.width * 2 + transport.width) tracks.width else 0
+        if (spacer.layoutParams.width == want) return
+        spacer.layoutParams = spacer.layoutParams.apply { width = want }
+    }
+
+    private fun touchHitsTrackButton(event: MotionEvent): Boolean {
+        val audio = findViewById<View>(androidx.media3.ui.R.id.exo_audio_track)
+        val subtitle = findViewById<View>(androidx.media3.ui.R.id.exo_subtitle)
+        return hitsView(audio, event) || hitsView(subtitle, event)
+    }
+
+    private fun hitsView(view: View?, event: MotionEvent): Boolean {
+        if (view == null || view.visibility != VISIBLE) return false
+        val loc = IntArray(2)
+        view.getLocationOnScreen(loc)
+        val x = event.rawX
+        val y = event.rawY
+        return x >= loc[0] && x < loc[0] + view.width && y >= loc[1] && y < loc[1] + view.height
     }
 
     /** Match Media3: keep chrome up while paused / idle / ended. */
@@ -232,6 +281,8 @@ class SeekPlayerView @JvmOverloads constructor(
             shownOnThisTap = false
             controllerGesture = isControllerFullyVisible &&
                 event.y >= height - 132f * resources.displayMetrics.density
+            // Subtitle / audio open a PopupWindow. Keep the bar up until some other touch.
+            holdChrome = controllerGesture && touchHitsTrackButton(event)
             if (controllerGesture) {
                 // User is interacting with the bar — defer auto-hide.
                 removeCallbacks(autoHideRunnable)
