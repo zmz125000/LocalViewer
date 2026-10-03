@@ -27,6 +27,13 @@ object NavTabWindows {
         ids.remove(tab)
     }
 
+    /** Drop [windowId] from every icon that was pointing at it. */
+    fun release(windowId: Long) {
+        Tab.entries.forEach { tab ->
+            if (ids[tab] == windowId) ids.remove(tab)
+        }
+    }
+
     fun id(tab: Tab): Long? = ids[tab]
 
     /** The remembered window, or null when the id is missing or that window was closed. */

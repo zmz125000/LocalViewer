@@ -631,14 +631,16 @@ private fun ExplorerWindowList(
         ) {
             fun closeListedWindow(id: Long) {
                 when (val result = ExplorerWindows.close(id)) {
-                    ExplorerWindows.CloseResult.Unchanged -> Unit
+                    ExplorerWindows.CloseResult.Unchanged -> NavTabWindows.release(id)
                     ExplorerWindows.CloseResult.NoneLeft -> {
+                        NavTabWindows.release(id)
                         if (viewingBrowser) {
-                            navigator.popBackStack()
+                            returnToNavTab(navigator, navTab)
                             onNavigated()
                         }
                     }
                     is ExplorerWindows.CloseResult.Switched -> {
+                        NavTabWindows.release(id)
                         if (viewingBrowser) {
                             bindOpenedWindow(navTab)
                             showWindow(
@@ -933,16 +935,26 @@ private fun showWindow(
     if (same && sameOrigin) return
     val replace = same && !sameOrigin
     with(navigator) {
+        val options: com.ramcosta.composedestinations.navigation.DestinationsNavOptionsBuilder.() -> Unit = {
+            when {
+                replace && window.kind == ExplorerWindows.Kind.Local ->
+                    popUpTo(FolderBrowserScreenDestination) { inclusive = true }
+                replace && window.kind == ExplorerWindows.Kind.Smb ->
+                    popUpTo(SmbBrowserScreenDestination) { inclusive = true }
+                replace && window.kind == ExplorerWindows.Kind.WebDav ->
+                    popUpTo(WebDavBrowserScreenDestination) { inclusive = true }
+                else -> popUpTo(LibraryScreenDestination) { saveState = false }
+            }
+            launchSingleTop = true
+        }
         when (window.kind) {
             ExplorerWindows.Kind.Local -> navigate(
                 FolderBrowserScreenDestination(
                     fromHistory = window.fromHistory,
                     fromLibrary = window.fromLibrary,
                 ),
-            ) {
-                if (replace) popUpTo(FolderBrowserScreenDestination) { inclusive = true }
-                launchSingleTop = true
-            }
+                builder = options,
+            )
             ExplorerWindows.Kind.Smb -> navigate(
                 SmbBrowserScreenDestination(
                     sourceId = window.sourceId,
@@ -950,10 +962,8 @@ private fun showWindow(
                     fromHistory = window.fromHistory,
                     fromLibrary = window.fromLibrary,
                 ),
-            ) {
-                if (replace) popUpTo(SmbBrowserScreenDestination) { inclusive = true }
-                launchSingleTop = true
-            }
+                builder = options,
+            )
             ExplorerWindows.Kind.WebDav -> navigate(
                 WebDavBrowserScreenDestination(
                     sourceId = window.sourceId,
@@ -961,11 +971,24 @@ private fun showWindow(
                     fromHistory = window.fromHistory,
                     fromLibrary = window.fromLibrary,
                 ),
-            ) {
-                if (replace) popUpTo(WebDavBrowserScreenDestination) { inclusive = true }
-                launchSingleTop = true
-            }
+                builder = options,
+            )
         }
+    }
+}
+
+/** Last window closed: leave every folder route and show the nav tab that opened them. */
+private fun returnToNavTab(navigator: DestinationsNavigator, tab: NavTabWindows.Tab?) {
+    val direction = when (tab) {
+        NavTabWindows.Tab.Browse -> BrowseScreenDestination
+        NavTabWindows.Tab.History -> HistoryScreenDestination
+        NavTabWindows.Tab.Library, null -> LibraryScreenDestination
+    }
+    if (navigator.popBackStack(direction, inclusive = false)) return
+    navigator.navigate(direction) {
+        popUpTo(LibraryScreenDestination) { saveState = false }
+        launchSingleTop = true
+        restoreState = false
     }
 }
 
