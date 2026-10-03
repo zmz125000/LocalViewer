@@ -312,6 +312,12 @@ private fun shouldShowMainNav(
     return false
 }
 
+private fun ownerTabOf(fromHistory: Boolean, fromLibrary: Boolean): NavTabWindows.Tab = when {
+    fromHistory -> NavTabWindows.Tab.History
+    fromLibrary -> NavTabWindows.Tab.Library
+    else -> NavTabWindows.Tab.Browse
+}
+
 private fun navTabOf(direction: Direction): NavTabWindows.Tab? = when (direction) {
     LibraryScreenDestination -> NavTabWindows.Tab.Library
     BrowseScreenDestination -> NavTabWindows.Tab.Browse
@@ -374,13 +380,21 @@ private fun recallNavWindow(
     }
     if (same) return
     with(navigator) {
+        // Replace whatever is above Library. Pushing the folder on top of Settings
+        // makes the next Settings tap restore that folder.
+        val options: com.ramcosta.composedestinations.navigation.DestinationsNavOptionsBuilder.() -> Unit = {
+            popUpTo(LibraryScreenDestination) { saveState = true }
+            launchSingleTop = true
+            restoreState = false
+        }
         when (shown.kind) {
             ExplorerWindows.Kind.Local -> navigate(
                 FolderBrowserScreenDestination(
                     fromHistory = shown.fromHistory,
                     fromLibrary = shown.fromLibrary,
                 ),
-            ) { launchSingleTop = true }
+                builder = options,
+            )
             ExplorerWindows.Kind.Smb -> navigate(
                 SmbBrowserScreenDestination(
                     sourceId = shown.sourceId,
@@ -388,7 +402,8 @@ private fun recallNavWindow(
                     fromHistory = shown.fromHistory,
                     fromLibrary = shown.fromLibrary,
                 ),
-            ) { launchSingleTop = true }
+                builder = options,
+            )
             ExplorerWindows.Kind.WebDav -> navigate(
                 WebDavBrowserScreenDestination(
                     sourceId = shown.sourceId,
@@ -396,45 +411,9 @@ private fun recallNavWindow(
                     fromHistory = shown.fromHistory,
                     fromLibrary = shown.fromLibrary,
                 ),
-            ) { launchSingleTop = true }
+                builder = options,
+            )
         }
-    }
-}
-
-private fun navigateMainTab(
-    navigator: DestinationsNavigator,
-    item: MainNavItem,
-    selectedTab: Direction?,
-    currentDestination: DestinationSpec?,
-) {
-    // Already on Library root: cycle Galleries ↔ Videos (same as the section header).
-    if (item.direction == LibraryScreenDestination &&
-        currentDestination == LibraryScreenDestination
-    ) {
-        toggleLibrarySection()
-        return
-    }
-    // Already on History root: cycle Media ↔ Documents (same as the section header).
-    if (item.direction == HistoryScreenDestination &&
-        currentDestination == HistoryScreenDestination
-    ) {
-        toggleHistorySection()
-        return
-    }
-    // Re-tap active tab (including while nested under it) → pop to that tab root.
-    if (selectedTab == item.direction) {
-        navigator.popBackStack(item.direction, inclusive = false)
-        return
-    }
-    // Same navigate pattern for every main tab (including Library). Using popBackStack only
-    // for Library forced the reverse (pop) transition while other tabs always used the
-    // forward enter animation — so left/right tab moves looked inconsistent.
-    navigator.navigate(item.direction) {
-        popUpTo(LibraryScreenDestination) {
-            saveState = true
-        }
-        launchSingleTop = true
-        restoreState = true
     }
 }
 
@@ -674,6 +653,11 @@ class MainActivity : AppCompatActivity() {
             }
             fun onMainNavClick(item: MainNavItem) {
                 val tab = navTabOf(item.direction)
+                if (isFolderNavDestination(currentDestination) && tab != ownerTabOf(fromHistoryArg, fromLibraryArg)) {
+                    ExplorerWindows.activeId?.let { id ->
+                        NavTabWindows.claim(ownerTabOf(fromHistoryArg, fromLibraryArg), id)
+                    }
+                }
                 if (tab != null) {
                     val savedId = NavTabWindows.id(tab)
                     val window = NavTabWindows.window(tab)
@@ -712,7 +696,14 @@ class MainActivity : AppCompatActivity() {
                     return
                 }
                 explorerPanel.close()
-                navigateMainTab(navigator, item, selectedTab, currentDestination)
+                // Settings is not a window tab. restoreState would bring back a folder
+                // that was left on top of Settings, and the folder's origin would keep
+                // Library selected.
+                if (selectedTab == item.direction) {
+                    navigator.popBackStack(item.direction, inclusive = false)
+                    return
+                }
+                showTabRoot(navigator, item.direction)
             }
             CompositionLocalProvider(
                 LocalExplorerPanel provides explorerPanel,
@@ -1041,7 +1032,7 @@ fun DrawerHandle(enabled: Boolean) {
     }
 }
 
-/** Swipe-left explorer panel. Off while a search field is focused or this screen opts out. */
+/** Swipe-left explorer panel. A screen can opt out by passing false. */
 @Composable
 fun ExplorerGestureEnabled(enabled: Boolean) {
     if (enabled) {
