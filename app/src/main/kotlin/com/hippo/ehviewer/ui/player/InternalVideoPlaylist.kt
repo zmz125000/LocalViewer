@@ -3,6 +3,7 @@ package com.hippo.ehviewer.ui.player
 import android.net.Uri
 import com.hippo.ehviewer.library.ZipPaths
 import com.hippo.ehviewer.library.mimeTypeForFileName
+import com.hippo.ehviewer.library.stableGalleryId
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 
@@ -31,6 +32,19 @@ sealed interface InternalVideoSource {
         override val identity: String get() = "dav:$sourceId:$remotePath"
     }
 }
+
+/**
+ * Same gallery id [com.hippo.ehviewer.library.LocalHistory] writes for this file,
+ * so playback position shares the reader progress row.
+ */
+fun InternalVideoSource.progressGid(): Long = when (this) {
+    is InternalVideoSource.Local -> stableGalleryId(0L, "local-file:$path")
+    is InternalVideoSource.Smb -> stableGalleryId(sourceId, "smbf:${progressRelative(remotePath)}")
+    is InternalVideoSource.WebDav -> stableGalleryId(sourceId, "davf:${progressRelative(remotePath)}")
+}
+
+/** Match LocalHistory path keys: trim slashes, drop a lone ".". */
+private fun progressRelative(path: String): String = path.trim('/').let { if (it == "." || it.isEmpty()) "" else it }
 
 data class PreparedInternalVideo(
     val token: String,

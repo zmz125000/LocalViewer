@@ -422,4 +422,16 @@
         <item>1</item>
         <item>2</item>
     </integer-array>
+
+    <string-array name="media3_playback_resume_entries" translatable="false">
+        <item>@string/settings_media3_playback_resume_auto</item>
+        <item>@string/settings_media3_playback_resume_on</item>
+        <item>@string/settings_media3_playback_resume_off</item>
+    </string-array>
+
+    <integer-array name="media3_playback_resume_values" translatable="false">
+        <item>0</item>
+        <item>1</item>
+        <item>2</item>
+    </integer-array>
 </resources>

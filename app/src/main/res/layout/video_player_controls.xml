@@ -14,83 +14,183 @@
         android:orientation="vertical"
         android:paddingBottom="8dp">
 
-        <androidx.media3.ui.DefaultTimeBar
-            android:id="@+id/exo_progress"
+        <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="48dp"
-            android:layout_marginHorizontal="12dp"
-            app:bar_gravity="bottom"
-            app:bar_height="3dp"
-            app:scrubber_dragged_size="20dp"
-            app:scrubber_enabled_size="16dp"
-            app:touch_target_height="48dp" />
-
-        <FrameLayout
-            android:id="@+id/video_controls_buttons"
-            android:layout_width="match_parent"
-            android:layout_height="72dp"
-            android:paddingHorizontal="12dp">
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingHorizontal="8dp">
 
             <TextView
-                android:id="@+id/exo_position"
+                android:id="@id/exo_position"
                 android:layout_width="wrap_content"
                 android:layout_height="match_parent"
-                android:layout_gravity="start"
-                android:gravity="center_vertical|start"
-                android:paddingStart="4dp"
+                android:fontFeatureSettings="tnum"
+                android:gravity="center"
+                android:minWidth="64dp"
                 android:textColor="@android:color/white"
                 android:textSize="13sp" />
 
-            <LinearLayout
+            <androidx.media3.ui.DefaultTimeBar
+                android:id="@id/exo_progress"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_marginHorizontal="4dp"
+                android:layout_weight="1"
+                app:bar_gravity="center"
+                app:bar_height="3dp"
+                app:scrubber_dragged_size="20dp"
+                app:scrubber_enabled_size="16dp"
+                app:touch_target_height="48dp" />
+
+            <TextView
+                android:id="@id/exo_duration"
                 android:layout_width="wrap_content"
                 android:layout_height="match_parent"
-                android:layout_gravity="center"
+                android:fontFeatureSettings="tnum"
                 android:gravity="center"
+                android:minWidth="64dp"
+                android:textColor="@android:color/white"
+                android:textSize="13sp" />
+
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/video_controls_buttons"
+            android:layout_width="match_parent"
+            android:layout_height="72dp"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingHorizontal="4dp">
+
+            <View
+                android:id="@+id/video_balance_start"
+                android:layout_width="0dp"
+                android:layout_height="0dp" />
+
+            <LinearLayout
+                android:id="@+id/video_track_buttons"
+                android:layout_width="wrap_content"
+                android:layout_height="match_parent"
+                android:gravity="center_vertical"
                 android:orientation="horizontal">
 
                 <ImageButton
-                    android:id="@+id/video_previous"
-                    android:layout_width="56dp"
-                    android:layout_height="56dp"
+                    android:id="@id/exo_audio_track"
+                    style="@style/ExoStyledControls.Button.Bottom.AudioTrack"
+                    android:src="@drawable/ic_video_music" />
+
+                <ImageButton
+                    android:id="@id/exo_subtitle"
+                    style="@style/ExoStyledControls.Button.Bottom.CC" />
+
+            </LinearLayout>
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:gravity="center"
+                android:orientation="horizontal">
+
+                <LinearLayout
+                    android:id="@+id/video_transport"
+                    android:layout_width="wrap_content"
+                    android:layout_height="match_parent"
+                    android:gravity="center"
+                    android:orientation="horizontal">
+
+                    <ImageButton
+                        android:id="@+id/video_rewind"
+                        android:layout_width="48dp"
+                        android:layout_height="48dp"
+                        android:background="?attr/selectableItemBackgroundBorderless"
+                        android:contentDescription="@string/exo_controls_rewind_description"
+                        android:padding="12dp"
+                        android:src="@drawable/ic_video_rewind"
+                        android:tint="@android:color/white" />
+                    
+                    <ImageButton
+                        android:id="@+id/video_previous"
+                        android:layout_width="48dp"
+                        android:layout_height="48dp"
+                        android:background="?attr/selectableItemBackgroundBorderless"
+                        android:contentDescription="@string/exo_controls_previous_description"
+                        android:padding="12dp"
+                        android:src="@drawable/ic_video_previous"
+                        android:tint="@android:color/white" />
+
+                    <ImageButton
+                        android:id="@id/exo_play_pause"
+                        android:layout_width="56dp"
+                        android:layout_height="56dp"
+                        android:background="?attr/selectableItemBackgroundBorderless"
+                        android:contentDescription="@string/exo_controls_play_description"
+                        android:padding="14dp"
+                        android:src="@drawable/exo_icon_play"
+                        android:tint="@android:color/white" />
+
+                    <ImageButton
+                        android:id="@+id/video_next"
+                        android:layout_width="48dp"
+                        android:layout_height="48dp"
+                        android:background="?attr/selectableItemBackgroundBorderless"
+                        android:contentDescription="@string/exo_controls_next_description"
+                        android:padding="12dp"
+                        android:src="@drawable/ic_video_next"
+                        android:tint="@android:color/white" />
+                    
+                    <ImageButton
+                        android:id="@+id/video_forward"
+                        android:layout_width="48dp"
+                        android:layout_height="48dp"
+                        android:background="?attr/selectableItemBackgroundBorderless"
+                        android:contentDescription="@string/exo_controls_fastforward_description"
+                        android:padding="12dp"
+                        android:src="@drawable/ic_video_fastforward"
+                        android:tint="@android:color/white" />
+
+
+                </LinearLayout>
+
+            </LinearLayout>
+
+            <LinearLayout
+                android:id="@+id/video_extra_buttons"
+                android:layout_width="wrap_content"
+                android:layout_height="match_parent"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <ImageButton
+                    android:id="@+id/video_rotate"
+                    android:layout_width="48dp"
+                    android:layout_height="48dp"
                     android:background="?attr/selectableItemBackgroundBorderless"
-                    android:contentDescription="@string/exo_controls_previous_description"
-                    android:padding="15dp"
-                    android:src="@drawable/ic_video_previous"
+                    android:contentDescription="@string/video_rotate_with_video"
+                    android:padding="12dp"
+                    android:src="@drawable/ic_video_rotate"
                     android:tint="@android:color/white" />
 
                 <ImageButton
-                    android:id="@id/exo_play_pause"
-                    android:layout_width="56dp"
-                    android:layout_height="56dp"
+                    android:id="@+id/video_pip"
+                    android:layout_width="48dp"
+                    android:layout_height="48dp"
                     android:background="?attr/selectableItemBackgroundBorderless"
-                    android:contentDescription="@string/exo_controls_play_description"
-                    android:padding="14dp"
-                    android:src="@drawable/exo_icon_play"
-                    android:tint="@android:color/white" />
-
-                <ImageButton
-                    android:id="@+id/video_next"
-                    android:layout_width="56dp"
-                    android:layout_height="56dp"
-                    android:background="?attr/selectableItemBackgroundBorderless"
-                    android:contentDescription="@string/exo_controls_next_description"
-                    android:padding="15dp"
-                    android:src="@drawable/ic_video_next"
+                    android:contentDescription="@string/video_picture_in_picture"
+                    android:padding="12dp"
+                    android:src="@drawable/ic_video_pip"
                     android:tint="@android:color/white" />
 
             </LinearLayout>
 
-            <TextView
-                android:id="@+id/exo_duration"
-                android:layout_width="wrap_content"
-                android:layout_height="match_parent"
-                android:layout_gravity="end"
-                android:gravity="center_vertical|end"
-                android:paddingEnd="4dp"
-                android:textColor="@android:color/white"
-                android:textSize="13sp" />
+            <!-- Fills the narrower side so the transport cluster stays centered. -->
+            <View
+                android:id="@+id/video_balance_end"
+                android:layout_width="0dp"
+                android:layout_height="0dp" />
 
-        </FrameLayout>
+        </LinearLayout>
 
     </LinearLayout>
 

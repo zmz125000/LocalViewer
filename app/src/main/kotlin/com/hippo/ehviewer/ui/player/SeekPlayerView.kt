@@ -7,15 +7,21 @@ import android.view.GestureDetector
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewConfiguration
+import android.view.ViewGroup
+import android.widget.PopupWindow
 import androidx.media3.common.C
 import androidx.media3.common.Player
+import androidx.media3.common.Tracks
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.ui.PlayerView
+import com.hippo.ehviewer.R
 import kotlin.math.abs
 
 /**
- * Stock [PlayerView] plus surface gestures: tap toggles chrome, double-tap play/pause,
- * horizontal drag seeks (rate-limited). Touches on the visible bottom bar go to Media3.
+ * Stock [PlayerView] plus surface gestures: tap toggles chrome, double-tap closes the player,
+ * horizontal drag seeks (rate-limited: one minute per screen width in portrait, two in
+ * landscape). Touches on the
+ * visible bottom bar go to Media3.
  *
  * Media3's built-in chrome animation slides the bottom bar; we disable it and fade alpha
  * instead. Auto-hide is also owned here so the fade path is used (Media3's timeout would
@@ -27,6 +33,9 @@ class SeekPlayerView @JvmOverloads constructor(
     attrs: AttributeSet? = null,
     defStyleAttr: Int = 0,
 ) : PlayerView(context, attrs, defStyleAttr) {
+    /** Double-tap on the video. The activity finishes so playback and the window both go away. */
+    var onClosePlayer: (() -> Unit)? = null
+
     private val touchSlop = ViewConfiguration.get(context).scaledTouchSlop
     private val scrubStartPx = maxOf(touchSlop * 3f, 32f * resources.displayMetrics.density)
     private var downX = 0f
@@ -37,6 +46,9 @@ class SeekPlayerView @JvmOverloads constructor(
     private var lastSeekAt = 0L
     private var controllerGesture = false
     private var shownOnThisTap = false
+
+    /** Track-popup taps must not start the auto-hide, or the window loses its anchor. */
+    private var holdChrome = false
 
     /** Caller-facing auto-hide timeout; Media3's own timer is kept at 0 (see [setControllerShowTimeoutMs]). */
     private var autoHideTimeoutMs = 0
@@ -56,11 +68,29 @@ class SeekPlayerView @JvmOverloads constructor(
         override fun onPlaybackStateChanged(playbackState: Int) {
             onPlaybackUiChanged()
         }
+
+        override fun onTracksChanged(tracks: Tracks) {
+            updateAudioTrackButton()
+            post { updateAudioTrackButton() }
+        }
     }
 
     init {
         // Media3's default chrome animation slides the bottom bar. Fade instead.
         setControllerAnimationEnabled(false)
+        // Stock layout lifts exo_progress by exo_styled_progress_margin_bottom (52dp) so it
+        // clears a separate bottom bar. That margin is reapplied on controller width changes.
+        // Our clocks sit beside the bar, so a non-zero margin stretches the row.
+        findViewById<View>(androidx.media3.ui.R.id.exo_progress)?.addOnLayoutChangeListener { v, _, _, _, _, _, _, _, _ ->
+            val lp = v.layoutParams as? ViewGroup.MarginLayoutParams ?: return@addOnLayoutChangeListener
+            if (lp.bottomMargin != 0) {
+                lp.bottomMargin = 0
+                v.layoutParams = lp
+            }
+        }
+        findViewById<View>(R.id.video_controls_buttons)?.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
+            balanceTrackSpacer()
+        }
     }
 
     private val controllerView: View?
@@ -85,6 +115,27 @@ class SeekPlayerView @JvmOverloads constructor(
         super.setPlayer(player)
         player?.addListener(playbackListener)
         onPlaybackUiChanged()
+        updateAudioTrackButton()
+        post { updateAudioTrackButton() }
+    }
+
+    /** No audio track, or only one, has nothing to pick. Leave the button visible and grey. */
+    private fun updateAudioTrackButton() {
+        val button = findViewById<View>(androidx.media3.ui.R.id.exo_audio_track) ?: return
+        val tracks = player?.currentTracks
+        var count = 0
+        if (tracks != null) {
+            for (group in tracks.groups) {
+                if (group.type != C.TRACK_TYPE_AUDIO) continue
+                for (index in 0 until group.length) {
+                    if (group.isTrackSupported(index)) count++
+                }
+            }
+        }
+        val enabled = count > 1
+        button.visibility = VISIBLE
+        button.isEnabled = enabled
+        button.alpha = if (enabled) 1f else 0.35f
     }
 
     override fun showController() {
@@ -128,9 +179,104 @@ class SeekPlayerView @JvmOverloads constructor(
 
     private fun scheduleAutoHide() {
         removeCallbacks(autoHideRunnable)
-        if (autoHideTimeoutMs <= 0 || hiding) return
+        if (holdChrome || autoHideTimeoutMs <= 0 || hiding) return
         if (!shouldAutoHide()) return
         postDelayed(autoHideRunnable, autoHideTimeoutMs.toLong())
+    }
+
+    /**
+     * Pad the narrower of the track buttons and the rotate/PiP buttons so the transport
+     * cluster stays centered. Drop the pad when the row cannot hold it.
+     */
+    private fun balanceTrackSpacer() {
+        val tracks = findViewById<View>(R.id.video_track_buttons) ?: return
+        val transport = findViewById<View>(R.id.video_transport) ?: return
+        val actions = findViewById<View>(R.id.video_extra_buttons) ?: return
+        val start = findViewById<View>(R.id.video_balance_start) ?: return
+        val end = findViewById<View>(R.id.video_balance_end) ?: return
+        val row = tracks.parent as? View ?: return
+        if (tracks.width == 0 || transport.width == 0 || row.width == 0) return
+        val available = row.width - row.paddingLeft - row.paddingRight
+        val diff = tracks.width - actions.width
+        val gap = abs(diff)
+        val fits = available >= tracks.width + actions.width + transport.width + gap
+        val startW = if (fits && diff < 0) -diff else 0
+        val endW = if (fits && diff > 0) diff else 0
+        if (start.layoutParams.width == startW && end.layoutParams.width == endW) return
+        if (start.layoutParams.width != startW) {
+            start.layoutParams = start.layoutParams.apply { width = startW }
+        }
+        if (end.layoutParams.width != endW) {
+            end.layoutParams = end.layoutParams.apply { width = endW }
+        }
+    }
+
+    private fun touchHitsTrackButton(event: MotionEvent): Boolean = trackButtonAt(event) != null
+
+    private fun trackButtonAt(event: MotionEvent): View? {
+        val audio = findViewById<View>(androidx.media3.ui.R.id.exo_audio_track)
+        val subtitle = findViewById<View>(androidx.media3.ui.R.id.exo_subtitle)
+        return when {
+            hitsView(audio, event) -> audio
+            hitsView(subtitle, event) -> subtitle
+            else -> null
+        }
+    }
+
+    /**
+     * Media3's settings popup uses the controller's right edge as its horizontal anchor.
+     * Move it so the list sits just above the button that opened it.
+     */
+    private fun placeTrackPopupAbove(anchor: View) {
+        val popup = settingsPopup() ?: return
+        if (!popup.isShowing) {
+            anchor.post {
+                if (popup.isShowing) applyTrackPopupAbove(anchor, popup)
+            }
+            return
+        }
+        applyTrackPopupAbove(anchor, popup)
+    }
+
+    private fun applyTrackPopupAbove(anchor: View, popup: PopupWindow) {
+        val gap = (8f * resources.displayMetrics.density).toInt()
+        val yOff = -(anchor.height + popup.height + gap)
+        val loc = IntArray(2)
+        anchor.getLocationOnScreen(loc)
+        val screenRight = resources.displayMetrics.widthPixels - gap
+        var xOff = 0
+        if (loc[0] + popup.width > screenRight) {
+            xOff = screenRight - popup.width - loc[0]
+        }
+        if (loc[0] + xOff < gap) xOff = gap - loc[0]
+        popup.update(anchor, xOff, yOff, -1, -1)
+    }
+
+    private fun settingsPopup(): PopupWindow? {
+        val controller = controllerView ?: return null
+        return runCatching {
+            var type: Class<*>? = controller.javaClass
+            while (type != null && type != Any::class.java) {
+                val field = type.declaredFields.firstOrNull {
+                    PopupWindow::class.java.isAssignableFrom(it.type)
+                }
+                if (field != null) {
+                    field.isAccessible = true
+                    return@runCatching field.get(controller) as? PopupWindow
+                }
+                type = type.superclass
+            }
+            null
+        }.getOrNull()
+    }
+
+    private fun hitsView(view: View?, event: MotionEvent): Boolean {
+        if (view == null || view.visibility != VISIBLE) return false
+        val loc = IntArray(2)
+        view.getLocationOnScreen(loc)
+        val x = event.rawX
+        val y = event.rawY
+        return x >= loc[0] && x < loc[0] + view.width && y >= loc[1] && y < loc[1] + view.height
     }
 
     /** Match Media3: keep chrome up while paused / idle / ended. */
@@ -178,15 +324,7 @@ class SeekPlayerView @JvmOverloads constructor(
 
             override fun onDoubleTap(e: MotionEvent): Boolean {
                 if (seeking) return true
-                val current = player ?: return true
-                if (current.playbackState == Player.STATE_ENDED) {
-                    current.seekTo(0L)
-                    current.play()
-                } else if (current.isPlaying) {
-                    current.pause()
-                } else {
-                    current.play()
-                }
+                onClosePlayer?.invoke()
                 return true
             }
 
@@ -212,9 +350,13 @@ class SeekPlayerView @JvmOverloads constructor(
                 }
                 val duration = current.duration
                 if (duration <= 0L || duration == C.TIME_UNSET) return true
-                val window = minOf(duration, MAX_DRAG_WINDOW_MS)
                 val target = (
-                    seekStartMs + (totalX / width.coerceAtLeast(1).toFloat() * window).toLong()
+                    seekStartMs + scrubSeekDeltaMs(
+                        totalX,
+                        width,
+                        duration,
+                        scrubWindowMs(width, height),
+                    )
                     ).coerceIn(0L, duration)
                 dispatchSeek(current, target)
                 return true
@@ -232,6 +374,8 @@ class SeekPlayerView @JvmOverloads constructor(
             shownOnThisTap = false
             controllerGesture = isControllerFullyVisible &&
                 event.y >= height - 132f * resources.displayMetrics.density
+            // Subtitle / audio open a PopupWindow. Keep the bar up until some other touch.
+            holdChrome = controllerGesture && touchHitsTrackButton(event)
             if (controllerGesture) {
                 // User is interacting with the bar — defer auto-hide.
                 removeCallbacks(autoHideRunnable)
@@ -240,7 +384,12 @@ class SeekPlayerView @JvmOverloads constructor(
         if (controllerGesture) {
             val handled = super.onTouchEvent(event)
             when (event.actionMasked) {
-                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> scheduleAutoHide()
+                MotionEvent.ACTION_UP -> {
+                    // Media3 anchors the list to the right edge. Sit it on the button instead.
+                    trackButtonAt(event)?.let(::placeTrackPopupAbove)
+                    scheduleAutoHide()
+                }
+                MotionEvent.ACTION_CANCEL -> scheduleAutoHide()
             }
             return handled
         }
@@ -273,8 +422,31 @@ class SeekPlayerView @JvmOverloads constructor(
     }
 
     companion object {
-        private const val MAX_DRAG_WINDOW_MS = 10L * 60L * 1000L
         private const val SCRUB_INTERVAL_MS = 120L
         private const val FADE_MS = 200L
     }
 }
+
+/**
+ * Horizontal scrub distance mapped to a seek delta.
+ * A full screen width moves at most [maxWindowMs]. Portrait uses one minute and landscape two,
+ * so a short drag does not jump through the movie.
+ */
+internal fun scrubSeekDeltaMs(
+    dragXPx: Float,
+    viewWidthPx: Int,
+    durationMs: Long,
+    maxWindowMs: Long = SCRUB_WINDOW_PORTRAIT_MS,
+): Long {
+    if (durationMs <= 0L || viewWidthPx <= 0) return 0L
+    val window = minOf(durationMs, maxWindowMs)
+    return (dragXPx / viewWidthPx.toFloat() * window).toLong()
+}
+
+/** Full-width drag when the player is taller than it is wide. */
+internal const val SCRUB_WINDOW_PORTRAIT_MS = 60L * 1000L
+
+/** Full-width drag when the player is wider than it is tall, or square. */
+internal const val SCRUB_WINDOW_LANDSCAPE_MS = 2L * 60L * 1000L
+
+internal fun scrubWindowMs(viewWidthPx: Int, viewHeightPx: Int): Long = if (viewWidthPx >= viewHeightPx) SCRUB_WINDOW_LANDSCAPE_MS else SCRUB_WINDOW_PORTRAIT_MS

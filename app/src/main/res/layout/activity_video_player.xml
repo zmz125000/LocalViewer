@@ -9,5 +9,6 @@
     app:controller_layout_id="@layout/video_player_controls"
     app:resize_mode="fit"
     app:show_buffering="when_playing"
+    app:show_subtitle_button="true"
     app:surface_type="surface_view"
     app:use_controller="true" />

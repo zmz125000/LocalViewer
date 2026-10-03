@@ -95,6 +95,11 @@
     <string name="settings_browse_folder_thumbs_summary">Show cover thumbs for folders.</string>
     <string name="settings_use_media3_player">Use Media3 player</string>
     <string name="settings_use_media3_player_summary">On: tap opens in-app player, long-press opens external app. Off: tap external, long-press in-app.</string>
+    <string name="settings_media3_playback_resume">Playback resume</string>
+    <string name="settings_media3_playback_resume_summary">%s is the current resume mode.</string>
+    <string name="settings_media3_playback_resume_auto">Auto (longer than 3 minutes)</string>
+    <string name="settings_media3_playback_resume_on">On</string>
+    <string name="settings_media3_playback_resume_off">Off</string>
     <string name="settings_pdf_reader">PDF reader</string>
     <string name="settings_pdf_reader_summary">%s is the current default reader.</string>
     <string name="settings_pdf_reader_mode_auto">Auto</string>
