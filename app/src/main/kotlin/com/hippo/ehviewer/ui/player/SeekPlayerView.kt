@@ -119,7 +119,7 @@ class SeekPlayerView @JvmOverloads constructor(
         post { updateAudioTrackButton() }
     }
 
-    /** One supported audio track has nothing to pick. Leave the button visible and grey. */
+    /** No audio track, or only one, has nothing to pick. Leave the button visible and grey. */
     private fun updateAudioTrackButton() {
         val button = findViewById<View>(androidx.media3.ui.R.id.exo_audio_track) ?: return
         val tracks = player?.currentTracks
@@ -132,7 +132,6 @@ class SeekPlayerView @JvmOverloads constructor(
                 }
             }
         }
-        if (count == 0) return
         val enabled = count > 1
         button.visibility = VISIBLE
         button.isEnabled = enabled

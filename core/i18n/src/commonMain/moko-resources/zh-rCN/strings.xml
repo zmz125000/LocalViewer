@@ -82,6 +82,7 @@
     <string name="settings_use_media3_player">使用 Media3 播放器</string>
     <string name="settings_use_media3_player_summary">开启：单击应用内播放，长按外部应用。关闭：单击外部应用，长按应用内播放。</string>
     <string name="settings_media3_playback_resume">播放进度续播</string>
+    <string name="settings_media3_playback_resume_summary">%s 是当前续播方式。</string>
     <string name="settings_media3_playback_resume_auto">自动（超过 3 分钟）</string>
     <string name="settings_media3_playback_resume_on">开</string>
     <string name="settings_media3_playback_resume_off">关</string>

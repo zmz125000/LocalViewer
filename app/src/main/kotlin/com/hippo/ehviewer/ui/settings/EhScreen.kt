@@ -208,28 +208,24 @@ fun AnimatedVisibilityScope.EhScreen(navigator: DestinationsNavigator) = Screen(
                     state = Settings.openHtmlInIncognito.asMutableState(),
                 )
             }
+            val useMedia3Player = Settings.useMedia3Player.asMutableState()
             SwitchPreference(
                 title = stringResource(id = R.string.settings_use_media3_player),
-                state = Settings.useMedia3Player.asMutableState(),
+                state = useMedia3Player,
             )
-            var playbackResume by Settings.media3PlaybackResume.asMutableState()
-            val playbackResumeEntries = listOf(
-                stringResource(id = R.string.settings_media3_playback_resume_auto),
-                stringResource(id = R.string.settings_media3_playback_resume_on),
-                stringResource(id = R.string.settings_media3_playback_resume_off),
-            )
-            Preference(
-                title = stringResource(id = R.string.settings_media3_playback_resume),
-                summary = playbackResumeEntries.getOrElse(playbackResume) { playbackResumeEntries.first() },
-            ) {
-                launchIO {
-                    val index = awaitSelectItem(
-                        items = playbackResumeEntries,
-                        title = R.string.settings_media3_playback_resume,
-                        selected = playbackResume.coerceIn(0, playbackResumeEntries.lastIndex),
-                    )
-                    playbackResume = index
-                }
+            AnimatedVisibility(visible = useMedia3Player.value) {
+                val playbackResume = Settings.media3PlaybackResume.asMutableState()
+                val resumeEntries = stringArrayResource(id = com.hippo.ehviewer.R.array.media3_playback_resume_entries)
+                val resumeValues = integerArrayResource(id = com.hippo.ehviewer.R.array.media3_playback_resume_values)
+                val resumeIndex = resumeValues.indexOf(playbackResume.value).let { if (it >= 0) it else 0 }
+                val resumeLabel = resumeEntries.getOrElse(resumeIndex) { resumeEntries.firstOrNull().orEmpty() }
+                SimpleMenuPreferenceInt(
+                    title = stringResource(id = R.string.settings_media3_playback_resume),
+                    summary = stringResource(id = R.string.settings_media3_playback_resume_summary, resumeLabel),
+                    entry = com.hippo.ehviewer.R.array.media3_playback_resume_entries,
+                    entryValueRes = com.hippo.ehviewer.R.array.media3_playback_resume_values,
+                    state = playbackResume,
+                )
             }
             var defaultVideoPlayer by Settings.defaultVideoPlayerComponent.asMutableState()
             val alwaysAsk = stringResource(id = R.string.settings_default_video_player_always_ask)

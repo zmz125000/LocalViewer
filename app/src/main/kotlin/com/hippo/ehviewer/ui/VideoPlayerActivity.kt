@@ -224,8 +224,8 @@ class VideoPlayerActivity : AppCompatActivity() {
     private fun bindControls() {
         findViewById<ImageButton>(R.id.video_previous).setOnClickListener { moveInPlaylist(-1) }
         findViewById<ImageButton>(R.id.video_next).setOnClickListener { moveInPlaylist(1) }
-        findViewById<ImageButton>(R.id.video_rewind).setOnClickListener { seekBy(-SKIP_MS) }
-        findViewById<ImageButton>(R.id.video_forward).setOnClickListener { seekBy(SKIP_MS) }
+        findViewById<ImageButton>(R.id.video_rewind).setOnClickListener { seekByStep(forward = false) }
+        findViewById<ImageButton>(R.id.video_forward).setOnClickListener { seekByStep(forward = true) }
         rotateWithVideo = Settings.videoRotateWithVideo.value
         findViewById<ImageButton>(R.id.video_rotate).setOnClickListener { toggleRotateWithVideo() }
         refreshRotateButton()
@@ -251,6 +251,11 @@ class VideoPlayerActivity : AppCompatActivity() {
             isSelected = rotateWithVideo
             alpha = if (rotateWithVideo) 1f else 0.4f
         }
+    }
+
+    private fun seekByStep(forward: Boolean) {
+        val step = skipStepMs(player?.duration ?: C.TIME_UNSET)
+        seekBy(if (forward) step else -step)
     }
 
     private fun seekBy(deltaMs: Long) {
@@ -621,7 +626,6 @@ class VideoPlayerActivity : AppCompatActivity() {
         const val EXTRA_PLAYLIST_INDEX = "playlist_index"
 
         private const val CONTROLLER_TIMEOUT_MS = 2_800
-        private const val SKIP_MS = 10_000L
         private const val PROGRESS_SAVE_INTERVAL_MS = 5_000L
         private const val RESUME_AUTO_MIN_MS = 3 * 60 * 1000L
         private const val RESUME_END_MARGIN_MS = 3_000L
@@ -665,3 +669,10 @@ internal const val PIP_ASPECT_MIN = 0.42f
 
 /** Inside the platform limit so [android.util.Rational] is accepted. */
 internal const val PIP_ASPECT_MAX = 2.38f
+
+/** Rewind / forward step from the video length. */
+internal fun skipStepMs(durationMs: Long): Long = when {
+    durationMs in 1L until 60_000L -> 3_000L
+    durationMs in 60_000L..10 * 60_000L -> 5_000L
+    else -> 10_000L
+}
