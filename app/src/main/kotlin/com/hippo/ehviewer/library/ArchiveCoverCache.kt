@@ -7,7 +7,6 @@ import com.ehviewer.core.util.logcat
 import com.ehviewer.core.util.withIOContext
 import com.hippo.ehviewer.image.hdr.HdrConvertCache
 import com.hippo.ehviewer.jni.closeArchive
-import com.hippo.ehviewer.library.document.PdfImageEngine
 import com.hippo.ehviewer.jni.extractToByteBuffer
 import com.hippo.ehviewer.jni.getExtension
 import com.hippo.ehviewer.jni.getStreamMemberLength
@@ -25,6 +24,7 @@ import com.hippo.ehviewer.jni.releaseByteBuffer
 import com.hippo.ehviewer.jni.solidCurrentExtension
 import com.hippo.ehviewer.jni.solidExtractCurrentToFd
 import com.hippo.ehviewer.jni.solidNextPlayable
+import com.hippo.ehviewer.library.document.PdfImageEngine
 import java.io.File
 import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
