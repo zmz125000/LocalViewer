@@ -172,6 +172,15 @@ fun AnimatedVisibilityScope.PrivacyScreen(navigator: DestinationsNavigator) = Sc
                     launchSnackbar(searchHistoryCleared)
                 }
             }
+            val folderHideCleared = stringResource(id = R.string.folder_hide_from_history_cleared)
+            Preference(
+                title = stringResource(id = R.string.settings_privacy_clear_folder_hide_from_history),
+            ) {
+                launch {
+                    withIOContext { EhDB.clearHistoryHiddenByFolderMarks() }
+                    launchSnackbar(folderHideCleared)
+                }
+            }
             val folderBrowseModeCleared = stringResource(id = R.string.folder_browse_mode_cleared)
             Preference(
                 title = stringResource(id = R.string.settings_privacy_clear_folder_browse_mode),

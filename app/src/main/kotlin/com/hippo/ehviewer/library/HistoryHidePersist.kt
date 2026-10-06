@@ -1,6 +1,8 @@
 package com.hippo.ehviewer.library
 
+import com.ehviewer.core.database.model.GalleryEntity
 import com.ehviewer.core.model.GalleryInfo
+import com.ehviewer.core.util.withIOContext
 import com.hippo.ehviewer.Settings
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -71,6 +73,30 @@ object HistoryHidePersist {
         return historyHideMode(folder, stored) == HistoryHideMode.NoRecord
     }
 
+    /** History rows the History screen would omit for [stored]. */
+    suspend fun rowsHiddenOnScreen(rows: List<GalleryEntity>, stored: Set<String>): List<GalleryEntity> = withIOContext {
+        if (stored.isEmpty() || rows.isEmpty()) return@withIOContext emptyList()
+        val lookup = hideLookup(rows)
+        rows.filter { hidesFromHistoryScreen(it, stored, lookup.places, lookup.roots) }
+    }
+
+    /**
+     * Drop hidden-folder rows before the History screen publishes the list.
+     * An empty [stored] set returns [rows] without loading library places.
+     */
+    suspend fun withoutHiddenFolders(rows: List<GalleryEntity>, stored: Set<String>): List<GalleryEntity> = withIOContext {
+        if (stored.isEmpty()) return@withIOContext rows
+        val lookup = hideLookup(rows)
+        rows.filterNot { hidesFromHistoryScreen(it, stored, lookup.places, lookup.roots) }
+    }
+
+    /** Remove every folder mark. History rows are left in place. */
+    fun clearAll() {
+        if (Settings.historyHideFolders.value.isEmpty()) return
+        Settings.historyHideFolders.value = emptySet()
+        bump()
+    }
+
     private suspend fun resolveFolder(info: GalleryInfo): BrowseFolderId? {
         val parsed = LocalHistory.parse(info)
         val library = if (parsed is LocalHistoryTarget.LibraryGallery) {
@@ -117,6 +143,35 @@ object HistoryHidePersist {
     private fun bump() {
         _revision.update { it + 1 }
     }
+
+    private suspend fun hideLookup(rows: List<GalleryInfo>): HideLookup {
+        val ids = rows.mapNotNull { info ->
+            info.gid.takeIf { info.token == LOCAL_GALLERY_TOKEN }
+        }.distinct()
+        val places = ids.mapNotNull { id ->
+            LocalLibrary.loadGallery(id)?.let { id to BrowseFolderId.local(it.rootId, it.relativePath) }
+        }.toMap()
+        val needsRoots = rows.any { info ->
+            when (LocalHistory.parse(info)) {
+                is LocalHistoryTarget.LocalArchive, is LocalHistoryTarget.LocalFile -> true
+                else -> false
+            }
+        }
+        val roots = if (!needsRoots) {
+            emptyList()
+        } else {
+            LocalLibrary.listRoots().mapNotNull { root ->
+                val path = LocalLibrary.rootPath(root)?.toString() ?: return@mapNotNull null
+                root.id to path
+            }
+        }
+        return HideLookup(places, roots)
+    }
+
+    private data class HideLookup(
+        val places: Map<Long, BrowseFolderId>,
+        val roots: List<Pair<Long, String>>,
+    )
 }
 
 fun historyHideMode(folder: BrowseFolderId, stored: Set<String>): HistoryHideMode {
