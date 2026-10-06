@@ -40,6 +40,8 @@ import com.hippo.ehviewer.collectAsState
 import com.hippo.ehviewer.library.BrowseContentMode
 import com.hippo.ehviewer.library.BrowseFolderId
 import com.hippo.ehviewer.library.BrowseModePersist
+import com.hippo.ehviewer.library.HistoryHideMode
+import com.hippo.ehviewer.library.HistoryHidePersist
 import com.hippo.ehviewer.library.naturalCompare
 
 /** Folder-view UI sort field ([Settings.browseSortMode]). Separate from [LibrarySortMode]. */
@@ -131,6 +133,10 @@ fun BrowseViewModeMenu(
     var photoGridMode by Settings.photoGridMode.asMutableState()
     var browseRecentOpen by Settings.browseRecentOpen.asMutableState()
     var browseRecentExpanded by Settings.browseRecentExpanded.asMutableState()
+    val historyHideFolders by Settings.historyHideFolders.collectAsState()
+    val historyHideMode = remember(folder, historyHideFolders) {
+        folder?.let { HistoryHidePersist.effective(it) } ?: HistoryHideMode.Off
+    }
     val haptic = LocalHapticFeedback.current
 
     fun selectBrowseSort(mode: BrowseSortMode) {
@@ -267,6 +273,20 @@ fun BrowseViewModeMenu(
                     }
                 },
             )
+            // Tap: hide this folder's tree from the History screen, still record it.
+            // Long-press: lock, do not record. Long-press again returns to hide-but-record.
+            if (folder != null) {
+                ContentModeItem(
+                    label = stringResource(R.string.browse_menu_hide_from_history),
+                    mark = when (historyHideMode) {
+                        HistoryHideMode.Off -> ModeMark.None
+                        HistoryHideMode.Hide -> ModeMark.Tick
+                        HistoryHideMode.NoRecord -> ModeMark.Lock
+                    },
+                    onClick = { HistoryHidePersist.tap(folder) },
+                    onLongClick = { HistoryHidePersist.longPress(folder) },
+                )
+            }
             HorizontalDivider()
             ToggleMenuItem(
                 label = stringResource(R.string.browse_menu_photo_grid),

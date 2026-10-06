@@ -372,6 +372,12 @@ object Settings : DataStorePreferences(null) {
      * See [com.hippo.ehviewer.library.BrowseModePersist].
      */
     val persistBrowseModes = stringSetPref("persist_browse_modes", emptySet())
+
+    /**
+     * Per-folder history hide. Entries: `{lf|sf|wf}:{id}:{rel}={0|1|2}`
+     * (off / hide from History screen / do not record). See [com.hippo.ehviewer.library.HistoryHidePersist].
+     */
+    val historyHideFolders = stringSetPref("history_hide_folders", emptySet())
     val showVoteStatus = boolPref("show_vote_status", false)
     val showComments = boolPref("show_gallery_comments", true)
     val commentThreshold = intPref("comment_threshold", -100)

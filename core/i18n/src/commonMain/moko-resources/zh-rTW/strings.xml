@@ -63,6 +63,7 @@
     <string name="browse_folder_gallery_pages_many">∞ 頁</string>
     <string name="browse_directories">目錄</string>
     <string name="browse_recent">最近開啟</string>
+    <string name="browse_menu_hide_from_history">從歷史中隱藏</string>
     <string name="browse_galleries">圖庫</string>
     <string name="browse_photos">相片</string>
     <string name="browse_favorites">收藏</string>
