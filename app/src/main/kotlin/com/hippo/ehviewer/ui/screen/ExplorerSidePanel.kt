@@ -1041,6 +1041,7 @@ private fun openSaved(
                     fromHistory = fromHistory,
                     fromLibrary = fromLibrary,
                     fromSidePanel = fromSidePanel,
+                    sidePanelOpen = true,
                 )
                 bindOpenedWindow(navTab)
             }
@@ -1051,6 +1052,7 @@ private fun openSaved(
                     fromHistory = fromHistory,
                     fromLibrary = fromLibrary,
                     fromSidePanel = fromSidePanel,
+                    sidePanelOpen = true,
                 )
                 bindOpenedWindow(navTab)
             }
@@ -1061,6 +1063,7 @@ private fun openSaved(
                     fromHistory = fromHistory,
                     fromLibrary = fromLibrary,
                     fromSidePanel = fromSidePanel,
+                    sidePanelOpen = true,
                 )
                 bindOpenedWindow(navTab)
             }
@@ -1090,6 +1093,7 @@ private fun openFavorite(
                     fromHistory = fromHistory,
                     fromLibrary = fromLibrary,
                     fromSidePanel = fromSidePanel,
+                    sidePanelOpen = true,
                 )
                 bindOpenedWindow(navTab)
             }
@@ -1100,6 +1104,7 @@ private fun openFavorite(
                     fromHistory = fromHistory,
                     fromLibrary = fromLibrary,
                     fromSidePanel = fromSidePanel,
+                    sidePanelOpen = true,
                 )
                 bindOpenedWindow(navTab)
             }
@@ -1110,6 +1115,7 @@ private fun openFavorite(
                     fromHistory = fromHistory,
                     fromLibrary = fromLibrary,
                     fromSidePanel = fromSidePanel,
+                    sidePanelOpen = true,
                 )
                 bindOpenedWindow(navTab)
             }
@@ -1124,6 +1130,7 @@ private fun openFavorite(
                     fromHistory = fromHistory,
                     fromLibrary = fromLibrary,
                     fromSidePanel = fromSidePanel,
+                    sidePanelOpen = true,
                 )
                 bindOpenedWindow(navTab)
             }
@@ -1134,6 +1141,7 @@ private fun openFavorite(
                     fromHistory = fromHistory,
                     fromLibrary = fromLibrary,
                     fromSidePanel = fromSidePanel,
+                    sidePanelOpen = true,
                 )
                 bindOpenedWindow(navTab)
             }
@@ -1144,6 +1152,7 @@ private fun openFavorite(
                     fromHistory = fromHistory,
                     fromLibrary = fromLibrary,
                     fromSidePanel = fromSidePanel,
+                    sidePanelOpen = true,
                 )
                 bindOpenedWindow(navTab)
             }
@@ -1171,6 +1180,7 @@ private fun DestinationsNavigator.openGalleryFavorite(
             fromHistory = navTab.fromHistoryFlag(),
             fromLibrary = navTab.fromLibraryFlag(),
             fromSidePanel = navTab == null,
+            sidePanelOpen = true,
         )
         bindOpenedWindow(navTab)
         return

@@ -26,13 +26,17 @@ import java.util.concurrent.SynchronousQueue
 import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.job
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
@@ -117,8 +121,9 @@ sealed interface VideoThumbnailSource {
  * - Probe I/O on [probePool]; timeout/cancel closes [ArchiveByteSource] (safe: not under MMR).
  * - [onAppBackgrounded] rejects **all** new extracts (local library included) so ON_STOP
  *   cannot leave `media.extractor` spinning after the UI is gone.
- * - [onBrowseFolderChanged] rotates decode/probe pools when the visible folder (or library
- *   section) changes, including leave (`""`) — waiters cancel; native MMR is not interrupted.
+ * - [onBrowseFolderChanged] rotates decode/probe pools and cancels in-flight extracts when
+ *   the visible folder (or library section) changes, including leave (`""`) and a side-panel
+ *   window switch. Waiters close the SMB/WebDAV handle; native MMR is not interrupted.
  *
  * Disk: `cache/video_thumb_cache/` under [OriginDiskCache.THUMB_BUDGET_BYTES].
  */
@@ -197,6 +202,10 @@ object VideoThumbnail {
     /** Empty string = no visible folder (root picker / screen disposed / library left). */
     private val browseFolderKey = AtomicReference("")
 
+    /** Bumped on every real folder change so a side-panel switch drops the previous extract. */
+    private val browseGeneration = AtomicLong(0L)
+    private val extractJobs = ConcurrentHashMap<Job, Long>()
+
     /**
      * Hard-capped MMR threads. SynchronousQueue: never queue behind cancelled zombies.
      * Replaced on [onBrowseFolderChanged] so a new folder is not blocked by the previous
@@ -238,21 +247,59 @@ object VideoThumbnail {
      */
     fun onBrowseFolderChanged(folderKey: String) {
         val prev = browseFolderKey.getAndSet(folderKey)
-        if (prev != folderKey) {
-            rotatePools(
-                "browse ${prev.ifEmpty { "none" }} → ${folderKey.ifEmpty { "none" }}",
-            )
-        }
+        if (prev == folderKey) return
+        rotatePools(
+            "browse ${prev.ifEmpty { "none" }} → ${folderKey.ifEmpty { "none" }}",
+        )
+        cancelStaleExtracts(prev, folderKey)
     }
 
     /**
-     * Screen dispose / empty stack. Only clears if this screen still owns the extract
-     * generation — otherwise Library `onDispose` would wipe a folder we just entered.
+     * Screen dispose / empty stack. [ownerPrefix] is a kind prefix (`smb:`, `local:`).
+     * Only clears if this screen still owns the extract — otherwise Library `onDispose`
+     * would wipe a folder we just entered.
      */
     fun onBrowseFolderLeft(ownerPrefix: String) {
         val current = browseFolderKey.get()
         if (current.startsWith(ownerPrefix)) {
             onBrowseFolderChanged("")
+        }
+    }
+
+    /**
+     * Dispose of the screen that published [folderKey]. A side-panel switch may already
+     * have published the next window's key; do not clear that one.
+     */
+    fun onBrowseFolderLeftIfCurrent(folderKey: String) {
+        if (folderKey.isNotEmpty() && browseFolderKey.get() == folderKey) {
+            onBrowseFolderChanged("")
+        }
+    }
+
+    private fun cancelStaleExtracts(prev: String, folderKey: String) {
+        val gen = browseGeneration.incrementAndGet()
+        val stale = ArrayList<Job>()
+        extractJobs.forEach { (job, jobGen) -> if (jobGen < gen) stale += job }
+        stale.forEach { it.cancel(CancellationException("video thumb $prev → $folderKey")) }
+    }
+
+    private fun ensureFolder(gen: Long) {
+        if (browseGeneration.get() != gen) {
+            throw CancellationException("video thumb folder changed")
+        }
+    }
+
+    /** Test hook: same generation cancel as a live video-thumb extract. */
+    internal suspend fun runExtractForTest(block: suspend () -> Unit) {
+        val gen = browseGeneration.get()
+        val job = currentCoroutineContext().job
+        extractJobs[job] = gen
+        try {
+            ensureFolder(gen)
+            block()
+            ensureFolder(gen)
+        } finally {
+            extractJobs.remove(job, gen)
         }
     }
 
@@ -354,8 +401,25 @@ object VideoThumbnail {
         return null
     }
 
+    suspend fun getOrCreate(context: Context, source: VideoThumbnailSource): File? {
+        val gen = browseGeneration.get()
+        val job = currentCoroutineContext().job
+        extractJobs[job] = gen
+        try {
+            ensureFolder(gen)
+            return getOrCreateLocked(context, source, gen)
+        } finally {
+            extractJobs.remove(job, gen)
+        }
+    }
+
     @Suppress("UNUSED_PARAMETER")
-    suspend fun getOrCreate(context: Context, source: VideoThumbnailSource): File? = withIOContext {
+    private suspend fun getOrCreateLocked(
+        context: Context,
+        source: VideoThumbnailSource,
+        gen: Long,
+    ): File? = withIOContext {
+        ensureFolder(gen)
         if (!Settings.saveFileMarkers.value && leftoverMarkersCleared.compareAndSet(false, true)) {
             clearFailureMarkers()
         }
@@ -390,7 +454,8 @@ object VideoThumbnail {
                 return@withLock target
             }
             val frame = try {
-                extractThumbnailFrame(source, persistTarget = target)
+                ensureFolder(gen)
+                extractThumbnailFrame(source, persistTarget = target, gen = gen)
             } catch (e: CancellationException) {
                 throw e
             } catch (_: TransientVideoThumbException) {
@@ -502,6 +567,7 @@ object VideoThumbnail {
     private suspend fun extractThumbnailFrame(
         source: VideoThumbnailSource,
         persistTarget: File,
+        gen: Long,
     ): Bitmap? = when (source) {
         is VideoThumbnailSource.Local -> {
             if (skipIfPaused(privacyLogLabel(source))) return null
@@ -520,7 +586,7 @@ object VideoThumbnail {
                             runCatching { zip.close() }
                             return@withPermit null
                         }
-                    extractNetworkFrame(memberSrc, source, persistTarget)
+                    extractNetworkFrame(memberSrc, source, persistTarget, gen)
                 }
             } else {
                 extractSemaphore.withPermit {
@@ -530,10 +596,13 @@ object VideoThumbnail {
         }
         is VideoThumbnailSource.Smb -> {
             if (skipIfPaused(privacyLogLabel(source))) return null
+            ensureFolder(gen)
             val smb = SmbRepository.load(source.sourceId) ?: error("SMB source missing")
             probeSemaphore.withPermit {
                 if (skipIfPaused(privacyLogLabel(source))) return@withPermit null
+                ensureFolder(gen)
                 SmbCache.withBrowseThumbFetchSlot {
+                    ensureFolder(gen)
                     val raw = SmbArchiveByteSource(
                         source = smb,
                         password = SmbPasswordStore.get(source.sourceId),
@@ -542,16 +611,19 @@ object VideoThumbnail {
                         readahead = false,
                         yieldable = true,
                     )
-                    extractNetworkFrame(raw, source, persistTarget)
+                    extractNetworkFrame(raw, source, persistTarget, gen)
                 }
             }
         }
         is VideoThumbnailSource.WebDav -> {
             if (skipIfPaused(privacyLogLabel(source))) return null
+            ensureFolder(gen)
             val webDav = WebDavRepository.load(source.sourceId) ?: error("WebDAV source missing")
             probeSemaphore.withPermit {
                 if (skipIfPaused(privacyLogLabel(source))) return@withPermit null
+                ensureFolder(gen)
                 WebDavCache.withBrowseThumbFetchSlot {
+                    ensureFolder(gen)
                     val raw = WebDavArchiveByteSource(
                         source = webDav,
                         password = WebDavPasswordStore.get(source.sourceId),
@@ -559,7 +631,7 @@ object VideoThumbnail {
                         pipeline = false,
                         readahead = false,
                     )
-                    extractNetworkFrame(raw, source, persistTarget)
+                    extractNetworkFrame(raw, source, persistTarget, gen)
                 }
             }
         }
@@ -574,16 +646,25 @@ object VideoThumbnail {
         raw: ArchiveByteSource,
         source: VideoThumbnailSource,
         persistTarget: File,
+        gen: Long,
     ): Bitmap? {
-        val sizeHint = source.knownSizeBytes.takeIf { it > 0L } ?: raw.size
-        val ts = isMpegTsVideoName(source.fileName) || !raw.isRandomAccess
-        return if (!ts && sizeHint > LARGE_FILE_BYTES) {
-            extractSemaphore.withPermit {
-                decodeRangedNetwork(raw, source, persistTarget, sizeHint)
+        try {
+            ensureFolder(gen)
+            val sizeHint = source.knownSizeBytes.takeIf { it > 0L } ?: raw.size
+            val ts = isMpegTsVideoName(source.fileName) || !raw.isRandomAccess
+            return if (!ts && sizeHint > LARGE_FILE_BYTES) {
+                extractSemaphore.withPermit {
+                    ensureFolder(gen)
+                    decodeRangedNetwork(raw, source, persistTarget, sizeHint)
+                }
+            } else {
+                val snapshot = fetchProbeSnapshot(raw, source) ?: return null
+                ensureFolder(gen)
+                extractSemaphore.withPermit { decodeSnapshot(snapshot, source, persistTarget) }
             }
-        } else {
-            val snapshot = fetchProbeSnapshot(raw, source) ?: return null
-            extractSemaphore.withPermit { decodeSnapshot(snapshot, source, persistTarget) }
+        } catch (e: CancellationException) {
+            runCatching { raw.close() }
+            throw e
         }
     }
 

@@ -63,6 +63,7 @@
     <string name="browse_folder_gallery_pages_many">∞ 頁</string>
     <string name="browse_directories">目錄</string>
     <string name="browse_recent">最近開啟</string>
+    <string name="browse_menu_hide_from_history">從歷史中隱藏</string>
     <string name="browse_galleries">圖庫</string>
     <string name="browse_photos">相片</string>
     <string name="browse_favorites">收藏</string>
@@ -269,6 +270,8 @@
     <string name="settings_general_back_to_upper_dir_summary">從歷史、圖庫或收藏開啟資料夾/圖庫時，系統返回會回到上層目錄。關閉（預設）則回到列表。</string>
     <string name="settings_general_history_dir_back_to_upper">歷史資料夾返回上層</string>
     <string name="settings_general_history_dir_back_to_upper_summary">在「返回上層目錄」關閉時：從歷史開啟的資料夾返回仍先回到上層目錄（預設開啟）。開啟「返回上層目錄」時會一併開啟本項。</string>
+    <string name="settings_general_side_panel_dir_back_to_upper">側欄資料夾返回上層</string>
+    <string name="settings_general_side_panel_dir_back_to_upper_summary">在「返回上層目錄」關閉時：從側欄開啟的資料夾返回仍先回到上層目錄（預設開啟），不跟隨歷史或圖庫頁的設定。開啟「返回上層目錄」時會一併開啟本項。</string>
     <string name="settings_privacy_library_recent_open">圖庫最近開啟</string>
     <string name="settings_privacy_library_recent_open_summary">依最近開啟排序圖庫列表，最近閱讀的會排在前面。關閉後僅依標題排序。</string>
     <string name="settings_privacy_save_file_markers">儲存檔案標記</string>

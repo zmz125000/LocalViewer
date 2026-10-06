@@ -367,6 +367,7 @@ fun LibraryViewModeMenu(modifier: Modifier = Modifier) {
                     alwaysExitToDir = !alwaysExitToDir
                     if (alwaysExitToDir) {
                         Settings.historyDirBackToUpper.value = true
+                        Settings.sidePanelDirBackToUpper.value = true
                     }
                 },
             )

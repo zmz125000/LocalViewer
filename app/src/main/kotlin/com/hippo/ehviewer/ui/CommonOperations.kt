@@ -129,14 +129,33 @@ private fun navToReader(args: ReaderScreenArgs) {
 /**
  * Whether folder / photo-grid back should walk parent directories for this open.
  *
- * - [Settings.alwaysExitToDir] on → always walk parents (History, Library, Fav).
+ * - [Settings.alwaysExitToDir] on → always walk parents (History, Library, Fav, side panel).
+ * - Off + [sidePanelOpen] → [Settings.sidePanelDirBackToUpper] only (ignores the nav tab).
  * - Off + [fromHistory] + [Settings.historyDirBackToUpper] on → History folders only.
  * - Otherwise leaf / exit to origin list.
  */
-fun walkUpperDirsForBrowseOpen(fromHistory: Boolean, fromLibrary: Boolean = false): Boolean {
+fun walkUpperDirsForBrowseOpen(
+    fromHistory: Boolean,
+    fromLibrary: Boolean = false,
+    sidePanelOpen: Boolean = false,
+): Boolean {
     if (Settings.alwaysExitToDir.value) return true
+    if (sidePanelOpen) return Settings.sidePanelDirBackToUpper.value
     if (fromHistory && Settings.historyDirBackToUpper.value) return true
     return false
+}
+
+/** First back leaves the browser when this open is a leaf pin from a list or the side panel. */
+private fun leaveBrowserOnBack(
+    fromHistory: Boolean,
+    fromLibrary: Boolean,
+    fromSidePanel: Boolean,
+    sidePanelOpen: Boolean,
+    walkParents: Boolean,
+): Boolean {
+    if (walkParents) return false
+    if (sidePanelOpen) return true
+    return (fromHistory || fromLibrary) && !fromSidePanel
 }
 
 /**
@@ -174,6 +193,7 @@ fun openLocalBrowseDir(
     fromHistory: Boolean = false,
     fromLibrary: Boolean = false,
     fromSidePanel: Boolean = false,
+    sidePanelOpen: Boolean = false,
 ) {
     val full = buildLocalBrowseStack(
         rootId = rootId,
@@ -182,7 +202,7 @@ fun openLocalBrowseDir(
         relativePath = relativePath,
         preferMediaStore = preferMediaStore,
     )
-    val walkParents = walkUpperDirsForBrowseOpen(fromHistory, fromLibrary)
+    val walkParents = walkUpperDirsForBrowseOpen(fromHistory, fromLibrary, sidePanelOpen)
     ExplorerWindows.prepareSpawn()
     BrowseSession.localStack = if (walkParents) full else listOf(full.last())
     ExplorerWindows.finishLocalSpawn(rootDisplayName, fromHistory, fromLibrary, fromSidePanel)
@@ -203,15 +223,16 @@ fun openSmbBrowseDir(
     fromHistory: Boolean = false,
     fromLibrary: Boolean = false,
     fromSidePanel: Boolean = false,
+    sidePanelOpen: Boolean = false,
 ) {
     val remote = remoteDir.trim('/').let { if (it == ".") "" else it }
     val segments = remote.split('/').filter { it.isNotEmpty() }
-    val walkParents = walkUpperDirsForBrowseOpen(fromHistory, fromLibrary)
-    val fromOrigin = (fromHistory || fromLibrary) && !fromSidePanel
+    val walkParents = walkUpperDirsForBrowseOpen(fromHistory, fromLibrary, sidePanelOpen)
+    val leaveOnBack = leaveBrowserOnBack(fromHistory, fromLibrary, fromSidePanel, sidePanelOpen, walkParents)
     ExplorerWindows.prepareSpawn()
     BrowseSession.setSmbSegments(sourceId, segments)
     BrowseSession.setSmbPhotoGrid(sourceId, null)
-    BrowseSession.setSmbExitToOrigin(sourceId, !walkParents && fromOrigin)
+    BrowseSession.setSmbExitToOrigin(sourceId, leaveOnBack)
     ExplorerWindows.finishSmbSpawn(sourceId, "", fromHistory, fromLibrary, fromSidePanel)
     rememberNavTabWindow(fromHistory, fromLibrary, fromSidePanel)
     nav.navigate(
@@ -232,15 +253,16 @@ fun openWebDavBrowseDir(
     fromHistory: Boolean = false,
     fromLibrary: Boolean = false,
     fromSidePanel: Boolean = false,
+    sidePanelOpen: Boolean = false,
 ) {
     val remote = remoteDir.trim('/').let { if (it == ".") "" else it }
     val segments = remote.split('/').filter { it.isNotEmpty() }
-    val walkParents = walkUpperDirsForBrowseOpen(fromHistory, fromLibrary)
-    val fromOrigin = (fromHistory || fromLibrary) && !fromSidePanel
+    val walkParents = walkUpperDirsForBrowseOpen(fromHistory, fromLibrary, sidePanelOpen)
+    val leaveOnBack = leaveBrowserOnBack(fromHistory, fromLibrary, fromSidePanel, sidePanelOpen, walkParents)
     ExplorerWindows.prepareSpawn()
     BrowseSession.setWebDavSegments(sourceId, segments)
     BrowseSession.setWebDavPhotoGrid(sourceId, null)
-    BrowseSession.setWebDavExitToOrigin(sourceId, !walkParents && fromOrigin)
+    BrowseSession.setWebDavExitToOrigin(sourceId, leaveOnBack)
     ExplorerWindows.finishWebDavSpawn(sourceId, "", fromHistory, fromLibrary, fromSidePanel)
     rememberNavTabWindow(fromHistory, fromLibrary, fromSidePanel)
     nav.navigate(
@@ -268,6 +290,7 @@ fun openLocalFolderPhotoGrid(
     fromHistory: Boolean = false,
     fromLibrary: Boolean = false,
     fromSidePanel: Boolean = false,
+    sidePanelOpen: Boolean = false,
 ) {
     val galleryStack = buildLocalBrowseStack(
         rootId = rootId,
@@ -280,7 +303,7 @@ fun openLocalFolderPhotoGrid(
         photoGrid = true,
         title = title?.takeIf { it.isNotBlank() } ?: galleryStack.last().title,
     )
-    val walkParents = walkUpperDirsForBrowseOpen(fromHistory, fromLibrary)
+    val walkParents = walkUpperDirsForBrowseOpen(fromHistory, fromLibrary, sidePanelOpen)
     ExplorerWindows.prepareSpawn()
     BrowseSession.localStack = if (walkParents) {
         val parentRel = parentRelativeOfFile(relativePath)
@@ -317,6 +340,7 @@ fun openLocalVideoFolder(
     fromHistory: Boolean = false,
     fromLibrary: Boolean = false,
     fromSidePanel: Boolean = false,
+    sidePanelOpen: Boolean = false,
 ) {
     val folderStack = buildLocalBrowseStack(
         rootId = rootId,
@@ -329,7 +353,7 @@ fun openLocalVideoFolder(
         videoFolder = true,
         title = title?.takeIf { it.isNotBlank() } ?: folderStack.last().title,
     )
-    val walkParents = walkUpperDirsForBrowseOpen(fromHistory, fromLibrary)
+    val walkParents = walkUpperDirsForBrowseOpen(fromHistory, fromLibrary, sidePanelOpen)
     ExplorerWindows.prepareSpawn()
     BrowseSession.localStack = if (walkParents) {
         val parentRel = parentRelativeOfFile(relativePath)
@@ -361,11 +385,12 @@ fun openSmbFolderPhotoGrid(
     fromHistory: Boolean = false,
     fromLibrary: Boolean = false,
     fromSidePanel: Boolean = false,
+    sidePanelOpen: Boolean = false,
 ) {
     val remote = remoteDir.trim('/').let { if (it == ".") "" else it }
     val segments = remote.split('/').filter { it.isNotEmpty() }
-    val walkParents = walkUpperDirsForBrowseOpen(fromHistory, fromLibrary)
-    val fromOrigin = (fromHistory || fromLibrary) && !fromSidePanel
+    val walkParents = walkUpperDirsForBrowseOpen(fromHistory, fromLibrary, sidePanelOpen)
+    val leaveOnBack = leaveBrowserOnBack(fromHistory, fromLibrary, fromSidePanel, sidePanelOpen, walkParents)
     ExplorerWindows.prepareSpawn()
     BrowseSession.setSmbSegments(sourceId, segments)
     BrowseSession.setSmbExitToOrigin(sourceId, false)
@@ -373,7 +398,7 @@ fun openSmbFolderPhotoGrid(
         sourceId,
         remote,
         enteredFromParent = walkParents && remote.isNotEmpty(),
-        exitToOrigin = !walkParents && fromOrigin,
+        exitToOrigin = leaveOnBack,
     )
     ExplorerWindows.finishSmbSpawn(sourceId, "", fromHistory, fromLibrary, fromSidePanel)
     rememberNavTabWindow(fromHistory, fromLibrary, fromSidePanel)
@@ -395,11 +420,12 @@ fun openWebDavFolderPhotoGrid(
     fromHistory: Boolean = false,
     fromLibrary: Boolean = false,
     fromSidePanel: Boolean = false,
+    sidePanelOpen: Boolean = false,
 ) {
     val remote = remoteDir.trim('/').let { if (it == ".") "" else it }
     val segments = remote.split('/').filter { it.isNotEmpty() }
-    val walkParents = walkUpperDirsForBrowseOpen(fromHistory, fromLibrary)
-    val fromOrigin = (fromHistory || fromLibrary) && !fromSidePanel
+    val walkParents = walkUpperDirsForBrowseOpen(fromHistory, fromLibrary, sidePanelOpen)
+    val leaveOnBack = leaveBrowserOnBack(fromHistory, fromLibrary, fromSidePanel, sidePanelOpen, walkParents)
     ExplorerWindows.prepareSpawn()
     BrowseSession.setWebDavSegments(sourceId, segments)
     BrowseSession.setWebDavExitToOrigin(sourceId, false)
@@ -407,7 +433,7 @@ fun openWebDavFolderPhotoGrid(
         sourceId,
         remote,
         enteredFromParent = walkParents && remote.isNotEmpty(),
-        exitToOrigin = !walkParents && fromOrigin,
+        exitToOrigin = leaveOnBack,
     )
     ExplorerWindows.finishWebDavSpawn(sourceId, "", fromHistory, fromLibrary, fromSidePanel)
     rememberNavTabWindow(fromHistory, fromLibrary, fromSidePanel)

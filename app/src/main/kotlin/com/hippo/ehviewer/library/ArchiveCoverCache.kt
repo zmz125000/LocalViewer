@@ -127,6 +127,17 @@ object ArchiveCoverCache {
     }
 
     /**
+     * Dispose of the screen that published [folderKey]. A side-panel switch may already
+     * have published the next window's key; do not clear that one.
+     */
+    fun onBrowseFolderLeftIfCurrent(folderKey: String) {
+        val current = browseFolderKey.get() ?: return
+        if (folderKey.isNotEmpty() && current == folderKey) {
+            onBrowseFolderChanged("")
+        }
+    }
+
+    /**
      * One-at-a-time cover extract. Folder change cancels waiters and the holder so the
      * next listing is not stuck behind a leftover RAR/ZIP page-0.
      */

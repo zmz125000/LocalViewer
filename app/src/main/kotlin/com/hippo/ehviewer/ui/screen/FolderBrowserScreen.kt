@@ -512,13 +512,19 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         return BrowseSession.isLocalFolderListingSessionCurrent(frame.rootId, frame.relativePath)
     }
 
+    var publishedThumbKey by remember { mutableStateOf("") }
     fun notifyLocalThumbFolder(frame: BrowseSession.LocalFrame?) {
         if (frame == null) {
-            VideoThumbnail.onBrowseFolderLeft("local:")
-            ArchiveCoverCache.onBrowseFolderLeft("local:")
+            val key = publishedThumbKey
+            if (key.isNotEmpty()) {
+                VideoThumbnail.onBrowseFolderLeftIfCurrent(key)
+                ArchiveCoverCache.onBrowseFolderLeftIfCurrent(key)
+            }
+            publishedThumbKey = ""
             return
         }
         val key = "local:${frame.rootId}:${frame.relativePath}:${frame.zipInnerRel.orEmpty()}"
+        publishedThumbKey = key
         VideoThumbnail.onBrowseFolderChanged(key)
         ArchiveCoverCache.onBrowseFolderChanged(key)
     }

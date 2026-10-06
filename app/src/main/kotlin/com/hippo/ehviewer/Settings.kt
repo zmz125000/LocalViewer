@@ -372,6 +372,12 @@ object Settings : DataStorePreferences(null) {
      * See [com.hippo.ehviewer.library.BrowseModePersist].
      */
     val persistBrowseModes = stringSetPref("persist_browse_modes", emptySet())
+
+    /**
+     * Per-folder history hide. Entries: `{lf|sf|wf}:{id}:{rel}={0|1|2}`
+     * (off / hide from History screen / do not record). See [com.hippo.ehviewer.library.HistoryHidePersist].
+     */
+    val historyHideFolders = stringSetPref("history_hide_folders", emptySet())
     val showVoteStatus = boolPref("show_vote_status", false)
     val showComments = boolPref("show_gallery_comments", true)
     val commentThreshold = intPref("comment_threshold", -100)
@@ -497,8 +503,10 @@ object Settings : DataStorePreferences(null) {
      * Back to upper directory when opening from History / Library / Favourites.
      * On: system back from reader or a dir pin walks the parent browse path.
      * Off (default): back returns to History/Library (or the prior stack), except
-     * History folder pins when [historyDirBackToUpper] is on.
-     * Turning this on also forces [historyDirBackToUpper] on (one-way follow).
+     * History folder pins when [historyDirBackToUpper] is on, and side-panel folder
+     * opens when [sidePanelDirBackToUpper] is on.
+     * Turning this on also forces [historyDirBackToUpper] and [sidePanelDirBackToUpper]
+     * on (one-way follow).
      */
     val alwaysExitToDir = boolPref("always_exit_to_dir", false)
 
@@ -508,6 +516,14 @@ object Settings : DataStorePreferences(null) {
      * [alwaysExitToDir] turns this on and never auto-turns it off.
      */
     val historyDirBackToUpper = boolPref("history_dir_back_to_upper", true)
+
+    /**
+     * When [alwaysExitToDir] is off: folders opened from the explorer side panel walk
+     * upper dirs on back (default on), independent of the History or Library tab.
+     * Hidden in UI while [alwaysExitToDir] is on; enabling [alwaysExitToDir] turns
+     * this on and never auto-turns it off.
+     */
+    val sidePanelDirBackToUpper = boolPref("side_panel_dir_back_to_upper", false)
 
     /**
      * Library list pin: when true (default), recently opened galleries (HISTORY time)

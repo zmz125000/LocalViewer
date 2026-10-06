@@ -30,6 +30,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -63,10 +64,12 @@ import com.ehviewer.core.util.withIOContext
 import com.hippo.ehviewer.EhDB
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.collectAsState
+import com.hippo.ehviewer.library.BrowseFolderId
 import com.hippo.ehviewer.library.BrowseSession
 import com.hippo.ehviewer.library.FolderGalleryIndex
 import com.hippo.ehviewer.library.HistoryThumbKey
 import com.hippo.ehviewer.library.LOCAL_FOLDER_TOKEN
+import com.hippo.ehviewer.library.LOCAL_GALLERY_TOKEN
 import com.hippo.ehviewer.library.LocalFolderListing
 import com.hippo.ehviewer.library.LocalHistory
 import com.hippo.ehviewer.library.LocalHistoryTarget
@@ -78,6 +81,7 @@ import com.hippo.ehviewer.library.WEBDAV_FOLDER_TOKEN
 import com.hippo.ehviewer.library.ZipAsDirListing
 import com.hippo.ehviewer.library.ZipPaths
 import com.hippo.ehviewer.library.buildLocalBrowseStack
+import com.hippo.ehviewer.library.hidesFromHistoryScreen
 import com.hippo.ehviewer.library.isEbookFileName
 import com.hippo.ehviewer.library.isEpubFileName
 import com.hippo.ehviewer.library.isPdfFileName
@@ -151,11 +155,39 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
         }
     }
     val filterQuery = keyword.trim()
-    val filteredHistory = remember(allHistory, filterQuery) {
-        if (filterQuery.isEmpty()) {
+    val historyHideFolders by Settings.historyHideFolders.collectAsState()
+    val libraryPlaces by produceState(emptyMap<Long, BrowseFolderId>(), allHistory) {
+        val ids = allHistory.mapNotNull { info ->
+            info.gid.takeIf { info.token == LOCAL_GALLERY_TOKEN }
+        }.distinct()
+        value = withIOContext {
+            ids.mapNotNull { id ->
+                LocalLibrary.loadGallery(id)?.let { id to BrowseFolderId.local(it.rootId, it.relativePath) }
+            }.toMap()
+        }
+    }
+    val localRoots by produceState(emptyList<Pair<Long, String>>()) {
+        value = withIOContext {
+            LocalLibrary.listRoots().mapNotNull { root ->
+                val path = LocalLibrary.rootPath(root)?.toString() ?: return@mapNotNull null
+                root.id to path
+            }
+        }
+    }
+    val visibleHistory = remember(allHistory, historyHideFolders, libraryPlaces, localRoots) {
+        if (historyHideFolders.isEmpty()) {
             allHistory
         } else {
-            allHistory.filter { info ->
+            allHistory.filterNot { info ->
+                hidesFromHistoryScreen(info, historyHideFolders, libraryPlaces, localRoots)
+            }
+        }
+    }
+    val filteredHistory = remember(visibleHistory, filterQuery) {
+        if (filterQuery.isEmpty()) {
+            visibleHistory
+        } else {
+            visibleHistory.filter { info ->
                 info.title?.contains(filterQuery, ignoreCase = true) == true ||
                     info.titleJpn?.contains(filterQuery, ignoreCase = true) == true
             }
