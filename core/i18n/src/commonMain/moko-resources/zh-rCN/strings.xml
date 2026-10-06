@@ -716,6 +716,9 @@
     <string name="settings_privacy_clear_history_on_startup_summary">每次启动应用时清除浏览与阅读历史</string>
     <string name="settings_privacy_clear_search_on_startup">启动时清除搜索</string>
     <string name="settings_privacy_clear_search_on_startup_summary">每次启动应用时清除设备上的搜索关键词</string>
+    <string name="settings_privacy_clear_folder_hide_from_history">清除文件夹隐藏历史标记</string>
+    <string name="settings_privacy_clear_folder_hide_from_history_summary">删除已标记“从历史中隐藏”的文件夹对应的历史记录，然后清除这些文件夹标记</string>
+    <string name="folder_hide_from_history_cleared">已清除文件夹隐藏历史标记</string>
     <string name="settings_privacy_clear_folder_browse_mode">清除文件夹浏览模式</string>
     <string name="settings_privacy_clear_folder_browse_mode_summary">删除已锁定在文件夹上的媒体 / 图库 / 视频 / 文档 / 文件夹模式</string>
     <string name="folder_browse_mode_cleared">已清除文件夹浏览模式</string>

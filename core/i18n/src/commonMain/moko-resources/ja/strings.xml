@@ -697,6 +697,9 @@
     <string name="settings_privacy_clear_history_on_startup_summary">アプリ起動のたびに閲覧・読書履歴を消去します</string>
     <string name="settings_privacy_clear_search_on_startup">起動時に検索を消去</string>
     <string name="settings_privacy_clear_search_on_startup_summary">アプリ起動のたびに端末の検索キーワードを消去します</string>
+    <string name="settings_privacy_clear_folder_hide_from_history">フォルダの履歴非表示マークを消去</string>
+    <string name="settings_privacy_clear_folder_hide_from_history_summary">「履歴に表示しない」に設定したフォルダに一致する履歴を削除してから、そのフォルダ設定を消去します</string>
+    <string name="folder_hide_from_history_cleared">フォルダの履歴非表示マークを消去しました</string>
     <string name="settings_privacy_clear_folder_browse_mode">フォルダ閲覧モードを消去</string>
     <string name="settings_privacy_clear_folder_browse_mode_summary">フォルダにロックしたメディア／画像／動画／ドキュメント／フォルダモードを削除します</string>
     <string name="folder_browse_mode_cleared">フォルダ閲覧モードを消去しました</string>

@@ -30,7 +30,6 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -64,12 +63,11 @@ import com.ehviewer.core.util.withIOContext
 import com.hippo.ehviewer.EhDB
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.collectAsState
-import com.hippo.ehviewer.library.BrowseFolderId
 import com.hippo.ehviewer.library.BrowseSession
 import com.hippo.ehviewer.library.FolderGalleryIndex
+import com.hippo.ehviewer.library.HistoryHidePersist
 import com.hippo.ehviewer.library.HistoryThumbKey
 import com.hippo.ehviewer.library.LOCAL_FOLDER_TOKEN
-import com.hippo.ehviewer.library.LOCAL_GALLERY_TOKEN
 import com.hippo.ehviewer.library.LocalFolderListing
 import com.hippo.ehviewer.library.LocalHistory
 import com.hippo.ehviewer.library.LocalHistoryTarget
@@ -81,7 +79,6 @@ import com.hippo.ehviewer.library.WEBDAV_FOLDER_TOKEN
 import com.hippo.ehviewer.library.ZipAsDirListing
 import com.hippo.ehviewer.library.ZipPaths
 import com.hippo.ehviewer.library.buildLocalBrowseStack
-import com.hippo.ehviewer.library.hidesFromHistoryScreen
 import com.hippo.ehviewer.library.isEbookFileName
 import com.hippo.ehviewer.library.isEpubFileName
 import com.hippo.ehviewer.library.isPdfFileName
@@ -124,6 +121,7 @@ import com.ramcosta.composedestinations.annotation.Destination
 import com.ramcosta.composedestinations.annotation.RootGraph
 import com.ramcosta.composedestinations.navigation.DestinationsNavigator
 import kotlin.math.roundToInt
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 import moe.tarsin.navigate
 import moe.tarsin.snackbar
@@ -146,43 +144,22 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
     ExplorerGestureEnabled(!searchFocused)
 
     val density = LocalDensity.current
-    // Full history stream; filter client-side so typing does not rebuild a PagingSource.
-    val allHistory by rememberInVM {
+    // Hide-from-history is applied before this list is published, so the grid never composes those rows.
+    // Keyword filtering stays here so typing does not rebuild a PagingSource.
+    val visibleHistory by rememberInVM {
         mutableStateOf(emptyList<GalleryEntity>()).also { state ->
             viewModelScope.launch {
-                EhDB.historyListFlow.collect { state.value = it }
+                combine(
+                    EhDB.historyListFlow,
+                    Settings.historyHideFolders.valueFlow(),
+                ) { rows, stored -> rows to stored }
+                    .collect { (rows, stored) ->
+                        state.value = HistoryHidePersist.withoutHiddenFolders(rows, stored)
+                    }
             }
         }
     }
     val filterQuery = keyword.trim()
-    val historyHideFolders by Settings.historyHideFolders.collectAsState()
-    val libraryPlaces by produceState(emptyMap<Long, BrowseFolderId>(), allHistory) {
-        val ids = allHistory.mapNotNull { info ->
-            info.gid.takeIf { info.token == LOCAL_GALLERY_TOKEN }
-        }.distinct()
-        value = withIOContext {
-            ids.mapNotNull { id ->
-                LocalLibrary.loadGallery(id)?.let { id to BrowseFolderId.local(it.rootId, it.relativePath) }
-            }.toMap()
-        }
-    }
-    val localRoots by produceState(emptyList<Pair<Long, String>>()) {
-        value = withIOContext {
-            LocalLibrary.listRoots().mapNotNull { root ->
-                val path = LocalLibrary.rootPath(root)?.toString() ?: return@mapNotNull null
-                root.id to path
-            }
-        }
-    }
-    val visibleHistory = remember(allHistory, historyHideFolders, libraryPlaces, localRoots) {
-        if (historyHideFolders.isEmpty()) {
-            allHistory
-        } else {
-            allHistory.filterNot { info ->
-                hidesFromHistoryScreen(info, historyHideFolders, libraryPlaces, localRoots)
-            }
-        }
-    }
     val filteredHistory = remember(visibleHistory, filterQuery) {
         if (filterQuery.isEmpty()) {
             visibleHistory

@@ -703,6 +703,9 @@
     <string name="settings_privacy_clear_history_on_startup_summary">每次啟動應用時清除瀏覽與閱讀歷史</string>
     <string name="settings_privacy_clear_search_on_startup">啟動時清除搜尋</string>
     <string name="settings_privacy_clear_search_on_startup_summary">每次啟動應用時清除裝置上的搜尋關鍵字</string>
+    <string name="settings_privacy_clear_folder_hide_from_history">清除資料夾隱藏歷史標記</string>
+    <string name="settings_privacy_clear_folder_hide_from_history_summary">刪除已標記「從歷史中隱藏」的資料夾對應的歷史記錄，然後清除這些資料夾標記</string>
+    <string name="folder_hide_from_history_cleared">已清除資料夾隱藏歷史標記</string>
     <string name="settings_privacy_clear_folder_browse_mode">清除資料夾瀏覽模式</string>
     <string name="settings_privacy_clear_folder_browse_mode_summary">刪除已鎖定在資料夾上的媒體 / 圖庫 / 影片 / 文件 / 資料夾模式</string>
     <string name="folder_browse_mode_cleared">已清除資料夾瀏覽模式</string>

@@ -41,6 +41,7 @@ import com.ehviewer.core.util.logcat
 import com.hippo.ehviewer.library.HistoryHidePersist
 import com.hippo.ehviewer.library.LocalHistory
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
 import okio.Path
 
 object EhDB {
@@ -319,6 +320,19 @@ object EhDB {
         val historyList = dao.list()
         dao.deleteAll()
         historyList.forEach { runCatching { db.galleryDao().deleteByKey(it.gid) } }
+    }
+
+    /**
+     * Delete history rows covered by the hide-from-history folder marks, then clear those marks.
+     * Rows the marks do not cover stay.
+     */
+    suspend fun clearHistoryHiddenByFolderMarks() {
+        val stored = Settings.historyHideFolders.value
+        if (stored.isNotEmpty()) {
+            HistoryHidePersist.rowsHiddenOnScreen(historyListFlow.first(), stored)
+                .forEach { deleteHistoryInfo(it) }
+        }
+        HistoryHidePersist.clearAll()
     }
 
     suspend fun getAllFilter() = db.filterDao().list()
