@@ -29,6 +29,8 @@ class PdfImageEngine private constructor(
     private var pageCursor: PdfParser.PageImageCursor? = null,
     structureComplete: Boolean = true,
     private val discoveryAllowed: Boolean = false,
+    /** Catalog `/Count`. Image [pageCount] stays the seek list. */
+    val metadataPageCount: Int = 0,
 ) : ProgressiveDocumentImageEngine {
 
     data class ImageRef(
@@ -363,6 +365,7 @@ class PdfImageEngine private constructor(
                     pageCursor = cursor,
                     structureComplete = false,
                     discoveryAllowed = true,
+                    metadataPageCount = cursor.declaredPageCount.coerceAtLeast(0),
                 )
                 engine.ensureListedThrough(if (progressiveOpen || coverOnly) 0 else Int.MAX_VALUE)
                 logcat("PdfImage") {

@@ -37,6 +37,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -67,6 +68,7 @@ import com.ehviewer.core.i18n.R
 import com.ehviewer.core.ui.component.ElevatedCard
 import com.ehviewer.core.util.logcat
 import com.ehviewer.core.util.withIOContext
+import com.hippo.ehviewer.EhDB
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.coil.CoverThumb
 import com.hippo.ehviewer.coil.coverThumbRequest
@@ -78,11 +80,13 @@ import com.hippo.ehviewer.library.DocumentExtractCache
 import com.hippo.ehviewer.library.EmptyArchiveRegistry
 import com.hippo.ehviewer.library.LandscapeCoverMarks
 import com.hippo.ehviewer.library.LocalLibrary
+import com.hippo.ehviewer.library.PdfPageCounts
 import com.hippo.ehviewer.library.ReaderPageThumb
 import com.hippo.ehviewer.library.VideoThumbnail
 import com.hippo.ehviewer.library.VideoThumbnailSource
 import com.hippo.ehviewer.library.ZipMemberCover
 import com.hippo.ehviewer.library.isDocumentFileName
+import com.hippo.ehviewer.library.isPdfFileName
 import com.hippo.ehviewer.library.isSolidArchiveFileName
 import com.hippo.ehviewer.library.isZipArchiveFileName
 import com.hippo.ehviewer.library.safFolderLabel
@@ -149,11 +153,27 @@ fun browseListSizeLabel(sizeBytes: Long): String {
     }
 }
 
-/** `12P` / `∞P` for folder galleries; empty when unknown. */
-fun browseListPagesLabel(pageCount: Int, pageCountCapped: Boolean = false): String = when {
+/** `12P` / `∞P` for folder galleries; `4/12P` when [readProgress] is set. Empty when unknown. */
+fun browseListPagesLabel(
+    pageCount: Int,
+    pageCountCapped: Boolean = false,
+    readProgress: Int = 0,
+): String = when {
     pageCountCapped -> "∞P"
+    readProgress > 0 && pageCount > 0 -> "${readProgress + 1}/${pageCount}P"
     pageCount > 0 -> "${pageCount}P"
     else -> ""
+}
+
+/** Grid corner badge: `12`, `4/12`, or `∞`. Same text as library and history. */
+fun galleryPageBadgeText(
+    pageCount: Int,
+    readProgress: Int = 0,
+    pageCountCapped: Boolean = false,
+): String = when {
+    pageCountCapped -> "∞"
+    readProgress > 0 && pageCount > 0 -> "${readProgress + 1}/$pageCount"
+    else -> "$pageCount"
 }
 
 /**
@@ -195,9 +215,10 @@ fun browseListMetaSegments(
     pageCount: Int = 0,
     pageCountCapped: Boolean = false,
     dateLabel: String = "",
+    readProgress: Int = 0,
 ): String = buildList {
     add(typeLabel)
-    val pages = browseListPagesLabel(pageCount, pageCountCapped)
+    val pages = browseListPagesLabel(pageCount, pageCountCapped, readProgress)
     if (pages.isNotEmpty()) add(pages)
     val size = browseListSizeLabel(sizeBytes)
     if (size.isNotEmpty()) add(size)
@@ -211,13 +232,99 @@ fun browseListSupportingLine(
     pageCount: Int = 0,
     pageCountCapped: Boolean = false,
     lastModifiedMs: Long = 0L,
+    readProgress: Int = 0,
 ): String = browseListMetaSegments(
     typeLabel = typeLabel,
     sizeBytes = sizeBytes,
     pageCount = pageCount,
     pageCountCapped = pageCountCapped,
     dateLabel = browseListDateLabel(lastModifiedMs),
+    readProgress = readProgress,
 )
+
+/** Saved reader page, or 0 when reading progress is hidden. */
+@Composable
+private fun rememberGalleryReadProgress(progressGid: Long): Int {
+    val showProgress by Settings.showReadingProgress.collectAsState()
+    if (!showProgress || progressGid == 0L) return 0
+    val flow = remember(progressGid) { EhDB.getReadProgressFlow(progressGid) }
+    return flow.collectAsState(0).value
+}
+
+/** Cover cache key used by [ArchiveCoverCache] PDF thumb fetch. */
+internal fun pdfMetadataCountKey(cover: BrowseCover?): String? = when (cover) {
+    is BrowseCover.LocalArchive -> cover.archivePath.toString()
+    is BrowseCover.SmbArchive -> "smb:${cover.sourceId}:${cover.remoteRelativeFile}"
+    is BrowseCover.WebDavArchive -> "webdav:${cover.sourceId}:${cover.remoteRelativeFile}"
+    else -> null
+}
+
+private fun isPdfBrowseName(cover: BrowseCover?, fileName: String): Boolean {
+    if (isPdfFileName(fileName)) return true
+    val key = pdfMetadataCountKey(cover) ?: return false
+    return isPdfFileName(key.substringAfterLast('/'))
+}
+
+/**
+ * Folder page total. PDFs use catalog `/Count` noted during thumb fetch,
+ * never the image-page list (that list stays for seek).
+ */
+@Composable
+private fun rememberFolderPageCount(listed: Int, cover: BrowseCover?, fileName: String): Int {
+    if (!isPdfBrowseName(cover, fileName)) return listed
+    val key = pdfMetadataCountKey(cover) ?: return 0
+    var count by remember(key) { mutableIntStateOf(PdfPageCounts.peek(key)) }
+    LaunchedEffect(key) {
+        val loaded = withIOContext { PdfPageCounts.get(key) }
+        if (loaded > 0) count = loaded
+        PdfPageCounts.updates.collect {
+            val noted = PdfPageCounts.peek(key)
+            if (noted > 0) count = noted
+        }
+    }
+    return count
+}
+
+@Composable
+private fun rememberArchiveProgressGid(cover: BrowseCover?): Long {
+    val immediate = remember(cover) { archiveProgressGid(cover) }
+    if (cover !is BrowseCover.LocalArchive) return immediate
+    var gid by remember(cover) { mutableLongStateOf(immediate) }
+    val path = cover.archivePath.toString()
+    LaunchedEffect(path) {
+        val libraryId = withIOContext { LocalLibrary.loadGalleryByContentPath(path)?.id }
+        if (libraryId != null && libraryId != 0L) gid = libraryId
+    }
+    return gid
+}
+
+private fun archiveProgressGid(cover: BrowseCover?): Long = when (cover) {
+    is BrowseCover.SmbArchive ->
+        stableGalleryId(cover.sourceId, "smba:${cover.remoteRelativeFile.trim('/')}")
+    is BrowseCover.WebDavArchive ->
+        stableGalleryId(cover.sourceId, "dava:${cover.remoteRelativeFile.trim('/')}")
+    is BrowseCover.LocalArchive ->
+        stableGalleryId(0L, "local-archive:${cover.archivePath}")
+    else -> 0L
+}
+
+@Composable
+private fun GalleryPagesBadge(
+    pageCount: Int,
+    pageCountCapped: Boolean,
+    progressGid: Long,
+    modifier: Modifier = Modifier,
+) {
+    if (pageCount <= 0 && !pageCountCapped) return
+    val readProgress = rememberGalleryReadProgress(if (pageCountCapped) 0L else progressGid)
+    Badge(
+        modifier = modifier
+            .widthIn(min = 32.dp)
+            .height(24.dp),
+    ) {
+        Text(text = galleryPageBadgeText(pageCount, readProgress, pageCountCapped))
+    }
+}
 
 /**
  * List-row supporting content: optional type icon (same idea as favourite / history
@@ -486,6 +593,8 @@ fun BrowseFolderGalleryRow(
     val haptic = LocalHapticFeedback.current
     val resolvedCover = cover ?: coverPath?.let { BrowseCover.Local(it) }
     val label = name.safFolderLabel()
+    val shownPages = if (showPages) pageCount else 0
+    val readProgress = rememberGalleryReadProgress(if (shownPages > 0 && !pageCountCapped) progressGid else 0L)
     BrowseFolderListItem(
         headlineContent = { Text(label) },
         supportingContent = {
@@ -493,9 +602,10 @@ fun BrowseFolderGalleryRow(
                 browseListSupportingLine(
                     typeLabel = typeLabel,
                     sizeBytes = sizeBytes,
-                    pageCount = if (showPages) pageCount else 0,
+                    pageCount = shownPages,
                     pageCountCapped = showPages && pageCountCapped,
                     lastModifiedMs = lastModifiedMs,
+                    readProgress = readProgress,
                 ),
             )
         },
@@ -551,6 +661,10 @@ fun BrowseArchiveGalleryRow(
     overflow: BrowseOverflowActions? = null,
 ) {
     val haptic = LocalHapticFeedback.current
+    val resolvedPages = rememberFolderPageCount(pageCount, cover, fileName)
+    val shownPages = if (showPages) resolvedPages else 0
+    val progressGid = rememberArchiveProgressGid(cover)
+    val readProgress = rememberGalleryReadProgress(if (shownPages > 0) progressGid else 0L)
     BrowseFolderListItem(
         headlineContent = { Text(name) },
         supportingContent = {
@@ -558,8 +672,9 @@ fun BrowseArchiveGalleryRow(
                 browseListSupportingLine(
                     typeLabel = browseFileExtensionLabel(fileName),
                     sizeBytes = sizeBytes,
-                    pageCount = if (showPages) pageCount else 0,
+                    pageCount = shownPages,
                     lastModifiedMs = lastModifiedMs,
+                    readProgress = readProgress,
                 ),
             )
         },
@@ -570,6 +685,7 @@ fun BrowseArchiveGalleryRow(
                 retryKey = thumbRetryKey,
                 allowRemoteFetch = allowRemoteFetch,
                 placeholderIcon = Icons.AutoMirrored.Filled.InsertDriveFile,
+                progressGid = progressGid,
             )
         },
         trailingContent = overflow?.let { actions ->
@@ -903,20 +1019,13 @@ fun BrowseFolderGalleryGridItem(
                     allowRemoteFetch = allowRemoteFetch,
                     progressGid = progressGid,
                 )
-                if (showPages && (pageCount > 0 || pageCountCapped)) {
-                    Badge(
-                        modifier = Modifier
-                            .align(Alignment.TopEnd)
-                            .widthIn(min = 32.dp)
-                            .height(24.dp),
-                    ) {
-                        Text(
-                            text = when {
-                                pageCountCapped -> "∞"
-                                else -> "$pageCount"
-                            },
-                        )
-                    }
+                if (showPages) {
+                    GalleryPagesBadge(
+                        pageCount = pageCount,
+                        pageCountCapped = pageCountCapped,
+                        progressGid = progressGid,
+                        modifier = Modifier.align(Alignment.TopEnd),
+                    )
                 }
             }
         },
@@ -1012,15 +1121,15 @@ fun BrowseArchiveGridItem(
                     allowRemoteFetch = allowRemoteFetch,
                     placeholderIcon = Icons.AutoMirrored.Filled.InsertDriveFile,
                 )
-                if (showPages && pageCount > 0) {
-                    Badge(
-                        modifier = Modifier
-                            .align(Alignment.TopEnd)
-                            .widthIn(min = 32.dp)
-                            .height(24.dp),
-                    ) {
-                        Text(text = "$pageCount")
-                    }
+                val archivePages = rememberFolderPageCount(pageCount, cover, name)
+                val archiveProgressGid = rememberArchiveProgressGid(cover)
+                if (showPages) {
+                    GalleryPagesBadge(
+                        pageCount = archivePages,
+                        pageCountCapped = false,
+                        progressGid = archiveProgressGid,
+                        modifier = Modifier.align(Alignment.TopEnd),
+                    )
                 }
             }
         },

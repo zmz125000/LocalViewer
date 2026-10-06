@@ -18,6 +18,15 @@ class BrowseListMetaTest {
     }
 
     @Test
+    fun readingProgressUsesLibraryBadgeText() {
+        assertEquals("4/12", galleryPageBadgeText(pageCount = 12, readProgress = 3))
+        assertEquals("12", galleryPageBadgeText(pageCount = 12, readProgress = 0))
+        assertEquals("∞", galleryPageBadgeText(pageCount = 0, pageCountCapped = true))
+        assertEquals("4/12P", browseListPagesLabel(pageCount = 12, readProgress = 3))
+        assertEquals("12P", browseListPagesLabel(pageCount = 12))
+    }
+
+    @Test
     fun fileRowIsExtSizeDate() {
         assertEquals(
             "TXT · 340 KB · Today 3:04 PM",

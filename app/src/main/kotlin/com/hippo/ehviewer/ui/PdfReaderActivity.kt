@@ -767,6 +767,7 @@ private fun tryOpenImagePdf(
             progressive = true,
         )
     }
+    cacheKey?.let { com.hippo.ehviewer.library.PdfPageCounts.note(it, engine?.metadataPageCount ?: 0) }
     if (engine == null || engine.ensureListedThrough(startPage.coerceAtLeast(0)) <= 0) {
         runCatching { engine?.close() }
         return null

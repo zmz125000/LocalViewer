@@ -1079,7 +1079,9 @@ internal fun openDocumentEngine(
                     progressive = progressivePdf,
                 )
             }
-            engine ?: error("Not a readable PDF (encrypted or unsupported)")
+            (engine ?: error("Not a readable PDF (encrypted or unsupported)")).also {
+                com.hippo.ehviewer.library.PdfPageCounts.note(cacheKey, it.metadataPageCount)
+            }
         }
         else -> error("Unsupported document format: $formatHint")
     }
