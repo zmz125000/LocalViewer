@@ -2165,6 +2165,8 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                                     allowRemoteFetch = allowRemoteThumbs,
                                     onClick = { openArchive(entry) },
                                     onLongClick = { openArchiveSecondary(entry) },
+                                    pageCount = entry.pageCount,
+                                    showPages = showGalleryPages,
                                     overflow = archiveOverflow(entry),
                                 )
                             } else {
@@ -2377,6 +2379,8 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                                         allowRemoteFetch = allowRemoteThumbs,
                                         onClick = { openArchive(entry) },
                                         onLongClick = { openArchiveSecondary(entry) },
+                                        pageCount = entry.pageCount,
+                                        showPages = showGalleryPages,
                                         overflow = archiveOverflow(entry),
                                     )
                                 } else {
@@ -2541,6 +2545,8 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                                                     allowRemoteFetch = allowRemoteThumbs,
                                                     onClick = { openArchive(entry) },
                                                     onLongClick = { openArchiveSecondary(entry) },
+                                                    pageCount = entry.pageCount,
+                                                    showPages = showGalleryPages,
                                                     overflow = archiveOverflow(entry),
                                                 )
                                             else -> Unit

@@ -203,7 +203,7 @@ fun LocalGalleryListItem(
     onClick: () -> Unit,
     onLongClick: () -> Unit = onClick,
     showPages: Boolean,
-    @Suppress("UNUSED_PARAMETER") showProgress: Boolean,
+    showProgress: Boolean,
     modifier: Modifier = Modifier,
 ) {
     val haptic = LocalHapticFeedback.current
@@ -223,6 +223,9 @@ fun LocalGalleryListItem(
             }.getOrDefault(0L)
         }
     }
+    val pageCount = if (showPages && !isVideoFile && !isImageFile) gallery.pageCount else 0
+    val savedPage = remember(gallery.id) { EhDB.getReadProgressFlow(gallery.id) }.collectAsState(0).value
+    val readProgress = if (showProgress && pageCount > 0) savedPage else 0
     val metaLine = browseListSupportingLine(
         typeLabel = when {
             isArchive -> browseFileExtensionLabel(gallery.contentPath)
@@ -230,8 +233,9 @@ fun LocalGalleryListItem(
             else -> "Folder"
         },
         sizeBytes = archiveSizeBytes,
-        pageCount = if (showPages && !isVideoFile && !isImageFile) gallery.pageCount else 0,
+        pageCount = pageCount,
         lastModifiedMs = gallery.mtime,
+        readProgress = readProgress,
     )
     val videoThumbPath = gallery.coverPath ?: gallery.contentPath.takeIf { isVideoFile || isVideoFolder }
     ListItem(
@@ -292,7 +296,7 @@ fun HistoryListItem(
     onClick: () -> Unit,
     onLongClick: () -> Unit = onClick,
     showPages: Boolean,
-    @Suppress("UNUSED_PARAMETER") showProgress: Boolean,
+    showProgress: Boolean,
     modifier: Modifier = Modifier,
     overflow: BrowseOverflowActions? = null,
 ) {
@@ -324,9 +328,13 @@ fun HistoryListItem(
         kind == LocalHistory.KindLabel.WebDav -> "WebDAV"
         else -> "File"
     }
+    val pageCount = if (showPages && LocalHistory.showsPageProgress(info)) info.pages else 0
+    val savedPage = remember(info.gid) { EhDB.getReadProgressFlow(info.gid) }.collectAsState(0).value
+    val readProgress = if (showProgress && pageCount > 0) savedPage else 0
     val metaLine = browseListSupportingLine(
         typeLabel = typeLabel,
-        pageCount = if (showPages && LocalHistory.showsPageProgress(info)) info.pages else 0,
+        pageCount = pageCount,
+        readProgress = readProgress,
     )
     val listDecodePx = CoverThumb.listDecodePx()
     val coverKey = remember(info.gid, info.thumbKey, info.token, info.uploader) {

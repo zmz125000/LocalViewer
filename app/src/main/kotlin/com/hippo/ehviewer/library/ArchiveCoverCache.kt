@@ -24,6 +24,7 @@ import com.hippo.ehviewer.jni.releaseByteBuffer
 import com.hippo.ehviewer.jni.solidCurrentExtension
 import com.hippo.ehviewer.jni.solidExtractCurrentToFd
 import com.hippo.ehviewer.jni.solidNextPlayable
+import com.hippo.ehviewer.library.document.PdfImageEngine
 import java.io.File
 import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
@@ -748,6 +749,7 @@ object ArchiveCoverCache {
                         val size = runCatching { source.size }.getOrDefault(0L)
                         val engine = openDocumentCoverEngine(cacheKey, source, size)
                             ?: return@use CoverEnsureResult.Skip
+                        notePdfMetadataPages(cacheKey, engine)
                         // Opened and no image pages: drop the photo tag. Document mode
                         // still keeps PDF/EPUB by filename. A failed open stays Skip.
                         if (engine.pageCount <= 0) return@use CoverEnsureResult.NoImages
@@ -781,6 +783,7 @@ object ArchiveCoverCache {
                     PfdArchiveByteSource(pfd, ownsPfd = false).use { source ->
                         val engine = openDocumentCoverEngine(key, source, pfd.statSize)
                             ?: return@withCoverExtractSlot CoverEnsureResult.Skip
+                        notePdfMetadataPages(key, engine)
                         // Opened and no image pages: drop the photo tag. Document mode
                         // still keeps PDF/EPUB by filename. A failed open stays Skip.
                         if (engine.pageCount <= 0) return@withCoverExtractSlot CoverEnsureResult.NoImages
@@ -799,6 +802,15 @@ object ArchiveCoverCache {
                 CoverEnsureResult.Skip
             }
         }
+    }
+
+    /** Catalog `/Count` from the parser this thumb fetch already opened. */
+    private fun notePdfMetadataPages(
+        cacheKey: String,
+        engine: com.hippo.ehviewer.library.document.DocumentImageEngine,
+    ) {
+        val pdf = engine as? PdfImageEngine ?: return
+        PdfPageCounts.note(cacheKey, pdf.metadataPageCount)
     }
 
     private fun openDocumentCoverEngine(

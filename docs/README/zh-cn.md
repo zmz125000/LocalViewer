@@ -77,7 +77,7 @@
 采用 [Material Design 3](https://m3.material.io/)  
 并支持 [动态取色](https://m3.material.io/styles/color/dynamic-color/overview)。
 
-类似 Perfect Viewer 和 Kuro Reader，但支持高分辨率图片（不降采样）、简洁界面和更好的性能。
+类似 Perfect Viewer 和 Kuro Reader，支持高分辨率图片（不降采样）、简洁界面和性能优化。
 
 使用 Grok 4.5 构建。
 
@@ -158,8 +158,9 @@ while ($true) {
 
 # 截图
 
-![screenshots-01](https://github.com/zmz125000/LocalViewer-art/blob/master/screenshots-01.webp)
-![screenshots-02](https://github.com/zmz125000/LocalViewer-art/blob/master/screenshots-02.webp)
+![LocalViewer screenshot main page](https://github.com/zmz125000/LocalViewer-art/blob/master/screenshots-01.webp)
+![LocalViewer screenshot gallery reader](https://github.com/zmz125000/LocalViewer-art/blob/master/screenshots-02.webp)
+![LocalViewer screenshot window manager](https://github.com/zmz125000/LocalViewer-art/blob/master/screenshots-03.webp)
 
 # 感谢
 
