@@ -116,22 +116,32 @@ fun AnimatedVisibilityScope.EhScreen(navigator: DestinationsNavigator) = Screen(
             )
             val alwaysExitToDir = Settings.alwaysExitToDir.asMutableState()
             val historyDirBackToUpper = Settings.historyDirBackToUpper.asMutableState()
+            val sidePanelDirBackToUpper = Settings.sidePanelDirBackToUpper.asMutableState()
             SwitchPreference(
                 title = stringResource(id = R.string.settings_general_back_to_upper_dir),
                 state = alwaysExitToDir,
             )
-            // Nested: only when parent is off. Enabling parent one-way turns this on.
-            // Turning parent off does not change this value.
+            // Nested: only when parent is off. Enabling parent one-way turns these on.
+            // Turning parent off does not change these values.
             AnimatedVisibility(visible = !alwaysExitToDir.value) {
-                SwitchPreference(
-                    title = stringResource(id = R.string.settings_general_history_dir_back_to_upper),
-                    state = historyDirBackToUpper,
-                )
+                Column {
+                    SwitchPreference(
+                        title = stringResource(id = R.string.settings_general_side_panel_dir_back_to_upper),
+                        state = sidePanelDirBackToUpper,
+                    )
+                    SwitchPreference(
+                        title = stringResource(id = R.string.settings_general_history_dir_back_to_upper),
+                        state = historyDirBackToUpper,
+                    )
+                }
             }
-            // One-way follow: parent ON → child ON (never auto-off).
+            // One-way follow: parent ON → children ON (never auto-off).
             LaunchedEffect(alwaysExitToDir.value) {
                 if (alwaysExitToDir.value && !historyDirBackToUpper.value) {
                     historyDirBackToUpper.value = true
+                }
+                if (alwaysExitToDir.value && !sidePanelDirBackToUpper.value) {
+                    sidePanelDirBackToUpper.value = true
                 }
             }
             SwitchPreference(
