@@ -664,10 +664,13 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
     // effect and starts a new one — that is the only concurrency control we need.
     // Previous epoch/ON_RESUME races could ++epoch, early-return without clearing loading,
     // and leave History→up→up stuck on an empty infinite spinner (manual refresh worked).
+    val thumbFolderKey = "smb:$sourceId:$relativeDir"
+    val thumbFolderKeyNow = rememberUpdatedState(thumbFolderKey)
     LaunchedEffect(explorerWindowId, sourceId, relativeDir, refreshToken) {
-        // New folder must not wait on previous folder's stuck MMR pool threads.
-        VideoThumbnail.onBrowseFolderChanged("smb:$sourceId:$relativeDir")
-        ArchiveCoverCache.onBrowseFolderChanged("smb:$sourceId:$relativeDir")
+        // New folder, including a side-panel window switch, drops the previous
+        // folder's SMB thumb borrows and MMR workers.
+        VideoThumbnail.onBrowseFolderChanged(thumbFolderKey)
+        ArchiveCoverCache.onBrowseFolderChanged(thumbFolderKey)
         val targetDir = relativeDir
         val force = forceNextLoad
         forceNextLoad = false
@@ -797,8 +800,8 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
 
     DisposableEffect(Unit) {
         onDispose {
-            VideoThumbnail.onBrowseFolderLeft("smb:")
-            ArchiveCoverCache.onBrowseFolderLeft("smb:")
+            VideoThumbnail.onBrowseFolderLeftIfCurrent(thumbFolderKeyNow.value)
+            ArchiveCoverCache.onBrowseFolderLeftIfCurrent(thumbFolderKeyNow.value)
         }
     }
 
