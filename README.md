@@ -26,9 +26,6 @@
   <a href="/LICENSE">
     <img src="https://img.shields.io/github/license/zmz125000/LocalViewer" alt="LICENSE">
   </a>
-  <a href="https://www.codefactor.io/repository/github/zmz125000/LocalViewer">
-    <img src="https://www.codefactor.io/repository/github/zmz125000/LocalViewer/badge" alt="CodeFactor">
-  </a>
   <a href="https://github.com/zmz125000/LocalViewer/releases">
     <img src="https://img.shields.io/github/v/release/zmz125000/LocalViewer" alt="Release">
   </a>
@@ -77,11 +74,11 @@ Based on [EhViewer](https://github.com/FooIbar/EhViewer)
 With [Material Design 3](https://m3.material.io/)  
 and [Dynamic Color](https://m3.material.io/styles/color/dynamic-color/overview) Support.  
 
-Similar to Perfect Viewer and Kuro Reader but with Hi-Res images support (no downscaling), clean UI and way better performance.
+Similar to Perfect Viewer and Kuro Reader, with Hi-Res images support (no downscaling), clean UI and good performance.
 
 Build with Grok 4.5.
 
-The app is now stable and polished, offering best-in-class performance, features, and UI/UX as a local media viewer.  
+The app is now stable and polished.  
 Thank you for your support.
 
 ## Features
@@ -117,6 +114,11 @@ Thank you for your support.
 * Reader comic dual pages mode.
 * E-Ink mode support (ported from [venera-next](https://github.com/cyrilpeng/venera-next)).
 * EasyTier support (ported from [moonlight-vplus](https://github.com/qiin2333/moonlight-vplus)).
+
+### Performance
+* The custom SMBJ and WebDAV clients achieve 1 Gbps network speeds over Wi-Fi 7, so after v1.11.x the image reader defaults to have image caching disabled.
+* Windows 11 JXR HDR screenshots can be displayed directly in fp16 bitmaps without tone mapping, or transcode to Ultra HDR Jpeg. The prefetch and decode ahead is set to 1 for JXR format to avoid OOM crashed.
+* The image loader was tweaked for preloading and decoding 20MB jpg files without any OOM crashes, and smaller files should load instantly.
 
 ### To use WebDAV
 
@@ -163,8 +165,9 @@ while ($true) {
 
 # Screenshot
 
-![screenshots-01](https://github.com/zmz125000/LocalViewer-art/blob/master/screenshots-01.webp)
-![screenshots-02](https://github.com/zmz125000/LocalViewer-art/blob/master/screenshots-02.webp)
+![LocalViewer screenshot main page](https://github.com/zmz125000/LocalViewer-art/blob/master/screenshots-01.webp)
+![LocalViewer screenshot gallery reader](https://github.com/zmz125000/LocalViewer-art/blob/master/screenshots-02.webp)
+![LocalViewer screenshot window manager](https://github.com/zmz125000/LocalViewer-art/blob/master/screenshots-03.webp)
 
 # Thanks
 

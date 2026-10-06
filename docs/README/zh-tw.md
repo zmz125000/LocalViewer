@@ -157,8 +157,9 @@ while ($true) {
 
 # 截圖
 
-![screenshots-01](https://github.com/zmz125000/LocalViewer-art/blob/master/screenshots-01.webp)
-![screenshots-02](https://github.com/zmz125000/LocalViewer-art/blob/master/screenshots-02.webp)
+![LocalViewer screenshot main page](https://github.com/zmz125000/LocalViewer-art/blob/master/screenshots-01.webp)
+![LocalViewer screenshot gallery reader](https://github.com/zmz125000/LocalViewer-art/blob/master/screenshots-02.webp)
+![LocalViewer screenshot window manager](https://github.com/zmz125000/LocalViewer-art/blob/master/screenshots-03.webp)
 
 # 感謝
 
