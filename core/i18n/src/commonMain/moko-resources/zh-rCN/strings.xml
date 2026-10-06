@@ -83,7 +83,7 @@
     <string name="settings_use_media3_player">使用 Media3 播放器</string>
     <string name="settings_use_media3_player_summary">开启：单击应用内播放，长按外部应用。关闭：单击外部应用，长按应用内播放。</string>
     <string name="settings_use_media3_player_for_library">图库使用 Media3 播放器</string>
-    <string name="settings_use_media3_player_for_library_summary">在“使用 Media3 播放器”关闭时：从图库全部视频列表打开的视频仍用应用内播放器。打开视频文件夹则不会。</string>
+    <string name="settings_use_media3_player_for_library_summary">在“使用 Media3 播放器”关闭时：从图库全部视频列表或图库视频文件夹打开的视频仍用应用内播放器。</string>
     <string name="settings_video_scroll_to_next">滑动到下一个视频</string>
     <string name="settings_video_scroll_to_next_summary">上滑或下滑切换下一个或上一个视频。</string>
     <string name="settings_media3_playback_resume">播放进度续播</string>

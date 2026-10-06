@@ -1886,14 +1886,26 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         }
     }
 
-    /** Primary action: Media3 when [Settings.useMedia3Player] is on, else external. */
+    /**
+     * Main Media3 switch, plus the library toggle while this frame is a library video folder.
+     * Long-press uses the other player.
+     */
+    fun videoOpensInApp(longPress: Boolean): Boolean = libraryVideoFileUsesMedia3(
+        media3 = Settings.useMedia3Player.value,
+        media3ForLibrary = Settings.useMedia3PlayerForLibrary.value,
+        videoMode = LibraryVideoMode.Folders,
+        libraryVideoFolder = videoFolder,
+        longPress = longPress,
+    )
+
+    /** Primary action: in-app when [videoOpensInApp] is on, else external. */
     fun openVideoPrimary(path: okio.Path) {
-        if (Settings.useMedia3Player.value) playVideo(path) else openExternalFile(path)
+        if (videoOpensInApp(longPress = false)) playVideo(path) else openExternalFile(path)
     }
 
     /** Long-press: opposite of [openVideoPrimary]. */
     fun openVideoSecondary(path: okio.Path) {
-        if (Settings.useMedia3Player.value) openExternalFile(path) else playVideo(path)
+        if (videoOpensInApp(longPress = true)) playVideo(path) else openExternalFile(path)
     }
 
     fun notSupportedAction() {

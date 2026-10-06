@@ -12,15 +12,29 @@ class LibraryVideoPlayerChoiceTest {
     }
 
     @Test
-    fun libraryToggleIsOnlyTheAllVideosList() {
+    fun libraryToggleCoversAllVideosListAndVideoFolders() {
         assertTrue(
             libraryVideoFileUsesMedia3(media3 = false, media3ForLibrary = true, LibraryVideoMode.Files),
+        )
+        assertTrue(
+            libraryVideoFileUsesMedia3(
+                media3 = false,
+                media3ForLibrary = true,
+                videoMode = LibraryVideoMode.Folders,
+                libraryVideoFolder = true,
+            ),
         )
         assertFalse(
             libraryVideoFileUsesMedia3(media3 = false, media3ForLibrary = true, LibraryVideoMode.Folders),
         )
         assertFalse(
-            libraryVideoFileUsesMedia3(media3 = false, media3ForLibrary = false, LibraryVideoMode.Files),
+            libraryVideoFileUsesMedia3(
+                media3 = false,
+                media3ForLibrary = true,
+                videoMode = LibraryVideoMode.Folders,
+                libraryVideoFolder = true,
+                longPress = true,
+            ),
         )
     }
 

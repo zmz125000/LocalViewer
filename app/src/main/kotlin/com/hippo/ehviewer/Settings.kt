@@ -146,9 +146,9 @@ object Settings : DataStorePreferences(null) {
 
     /**
      * Shown when [useMedia3Player] is off. On: a video opened from the library
-     * all-videos list (not a video folder) uses Media3. Video folders stay external.
+     * all-videos list or a library video folder uses Media3.
      */
-    val useMedia3PlayerForLibrary = boolPref("use_media3_player_for_library", false)
+    val useMedia3PlayerForLibrary = boolPref("use_media3_player_for_library", true)
 
     /**
      * In-app player: swipe up/down moves to the next/previous video.
