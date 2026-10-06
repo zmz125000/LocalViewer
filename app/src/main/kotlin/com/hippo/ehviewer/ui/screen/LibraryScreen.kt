@@ -533,9 +533,17 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
         navToLocalFolderReader(dir, item.toBaseGalleryInfo(), page, names)
     }
 
+    /** All-videos list only. Long-press is the other player. A video folder keeps the main switch. */
+    fun libraryVideoFileInApp(longPress: Boolean): Boolean = libraryVideoFileUsesMedia3(
+        media3 = Settings.useMedia3Player.value,
+        media3ForLibrary = Settings.useMedia3PlayerForLibrary.value,
+        videoMode = LibraryVideoMode.fromPref(Settings.libraryVideoMode.value),
+        longPress = longPress,
+    )
+
     fun openLibraryItemPrimary(item: LocalGalleryEntity) {
         when (item.kind) {
-            LOCAL_GALLERY_KIND_VIDEO_FILE -> openVideoFile(item, inApp = Settings.useMedia3Player.value)
+            LOCAL_GALLERY_KIND_VIDEO_FILE -> openVideoFile(item, inApp = libraryVideoFileInApp(longPress = false))
             LOCAL_GALLERY_KIND_VIDEO_FOLDER -> openVideoFolder(item)
             LOCAL_GALLERY_KIND_IMAGE_FILE -> openAllPhotosReader(item)
             else -> openGalleryPrimary(item)
@@ -544,7 +552,7 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
 
     fun openLibraryItemSecondary(item: LocalGalleryEntity) {
         when (item.kind) {
-            LOCAL_GALLERY_KIND_VIDEO_FILE -> openVideoFile(item, inApp = !Settings.useMedia3Player.value)
+            LOCAL_GALLERY_KIND_VIDEO_FILE -> openVideoFile(item, inApp = libraryVideoFileInApp(longPress = true))
             LOCAL_GALLERY_KIND_VIDEO_FOLDER -> openVideoFolder(item)
             LOCAL_GALLERY_KIND_IMAGE_FILE -> openImageFile(item, photoGrid = !Settings.photoGridMode.value)
             else -> openGallerySecondary(item)

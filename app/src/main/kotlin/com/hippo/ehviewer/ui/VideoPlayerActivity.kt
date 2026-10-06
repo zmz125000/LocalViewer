@@ -69,6 +69,7 @@ class VideoPlayerActivity : AppCompatActivity() {
     private var playlistIndex: Int = 0
     private var changingItem = false
     private var rotateWithVideo = true
+    private var scrollToNext = true
     private var lastVideoSize: VideoSize = VideoSize.UNKNOWN
     private var pipControlRegistered = false
 
@@ -227,6 +228,9 @@ class VideoPlayerActivity : AppCompatActivity() {
         findViewById<ImageButton>(R.id.video_rewind).setOnClickListener { seekByStep(forward = false) }
         findViewById<ImageButton>(R.id.video_forward).setOnClickListener { seekByStep(forward = true) }
         rotateWithVideo = Settings.videoRotateWithVideo.value
+        scrollToNext = Settings.videoScrollToNext.value
+        playerView?.scrollToNextEnabled = scrollToNext
+        playerView?.onPlaylistScroll = { delta -> moveInPlaylist(delta) }
         findViewById<ImageButton>(R.id.video_rotate).setOnClickListener { toggleRotateWithVideo() }
         refreshRotateButton()
         val pip = findViewById<ImageButton>(R.id.video_pip)

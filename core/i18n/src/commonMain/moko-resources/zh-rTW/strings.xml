@@ -86,6 +86,10 @@
     <string name="settings_browse_folder_thumbs_summary">在瀏覽中為資料夾顯示封面縮圖（共用圖庫封面的縮圖快取）。</string>
     <string name="settings_use_media3_player">使用 Media3 播放器</string>
     <string name="settings_use_media3_player_summary">開啟：單擊應用內播放，長按外部應用。關閉：單擊外部應用，長按應用內播放。</string>
+    <string name="settings_use_media3_player_for_library">圖庫使用 Media3 播放器</string>
+    <string name="settings_use_media3_player_for_library_summary">在「使用 Media3 播放器」關閉時：從圖庫全部影片列表或圖庫影片資料夾開啟的影片仍用應用內播放器。</string>
+    <string name="settings_video_scroll_to_next">滑動到下一個影片</string>
+    <string name="settings_video_scroll_to_next_summary">上滑或下滑切換下一個或上一個影片。</string>
     <string name="settings_media3_playback_resume">播放進度續播</string>
     <string name="settings_media3_playback_resume_summary">%s 是目前續播方式。</string>
     <string name="settings_media3_playback_resume_auto">自動（超過 3 分鐘）</string>

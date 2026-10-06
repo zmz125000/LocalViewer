@@ -102,6 +102,23 @@ enum class LibraryVideoMode(val prefValue: Int) {
     }
 }
 
+/**
+ * Library videos use Media3 when the main player switch is on, or when that switch is
+ * off and [media3ForLibrary] is on for the all-videos list or a library video folder.
+ * [longPress] takes the other player.
+ */
+fun libraryVideoFileUsesMedia3(
+    media3: Boolean,
+    media3ForLibrary: Boolean,
+    videoMode: LibraryVideoMode,
+    libraryVideoFolder: Boolean = false,
+    longPress: Boolean = false,
+): Boolean {
+    val librarySurface = videoMode == LibraryVideoMode.Files || libraryVideoFolder
+    val primary = media3 || (media3ForLibrary && librarySurface)
+    return if (longPress) !primary else primary
+}
+
 fun toggleLibraryVideoMode() {
     Settings.libraryVideoMode.value = when (LibraryVideoMode.fromPref(Settings.libraryVideoMode.value)) {
         LibraryVideoMode.Folders -> LibraryVideoMode.Files.prefValue
