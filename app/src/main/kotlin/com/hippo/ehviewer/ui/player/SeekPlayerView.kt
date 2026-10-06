@@ -36,12 +36,19 @@ class SeekPlayerView @JvmOverloads constructor(
     /** Double-tap on the video. The activity finishes so playback and the window both go away. */
     var onClosePlayer: (() -> Unit)? = null
 
+    /** Vertical swipe while [scrollToNextEnabled]: +1 next (up), -1 previous (down). */
+    var onPlaylistScroll: ((Int) -> Unit)? = null
+
+    /** Shorts-style swipe between playlist items. Horizontal scrub stays available. */
+    var scrollToNextEnabled: Boolean = false
+
     private val touchSlop = ViewConfiguration.get(context).scaledTouchSlop
     private val scrubStartPx = maxOf(touchSlop * 3f, 32f * resources.displayMetrics.density)
     private var downX = 0f
     private var downY = 0f
     private var seekStartMs = 0L
     private var seeking = false
+    private var scrollingNext = false
     private var lastSeekMs = C.TIME_UNSET
     private var lastSeekAt = 0L
     private var controllerGesture = false
@@ -337,6 +344,13 @@ class SeekPlayerView @JvmOverloads constructor(
                 val current = player ?: return false
                 val totalX = e2.x - downX
                 val totalY = e2.y - downY
+                if (scrollingNext) return true
+                if (!seeking && scrollToNextEnabled &&
+                    abs(totalY) >= scrubStartPx && abs(totalY) > abs(totalX) * 1.5f
+                ) {
+                    scrollingNext = true
+                    return true
+                }
                 if (!seeking) {
                     if (abs(totalX) < scrubStartPx || abs(totalX) <= abs(totalY) * 1.5f) return false
                     val duration = current.duration
@@ -369,6 +383,7 @@ class SeekPlayerView @JvmOverloads constructor(
             downX = event.x
             downY = event.y
             seeking = false
+            scrollingNext = false
             lastSeekMs = C.TIME_UNSET
             lastSeekAt = 0L
             shownOnThisTap = false
@@ -397,6 +412,15 @@ class SeekPlayerView @JvmOverloads constructor(
         val handled = gestures.onTouchEvent(event)
         when (event.actionMasked) {
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                if (scrollingNext) {
+                    val up = event.actionMasked == MotionEvent.ACTION_UP
+                    val totalY = event.y - downY
+                    scrollingNext = false
+                    if (up && abs(totalY) >= scrubStartPx) {
+                        onPlaylistScroll?.invoke(if (totalY < 0f) 1 else -1)
+                    }
+                    return true
+                }
                 val wasSeeking = seeking
                 if (seeking && lastSeekMs != C.TIME_UNSET) {
                     player?.seekTo(lastSeekMs)

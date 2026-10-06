@@ -145,6 +145,18 @@ object Settings : DataStorePreferences(null) {
     val useMedia3Player = boolPref("use_media3_player", true)
 
     /**
+     * Shown when [useMedia3Player] is off. On: a video opened from the library
+     * all-videos list (not a video folder) uses Media3. Video folders stay external.
+     */
+    val useMedia3PlayerForLibrary = boolPref("use_media3_player_for_library", false)
+
+    /**
+     * In-app player: swipe up/down moves to the next/previous video.
+     * Independent of [videoRotateWithVideo]. Default on.
+     */
+    val videoScrollToNext = boolPref("video_scroll_to_next", true)
+
+    /**
      * When true (default): tap HTML → loopback HTTP + default browser, serving the
      * parent directory (relative CSS/JS/images and subdir listings). Incognito
      * follows [openHtmlInIncognito].

@@ -96,6 +96,10 @@
     <string name="settings_browse_folder_thumbs_summary">Show cover thumbs for folders.</string>
     <string name="settings_use_media3_player">Use Media3 player</string>
     <string name="settings_use_media3_player_summary">On: tap opens in-app player, long-press opens external app. Off: tap external, long-press in-app.</string>
+    <string name="settings_use_media3_player_for_library">Use Media3 player for library</string>
+    <string name="settings_use_media3_player_for_library_summary">When Use Media3 player is off: videos opened from the library all-videos list use the in-app player. Opening a video folder does not.</string>
+    <string name="settings_video_scroll_to_next">Scroll to next video</string>
+    <string name="settings_video_scroll_to_next_summary">Swipe up or down for the next or previous video.</string>
     <string name="settings_media3_playback_resume">Playback resume</string>
     <string name="settings_media3_playback_resume_summary">%s is the current resume mode.</string>
     <string name="settings_media3_playback_resume_auto">Auto (longer than 3 minutes)</string>
