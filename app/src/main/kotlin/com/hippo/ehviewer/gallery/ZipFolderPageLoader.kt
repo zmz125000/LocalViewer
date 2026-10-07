@@ -16,7 +16,9 @@ import com.hippo.ehviewer.library.openLocalArchiveByteSource
 import com.hippo.ehviewer.util.FileUtils
 import java.io.File
 import java.nio.ByteBuffer
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
 import moe.tarsin.kt.install
 import okio.Path
 import okio.Path.Companion.toPath
@@ -27,7 +29,8 @@ import okio.Path.Companion.toPath
  * Each page is a [ZipCentralDirectory] range extract (local header + compressed
  * payload via [ArchiveByteSource.readAt]), not a sequential walk of the ZIP.
  * [Settings.disableReaderNetworkCache] keeps the member in RAM ([byteBufferSource]);
- * otherwise [ZipFolderExtractSession.ensurePage] writes `cache/zip_folder_pages/`.
+ * camera RAW can still be written during preload ([RawNetworkPageCache]).
+ * Otherwise [ZipFolderExtractSession.ensurePage] writes `cache/zip_folder_pages/`.
  *
  * Local on-device zip galleries use mmap [useArchivePageLoader] instead (no page cache).
  *
@@ -74,13 +77,14 @@ suspend inline fun <T> useZipFolderPageLoader(
                 override fun getOriginalImageFileName(index: Int) = imageNames[index].substringAfterLast('/').substringAfterLast('\\')
 
                 override fun savePage(index: Int, file: Path): Boolean = runCatching {
-                    if (Settings.disableReaderNetworkCache.value) {
+                    if (RawNetworkPageCache.wantsDisk(imageNames[index]) || !Settings.disableReaderNetworkCache.value) {
+                        val src = session.ensurePage(zipKey, prefix, imageNames, index)
+                        RawNetworkPageCache.note(imageNames[index], src)
+                        File(src.toString()).copyTo(File(file.toString()), overwrite = true)
+                    } else {
                         File(file.toString()).writeBytes(
                             session.pageBytes(zipKey, prefix, imageNames, index),
                         )
-                    } else {
-                        val src = session.ensurePage(zipKey, prefix, imageNames, index)
-                        File(src.toString()).copyTo(File(file.toString()), overwrite = true)
                     }
                     true
                 }.getOrDefault(false)
@@ -91,6 +95,19 @@ suspend inline fun <T> useZipFolderPageLoader(
                 }
 
                 override fun openSource(index: Int): ImageSource {
+                    if (RawNetworkPageCache.wantsDisk(imageNames[index])) {
+                        val path = session.ensurePage(zipKey, prefix, imageNames, index)
+                        RawNetworkPageCache.note(imageNames[index], path)
+                        return object : PathSource {
+                            override val source = path
+                            override val type by lazy {
+                                FileUtils.getExtensionFromFilename(path.name)
+                                    ?: FileUtils.getExtensionFromFilename(imageNames[index])
+                                    ?: "jpg"
+                            }
+                            override fun close() = Unit
+                        }
+                    }
                     if (Settings.disableReaderNetworkCache.value) {
                         val member = zipFolderMember(prefix, imageNames[index])
                         val dest = ZipMemberCover.destFile(zipKey, member)
@@ -122,7 +139,17 @@ suspend inline fun <T> useZipFolderPageLoader(
                     }
                 }
 
-                override fun prefetchPages(pages: List<Int>, bounds: IntRange) = Unit
+                override fun prefetchPages(pages: List<Int>, bounds: IntRange) {
+                    pages.forEach { index ->
+                        if (!RawNetworkPageCache.wantsDisk(imageNames[index])) return@forEach
+                        scope.launch(Dispatchers.IO) {
+                            runCatching {
+                                val path = session.ensurePage(zipKey, prefix, imageNames, index)
+                                RawNetworkPageCache.note(imageNames[index], path)
+                            }
+                        }
+                    }
+                }
 
                 override fun onRequest(index: Int, force: Boolean, orgImg: Boolean) = notifySourceReady(index, orgImg)
 

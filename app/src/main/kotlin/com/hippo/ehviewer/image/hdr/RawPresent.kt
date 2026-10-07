@@ -40,13 +40,18 @@ fun rawContentBoost(mode: RawPresent, peakOverWhite: Float, panelBoost: Float): 
 }
 
 /**
- * LibRaw 16-bit sample divided by sensor white (full scale).
+ * LibRaw 16-bit sample divided by the white point chosen in the native pack.
  *
- * 1.0 is that white for both deep color and HDR. [exposureEv] is stops on top,
- * including DNG BaselineExposure. There is no per-frame percentile stretch.
+ * Deep color and HDR both run the camera look on sensor white (full scale),
+ * including DNG BaselineExposure. HDR then lifts only pixels above the
+ * 90th-percentile paper white, so that headroom sits above 1.
  * [highlightStops] compresses only samples above 1, then the result is clamped to [cap].
  *
- * The native pack in `raw_still.cpp` must use this same formula.
+ * On the deep-color and 8-bit paths the native pack applies the camera look first
+ * (hue/saturation when the file has the tables, then exposure, then the look table,
+ * then the tone curve). Highlight compression runs after that, with exposure already
+ * included, so the native call passes 0 for [exposureEv]. This function itself still
+ * applies [exposureEv], and the tests cover that.
  */
 fun rawLinearSample(
     sceneOverWhite: Float,

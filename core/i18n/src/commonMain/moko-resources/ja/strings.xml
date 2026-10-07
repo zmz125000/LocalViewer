@@ -224,6 +224,8 @@
     <string name="settings_reader_preload_image_summary">次の %s ページを先読み（SMB は先行ダウンロード、ローカルは必要時に開く）</string>
     <string name="settings_advanced_disable_reader_network_cache">リーダーのネットワークキャッシュを無効化</string>
     <string name="settings_advanced_disable_reader_network_cache_summary">SMB / WebDAV / ストリームアーカイブのページをキャッシュに書き込みません。</string>
+    <string name="settings_reader_allow_network_cache_raw">RAW のネットワークキャッシュを許可</string>
+    <string name="settings_reader_allow_network_cache_raw_summary">先読みでカメラ RAW を保存します。最新 10 件だけ残します。</string>
     <string name="settings_reader_decode_ahead">先行デコード</string>
     <string name="settings_reader_decode_ahead_summary">読み進める方向の次の %s ページをデコード済みに保つ</string>
     <string name="settings_heavy_decode">ヘビーデコード</string>

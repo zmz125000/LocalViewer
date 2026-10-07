@@ -457,8 +457,16 @@ object Settings : DataStorePreferences(null) {
      * network image PDF (JPEG, PNG-style Flate, JPEG 2000). Indexed color is WebP
      * and still saved. Decode from RAM; leftover files may still be read.
      * Local folders already skip a page cache.
+     * Camera RAW can still be written while this is on: [readerAllowNetworkCacheRaw].
      */
     val disableReaderNetworkCache = boolPref("disable_reader_network_cache", true)
+
+    /**
+     * Shown under [disableReaderNetworkCache]. Preload writes camera RAW to the page
+     * cache and keeps only the newest ten files, instead of holding each file in RAM
+     * or waiting for the shared origin LRU.
+     */
+    val readerAllowNetworkCacheRaw = boolPref("reader_allow_network_cache_raw", true)
 
     /** Decoded images to keep ahead independently of [preloadImage]. */
     val readerDecodeAhead = intPref("pref_reader_decode_ahead", 3)
@@ -932,11 +940,11 @@ object Settings : DataStorePreferences(null) {
      * Decode camera RAW sensor data in the reader. Off shows the embedded preview,
      * then an 8-bit decode when the file has no embedded image.
      */
-    val readerCameraRaw = boolPref("pref_reader_camera_raw", true)
+    val readerCameraRaw = boolPref("pref_reader_camera_raw", false)
 
     /**
      * Camera RAW exposure in tenths of an EV (−30..30). 0 is as-shot sensor white.
-     * DNG BaselineExposure is included. Deep color and HDR apply the sum in the float pack.
+     * DNG BaselineExposure is included. The sum is applied before the tone curve.
      */
     val readerRawExposure = intPref("pref_reader_raw_exposure", 0)
 
