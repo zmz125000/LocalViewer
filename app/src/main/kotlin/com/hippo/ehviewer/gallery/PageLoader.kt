@@ -263,6 +263,7 @@ abstract class PageLoader(
     /**
      * When [Settings.readerLibDirectBitmap] is on and the page is a lib still,
      * decode straight to Bitmap. Null → fall through to convert + Coil.
+     * Camera RAW never falls through: ImageDecoder cannot open it.
      */
     private suspend fun tryDecodeLibDirect(
         index: Int,
@@ -270,8 +271,12 @@ abstract class PageLoader(
         forceOriginal: Boolean,
         hint: String,
     ): Image? {
-        val nameHint = when (raw) {
-            is PathSource -> raw.source.name.ifBlank { hint }
+        val pathName = (raw as? PathSource)?.source?.name.orEmpty()
+        val pageExt = getImageExtension(index)
+        val nameHint = when {
+            isRawStillExtension(FileUtils.getExtensionFromFilename(pathName)) -> pathName
+            isRawStillExtension(pageExt) -> hint
+            pathName.isNotBlank() -> pathName
             else -> hint
         }
         val route = when (raw) {
@@ -279,11 +284,18 @@ abstract class PageLoader(
             is ByteBufferSource -> classify(raw.source, nameHint)
         }
         // RAW is always a direct bitmap. Bypass-UHDR does not apply, and there is no gain map.
-        val rawStill = route is StillRoute.Lib && route.codec == LibCodec.Raw
+        val rawStill = (route is StillRoute.Lib && route.codec == LibCodec.Raw) ||
+            isRawStillExtension(pageExt)
         if (!rawStill && !Settings.readerLibDirectBitmap.value) return null
-        if (!route.needsLibDecode) return null
+        if (!route.needsLibDecode && !rawStill) return null
         val maxEdge = Image.maxEdgeForReader(forceOriginal)
-        val direct = LibDirectDecode.decode(raw, nameHint, maxEdge) ?: return null
+        val direct = LibDirectDecode.decode(raw, nameHint, maxEdge)
+        if (direct == null) {
+            if (rawStill) {
+                error("RAW decode failed: $nameHint")
+            }
+            return null
+        }
         thumbSoftwareBitmapBeforeHardware(index, raw, direct.bitmap)
         return Image.fromLibDirect(direct, raw).also {
             it.noteHiResPreview(Image.hiResPreviewCapEdge(forceOriginal) > 0)

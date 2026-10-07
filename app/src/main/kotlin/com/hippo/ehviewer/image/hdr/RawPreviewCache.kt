@@ -1,8 +1,11 @@
 package com.hippo.ehviewer.image.hdr
 
+import android.util.Log
+import com.ehviewer.core.files.metadataOrNull
 import com.hippo.ehviewer.jni.extractRawPreviewFile
 import java.io.File
 import java.security.MessageDigest
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -16,22 +19,30 @@ import splitties.init.appCtx
  * Keyed by path, length, and mtime. Cover and browse thumbs share the file.
  */
 object RawPreviewCache {
+    private const val TAG = "RawPreviewCache"
     private val gate = Mutex()
 
     suspend fun ensureJpeg(source: Path, demosaicFallback: Boolean): Path? = withContext(Dispatchers.IO) {
-        val file = File(source.toString())
-        if (!file.isFile || file.length() <= 0L) return@withContext null
-        val dest = File(appCtx.cacheDir, "raw_preview/${keyFor(file)}.jpg")
+        val dest = File(appCtx.cacheDir, "raw_preview/${keyFor(source)}.jpg")
         gate.withLock {
             if (dest.isFile && dest.length() > 0L) return@withLock dest.toOkioPath()
             dest.parentFile?.mkdirs()
             val tmp = File(dest.absolutePath + ".tmp")
             val rc = try {
-                extractRawPreviewFile(file.absolutePath, tmp.absolutePath, demosaicFallback)
+                source.withLocalRawFile { file ->
+                    extractRawPreviewFile(file.absolutePath, tmp.absolutePath, demosaicFallback)
+                }
+            } catch (e: CancellationException) {
+                tmp.delete()
+                throw e
             } catch (_: UnsatisfiedLinkError) {
+                -1
+            } catch (e: Exception) {
+                Log.e(TAG, "RAW preview unreadable: $source", e)
                 -1
             }
             if (rc != 0 || !tmp.isFile || tmp.length() <= 0L) {
+                Log.e(TAG, "RAW preview missing rc=$rc path=$source")
                 tmp.delete()
                 return@withLock null
             }
@@ -43,8 +54,16 @@ object RawPreviewCache {
         }
     }
 
-    private fun keyFor(file: File): String {
-        val raw = "${file.absolutePath}|${file.length()}|${file.lastModified()}"
+    private fun keyFor(source: Path): String {
+        val text = source.toString()
+        val (length, mtime) = if (isPhysicalRawPath(text)) {
+            val file = File(text)
+            file.length() to file.lastModified()
+        } else {
+            val meta = source.metadataOrNull()
+            (meta?.size ?: -1L) to (meta?.lastModifiedAtMillis ?: -1L)
+        }
+        val raw = "$text|$length|$mtime"
         val dig = MessageDigest.getInstance("SHA-256").digest(raw.toByteArray())
         return dig.joinToString("") { "%02x".format(it) }
     }

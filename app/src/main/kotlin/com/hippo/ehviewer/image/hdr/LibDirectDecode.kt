@@ -11,6 +11,7 @@ import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.image.ByteBufferSource
 import com.hippo.ehviewer.image.ImageSource
 import com.hippo.ehviewer.image.PathSource
+import com.hippo.ehviewer.image.byteBufferSource
 import com.hippo.ehviewer.image.tryHardwareF16FromPixels
 import com.hippo.ehviewer.jni.decodeAvifBytesToDirect
 import com.hippo.ehviewer.jni.decodeJpeg2000Bitmap
@@ -30,6 +31,7 @@ import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import kotlinx.io.readByteArray
+import okio.Path.Companion.toOkioPath
 import splitties.init.appCtx
 
 /**
@@ -142,9 +144,11 @@ object LibDirectDecode {
         fileNameHint: String,
         maxEdge: Int,
     ): LibDirectResult? {
-        val rawName = when (src) {
-            is PathSource -> src.source.name.ifBlank { fileNameHint }
-            else -> fileNameHint
+        val pathName = (src as? PathSource)?.source?.name
+        val rawName = when {
+            isRawStillExtension(FileUtils.getExtensionFromFilename(fileNameHint)) -> fileNameHint
+            isRawStillExtension(FileUtils.getExtensionFromFilename(pathName)) -> pathName
+            else -> pathName?.ifBlank { null } ?: fileNameHint
         }
         if (isRawStillExtension(FileUtils.getExtensionFromFilename(rawName))) {
             return decodeRawUnlocked(src, maxEdge)
@@ -164,7 +168,10 @@ object LibDirectDecode {
                 LibCodec.Jpeg2000 -> decodeJpeg2000BytesToDirect(bytes, maxEdge, advanced, outInfo, outBoost)
                     ?: packJpeg2000(bytes, maxEdge, outInfo, outBoost)
                 LibCodec.AvifPq -> decodeAvifBytesToDirect(bytes, maxEdge, advanced, outInfo, outBoost)
-                LibCodec.Raw -> return null
+                LibCodec.Raw -> return decodeRawUnlocked(
+                    byteBufferSource(ByteBuffer.wrap(bytes)) {},
+                    maxEdge,
+                )
             } ?: return null
             // [bytes] ends with this block; only packed pixels + meta remain.
             PackedPixels(pixels, outInfo, outBoost, advanced)
@@ -178,6 +185,27 @@ object LibDirectDecode {
      * LibRaw half-size interpolation.
      */
     private fun decodeRawUnlocked(src: ImageSource, maxEdge: Int): LibDirectResult? {
+        val path = (src as? PathSource)?.source
+        if (path != null && !isPhysicalRawPath(path.toString())) {
+            return runCatching { path.withLocalRawFile { decodeRawFromFile(it, maxEdge) } }
+                .getOrElse { e ->
+                    android.util.Log.e("LibDirectDecode", "RAW content copy failed: $path", e)
+                    null
+                }
+        }
+        return decodeRawLocal(src, maxEdge)
+    }
+
+    private fun decodeRawFromFile(file: File, maxEdge: Int): LibDirectResult? {
+        val local = object : PathSource {
+            override val source = file.toOkioPath()
+            override val type = "image/x-raw"
+            override fun close() = Unit
+        }
+        return decodeRawLocal(local, maxEdge)
+    }
+
+    private fun decodeRawLocal(src: ImageSource, maxEdge: Int): LibDirectResult? {
         if (!Settings.readerCameraRaw.value) {
             return rawPreviewFallback(src) ?: decodeRawPresent(src, maxEdge, RawPresent.EightBit)
         }
