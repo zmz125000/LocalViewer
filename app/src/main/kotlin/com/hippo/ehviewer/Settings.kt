@@ -932,11 +932,11 @@ object Settings : DataStorePreferences(null) {
      * Decode camera RAW sensor data in the reader. Off shows the embedded preview,
      * then an 8-bit decode when the file has no embedded image.
      */
-    val readerCameraRaw = boolPref("pref_reader_camera_raw", true)
+    val readerCameraRaw = boolPref("pref_reader_camera_raw", false)
 
     /**
      * Camera RAW exposure in tenths of an EV (−30..30). 0 is as-shot sensor white.
-     * DNG BaselineExposure is included. Deep color and HDR apply the sum in the float pack.
+     * DNG BaselineExposure is included. The sum is applied before the tone curve.
      */
     val readerRawExposure = intPref("pref_reader_raw_exposure", 0)
 

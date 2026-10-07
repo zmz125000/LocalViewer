@@ -46,7 +46,11 @@ fun rawContentBoost(mode: RawPresent, peakOverWhite: Float, panelBoost: Float): 
  * including DNG BaselineExposure. There is no per-frame percentile stretch.
  * [highlightStops] compresses only samples above 1, then the result is clamped to [cap].
  *
- * The native pack in `raw_still.cpp` must use this same formula.
+ * The native pack applies the camera look first: hue/saturation (when the file
+ * has the tables), then this exposure, then the look table, then the tone curve.
+ * Highlight compression runs after that curve, with exposure already included,
+ * so the native call passes 0 for [exposureEv]. This function itself still
+ * applies [exposureEv], and the tests cover that.
  */
 fun rawLinearSample(
     sceneOverWhite: Float,
