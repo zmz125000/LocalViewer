@@ -935,8 +935,8 @@ object Settings : DataStorePreferences(null) {
     val readerCameraRaw = boolPref("pref_reader_camera_raw", true)
 
     /**
-     * Camera RAW exposure in tenths of an EV (−30..30). 0 leaves the 8-bit path unchanged.
-     * Deep color and HDR apply it on top of the 90th-percentile paper white.
+     * Camera RAW exposure in tenths of an EV (−30..30). 0 is as-shot sensor white.
+     * DNG BaselineExposure is included. Deep color and HDR apply the sum in the float pack.
      */
     val readerRawExposure = intPref("pref_reader_raw_exposure", 0)
 
@@ -952,7 +952,7 @@ object Settings : DataStorePreferences(null) {
 
     /**
      * Camera RAW highlight protection in tenths of a stop (0..30).
-     * 0 leaves samples above paper white as they are. Deep color and HDR only.
+     * 0 leaves samples above sensor white as they are. Deep color and HDR only.
      */
     val readerRawHighlight = intPref("pref_reader_raw_highlight", 0)
     val fullscreen = boolPref("fullscreen", true)

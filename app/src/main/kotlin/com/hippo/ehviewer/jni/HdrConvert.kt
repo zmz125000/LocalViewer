@@ -110,7 +110,7 @@ external fun decodeAvifBytesToDirect(
  * 3 cloudy, 4 shade, 5 tungsten, 6 fluorescent, 7 flash, 8 kelvin.
  * [kelvin] is 2000..12000 and applies when [whiteBalance] is kelvin. Named presets
  * that the file does not store use this same temperature curve.
- * [highlightStops] compresses deep-color and HDR samples above paper white.
+ * [highlightStops] compresses deep-color and HDR samples above sensor white.
  */
 external fun decodeRawFileToDirect(
     path: String,

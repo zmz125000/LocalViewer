@@ -40,9 +40,10 @@ fun rawContentBoost(mode: RawPresent, peakOverWhite: Float, panelBoost: Float): 
 }
 
 /**
- * LibRaw 16-bit sample divided by the 90th-percentile paper white.
+ * LibRaw 16-bit sample divided by sensor white (full scale).
  *
- * 1.0 is that white for both deep color and HDR. [exposureEv] is stops on top.
+ * 1.0 is that white for both deep color and HDR. [exposureEv] is stops on top,
+ * including DNG BaselineExposure. There is no per-frame percentile stretch.
  * [highlightStops] compresses only samples above 1, then the result is clamped to [cap].
  *
  * The native pack in `raw_still.cpp` must use this same formula.

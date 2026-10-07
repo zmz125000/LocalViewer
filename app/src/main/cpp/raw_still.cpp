@@ -2,10 +2,11 @@
  * Camera RAW (DNG / CR2 / NEF / …).
  *
  * 64-bit: LibRaw demosaic → packed RGBA for the reader.
- *   present 0: 8-bit sRGB
+ *   present 0: 8-bit sRGB (sRGB transfer, no histogram stretch)
  *   present 1: deep color, linear Display P3, float16 clamped to 0..1
  *   present 2: deep color + Android 16 HDR, linear Rec.2020 float16.
- *              1.0 is the 90th-percentile paper white. The sensor clip sits above 1.
+ *              1.0 is sensor white after black subtraction. DNG BaselineExposure
+ *              is applied on top. There is no per-frame auto exposure.
  *              The advanced-color switch is not a third mode;
  *              the caller selects 2 whenever HDR display is on and the panel is HDR.
  * Every ABI: embedded JPEG preview for covers and for a failed demosaic.
@@ -57,9 +58,9 @@ bool write_file(const char* path, const uint8_t* data, size_t n) {
 
 #if defined(EHVIEWER_HDR_CODECS)
 // OnePlus DNGs store four CFA black levels and omit BlackLevelRepeatDim.
-// LibRaw then leaves black at 0, so the linear 16-bit image sits on that
-// pedestal and looks grey. 8-bit auto-bright hides it. Count 1 is already
-// applied by LibRaw.
+// LibRaw then leaves black at 0, so the image sits on that pedestal and looks
+// grey. Count 1 is already applied by LibRaw. Auto-bright is off, so the tag
+// has to be installed for every present mode.
 struct DngBlackLevel {
     int repeat_rows = 0;
     int repeat_cols = 0;
@@ -252,7 +253,7 @@ void apply_missing_dng_black(LibRaw& raw, const uint8_t* data, size_t len) {
     int want = static_cast<int>(std::lround(black.values[0]));
     // LibRaw stores CFA BlackLevel as an integer, so 63.9375 becomes 63.
     // The leftover count is stretched by the linear 16-bit scale and a dark
-    // frame looks grey. 8-bit auto-bright hides it. Install the rounded tag
+    // frame looks grey. Install the rounded tag
     // when that integer is short of it. user_black replaces the pattern.
     if (color.black >= static_cast<unsigned>(want)) return;
     unsigned have = 0;
@@ -447,38 +448,7 @@ float sample_component(const uint8_t* base, int bits, int colors, int x, int y, 
     return static_cast<float>(base[i + static_cast<size_t>(channel)]);
 }
 
-// Diffuse white ≈ 90th percentile of sampled luminance. Peak is the brightest sample.
-void linear_white_and_peak(const uint8_t* base, int w, int h, int colors, int bits, float& white, float& peak) {
-    const int npx = w * h;
-    int step = 1;
-    while (npx / step > 50000) step *= 2;
-    std::vector<float> ys;
-    ys.reserve(static_cast<size_t>(npx / step + 1));
-    peak = 0.f;
-    const float full = bits == 16 ? 65535.f : 255.f;
-    for (int i = 0; i < npx; i += step) {
-        int y = i / w;
-        int x = i - y * w;
-        int ch = std::min(colors, 3);
-        float r = sample_component(base, bits, colors, x, y, w, 0);
-        float g = ch > 1 ? sample_component(base, bits, colors, x, y, w, 1) : r;
-        float b = ch > 2 ? sample_component(base, bits, colors, x, y, w, 2) : r;
-        float lum = 0.2126f * r + 0.7152f * g + 0.0722f * b;
-        ys.push_back(lum);
-        peak = std::max(peak, std::max(r, std::max(g, b)));
-    }
-    if (ys.empty()) {
-        white = full;
-        peak = full;
-        return;
-    }
-    size_t idx = static_cast<size_t>(0.90 * static_cast<double>(ys.size() - 1));
-    std::nth_element(ys.begin(), ys.begin() + static_cast<std::ptrdiff_t>(idx), ys.end());
-    white = std::max(ys[idx], 1.f);
-    peak = std::max(peak, white);
-}
-
-// Same mapping as RawPresent.rawLinearSample. scene_over_white is 1 at the 90th percentile.
+// Same mapping as RawPresent.rawLinearSample. scene_over_white is 1 at sensor white.
 // Highlight stops compress only above 1.
 float raw_linear_sample(float scene_over_white, float exposure_ev, float highlight_stops, float cap) {
     if (!std::isfinite(scene_over_white) || !std::isfinite(exposure_ev) || !std::isfinite(highlight_stops) ||
@@ -522,12 +492,9 @@ bool pack_image(const libraw_processed_image_t* img, int max_edge, int present, 
     // 10000/203 matches hdr_encode.h kMaxLinear. HDR does not clamp to 1.
     const float panel = std::isfinite(panel_boost) ? std::clamp(panel_boost, 1.f, 64.f) : 1.f;
     const float cap = hdr ? std::min(panel, 10000.f / 203.f) : 1.f;
-    float white = deep ? 65535.f : 255.f;
-    if (deep) {
-        float sensor_peak = white;
-        linear_white_and_peak(img->data, sw, sh, colors, img->bits, white, sensor_peak);
-    }
-    if (!(white > 0.f)) white = 1.f;
+    // Sensor white after LibRaw black/white scaling. Not a histogram percentile:
+    // that stretch is what made frames brighter than Resolve and the Windows viewer.
+    const float white = deep ? 65535.f : 255.f;
 
     out.pixels.assign(bytes, 0);
     out.w = dw;
@@ -784,6 +751,13 @@ void request_embedded_matrix(LibRaw& raw) {
     raw.imgdata.params.use_camera_matrix = 3;
 }
 
+// LibRaw stores the tag and never multiplies by it. -999 means absent.
+float dng_baseline_ev(const LibRaw& raw) {
+    const float ev = raw.imgdata.color.dng_levels.baseline_exposure;
+    if (!std::isfinite(ev) || ev <= -100.f || ev >= 100.f) return 0.f;
+    return ev;
+}
+
 void configure_process(LibRaw& raw, int present, int max_edge, int demosaic_qual, int wb_mode, float exposure_ev,
                        int kelvin) {
     auto& p = raw.imgdata.params;
@@ -792,6 +766,10 @@ void configure_process(LibRaw& raw, int present, int max_edge, int demosaic_qual
     p.use_camera_matrix = 3;
     p.user_qual = demosaic_qual;
     p.half_size = 0;
+    // Histogram stretch and a lowered white point both brighten past as-shot.
+    p.no_auto_bright = 1;
+    p.bright = 1.f;
+    p.adjust_maximum_thr = 0.f;
     // Preview and cover requests stay at or under 4096. The visible size is known
     // after open, before unpack. Under 24 MP stays full size. Above that, half size.
     // View original passes a larger edge and stays full size.
@@ -806,25 +784,24 @@ void configure_process(LibRaw& raw, int present, int max_edge, int demosaic_qual
     if (present == 0) {
         p.output_bps = 8;
         p.output_color = 1;  // sRGB
-        p.no_auto_bright = 0;
         p.highlight = 0;
-        p.gamm[0] = 0.45;
-        p.gamm[1] = 4.5;
+        // sRGB transfer. 0.45/4.5 is BT.709 and does not match these primaries.
+        p.gamm[0] = 1.f / 2.4f;
+        p.gamm[1] = 12.92f;
         // LibRaw exp_shift is a linear multiplier. 16-bit applies exposure in the float pack.
-        if (std::isfinite(exposure_ev) && exposure_ev != 0.f) {
+        const float ev = (std::isfinite(exposure_ev) ? exposure_ev : 0.f) + dng_baseline_ev(raw);
+        if (ev != 0.f) {
             p.exp_correc = 1;
-            p.exp_shift = std::exp2(exposure_ev);
+            p.exp_shift = std::exp2(ev);
             p.exp_preser = 0.f;
         }
     } else {
         p.output_bps = 16;
-        p.output_color = present == 2 ? 8 : 7;  // Rec.2020 or DCI-P3
-        p.no_auto_bright = 1;
+        p.output_color = present == 2 ? 8 : 7;  // Rec.2020 or DCI-P3 D65
         // 0 clips a saturated pixel to white. 1 leaves it pink.
         p.highlight = 0;
         p.gamm[0] = 1.0;
         p.gamm[1] = 1.0;
-        p.bright = 1.f;
     }
 }
 
@@ -832,9 +809,8 @@ bool process_open_raw(LibRaw& raw, const uint8_t* tiff, size_t tiff_len, int max
                       int demosaic_qual, int wb_mode, float exposure_ev, float highlight_stops, int kelvin, Decoded& out) {
     configure_process(raw, present, max_edge, demosaic_qual, wb_mode, exposure_ev, kelvin);
     if (raw.unpack() != LIBRAW_SUCCESS) return false;
-    // After unpack: lossless JPEG may have cleared the DNG black tag. 8-bit
-    // auto-bright hides that. Linear deep color / HDR does not.
-    if (present != 0) apply_missing_dng_black(raw, tiff, tiff_len);
+    // After unpack: lossless JPEG may have cleared the DNG black tag.
+    apply_missing_dng_black(raw, tiff, tiff_len);
     if (raw.dcraw_process() != LIBRAW_SUCCESS) return false;
     int err = 0;
     libraw_processed_image_t* img = raw.dcraw_make_mem_image(&err);
@@ -842,7 +818,10 @@ bool process_open_raw(LibRaw& raw, const uint8_t* tiff, size_t tiff_len, int max
         if (img) LibRaw::dcraw_clear_mem(img);
         return false;
     }
-    bool ok = pack_image(img, max_edge, present, panel_boost, exposure_ev, highlight_stops, out);
+    // 8-bit already baked user exposure and BaselineExposure into LibRaw.
+    const float pack_ev = present == 0 ? 0.f
+                                       : (std::isfinite(exposure_ev) ? exposure_ev : 0.f) + dng_baseline_ev(raw);
+    bool ok = pack_image(img, max_edge, present, panel_boost, pack_ev, highlight_stops, out);
     LibRaw::dcraw_clear_mem(img);
     return ok;
 }
@@ -877,7 +856,7 @@ bool demosaic_cover_jpeg(const char* path, const uint8_t* mem, size_t mem_len, c
     int rc = mem ? raw.open_buffer(mem, mem_len) : raw.open_file(path);
     if (rc != LIBRAW_SUCCESS) return false;
     Decoded decoded;
-    // Bilinear is enough for a 512 px cover. Present 0 does not use the black-tag fix.
+    // Bilinear is enough for a 512 px cover. Same as-shot process as the reader.
     if (!process_open_raw(raw, mem, mem_len, 512, /*present=*/0, 1.f, /*demosaic_qual=*/0, /*wb_mode=*/0, 0.f, 0.f,
                           5200, decoded)) {
         return false;
