@@ -862,6 +862,7 @@ object Settings : DataStorePreferences(null) {
      * When on: [com.hippo.ehviewer.image.hdr.LibDirectDecode]; with [readerAdvancedColor]
      * preserves P3/BT.2020 + F16 where useful; advanced off rematrixes wide→709.
      * Network/SMB/WebDAV keep original when on. Browse covers still convert to small JPEG.
+     * Camera RAW always uses the direct bitmap, whether this is on or off.
      */
     val readerLibDirectBitmap = boolPref("pref_reader_lib_direct_bitmap", false)
 
@@ -872,6 +873,10 @@ object Settings : DataStorePreferences(null) {
      *
      * Does **not** disable convert (JXR/PQ/JXL → Ultra HDR) or gain-map decode —
      * those always run so files open; off = SDR base presentation without window HDR.
+     *
+     * Camera RAW ignores [readerAdvancedColor] while this is on: the bitmap is
+     * deep color, and a HDR panel also gets Android 16 HDR (COLOR_MODE_HDR).
+     * A panel that is not HDR keeps the deep-color bitmap and does not request HDR.
      */
     val readerHdrDisplay = boolPref("pref_reader_hdr_display", true)
 
@@ -909,6 +914,8 @@ object Settings : DataStorePreferences(null) {
      *   platform-HBD sub-toggle (user may still turn HBD off while WCG stays on).
      *
      * When off: platform sRGB conversion; lib rematrix wide→709; no WCG window; HBD off.
+     * Camera RAW uses this as deep color only while [readerHdrDisplay] is off.
+     * HDR display on ignores this switch and still decodes the deep-color bitmap.
      */
     val readerAdvancedColor = boolPref("pref_reader_advanced_color", true).observed { wcg ->
         // WCG always updates sub-toggle; sub-toggle must never write back to WCG.

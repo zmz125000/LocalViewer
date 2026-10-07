@@ -17,6 +17,9 @@ interface ReaderSession : AutoCloseable {
     fun navigate(navigation: ReaderNavigation)
     fun replan()
     fun restart()
+
+    /** Camera RAW pages reload when HDR display changes, because the bitmap itself changes. */
+    fun containsRawStill(): Boolean = false
     fun onForeground()
 
     /** Flush [startPage] to DB. Safe to call often; no-op without [info]. */

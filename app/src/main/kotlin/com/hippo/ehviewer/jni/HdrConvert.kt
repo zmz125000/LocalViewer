@@ -98,3 +98,40 @@ external fun decodeAvifBytesToDirect(
     outInfo: IntArray,
     outBoost: FloatArray,
 ): ByteArray?
+
+// ── Camera RAW (LibRaw on 64-bit; embedded JPEG preview on every ABI) ────
+
+/**
+ * LibRaw → packed pixels. [present] matches [com.hippo.ehviewer.image.hdr.RawPresent]
+ * ordinal: 0 eight-bit, 1 deep color, 2 deep color + Android 16 HDR.
+ * [maxEdge] is already capped (8192 for a full decode).
+ * [panelBoost] clamps HDR highlights. Ignored for the other modes.
+ */
+external fun decodeRawFileToDirect(
+    path: String,
+    maxEdge: Int,
+    present: Int,
+    panelBoost: Float,
+    outInfo: IntArray,
+    outBoost: FloatArray,
+): ByteArray?
+
+external fun decodeRawBytesToDirect(
+    input: ByteArray,
+    maxEdge: Int,
+    present: Int,
+    panelBoost: Float,
+    outInfo: IntArray,
+    outBoost: FloatArray,
+): ByteArray?
+
+/**
+ * Write an embedded JPEG preview to [outPath].
+ * [demosaicFallback]: on 64-bit, a missing preview becomes a half-size demosaic
+ * JPEG (long edge 512). Reader failure passes false so a missing preview stays missing.
+ *
+ * @return 0 on success.
+ */
+external fun extractRawPreviewFile(path: String, outPath: String, demosaicFallback: Boolean): Int
+
+external fun extractRawPreviewBytes(input: ByteArray, outPath: String, demosaicFallback: Boolean): Int

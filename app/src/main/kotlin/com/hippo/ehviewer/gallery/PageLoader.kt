@@ -22,11 +22,14 @@ import com.hippo.ehviewer.image.PathSource
 import com.hippo.ehviewer.image.byteBufferSource
 import com.hippo.ehviewer.image.hdr.DisplaySource
 import com.hippo.ehviewer.image.hdr.HdrConvertCache
+import com.hippo.ehviewer.image.hdr.LibCodec
 import com.hippo.ehviewer.image.hdr.LibDirectDecode
+import com.hippo.ehviewer.image.hdr.StillRoute
 import com.hippo.ehviewer.image.hdr.classify
 import com.hippo.ehviewer.image.hdr.classifyPath
 import com.hippo.ehviewer.image.hdr.exportImageExtension
 import com.hippo.ehviewer.image.hdr.isLibStillExtension
+import com.hippo.ehviewer.image.hdr.isRawStillExtension
 import com.hippo.ehviewer.image.hdr.needsLibDecode
 import com.hippo.ehviewer.library.ReaderPageThumb
 import com.hippo.ehviewer.util.FileUtils
@@ -267,7 +270,6 @@ abstract class PageLoader(
         forceOriginal: Boolean,
         hint: String,
     ): Image? {
-        if (!Settings.readerLibDirectBitmap.value) return null
         val nameHint = when (raw) {
             is PathSource -> raw.source.name.ifBlank { hint }
             else -> hint
@@ -276,6 +278,9 @@ abstract class PageLoader(
             is PathSource -> classifyPath(raw.source, nameHint)
             is ByteBufferSource -> classify(raw.source, nameHint)
         }
+        // RAW is always a direct bitmap. Bypass-UHDR does not apply, and there is no gain map.
+        val rawStill = route is StillRoute.Lib && route.codec == LibCodec.Raw
+        if (!rawStill && !Settings.readerLibDirectBitmap.value) return null
         if (!route.needsLibDecode) return null
         val maxEdge = Image.maxEdgeForReader(forceOriginal)
         val direct = LibDirectDecode.decode(raw, nameHint, maxEdge) ?: return null
@@ -709,6 +714,16 @@ abstract class PageLoader(
     }
 
     abstract override val title: String
+
+    /** True when any page is a camera RAW still. HDR display then reloads, because the bitmap changes. */
+    override fun containsRawStill(): Boolean {
+        val n = size
+        if (n <= 0) return false
+        for (i in 0 until n) {
+            if (isRawStillExtension(getImageExtension(i))) return true
+        }
+        return false
+    }
 
     protected abstract fun getImageExtension(index: Int): String?
 

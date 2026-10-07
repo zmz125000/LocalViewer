@@ -553,9 +553,13 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
                 readerOppoProxdr.changesFlow(),
                 // HDR display changes whether a non-original decode is redone at
                 // file resolution. Original size is already full-res, so skip it.
+                // A RAW page's bitmap itself follows this switch (deep color + HDR),
+                // so those galleries reload at any decode size.
                 readerHdrDisplay.changesFlow().filter {
-                    !readerHiResOptimize.value &&
-                        !DecodeSizeType.fromPreference(readerDecodeSize.value).isOriginal
+                    pageLoader.containsRawStill() || (
+                        !readerHiResOptimize.value &&
+                            !DecodeSizeType.fromPreference(readerDecodeSize.value).isOriginal
+                        )
                 },
             ).collect {
                 pageLoader.restart()
