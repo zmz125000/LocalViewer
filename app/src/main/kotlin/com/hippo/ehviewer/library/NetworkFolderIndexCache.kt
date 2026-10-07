@@ -14,9 +14,11 @@ import splitties.init.appCtx
  *
  * **Identity:** one directory per source — `{protocol}_{sourceId}/`
  * (e.g. `smb_7/`). Editing host / share / user / URL on the **same** row keeps
- * this directory. Stored `configKey` is only a stamp (updated on save); it must **not**
- * invalidate the whole index — slim quick scan marks stale dirs unreachable as the user
- * re-enters folders (descendant keys stay until a later slim hit recovers them).
+ * this directory. For SMB and WebDAV, stored `configKey` is only a stamp (updated on
+ * save); it must **not** invalidate the index — slim quick scan marks stale dirs
+ * unreachable as the user re-enters folders (descendant keys stay until a later slim
+ * hit recovers them). A local stamp mismatch drops that root's index: MediaStore and
+ * SAF share `local_{id}/`, and `ms=true` / `ms=false` must not reuse each other's rows.
  *
  * Each relativeDir is its own JSON listing file under that directory. Saving one
  * folder does not rewrite or re-parse sibling folders. Zip/cbz-as-dir interiors use
@@ -219,6 +221,7 @@ object NetworkFolderIndexCache {
                 removedChildDirs,
                 Settings.browseZipAsDir.value,
                 logKeep = "$protocol/$sourceId",
+                protocol = protocol,
             )
         }
     }
@@ -243,6 +246,7 @@ object NetworkFolderIndexCache {
                     removedChildDirs = emptySet(),
                     zipAsDir = zipAsDir,
                     logKeep = "$protocol/$sourceId",
+                    protocol = protocol,
                 )
             }
             stored
@@ -268,6 +272,25 @@ object NetworkFolderIndexCache {
         }
     }
 
+    /**
+     * Local MediaStore and SAF share one directory per root id. The stamp includes
+     * `ms=`, so a mismatch is the other access mode and must not be returned or
+     * rewritten in place. SMB and WebDAV host edits keep the index.
+     * An empty requested key (subtree delete) does not reject.
+     */
+    internal fun rejectsStamp(protocol: String, storedKey: String, configKey: String): Boolean = protocol == "local" &&
+        storedKey.isNotEmpty() &&
+        configKey.isNotEmpty() &&
+        storedKey != configKey
+
+    private fun dropRejectedLocalIndex(protocol: String, sourceId: Long, disk: FolderIndexDisk) {
+        dropMemory(protocol, sourceId)
+        disk.deleteSource()
+        logcat("FolderIndex") {
+            "Dropping $protocol/$sourceId index (configKey stamp differs)"
+        }
+    }
+
     /** Source already on disk (v6 dir or migrated v5 blob). Null when nothing stored. */
     private fun existingMemory(
         protocol: String,
@@ -275,9 +298,19 @@ object NetworkFolderIndexCache {
         configKey: String,
     ): MemoryIndex? {
         val key = memoryKey(protocol, sourceId)
-        memory[key]?.let { return it }
+        memory[key]?.let { idx ->
+            if (rejectsStamp(protocol, idx.configKey, configKey)) {
+                dropRejectedLocalIndex(protocol, sourceId, idx.disk)
+                return null
+            }
+            return idx
+        }
         val disk = openDisk(protocol, sourceId, create = false) ?: return null
         val meta = disk.readMeta() ?: return null
+        if (rejectsStamp(protocol, meta.configKey, configKey)) {
+            dropRejectedLocalIndex(protocol, sourceId, disk)
+            return null
+        }
         logConfigKeyMismatch(protocol, sourceId, meta.configKey, configKey)
         val idx = MemoryIndex(disk, meta.configKey)
         memory[key] = idx
@@ -291,15 +324,23 @@ object NetworkFolderIndexCache {
         configKey: String,
     ): MemoryIndex {
         val key = memoryKey(protocol, sourceId)
-        memory[key]?.let { idx ->
-            if (idx.configKey != configKey) {
-                idx.disk.writeMeta(configKey)
-                idx.configKey = configKey
+        val held = memory[key]
+        if (held != null && rejectsStamp(protocol, held.configKey, configKey)) {
+            dropRejectedLocalIndex(protocol, sourceId, held.disk)
+        } else if (held != null) {
+            if (held.configKey != configKey) {
+                held.disk.writeMeta(configKey)
+                held.configKey = configKey
             }
-            return idx
+            return held
         }
-        val disk = openDisk(protocol, sourceId, create = true)!!
-        val meta = disk.readMeta()
+        var disk = openDisk(protocol, sourceId, create = true)!!
+        var meta = disk.readMeta()
+        if (meta != null && rejectsStamp(protocol, meta.configKey, configKey)) {
+            dropRejectedLocalIndex(protocol, sourceId, disk)
+            disk = openDisk(protocol, sourceId, create = true)!!
+            meta = null
+        }
         logConfigKeyMismatch(protocol, sourceId, meta?.configKey.orEmpty(), configKey)
         val blobPending = meta == null && legacyBlobFile(protocol, sourceId) != null
         if (!blobPending && (meta == null || meta.configKey != configKey)) {
@@ -323,11 +364,12 @@ object NetworkFolderIndexCache {
         removedChildDirs: Set<String>,
         zipAsDir: Boolean,
         logKeep: String,
+        protocol: String,
     ): List<BrowseEntryRemote> {
         val key = FolderIndexDisk.normalizeDir(relativeDir)
         val previous = idx.decoded[key] ?: idx.disk.readListing(key)
         if (previous != null) idx.decoded[key] = previous
-        val merge = mergeFolderEntry(previous, entries, zipAsDir, logKeep, key)
+        val merge = mergeFolderEntry(previous, entries, zipAsDir, logKeep, key, protocol)
         if (!merge.keepPrevious && removedChildDirs.isNotEmpty()) {
             val parent = key
             for (child in removedChildDirs) {
@@ -357,9 +399,15 @@ object NetworkFolderIndexCache {
         zipAsDir: Boolean,
         logKeep: String,
         key: String,
+        protocol: String,
     ): FolderMerge {
         val keepPrevious = previous != null &&
-            shouldKeepPreviousFolderIndex(previous, entries, zipAsDir)
+            shouldKeepPreviousFolderIndex(
+                previous,
+                entries,
+                zipAsDir,
+                trustEmpty = protocol == "local",
+            )
         val toStore = if (keepPrevious) {
             logcat("FolderIndex") {
                 "Keeping $logKeep dir=$key index " +

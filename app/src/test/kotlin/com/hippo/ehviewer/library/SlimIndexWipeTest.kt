@@ -67,6 +67,20 @@ class SlimIndexWipeTest {
     }
 
     @Test
+    fun localEmptyLiveListing_isTrusted() {
+        assertFalse(isUntrustedLocalSlimLiveListing(cached, emptyList()))
+        assertTrue(isUntrustedSlimLiveListing(cached, emptyList()))
+        val filesOnly = listOf(RemoteChild(name = "readme.txt", isDirectory = false))
+        assertTrue(isUntrustedLocalSlimLiveListing(cached, filesOnly))
+    }
+
+    @Test
+    fun localEmptyNextReplacesPreviousIndex() {
+        assertFalse(shouldKeepPreviousFolderIndex(cached, emptyList(), trustEmpty = true))
+        assertTrue(shouldKeepPreviousFolderIndex(cached, emptyList()))
+    }
+
+    @Test
     fun liveFilesOnly_againstCachedDirs_isUntrusted() {
         val live = listOf(RemoteChild(name = "readme.txt", isDirectory = false))
         assertTrue(isUntrustedSlimLiveListing(cached, live))
