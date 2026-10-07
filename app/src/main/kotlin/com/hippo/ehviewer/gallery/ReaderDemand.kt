@@ -6,6 +6,9 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import okio.Path
 
+/** Reader sessions that never decode a camera RAW. */
+internal val NoRawLoaded: StateFlow<Boolean> = MutableStateFlow(false)
+
 /** Small reader-facing seam; source/decode callbacks remain private to its implementation. */
 interface ReaderSession : AutoCloseable {
     val info: GalleryInfo?
@@ -20,6 +23,13 @@ interface ReaderSession : AutoCloseable {
 
     /** Camera RAW pages reload when HDR display changes, because the bitmap itself changes. */
     fun containsRawStill(): Boolean = false
+
+    /**
+     * Becomes true after this session decodes a camera RAW page, and stays true.
+     * Reading-mode RAW controls wait for this.
+     */
+    val rawLoaded: StateFlow<Boolean>
+        get() = NoRawLoaded
     fun onForeground()
 
     /** Flush [startPage] to DB. Safe to call often; no-op without [info]. */

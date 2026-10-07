@@ -26,7 +26,11 @@ import eu.kanade.tachiyomi.ui.reader.setting.OrientationType
 import eu.kanade.tachiyomi.ui.reader.setting.ReadingModeType
 
 @Composable
-fun ReaderModeSetting(isWebtoon: Boolean, isDocument: Boolean = false) = Column(modifier = Modifier.verticalScroll(rememberScrollState()).navigationBarsPadding()) {
+fun ReaderModeSetting(
+    isWebtoon: Boolean,
+    isDocument: Boolean = false,
+    showCameraRaw: Boolean = false,
+) = Column(modifier = Modifier.verticalScroll(rememberScrollState()).navigationBarsPadding()) {
     SpinnerChoice(
         title = stringResource(id = R.string.pref_category_reading_mode),
         entries = stringArrayResource(id = com.hippo.ehviewer.R.array.viewers_selector),
@@ -78,7 +82,7 @@ fun ReaderModeSetting(isWebtoon: Boolean, isDocument: Boolean = false) = Column(
         values = listOf(0, 1, 2),
         field = Settings.autoRotateMode.asMutableState(),
     )
-    if (!isDocument) {
+    if (!isDocument && showCameraRaw) {
         val cameraRaw = Settings.readerCameraRaw.asMutableState()
         AnimatedVisibility(visible = cameraRaw.value) {
             CameraRawSetting()
@@ -336,6 +340,7 @@ private fun PagerSetting() = Column {
 
 @Composable
 private fun CameraRawSetting() = Column {
+    Spacer(modifier = Modifier.size(16.dp))
     Text(
         text = stringResource(id = R.string.pref_reader_camera_raw),
         modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),

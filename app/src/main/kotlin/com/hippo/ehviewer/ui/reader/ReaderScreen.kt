@@ -1302,7 +1302,11 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
                             contentWindowInsets = { WindowInsets() },
                         ) {
                             Box(Modifier.readerSheetBox(GalleryGridDefaults.capReaderSheet())) {
-                                SettingsPager(isWebtoon = isWebtoon, modifier = Modifier.fillMaxSize())
+                                SettingsPager(
+                                    isWebtoon = isWebtoon,
+                                    rawLoaded = pageLoader.rawLoaded,
+                                    modifier = Modifier.fillMaxSize(),
+                                )
                             }
                         }
                     }

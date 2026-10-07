@@ -854,7 +854,7 @@
     <string name="pref_reader_raw_kelvin">色溫</string>
     <string name="pref_reader_raw_kelvin_summary">相機 RAW 的色溫。白平衡選色溫時使用。</string>
     <string name="pref_reader_raw_highlight">高光</string>
-    <string name="pref_reader_raw_highlight_summary">將亮部拉向紙白。用於相機 RAW 的深色與 HDR。</string>
+    <string name="pref_reader_raw_highlight_summary">將亮部拉向紙白。</string>
     <string name="pref_custom_brightness">自訂亮度</string>
     <string name="pref_custom_color_filter">色彩濾鏡</string>
     <string name="pref_keep_screen_on">保持螢幕恆亮</string>

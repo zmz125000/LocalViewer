@@ -278,7 +278,7 @@
     <string name="pref_reader_raw_kelvin">色温度</string>
     <string name="pref_reader_raw_kelvin_summary">カメラ RAW の色温度です。ホワイトバランスがケルビンのときに使います。</string>
     <string name="pref_reader_raw_highlight">ハイライト</string>
-    <string name="pref_reader_raw_highlight_summary">明るい部分をペーパーホワイトへ寄せます。カメラ RAW のディープカラーと HDR に使います。</string>
+    <string name="pref_reader_raw_highlight_summary">明るい部分をペーパーホワイトへ寄せます。</string>
     <string name="pref_eink_refresh">電子ペーパー表示のリフレッシュ</string>
     <string name="pref_eink_refresh_summary">ページ切替後に画面をフラッシュし、電子ペーパーの残像を減らします。ギャラリーモードのみ。</string>
     <string name="pref_eink_refresh_duration">リフレッシュ点滅時間</string>

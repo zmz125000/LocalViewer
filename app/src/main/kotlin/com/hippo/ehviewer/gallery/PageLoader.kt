@@ -286,6 +286,7 @@ abstract class PageLoader(
         // RAW is always a direct bitmap. Bypass-UHDR does not apply, and there is no gain map.
         val rawStill = (route is StillRoute.Lib && route.codec == LibCodec.Raw) ||
             isRawStillExtension(pageExt)
+        if (rawStill) noteRawLoaded()
         if (!rawStill && !Settings.readerLibDirectBitmap.value) return null
         if (!route.needsLibDecode && !rawStill) return null
         val maxEdge = Image.maxEdgeForReader(forceOriginal)
@@ -726,6 +727,15 @@ abstract class PageLoader(
     }
 
     abstract override val title: String
+
+    private val rawLoadedState = MutableStateFlow(false)
+
+    /** Latches when this session decodes a camera RAW page. */
+    override val rawLoaded: StateFlow<Boolean> = rawLoadedState
+
+    private fun noteRawLoaded() {
+        rawLoadedState.value = true
+    }
 
     /** True when any page is a camera RAW still. HDR display then reloads, because the bitmap changes. */
     override fun containsRawStill(): Boolean {
