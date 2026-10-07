@@ -54,6 +54,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewModelScope
+import com.ehviewer.core.database.model.LIBRARY_ROOT_ACCESS_MEDIA
+import com.ehviewer.core.database.model.LIBRARY_ROOT_ACCESS_MEDIA_ARCHIVE
 import com.ehviewer.core.database.model.LIBRARY_ROOT_ROLE_FOLDER
 import com.ehviewer.core.database.model.LIBRARY_ROOT_ROLE_LIBRARY
 import com.ehviewer.core.database.model.LibraryRootEntity
@@ -77,7 +79,6 @@ import com.hippo.ehviewer.library.LocalLibrary
 import com.hippo.ehviewer.library.MediaPermissions
 import com.hippo.ehviewer.library.NavTabWindows
 import com.hippo.ehviewer.library.displayNameForTreeUri
-import com.hippo.ehviewer.library.isMediaStoreRootUri
 import com.hippo.ehviewer.library.safFolderLabel
 import com.hippo.ehviewer.smb.SmbGateway
 import com.hippo.ehviewer.smb.SmbRepository
@@ -159,8 +160,9 @@ fun AnimatedVisibilityScope.BrowseScreen(navigator: DestinationsNavigator) = Scr
 
     var smbEditor by remember { mutableStateOf<SmbEditorState?>(null) }
     var webDavEditor by remember { mutableStateOf<WebDavEditorState?>(null) }
-    // Pending role for the next OpenDocumentTree result.
+    // Pending role and access mode for the next OpenDocumentTree result.
     var pendingSafRole by remember { mutableIntStateOf(LIBRARY_ROOT_ROLE_LIBRARY) }
+    var pendingSafAccessMode by remember { mutableIntStateOf(LIBRARY_ROOT_ACCESS_MEDIA) }
     var accessChooserRole by remember { mutableStateOf<Int?>(null) }
     var mediaDenied by remember { mutableStateOf(false) }
 
@@ -202,8 +204,7 @@ fun AnimatedVisibilityScope.BrowseScreen(navigator: DestinationsNavigator) = Scr
                 val path = documentUri.toOkioPath()
                 check(path.isDirectory) { "$path is not a directory" }
                 val name = context.displayNameForTreeUri(treeUri.toString())
-                // Always store SAF tree (backup). Runtime upgrade to MediaStore is gated by setting.
-                when (LocalLibrary.addRoot(treeUri.toString(), name, role)) {
+                when (LocalLibrary.addRoot(treeUri.toString(), name, role, pendingSafAccessMode)) {
                     is AddRootResult.Created, is AddRootResult.UpgradedToLibrary -> Unit
                     is AddRootResult.AlreadyExists -> launch { snackbar(alreadyAdded) }
                 }
@@ -242,11 +243,13 @@ fun AnimatedVisibilityScope.BrowseScreen(navigator: DestinationsNavigator) = Scr
         },
     )
 
-    fun launchSafPicker(role: Int) {
+    fun launchFolderPicker(role: Int, accessMode: Int) {
         pendingSafRole = role
-        // When "Prefer device media" is on, ask media permission so SAF trees can upgrade.
-        // Off = pure SAF (privacy), skip the prompt.
-        if (MediaPermissions.shouldRequestMediaPermissionForSafAdd(context)) {
+        pendingSafAccessMode = accessMode
+        // MediaStore listing needs media permission. File access does not.
+        if (accessMode != LIBRARY_ROOT_ACCESS_MEDIA_ARCHIVE &&
+            MediaPermissions.shouldRequestMediaPermissionForSafAdd(context)
+        ) {
             openSafAfterMediaPerm = true
             mediaPermission.request(role)
         } else {
@@ -255,22 +258,7 @@ fun AnimatedVisibilityScope.BrowseScreen(navigator: DestinationsNavigator) = Scr
     }
 
     fun launchAddLocalSource(role: Int) {
-        // Device media is one root:
-        // - as Library → no need to offer it again for library or folder add → SAF only
-        // - as Folder only → skip chooser for folder add; library add still shows chooser
-        //   (device media can upgrade folder → library)
-        val mediaRoot = roots.firstOrNull { isMediaStoreRootUri(it.treeUri) }
-        val skipChooser = when {
-            mediaRoot == null -> false
-            mediaRoot.isLibraryRole -> true
-            role == LIBRARY_ROOT_ROLE_FOLDER -> true
-            else -> false
-        }
-        if (skipChooser) {
-            launchSafPicker(role)
-        } else {
-            accessChooserRole = role
-        }
+        accessChooserRole = role
     }
 
     fun openLocalRoot(root: LibraryRootEntity) {
@@ -439,7 +427,8 @@ fun AnimatedVisibilityScope.BrowseScreen(navigator: DestinationsNavigator) = Scr
         LocalSourceAccessDialog(
             role = role,
             onDismiss = { accessChooserRole = null },
-            onChooseSaf = { launchSafPicker(it) },
+            onChooseFolderMedia = { launchFolderPicker(it, LIBRARY_ROOT_ACCESS_MEDIA) },
+            onChooseFolderFiles = { launchFolderPicker(it, LIBRARY_ROOT_ACCESS_MEDIA_ARCHIVE) },
             onChooseDeviceMedia = { mediaPermission.request(it) },
         )
     }

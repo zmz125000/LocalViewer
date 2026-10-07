@@ -32,8 +32,10 @@
     <string name="library_add_library_source">Add Library Source</string>
     <string name="library_add_folder_source">Add Folder Source</string>
     <string name="library_root_already_added">This folder is already added</string>
-    <string name="source_access_saf">Folder picker (SAF)</string>
-    <string name="source_access_saf_summary">Pick any folder (including archives).</string>
+    <string name="source_access_folder_media">Folder picker (media)</string>
+    <string name="source_access_folder_media_summary">Pick a folder. Images and videos are read through MediaStore.</string>
+    <string name="source_access_folder_files">Folder picker (files)</string>
+    <string name="source_access_folder_files_summary">Pick a folder and read files directly, including archives.</string>
     <string name="source_access_device_media">Device media</string>
     <string name="source_access_device_media_summary">Read images and videos via system media permission. Archives not included.</string>
     <string name="source_device_media_name">Device media</string>

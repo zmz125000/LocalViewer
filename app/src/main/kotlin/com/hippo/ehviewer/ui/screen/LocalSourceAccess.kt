@@ -15,7 +15,8 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.FolderOpen
-import androidx.compose.material.icons.filled.PhotoLibrary
+import androidx.compose.material.icons.filled.Inventory2
+import androidx.compose.material.icons.filled.PermMedia
 import androidx.compose.material3.BasicAlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -41,7 +42,8 @@ import com.hippo.ehviewer.library.MediaPermissions
 
 /**
  * Access method when adding a library / folder source:
- * - SAF tree picker (full folder incl. archives)
+ * - Folder picker (media): SAF tree, listed through MediaStore
+ * - Folder picker (files): SAF tree, direct file access including archives
  * - Device media via [READ_MEDIA_IMAGES] / [READ_MEDIA_VIDEO] (Aves-style)
  */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -49,7 +51,8 @@ import com.hippo.ehviewer.library.MediaPermissions
 fun LocalSourceAccessDialog(
     role: Int,
     onDismiss: () -> Unit,
-    onChooseSaf: (role: Int) -> Unit,
+    onChooseFolderMedia: (role: Int) -> Unit,
+    onChooseFolderFiles: (role: Int) -> Unit,
     onChooseDeviceMedia: (role: Int) -> Unit,
 ) {
     val isLibrary = role == LIBRARY_ROOT_ROLE_LIBRARY
@@ -87,15 +90,24 @@ fun LocalSourceAccessDialog(
                 ) {
                     SourceAccessOption(
                         icon = Icons.Default.FolderOpen,
-                        title = stringResource(R.string.source_access_saf),
-                        summary = stringResource(R.string.source_access_saf_summary),
+                        title = stringResource(R.string.source_access_folder_media),
+                        summary = stringResource(R.string.source_access_folder_media_summary),
                         onClick = {
                             onDismiss()
-                            onChooseSaf(role)
+                            onChooseFolderMedia(role)
                         },
                     )
                     SourceAccessOption(
-                        icon = Icons.Default.PhotoLibrary,
+                        icon = Icons.Default.Inventory2,
+                        title = stringResource(R.string.source_access_folder_files),
+                        summary = stringResource(R.string.source_access_folder_files_summary),
+                        onClick = {
+                            onDismiss()
+                            onChooseFolderFiles(role)
+                        },
+                    )
+                    SourceAccessOption(
+                        icon = Icons.Default.PermMedia,
                         title = stringResource(R.string.source_access_device_media),
                         summary = stringResource(R.string.source_access_device_media_summary),
                         onClick = {
