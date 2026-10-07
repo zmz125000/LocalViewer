@@ -178,11 +178,18 @@ object LibDirectDecode {
      * LibRaw half-size interpolation.
      */
     private fun decodeRawUnlocked(src: ImageSource, maxEdge: Int): LibDirectResult? {
+        if (!Settings.readerCameraRaw.value) {
+            return rawPreviewFallback(src) ?: decodeRawPresent(src, maxEdge, RawPresent.EightBit)
+        }
         val mode = rawPresentMode(
             hdrDisplay = Settings.readerHdrDisplay.value,
             advancedColor = Settings.readerAdvancedColor.value,
             panelHdr = rawPanelIsHdr(),
         )
+        return decodeRawPresent(src, maxEdge, mode) ?: rawPreviewFallback(src)
+    }
+
+    private fun decodeRawPresent(src: ImageSource, maxEdge: Int, mode: RawPresent): LibDirectResult? {
         val edge = rawDecodeEdge(maxEdge)
         val panelBoost = if (mode == RawPresent.Hdr) rawPanelBoost() else 1f
         val outInfo = IntArray(6)
@@ -203,7 +210,7 @@ object LibDirectDecode {
                 outBoost,
             )
             is ByteBufferSource -> {
-                val bytes = readBytes(src) ?: return rawPreviewFallback(src)
+                val bytes = readBytes(src) ?: return null
                 decodeRawBytesToDirect(
                     bytes,
                     edge,
@@ -216,9 +223,8 @@ object LibDirectDecode {
                     outBoost,
                 )
             }
-        }
-        val direct = pixels?.let { bitmapFromPacked(it, outInfo, outBoost, wrapHardware = true) }
-        return direct ?: rawPreviewFallback(src)
+        } ?: return null
+        return bitmapFromPacked(pixels, outInfo, outBoost, wrapHardware = true)
     }
 
     /** Embedded JPEG only. A missing preview stays a page error; covers demosaic separately. */

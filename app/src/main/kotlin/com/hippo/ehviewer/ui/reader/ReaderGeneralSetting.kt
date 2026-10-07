@@ -52,29 +52,9 @@ fun ReaderGeneralSetting(isDocument: Boolean = false) = Column(modifier = Modifi
             field = Settings.readerPlatformHighDepth.asMutableState(),
         )
     }
-    CommitSliderChoice(
-        title = stringResource(id = R.string.pref_reader_raw_exposure),
-        summary = stringResource(id = R.string.pref_reader_raw_exposure_summary),
-        range = -30..30,
-        field = Settings.readerRawExposure.asMutableState(),
-        valueText = { "%+.1f".format(it / 10f) },
-    )
-    SpinnerChoice(
-        title = stringResource(id = R.string.pref_reader_raw_white_balance),
-        entries = arrayOf(
-            stringResource(id = R.string.pref_reader_raw_wb_camera),
-            stringResource(id = R.string.pref_reader_raw_wb_auto),
-            stringResource(id = R.string.pref_reader_raw_wb_daylight),
-        ),
-        values = listOf(0, 1, 2),
-        field = Settings.readerRawWhiteBalance.asMutableState(),
-    )
-    CommitSliderChoice(
-        title = stringResource(id = R.string.pref_reader_raw_highlight),
-        summary = stringResource(id = R.string.pref_reader_raw_highlight_summary),
-        range = 0..30,
-        field = Settings.readerRawHighlight.asMutableState(),
-        valueText = { "%.1f".format(it / 10f) },
+    SwitchChoice(
+        title = stringResource(id = R.string.pref_reader_camera_raw),
+        field = Settings.readerCameraRaw.asMutableState(),
     )
     SwitchChoice(
         title = stringResource(id = R.string.settings_advanced_disable_reader_network_cache),

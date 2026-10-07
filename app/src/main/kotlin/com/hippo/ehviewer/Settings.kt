@@ -923,8 +923,14 @@ object Settings : DataStorePreferences(null) {
     }
 
     /**
+     * Decode camera RAW sensor data in the reader. Off shows the embedded preview,
+     * then an 8-bit decode when the file has no embedded image.
+     */
+    val readerCameraRaw = boolPref("pref_reader_camera_raw", true)
+
+    /**
      * Camera RAW exposure in tenths of an EV (−30..30). 0 leaves the 8-bit path unchanged.
-     * Deep color and HDR apply it in the linear pack, on top of DNG BaselineExposure.
+     * Deep color and HDR apply it on top of the 90th-percentile paper white.
      */
     val readerRawExposure = intPref("pref_reader_raw_exposure", 0)
 

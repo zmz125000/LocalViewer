@@ -261,6 +261,8 @@
     <string name="pref_reader_advanced_color_summary">広色域ディスプレイでウィンドウ広色域モードを有効にし、高精度ビットマップを優先します。GPU とメモリを多く使います。HDR ページは引き続き HDR が優先されます。</string>
     <string name="pref_reader_platform_high_depth">高ビット深度（PNG）</string>
     <string name="pref_reader_platform_high_depth_summary">高度な色がオンのとき: 高ビット深度 PNG を float16 でデコード（ハードウェア 8bit 経路を回避）。メモリ使用量が増えます。高度な色の切替に追従します。</string>
+    <string name="pref_reader_camera_raw">カメラ RAW</string>
+    <string name="pref_reader_camera_raw_summary">センサーデータを現像します。オフのときは埋め込みプレビューを使い、無いときは 8 ビットで現像します。</string>
     <string name="pref_reader_raw_exposure">露出</string>
     <string name="pref_reader_raw_exposure_summary">カメラ RAW の明るさを加減します。</string>
     <string name="pref_reader_raw_white_balance">ホワイトバランス</string>

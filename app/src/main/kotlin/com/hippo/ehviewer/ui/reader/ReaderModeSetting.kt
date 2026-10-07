@@ -78,6 +78,32 @@ fun ReaderModeSetting(isWebtoon: Boolean, isDocument: Boolean = false) = Column(
         values = listOf(0, 1, 2),
         field = Settings.autoRotateMode.asMutableState(),
     )
+    if (!isDocument) {
+        SpinnerChoice(
+            title = stringResource(id = R.string.pref_reader_raw_white_balance),
+            entries = arrayOf(
+                stringResource(id = R.string.pref_reader_raw_wb_camera),
+                stringResource(id = R.string.pref_reader_raw_wb_auto),
+                stringResource(id = R.string.pref_reader_raw_wb_daylight),
+            ),
+            values = listOf(0, 1, 2),
+            field = Settings.readerRawWhiteBalance.asMutableState(),
+        )
+        CommitSliderChoice(
+            title = stringResource(id = R.string.pref_reader_raw_exposure),
+            summary = stringResource(id = R.string.pref_reader_raw_exposure_summary),
+            range = -30..30,
+            field = Settings.readerRawExposure.asMutableState(),
+            valueText = { "%+.1f".format(it / 10f) },
+        )
+        CommitSliderChoice(
+            title = stringResource(id = R.string.pref_reader_raw_highlight),
+            summary = stringResource(id = R.string.pref_reader_raw_highlight_summary),
+            range = 0..30,
+            field = Settings.readerRawHighlight.asMutableState(),
+            valueText = { "%.1f".format(it / 10f) },
+        )
+    }
     if (isDocument) {
         Spacer(modifier = Modifier.size(8.dp))
         DocumentStyleSetting()

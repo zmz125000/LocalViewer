@@ -5,7 +5,7 @@
  *   present 0: 8-bit sRGB
  *   present 1: deep color, linear Display P3, float16 clamped to 0..1
  *   present 2: deep color + Android 16 HDR, linear Rec.2020 float16.
- *              1.0 is paper white (203 nits). The sensor clip sits above 1.
+ *              1.0 is the 90th-percentile paper white. The sensor clip sits above 1.
  *              The advanced-color switch is not a third mode;
  *              the caller selects 2 whenever HDR display is on and the panel is HDR.
  * Every ABI: embedded JPEG preview for covers and for a failed demosaic.
@@ -210,18 +210,46 @@ float sample_component(const uint8_t* base, int bits, int colors, int x, int y, 
     return static_cast<float>(base[i + static_cast<size_t>(channel)]);
 }
 
-// Same mapping as RawPresent.rawLinearSample. 1.0 is paper white. hdr with a missing
-// baseline reserves 2 stops; deep color does not. Highlight stops compress only above 1.
-float raw_linear_sample(float scene, float baseline_ev, float exposure_ev, float highlight_stops, float cap, bool hdr) {
-    if (!std::isfinite(scene) || !std::isfinite(exposure_ev) || !std::isfinite(highlight_stops) ||
+// Diffuse white ≈ 90th percentile of sampled luminance. Peak is the brightest sample.
+void linear_white_and_peak(const uint8_t* base, int w, int h, int colors, int bits, float& white, float& peak) {
+    const int npx = w * h;
+    int step = 1;
+    while (npx / step > 50000) step *= 2;
+    std::vector<float> ys;
+    ys.reserve(static_cast<size_t>(npx / step + 1));
+    peak = 0.f;
+    const float full = bits == 16 ? 65535.f : 255.f;
+    for (int i = 0; i < npx; i += step) {
+        int y = i / w;
+        int x = i - y * w;
+        int ch = std::min(colors, 3);
+        float r = sample_component(base, bits, colors, x, y, w, 0);
+        float g = ch > 1 ? sample_component(base, bits, colors, x, y, w, 1) : r;
+        float b = ch > 2 ? sample_component(base, bits, colors, x, y, w, 2) : r;
+        float lum = 0.2126f * r + 0.7152f * g + 0.0722f * b;
+        ys.push_back(lum);
+        peak = std::max(peak, std::max(r, std::max(g, b)));
+    }
+    if (ys.empty()) {
+        white = full;
+        peak = full;
+        return;
+    }
+    size_t idx = static_cast<size_t>(0.90 * static_cast<double>(ys.size() - 1));
+    std::nth_element(ys.begin(), ys.begin() + static_cast<std::ptrdiff_t>(idx), ys.end());
+    white = std::max(ys[idx], 1.f);
+    peak = std::max(peak, white);
+}
+
+// Same mapping as RawPresent.rawLinearSample. scene_over_white is 1 at the 90th percentile.
+// Highlight stops compress only above 1.
+float raw_linear_sample(float scene_over_white, float exposure_ev, float highlight_stops, float cap) {
+    if (!std::isfinite(scene_over_white) || !std::isfinite(exposure_ev) || !std::isfinite(highlight_stops) ||
         !std::isfinite(cap)) {
         return 0.f;
     }
-    if (!(scene > 0.f)) return 0.f;
-    const double be = baseline_ev;
-    const bool be_valid = std::isfinite(be) && be > -100.0 && be < 10.0;
-    const double scale = be_valid ? be : (hdr ? 2.0 : 0.0);
-    const double base = static_cast<double>(scene) * std::exp2(scale + static_cast<double>(exposure_ev));
+    if (!(scene_over_white > 0.f)) return 0.f;
+    const double base = static_cast<double>(scene_over_white) * std::exp2(static_cast<double>(exposure_ev));
     double y;
     if (!(highlight_stops > 0.f) || !(base > 1.0)) {
         y = base;
@@ -234,7 +262,7 @@ float raw_linear_sample(float scene, float baseline_ev, float exposure_ev, float
     return static_cast<float>(y);
 }
 
-bool pack_image(const libraw_processed_image_t* img, int max_edge, int present, float panel_boost, float baseline_ev,
+bool pack_image(const libraw_processed_image_t* img, int max_edge, int present, float panel_boost,
                 float exposure_ev, float highlight_stops, Decoded& out) {
     if (!img || img->width == 0 || img->height == 0) return false;
     if (img->type != LIBRAW_IMAGE_BITMAP) return false;
@@ -257,6 +285,12 @@ bool pack_image(const libraw_processed_image_t* img, int max_edge, int present, 
     // 10000/203 matches hdr_encode.h kMaxLinear. HDR does not clamp to 1.
     const float panel = std::isfinite(panel_boost) ? std::clamp(panel_boost, 1.f, 64.f) : 1.f;
     const float cap = hdr ? std::min(panel, 10000.f / 203.f) : 1.f;
+    float white = deep ? 65535.f : 255.f;
+    if (deep) {
+        float sensor_peak = white;
+        linear_white_and_peak(img->data, sw, sh, colors, img->bits, white, sensor_peak);
+    }
+    if (!(white > 0.f)) white = 1.f;
 
     out.pixels.assign(bytes, 0);
     out.w = dw;
@@ -294,9 +328,17 @@ bool pack_image(const libraw_processed_image_t* img, int max_edge, int present, 
                 }
                 out.pixels[o + 3] = 255;
             } else {
+                double ch[3];
+                for (int c = 0; c < 3; ++c) ch[c] = acc[c] / count;
+                // A channel sitting on the 16-bit ceiling is a clipped sensor sample.
+                // Leaving the other channels below it is the purple highlight.
+                const double mx = std::max(ch[0], std::max(ch[1], ch[2]));
+                if (mx >= 65280.0) {
+                    ch[0] = ch[1] = ch[2] = mx;
+                }
                 for (int c = 0; c < 3; ++c) {
-                    float scene = static_cast<float>((acc[c] / count) / 65535.0);
-                    float v = raw_linear_sample(scene, baseline_ev, exposure_ev, highlight_stops, cap, hdr);
+                    float scene = static_cast<float>(ch[c] / white);
+                    float v = raw_linear_sample(scene, exposure_ev, highlight_stops, cap);
                     peak = std::max(peak, v);
                     uint16_t half = float_to_half(v);
                     out.pixels[o + static_cast<size_t>(c) * 2] = static_cast<uint8_t>(half & 0xff);
@@ -348,7 +390,8 @@ void configure_process(LibRaw& raw, int present, int max_edge, int demosaic_qual
         p.output_bps = 16;
         p.output_color = present == 2 ? 8 : 7;  // Rec.2020 or DCI-P3
         p.no_auto_bright = 1;
-        p.highlight = 1;
+        // 0 clips a saturated pixel to white. 1 leaves it pink.
+        p.highlight = 0;
         p.gamm[0] = 1.0;
         p.gamm[1] = 1.0;
         p.bright = 1.f;
@@ -366,9 +409,7 @@ bool process_open_raw(LibRaw& raw, int max_edge, int present, float panel_boost,
         if (img) LibRaw::dcraw_clear_mem(img);
         return false;
     }
-    // Metadata survives dcraw_process. -999 means the file has no BaselineExposure.
-    float baseline = raw.imgdata.color.dng_levels.baseline_exposure;
-    bool ok = pack_image(img, max_edge, present, panel_boost, baseline, exposure_ev, highlight_stops, out);
+    bool ok = pack_image(img, max_edge, present, panel_boost, exposure_ev, highlight_stops, out);
     LibRaw::dcraw_clear_mem(img);
     return ok;
 }
@@ -389,7 +430,7 @@ bool libraw_thumb_file(const char* path, const uint8_t* mem, size_t mem_len, con
         ok = write_file(out_path, img->data, img->data_size);
     } else if (img->type == LIBRAW_IMAGE_BITMAP && img->bits == 8 && img->colors >= 3) {
         Decoded packed;
-        if (pack_image(img, 0, /*present=*/0, 1.f, 0.f, 0.f, 0.f, packed)) {
+        if (pack_image(img, 0, /*present=*/0, 1.f, 0.f, 0.f, packed)) {
             ok = write_rgba8_jpeg(packed.pixels.data(), packed.w, packed.h, out_path, 85);
         }
     }

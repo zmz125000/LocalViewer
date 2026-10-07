@@ -837,6 +837,8 @@
     <string name="pref_reader_advanced_color_summary">在廣色域螢幕上啟用視窗廣色域模式，並優先使用更高精度點陣圖。會占用更多 GPU 與記憶體。HDR 頁面仍優先使用 HDR 視窗模式。</string>
     <string name="pref_reader_platform_high_depth">高位深（PNG）</string>
     <string name="pref_reader_platform_high_depth_summary">在進階色彩開啟時：對高位深 PNG 以 float16 解碼（繞過硬體 8 位路徑），占用更多記憶體。進階色彩開關變化時會同步本項。</string>
+    <string name="pref_reader_camera_raw">相機 RAW</string>
+    <string name="pref_reader_camera_raw_summary">解碼感光元件資料。關閉時使用內嵌預覽，沒有預覽時用 8 位元解碼。</string>
     <string name="pref_reader_raw_exposure">曝光</string>
     <string name="pref_reader_raw_exposure_summary">相機 RAW 的額外亮度。</string>
     <string name="pref_reader_raw_white_balance">白平衡</string>

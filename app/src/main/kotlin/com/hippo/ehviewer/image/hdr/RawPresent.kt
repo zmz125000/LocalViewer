@@ -40,37 +40,24 @@ fun rawContentBoost(mode: RawPresent, peakOverWhite: Float, panelBoost: Float): 
 }
 
 /**
- * LibRaw 16-bit code `scene` (1 = sensor clip) → linear float for the bitmap.
+ * LibRaw 16-bit sample divided by the 90th-percentile paper white.
  *
- * 1.0 is paper white. [hdr] with a missing baseline (LibRaw sentinel -999, or any
- * non-finite / out-of-range tag) reserves 2 stops, so the clip lands at 4.
- * Deep color passes [hdr] false and does not invent that headroom.
- * A real DNG BaselineExposure, including 0, is the scale for both.
+ * 1.0 is that white for both deep color and HDR. [exposureEv] is stops on top.
  * [highlightStops] compresses only samples above 1, then the result is clamped to [cap].
  *
  * The native pack in `raw_still.cpp` must use this same formula.
  */
 fun rawLinearSample(
-    scene: Float,
-    baselineEv: Float,
+    sceneOverWhite: Float,
     exposureEv: Float,
     highlightStops: Float,
     cap: Float,
-    hdr: Boolean,
 ): Float {
-    if (!scene.isFinite() || !exposureEv.isFinite() || !highlightStops.isFinite() || !cap.isFinite()) {
+    if (!sceneOverWhite.isFinite() || !exposureEv.isFinite() || !highlightStops.isFinite() || !cap.isFinite()) {
         return 0f
     }
-    if (scene <= 0f) return 0f
-    val beValid = baselineEv.isFinite() && baselineEv > -100f && baselineEv < 10f
-    val scale = if (beValid) {
-        baselineEv
-    } else if (hdr) {
-        2f
-    } else {
-        0f
-    }
-    val base = scene * 2.0.pow((scale + exposureEv).toDouble()).toFloat()
+    if (sceneOverWhite <= 0f) return 0f
+    val base = sceneOverWhite * 2.0.pow(exposureEv.toDouble()).toFloat()
     val y = if (highlightStops <= 0f || base <= 1f) {
         base
     } else {

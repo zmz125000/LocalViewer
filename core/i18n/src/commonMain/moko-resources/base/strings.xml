@@ -917,6 +917,8 @@
     <string name="pref_reader_advanced_color_summary">On wide-gamut displays, enable window wide color mode and prefer higher-precision bitmaps. Uses more GPU and memory. HDR mode still takes priority for HDR pages.</string>
     <string name="pref_reader_platform_high_depth">High bit depth (PNG)</string>
     <string name="pref_reader_platform_high_depth_summary">Under advanced color: decode high-depth PNG as float16 (bypass hardware 8-bit). Uses more memory. Follows the advanced-color switch when that switch changes.</string>
+    <string name="pref_reader_camera_raw">Camera RAW</string>
+    <string name="pref_reader_camera_raw_summary">Decode the sensor data. Off uses the embedded preview, then an 8-bit decode.</string>
     <string name="pref_reader_raw_exposure">Exposure</string>
     <string name="pref_reader_raw_exposure_summary">Extra brightness for camera RAW.</string>
     <string name="pref_reader_raw_white_balance">White balance</string>
