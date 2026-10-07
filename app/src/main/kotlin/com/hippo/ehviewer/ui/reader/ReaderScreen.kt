@@ -577,6 +577,7 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
             Settings.preloadImage.changesFlow(),
             Settings.readerDecodeAhead.changesFlow(),
             Settings.disableReaderNetworkCache.changesFlow(),
+            Settings.readerAllowNetworkCacheRaw.changesFlow(),
         ).collect {
             // Lookahead policy changes do not invalidate already decoded images.
             pageLoader.replan()

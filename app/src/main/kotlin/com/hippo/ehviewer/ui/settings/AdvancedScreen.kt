@@ -171,11 +171,19 @@ fun AnimatedVisibilityScope.AdvancedScreen(navigator: DestinationsNavigator) = S
                     }
                 }
             }
+            val disableNetworkCache = Settings.disableReaderNetworkCache.asMutableState()
             SwitchPreference(
                 title = stringResource(id = R.string.settings_advanced_disable_reader_network_cache),
                 summary = stringResource(id = R.string.settings_advanced_disable_reader_network_cache_summary),
-                state = Settings.disableReaderNetworkCache.asMutableState(),
+                state = disableNetworkCache,
             )
+            AnimatedVisibility(visible = disableNetworkCache.value) {
+                SwitchPreference(
+                    title = stringResource(id = R.string.settings_reader_allow_network_cache_raw),
+                    summary = stringResource(id = R.string.settings_reader_allow_network_cache_raw_summary),
+                    state = Settings.readerAllowNetworkCacheRaw.asMutableState(),
+                )
+            }
             val preloadImage = Settings.preloadImage.asMutableState()
             LaunchedEffect(preloadImage.value) {
                 val clamped = preloadImage.value.coerceIn(0, 6)

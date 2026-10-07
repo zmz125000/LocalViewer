@@ -56,10 +56,18 @@ fun ReaderGeneralSetting(isDocument: Boolean = false) = Column(modifier = Modifi
         title = stringResource(id = R.string.pref_reader_camera_raw),
         field = Settings.readerCameraRaw.asMutableState(),
     )
+    val disableNetworkCache = Settings.disableReaderNetworkCache.asMutableState()
     SwitchChoice(
         title = stringResource(id = R.string.settings_advanced_disable_reader_network_cache),
-        field = Settings.disableReaderNetworkCache.asMutableState(),
+        field = disableNetworkCache,
     )
+    AnimatedVisibility(visible = disableNetworkCache.value) {
+        SwitchChoice(
+            title = stringResource(id = R.string.settings_reader_allow_network_cache_raw),
+            summary = stringResource(id = R.string.settings_reader_allow_network_cache_raw_summary),
+            field = Settings.readerAllowNetworkCacheRaw.asMutableState(),
+        )
+    }
     SwitchChoice(
         title = stringResource(id = R.string.pref_reader_lib_direct_bitmap),
         summary = stringResource(id = R.string.pref_reader_lib_direct_bitmap_summary),

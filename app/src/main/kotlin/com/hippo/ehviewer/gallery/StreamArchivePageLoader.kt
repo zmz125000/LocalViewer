@@ -338,8 +338,10 @@ suspend inline fun <T> useStreamArchivePageLoader(
                     }
 
                     override fun prefetchPages(pages: List<Int>, bounds: IntRange) {
-                        if (Settings.disableReaderNetworkCache.value) return
+                        val cacheOff = Settings.disableReaderNetworkCache.value
+                        if (cacheOff && !Settings.readerAllowNetworkCacheRaw.value) return
                         pages.forEach { index ->
+                            if (cacheOff && !RawNetworkPageCache.wantsDisk(getExtension(index))) return@forEach
                             ensureExtract(index, interactive = false)
                         }
                     }
@@ -471,10 +473,12 @@ suspend inline fun <T> useStreamArchivePageLoader(
                         val job = scope.launch(Dispatchers.IO, start = CoroutineStart.LAZY) {
                             try {
                                 if (isPageCached(index)) {
+                                    pagePaths[index]?.let { RawNetworkPageCache.note(getExtension(index), it) }
                                     dispatchReady(index)
                                     return@launch
                                 }
-                                val skipDisk = Settings.disableReaderNetworkCache.value
+                                val skipDisk = Settings.disableReaderNetworkCache.value &&
+                                    !RawNetworkPageCache.wantsDisk(getExtension(index))
                                 if (skipDisk) {
                                     extractToRam(index)
                                     if (ramPages.containsKey(index) || isPageCached(index)) {
@@ -488,6 +492,7 @@ suspend inline fun <T> useStreamArchivePageLoader(
                                 } else {
                                     val path = extractToCache(index)
                                     if (path != null && ArchiveStreamPageCache.isCached(path)) {
+                                        RawNetworkPageCache.note(getExtension(index), path)
                                         dispatchReady(index)
                                     } else {
                                         val waiters = takeReadyWaiters(index)

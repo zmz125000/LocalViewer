@@ -115,8 +115,12 @@ suspend inline fun <T> useWebDavFolderPageLoader(
                 }
 
                 override fun prefetchPages(pages: List<Int>, bounds: IntRange) {
-                    if (Settings.disableReaderNetworkCache.value) return
-                    pages.forEach { ensureDownload(it) }
+                    val cacheOff = Settings.disableReaderNetworkCache.value
+                    if (cacheOff && !Settings.readerAllowNetworkCacheRaw.value) return
+                    pages.forEach { index ->
+                        if (cacheOff && !RawNetworkPageCache.wantsDisk(imageFileNames[index])) return@forEach
+                        ensureDownload(index)
+                    }
                 }
 
                 override fun onRequest(index: Int, force: Boolean, orgImg: Boolean) {
@@ -181,7 +185,7 @@ suspend inline fun <T> useWebDavFolderPageLoader(
                     if (closed.get() || index !in 0 until size) return
                     val name = imageFileNames[index]
                     val cache = WebDavCache.cachePath(source.id, remoteDir, name)
-                    val skipDisk = Settings.disableReaderNetworkCache.value
+                    val skipDisk = Settings.disableReaderNetworkCache.value && !RawNetworkPageCache.wantsDisk(name)
                     // Never probe disk here — onRequest/retryPage run on main (lifecycle).
                     if (onReady == null && !skipDisk && WebDavCache.isPageCached(cache)) {
                         markSourceReady(index)
@@ -198,13 +202,14 @@ suspend inline fun <T> useWebDavFolderPageLoader(
 
                     val job = launch(Dispatchers.IO, start = CoroutineStart.LAZY) {
                         try {
-                            val skipDisk = Settings.disableReaderNetworkCache.value
+                            val skipDisk = Settings.disableReaderNetworkCache.value && !RawNetworkPageCache.wantsDisk(name)
                             if (skipDisk && ramPages.containsKey(index)) {
                                 dispatchReady(index)
                                 return@launch
                             }
                             // Authoritative disk check on IO (StrictMode + LRU correctness).
                             if (!skipDisk && WebDavCache.isPageCachedOnDisk(cache)) {
+                                RawNetworkPageCache.note(name, cache)
                                 dispatchReady(index)
                                 return@launch
                             }
@@ -239,6 +244,7 @@ suspend inline fun <T> useWebDavFolderPageLoader(
                                     }
                                 } else {
                                     if (WebDavCache.isPageCachedOnDisk(cache)) {
+                                        RawNetworkPageCache.note(name, cache)
                                         dispatchReady(index)
                                         return@withFolderNetworkPermit
                                     }
@@ -246,6 +252,7 @@ suspend inline fun <T> useWebDavFolderPageLoader(
                                     WebDavCache.downloadIfNeeded(cache, originalFileName = name) { out ->
                                         WebDavClient.downloadFile(source, password, remote, out)
                                     }
+                                    RawNetworkPageCache.note(name, cache)
                                     if (WebDavCache.isPageCachedOnDisk(cache)) {
                                         dispatchReady(index)
                                     } else if (readyWaiters.containsKey(index)) {

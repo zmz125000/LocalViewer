@@ -135,8 +135,10 @@ suspend inline fun <T> useSmbFolderPageLoader(
                 }
 
                 override fun prefetchPages(pages: List<Int>, bounds: IntRange) {
-                    if (Settings.disableReaderNetworkCache.value) return
+                    val cacheOff = Settings.disableReaderNetworkCache.value
+                    if (cacheOff && !Settings.readerAllowNetworkCacheRaw.value) return
                     pages.forEach { index ->
+                        if (cacheOff && !RawNetworkPageCache.wantsDisk(imageFileNames[index])) return@forEach
                         ensureDownload(index)
                     }
                 }
@@ -225,7 +227,7 @@ suspend inline fun <T> useSmbFolderPageLoader(
                     if (closed.get() || index !in 0 until size) return
                     val name = imageFileNames[index]
                     val cache = SmbCache.cachePath(source.id, remoteDir, name)
-                    val skipDisk = Settings.disableReaderNetworkCache.value
+                    val skipDisk = Settings.disableReaderNetworkCache.value && !RawNetworkPageCache.wantsDisk(name)
                     // Never probe disk here — onRequest/retryPage run on main (lifecycle
                     // ON_RESUME). Memory-only skip for prefetch when known present.
                     if (onReady == null && !skipDisk && SmbCache.isPageCached(cache)) {
@@ -246,7 +248,7 @@ suspend inline fun <T> useSmbFolderPageLoader(
                     }
                     val job = scope.launch(Dispatchers.IO, start = CoroutineStart.LAZY) {
                         try {
-                            val skipDisk = Settings.disableReaderNetworkCache.value
+                            val skipDisk = Settings.disableReaderNetworkCache.value && !RawNetworkPageCache.wantsDisk(name)
                             if (skipDisk && ramPages.containsKey(index)) {
                                 dispatchReady(index)
                                 return@launch
@@ -254,6 +256,7 @@ suspend inline fun <T> useSmbFolderPageLoader(
                             // Authoritative disk check on IO (StrictMode + LRU correctness).
                             // Skip mtime touch when not writing cache.
                             if (!skipDisk && SmbCache.isPageCachedOnDisk(cache)) {
+                                RawNetworkPageCache.note(name, cache)
                                 dispatchReady(index)
                                 return@launch
                             }
@@ -385,12 +388,16 @@ suspend inline fun <T> useSmbFolderPageLoader(
                 private suspend fun downloadToCache(index: Int) {
                     val name = imageFileNames[index]
                     val cache = SmbCache.cachePath(source.id, remoteDir, name)
-                    if (SmbCache.isPageCachedOnDisk(cache)) return
+                    if (SmbCache.isPageCachedOnDisk(cache)) {
+                        RawNetworkPageCache.note(name, cache)
+                        return
+                    }
                     val rel = if (remoteDir.isEmpty()) name else "$remoteDir/$name"
                     // Per-path mutex: two connections never write the same cache file.
                     SmbCache.downloadIfNeeded(cache, originalFileName = name) { out ->
                         SmbGateway.downloadFile(source, password, rel, out)
                     }
+                    RawNetworkPageCache.note(name, cache)
                 }
             },
         )
