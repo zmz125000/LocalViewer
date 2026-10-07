@@ -224,6 +224,7 @@ object LibDirectDecode {
         val outBoost = FloatArray(1)
         val exposureEv = rawExposureEv()
         val whiteBalance = rawWhiteBalance()
+        val kelvin = rawKelvin()
         val highlightStops = rawHighlightStops()
         val pixels = when (src) {
             is PathSource -> decodeRawFileToDirect(
@@ -233,6 +234,7 @@ object LibDirectDecode {
                 panelBoost,
                 exposureEv,
                 whiteBalance,
+                kelvin,
                 highlightStops,
                 outInfo,
                 outBoost,
@@ -246,6 +248,7 @@ object LibDirectDecode {
                     panelBoost,
                     exposureEv,
                     whiteBalance,
+                    kelvin,
                     highlightStops,
                     outInfo,
                     outBoost,
@@ -304,7 +307,9 @@ object LibDirectDecode {
 
     private fun rawExposureEv(): Float = (Settings.readerRawExposure.value / 10f).coerceIn(-3f, 3f)
 
-    private fun rawWhiteBalance(): Int = Settings.readerRawWhiteBalance.value.coerceIn(0, 2)
+    private fun rawWhiteBalance(): Int = Settings.readerRawWhiteBalance.value.coerceIn(0, 8)
+
+    private fun rawKelvin(): Int = Settings.readerRawKelvin.value.coerceIn(2000, 12000)
 
     private fun rawHighlightStops(): Float = (Settings.readerRawHighlight.value / 10f).coerceIn(0f, 3f)
 

@@ -870,6 +870,14 @@
     <string name="pref_reader_raw_wb_camera">相机</string>
     <string name="pref_reader_raw_wb_auto">自动</string>
     <string name="pref_reader_raw_wb_daylight">日光</string>
+    <string name="pref_reader_raw_wb_cloudy">阴天</string>
+    <string name="pref_reader_raw_wb_shade">阴影</string>
+    <string name="pref_reader_raw_wb_tungsten">白炽灯</string>
+    <string name="pref_reader_raw_wb_fluorescent">荧光灯</string>
+    <string name="pref_reader_raw_wb_flash">闪光灯</string>
+    <string name="pref_reader_raw_wb_kelvin">色温</string>
+    <string name="pref_reader_raw_kelvin">色温</string>
+    <string name="pref_reader_raw_kelvin_summary">相机 RAW 的色温。白平衡选色温时使用。</string>
     <string name="pref_reader_raw_highlight">高光</string>
     <string name="pref_reader_raw_highlight_summary">把亮部拉向纸白。用于相机 RAW 的深色与 HDR。</string>
     <string name="pref_custom_brightness">自定义亮度</string>

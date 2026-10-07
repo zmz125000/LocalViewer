@@ -354,18 +354,197 @@ bool pack_image(const libraw_processed_image_t* img, int max_edge, int present, 
     return true;
 }
 
-void configure_process(LibRaw& raw, int present, int max_edge, int demosaic_qual, int wb_mode, float exposure_ev) {
-    auto& p = raw.imgdata.params;
-    if (wb_mode == 1) {
-        p.use_camera_wb = 0;
-        p.use_auto_wb = 1;
-    } else if (wb_mode == 2) {
-        p.use_camera_wb = 0;
-        p.use_auto_wb = 0;
-    } else {
-        p.use_camera_wb = 1;
-        p.use_auto_wb = 0;
+// 0 camera, 1 auto, 2 daylight, 3 cloudy, 4 shade, 5 tungsten, 6 fluorescent, 7 flash, 8 kelvin.
+bool wb_coeff(const LibRaw& raw, int index, float mul[4]) {
+    if (index < 0 || index >= 256) return false;
+    const int* c = raw.imgdata.color.WB_Coeffs[index];
+    if (c[0] <= 0 || c[1] <= 0 || c[2] <= 0) return false;
+    mul[0] = static_cast<float>(c[0]);
+    mul[1] = static_cast<float>(c[1]);
+    mul[2] = static_cast<float>(c[2]);
+    mul[3] = c[3] > 0 ? static_cast<float>(c[3]) : mul[1];
+    return true;
+}
+
+bool wb_coeff_any(const LibRaw& raw, const int* ids, int count, float mul[4]) {
+    for (int i = 0; i < count; ++i) {
+        if (wb_coeff(raw, ids[i], mul)) return true;
     }
+    return false;
+}
+
+// Daylight locus from 4000 K. Below that, the Planckian locus (Illuminant A at 2856 K).
+bool kelvin_xy(float kelvin, double& x, double& y) {
+    double t = std::clamp(static_cast<double>(kelvin), 1667.0, 25000.0);
+    double t2 = t * t;
+    double t3 = t2 * t;
+    if (t >= 4000.0) {
+        if (t <= 7000.0) {
+            x = -4.6070e9 / t3 + 2.9678e6 / t2 + 0.09911e3 / t + 0.244063;
+        } else {
+            x = -2.0064e9 / t3 + 1.9018e6 / t2 + 0.24748e3 / t + 0.237040;
+        }
+        y = -3.000 * x * x + 2.870 * x - 0.275;
+    } else {
+        x = -0.2661239e9 / t3 - 0.2343589e6 / t2 + 0.8776956e3 / t + 0.179910;
+        if (t <= 2222.0) {
+            y = -1.1063814 * x * x * x - 1.34811020 * x * x + 2.18555832 * x - 0.20219683;
+        } else {
+            y = -0.9549476 * x * x * x - 1.37418593 * x * x + 2.09137015 * x - 0.16748867;
+        }
+    }
+    return y > 1e-6;
+}
+
+bool mul_from_wbct(const float ct[64][5], float kelvin, float mul[4]) {
+    struct Pt {
+        float t;
+        float m[4];
+    };
+    Pt pts[64];
+    int n = 0;
+    for (int i = 0; i < 64; ++i) {
+        if (!(ct[i][0] > 1.f) || !(ct[i][1] > 0.f) || !(ct[i][2] > 0.f) || !(ct[i][3] > 0.f)) continue;
+        pts[n].t = ct[i][0];
+        pts[n].m[0] = ct[i][1];
+        pts[n].m[1] = ct[i][2];
+        pts[n].m[2] = ct[i][3];
+        pts[n].m[3] = ct[i][4] > 0.f ? ct[i][4] : ct[i][2];
+        ++n;
+    }
+    if (n < 2) return false;
+    std::sort(pts, pts + n, [](const Pt& a, const Pt& b) { return a.t < b.t; });
+    int w = 1;
+    for (int i = 1; i < n; ++i) {
+        if (pts[i].t > pts[w - 1].t + 0.5f) pts[w++] = pts[i];
+    }
+    n = w;
+    if (n < 2) return false;
+    auto copy_pt = [&](const Pt& p) {
+        for (int c = 0; c < 4; ++c) mul[c] = p.m[c];
+    };
+    if (kelvin <= pts[0].t) {
+        copy_pt(pts[0]);
+        return mul[0] > 0.f;
+    }
+    if (kelvin >= pts[n - 1].t) {
+        copy_pt(pts[n - 1]);
+        return mul[0] > 0.f;
+    }
+    for (int i = 1; i < n; ++i) {
+        if (kelvin > pts[i].t) continue;
+        float m0 = 1e6f / pts[i - 1].t;
+        float m1 = 1e6f / pts[i].t;
+        float m = 1e6f / kelvin;
+        float u = (m0 == m1) ? 0.f : (m0 - m) / (m0 - m1);
+        u = std::clamp(u, 0.f, 1.f);
+        for (int c = 0; c < 4; ++c) mul[c] = pts[i - 1].m[c] + (pts[i].m[c] - pts[i - 1].m[c]) * u;
+        return mul[0] > 0.f;
+    }
+    return false;
+}
+
+bool mul_from_matrix(const LibRaw& raw, float kelvin, float mul[4]) {
+    double x = 0;
+    double y = 0;
+    if (!kelvin_xy(kelvin, x, y)) return false;
+    const auto& m = raw.imgdata.color.cam_xyz;
+    double acc = 0;
+    for (int c = 0; c < 3; ++c) acc += std::fabs(m[c][0]) + std::fabs(m[c][1]) + std::fabs(m[c][2]);
+    if (acc < 0.01) return false;
+    double X = x / y;
+    double Y = 1.0;
+    double Z = (1.0 - x - y) / y;
+    int colors = raw.imgdata.idata.colors;
+    for (int c = 0; c < 4; ++c) {
+        int src = c;
+        if (c == 3 && (colors < 4 || (std::fabs(m[3][0]) + std::fabs(m[3][1]) + std::fabs(m[3][2]) < 1e-6))) src = 1;
+        double cam = m[src][0] * X + m[src][1] * Y + m[src][2] * Z;
+        if (!(cam > 1e-4)) cam = 1e-4;
+        mul[c] = static_cast<float>(1.0 / cam);
+    }
+    return mul[0] > 0.f;
+}
+
+void use_multipliers(LibRaw& raw, const float mul[4]) {
+    auto& p = raw.imgdata.params;
+    p.use_camera_wb = 0;
+    p.use_auto_wb = 0;
+    for (int i = 0; i < 4; ++i) p.user_mul[i] = mul[i];
+}
+
+bool apply_kelvin(LibRaw& raw, float kelvin) {
+    float mul[4];
+    if (mul_from_wbct(raw.imgdata.color.WBCT_Coeffs, kelvin, mul) || mul_from_matrix(raw, kelvin, mul)) {
+        use_multipliers(raw, mul);
+        return true;
+    }
+    auto& p = raw.imgdata.params;
+    p.use_camera_wb = 0;
+    p.use_auto_wb = 0;
+    return false;
+}
+
+void configure_white_balance(LibRaw& raw, int wb_mode, int kelvin) {
+    auto& p = raw.imgdata.params;
+    for (int i = 0; i < 4; ++i) p.user_mul[i] = 0.f;
+    float mul[4];
+    switch (wb_mode) {
+        case 1:
+            p.use_camera_wb = 0;
+            p.use_auto_wb = 1;
+            break;
+        case 2: {
+            const int ids[] = {LIBRAW_WBI_Daylight, LIBRAW_WBI_D55, LIBRAW_WBI_D65};
+            if (wb_coeff_any(raw, ids, 3, mul)) {
+                use_multipliers(raw, mul);
+            } else {
+                p.use_camera_wb = 0;
+                p.use_auto_wb = 0;
+            }
+            break;
+        }
+        case 3: {
+            const int ids[] = {LIBRAW_WBI_Cloudy, LIBRAW_WBI_FineWeather};
+            if (wb_coeff_any(raw, ids, 2, mul)) use_multipliers(raw, mul);
+            else apply_kelvin(raw, 6000.f);
+            break;
+        }
+        case 4:
+            if (wb_coeff(raw, LIBRAW_WBI_Shade, mul)) use_multipliers(raw, mul);
+            else apply_kelvin(raw, 7500.f);
+            break;
+        case 5: {
+            const int ids[] = {LIBRAW_WBI_Tungsten, LIBRAW_WBI_StudioTungsten, LIBRAW_WBI_Ill_A};
+            if (wb_coeff_any(raw, ids, 3, mul)) use_multipliers(raw, mul);
+            else apply_kelvin(raw, 2850.f);
+            break;
+        }
+        case 6: {
+            const int ids[] = {LIBRAW_WBI_Fluorescent, LIBRAW_WBI_FL_D, LIBRAW_WBI_FL_N,
+                               LIBRAW_WBI_FL_W,       LIBRAW_WBI_FL_WW, LIBRAW_WBI_FL_L};
+            if (wb_coeff_any(raw, ids, 6, mul)) use_multipliers(raw, mul);
+            else apply_kelvin(raw, 4000.f);
+            break;
+        }
+        case 7:
+            if (wb_coeff(raw, LIBRAW_WBI_Flash, mul)) use_multipliers(raw, mul);
+            else apply_kelvin(raw, 5500.f);
+            break;
+        case 8:
+            apply_kelvin(raw, static_cast<float>(std::clamp(kelvin, 2000, 12000)));
+            break;
+        default:
+            p.use_camera_wb = 1;
+            p.use_auto_wb = 0;
+            break;
+    }
+}
+
+void configure_process(LibRaw& raw, int present, int max_edge, int demosaic_qual, int wb_mode, float exposure_ev,
+                       int kelvin) {
+    auto& p = raw.imgdata.params;
+    configure_white_balance(raw, wb_mode, kelvin);
     p.use_camera_matrix = 1;
     p.user_qual = demosaic_qual;
     p.half_size = 0;
@@ -399,8 +578,8 @@ void configure_process(LibRaw& raw, int present, int max_edge, int demosaic_qual
 }
 
 bool process_open_raw(LibRaw& raw, int max_edge, int present, float panel_boost, int demosaic_qual, int wb_mode,
-                      float exposure_ev, float highlight_stops, Decoded& out) {
-    configure_process(raw, present, max_edge, demosaic_qual, wb_mode, exposure_ev);
+                      float exposure_ev, float highlight_stops, int kelvin, Decoded& out) {
+    configure_process(raw, present, max_edge, demosaic_qual, wb_mode, exposure_ev, kelvin);
     if (raw.unpack() != LIBRAW_SUCCESS) return false;
     if (raw.dcraw_process() != LIBRAW_SUCCESS) return false;
     int err = 0;
@@ -444,7 +623,8 @@ bool demosaic_cover_jpeg(const char* path, const uint8_t* mem, size_t mem_len, c
     if (rc != LIBRAW_SUCCESS) return false;
     Decoded decoded;
     // Bilinear is enough for a 512 px cover.
-    if (!process_open_raw(raw, 512, /*present=*/0, 1.f, /*demosaic_qual=*/0, /*wb_mode=*/0, 0.f, 0.f, decoded)) {
+    if (!process_open_raw(raw, 512, /*present=*/0, 1.f, /*demosaic_qual=*/0, /*wb_mode=*/0, 0.f, 0.f, 5200,
+                          decoded)) {
         return false;
     }
     if (decoded.format != 0) return false;
@@ -500,8 +680,8 @@ int extract_preview(const char* path, const uint8_t* mem, size_t mem_len, const 
 extern "C" JNIEXPORT jbyteArray JNICALL
 Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeRawFileToDirect(JNIEnv* env, jclass, jstring j_path, jint max_edge,
                                                                jint present, jfloat panel_boost, jfloat exposure_ev,
-                                                               jint wb_mode, jfloat highlight_stops, jintArray j_info,
-                                                               jfloatArray j_boost) {
+                                                               jint wb_mode, jint kelvin, jfloat highlight_stops,
+                                                               jintArray j_info, jfloatArray j_boost) {
 #if !defined(EHVIEWER_HDR_CODECS)
     (void)env;
     (void)j_path;
@@ -510,6 +690,7 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeRawFileToDirect(JNIEnv* env, jcla
     (void)panel_boost;
     (void)exposure_ev;
     (void)wb_mode;
+    (void)kelvin;
     (void)highlight_stops;
     (void)j_info;
     (void)j_boost;
@@ -526,8 +707,9 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeRawFileToDirect(JNIEnv* env, jcla
             int mode = present < 0 ? 0 : (present > 2 ? 2 : present);
             float exposure = std::isfinite(exposure_ev) ? std::clamp(exposure_ev, -3.f, 3.f) : 0.f;
             float stops = std::isfinite(highlight_stops) ? std::clamp(highlight_stops, 0.f, 3.f) : 0.f;
-            int wb = wb_mode < 0 ? 0 : (wb_mode > 2 ? 2 : wb_mode);
-            if (process_open_raw(raw, max_edge, mode, panel_boost, /*demosaic_qual=*/3, wb, exposure, stops,
+            int wb = std::clamp(wb_mode, 0, 8);
+            int temp = std::clamp(kelvin, 2000, 12000);
+            if (process_open_raw(raw, max_edge, mode, panel_boost, /*demosaic_qual=*/3, wb, exposure, stops, temp,
                                  decoded)) {
                 result = decoded_to_java(env, decoded, j_info, j_boost);
             }
@@ -542,9 +724,10 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeRawFileToDirect(JNIEnv* env, jcla
 }
 
 extern "C" JNIEXPORT jbyteArray JNICALL
-Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeRawBytesToDirect(JNIEnv* env, jclass, jbyteArray j_input, jint max_edge,
-                                                                jint present, jfloat panel_boost, jfloat exposure_ev,
-                                                                jint wb_mode, jfloat highlight_stops, jintArray j_info,
+Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeRawBytesToDirect(JNIEnv* env, jclass, jbyteArray j_input,
+                                                                jint max_edge, jint present, jfloat panel_boost,
+                                                                jfloat exposure_ev, jint wb_mode, jint kelvin,
+                                                                jfloat highlight_stops, jintArray j_info,
                                                                 jfloatArray j_boost) {
 #if !defined(EHVIEWER_HDR_CODECS)
     (void)env;
@@ -554,6 +737,7 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeRawBytesToDirect(JNIEnv* env, jcl
     (void)panel_boost;
     (void)exposure_ev;
     (void)wb_mode;
+    (void)kelvin;
     (void)highlight_stops;
     (void)j_info;
     (void)j_boost;
@@ -572,8 +756,9 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeRawBytesToDirect(JNIEnv* env, jcl
             int mode = present < 0 ? 0 : (present > 2 ? 2 : present);
             float exposure = std::isfinite(exposure_ev) ? std::clamp(exposure_ev, -3.f, 3.f) : 0.f;
             float stops = std::isfinite(highlight_stops) ? std::clamp(highlight_stops, 0.f, 3.f) : 0.f;
-            int wb = wb_mode < 0 ? 0 : (wb_mode > 2 ? 2 : wb_mode);
-            if (process_open_raw(raw, max_edge, mode, panel_boost, /*demosaic_qual=*/3, wb, exposure, stops,
+            int wb = std::clamp(wb_mode, 0, 8);
+            int temp = std::clamp(kelvin, 2000, 12000);
+            if (process_open_raw(raw, max_edge, mode, panel_boost, /*demosaic_qual=*/3, wb, exposure, stops, temp,
                                  decoded)) {
                 result = decoded_to_java(env, decoded, j_info, j_boost);
             }

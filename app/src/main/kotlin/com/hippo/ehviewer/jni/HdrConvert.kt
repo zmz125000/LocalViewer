@@ -106,7 +106,10 @@ external fun decodeAvifBytesToDirect(
  * ordinal: 0 eight-bit, 1 deep color, 2 deep color + Android 16 HDR.
  * [maxEdge] is already capped (8192 for a full decode).
  * [panelBoost] clamps HDR highlights. Ignored for the other modes.
- * [exposureEv] is extra stops. [whiteBalance] is 0 camera, 1 auto, 2 daylight.
+ * [exposureEv] is extra stops. [whiteBalance] is 0 camera, 1 auto, 2 daylight,
+ * 3 cloudy, 4 shade, 5 tungsten, 6 fluorescent, 7 flash, 8 kelvin.
+ * [kelvin] is 2000..12000 and applies when [whiteBalance] is kelvin. Named presets
+ * that the file does not store use this same temperature curve.
  * [highlightStops] compresses deep-color and HDR samples above paper white.
  */
 external fun decodeRawFileToDirect(
@@ -116,6 +119,7 @@ external fun decodeRawFileToDirect(
     panelBoost: Float,
     exposureEv: Float,
     whiteBalance: Int,
+    kelvin: Int,
     highlightStops: Float,
     outInfo: IntArray,
     outBoost: FloatArray,
@@ -128,6 +132,7 @@ external fun decodeRawBytesToDirect(
     panelBoost: Float,
     exposureEv: Float,
     whiteBalance: Int,
+    kelvin: Int,
     highlightStops: Float,
     outInfo: IntArray,
     outBoost: FloatArray,

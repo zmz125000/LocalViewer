@@ -934,8 +934,15 @@ object Settings : DataStorePreferences(null) {
      */
     val readerRawExposure = intPref("pref_reader_raw_exposure", 0)
 
-    /** Camera RAW white balance: 0 camera, 1 auto, 2 daylight. */
+    /**
+     * Camera RAW white balance.
+     * 0 camera, 1 auto, 2 daylight, 3 cloudy, 4 shade, 5 tungsten,
+     * 6 fluorescent, 7 flash, 8 kelvin.
+     */
     val readerRawWhiteBalance = intPref("pref_reader_raw_white_balance", 0)
+
+    /** Camera RAW Kelvin white balance, 2000..12000. Used when [readerRawWhiteBalance] is kelvin. */
+    val readerRawKelvin = intPref("pref_reader_raw_kelvin", 5200)
 
     /**
      * Camera RAW highlight protection in tenths of a stop (0..30).

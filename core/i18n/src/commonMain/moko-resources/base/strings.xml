@@ -925,6 +925,14 @@
     <string name="pref_reader_raw_wb_camera">Camera</string>
     <string name="pref_reader_raw_wb_auto">Auto</string>
     <string name="pref_reader_raw_wb_daylight">Daylight</string>
+    <string name="pref_reader_raw_wb_cloudy">Cloudy</string>
+    <string name="pref_reader_raw_wb_shade">Shade</string>
+    <string name="pref_reader_raw_wb_tungsten">Tungsten</string>
+    <string name="pref_reader_raw_wb_fluorescent">Fluorescent</string>
+    <string name="pref_reader_raw_wb_flash">Flash</string>
+    <string name="pref_reader_raw_wb_kelvin">Kelvin</string>
+    <string name="pref_reader_raw_kelvin">Color temperature</string>
+    <string name="pref_reader_raw_kelvin_summary">Kelvin white balance for camera RAW. Shown when white balance is Kelvin.</string>
     <string name="pref_reader_raw_highlight">Highlights</string>
     <string name="pref_reader_raw_highlight_summary">Pull bright areas toward paper white. Applies to camera RAW deep color and HDR.</string>
     <string name="pref_custom_brightness">Custom brightness</string>

@@ -565,6 +565,7 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
                 readerCameraRaw.changesFlow().filter { pageLoader.containsRawStill() },
                 readerRawExposure.changesFlow().filter { pageLoader.containsRawStill() },
                 readerRawWhiteBalance.changesFlow().filter { pageLoader.containsRawStill() },
+                readerRawKelvin.changesFlow().filter { pageLoader.containsRawStill() },
                 readerRawHighlight.changesFlow().filter { pageLoader.containsRawStill() },
             ).collect {
                 pageLoader.restart()
