@@ -196,6 +196,14 @@ fun AnimatedVisibilityScope.AdvancedScreen(navigator: DestinationsNavigator) = S
                 entryValueRes = com.hippo.ehviewer.R.array.reader_decode_ahead_entry_values,
                 state = decodeAhead,
             )
+            val heavyDecode = Settings.heavyDecode.asMutableState()
+            SimpleMenuPreferenceInt(
+                title = stringResource(id = R.string.settings_heavy_decode),
+                summary = stringResource(id = R.string.settings_heavy_decode_summary, heavyDecode.value.coerceIn(1, 2)),
+                entry = com.hippo.ehviewer.R.array.heavy_decode_entries,
+                entryValueRes = com.hippo.ehviewer.R.array.heavy_decode_entry_values,
+                state = heavyDecode,
+            )
             val smbConnections = Settings.multiThreadDownload.asMutableState()
             SimpleMenuPreferenceInt(
                 title = stringResource(id = R.string.settings_smb_concurrency),

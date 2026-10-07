@@ -66,13 +66,28 @@ object LibDirectDecode {
     /** Second RAW decode (view original) stops here instead of a full-sensor float16. */
     private const val RAW_FULL_EDGE = 8192
 
+    /** Upper choice of [Settings.heavyDecode], and the size of [heavyDecodeSlots]. */
+    private const val HEAVY_DECODE_POOL = 2
+
     /**
      * Full-res RGBA_F16 is ~66 MiB at 3500×2500. Concurrent packs (PageLoader
      * Semaphore 4 + two pages) blow a 256 MiB Java heap → blocking GC Alloc /
-     * SoftReference thrash. Serialize heavy native→Bitmap work process-wide.
+     * SoftReference thrash. [Settings.heavyDecode] is 1 or 2. The pool has 2
+     * permits; 1 acquires both so heavy native→Bitmap work stays serial.
      * Also used for platform high-depth F16 frames.
      */
-    internal val heavyDecode = Semaphore(1)
+    private val heavyDecodeSlots = Semaphore(HEAVY_DECODE_POOL)
+
+    internal suspend fun <T> withHeavyDecode(block: suspend () -> T): T {
+        val parallel = Settings.heavyDecode.value >= HEAVY_DECODE_POOL
+        return if (parallel) {
+            heavyDecodeSlots.withPermit { block() }
+        } else {
+            heavyDecodeSlots.withPermit {
+                heavyDecodeSlots.withPermit { block() }
+            }
+        }
+    }
 
     /**
      * ICC type-3 identity (Y = X). [Bitmap.wrapHardwareBuffer] requires this;
@@ -134,7 +149,7 @@ object LibDirectDecode {
         maxEdge: Int = 0,
     ): LibDirectResult? = withContext(Dispatchers.IO) {
         // Gate before allocating native F16 + Java byte[] + Bitmap (~one full frame each).
-        heavyDecode.withPermit {
+        withHeavyDecode {
             decodeUnlocked(src, fileNameHint, maxEdge)
         }
     }
