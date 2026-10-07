@@ -4,12 +4,11 @@
  * 64-bit: LibRaw demosaic → packed RGBA for the reader.
  *   present 0: 8-bit sRGB. Linear samples, then the camera look, then the sRGB transfer.
  *   present 1: deep color, Display P3 float16 clamped to 0..1, after the camera look.
- *   present 2: deep color + Android 16 HDR, Rec.2020 float16, after the camera look.
- *              1.0 is sensor white after black subtraction, before the tone curve.
- *              DNG BaselineExposure is applied before that curve. There is no
- *              per-frame auto exposure. The curve is ProfileToneCurve, or the
- *              Camera Raw default curve when the file has none. Hue/saturation
- *              and look tables are applied only when the file stores them.
+ *   present 2: deep color + Android 16 HDR, linear Rec.2020 float16.
+ *              1.0 is the 90th-percentile paper white, so the sensor clip sits above 1.
+ *              No tone curve: that curve plus the paper-white stretch brightens the
+ *              frame and leaves no HDR separation. Deep color and 8-bit keep the
+ *              camera look and full-scale sensor white.
  *              The advanced-color switch is not a third mode;
  *              the caller selects 2 whenever HDR display is on and the panel is HDR.
  * Every ABI: embedded JPEG preview for covers and for a failed demosaic.
@@ -453,7 +452,41 @@ float sample_component(const uint8_t* base, int bits, int colors, int x, int y, 
     return static_cast<float>(base[i + static_cast<size_t>(channel)]);
 }
 
-// Same mapping as RawPresent.rawLinearSample. scene_over_white is 1 at sensor white.
+// Diffuse white ≈ 90th percentile of sampled luminance. Peak is the brightest sample.
+// HDR uses this as paper white. Full scale (65535) puts the sensor clip at 1 and
+// leaves no headroom, which is why that mode stopped reading as HDR.
+void linear_white_and_peak(const uint8_t* base, int w, int h, int colors, int bits, float& white, float& peak) {
+    const int npx = w * h;
+    int step = 1;
+    while (npx / step > 50000) step *= 2;
+    std::vector<float> ys;
+    ys.reserve(static_cast<size_t>(npx / step + 1));
+    peak = 0.f;
+    const float full = bits == 16 ? 65535.f : 255.f;
+    for (int i = 0; i < npx; i += step) {
+        int y = i / w;
+        int x = i - y * w;
+        int ch = std::min(colors, 3);
+        float r = sample_component(base, bits, colors, x, y, w, 0);
+        float g = ch > 1 ? sample_component(base, bits, colors, x, y, w, 1) : r;
+        float b = ch > 2 ? sample_component(base, bits, colors, x, y, w, 2) : r;
+        float lum = 0.2126f * r + 0.7152f * g + 0.0722f * b;
+        ys.push_back(lum);
+        peak = std::max(peak, std::max(r, std::max(g, b)));
+    }
+    if (ys.empty()) {
+        white = full;
+        peak = full;
+        return;
+    }
+    size_t idx = static_cast<size_t>(0.90 * static_cast<double>(ys.size() - 1));
+    std::nth_element(ys.begin(), ys.begin() + static_cast<std::ptrdiff_t>(idx), ys.end());
+    white = std::max(ys[idx], 1.f);
+    peak = std::max(peak, white);
+}
+
+// Same mapping as RawPresent.rawLinearSample. scene_over_white is 1 at paper white for HDR,
+// and at sensor white for deep color.
 // Highlight stops compress only above 1.
 float raw_linear_sample(float scene_over_white, float exposure_ev, float highlight_stops, float cap) {
     if (!std::isfinite(scene_over_white) || !std::isfinite(exposure_ev) || !std::isfinite(highlight_stops) ||
@@ -499,9 +532,16 @@ bool pack_image(const libraw_processed_image_t* img, int max_edge, int present, 
     // 10000/203 matches hdr_encode.h kMaxLinear. HDR does not clamp to 1.
     const float panel = std::isfinite(panel_boost) ? std::clamp(panel_boost, 1.f, 64.f) : 1.f;
     const float cap = hdr ? std::min(panel, 10000.f / 203.f) : 1.f;
-    // Sensor white after LibRaw black/white scaling. Not a histogram percentile:
-    // that stretch is what made frames brighter than Resolve and the Windows viewer.
-    const float white = linear16 ? 65535.f : 255.f;
+    // Deep color and 8-bit use sensor white. The 90th-percentile stretch is what
+    // made those frames brighter than Resolve and the Windows viewer.
+    // HDR still needs that paper white: LibRaw already maps the clip to full scale,
+    // so dividing by 65535 leaves nothing above 1.
+    float white = linear16 ? 65535.f : 255.f;
+    if (hdr && linear16) {
+        float sensor_peak = white;
+        linear_white_and_peak(img->data, sw, sh, colors, img->bits, white, sensor_peak);
+    }
+    if (!(white > 0.f)) white = 1.f;
 
     out.pixels.assign(bytes, 0);
     out.w = dw;
@@ -549,7 +589,9 @@ bool pack_image(const libraw_processed_image_t* img, int max_edge, int present, 
                 }
                 float rgb[3];
                 for (int c = 0; c < 3; ++c) rgb[c] = static_cast<float>(ch[c] / white);
-                if (look) {
+                // HDR stays linear. The camera look's tone curve lifts midtones the way an
+                // SDR develop does, which on top of paper white reads as a bright SDR frame.
+                if (look && !hdr) {
                     rawlook::apply_camera_look(*look, exposure_ev, rgb[0], rgb[1], rgb[2]);
                 } else {
                     float gain = std::exp2(std::isfinite(exposure_ev) ? exposure_ev : 0.f);
@@ -833,9 +875,11 @@ bool process_open_raw(LibRaw& raw, const uint8_t* tiff, size_t tiff_len, int max
         if (img) LibRaw::dcraw_clear_mem(img);
         return false;
     }
-    // Exposure is applied inside the camera look, before the tone curve.
-    const float pack_ev = (std::isfinite(exposure_ev) ? exposure_ev : 0.f) + dng_baseline_ev(raw);
-    int space = present == 2 ? 2 : (present == 1 ? 1 : 0);
+    // HDR matches the linear paper-white pack: user EV only, no BaselineExposure
+    // and no tone curve. Deep color and 8-bit apply both inside the camera look.
+    const float user_ev = std::isfinite(exposure_ev) ? exposure_ev : 0.f;
+    const float pack_ev = present == 2 ? user_ev : user_ev + dng_baseline_ev(raw);
+    int space = present == 1 ? 1 : 0;
     float temp = 5500.f;
     if (wb_mode == 8) {
         temp = static_cast<float>(kelvin);
@@ -844,8 +888,12 @@ bool process_open_raw(LibRaw& raw, const uint8_t* tiff, size_t tiff_len, int max
         if (std::isfinite(measured) && measured >= 1667.f && measured <= 25000.f) temp = measured;
     }
     rawlook::CameraLook look;
-    rawlook::prepare_camera_look(tiff, tiff_len, temp, space, look);
-    bool ok = pack_image(img, max_edge, present, panel_boost, pack_ev, highlight_stops, &look, out);
+    const rawlook::CameraLook* look_ptr = nullptr;
+    if (present != 2) {
+        rawlook::prepare_camera_look(tiff, tiff_len, temp, space, look);
+        look_ptr = &look;
+    }
+    bool ok = pack_image(img, max_edge, present, panel_boost, pack_ev, highlight_stops, look_ptr, out);
     LibRaw::dcraw_clear_mem(img);
     return ok;
 }

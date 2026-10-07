@@ -180,7 +180,6 @@ fun AnimatedVisibilityScope.AdvancedScreen(navigator: DestinationsNavigator) = S
             AnimatedVisibility(visible = disableNetworkCache.value) {
                 SwitchPreference(
                     title = stringResource(id = R.string.settings_reader_allow_network_cache_raw),
-                    summary = stringResource(id = R.string.settings_reader_allow_network_cache_raw_summary),
                     state = Settings.readerAllowNetworkCacheRaw.asMutableState(),
                 )
             }

@@ -6,6 +6,7 @@
 // The tone curve is ProfileToneCurve when the file has one. Otherwise it is the
 // Adobe Camera Raw default curve (dng_tone_curve_acr3_default). Maps run in linear
 // ProPhoto, which is the space the DNG spec uses for these tables.
+// HDR (space 2) extends that curve with slope 1 above 1, so headroom stays scene-linear.
 
 #include <cmath>
 #include <cstddef>
@@ -158,7 +159,13 @@ inline float tone_map(const CameraLook& look, float x) {
     const int n = static_cast<int>(look.tone.size());
     if (n < 2 || !std::isfinite(x)) return x > 0.f ? x : 0.f;
     if (!(x > 0.f)) return 0.f;
-    if (x > 1.f) return look.tone[n - 1] + (x - 1.f) * look.tone_slope;
+    if (x > 1.f) {
+        // The curve's end slope is the SDR shoulder (the Camera Raw default is ~0.13).
+        // HDR keeps one scene stop per stop above sensor white, or the headroom
+        // compresses onto paper white and the frame no longer reads as HDR.
+        float slope = look.overrange ? 1.f : look.tone_slope;
+        return look.tone[n - 1] + (x - 1.f) * slope;
+    }
     float y = x * static_cast<float>(n - 1);
     int i = static_cast<int>(y);
     if (i >= n - 1) return look.tone[n - 1];

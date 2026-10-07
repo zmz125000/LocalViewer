@@ -64,7 +64,6 @@ fun ReaderGeneralSetting(isDocument: Boolean = false) = Column(modifier = Modifi
     AnimatedVisibility(visible = disableNetworkCache.value) {
         SwitchChoice(
             title = stringResource(id = R.string.settings_reader_allow_network_cache_raw),
-            summary = stringResource(id = R.string.settings_reader_allow_network_cache_raw_summary),
             field = Settings.readerAllowNetworkCacheRaw.asMutableState(),
         )
     }
