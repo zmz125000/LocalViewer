@@ -42,9 +42,9 @@ fun rawContentBoost(mode: RawPresent, peakOverWhite: Float, panelBoost: Float): 
 /**
  * LibRaw 16-bit sample divided by the white point chosen in the native pack.
  *
- * Deep color uses sensor white (full scale) and the camera look, including DNG
- * BaselineExposure. HDR uses the 90th-percentile paper white and stays linear:
- * the tone curve is not applied, and [exposureEv] is the user slider only.
+ * Deep color and HDR both run the camera look on sensor white (full scale),
+ * including DNG BaselineExposure. HDR then lifts only pixels above the
+ * 90th-percentile paper white, so that headroom sits above 1.
  * [highlightStops] compresses only samples above 1, then the result is clamped to [cap].
  *
  * On the deep-color and 8-bit paths the native pack applies the camera look first
