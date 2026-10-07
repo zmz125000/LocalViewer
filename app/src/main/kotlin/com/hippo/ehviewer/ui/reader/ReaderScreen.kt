@@ -561,6 +561,10 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
                             !DecodeSizeType.fromPreference(readerDecodeSize.value).isOriginal
                         )
                 },
+                // Camera RAW exposure, white balance, and highlights change the bitmap.
+                readerRawExposure.changesFlow().filter { pageLoader.containsRawStill() },
+                readerRawWhiteBalance.changesFlow().filter { pageLoader.containsRawStill() },
+                readerRawHighlight.changesFlow().filter { pageLoader.containsRawStill() },
             ).collect {
                 pageLoader.restart()
             }

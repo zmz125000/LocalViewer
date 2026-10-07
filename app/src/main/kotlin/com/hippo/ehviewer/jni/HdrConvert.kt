@@ -106,12 +106,17 @@ external fun decodeAvifBytesToDirect(
  * ordinal: 0 eight-bit, 1 deep color, 2 deep color + Android 16 HDR.
  * [maxEdge] is already capped (8192 for a full decode).
  * [panelBoost] clamps HDR highlights. Ignored for the other modes.
+ * [exposureEv] is extra stops. [whiteBalance] is 0 camera, 1 auto, 2 daylight.
+ * [highlightStops] compresses deep-color and HDR samples above paper white.
  */
 external fun decodeRawFileToDirect(
     path: String,
     maxEdge: Int,
     present: Int,
     panelBoost: Float,
+    exposureEv: Float,
+    whiteBalance: Int,
+    highlightStops: Float,
     outInfo: IntArray,
     outBoost: FloatArray,
 ): ByteArray?
@@ -121,6 +126,9 @@ external fun decodeRawBytesToDirect(
     maxEdge: Int,
     present: Int,
     panelBoost: Float,
+    exposureEv: Float,
+    whiteBalance: Int,
+    highlightStops: Float,
     outInfo: IntArray,
     outBoost: FloatArray,
 ): ByteArray?

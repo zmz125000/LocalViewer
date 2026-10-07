@@ -187,18 +187,34 @@ object LibDirectDecode {
         val panelBoost = if (mode == RawPresent.Hdr) rawPanelBoost() else 1f
         val outInfo = IntArray(6)
         val outBoost = FloatArray(1)
+        val exposureEv = rawExposureEv()
+        val whiteBalance = rawWhiteBalance()
+        val highlightStops = rawHighlightStops()
         val pixels = when (src) {
             is PathSource -> decodeRawFileToDirect(
                 src.source.toString(),
                 edge,
                 mode.ordinal,
                 panelBoost,
+                exposureEv,
+                whiteBalance,
+                highlightStops,
                 outInfo,
                 outBoost,
             )
             is ByteBufferSource -> {
                 val bytes = readBytes(src) ?: return rawPreviewFallback(src)
-                decodeRawBytesToDirect(bytes, edge, mode.ordinal, panelBoost, outInfo, outBoost)
+                decodeRawBytesToDirect(
+                    bytes,
+                    edge,
+                    mode.ordinal,
+                    panelBoost,
+                    exposureEv,
+                    whiteBalance,
+                    highlightStops,
+                    outInfo,
+                    outBoost,
+                )
             }
         }
         val direct = pixels?.let { bitmapFromPacked(it, outInfo, outBoost, wrapHardware = true) }
@@ -251,6 +267,12 @@ object LibDirectDecode {
             ?.getDisplay(Display.DEFAULT_DISPLAY)
         return HdrDisplayInfo.maxDisplayBoost(display)
     }
+
+    private fun rawExposureEv(): Float = (Settings.readerRawExposure.value / 10f).coerceIn(-3f, 3f)
+
+    private fun rawWhiteBalance(): Int = Settings.readerRawWhiteBalance.value.coerceIn(0, 2)
+
+    private fun rawHighlightStops(): Float = (Settings.readerRawHighlight.value / 10f).coerceIn(0f, 3f)
 
     private fun bitmapFromPacked(
         pixels: ByteArray,
@@ -354,7 +376,9 @@ object LibDirectDecode {
         return when {
             // Linear F16 in Display P3 primaries (advanced WCG/deep color).
             f16 && gamut == 1 -> displayP3LinearExtended
-            // Linear F16 in BT.2020 primaries (advanced HDR preserve).
+            // Linear F16 in BT.2020 primaries. JXL and camera RAW HDR share this.
+            // API 37 cannot pair an ICC transfer with a max above 1; HardwareBuffer
+            // still stores half-floats above 1, which is the headroom.
             f16 && gamut == 2 -> bt2020LinearExtended
             f16 -> ColorSpace.get(ColorSpace.Named.LINEAR_EXTENDED_SRGB)
             gamut == 1 -> ColorSpace.get(ColorSpace.Named.DISPLAY_P3)

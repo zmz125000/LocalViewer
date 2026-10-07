@@ -921,6 +921,21 @@ object Settings : DataStorePreferences(null) {
         // WCG always updates sub-toggle; sub-toggle must never write back to WCG.
         readerPlatformHighDepth.value = wcg
     }
+
+    /**
+     * Camera RAW exposure in tenths of an EV (−30..30). 0 leaves the 8-bit path unchanged.
+     * Deep color and HDR apply it in the linear pack, on top of DNG BaselineExposure.
+     */
+    val readerRawExposure = intPref("pref_reader_raw_exposure", 0)
+
+    /** Camera RAW white balance: 0 camera, 1 auto, 2 daylight. */
+    val readerRawWhiteBalance = intPref("pref_reader_raw_white_balance", 0)
+
+    /**
+     * Camera RAW highlight protection in tenths of a stop (0..30).
+     * 0 leaves samples above paper white as they are. Deep color and HDR only.
+     */
+    val readerRawHighlight = intPref("pref_reader_raw_highlight", 0)
     val fullscreen = boolPref("fullscreen", true)
     val cutoutShort = boolPref("cutout_short", true)
     val keepScreenOn = boolPref("pref_keep_screen_on_key", true)

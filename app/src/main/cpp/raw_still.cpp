@@ -4,8 +4,9 @@
  * 64-bit: LibRaw demosaic → packed RGBA for the reader.
  *   present 0: 8-bit sRGB
  *   present 1: deep color, linear Display P3, float16 clamped to 0..1
- *   present 2: deep color + Android 16 HDR, linear Rec.2020, float16 with
- *              highlight headroom. The advanced-color switch is not a third mode;
+ *   present 2: deep color + Android 16 HDR, linear Rec.2020 float16.
+ *              1.0 is paper white (203 nits). The sensor clip sits above 1.
+ *              The advanced-color switch is not a third mode;
  *              the caller selects 2 whenever HDR display is on and the panel is HDR.
  * Every ABI: embedded JPEG preview for covers and for a failed demosaic.
  * 64-bit covers with no preview get a long-edge-512 demosaic JPEG.
@@ -209,38 +210,32 @@ float sample_component(const uint8_t* base, int bits, int colors, int x, int y, 
     return static_cast<float>(base[i + static_cast<size_t>(channel)]);
 }
 
-// Diffuse white ≈ 90th percentile of sampled luminance. Peak is the brightest sample.
-void linear_white_and_peak(const uint8_t* base, int w, int h, int colors, int bits, float& white, float& peak) {
-    const int npx = w * h;
-    int step = 1;
-    while (npx / step > 50000) step *= 2;
-    std::vector<float> ys;
-    ys.reserve(static_cast<size_t>(npx / step + 1));
-    peak = 0.f;
-    const float full = bits == 16 ? 65535.f : 255.f;
-    for (int i = 0; i < npx; i += step) {
-        int y = i / w;
-        int x = i - y * w;
-        int ch = std::min(colors, 3);
-        float r = sample_component(base, bits, colors, x, y, w, 0);
-        float g = ch > 1 ? sample_component(base, bits, colors, x, y, w, 1) : r;
-        float b = ch > 2 ? sample_component(base, bits, colors, x, y, w, 2) : r;
-        float lum = 0.2126f * r + 0.7152f * g + 0.0722f * b;
-        ys.push_back(lum);
-        peak = std::max(peak, std::max(r, std::max(g, b)));
+// Same mapping as RawPresent.rawLinearSample. 1.0 is paper white. hdr with a missing
+// baseline reserves 2 stops; deep color does not. Highlight stops compress only above 1.
+float raw_linear_sample(float scene, float baseline_ev, float exposure_ev, float highlight_stops, float cap, bool hdr) {
+    if (!std::isfinite(scene) || !std::isfinite(exposure_ev) || !std::isfinite(highlight_stops) ||
+        !std::isfinite(cap)) {
+        return 0.f;
     }
-    if (ys.empty()) {
-        white = full;
-        peak = full;
-        return;
+    if (!(scene > 0.f)) return 0.f;
+    const double be = baseline_ev;
+    const bool be_valid = std::isfinite(be) && be > -100.0 && be < 10.0;
+    const double scale = be_valid ? be : (hdr ? 2.0 : 0.0);
+    const double base = static_cast<double>(scene) * std::exp2(scale + static_cast<double>(exposure_ev));
+    double y;
+    if (!(highlight_stops > 0.f) || !(base > 1.0)) {
+        y = base;
+    } else {
+        y = 1.0 + (base - 1.0) * std::exp2(-static_cast<double>(highlight_stops));
     }
-    size_t idx = static_cast<size_t>(0.90 * static_cast<double>(ys.size() - 1));
-    std::nth_element(ys.begin(), ys.begin() + static_cast<std::ptrdiff_t>(idx), ys.end());
-    white = std::max(ys[idx], 1.f);
-    peak = std::max(peak, white);
+    if (!std::isfinite(y) || y <= 0.0) return 0.f;
+    const double limit = cap >= 1.f ? cap : 1.0;
+    if (y > limit) y = limit;
+    return static_cast<float>(y);
 }
 
-bool pack_image(const libraw_processed_image_t* img, int max_edge, int present, float panel_boost, Decoded& out) {
+bool pack_image(const libraw_processed_image_t* img, int max_edge, int present, float panel_boost, float baseline_ev,
+                float exposure_ev, float highlight_stops, Decoded& out) {
     if (!img || img->width == 0 || img->height == 0) return false;
     if (img->type != LIBRAW_IMAGE_BITMAP) return false;
     const int sw = img->width;
@@ -258,23 +253,20 @@ bool pack_image(const libraw_processed_image_t* img, int max_edge, int present, 
     const size_t bytes = static_cast<size_t>(dw) * static_cast<size_t>(dh) * (deep ? 8u : 4u);
     if (bytes == 0 || bytes > 400u * 1024u * 1024u) return false;
 
-    float white = deep ? 65535.f : 255.f;
-    float peak = white;
-    if (deep) linear_white_and_peak(img->data, sw, sh, colors, img->bits, white, peak);
-    float headroom = 1.f;
-    if (present == 2 && white > 0.f) {
-        float panel = std::isfinite(panel_boost) ? std::clamp(panel_boost, 1.f, 64.f) : 1.f;
-        headroom = std::clamp(peak / white, 1.f, panel);
-    }
+    const bool hdr = present == 2;
+    // 10000/203 matches hdr_encode.h kMaxLinear. HDR does not clamp to 1.
+    const float panel = std::isfinite(panel_boost) ? std::clamp(panel_boost, 1.f, 64.f) : 1.f;
+    const float cap = hdr ? std::min(panel, 10000.f / 203.f) : 1.f;
 
     out.pixels.assign(bytes, 0);
     out.w = dw;
     out.h = dh;
     out.format = deep ? 1 : 0;
-    out.is_hdr = present == 2 ? 1 : 0;
-    out.gamut = present == 2 ? 2 : (present == 1 ? 1 : 0);
-    out.boost = present == 2 ? headroom : 1.f;
-    const float cap = present == 2 ? out.boost : 1.f;
+    out.is_hdr = hdr ? 1 : 0;
+    // gamut 2 is the shared linear BT.2020 space. Headroom is the half-float values.
+    out.gamut = hdr ? 2 : (present == 1 ? 1 : 0);
+    out.boost = 1.f;
+    float peak = 1.f;
 
     for (int y = 0; y < dh; ++y) {
         int y0 = y * sh / dh;
@@ -303,9 +295,9 @@ bool pack_image(const libraw_processed_image_t* img, int max_edge, int present, 
                 out.pixels[o + 3] = 255;
             } else {
                 for (int c = 0; c < 3; ++c) {
-                    float v = static_cast<float>((acc[c] / count) / white);
-                    if (!std::isfinite(v)) v = 0.f;
-                    v = std::clamp(v, 0.f, cap);
+                    float scene = static_cast<float>((acc[c] / count) / 65535.0);
+                    float v = raw_linear_sample(scene, baseline_ev, exposure_ev, highlight_stops, cap, hdr);
+                    peak = std::max(peak, v);
                     uint16_t half = float_to_half(v);
                     out.pixels[o + static_cast<size_t>(c) * 2] = static_cast<uint8_t>(half & 0xff);
                     out.pixels[o + static_cast<size_t>(c) * 2 + 1] = static_cast<uint8_t>(half >> 8);
@@ -316,13 +308,22 @@ bool pack_image(const libraw_processed_image_t* img, int max_edge, int present, 
             }
         }
     }
+    if (hdr) out.boost = peak;
     return true;
 }
 
-void configure_process(LibRaw& raw, int present, int max_edge, int demosaic_qual) {
+void configure_process(LibRaw& raw, int present, int max_edge, int demosaic_qual, int wb_mode, float exposure_ev) {
     auto& p = raw.imgdata.params;
-    p.use_camera_wb = 1;
-    p.use_auto_wb = 0;
+    if (wb_mode == 1) {
+        p.use_camera_wb = 0;
+        p.use_auto_wb = 1;
+    } else if (wb_mode == 2) {
+        p.use_camera_wb = 0;
+        p.use_auto_wb = 0;
+    } else {
+        p.use_camera_wb = 1;
+        p.use_auto_wb = 0;
+    }
     p.use_camera_matrix = 1;
     p.user_qual = demosaic_qual;
     p.half_size = 0;
@@ -337,6 +338,12 @@ void configure_process(LibRaw& raw, int present, int max_edge, int demosaic_qual
         p.highlight = 0;
         p.gamm[0] = 0.45;
         p.gamm[1] = 4.5;
+        // LibRaw exp_shift is a linear multiplier. 16-bit applies exposure in the float pack.
+        if (std::isfinite(exposure_ev) && exposure_ev != 0.f) {
+            p.exp_correc = 1;
+            p.exp_shift = std::exp2(exposure_ev);
+            p.exp_preser = 0.f;
+        }
     } else {
         p.output_bps = 16;
         p.output_color = present == 2 ? 8 : 7;  // Rec.2020 or DCI-P3
@@ -348,8 +355,9 @@ void configure_process(LibRaw& raw, int present, int max_edge, int demosaic_qual
     }
 }
 
-bool process_open_raw(LibRaw& raw, int max_edge, int present, float panel_boost, int demosaic_qual, Decoded& out) {
-    configure_process(raw, present, max_edge, demosaic_qual);
+bool process_open_raw(LibRaw& raw, int max_edge, int present, float panel_boost, int demosaic_qual, int wb_mode,
+                      float exposure_ev, float highlight_stops, Decoded& out) {
+    configure_process(raw, present, max_edge, demosaic_qual, wb_mode, exposure_ev);
     if (raw.unpack() != LIBRAW_SUCCESS) return false;
     if (raw.dcraw_process() != LIBRAW_SUCCESS) return false;
     int err = 0;
@@ -358,7 +366,9 @@ bool process_open_raw(LibRaw& raw, int max_edge, int present, float panel_boost,
         if (img) LibRaw::dcraw_clear_mem(img);
         return false;
     }
-    bool ok = pack_image(img, max_edge, present, panel_boost, out);
+    // Metadata survives dcraw_process. -999 means the file has no BaselineExposure.
+    float baseline = raw.imgdata.color.dng_levels.baseline_exposure;
+    bool ok = pack_image(img, max_edge, present, panel_boost, baseline, exposure_ev, highlight_stops, out);
     LibRaw::dcraw_clear_mem(img);
     return ok;
 }
@@ -379,7 +389,7 @@ bool libraw_thumb_file(const char* path, const uint8_t* mem, size_t mem_len, con
         ok = write_file(out_path, img->data, img->data_size);
     } else if (img->type == LIBRAW_IMAGE_BITMAP && img->bits == 8 && img->colors >= 3) {
         Decoded packed;
-        if (pack_image(img, 0, /*present=*/0, 1.f, packed)) {
+        if (pack_image(img, 0, /*present=*/0, 1.f, 0.f, 0.f, 0.f, packed)) {
             ok = write_rgba8_jpeg(packed.pixels.data(), packed.w, packed.h, out_path, 85);
         }
     }
@@ -393,7 +403,9 @@ bool demosaic_cover_jpeg(const char* path, const uint8_t* mem, size_t mem_len, c
     if (rc != LIBRAW_SUCCESS) return false;
     Decoded decoded;
     // Bilinear is enough for a 512 px cover.
-    if (!process_open_raw(raw, 512, /*present=*/0, 1.f, /*demosaic_qual=*/0, decoded)) return false;
+    if (!process_open_raw(raw, 512, /*present=*/0, 1.f, /*demosaic_qual=*/0, /*wb_mode=*/0, 0.f, 0.f, decoded)) {
+        return false;
+    }
     if (decoded.format != 0) return false;
     return write_rgba8_jpeg(decoded.pixels.data(), decoded.w, decoded.h, out_path, 85);
 }
@@ -446,7 +458,8 @@ int extract_preview(const char* path, const uint8_t* mem, size_t mem_len, const 
 
 extern "C" JNIEXPORT jbyteArray JNICALL
 Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeRawFileToDirect(JNIEnv* env, jclass, jstring j_path, jint max_edge,
-                                                               jint present, jfloat panel_boost, jintArray j_info,
+                                                               jint present, jfloat panel_boost, jfloat exposure_ev,
+                                                               jint wb_mode, jfloat highlight_stops, jintArray j_info,
                                                                jfloatArray j_boost) {
 #if !defined(EHVIEWER_HDR_CODECS)
     (void)env;
@@ -454,6 +467,9 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeRawFileToDirect(JNIEnv* env, jcla
     (void)max_edge;
     (void)present;
     (void)panel_boost;
+    (void)exposure_ev;
+    (void)wb_mode;
+    (void)highlight_stops;
     (void)j_info;
     (void)j_boost;
     return nullptr;
@@ -467,7 +483,11 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeRawFileToDirect(JNIEnv* env, jcla
         if (raw.open_file(path) == LIBRAW_SUCCESS) {
             Decoded decoded;
             int mode = present < 0 ? 0 : (present > 2 ? 2 : present);
-            if (process_open_raw(raw, max_edge, mode, panel_boost, /*demosaic_qual=*/3, decoded)) {
+            float exposure = std::isfinite(exposure_ev) ? std::clamp(exposure_ev, -3.f, 3.f) : 0.f;
+            float stops = std::isfinite(highlight_stops) ? std::clamp(highlight_stops, 0.f, 3.f) : 0.f;
+            int wb = wb_mode < 0 ? 0 : (wb_mode > 2 ? 2 : wb_mode);
+            if (process_open_raw(raw, max_edge, mode, panel_boost, /*demosaic_qual=*/3, wb, exposure, stops,
+                                 decoded)) {
                 result = decoded_to_java(env, decoded, j_info, j_boost);
             }
         }
@@ -482,7 +502,8 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeRawFileToDirect(JNIEnv* env, jcla
 
 extern "C" JNIEXPORT jbyteArray JNICALL
 Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeRawBytesToDirect(JNIEnv* env, jclass, jbyteArray j_input, jint max_edge,
-                                                                jint present, jfloat panel_boost, jintArray j_info,
+                                                                jint present, jfloat panel_boost, jfloat exposure_ev,
+                                                                jint wb_mode, jfloat highlight_stops, jintArray j_info,
                                                                 jfloatArray j_boost) {
 #if !defined(EHVIEWER_HDR_CODECS)
     (void)env;
@@ -490,6 +511,9 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeRawBytesToDirect(JNIEnv* env, jcl
     (void)max_edge;
     (void)present;
     (void)panel_boost;
+    (void)exposure_ev;
+    (void)wb_mode;
+    (void)highlight_stops;
     (void)j_info;
     (void)j_boost;
     return nullptr;
@@ -505,7 +529,11 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeRawBytesToDirect(JNIEnv* env, jcl
         if (raw.open_buffer(bytes, static_cast<size_t>(len)) == LIBRAW_SUCCESS) {
             Decoded decoded;
             int mode = present < 0 ? 0 : (present > 2 ? 2 : present);
-            if (process_open_raw(raw, max_edge, mode, panel_boost, /*demosaic_qual=*/3, decoded)) {
+            float exposure = std::isfinite(exposure_ev) ? std::clamp(exposure_ev, -3.f, 3.f) : 0.f;
+            float stops = std::isfinite(highlight_stops) ? std::clamp(highlight_stops, 0.f, 3.f) : 0.f;
+            int wb = wb_mode < 0 ? 0 : (wb_mode > 2 ? 2 : wb_mode);
+            if (process_open_raw(raw, max_edge, mode, panel_boost, /*demosaic_qual=*/3, wb, exposure, stops,
+                                 decoded)) {
                 result = decoded_to_java(env, decoded, j_info, j_boost);
             }
         }

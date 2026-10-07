@@ -39,4 +39,31 @@ class RawPresentTest {
         assertEquals(4f, rawContentBoost(RawPresent.Hdr, peakOverWhite = 8f, panelBoost = 4f), 0.001f)
         assertEquals(1f, rawContentBoost(RawPresent.Hdr, peakOverWhite = 1f, panelBoost = 4f), 0.001f)
     }
+
+    @Test
+    fun missingBaselineReservesTwoStopsOnlyForHdr() {
+        assertEquals(4f, rawLinearSample(1f, -999f, 0f, 0f, cap = 8f, hdr = true), 0.001f)
+        assertEquals(1f, rawLinearSample(0.25f, -999f, 0f, 0f, cap = 8f, hdr = true), 0.001f)
+        assertEquals(0.5f, rawLinearSample(0.5f, -999f, 0f, 0f, cap = 1f, hdr = false), 0.001f)
+    }
+
+    @Test
+    fun baselineExposurePlacesTheClipAndHighlightStopsLeaveShadows() {
+        assertEquals(2.828427f, rawLinearSample(1f, 1.5f, 0f, 0f, cap = 8f, hdr = true), 0.001f)
+        val below = rawLinearSample(0.25f, 1.5f, 0f, 0f, cap = 8f, hdr = true)
+        assertEquals(below, rawLinearSample(0.25f, 1.5f, 0f, 1f, cap = 8f, hdr = true), 0.0001f)
+        assertTrue(below < 1f)
+        assertEquals(3f, rawLinearSample(0.75f, 2f, 0f, 0f, cap = 8f, hdr = true), 0.001f)
+        assertEquals(2f, rawLinearSample(0.75f, 2f, 0f, 1f, cap = 8f, hdr = true), 0.001f)
+    }
+
+    @Test
+    fun linearSampleClampsToTheCapAndRejectsNonFiniteInput() {
+        assertEquals(2f, rawLinearSample(1f, -999f, 0f, 0f, cap = 2f, hdr = true), 0.001f)
+        assertEquals(1f, rawLinearSample(1f, 1.5f, 0f, 0f, cap = 1f, hdr = false), 0.001f)
+        assertEquals(0f, rawLinearSample(Float.NaN, 0f, 0f, 0f, cap = 8f, hdr = true), 0f)
+        assertEquals(0f, rawLinearSample(1f, 0f, Float.NaN, 0f, cap = 8f, hdr = true), 0f)
+        assertEquals(0f, rawLinearSample(1f, 0f, 0f, Float.NaN, cap = 8f, hdr = true), 0f)
+        assertEquals(0f, rawLinearSample(1f, 0f, 0f, 0f, cap = Float.NaN, hdr = true), 0f)
+    }
 }
