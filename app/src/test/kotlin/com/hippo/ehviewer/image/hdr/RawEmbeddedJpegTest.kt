@@ -37,6 +37,22 @@ class RawEmbeddedJpegTest {
     }
 
     @Test
+    fun browseThumbSkipsRangeReadUnlessRawAndUncached() = runBlocking {
+        var reads = 0
+        val jpeg = byteArrayOf(1)
+        val read: suspend () -> ByteArray? = {
+            reads++
+            jpeg
+        }
+        assertEquals(null, browseEmbeddedRawJpeg("a.jpg", pageAlreadyCached = false, read))
+        assertEquals(null, browseEmbeddedRawJpeg("a.cr2", pageAlreadyCached = true, read))
+        assertEquals(null, browseEmbeddedRawJpeg("a.nef", pageAlreadyCached = false, null))
+        val got = browseEmbeddedRawJpeg("dir/a.CR2", pageAlreadyCached = false, read)
+        assertTrue(got === jpeg)
+        assertEquals(1, reads)
+    }
+
+    @Test
     fun fujiHeaderNamesThePreview() = runBlocking {
         val body = ByteArray(40 * 1024)
         body[0] = 0xff.toByte()

@@ -3,6 +3,7 @@ package com.hippo.ehviewer.webdav
 import android.os.Looper
 import com.ehviewer.core.files.mkdirs
 import com.hippo.ehviewer.image.hdr.HdrConvertCache
+import com.hippo.ehviewer.image.hdr.browseEmbeddedRawJpeg
 import com.hippo.ehviewer.library.OriginDiskCache
 import com.hippo.ehviewer.util.FileUtils
 import java.io.ByteArrayOutputStream
@@ -153,6 +154,8 @@ object WebDavCache {
 
     /**
      * Browse thumb: reuse page cache if present; else RAM download → MaxEdge-only thumb.
+     * Camera RAW with no page cache uses [readEmbeddedJpeg] (range read) and skips the
+     * full container, including when [cacheOriginal] is set.
      * New platform thumbs land as WebP; lib/HDR thumbs stay Ultra HDR JPEG. Leftover JPEGs
      * are reused until LRU. When [cacheOriginal] is true and page cache is missing, download
      * via [downloadIfNeeded] (same path + HDR convert as the reader), then encode the thumb
@@ -162,6 +165,7 @@ object WebDavCache {
         sourceId: Long,
         remoteRelativeFile: String,
         cacheOriginal: Boolean = false,
+        readEmbeddedJpeg: (suspend () -> ByteArray?)? = null,
         download: suspend (OutputStream) -> Unit,
     ): Path = withContext(Dispatchers.IO) {
         cachedThumbIfPresent(sourceId, remoteRelativeFile)?.let { return@withContext it }
@@ -178,36 +182,46 @@ object WebDavCache {
                 File(destPath.parent!!.toString()).mkdirs()
                 val dest = File(key)
                 val pageForThumb = resolveReaderPath(pagePath)
-                if (!probeDisk(pageForThumb) && cacheOriginal) {
+                val embedded = browseEmbeddedRawJpeg(name, probeDisk(pageForThumb), readEmbeddedJpeg)
+                val fromEmbedded = embedded != null && HdrConvertCache.writeThumbFromBytes(
+                    bytes = embedded,
+                    destJpeg = dest,
+                    maxEdge = THUMB_DISK_EDGE,
+                    quality = THUMB_WEBP_QUALITY,
+                    fileNameHint = HdrConvertCache.EMBEDDED_JPEG_NAME,
+                )
+                if (!fromEmbedded && !probeDisk(pageForThumb) && cacheOriginal) {
                     // Same path + convert pipeline as the folder-gallery reader.
                     downloadIfNeeded(pagePath, originalFileName = name, write = download)
                 }
-                val pageAfter = resolveReaderPath(pagePath)
-                if (probeDisk(pageAfter)) {
-                    try {
-                        writeSubsampledThumb(
-                            File(pageAfter.toString()),
-                            dest,
-                            THUMB_DISK_EDGE,
-                            THUMB_WEBP_QUALITY,
+                if (!fromEmbedded) {
+                    val pageAfter = resolveReaderPath(pagePath)
+                    if (probeDisk(pageAfter)) {
+                        try {
+                            writeSubsampledThumb(
+                                File(pageAfter.toString()),
+                                dest,
+                                THUMB_DISK_EDGE,
+                                THUMB_WEBP_QUALITY,
+                            )
+                        } catch (e: Throwable) {
+                            cachedThumbIfPresent(sourceId, remoteRelativeFile)?.let { return@withContext it }
+                            throw e
+                        }
+                    } else {
+                        // No page cache: MaxEdge-only thumb (no full-page UHDR from grid browse).
+                        val bos = ByteArrayOutputStream(256 * 1024)
+                        download(bos)
+                        val ok = HdrConvertCache.writeThumbFromBytes(
+                            bytes = bos.toByteArray(),
+                            destJpeg = dest,
+                            maxEdge = THUMB_DISK_EDGE,
+                            quality = THUMB_WEBP_QUALITY,
+                            fileNameHint = name,
                         )
-                    } catch (e: Throwable) {
-                        cachedThumbIfPresent(sourceId, remoteRelativeFile)?.let { return@withContext it }
-                        throw e
-                    }
-                } else {
-                    // No page cache: MaxEdge-only thumb (no full-page UHDR from grid browse).
-                    val bos = ByteArrayOutputStream(256 * 1024)
-                    download(bos)
-                    val ok = HdrConvertCache.writeThumbFromBytes(
-                        bytes = bos.toByteArray(),
-                        destJpeg = dest,
-                        maxEdge = THUMB_DISK_EDGE,
-                        quality = THUMB_WEBP_QUALITY,
-                        fileNameHint = name,
-                    )
-                    if (!ok) {
-                        error("WebDAV browse thumb failed for $remoteRelativeFile")
+                        if (!ok) {
+                            error("WebDAV browse thumb failed for $remoteRelativeFile")
+                        }
                     }
                 }
                 scheduleTrim()

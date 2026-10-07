@@ -407,6 +407,12 @@ object HdrConvertCache {
     }
 
     /**
+     * [writeThumbFromBytes] hint when [bytes] are the embedded preview JPEG, not the
+     * RAW container. A RAW extension would send those bytes through LibRaw.
+     */
+    const val EMBEDDED_JPEG_NAME = "preview.jpg"
+
+    /**
      * Browse thumb from in-memory download — **MaxEdge only** for HDR (no full-page UHDR).
      * Does not write page-cache originals.
      */

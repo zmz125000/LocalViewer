@@ -1,5 +1,7 @@
 package com.hippo.ehviewer.image.hdr
 
+import com.hippo.ehviewer.util.FileUtils
+
 /**
  * Offset and length of an embedded camera JPEG.
  *
@@ -17,6 +19,21 @@ private const val RAW_JPEG_HEADER = 512 * 1024
 private const val RAW_JPEG_HEADER_MAX = 2 * 1024 * 1024
 private const val RAW_JPEG_MAX = 20 * 1024 * 1024
 private const val RAW_JPEG_PREVIEW_MIN = 32 * 1024
+
+/**
+ * Embedded JPEG for a browse thumb. Null when the page file is already local,
+ * the name is not camera RAW, or [read] finds no preview — the caller then
+ * downloads the container.
+ */
+internal suspend fun browseEmbeddedRawJpeg(
+    fileName: String,
+    pageAlreadyCached: Boolean,
+    read: (suspend () -> ByteArray?)?,
+): ByteArray? {
+    if (pageAlreadyCached || read == null) return null
+    if (!isRawStillExtension(FileUtils.getExtensionFromFilename(fileName))) return null
+    return read()
+}
 
 /**
  * Read the embedded preview JPEG with range reads. Null when the header does not
