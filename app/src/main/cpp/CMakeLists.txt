@@ -374,12 +374,12 @@ if (EHVIEWER_HDR_CODECS)
     endif ()
     list(APPEND EHVIEWER_HDR_LIBS jxrlib)
 
-    # LibRaw 0.21.4 — DSLR RAW demosaic. No RawSpeed (GPL), Jasper, LCMS, or OpenMP.
+    # LibRaw 0.22.2 — DSLR RAW demosaic. No RawSpeed (GPL), Jasper, LCMS, or OpenMP.
     # zlib + libultrahdr's libjpeg-turbo cover deflate and lossy DNG.
     FetchContent_Declare(
             libraw
             GIT_REPOSITORY https://github.com/LibRaw/LibRaw.git
-            GIT_TAG 0.21.4
+            GIT_TAG 0.22.2
             GIT_SHALLOW 1
     )
     FetchContent_GetProperties(libraw)
