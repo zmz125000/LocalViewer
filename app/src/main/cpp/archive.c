@@ -1120,7 +1120,7 @@ static void stream_bridge_clear(JNIEnv *env) {
 }
 
 /* Keep in sync with IMAGE_EXTENSIONS in MediaTypes.kt (room for heics/heifs). */
-#define SUPPORT_EXT_COUNT 39
+#define SUPPORT_EXT_COUNT 40
 
 const char supportExt[SUPPORT_EXT_COUNT][8] = {
         "jpeg",
@@ -1158,6 +1158,7 @@ const char supportExt[SUPPORT_EXT_COUNT][8] = {
         "arw",
         "raf",
         "orf",
+        "ori",
         "rw2",
         "pef",
         "srw",

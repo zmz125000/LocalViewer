@@ -778,11 +778,18 @@ void configure_white_balance(LibRaw& raw, int wb_mode, int kelvin) {
     }
 }
 
+// identify() copies an embedded color matrix only while opening. 3 always copies it.
+// The default 1 does that for DNG, or when camera white balance is already set.
+void request_embedded_matrix(LibRaw& raw) {
+    raw.imgdata.params.use_camera_matrix = 3;
+}
+
 void configure_process(LibRaw& raw, int present, int max_edge, int demosaic_qual, int wb_mode, float exposure_ev,
                        int kelvin) {
     auto& p = raw.imgdata.params;
     configure_white_balance(raw, wb_mode, kelvin);
-    p.use_camera_matrix = 1;
+    // Too late to copy a missed matrix. Kept so it matches the value set before open.
+    p.use_camera_matrix = 3;
     p.user_qual = demosaic_qual;
     p.half_size = 0;
     int full_w = raw.imgdata.sizes.width;
@@ -859,6 +866,7 @@ bool libraw_thumb_file(const char* path, const uint8_t* mem, size_t mem_len, con
 
 bool demosaic_cover_jpeg(const char* path, const uint8_t* mem, size_t mem_len, const char* out_path) {
     LibRaw raw;
+    request_embedded_matrix(raw);
     int rc = mem ? raw.open_buffer(mem, mem_len) : raw.open_file(path);
     if (rc != LIBRAW_SUCCESS) return false;
     Decoded decoded;
@@ -942,6 +950,7 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeRawFileToDirect(JNIEnv* env, jcla
     jbyteArray result = nullptr;
     try {
         LibRaw raw;
+        request_embedded_matrix(raw);
         if (raw.open_file(path) == LIBRAW_SUCCESS) {
             Decoded decoded;
             int mode = present < 0 ? 0 : (present > 2 ? 2 : present);
@@ -998,6 +1007,7 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeRawBytesToDirect(JNIEnv* env, jcl
     jbyteArray result = nullptr;
     try {
         LibRaw raw;
+        request_embedded_matrix(raw);
         if (raw.open_buffer(bytes, static_cast<size_t>(len)) == LIBRAW_SUCCESS) {
             Decoded decoded;
             int mode = present < 0 ? 0 : (present > 2 ? 2 : present);

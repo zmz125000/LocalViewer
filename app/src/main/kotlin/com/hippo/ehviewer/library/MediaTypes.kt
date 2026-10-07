@@ -34,7 +34,7 @@ val IMAGE_EXTENSIONS = setOf(
     // JPEG 2000 — OpenJPEG, then a Coil-ready JPEG
     "jp2", "j2k", "j2c", "jpc", "jpx",
     // Camera RAW — LibRaw. Not generic TIFF.
-    "dng", "cr2", "cr3", "nef", "nrw", "arw", "raf", "orf", "rw2", "pef", "srw", "raw",
+    "dng", "cr2", "cr3", "nef", "nrw", "arw", "raf", "orf", "ori", "rw2", "pef", "srw", "raw",
 )
 
 val ARCHIVE_EXTENSIONS = setOf(
@@ -297,7 +297,7 @@ fun mimeTypeForFileName(name: String): String {
             "nef", "nrw" -> "image/x-nikon-nef"
             "arw" -> "image/x-sony-arw"
             "raf" -> "image/x-fuji-raf"
-            "orf" -> "image/x-olympus-orf"
+            "orf", "ori" -> "image/x-olympus-orf"
             "rw2" -> "image/x-panasonic-rw2"
             "pef" -> "image/x-pentax-pef"
             "srw" -> "image/x-samsung-srw"

@@ -93,6 +93,7 @@ val RAW_STILL_EXTENSIONS = setOf(
     "arw",
     "raf",
     "orf",
+    "ori",
     "rw2",
     "pef",
     "srw",
