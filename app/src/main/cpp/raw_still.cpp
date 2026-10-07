@@ -792,10 +792,17 @@ void configure_process(LibRaw& raw, int present, int max_edge, int demosaic_qual
     p.use_camera_matrix = 3;
     p.user_qual = demosaic_qual;
     p.half_size = 0;
-    int full_w = raw.imgdata.sizes.width;
-    int full_h = raw.imgdata.sizes.height;
-    int long_edge = std::max(full_w, full_h);
-    if (max_edge > 0 && max_edge <= 4096 && long_edge / 2 >= max_edge) p.half_size = 1;
+    // Preview and cover requests stay at or under 4096. The visible size is known
+    // after open, before unpack. Under 24 MP stays full size. Above that, half size.
+    // View original passes a larger edge and stays full size.
+    if (max_edge > 0 && max_edge <= 4096) {
+        const auto& sz = raw.imgdata.sizes;
+        int64_t pixels = static_cast<int64_t>(sz.width) * static_cast<int64_t>(sz.height);
+        if (pixels <= 0) {
+            pixels = static_cast<int64_t>(sz.raw_width) * static_cast<int64_t>(sz.raw_height);
+        }
+        if (pixels > 24000000LL) p.half_size = 1;
+    }
     if (present == 0) {
         p.output_bps = 8;
         p.output_color = 1;  // sRGB

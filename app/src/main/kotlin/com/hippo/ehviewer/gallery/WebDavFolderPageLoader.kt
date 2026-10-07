@@ -9,6 +9,8 @@ import com.hippo.ehviewer.image.ImageSource
 import com.hippo.ehviewer.image.PathSource
 import com.hippo.ehviewer.image.byteBufferSource
 import com.hippo.ehviewer.image.hdr.HdrConvertCache
+import com.hippo.ehviewer.image.hdr.isRawStillExtension
+import com.hippo.ehviewer.image.hdr.readEmbeddedRawJpeg
 import com.hippo.ehviewer.library.ZipAsDirListing
 import com.hippo.ehviewer.library.ZipMemberCover
 import com.hippo.ehviewer.util.FileUtils
@@ -20,6 +22,7 @@ import java.nio.ByteBuffer
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicBoolean
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -62,6 +65,9 @@ suspend inline fun <T> useWebDavFolderPageLoader(
         val readyWaiters = ConcurrentHashMap<Int, CopyOnWriteArrayList<() -> Unit>>()
         val ramPages = ConcurrentHashMap<Int, ByteArray>()
 
+        /** Cache-off RAW pages whose RAM bytes are the embedded JPEG, not the sensor file. */
+        val ramJpegPages = ConcurrentHashMap.newKeySet<Int>()
+
         val loader = install(
             object : PageLoader(this, info, startPage.coerceIn(0, size - 1), size) {
                 override val title by lazy {
@@ -69,7 +75,10 @@ suspend inline fun <T> useWebDavFolderPageLoader(
                         ?: remoteDir.substringAfterLast('/').ifEmpty { source.displayName }
                 }
 
-                override fun getImageExtension(index: Int) = FileUtils.getExtensionFromFilename(imageFileNames[index])
+                override fun getImageExtension(index: Int): String? {
+                    if (ramJpegPages.contains(index)) return "jpg"
+                    return FileUtils.getExtensionFromFilename(imageFileNames[index])
+                }
 
                 override fun getOriginalImageFileName(index: Int) = imageFileNames[index]
 
@@ -139,6 +148,7 @@ suspend inline fun <T> useWebDavFolderPageLoader(
                     ramPages.keys.toList().forEach { idx ->
                         if (idx !in decodedPages) {
                             ramPages.remove(idx)
+                            ramJpegPages.remove(idx)
                             clearSourceReady(idx)
                         }
                     }
@@ -149,6 +159,7 @@ suspend inline fun <T> useWebDavFolderPageLoader(
 
                 override fun releaseRamPage(index: Int) {
                     ramPages.remove(index)
+                    ramJpegPages.remove(index)
                     if (!isDecodedDemand(index)) clearSourceReady(index)
                 }
 
@@ -285,6 +296,46 @@ suspend inline fun <T> useWebDavFolderPageLoader(
                         } ?: error("Cannot extract ZIP member $member from $zipRel")
                         if (isDecodedDemand(index)) ramPages[index] = bytes
                         return
+                    }
+                    // RAW images on needs the sensor bytes. Off keeps the embedded JPEG.
+                    if (!Settings.readerCameraRaw.value &&
+                        isRawStillExtension(FileUtils.getExtensionFromFilename(name))
+                    ) {
+                        val jpeg = try {
+                            val size = WebDavClient.fileSizeOrNull(source, password, remote)
+                            if (size == null) {
+                                null
+                            } else {
+                                readEmbeddedRawJpeg(size) { off, len ->
+                                    val buf = ByteArray(len)
+                                    val n = WebDavClient.readRange(
+                                        source,
+                                        password,
+                                        remote,
+                                        off,
+                                        buf,
+                                        0,
+                                        len,
+                                    )
+                                    when {
+                                        n <= 0 -> null
+                                        n == len -> buf
+                                        else -> buf.copyOf(n)
+                                    }
+                                }
+                            }
+                        } catch (e: CancellationException) {
+                            throw e
+                        } catch (_: Throwable) {
+                            null
+                        }
+                        if (jpeg != null) {
+                            if (isDecodedDemand(index)) {
+                                ramPages[index] = jpeg
+                                ramJpegPages.add(index)
+                            }
+                            return
+                        }
                     }
                     val sink = RamByteSink()
                     WebDavClient.downloadFile(source, password, remote, sink)

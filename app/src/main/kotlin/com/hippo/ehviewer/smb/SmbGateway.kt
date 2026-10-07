@@ -3564,6 +3564,43 @@ object SmbGateway {
         }
     }
 
+    /**
+     * Open [relativeFilePath] once and range-read it. Used to pull an embedded
+     * RAW JPEG without copying the sensor data into RAM.
+     */
+    suspend fun <T> withFileRangeRead(
+        source: SmbSourceEntity,
+        password: String,
+        relativeFilePath: String,
+        block: suspend (fileSize: Long, readAt: suspend (offset: Long, length: Int) -> ByteArray?) -> T,
+    ): T = withIOContext {
+        val downloadContext = coroutineContext
+        copyOpenFile(source, password, relativeFilePath, downloadContext) { file ->
+            val size = file.fileInformation.standardInformation.endOfFile
+            val readAt: suspend (Long, Int) -> ByteArray? = { offset, length ->
+                if (length <= 0 || offset < 0L || offset >= size) {
+                    null
+                } else {
+                    val n = minOf(length.toLong(), size - offset).toInt()
+                    val out = ByteArray(n)
+                    var got = 0
+                    while (got < n) {
+                        downloadContext.ensureActive()
+                        val r = file.read(out, offset + got, got, n - got)
+                        if (r <= 0) break
+                        got += r
+                    }
+                    when {
+                        got <= 0 -> null
+                        got == n -> out
+                        else -> out.copyOf(got)
+                    }
+                }
+            }
+            block(size, readAt)
+        }
+    }
+
     suspend fun downloadFile(
         source: SmbSourceEntity,
         password: String,

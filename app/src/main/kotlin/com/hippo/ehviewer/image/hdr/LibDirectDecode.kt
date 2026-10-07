@@ -196,8 +196,8 @@ object LibDirectDecode {
 
     /**
      * Full RAW decode is capped at 8192 on the long edge. A 45 MP float16 frame
-     * is hundreds of megabytes; the hi-res preview stays at 4096 and may use
-     * LibRaw half-size interpolation.
+     * is hundreds of megabytes. The hi-res preview stays at 4096. Above 24 MP
+     * that preview demosaics at half size; 24 MP and under stay full size.
      */
     private fun decodeRawUnlocked(src: ImageSource, maxEdge: Int): LibDirectResult? {
         val path = (src as? PathSource)?.source
