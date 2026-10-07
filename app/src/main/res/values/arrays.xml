@@ -182,6 +182,16 @@
         <item>5</item>
     </integer-array>
 
+    <string-array name="heavy_decode_entries" translatable="false">
+        <item>1</item>
+        <item>2</item>
+    </string-array>
+
+    <integer-array name="heavy_decode_entry_values" translatable="false">
+        <item>1</item>
+        <item>2</item>
+    </integer-array>
+
     <string-array name="read_cache_size_entries" translatable="false">
         <item>320 MB</item>
         <item>640 MB</item>

@@ -16,6 +16,7 @@ import okio.Path.Companion.toPath
  * ```
  * Platform / PlatformGainMap / OppoProxdr  → Coil / ImageDecoder (no UHDR convert)
  * Lib(codec)                               → ensureUhdr → Coil  (JXR / JXL / JPEG 2000 / PQ-AVIF)
+ * Lib(Raw)                                 → LibDirectDecode (no Ultra HDR JPEG)
  * ```
  *
  * OppoProxdr: same present path as PlatformGainMap (ORIGIN + [Bitmap.gainmap]); the
@@ -23,6 +24,7 @@ import okio.Path.Companion.toPath
  *
  * JXR/JXL/JPEG 2000 always convert: the platform cannot open them. JXR/JXL become
  * Ultra HDR JPEG. JPEG 2000 becomes a baseline JPEG (SDR).
+ * Camera RAW is extension-only (TIFF magic collides with DNG) and is not converted.
  */
 sealed class StillRoute {
     /** Platform ImageDecoder path (JPEG/PNG/HEIC/SDR AVIF/…). */
@@ -56,11 +58,17 @@ enum class LibCodec {
 
     /** Absolute PQ/HLG AVIF only (gain-map AVIF is [StillRoute.PlatformGainMap]). */
     AvifPq,
+
+    /** Camera RAW (DNG / CR2 / NEF / …). Direct bitmap, never Ultra HDR convert. */
+    Raw,
 }
 
-/** True → full-pixel pipeline: lib decode → libultrahdr → `.jpg` convert cache. */
+/**
+ * True → full-pixel pipeline: lib decode → libultrahdr → `.jpg` convert cache.
+ * RAW has no gain map, so it stays on [LibDirectDecode].
+ */
 val StillRoute.needsUhdr: Boolean
-    get() = this is StillRoute.Lib
+    get() = this is StillRoute.Lib && codec != LibCodec.Raw
 
 /** Formats that never go through platform ImageDecoder for pixels. */
 val StillRoute.needsLibDecode: Boolean
@@ -74,6 +82,23 @@ val StillRoute.isGainMap: Boolean
  * Extensions that are **not** platform ImageDecoder stills (need lib convert).
  */
 val LIB_STILL_EXTENSIONS = setOf("jxr", "wdp", "hdp", "jxl", "jp2", "j2k", "j2c", "jpc", "jpx")
+
+/** DSLR / camera RAW. Not generic TIFF. */
+val RAW_STILL_EXTENSIONS = setOf(
+    "dng",
+    "cr2",
+    "cr3",
+    "nef",
+    "nrw",
+    "arw",
+    "raf",
+    "orf",
+    "ori",
+    "rw2",
+    "pef",
+    "srw",
+    "raw",
+)
 
 val JPEG2000_EXTENSIONS = setOf("jp2", "j2k", "j2c", "jpc", "jpx")
 
@@ -95,6 +120,11 @@ fun isJpeg2000Extension(ext: String?): Boolean {
 fun isLibStillExtension(ext: String?): Boolean {
     val e = ext?.lowercase()?.removePrefix(".") ?: return false
     return e in LIB_STILL_EXTENSIONS
+}
+
+fun isRawStillExtension(ext: String?): Boolean {
+    val e = ext?.lowercase()?.removePrefix(".") ?: return false
+    return e in RAW_STILL_EXTENSIONS
 }
 
 fun isHdrMaybeConvertExtension(ext: String?): Boolean {
@@ -128,6 +158,7 @@ fun classifyByExtension(fileName: String): StillRoute {
     return when {
         ext == "jxl" -> StillRoute.Lib(LibCodec.Jxl)
         isJpeg2000Extension(ext) -> StillRoute.Lib(LibCodec.Jpeg2000)
+        isRawStillExtension(ext) -> StillRoute.Lib(LibCodec.Raw)
         isLibStillExtension(ext) -> StillRoute.Lib(LibCodec.Jxr)
         else -> StillRoute.Platform
     }
@@ -161,7 +192,7 @@ fun classify(
 fun classifyPath(path: Path, fileNameHint: String? = null, maxBytes: Int = HDR_SNIFF_BYTES): StillRoute {
     val hint = fileNameHint ?: path.name
     val byExt = classifyByExtension(hint)
-    if (byExt.needsUhdr) return byExt
+    if (byExt.needsLibDecode) return byExt
     // HEIC: always consider ProXDR when enabled (trailer is after mdat; extension gate only).
     val heicCandidate = isHeicImageExtension(FileUtils.getExtensionFromFilename(hint)) ||
         isHeicImageExtension(FileUtils.getExtensionFromFilename(path.name))
@@ -200,6 +231,12 @@ fun classify(bytes: ByteArray, length: Int = bytes.size, fileNameHint: String? =
     if (n <= 0) return StillRoute.Platform
 
     val ext = FileUtils.getExtensionFromFilename(fileNameHint)?.lowercase()
+
+    // Camera RAW is extension-only. The container often starts with TIFF or an
+    // embedded JPEG, which must not win over the RAW route.
+    if (isRawStillExtension(ext)) {
+        return StillRoute.Lib(LibCodec.Raw)
+    }
 
     // JPEG XL — platform cannot open; always Ultra HDR convert path.
     if (isJpegXlMagic(bytes, n) || ext == "jxl") {

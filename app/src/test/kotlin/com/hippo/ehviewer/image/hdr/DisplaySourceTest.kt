@@ -4,6 +4,7 @@ import java.nio.ByteBuffer
 import okio.Path.Companion.toPath
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -27,6 +28,23 @@ class DisplaySourceTest {
         assertEquals(LibCodec.Jpeg2000, (classify(jp2, jp2.size, "page.bin") as StillRoute.Lib).codec)
         val j2k = byteArrayOf(0xff.toByte(), 0x4f, 0xff.toByte(), 0x51)
         assertEquals(LibCodec.Jpeg2000, (classify(j2k, j2k.size, "scan.j2k") as StillRoute.Lib).codec)
+    }
+
+    @Test
+    fun rawIsDirectAndNotUltraHdr() {
+        val nef = classifyByExtension("photo.nef")
+        val dng = classifyByExtension("photo.DNG")
+        assertEquals(LibCodec.Raw, (nef as StillRoute.Lib).codec)
+        assertEquals(LibCodec.Raw, (dng as StillRoute.Lib).codec)
+        assertTrue(nef.needsLibDecode)
+        assertFalse(nef.needsUhdr)
+        assertFalse(dng.needsUhdr)
+        assertTrue(classifyByExtension("photo.jxl").needsUhdr)
+        assertEquals(StillRoute.Platform, classifyByExtension("photo.tif"))
+        assertFalse(isRawStillExtension("tif"))
+        // Embedded JPEG bytes must not steal a RAW name.
+        val jpeg = byteArrayOf(0xff.toByte(), 0xd8.toByte(), 0xff.toByte(), 0xe0.toByte())
+        assertEquals(LibCodec.Raw, (classify(jpeg, jpeg.size, "shot.cr2") as StillRoute.Lib).codec)
     }
 
     @Test

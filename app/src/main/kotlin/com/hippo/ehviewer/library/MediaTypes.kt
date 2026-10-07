@@ -12,6 +12,7 @@ import com.hippo.ehviewer.util.FileUtils
  * - Gain-map JPEG/AVIF/HEIC: Android 14+ platform decode.
  * - HEIC/HEIF (HEVC): platform ImageDecoder (not libavif).
  * - JPEG XR / JPEG XL / JPEG 2000: always lib → Coil-ready JPEG (platform cannot open them).
+ * - Camera RAW (DNG, CR2, NEF, …): LibRaw direct bitmap. Not generic TIFF.
  * - Absolute PQ/HLG **AVIF**: libavif → Ultra HDR when CICP sniff hits.
  * Native codecs link only arm64-v8a + x86_64 ([EHVIEWER_HDR_CODECS]).
  */
@@ -32,6 +33,8 @@ val IMAGE_EXTENSIONS = setOf(
     "jxl",
     // JPEG 2000 — OpenJPEG, then a Coil-ready JPEG
     "jp2", "j2k", "j2c", "jpc", "jpx",
+    // Camera RAW — LibRaw. Not generic TIFF.
+    "dng", "cr2", "cr3", "nef", "nrw", "arw", "raf", "orf", "ori", "rw2", "pef", "srw", "raw",
 )
 
 val ARCHIVE_EXTENSIONS = setOf(
@@ -288,6 +291,17 @@ fun mimeTypeForFileName(name: String): String {
             "jxr", "wdp", "hdp" -> "image/vnd.ms-photo"
             "jp2", "j2k", "j2c", "jpc" -> "image/jp2"
             "jpx" -> "image/jpx"
+            "dng" -> "image/dng"
+            "cr2" -> "image/x-canon-cr2"
+            "cr3" -> "image/x-canon-cr3"
+            "nef", "nrw" -> "image/x-nikon-nef"
+            "arw" -> "image/x-sony-arw"
+            "raf" -> "image/x-fuji-raf"
+            "orf", "ori" -> "image/x-olympus-orf"
+            "rw2" -> "image/x-panasonic-rw2"
+            "pef" -> "image/x-pentax-pef"
+            "srw" -> "image/x-samsung-srw"
+            "raw" -> "image/x-raw"
             "ico" -> "image/x-icon"
             "heics", "heifs", "hif" -> "image/heif"
             else -> "image/$ext"

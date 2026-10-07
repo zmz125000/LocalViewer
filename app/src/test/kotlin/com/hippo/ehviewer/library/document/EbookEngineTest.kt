@@ -86,6 +86,28 @@ class EbookEngineTest {
     }
 
     @Test
+    fun contentsIntroUnderChapterStaysInTheListing() {
+        val text = buildString {
+            for (n in 1..6) {
+                appendLine("chapter $n sample chapter.")
+                appendLine("sample chapter is about a short story of a dog")
+            }
+            appendLine()
+            appendLine("Chapter 1 sample chapter.")
+            append("The dog ran through the field. ".repeat(20))
+        }
+        val chapters = EbookEngine.chaptersFromPlain(text, "book")
+        val titled = chapters.filter { it.title.isNotBlank() }
+        assertEquals(listOf("Chapter 1 sample chapter."), titled.map { it.title })
+        val listing = chapters.first { it.text.contains("short story of a dog") }
+        assertTrue(listing.title.isBlank())
+        assertTrue(listing.text.contains("chapter 1 sample chapter."))
+        assertTrue(listing.text.contains("chapter 6 sample chapter."))
+        assertFalse(listing.inToc)
+        assertTrue(chapters.first { it.title.startsWith("Chapter 1") }.text.contains("The dog ran"))
+    }
+
+    @Test
     fun contentsListingStaysOneSection() {
         val text = buildString {
             appendLine("目录")
@@ -523,6 +545,21 @@ class EbookEngineTest {
         assertTrue(paras[0].contains("continues here"))
         assertFalse(paras[0].contains("Next"))
         assertEquals("Next", paras[1])
+    }
+
+    @Test
+    fun longHeadingWrapsAtTheHeadingSize() {
+        val title = "第一章 " + "很长的章节标题文字".repeat(8)
+        val style = EbookStyle()
+        val (pages, _) = EbookPaginator.paginate(listOf(EbookChapter(title, "正文一段。", 0)), style)
+        val cap = EbookPaginator.lineCapacity(style)
+        val heads = pages.first().lines.filter { it.bold && it.text.isNotEmpty() }
+        assertTrue("lines=${heads.size}", heads.size >= 2)
+        for (line in heads) {
+            val drawn = line.text.sumOf { EbookPaginator.charEm(it).toDouble() } * line.scale * 1.08
+            assertTrue("drawn=$drawn cap=$cap text=${line.text}", drawn <= cap + 0.05)
+        }
+        assertEquals(title.replace(" ", ""), heads.joinToString("") { it.text })
     }
 
     @Test

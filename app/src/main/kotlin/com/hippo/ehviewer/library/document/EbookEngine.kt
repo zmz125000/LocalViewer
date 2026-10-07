@@ -456,7 +456,7 @@ internal object EbookEngine {
             val body = text.trim()
             if (body.isEmpty()) emptyList() else listOf(EbookChapter(fallbackTitle, body, 0))
         } else {
-            collapseContentsRuns(parts)
+            collapseContentsRuns(parts, blurbs = true)
         }
     }
 
@@ -465,18 +465,18 @@ internal object EbookEngine {
      * between them. Those stay one chapter so each entry is not its own page.
      * A later "Chapter N" with a real body is still a chapter break.
      */
-    internal fun collapseContentsRuns(parts: List<EbookChapter>): List<EbookChapter> {
+    internal fun collapseContentsRuns(parts: List<EbookChapter>, blurbs: Boolean = false): List<EbookChapter> {
         if (parts.size < 3) return parts
         val out = ArrayList<EbookChapter>(parts.size)
         var i = 0
         while (i < parts.size) {
-            if (!isContentsStub(parts[i])) {
+            if (!isContentsStub(parts[i], blurbs)) {
                 out += parts[i]
                 i++
                 continue
             }
             var j = i + 1
-            while (j < parts.size && isContentsStub(parts[j])) j++
+            while (j < parts.size && isContentsStub(parts[j], blurbs)) j++
             if (j - i < 3) {
                 while (i < j) {
                     out += parts[i]
@@ -497,22 +497,26 @@ internal object EbookEngine {
                 val merged = listOf(prev.text.trim(), block).filter { it.isNotEmpty() }.joinToString("\n")
                 out[out.lastIndex] = prev.copy(text = merged)
             } else {
-                out += EbookChapter("", block, 0)
+                out += EbookChapter("", block, 0, inToc = false)
             }
             i = j
         }
         return out
     }
 
-    private fun isContentsStub(ch: EbookChapter): Boolean {
+    private fun isContentsStub(ch: EbookChapter, blurbs: Boolean): Boolean {
         if (!CHAPTER_HEADING.matches(ch.title.trim())) return false
         val body = ch.text.trim()
         if (body.isEmpty()) return true
-        if (body.length > 60) return false
         val lines = body.lines().map { it.trim() }.filter { it.isNotEmpty() }
         if (lines.size > 2) return false
-        return lines.all { isContentsTail(it) }
+        if (lines.all { isContentsTail(it) }) return true
+        // Plain-text contents: "Chapter 1 Title" plus one or two short introduction lines.
+        return blurbs && lines.all { isContentsBlurb(it) }
     }
+
+    /** A short sentence under a contents entry, not the opening of the chapter body. */
+    private fun isContentsBlurb(line: String): Boolean = line.length in 1..64
 
     /** A dotted leader or a bare page number under a contents entry. */
     private fun isContentsTail(line: String): Boolean {
@@ -791,7 +795,7 @@ internal object EbookEngine {
     )
     private val MD_HEADING = Regex("""^(#{1,6})\s+(.+)$""")
     private val CHAPTER_HEADING = Regex(
-        """^(?:第[0-9一二三四五六七八九十百千零〇两]+[章节回部卷篇节]|Chapter\s+\d+|CHAPTER\s+\d+)(?:\s+.*)?$""",
+        """^(?:第[0-9一二三四五六七八九十百千零〇两]+[章节回部卷篇节]|(?i:chapter)\s+\d+)(?:\s+.*)?$""",
     )
     private val CONTENTS_HEADER = Regex(
         """(?i)^(?:contents|table\s+of\s+contents|toc|目录|目錄|目次|目\s*录)$""",

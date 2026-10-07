@@ -1,25 +1,38 @@
 package com.hippo.ehviewer.image.hdr
 
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.graphics.ColorSpace
+import android.hardware.display.DisplayManager
 import android.os.Build
+import android.view.Display
 import com.ehviewer.core.files.read
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.image.ByteBufferSource
 import com.hippo.ehviewer.image.ImageSource
 import com.hippo.ehviewer.image.PathSource
+import com.hippo.ehviewer.image.byteBufferSource
 import com.hippo.ehviewer.image.tryHardwareF16FromPixels
 import com.hippo.ehviewer.jni.decodeAvifBytesToDirect
 import com.hippo.ehviewer.jni.decodeJpeg2000Bitmap
 import com.hippo.ehviewer.jni.decodeJpeg2000BytesToDirect
 import com.hippo.ehviewer.jni.decodeJxlBytesToDirect
 import com.hippo.ehviewer.jni.decodeJxrBytesToDirect
+import com.hippo.ehviewer.jni.decodeRawBytesToDirect
+import com.hippo.ehviewer.jni.decodeRawFileToDirect
+import com.hippo.ehviewer.jni.extractRawPreviewBytes
+import com.hippo.ehviewer.jni.extractRawPreviewFile
+import com.hippo.ehviewer.util.FileUtils
+import com.hippo.ehviewer.util.HdrDisplayInfo
+import java.io.File
 import java.nio.ByteBuffer
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import kotlinx.io.readByteArray
+import okio.Path.Companion.toOkioPath
+import splitties.init.appCtx
 
 /**
  * Result of lib still → direct [Bitmap] (no Ultra HDR JPEG convert).
@@ -50,13 +63,31 @@ data class LibDirectResult(
  * Advanced off: rematrix wide → scRGB/sRGB (safe default).
  */
 object LibDirectDecode {
+    /** Second RAW decode (view original) stops here instead of a full-sensor float16. */
+    private const val RAW_FULL_EDGE = 8192
+
+    /** Upper choice of [Settings.heavyDecode], and the size of [heavyDecodeSlots]. */
+    private const val HEAVY_DECODE_POOL = 2
+
     /**
      * Full-res RGBA_F16 is ~66 MiB at 3500×2500. Concurrent packs (PageLoader
      * Semaphore 4 + two pages) blow a 256 MiB Java heap → blocking GC Alloc /
-     * SoftReference thrash. Serialize heavy native→Bitmap work process-wide.
+     * SoftReference thrash. [Settings.heavyDecode] is 1 or 2. The pool has 2
+     * permits; 1 acquires both so heavy native→Bitmap work stays serial.
      * Also used for platform high-depth F16 frames.
      */
-    internal val heavyDecode = Semaphore(1)
+    private val heavyDecodeSlots = Semaphore(HEAVY_DECODE_POOL)
+
+    internal suspend fun <T> withHeavyDecode(block: suspend () -> T): T {
+        val parallel = Settings.heavyDecode.value >= HEAVY_DECODE_POOL
+        return if (parallel) {
+            heavyDecodeSlots.withPermit { block() }
+        } else {
+            heavyDecodeSlots.withPermit {
+                heavyDecodeSlots.withPermit { block() }
+            }
+        }
+    }
 
     /**
      * ICC type-3 identity (Y = X). [Bitmap.wrapHardwareBuffer] requires this;
@@ -118,7 +149,7 @@ object LibDirectDecode {
         maxEdge: Int = 0,
     ): LibDirectResult? = withContext(Dispatchers.IO) {
         // Gate before allocating native F16 + Java byte[] + Bitmap (~one full frame each).
-        heavyDecode.withPermit {
+        withHeavyDecode {
             decodeUnlocked(src, fileNameHint, maxEdge)
         }
     }
@@ -128,6 +159,15 @@ object LibDirectDecode {
         fileNameHint: String,
         maxEdge: Int,
     ): LibDirectResult? {
+        val pathName = (src as? PathSource)?.source?.name
+        val rawName = when {
+            isRawStillExtension(FileUtils.getExtensionFromFilename(fileNameHint)) -> fileNameHint
+            isRawStillExtension(FileUtils.getExtensionFromFilename(pathName)) -> pathName
+            else -> pathName?.ifBlank { null } ?: fileNameHint
+        }
+        if (isRawStillExtension(FileUtils.getExtensionFromFilename(rawName))) {
+            return decodeRawUnlocked(src, maxEdge)
+        }
         // Scope source bytes tightly so they are eligible for GC before Bitmap.create.
         val packed = run {
             val bytes = readBytes(src) ?: return null
@@ -143,16 +183,163 @@ object LibDirectDecode {
                 LibCodec.Jpeg2000 -> decodeJpeg2000BytesToDirect(bytes, maxEdge, advanced, outInfo, outBoost)
                     ?: packJpeg2000(bytes, maxEdge, outInfo, outBoost)
                 LibCodec.AvifPq -> decodeAvifBytesToDirect(bytes, maxEdge, advanced, outInfo, outBoost)
+                LibCodec.Raw -> return decodeRawUnlocked(
+                    byteBufferSource(ByteBuffer.wrap(bytes)) {},
+                    maxEdge,
+                )
             } ?: return null
             // [bytes] ends with this block; only packed pixels + meta remain.
             PackedPixels(pixels, outInfo, outBoost, advanced)
         }
-        val w = packed.outInfo[0]
-        val h = packed.outInfo[1]
-        val format = packed.outInfo[2]
-        val isHdr = packed.outInfo[3] != 0
-        val gamut = packed.outInfo[4]
-        val transfer = packed.outInfo[5]
+        return bitmapFromPacked(packed.pixels, packed.outInfo, packed.outBoost, wrapHardware = packed.advanced)
+    }
+
+    /**
+     * Full RAW decode is capped at 8192 on the long edge. A 45 MP float16 frame
+     * is hundreds of megabytes. The hi-res preview stays at 4096. Above 24 MP
+     * that preview demosaics at half size; 24 MP and under stay full size.
+     */
+    private fun decodeRawUnlocked(src: ImageSource, maxEdge: Int): LibDirectResult? {
+        val path = (src as? PathSource)?.source
+        if (path != null && !isPhysicalRawPath(path.toString())) {
+            return runCatching { path.withLocalRawFile { decodeRawFromFile(it, maxEdge) } }
+                .getOrElse { e ->
+                    android.util.Log.e("LibDirectDecode", "RAW content copy failed: $path", e)
+                    null
+                }
+        }
+        return decodeRawLocal(src, maxEdge)
+    }
+
+    private fun decodeRawFromFile(file: File, maxEdge: Int): LibDirectResult? {
+        val local = object : PathSource {
+            override val source = file.toOkioPath()
+            override val type = "image/x-raw"
+            override fun close() = Unit
+        }
+        return decodeRawLocal(local, maxEdge)
+    }
+
+    private fun decodeRawLocal(src: ImageSource, maxEdge: Int): LibDirectResult? {
+        if (!Settings.readerCameraRaw.value) {
+            return rawPreviewFallback(src) ?: decodeRawPresent(src, maxEdge, RawPresent.EightBit)
+        }
+        val mode = rawPresentMode(
+            hdrDisplay = Settings.readerHdrDisplay.value,
+            advancedColor = Settings.readerAdvancedColor.value,
+            panelHdr = rawPanelIsHdr(),
+        )
+        return decodeRawPresent(src, maxEdge, mode) ?: rawPreviewFallback(src)
+    }
+
+    private fun decodeRawPresent(src: ImageSource, maxEdge: Int, mode: RawPresent): LibDirectResult? {
+        val edge = rawDecodeEdge(maxEdge)
+        val panelBoost = if (mode == RawPresent.Hdr) rawPanelBoost() else 1f
+        val outInfo = IntArray(6)
+        val outBoost = FloatArray(1)
+        val exposureEv = rawExposureEv()
+        val whiteBalance = rawWhiteBalance()
+        val kelvin = rawKelvin()
+        val highlightStops = rawHighlightStops()
+        val pixels = when (src) {
+            is PathSource -> decodeRawFileToDirect(
+                src.source.toString(),
+                edge,
+                mode.ordinal,
+                panelBoost,
+                exposureEv,
+                whiteBalance,
+                kelvin,
+                highlightStops,
+                outInfo,
+                outBoost,
+            )
+            is ByteBufferSource -> {
+                val bytes = readBytes(src) ?: return null
+                decodeRawBytesToDirect(
+                    bytes,
+                    edge,
+                    mode.ordinal,
+                    panelBoost,
+                    exposureEv,
+                    whiteBalance,
+                    kelvin,
+                    highlightStops,
+                    outInfo,
+                    outBoost,
+                )
+            }
+        } ?: return null
+        return bitmapFromPacked(pixels, outInfo, outBoost, wrapHardware = true)
+    }
+
+    /** Embedded JPEG only. A missing preview stays a page error; covers demosaic separately. */
+    private fun rawPreviewFallback(src: ImageSource): LibDirectResult? {
+        val jpeg = File.createTempFile("rawprev", ".jpg", appCtx.cacheDir)
+        return try {
+            val wrote = try {
+                when (src) {
+                    is PathSource -> extractRawPreviewFile(src.source.toString(), jpeg.absolutePath, false) == 0
+                    is ByteBufferSource -> {
+                        val bytes = readBytes(src) ?: return null
+                        extractRawPreviewBytes(bytes, jpeg.absolutePath, false) == 0
+                    }
+                }
+            } catch (_: UnsatisfiedLinkError) {
+                false
+            }
+            if (!wrote || jpeg.length() <= 0L) return null
+            val bitmap = BitmapFactory.decodeFile(jpeg.absolutePath) ?: return null
+            LibDirectResult(
+                bitmap = bitmap,
+                isHdrContent = false,
+                contentHdrBoost = 1f,
+                isWideGamutSource = false,
+            )
+        } finally {
+            jpeg.delete()
+        }
+    }
+
+    private fun rawDecodeEdge(maxEdge: Int): Int = when {
+        maxEdge <= 0 -> RAW_FULL_EDGE
+        else -> maxEdge.coerceAtMost(RAW_FULL_EDGE)
+    }
+
+    private fun rawPanelIsHdr(): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) return false
+        val display = appCtx.getSystemService(DisplayManager::class.java)
+            ?.getDisplay(Display.DEFAULT_DISPLAY)
+            ?: return false
+        return display.isHdr
+    }
+
+    private fun rawPanelBoost(): Float {
+        val display = appCtx.getSystemService(DisplayManager::class.java)
+            ?.getDisplay(Display.DEFAULT_DISPLAY)
+        return HdrDisplayInfo.maxDisplayBoost(display)
+    }
+
+    private fun rawExposureEv(): Float = (Settings.readerRawExposure.value / 10f).coerceIn(-3f, 3f)
+
+    private fun rawWhiteBalance(): Int = Settings.readerRawWhiteBalance.value.coerceIn(0, 8)
+
+    private fun rawKelvin(): Int = Settings.readerRawKelvin.value.coerceIn(2000, 12000)
+
+    private fun rawHighlightStops(): Float = (Settings.readerRawHighlight.value / 10f).coerceIn(0f, 3f)
+
+    private fun bitmapFromPacked(
+        pixels: ByteArray,
+        outInfo: IntArray,
+        outBoost: FloatArray,
+        wrapHardware: Boolean,
+    ): LibDirectResult? {
+        val w = outInfo[0]
+        val h = outInfo[1]
+        val format = outInfo[2]
+        val isHdr = outInfo[3] != 0
+        val gamut = outInfo[4]
+        val transfer = outInfo[5]
         if (w <= 0 || h <= 0) return null
         val f16 = format == 1
         val colorSpace = resolveColorSpace(f16, gamut, transfer)
@@ -160,15 +347,17 @@ object LibDirectDecode {
         // This removes the ByteArray → software Bitmap → AHB double copy while preserving
         // the exact linear scRGB/BT.2020 ColorSpace chosen above. Fall back to software
         // when the device cannot wrap that color space.
-        val hardware = if (packed.advanced && f16) {
-            tryHardwareF16FromPixels(packed.pixels, w, h, colorSpace)
+        // RAW deep color / HDR wraps even when the advanced-color switch is off, because
+        // HDR display ignores that switch and still packs float16.
+        val hardware = if (wrapHardware && f16) {
+            tryHardwareF16FromPixels(pixels, w, h, colorSpace)
         } else {
             null
         }
         val bitmap = hardware
-            ?: pixelsToSoftwareBitmap(packed.pixels, w, h, f16, colorSpace)
+            ?: pixelsToSoftwareBitmap(pixels, w, h, f16, colorSpace)
             ?: return null
-        val boost = packed.outBoost[0].coerceIn(1f, 64f)
+        val boost = outBoost.getOrElse(0) { 1f }.coerceIn(1f, 64f)
         val wide = gamut == 1 || gamut == 2 ||
             (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && bitmap.colorSpace?.isWideGamut == true)
         return LibDirectResult(
@@ -241,7 +430,9 @@ object LibDirectDecode {
         return when {
             // Linear F16 in Display P3 primaries (advanced WCG/deep color).
             f16 && gamut == 1 -> displayP3LinearExtended
-            // Linear F16 in BT.2020 primaries (advanced HDR preserve).
+            // Linear F16 in BT.2020 primaries. JXL and camera RAW HDR share this.
+            // API 37 cannot pair an ICC transfer with a max above 1; HardwareBuffer
+            // still stores half-floats above 1, which is the headroom.
             f16 && gamut == 2 -> bt2020LinearExtended
             f16 -> ColorSpace.get(ColorSpace.Named.LINEAR_EXTENDED_SRGB)
             gamut == 1 -> ColorSpace.get(ColorSpace.Named.DISPLAY_P3)

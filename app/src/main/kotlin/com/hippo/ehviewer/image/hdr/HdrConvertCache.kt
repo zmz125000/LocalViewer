@@ -17,6 +17,7 @@ import com.hippo.ehviewer.jni.convertJxrBytesToUltraHdr
 import com.hippo.ehviewer.jni.convertJxrBytesToUltraHdrMaxEdge
 import com.hippo.ehviewer.jni.convertJxrToUltraHdr
 import com.hippo.ehviewer.jni.decodeJpeg2000Bitmap
+import com.hippo.ehviewer.jni.extractRawPreviewBytes
 import com.hippo.ehviewer.jni.probeAvifHdrKind
 import com.hippo.ehviewer.library.OriginDiskCache
 import com.hippo.ehviewer.util.FileUtils
@@ -271,6 +272,16 @@ object HdrConvertCache {
         if (OriginDiskCache.existingThumb(dest) != null) return@withContext true
         val edge = maxEdge.coerceIn(64, 2048)
         val route = classifyPath(source, fileNameHint)
+        if (route is StillRoute.Lib && route.codec == LibCodec.Raw) {
+            val preview = RawPreviewCache.ensureJpeg(source, demosaicFallback = true) ?: return@withContext false
+            val rawOk = writePlatformThumb(preview, dest, edge, quality)
+            if (rawOk && OriginDiskCache.existingThumb(dest) != null) {
+                onDecoded?.let { reportThumbSize(dest, it) }
+                OriginDiskCache.scheduleTrim()
+                return@withContext true
+            }
+            return@withContext false
+        }
         val ok = if (route.needsUhdr) {
             val lib = route as StillRoute.Lib
             writeConvertThumb(source, dest, edge, fileNameHint, lib.codec)
@@ -396,6 +407,12 @@ object HdrConvertCache {
     }
 
     /**
+     * [writeThumbFromBytes] hint when [bytes] are the embedded preview JPEG, not the
+     * RAW container. A RAW extension would send those bytes through LibRaw.
+     */
+    const val EMBEDDED_JPEG_NAME = "preview.jpg"
+
+    /**
      * Browse thumb from in-memory download — **MaxEdge only** for HDR (no full-page UHDR).
      * Does not write page-cache originals.
      */
@@ -411,6 +428,21 @@ object HdrConvertCache {
         if (bytes.isEmpty()) return@withContext false
         val edge = maxEdge.coerceIn(64, 2048)
         val route = classify(bytes, bytes.size, fileNameHint)
+        if (route is StillRoute.Lib && route.codec == LibCodec.Raw) {
+            val preview = File.createTempFile("rawprev", ".jpg", appCtx.cacheDir)
+            val rawOk = try {
+                extractRawPreviewBytes(bytes, preview.absolutePath, true) == 0 &&
+                    writePlatformThumb(preview.toOkioPath(), destJpeg, edge, quality)
+            } finally {
+                preview.delete()
+            }
+            if (rawOk && OriginDiskCache.existingThumb(destJpeg) != null) {
+                onDecoded?.let { reportThumbSize(destJpeg, it) }
+                OriginDiskCache.scheduleTrim()
+                return@withContext true
+            }
+            return@withContext false
+        }
         val ok = if (route.needsUhdr) {
             val lib = route as StillRoute.Lib
             writeConvertThumbBytes(bytes, destJpeg, edge, lib.codec)
@@ -509,6 +541,7 @@ object HdrConvertCache {
                             LibCodec.Jxl -> convertJxlBytesToUltraHdrMaxEdge(input, tmp.absolutePath, maxEdge)
                             LibCodec.Jpeg2000 -> convertJpeg2000(input, tmp, maxEdge)
                             LibCodec.AvifPq -> convertAvifBytesToUltraHdrMaxEdge(input, tmp.absolutePath, maxEdge)
+                            LibCodec.Raw -> -1
                         }
                     } else {
                         when (codec) {
@@ -516,6 +549,7 @@ object HdrConvertCache {
                             LibCodec.Jxl -> convertJxlBytesToUltraHdr(input, tmp.absolutePath)
                             LibCodec.Jpeg2000 -> convertJpeg2000(input, tmp, 0)
                             LibCodec.AvifPq -> convertAvifBytesToUltraHdr(input, tmp.absolutePath)
+                            LibCodec.Raw -> -1
                         }
                     }
                     if (code != 0 || !tmp.isFile || tmp.length() <= 0L) {

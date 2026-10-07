@@ -73,6 +73,8 @@ import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.coil.CoverThumb
 import com.hippo.ehviewer.coil.coverThumbRequest
 import com.hippo.ehviewer.collectAsState
+import com.hippo.ehviewer.image.hdr.isRawStillExtension
+import com.hippo.ehviewer.image.hdr.readEmbeddedRawJpeg
 import com.hippo.ehviewer.library.ArchiveCoverCache
 import com.hippo.ehviewer.library.BrowseSession
 import com.hippo.ehviewer.library.CoverEnsureResult
@@ -96,6 +98,7 @@ import com.hippo.ehviewer.smb.SmbCache
 import com.hippo.ehviewer.smb.SmbGateway
 import com.hippo.ehviewer.smb.SmbPasswordStore
 import com.hippo.ehviewer.smb.SmbRepository
+import com.hippo.ehviewer.util.FileUtils
 import com.hippo.ehviewer.webdav.WebDavArchiveByteSource
 import com.hippo.ehviewer.webdav.WebDavCache
 import com.hippo.ehviewer.webdav.WebDavClient
@@ -116,6 +119,26 @@ val BrowseListLeadingIconSize = 42.dp
 
 /** Placeholder glyph in grid cells when there is no cover thumb. */
 val BrowseGridPlaceholderIconSize = 42.dp
+
+/**
+ * Range-read the embedded JPEG for a camera RAW browse thumb.
+ * Non-RAW names skip the network. A missing preview returns null so the caller
+ * can still download the container.
+ */
+private suspend fun embeddedRawJpegOrNull(
+    relativeFile: String,
+    read: suspend () -> ByteArray?,
+): ByteArray? {
+    val name = relativeFile.substringAfterLast('/')
+    if (!isRawStillExtension(FileUtils.getExtensionFromFilename(name))) return null
+    return try {
+        read()
+    } catch (e: CancellationException) {
+        throw e
+    } catch (_: Throwable) {
+        null
+    }
+}
 
 /** Uppercase extension from a basename / relative path; `"FILE"` when missing. */
 fun browseFileExtensionLabel(fileName: String): String {
@@ -1632,6 +1655,17 @@ fun BrowseCoverThumb(
                                 cover.sourceId,
                                 cover.remoteRelativeFile,
                                 cacheOriginal = cacheThumbOriginal,
+                                readEmbeddedJpeg = {
+                                    embeddedRawJpegOrNull(cover.remoteRelativeFile) {
+                                        SmbGateway.withFileRangeRead(
+                                            source,
+                                            password,
+                                            cover.remoteRelativeFile,
+                                        ) { size, readAt ->
+                                            readEmbeddedRawJpeg(size, readAt)
+                                        }
+                                    }
+                                },
                             ) { out ->
                                 SmbGateway.downloadFile(
                                     source,
@@ -1678,6 +1712,32 @@ fun BrowseCoverThumb(
                                 cover.sourceId,
                                 cover.remoteRelativeFile,
                                 cacheOriginal = cacheThumbOriginal,
+                                readEmbeddedJpeg = {
+                                    embeddedRawJpegOrNull(cover.remoteRelativeFile) {
+                                        val size = WebDavClient.fileSizeOrNull(
+                                            source,
+                                            password,
+                                            cover.remoteRelativeFile,
+                                        ) ?: return@embeddedRawJpegOrNull null
+                                        readEmbeddedRawJpeg(size) { off, len ->
+                                            val buf = ByteArray(len)
+                                            val n = WebDavClient.readRange(
+                                                source,
+                                                password,
+                                                cover.remoteRelativeFile,
+                                                off,
+                                                buf,
+                                                0,
+                                                len,
+                                            )
+                                            when {
+                                                n <= 0 -> null
+                                                n == len -> buf
+                                                else -> buf.copyOf(n)
+                                            }
+                                        }
+                                    }
+                                },
                             ) { out ->
                                 WebDavClient.downloadFile(source, password, cover.remoteRelativeFile, out)
                             }

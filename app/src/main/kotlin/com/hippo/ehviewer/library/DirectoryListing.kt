@@ -441,6 +441,10 @@ fun planRemoteDirectorySlimRefresh(
  * MediaStore / SAF cursors also stop early on large folders (cursor window ~2 MB).
  * A prefix of a 5 000-file listing must not [replaceSlimDirectFilesFromLive] the
  * complete folder index.
+ *
+ * Local folder slim uses [isUntrustedLocalSlimLiveListing]: an empty live list is the
+ * listing (MediaStore omits a `.nomedia` directory; an empty SAF cursor is an empty
+ * folder). SMB and WebDAV stay on this function.
  */
 fun isUntrustedSlimLiveListing(
     cachedEntries: List<BrowseEntryRemote>,
@@ -459,6 +463,18 @@ fun isUntrustedSlimLiveListing(
     }.toSet()
     if (liveZipNames.isNotEmpty() && cachedDirs.all { it in liveZipNames }) return false
     return true
+}
+
+/**
+ * Local slim refresh. An empty live list replaces the cached folder. Other sparse
+ * listings (truncated cursors, files-only against cached directories) stay untrusted.
+ */
+fun isUntrustedLocalSlimLiveListing(
+    cachedEntries: List<BrowseEntryRemote>,
+    liveChildren: List<RemoteChild>,
+): Boolean {
+    if (liveChildren.isEmpty()) return false
+    return isUntrustedSlimLiveListing(cachedEntries, liveChildren)
 }
 
 /** Keep a large cached file list when live looks like a truncated subset, not a real delete. */
@@ -484,14 +500,18 @@ fun isUntrustedSlimLiveFileListing(
 /**
  * Disk-save last line of defence: a poorer re-list must not replace a complete folder
  * index (Empty/Pending shells, or a listing that dropped every child folder).
+ *
+ * [trustEmpty] is local listings. An empty result replaces the stored index. SMB and
+ * WebDAV leave it false so a failed PROPFIND cannot wipe the cache.
  */
 fun shouldKeepPreviousFolderIndex(
     previous: List<BrowseEntryRemote>,
     next: List<BrowseEntryRemote>,
     zipAsDir: Boolean = true,
+    trustEmpty: Boolean = false,
 ): Boolean {
     if (previous.isEmpty()) return false
-    if (next.isEmpty()) return true
+    if (next.isEmpty()) return !trustEmpty
     if (isShallowIncompleteListing(next) && !isShallowIncompleteListing(previous)) return true
     val prevDirs = indexKeepDirectoryNames(previous, zipAsDir)
     val nextDirs = indexKeepDirectoryNames(next, zipAsDir)

@@ -50,6 +50,9 @@ internal data class EbookStyle(
     }
 }
 
+/** Bold heading faces are a little wider than the regular em used to wrap body text. */
+private const val HEADING_BOLD_EM = 1.08f
+
 internal object EbookPaginator {
     const val ASPECT = 1f / 1.41421356f
     const val CJK_PER_LINE = 28
@@ -249,7 +252,8 @@ internal object EbookPaginator {
     private fun wrapHeading(title: String, depth: Int, style: EbookStyle, out: MutableList<EbookLine>) {
         val scale = headingScale(depth)
         val start = out.size
-        wrapParagraph(title, style.copy(indentEm = 0, justify = false), out)
+        // Heading type is larger and bold, so the line holds fewer glyphs than body text.
+        wrapParagraph(title, style.copy(indentEm = 0, justify = false), out, widthScale = scale * HEADING_BOLD_EM)
         for (i in start until out.size) {
             val line = out[i]
             out[i] = line.copy(
@@ -301,9 +305,14 @@ internal object EbookPaginator {
         val quoteIndent: Float,
     )
 
-    private fun wrapParagraph(para: String, style: EbookStyle, out: MutableList<EbookLine>) {
+    private fun wrapParagraph(
+        para: String,
+        style: EbookStyle,
+        out: MutableList<EbookLine>,
+        widthScale: Float = 1f,
+    ) {
         val flags = readParaFlags(para)
-        WrapCursor(para, style, out, flags, wrapLayout(flags, style)).wrap()
+        WrapCursor(para, style, out, flags, wrapLayout(flags, style), widthScale).wrap()
     }
 
     private fun readParaFlags(para: String): ParaFlags {
@@ -364,6 +373,7 @@ internal object EbookPaginator {
         val out: MutableList<EbookLine>,
         val flags: ParaFlags,
         val layout: WrapLayout,
+        val widthScale: Float,
     ) {
         var i = flags.index
         var first = true
@@ -373,7 +383,7 @@ internal object EbookPaginator {
 
         fun indentOf() = layout.quoteIndent + if (first) layout.firstIndent else 0f
 
-        fun limit() = (lineCapacity(style) - indentOf()).coerceAtLeast(4f)
+        fun limit() = (lineCapacity(style) / widthScale.coerceAtLeast(0.5f) - indentOf()).coerceAtLeast(4f)
 
         fun wrap() {
             while (i < para.length) consume()

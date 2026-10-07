@@ -171,11 +171,18 @@ fun AnimatedVisibilityScope.AdvancedScreen(navigator: DestinationsNavigator) = S
                     }
                 }
             }
+            val disableNetworkCache = Settings.disableReaderNetworkCache.asMutableState()
             SwitchPreference(
                 title = stringResource(id = R.string.settings_advanced_disable_reader_network_cache),
                 summary = stringResource(id = R.string.settings_advanced_disable_reader_network_cache_summary),
-                state = Settings.disableReaderNetworkCache.asMutableState(),
+                state = disableNetworkCache,
             )
+            AnimatedVisibility(visible = disableNetworkCache.value) {
+                SwitchPreference(
+                    title = stringResource(id = R.string.settings_reader_allow_network_cache_raw),
+                    state = Settings.readerAllowNetworkCacheRaw.asMutableState(),
+                )
+            }
             val preloadImage = Settings.preloadImage.asMutableState()
             LaunchedEffect(preloadImage.value) {
                 val clamped = preloadImage.value.coerceIn(0, 6)
@@ -195,6 +202,14 @@ fun AnimatedVisibilityScope.AdvancedScreen(navigator: DestinationsNavigator) = S
                 entry = com.hippo.ehviewer.R.array.reader_decode_ahead_entries,
                 entryValueRes = com.hippo.ehviewer.R.array.reader_decode_ahead_entry_values,
                 state = decodeAhead,
+            )
+            val heavyDecode = Settings.heavyDecode.asMutableState()
+            SimpleMenuPreferenceInt(
+                title = stringResource(id = R.string.settings_heavy_decode),
+                summary = stringResource(id = R.string.settings_heavy_decode_summary, heavyDecode.value.coerceIn(1, 2)),
+                entry = com.hippo.ehviewer.R.array.heavy_decode_entries,
+                entryValueRes = com.hippo.ehviewer.R.array.heavy_decode_entry_values,
+                state = heavyDecode,
             )
             val smbConnections = Settings.multiThreadDownload.asMutableState()
             SimpleMenuPreferenceInt(

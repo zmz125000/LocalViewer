@@ -76,7 +76,6 @@ import kotlin.concurrent.atomics.AtomicInt
 import kotlin.concurrent.atomics.decrementAndFetch
 import kotlin.concurrent.atomics.updateAndFetch
 import kotlin.math.roundToInt
-import kotlinx.coroutines.sync.withPermit
 import okio.Path
 import splitties.init.appCtx
 
@@ -537,7 +536,7 @@ class Image private constructor(
 
             suspend fun runDecode(m: DecodeSizeType, hdr: Boolean, hbd: Boolean): CoilImage = if (hbd) {
                 // Full-res F16: share lib-direct serialize lock.
-                LibDirectDecode.heavyDecode.withPermit {
+                LibDirectDecode.withHeavyDecode {
                     decodeCoilOnce(m, checkExtraneousAds, hdrSafe = hdr, platformHbd = true, longEdgeCap = longEdgeCap)
                 }
             } else {

@@ -12,6 +12,8 @@ import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
@@ -19,6 +21,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import com.ehviewer.core.i18n.R
 import com.hippo.ehviewer.Settings
+import com.hippo.ehviewer.gallery.NoRawLoaded
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 
 private val tabs = intArrayOf(
@@ -28,7 +32,13 @@ private val tabs = intArrayOf(
 )
 
 @Composable
-fun SettingsPager(isWebtoon: Boolean, isDocument: Boolean = false, modifier: Modifier = Modifier) {
+fun SettingsPager(
+    isWebtoon: Boolean,
+    isDocument: Boolean = false,
+    rawLoaded: StateFlow<Boolean> = NoRawLoaded,
+    modifier: Modifier = Modifier,
+) {
+    val showCameraRaw by rawLoaded.collectAsState()
     val initialPage = Settings.readerSettingsTab.value.coerceIn(0, tabs.lastIndex)
     val pagerState = rememberPagerState(initialPage = initialPage) { tabs.size }
     LaunchedEffect(Unit) {
@@ -59,7 +69,7 @@ fun SettingsPager(isWebtoon: Boolean, isDocument: Boolean = false, modifier: Mod
         ) { page ->
             ProvideTextStyle(value = MaterialTheme.typography.labelLarge) {
                 when (page) {
-                    0 -> ReaderModeSetting(isWebtoon, isDocument)
+                    0 -> ReaderModeSetting(isWebtoon, isDocument, showCameraRaw)
                     1 -> ReaderGeneralSetting(isDocument)
                     2 -> ColorFilterSetting()
                 }

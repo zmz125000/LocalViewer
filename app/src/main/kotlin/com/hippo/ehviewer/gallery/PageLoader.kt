@@ -22,11 +22,14 @@ import com.hippo.ehviewer.image.PathSource
 import com.hippo.ehviewer.image.byteBufferSource
 import com.hippo.ehviewer.image.hdr.DisplaySource
 import com.hippo.ehviewer.image.hdr.HdrConvertCache
+import com.hippo.ehviewer.image.hdr.LibCodec
 import com.hippo.ehviewer.image.hdr.LibDirectDecode
+import com.hippo.ehviewer.image.hdr.StillRoute
 import com.hippo.ehviewer.image.hdr.classify
 import com.hippo.ehviewer.image.hdr.classifyPath
 import com.hippo.ehviewer.image.hdr.exportImageExtension
 import com.hippo.ehviewer.image.hdr.isLibStillExtension
+import com.hippo.ehviewer.image.hdr.isRawStillExtension
 import com.hippo.ehviewer.image.hdr.needsLibDecode
 import com.hippo.ehviewer.library.ReaderPageThumb
 import com.hippo.ehviewer.util.FileUtils
@@ -260,6 +263,7 @@ abstract class PageLoader(
     /**
      * When [Settings.readerLibDirectBitmap] is on and the page is a lib still,
      * decode straight to Bitmap. Null → fall through to convert + Coil.
+     * Camera RAW never falls through: ImageDecoder cannot open it.
      */
     private suspend fun tryDecodeLibDirect(
         index: Int,
@@ -267,18 +271,32 @@ abstract class PageLoader(
         forceOriginal: Boolean,
         hint: String,
     ): Image? {
-        if (!Settings.readerLibDirectBitmap.value) return null
-        val nameHint = when (raw) {
-            is PathSource -> raw.source.name.ifBlank { hint }
+        val pathName = (raw as? PathSource)?.source?.name.orEmpty()
+        val pageExt = getImageExtension(index)
+        val nameHint = when {
+            isRawStillExtension(FileUtils.getExtensionFromFilename(pathName)) -> pathName
+            isRawStillExtension(pageExt) -> hint
+            pathName.isNotBlank() -> pathName
             else -> hint
         }
         val route = when (raw) {
             is PathSource -> classifyPath(raw.source, nameHint)
             is ByteBufferSource -> classify(raw.source, nameHint)
         }
-        if (!route.needsLibDecode) return null
+        // RAW is always a direct bitmap. Bypass-UHDR does not apply, and there is no gain map.
+        val rawStill = (route is StillRoute.Lib && route.codec == LibCodec.Raw) ||
+            isRawStillExtension(pageExt)
+        if (rawStill) noteRawLoaded()
+        if (!rawStill && !Settings.readerLibDirectBitmap.value) return null
+        if (!route.needsLibDecode && !rawStill) return null
         val maxEdge = Image.maxEdgeForReader(forceOriginal)
-        val direct = LibDirectDecode.decode(raw, nameHint, maxEdge) ?: return null
+        val direct = LibDirectDecode.decode(raw, nameHint, maxEdge)
+        if (direct == null) {
+            if (rawStill) {
+                error("RAW decode failed: $nameHint")
+            }
+            return null
+        }
         thumbSoftwareBitmapBeforeHardware(index, raw, direct.bitmap)
         return Image.fromLibDirect(direct, raw).also {
             it.noteHiResPreview(Image.hiResPreviewCapEdge(forceOriginal) > 0)
@@ -709,6 +727,25 @@ abstract class PageLoader(
     }
 
     abstract override val title: String
+
+    private val rawLoadedState = MutableStateFlow(false)
+
+    /** Latches when this session decodes a camera RAW page. */
+    override val rawLoaded: StateFlow<Boolean> = rawLoadedState
+
+    private fun noteRawLoaded() {
+        rawLoadedState.value = true
+    }
+
+    /** True when any page is a camera RAW still. HDR display then reloads, because the bitmap changes. */
+    override fun containsRawStill(): Boolean {
+        val n = size
+        if (n <= 0) return false
+        for (i in 0 until n) {
+            if (isRawStillExtension(getImageExtension(i))) return true
+        }
+        return false
+    }
 
     protected abstract fun getImageExtension(index: Int): String?
 

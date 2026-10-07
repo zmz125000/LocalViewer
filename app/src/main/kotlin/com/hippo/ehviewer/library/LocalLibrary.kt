@@ -138,6 +138,7 @@ object LocalLibrary {
         treeUri: String,
         displayName: String,
         role: Int = LIBRARY_ROOT_ROLE_LIBRARY,
+        accessMode: Int = LIBRARY_ROOT_ACCESS_MEDIA,
     ): AddRootResult = withNonCancellableContext {
         // NonCancellable: MediaStore whole-library scan often outlives the add screen.
         // Composition-scoped jobs (LaunchedEffect / rememberCoroutineScope) cancel on leave
@@ -167,15 +168,20 @@ object LocalLibrary {
                 return@withIOContext AddRootResult.AlreadyExists(existing.id, existing.role)
             }
 
-            // New sources default to MediaStore (ACCESS_MODE = 0); user can opt into
-            // media+archive on Manage Sources for local archive scan/browse.
+            // Folder picker (media) stores MediaStore. Folder picker (files) stores
+            // file access. Device media is always MediaStore.
+            val mode = when {
+                media -> LIBRARY_ROOT_ACCESS_MEDIA
+                accessMode == LIBRARY_ROOT_ACCESS_MEDIA_ARCHIVE -> LIBRARY_ROOT_ACCESS_MEDIA_ARCHIVE
+                else -> LIBRARY_ROOT_ACCESS_MEDIA
+            }
             val id = db.libraryRootDao().insert(
                 LibraryRootEntity(
                     treeUri = treeUri,
                     displayName = displayName,
                     addedAt = Clock.System.now().toEpochMilliseconds(),
                     role = role,
-                    accessMode = LIBRARY_ROOT_ACCESS_MEDIA,
+                    accessMode = mode,
                 ),
             )
             if (role == LIBRARY_ROOT_ROLE_LIBRARY) {

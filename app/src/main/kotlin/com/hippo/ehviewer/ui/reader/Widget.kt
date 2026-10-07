@@ -21,6 +21,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -125,5 +126,41 @@ fun SliderChoice(
             steps = steps,
         )
         endSlot()
+    }
+}
+
+/**
+ * Slider that writes [field] when the drag ends. The label follows the finger.
+ * A live write would re-decode a camera RAW on every tick.
+ */
+@Composable
+fun CommitSliderChoice(
+    title: String,
+    summary: String,
+    range: IntRange,
+    field: MutableState<Int>,
+    valueText: (Int) -> String,
+    steps: Int = range.last - range.first - 1,
+) {
+    var value by field
+    var drag by remember(value) { mutableIntStateOf(value.coerceIn(range.first, range.last)) }
+    Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
+        Text(text = title, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(
+            text = summary,
+            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f),
+            style = MaterialTheme.typography.bodySmall,
+        )
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Slider(
+                value = drag,
+                onValueChange = { drag = it },
+                modifier = Modifier.weight(1f).padding(end = 8.dp),
+                valueRange = range,
+                steps = steps,
+                onValueChangeFinished = { value = drag },
+            )
+            Text(text = valueText(drag), color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
     }
 }

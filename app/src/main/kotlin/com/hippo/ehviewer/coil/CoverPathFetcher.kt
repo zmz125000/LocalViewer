@@ -14,7 +14,9 @@ import coil3.request.Options
 import coil3.toUri as toCoilUri
 import com.ehviewer.core.files.toUri
 import com.hippo.ehviewer.image.hdr.HdrConvertCache
+import com.hippo.ehviewer.image.hdr.RawPreviewCache
 import com.hippo.ehviewer.image.hdr.isHdrConvertCandidateExtension
+import com.hippo.ehviewer.image.hdr.isRawStillExtension
 import com.hippo.ehviewer.library.LandscapeCoverMarks
 import com.hippo.ehviewer.library.ZipMemberCover
 import com.hippo.ehviewer.library.ZipPaths
@@ -49,10 +51,11 @@ class CoverPathFetcher(
         val hint = coverConvertHint(data.path, resolved.name)
         val ext = FileUtils.getExtensionFromFilename(hint)?.lowercase()
             ?: FileUtils.getExtensionFromFilename(resolved.name)?.lowercase()
-        val openPath = if (isHdrConvertCandidateExtension(ext)) {
-            HdrConvertCache.ensureCoilReady(resolved, hint)
-        } else {
-            resolved
+        val openPath = when {
+            isRawStillExtension(ext) -> RawPreviewCache.ensureJpeg(resolved, demosaicFallback = true)
+                ?: throw FileNotFoundException("RAW preview missing: ${data.path}")
+            isHdrConvertCandidateExtension(ext) -> HdrConvertCache.ensureCoilReady(resolved, hint)
+            else -> resolved
         }
         // Coil called fetch, so this cover is actually being decoded (not a memory hit).
         noteCoverBounds(data.path, openPath)

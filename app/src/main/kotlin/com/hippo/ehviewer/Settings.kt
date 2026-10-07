@@ -457,11 +457,25 @@ object Settings : DataStorePreferences(null) {
      * network image PDF (JPEG, PNG-style Flate, JPEG 2000). Indexed color is WebP
      * and still saved. Decode from RAM; leftover files may still be read.
      * Local folders already skip a page cache.
+     * Camera RAW can still be written while this is on: [readerAllowNetworkCacheRaw].
      */
     val disableReaderNetworkCache = boolPref("disable_reader_network_cache", true)
 
+    /**
+     * Shown under [disableReaderNetworkCache]. Preload writes camera RAW to the page
+     * cache and keeps only the newest ten files, instead of holding each file in RAM
+     * or waiting for the shared origin LRU.
+     */
+    val readerAllowNetworkCacheRaw = boolPref("reader_allow_network_cache_raw", true)
+
     /** Decoded images to keep ahead independently of [preloadImage]. */
     val readerDecodeAhead = intPref("pref_reader_decode_ahead", 3)
+
+    /**
+     * Concurrent full-size decodes (lib-direct and platform high bit depth).
+     * 1 keeps them serial. 2 allows one extra decode. Other values count as 1.
+     */
+    val heavyDecode = intPref("heavy_decode", 1)
     val downloadOriginImage = boolPref("download_origin_image", false)
     val saveAsCbz = boolPref("save_as_cbz", false)
     val archiveMetadata = boolPref("archive_metadata", true)
@@ -862,6 +876,7 @@ object Settings : DataStorePreferences(null) {
      * When on: [com.hippo.ehviewer.image.hdr.LibDirectDecode]; with [readerAdvancedColor]
      * preserves P3/BT.2020 + F16 where useful; advanced off rematrixes wide→709.
      * Network/SMB/WebDAV keep original when on. Browse covers still convert to small JPEG.
+     * Camera RAW always uses the direct bitmap, whether this is on or off.
      */
     val readerLibDirectBitmap = boolPref("pref_reader_lib_direct_bitmap", false)
 
@@ -872,6 +887,10 @@ object Settings : DataStorePreferences(null) {
      *
      * Does **not** disable convert (JXR/PQ/JXL → Ultra HDR) or gain-map decode —
      * those always run so files open; off = SDR base presentation without window HDR.
+     *
+     * Camera RAW ignores [readerAdvancedColor] while this is on: the bitmap is
+     * deep color, and a HDR panel also gets Android 16 HDR (COLOR_MODE_HDR).
+     * A panel that is not HDR keeps the deep-color bitmap and does not request HDR.
      */
     val readerHdrDisplay = boolPref("pref_reader_hdr_display", true)
 
@@ -909,11 +928,41 @@ object Settings : DataStorePreferences(null) {
      *   platform-HBD sub-toggle (user may still turn HBD off while WCG stays on).
      *
      * When off: platform sRGB conversion; lib rematrix wide→709; no WCG window; HBD off.
+     * Camera RAW uses this as deep color only while [readerHdrDisplay] is off.
+     * HDR display on ignores this switch and still decodes the deep-color bitmap.
      */
     val readerAdvancedColor = boolPref("pref_reader_advanced_color", true).observed { wcg ->
         // WCG always updates sub-toggle; sub-toggle must never write back to WCG.
         readerPlatformHighDepth.value = wcg
     }
+
+    /**
+     * Decode camera RAW sensor data in the reader. Off shows the embedded preview,
+     * then an 8-bit decode when the file has no embedded image.
+     */
+    val readerCameraRaw = boolPref("pref_reader_camera_raw", false)
+
+    /**
+     * Camera RAW exposure in tenths of an EV (−30..30). 0 is as-shot sensor white.
+     * DNG BaselineExposure is included. The sum is applied before the tone curve.
+     */
+    val readerRawExposure = intPref("pref_reader_raw_exposure", 0)
+
+    /**
+     * Camera RAW white balance.
+     * 0 camera, 1 auto, 2 daylight, 3 cloudy, 4 shade, 5 tungsten,
+     * 6 fluorescent, 7 flash, 8 kelvin.
+     */
+    val readerRawWhiteBalance = intPref("pref_reader_raw_white_balance", 0)
+
+    /** Camera RAW Kelvin white balance, 2000..12000. Used when [readerRawWhiteBalance] is kelvin. */
+    val readerRawKelvin = intPref("pref_reader_raw_kelvin", 5200)
+
+    /**
+     * Camera RAW highlight protection in tenths of a stop (0..30).
+     * 0 leaves samples above sensor white as they are. Deep color and HDR only.
+     */
+    val readerRawHighlight = intPref("pref_reader_raw_highlight", 0)
     val fullscreen = boolPref("fullscreen", true)
     val cutoutShort = boolPref("cutout_short", true)
     val keepScreenOn = boolPref("pref_keep_screen_on_key", true)

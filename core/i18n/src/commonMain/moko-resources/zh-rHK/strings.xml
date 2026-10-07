@@ -518,4 +518,6 @@
     <string name="app_cache_cleared">已清除快取</string>
     <string name="settings_reader_decode_ahead">預先解碼</string>
     <string name="settings_reader_decode_ahead_summary">保持閱讀方向上後續 %s 頁處於已解碼狀態</string>
+    <string name="settings_heavy_decode">重度解碼</string>
+    <string name="settings_heavy_decode_summary">同時進行的全尺寸解碼數：%s</string>
 </resources>

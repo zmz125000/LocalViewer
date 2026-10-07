@@ -428,7 +428,7 @@ object LocalFolderListing {
         relativeDir: String,
     ): SlimRefresh {
         val children = listChildrenRemote(dir, preferMediaStore)
-        if (isUntrustedSlimLiveListing(cached, children)) {
+        if (isUntrustedLocalSlimLiveListing(cached, children)) {
             return SlimRefresh(cached, emptySet(), persist = false)
         }
         val plan = planRemoteDirectorySlimRefresh(cached, children)

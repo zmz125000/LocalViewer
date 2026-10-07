@@ -3,8 +3,10 @@ package com.hippo.ehviewer.library
 import okio.Path.Companion.toPath
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class LocalFolderIndexKeyTest {
@@ -72,5 +74,17 @@ class LocalFolderIndexKeyTest {
         val safKey = LocalFolderListing.rootConfigKey(media, preferMediaStore = false)
         assertNotEquals(msKey, safKey)
         assertEquals("local_4", FolderIndexDisk.sourceDirName("local", 4L))
+    }
+
+    @Test
+    fun localStampMismatchRejectsThatIndex() {
+        val media = "local|mediastore:/Pictures|ms=true"
+        val saf = "local|content://tree|ms=false"
+        assertTrue(NetworkFolderIndexCache.rejectsStamp("local", media, saf))
+        assertFalse(NetworkFolderIndexCache.rejectsStamp("local", media, media))
+        assertFalse(NetworkFolderIndexCache.rejectsStamp("local", "", saf))
+        assertFalse(NetworkFolderIndexCache.rejectsStamp("local", media, ""))
+        assertFalse(NetworkFolderIndexCache.rejectsStamp("smb", media, saf))
+        assertFalse(NetworkFolderIndexCache.rejectsStamp("webdav", media, saf))
     }
 }

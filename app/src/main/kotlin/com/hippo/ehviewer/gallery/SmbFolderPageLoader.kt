@@ -9,6 +9,8 @@ import com.hippo.ehviewer.image.ImageSource
 import com.hippo.ehviewer.image.PathSource
 import com.hippo.ehviewer.image.byteBufferSource
 import com.hippo.ehviewer.image.hdr.HdrConvertCache
+import com.hippo.ehviewer.image.hdr.isRawStillExtension
+import com.hippo.ehviewer.image.hdr.readEmbeddedRawJpeg
 import com.hippo.ehviewer.library.ZipAsDirListing
 import com.hippo.ehviewer.library.ZipMemberCover
 import com.hippo.ehviewer.smb.SmbArchiveByteSource
@@ -20,6 +22,7 @@ import java.nio.ByteBuffer
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicBoolean
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -78,6 +81,9 @@ suspend inline fun <T> useSmbFolderPageLoader(
         /** UI/decode callbacks waiting for [index] to land in [SmbCache]. */
         val readyWaiters = ConcurrentHashMap<Int, CopyOnWriteArrayList<() -> Unit>>()
         val ramPages = ConcurrentHashMap<Int, ByteArray>()
+
+        /** Cache-off RAW pages whose RAM bytes are the embedded JPEG, not the sensor file. */
+        val ramJpegPages = ConcurrentHashMap.newKeySet<Int>()
         val loader = install(
             object : PageLoader(this, info, startPage.coerceIn(0, size - 1), size) {
                 override val title by lazy {
@@ -86,7 +92,10 @@ suspend inline fun <T> useSmbFolderPageLoader(
                             .ifEmpty { source.displayName }
                 }
 
-                override fun getImageExtension(index: Int) = FileUtils.getExtensionFromFilename(imageFileNames[index])
+                override fun getImageExtension(index: Int): String? {
+                    if (ramJpegPages.contains(index)) return "jpg"
+                    return FileUtils.getExtensionFromFilename(imageFileNames[index])
+                }
 
                 override fun getOriginalImageFileName(index: Int) = imageFileNames[index]
 
@@ -126,8 +135,10 @@ suspend inline fun <T> useSmbFolderPageLoader(
                 }
 
                 override fun prefetchPages(pages: List<Int>, bounds: IntRange) {
-                    if (Settings.disableReaderNetworkCache.value) return
+                    val cacheOff = Settings.disableReaderNetworkCache.value
+                    if (cacheOff && !Settings.readerAllowNetworkCacheRaw.value) return
                     pages.forEach { index ->
+                        if (cacheOff && !RawNetworkPageCache.wantsDisk(imageFileNames[index])) return@forEach
                         ensureDownload(index)
                     }
                 }
@@ -170,6 +181,7 @@ suspend inline fun <T> useSmbFolderPageLoader(
                     ramPages.keys.toList().forEach { idx ->
                         if (idx !in decodedPages) {
                             ramPages.remove(idx)
+                            ramJpegPages.remove(idx)
                             clearSourceReady(idx)
                         }
                     }
@@ -183,6 +195,7 @@ suspend inline fun <T> useSmbFolderPageLoader(
 
                 override fun releaseRamPage(index: Int) {
                     ramPages.remove(index)
+                    ramJpegPages.remove(index)
                     // Still on screen: decode may have persisted a file and the page stays
                     // in the ordered window. Clearing here would pin rank 0 with no job.
                     if (!isDecodedDemand(index)) clearSourceReady(index)
@@ -214,7 +227,7 @@ suspend inline fun <T> useSmbFolderPageLoader(
                     if (closed.get() || index !in 0 until size) return
                     val name = imageFileNames[index]
                     val cache = SmbCache.cachePath(source.id, remoteDir, name)
-                    val skipDisk = Settings.disableReaderNetworkCache.value
+                    val skipDisk = Settings.disableReaderNetworkCache.value && !RawNetworkPageCache.wantsDisk(name)
                     // Never probe disk here — onRequest/retryPage run on main (lifecycle
                     // ON_RESUME). Memory-only skip for prefetch when known present.
                     if (onReady == null && !skipDisk && SmbCache.isPageCached(cache)) {
@@ -235,7 +248,7 @@ suspend inline fun <T> useSmbFolderPageLoader(
                     }
                     val job = scope.launch(Dispatchers.IO, start = CoroutineStart.LAZY) {
                         try {
-                            val skipDisk = Settings.disableReaderNetworkCache.value
+                            val skipDisk = Settings.disableReaderNetworkCache.value && !RawNetworkPageCache.wantsDisk(name)
                             if (skipDisk && ramPages.containsKey(index)) {
                                 dispatchReady(index)
                                 return@launch
@@ -243,6 +256,7 @@ suspend inline fun <T> useSmbFolderPageLoader(
                             // Authoritative disk check on IO (StrictMode + LRU correctness).
                             // Skip mtime touch when not writing cache.
                             if (!skipDisk && SmbCache.isPageCachedOnDisk(cache)) {
+                                RawNetworkPageCache.note(name, cache)
                                 dispatchReady(index)
                                 return@launch
                             }
@@ -344,6 +358,27 @@ suspend inline fun <T> useSmbFolderPageLoader(
                         if (isDecodedDemand(index)) ramPages[index] = bytes
                         return
                     }
+                    // RAW images on needs the sensor bytes. Off keeps the embedded JPEG.
+                    if (!Settings.readerCameraRaw.value &&
+                        isRawStillExtension(FileUtils.getExtensionFromFilename(name))
+                    ) {
+                        val jpeg = try {
+                            SmbGateway.withFileRangeRead(source, password, rel) { size, readAt ->
+                                readEmbeddedRawJpeg(size, readAt)
+                            }
+                        } catch (e: CancellationException) {
+                            throw e
+                        } catch (_: Throwable) {
+                            null
+                        }
+                        if (jpeg != null) {
+                            if (isDecodedDemand(index)) {
+                                ramPages[index] = jpeg
+                                ramJpegPages.add(index)
+                            }
+                            return
+                        }
+                    }
                     val sink = RamByteSink()
                     SmbGateway.downloadFile(source, password, rel, sink)
                     val bytes = sink.take()
@@ -353,12 +388,16 @@ suspend inline fun <T> useSmbFolderPageLoader(
                 private suspend fun downloadToCache(index: Int) {
                     val name = imageFileNames[index]
                     val cache = SmbCache.cachePath(source.id, remoteDir, name)
-                    if (SmbCache.isPageCachedOnDisk(cache)) return
+                    if (SmbCache.isPageCachedOnDisk(cache)) {
+                        RawNetworkPageCache.note(name, cache)
+                        return
+                    }
                     val rel = if (remoteDir.isEmpty()) name else "$remoteDir/$name"
                     // Per-path mutex: two connections never write the same cache file.
                     SmbCache.downloadIfNeeded(cache, originalFileName = name) { out ->
                         SmbGateway.downloadFile(source, password, rel, out)
                     }
+                    RawNetworkPageCache.note(name, cache)
                 }
             },
         )

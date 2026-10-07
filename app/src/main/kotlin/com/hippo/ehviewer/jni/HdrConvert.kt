@@ -98,3 +98,53 @@ external fun decodeAvifBytesToDirect(
     outInfo: IntArray,
     outBoost: FloatArray,
 ): ByteArray?
+
+// ── Camera RAW (LibRaw on 64-bit; embedded JPEG preview on every ABI) ────
+
+/**
+ * LibRaw → packed pixels. [present] matches [com.hippo.ehviewer.image.hdr.RawPresent]
+ * ordinal: 0 eight-bit, 1 deep color, 2 deep color + Android 16 HDR.
+ * [maxEdge] is already capped (8192 for a full decode).
+ * [panelBoost] clamps HDR highlights. Ignored for the other modes.
+ * [exposureEv] is extra stops. [whiteBalance] is 0 camera, 1 auto, 2 daylight,
+ * 3 cloudy, 4 shade, 5 tungsten, 6 fluorescent, 7 flash, 8 kelvin.
+ * [kelvin] is 2000..12000 and applies when [whiteBalance] is kelvin. Named presets
+ * that the file does not store use this same temperature curve.
+ * [highlightStops] compresses deep-color and HDR samples above 1 after the tone curve.
+ */
+external fun decodeRawFileToDirect(
+    path: String,
+    maxEdge: Int,
+    present: Int,
+    panelBoost: Float,
+    exposureEv: Float,
+    whiteBalance: Int,
+    kelvin: Int,
+    highlightStops: Float,
+    outInfo: IntArray,
+    outBoost: FloatArray,
+): ByteArray?
+
+external fun decodeRawBytesToDirect(
+    input: ByteArray,
+    maxEdge: Int,
+    present: Int,
+    panelBoost: Float,
+    exposureEv: Float,
+    whiteBalance: Int,
+    kelvin: Int,
+    highlightStops: Float,
+    outInfo: IntArray,
+    outBoost: FloatArray,
+): ByteArray?
+
+/**
+ * Write an embedded JPEG preview to [outPath].
+ * [demosaicFallback]: on 64-bit, a missing preview becomes a half-size demosaic
+ * JPEG (long edge 512). Reader failure passes false so a missing preview stays missing.
+ *
+ * @return 0 on success.
+ */
+external fun extractRawPreviewFile(path: String, outPath: String, demosaicFallback: Boolean): Int
+
+external fun extractRawPreviewBytes(input: ByteArray, outPath: String, demosaicFallback: Boolean): Int

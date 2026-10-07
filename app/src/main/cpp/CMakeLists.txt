@@ -373,6 +373,44 @@ if (EHVIEWER_HDR_CODECS)
         list(APPEND EHVIEWER_HDR_LIBS jxl_cms)
     endif ()
     list(APPEND EHVIEWER_HDR_LIBS jxrlib)
+
+    # LibRaw 0.22.2 — DSLR RAW demosaic. No RawSpeed (GPL), Jasper, LCMS, or OpenMP.
+    # zlib + libultrahdr's libjpeg-turbo cover deflate and lossy DNG.
+    FetchContent_Declare(
+            libraw
+            GIT_REPOSITORY https://github.com/LibRaw/LibRaw.git
+            GIT_TAG 0.22.2
+            GIT_SHALLOW 1
+    )
+    FetchContent_GetProperties(libraw)
+    if (NOT libraw_POPULATED)
+        FetchContent_Populate(libraw)
+    endif ()
+    file(GLOB_RECURSE LIBRAW_SOURCES CONFIGURE_DEPENDS ${libraw_SOURCE_DIR}/src/*.cpp)
+    # *_ph.cpp duplicates the real postprocess symbols. integration/*_glue.cpp stays:
+    # without USE_RAWSPEED / USE_DNGSDK those files are the no-op try_rawspeed / try_dngsdk
+    # that unpack calls. They do not pull in RawSpeed or the Adobe DNG SDK.
+    list(FILTER LIBRAW_SOURCES EXCLUDE REGEX "/[^/]*_ph\\.cpp$")
+    if (NOT LIBRAW_SOURCES)
+        message(FATAL_ERROR "LibRaw sources not found under ${libraw_SOURCE_DIR}/src")
+    endif ()
+    add_library(libraw_static STATIC ${LIBRAW_SOURCES})
+    target_include_directories(libraw_static PUBLIC ${libraw_SOURCE_DIR})
+    target_include_directories(libraw_static PRIVATE
+            ${libultrahdr_SOURCE_DIR}/third_party/turbojpeg/src
+            ${libultrahdr_BINARY_DIR}/turbojpeg/src/turbojpeg-build
+    )
+    target_compile_definitions(libraw_static PRIVATE USE_JPEG USE_ZLIB LIBRAW_CALLOC_RAWSTORE)
+    # NDK leaves exceptions off unless asked. LibRaw throws LibRaw_exceptions.
+    target_compile_options(libraw_static PRIVATE -O2 -w -fno-strict-aliasing -fexceptions -frtti)
+    if (TARGET uhdr)
+        add_dependencies(libraw_static uhdr)
+    elseif (TARGET libuhdr)
+        add_dependencies(libraw_static libuhdr)
+    elseif (TARGET ultrahdr)
+        add_dependencies(libraw_static ultrahdr)
+    endif ()
+    list(APPEND EHVIEWER_HDR_LIBS libraw_static)
 else ()
     set(EHVIEWER_HDR_SOURCES hdr_stubs.cpp)
 endif ()
@@ -402,14 +440,24 @@ endif ()
 set_source_files_properties(jp2_decode.cpp PROPERTIES COMPILE_DEFINITIONS OPJ_STATIC)
 
 # Build and link our app's native lib
+set_source_files_properties(raw_still.cpp PROPERTIES COMPILE_FLAGS "-fexceptions")
 add_library(${PROJECT_NAME} SHARED archive.c gifutils.c hash.c natsort/strnatcmp.c jp2_decode.cpp
-        ${EHVIEWER_HDR_SOURCES})
+        raw_still.cpp ${EHVIEWER_HDR_SOURCES})
 target_include_directories(${PROJECT_NAME} PRIVATE
         ${openjpeg_SOURCE_DIR}/src/lib/openjp2
         ${openjpeg_BINARY_DIR}/src/lib/openjp2
 )
 if (EHVIEWER_HDR_CODECS)
     target_compile_definitions(${PROJECT_NAME} PRIVATE EHVIEWER_HDR_CODECS)
+    # raw_still.cpp includes jpeglib.h. jconfig.h appears when libjpeg-turbo is configured,
+    # which finishes before the uhdr target.
+    if (TARGET uhdr)
+        add_dependencies(${PROJECT_NAME} uhdr)
+    elseif (TARGET libuhdr)
+        add_dependencies(${PROJECT_NAME} libuhdr)
+    elseif (TARGET ultrahdr)
+        add_dependencies(${PROJECT_NAME} ultrahdr)
+    endif ()
     # libjpeg-turbo is built as an ExternalProject of libultrahdr (baseline SDR JPEG).
     set(EH_JPEG_INCLUDE_DIRS
             ${libultrahdr_SOURCE_DIR}/third_party/turbojpeg/src
