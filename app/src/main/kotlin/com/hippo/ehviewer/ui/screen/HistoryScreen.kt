@@ -305,6 +305,7 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
                             if (root == null || rootPath == null) {
                                 navToLocalFolderReader(local.contentPath, local.toBaseGalleryInfo())
                             } else {
+                                withIOContext { EhDB.putHistoryInfo(info) }
                                 openLocalFolderPhotoGrid(
                                     rootId = root.id,
                                     rootDisplayName = root.displayName,
@@ -460,6 +461,7 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
                     val rel = target.relativePath.trim('/')
                     val title = info.title ?: rel.substringAfterLast('/').ifEmpty { "Folder" }
                     if (Settings.photoGridMode.value) {
+                        withIOContext { EhDB.putHistoryInfo(info) }
                         openLocalFolderPhotoGrid(
                             rootId = root.id,
                             rootDisplayName = root.displayName,
@@ -1043,6 +1045,7 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
                             if (root == null || rootPath == null) {
                                 navToLocalFolderReader(local.contentPath, local.toBaseGalleryInfo())
                             } else {
+                                withIOContext { EhDB.putHistoryInfo(info) }
                                 openLocalFolderPhotoGrid(
                                     rootId = root.id,
                                     rootDisplayName = root.displayName,
@@ -1245,6 +1248,7 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
                         snackbar(string(R.string.history_unavailable))
                         return@launch
                     }
+                    withIOContext { EhDB.putHistoryInfo(info) }
                     openLocalFolderPhotoGrid(
                         rootId = root.id,
                         rootDisplayName = root.displayName,
@@ -1291,6 +1295,7 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
                         snackbar(string(R.string.history_unavailable))
                         return@launch
                     }
+                    withIOContext { EhDB.putHistoryInfo(info) }
                     openLocalFolderPhotoGrid(
                         rootId = root.id,
                         rootDisplayName = root.displayName,
