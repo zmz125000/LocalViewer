@@ -281,6 +281,20 @@ class EbookEngineTest {
     }
 
     @Test
+    fun tallerViewerFitsMoreTextPerPage() {
+        val chapters = listOf(EbookChapter("t", "测".repeat(800)))
+        val sheet = EbookPaginator.paginate(
+            chapters,
+            EbookStyle(fontSize = 18, pageAspect = EbookPaginator.ASPECT),
+        ).first
+        val phone = EbookPaginator.paginate(
+            chapters,
+            EbookStyle(fontSize = 18, pageAspect = 0.45f),
+        ).first
+        assertTrue(phone.size < sheet.size)
+    }
+
+    @Test
     fun verticalMarginChangesPageHeightOnly() {
         val tight = EbookStyle(fontSize = 18, verticalMarginPercent = 0)
         val wide = EbookStyle(fontSize = 18, verticalMarginPercent = 12)

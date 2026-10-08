@@ -136,21 +136,23 @@ fun SliderChoice(
 @Composable
 fun CommitSliderChoice(
     title: String,
-    summary: String,
     range: IntRange,
     field: MutableState<Int>,
     valueText: (Int) -> String,
+    summary: String? = null,
     steps: Int = range.last - range.first - 1,
 ) {
     var value by field
     var drag by remember(value) { mutableIntStateOf(value.coerceIn(range.first, range.last)) }
     Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
         Text(text = title, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Text(
-            text = summary,
-            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f),
-            style = MaterialTheme.typography.bodySmall,
-        )
+        if (summary != null) {
+            Text(
+                text = summary,
+                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f),
+                style = MaterialTheme.typography.bodySmall,
+            )
+        }
         Row(verticalAlignment = Alignment.CenterVertically) {
             Slider(
                 value = drag,
