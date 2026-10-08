@@ -865,6 +865,7 @@
     <string name="pref_reader_raw_midtones_summary">壓暗或提亮 RAW 影像的中間調。</string>
     <string name="pref_reader_raw_highlights">高光</string>
     <string name="pref_reader_raw_highlights_summary">壓暗或提亮 RAW 影像的亮部。</string>
+    <string name="pref_reader_raw_reset">重設</string>
     <string name="pref_reader_raw_highlight">HDR 增強</string>
     <string name="pref_reader_raw_highlight_summary">將亮部拉向紙白。</string>
     <string name="pref_reader_raw_hdr_linear">HDR 線性 Rec.2020</string>

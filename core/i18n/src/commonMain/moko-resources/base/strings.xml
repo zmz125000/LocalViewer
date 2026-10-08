@@ -945,6 +945,7 @@
     <string name="pref_reader_raw_midtones_summary">Darken or brighten the middle of a RAW image.</string>
     <string name="pref_reader_raw_highlights">Highlights</string>
     <string name="pref_reader_raw_highlights_summary">Darken or brighten the bright parts of a RAW image.</string>
+    <string name="pref_reader_raw_reset">Reset</string>
     <string name="pref_reader_raw_highlight">HDR boost</string>
     <string name="pref_reader_raw_highlight_summary">Pull bright areas toward paper white.</string>
     <string name="pref_reader_raw_hdr_linear">HDR linear Rec.2020</string>

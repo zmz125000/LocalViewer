@@ -289,6 +289,7 @@
     <string name="pref_reader_raw_midtones_summary">RAW 画像の中間の明るさを暗く、または明るくします。</string>
     <string name="pref_reader_raw_highlights">ハイライト</string>
     <string name="pref_reader_raw_highlights_summary">RAW 画像の明るい部分を暗く、または明るくします。</string>
+    <string name="pref_reader_raw_reset">リセット</string>
     <string name="pref_reader_raw_highlight">HDR ブースト</string>
     <string name="pref_reader_raw_highlight_summary">明るい部分をペーパーホワイトへ寄せます。</string>
     <string name="pref_reader_raw_hdr_linear">HDR リニア Rec.2020</string>

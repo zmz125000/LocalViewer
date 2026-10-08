@@ -978,6 +978,18 @@ object Settings : DataStorePreferences(null) {
      * Off keeps hue/saturation, the tone curve, and baseline exposure.
      */
     val readerRawHdrLinear = boolPref("pref_reader_raw_hdr_linear", false)
+
+    /** Restore the RAW image controls to their defaults. Does not turn sensor decode off. */
+    fun resetReaderRaw() {
+        readerRawWhiteBalance.value = 0
+        readerRawKelvin.value = 5200
+        readerRawHdrLinear.value = false
+        readerRawExposure.value = 0
+        readerRawShadows.value = 0
+        readerRawMidtones.value = 0
+        readerRawHighlights.value = 0
+        readerRawHighlight.value = 0
+    }
     val fullscreen = boolPref("fullscreen", true)
     val cutoutShort = boolPref("cutout_short", true)
     val keepScreenOn = boolPref("pref_keep_screen_on_key", true)

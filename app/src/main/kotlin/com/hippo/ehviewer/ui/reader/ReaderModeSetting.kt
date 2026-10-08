@@ -11,6 +11,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.integerArrayResource
@@ -409,6 +410,12 @@ private fun CameraRawSetting() = Column {
         field = Settings.readerRawHighlight.asMutableState(),
         valueText = { "%.1f".format(it / 10f) },
     )
+    TextButton(
+        onClick = { Settings.resetReaderRaw() },
+        modifier = Modifier.padding(horizontal = 4.dp),
+    ) {
+        Text(text = stringResource(id = R.string.pref_reader_raw_reset))
+    }
 }
 
 @Composable
