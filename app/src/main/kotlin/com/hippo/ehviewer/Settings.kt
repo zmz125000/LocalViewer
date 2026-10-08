@@ -476,7 +476,7 @@ object Settings : DataStorePreferences(null) {
      * Concurrent full-size decodes (lib-direct and platform high bit depth).
      * 1 keeps them serial. 2 allows one extra decode. Other values count as 1.
      */
-    val heavyDecode = intPref("heavy_decode", 1)
+    val heavyDecode = intPref("heavy_decode", 2)
     val downloadOriginImage = boolPref("download_origin_image", false)
     val saveAsCbz = boolPref("save_as_cbz", false)
     val archiveMetadata = boolPref("archive_metadata", true)
