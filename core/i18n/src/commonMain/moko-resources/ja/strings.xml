@@ -283,8 +283,16 @@
     <string name="pref_reader_raw_wb_kelvin">ケルビン</string>
     <string name="pref_reader_raw_kelvin">色温度</string>
     <string name="pref_reader_raw_kelvin_summary">RAW 画像の色温度です。ホワイトバランスがケルビンのときに使います。</string>
-    <string name="pref_reader_raw_highlight">ハイライト</string>
+    <string name="pref_reader_raw_shadows">シャドウ</string>
+    <string name="pref_reader_raw_shadows_summary">RAW 画像の暗い部分を暗くする、または持ち上げます。</string>
+    <string name="pref_reader_raw_midtones">中間調</string>
+    <string name="pref_reader_raw_midtones_summary">RAW 画像の中間の明るさを暗く、または明るくします。</string>
+    <string name="pref_reader_raw_highlights">ハイライト</string>
+    <string name="pref_reader_raw_highlights_summary">RAW 画像の明るい部分を暗く、または明るくします。</string>
+    <string name="pref_reader_raw_highlight">HDR ブースト</string>
     <string name="pref_reader_raw_highlight_summary">明るい部分をペーパーホワイトへ寄せます。</string>
+    <string name="pref_reader_raw_hdr_linear">HDR リニア Rec.2020</string>
+    <string name="pref_reader_raw_hdr_linear_summary">HDR RAW ではカメラルックを使わず、リニア Rec.2020 のままにします。</string>
     <string name="pref_eink_refresh">電子ペーパー表示のリフレッシュ</string>
     <string name="pref_eink_refresh_summary">ページ切替後に画面をフラッシュし、電子ペーパーの残像を減らします。ギャラリーモードのみ。</string>
     <string name="pref_eink_refresh_duration">リフレッシュ点滅時間</string>

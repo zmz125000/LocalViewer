@@ -527,9 +527,13 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
                 // Camera RAW decode, exposure, white balance, and highlights change the bitmap.
                 readerCameraRaw.changesFlow().filter { pageLoader.containsRawStill() },
                 readerRawExposure.changesFlow().filter { pageLoader.containsRawStill() },
+                readerRawShadows.changesFlow().filter { pageLoader.containsRawStill() },
+                readerRawMidtones.changesFlow().filter { pageLoader.containsRawStill() },
+                readerRawHighlights.changesFlow().filter { pageLoader.containsRawStill() },
                 readerRawWhiteBalance.changesFlow().filter { pageLoader.containsRawStill() },
                 readerRawKelvin.changesFlow().filter { pageLoader.containsRawStill() },
                 readerRawHighlight.changesFlow().filter { pageLoader.containsRawStill() },
+                readerRawHdrLinear.changesFlow().filter { pageLoader.containsRawStill() },
             ).collect {
                 pageLoader.restart()
             }

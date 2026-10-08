@@ -311,7 +311,7 @@ inline void apply_hue_map(const HueMap& map, float& r, float& g, float& b, bool 
     b = bb;
 }
 
-inline void apply_camera_look(const CameraLook& look, float exposure_ev, float& r, float& g, float& b) {
+inline void apply_camera_look(const CameraLook& look, float exposure_ev, float& r, float& g, float& b, bool tone = true) {
     if (!std::isfinite(r) || !std::isfinite(g) || !std::isfinite(b)) {
         r = g = b = 0.f;
         return;
@@ -338,7 +338,7 @@ inline void apply_camera_look(const CameraLook& look, float exposure_ev, float& 
     g *= gain;
     b *= gain;
     if (look.has_look) apply_hue_map(look.look, r, g, b, look.overrange);
-    if (look.tone_active) apply_rgb_tone(look, r, g, b);
+    if (tone && look.tone_active) apply_rgb_tone(look, r, g, b);
     mul3(from_prophoto(look.space), r, g, b);
     if (!std::isfinite(r) || !std::isfinite(g) || !std::isfinite(b)) r = g = b = 0.f;
 }

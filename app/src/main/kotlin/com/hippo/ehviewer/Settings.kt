@@ -963,6 +963,21 @@ object Settings : DataStorePreferences(null) {
      * 0 leaves samples above sensor white as they are. Deep color and HDR only.
      */
     val readerRawHighlight = intPref("pref_reader_raw_highlight", 0)
+
+    /** Camera RAW shadows, −100..100. 0 leaves dark areas alone. */
+    val readerRawShadows = intPref("pref_reader_raw_shadows", 0)
+
+    /** Camera RAW midtones, −100..100. 0 leaves the middle of the picture alone. */
+    val readerRawMidtones = intPref("pref_reader_raw_midtones", 0)
+
+    /** Camera RAW highlights, −100..100. 0 leaves bright areas alone. */
+    val readerRawHighlights = intPref("pref_reader_raw_highlights", 0)
+
+    /**
+     * HDR RAW stays linear Rec.2020 and skips the camera look.
+     * Off keeps hue/saturation, the tone curve, and baseline exposure.
+     */
+    val readerRawHdrLinear = boolPref("pref_reader_raw_hdr_linear", false)
     val fullscreen = boolPref("fullscreen", true)
     val cutoutShort = boolPref("cutout_short", true)
     val keepScreenOn = boolPref("pref_keep_screen_on_key", true)
