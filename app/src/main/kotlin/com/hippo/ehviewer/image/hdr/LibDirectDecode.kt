@@ -251,6 +251,7 @@ object LibDirectDecode {
                 whiteBalance,
                 kelvin,
                 highlightStops,
+                Settings.readerRawHdrLinear.value && mode == RawPresent.Hdr,
                 outInfo,
                 outBoost,
             )
@@ -265,6 +266,7 @@ object LibDirectDecode {
                     whiteBalance,
                     kelvin,
                     highlightStops,
+                    Settings.readerRawHdrLinear.value && mode == RawPresent.Hdr,
                     outInfo,
                     outBoost,
                 )

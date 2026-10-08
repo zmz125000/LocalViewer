@@ -373,6 +373,11 @@ private fun CameraRawSetting() = Column {
             steps = 99,
         )
     }
+    SwitchChoice(
+        title = stringResource(id = R.string.pref_reader_raw_hdr_linear),
+        summary = stringResource(id = R.string.pref_reader_raw_hdr_linear_summary),
+        field = Settings.readerRawHdrLinear.asMutableState(),
+    )
     CommitSliderChoice(
         title = stringResource(id = R.string.pref_reader_raw_exposure),
         summary = stringResource(id = R.string.pref_reader_raw_exposure_summary),

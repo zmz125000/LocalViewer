@@ -861,6 +861,8 @@
     <string name="pref_reader_raw_kelvin_summary">RAW 影像的色溫。白平衡選色溫時使用。</string>
     <string name="pref_reader_raw_highlight">高光</string>
     <string name="pref_reader_raw_highlight_summary">將亮部拉向紙白。</string>
+    <string name="pref_reader_raw_hdr_linear">HDR 線性 Rec.2020</string>
+    <string name="pref_reader_raw_hdr_linear_summary">HDR RAW 略過相機風格，保持線性 Rec.2020。</string>
     <string name="pref_custom_brightness">自訂亮度</string>
     <string name="pref_custom_color_filter">色彩濾鏡</string>
     <string name="pref_keep_screen_on">保持螢幕恆亮</string>
