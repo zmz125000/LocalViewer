@@ -380,10 +380,27 @@ private fun CameraRawSetting() = Column {
     )
     CommitSliderChoice(
         title = stringResource(id = R.string.pref_reader_raw_exposure),
-        summary = stringResource(id = R.string.pref_reader_raw_exposure_summary),
         range = -30..30,
         field = Settings.readerRawExposure.asMutableState(),
         valueText = { "%+.1f".format(it / 10f) },
+    )
+    CommitSliderChoice(
+        title = stringResource(id = R.string.pref_reader_raw_shadows),
+        range = -100..100,
+        field = Settings.readerRawShadows.asMutableState(),
+        valueText = { "%+d".format(it) },
+    )
+    CommitSliderChoice(
+        title = stringResource(id = R.string.pref_reader_raw_midtones),
+        range = -100..100,
+        field = Settings.readerRawMidtones.asMutableState(),
+        valueText = { "%+d".format(it) },
+    )
+    CommitSliderChoice(
+        title = stringResource(id = R.string.pref_reader_raw_highlights),
+        range = -100..100,
+        field = Settings.readerRawHighlights.asMutableState(),
+        valueText = { "%+d".format(it) },
     )
     CommitSliderChoice(
         title = stringResource(id = R.string.pref_reader_raw_highlight),

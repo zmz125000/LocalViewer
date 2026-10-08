@@ -507,9 +507,41 @@ float raw_linear_sample(float scene_over_white, float exposure_ev, float highlig
     return static_cast<float>(y);
 }
 
+float zone_smooth(float edge0, float edge1, float x) {
+    float t = (x - edge0) / (edge1 - edge0);
+    t = std::clamp(t, 0.f, 1.f);
+    return t * t * (3.f - 2.f * t);
+}
+
+// shadows, midtones, and highlights are −1..1. 0 leaves the pixel alone.
+// The weight is taken from compressed luminance so a value above 1 still counts
+// as a highlight, and each slider mostly moves its own part of the picture.
+void apply_raw_zones(float& r, float& g, float& b, float shadows, float midtones, float highlights) {
+    shadows = std::isfinite(shadows) ? std::clamp(shadows, -1.f, 1.f) : 0.f;
+    midtones = std::isfinite(midtones) ? std::clamp(midtones, -1.f, 1.f) : 0.f;
+    highlights = std::isfinite(highlights) ? std::clamp(highlights, -1.f, 1.f) : 0.f;
+    if (shadows == 0.f && midtones == 0.f && highlights == 0.f) return;
+    r = std::max(r, 0.f);
+    g = std::max(g, 0.f);
+    b = std::max(b, 0.f);
+    const float luma = 0.2126f * r + 0.7152f * g + 0.0722f * b;
+    const float s = luma / (1.f + luma);
+    const float shadow_w = 1.f - zone_smooth(0.02f, 0.42f, s);
+    const float mid_d = (s - 0.33f) / 0.14f;
+    const float mid_w = std::exp(-0.5f * mid_d * mid_d);
+    const float high_w = zone_smooth(0.38f, 0.90f, s);
+    const float ev = shadows * shadow_w * 1.5f + midtones * mid_w * 1.f + highlights * high_w * 1.5f;
+    float gain = std::exp2(ev);
+    if (!std::isfinite(gain) || gain < 0.f) gain = 1.f;
+    const float lift = shadows * shadow_w * 0.04f;
+    r = std::max(0.f, r * gain + lift);
+    g = std::max(0.f, g * gain + lift);
+    b = std::max(0.f, b * gain + lift);
+}
+
 bool pack_image(const libraw_processed_image_t* img, int max_edge, int present, float panel_boost,
                 float exposure_ev, float highlight_stops, const rawlook::CameraLook* look, bool hdr_linear,
-                float camera_white, Decoded& out) {
+                float camera_white, float shadows, float midtones, float highlights, Decoded& out) {
     if (!img || img->width == 0 || img->height == 0) return false;
     if (img->type != LIBRAW_IMAGE_BITMAP) return false;
     const int sw = img->width;
@@ -586,10 +618,13 @@ bool pack_image(const libraw_processed_image_t* img, int max_edge, int present, 
                 float rgb[3];
                 const float scale = linear_hdr ? paper : white;
                 for (int c = 0; c < 3; ++c) rgb[c] = static_cast<float>(ch[c] / scale);
+                // LibRaw's linear RGB, before the camera look. The tone curve then
+                // shapes the adjusted values instead of a slider fighting the shoulder.
+                apply_raw_zones(rgb[0], rgb[1], rgb[2], shadows, midtones, highlights);
                 auto rec_luma = [](float r, float g, float b) {
                     return 0.2126f * r + 0.7152f * g + 0.0722f * b;
                 };
-                const float lum = rec_luma(static_cast<float>(ch[0]), static_cast<float>(ch[1]), static_cast<float>(ch[2]));
+                const float lum = rec_luma(rgb[0], rgb[1], rgb[2]) * scale;
                 if (look && !linear_hdr && hdr && lum > paper) {
                     // Curve the paper-white version of this color, then extend with the
                     // hue/sat result (no shoulder) so the roll-off stays proportional.
@@ -922,7 +957,7 @@ float highlight_fit(const LibRaw& raw, float sat_fit) {
 
 bool process_open_raw(HeadroomRaw& raw, const uint8_t* tiff, size_t tiff_len, int max_edge, int present, float panel_boost,
                       int demosaic_qual, int wb_mode, float exposure_ev, float highlight_stops, int kelvin,
-                      bool hdr_linear, Decoded& out) {
+                      bool hdr_linear, float shadows, float midtones, float highlights, Decoded& out) {
     configure_process(raw, present, max_edge, demosaic_qual, wb_mode, kelvin);
     if (raw.unpack() != LIBRAW_SUCCESS) return false;
     // After unpack: lossless JPEG may have cleared the DNG black tag.
@@ -956,7 +991,7 @@ bool process_open_raw(HeadroomRaw& raw, const uint8_t* tiff, size_t tiff_len, in
         look_ptr = &look;
     }
     bool ok = pack_image(img, max_edge, present, panel_boost, pack_ev, highlight_stops, look_ptr, linear_hdr,
-                          camera_white, out);
+                          camera_white, shadows, midtones, highlights, out);
     LibRaw::dcraw_clear_mem(img);
     return ok;
 }
@@ -977,7 +1012,7 @@ bool libraw_thumb_file(const char* path, const uint8_t* mem, size_t mem_len, con
         ok = write_file(out_path, img->data, img->data_size);
     } else if (img->type == LIBRAW_IMAGE_BITMAP && img->bits == 8 && img->colors >= 3) {
         Decoded packed;
-        if (pack_image(img, 0, /*present=*/0, 1.f, 0.f, 0.f, nullptr, false, 0.f, packed)) {
+        if (pack_image(img, 0, /*present=*/0, 1.f, 0.f, 0.f, nullptr, false, 0.f, 0.f, 0.f, 0.f, packed)) {
             ok = write_rgba8_jpeg(packed.pixels.data(), packed.w, packed.h, out_path, 85);
         }
     }
@@ -993,7 +1028,7 @@ bool demosaic_cover_jpeg(const char* path, const uint8_t* mem, size_t mem_len, c
     Decoded decoded;
     // Bilinear is enough for a 512 px cover. Same as-shot process as the reader.
     if (!process_open_raw(raw, mem, mem_len, 512, /*present=*/0, 1.f, /*demosaic_qual=*/0, /*wb_mode=*/0, 0.f, 0.f,
-                          5200, false, decoded)) {
+                          5200, false, 0.f, 0.f, 0.f, decoded)) {
         return false;
     }
     if (decoded.format != 0) return false;
@@ -1050,7 +1085,8 @@ extern "C" JNIEXPORT jbyteArray JNICALL
 Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeRawFileToDirect(JNIEnv* env, jclass, jstring j_path, jint max_edge,
                                                                jint present, jfloat panel_boost, jfloat exposure_ev,
                                                                jint wb_mode, jint kelvin, jfloat highlight_stops,
-                                                               jboolean hdr_linear, jintArray j_info, jfloatArray j_boost) {
+                                                               jboolean hdr_linear, jfloat shadows, jfloat midtones,
+                                                               jfloat highlights, jintArray j_info, jfloatArray j_boost) {
 #if !defined(EHVIEWER_HDR_CODECS)
     (void)env;
     (void)j_path;
@@ -1062,6 +1098,9 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeRawFileToDirect(JNIEnv* env, jcla
     (void)kelvin;
     (void)highlight_stops;
     (void)hdr_linear;
+    (void)shadows;
+    (void)midtones;
+    (void)highlights;
     (void)j_info;
     (void)j_boost;
     return nullptr;
@@ -1078,6 +1117,7 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeRawFileToDirect(JNIEnv* env, jcla
             int mode = present < 0 ? 0 : (present > 2 ? 2 : present);
             float exposure = std::isfinite(exposure_ev) ? std::clamp(exposure_ev, -3.f, 3.f) : 0.f;
             float stops = std::isfinite(highlight_stops) ? std::clamp(highlight_stops, 0.f, 3.f) : 0.f;
+            auto zone = [](float v) { return std::isfinite(v) ? std::clamp(v, -1.f, 1.f) : 0.f; };
             int wb = std::clamp(wb_mode, 0, 8);
             int temp = std::clamp(kelvin, 2000, 12000);
             std::vector<uint8_t> file;
@@ -1089,7 +1129,8 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeRawFileToDirect(JNIEnv* env, jcla
                 tiff_len = file.size();
             }
             if (process_open_raw(raw, tiff, tiff_len, max_edge, mode, panel_boost, /*demosaic_qual=*/3, wb, exposure,
-                                 stops, temp, hdr_linear == JNI_TRUE, decoded)) {
+                                 stops, temp, hdr_linear == JNI_TRUE, zone(shadows), zone(midtones), zone(highlights),
+                                 decoded)) {
                 result = decoded_to_java(env, decoded, j_info, j_boost);
             }
         }
@@ -1107,6 +1148,7 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeRawBytesToDirect(JNIEnv* env, jcl
                                                                 jint max_edge, jint present, jfloat panel_boost,
                                                                 jfloat exposure_ev, jint wb_mode, jint kelvin,
                                                                 jfloat highlight_stops, jboolean hdr_linear,
+                                                                jfloat shadows, jfloat midtones, jfloat highlights,
                                                                 jintArray j_info, jfloatArray j_boost) {
 #if !defined(EHVIEWER_HDR_CODECS)
     (void)env;
@@ -1119,6 +1161,9 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeRawBytesToDirect(JNIEnv* env, jcl
     (void)kelvin;
     (void)highlight_stops;
     (void)hdr_linear;
+    (void)shadows;
+    (void)midtones;
+    (void)highlights;
     (void)j_info;
     (void)j_boost;
     return nullptr;
@@ -1137,12 +1182,14 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeRawBytesToDirect(JNIEnv* env, jcl
             int mode = present < 0 ? 0 : (present > 2 ? 2 : present);
             float exposure = std::isfinite(exposure_ev) ? std::clamp(exposure_ev, -3.f, 3.f) : 0.f;
             float stops = std::isfinite(highlight_stops) ? std::clamp(highlight_stops, 0.f, 3.f) : 0.f;
+            auto zone = [](float v) { return std::isfinite(v) ? std::clamp(v, -1.f, 1.f) : 0.f; };
             int wb = std::clamp(wb_mode, 0, 8);
             int temp = std::clamp(kelvin, 2000, 12000);
             const uint8_t* tiff = reinterpret_cast<const uint8_t*>(bytes);
             size_t tiff_len = static_cast<size_t>(len);
             if (process_open_raw(raw, tiff, tiff_len, max_edge, mode, panel_boost, /*demosaic_qual=*/3, wb, exposure,
-                                 stops, temp, hdr_linear == JNI_TRUE, decoded)) {
+                                 stops, temp, hdr_linear == JNI_TRUE, zone(shadows), zone(midtones), zone(highlights),
+                                 decoded)) {
                 result = decoded_to_java(env, decoded, j_info, j_boost);
             }
         }
