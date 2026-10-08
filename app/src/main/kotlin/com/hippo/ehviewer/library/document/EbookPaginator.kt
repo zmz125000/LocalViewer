@@ -27,6 +27,11 @@ internal data class EbookStyle(
     val indentEm: Int = 2,
     val marginPercent: Int = 7,
     val verticalMarginPercent: Int = 2,
+    /**
+     * Page width / height. A-series keeps webtoon sheets stable. Single-page mode
+     * uses the viewer so the page fills the screen instead of letterboxing.
+     */
+    val pageAspect: Float = EbookPaginator.ASPECT,
     val justify: Boolean = false,
     val hyphenate: Boolean = false,
     /** When on, a paragraph's own alignment replaces [justify]. */
@@ -68,7 +73,7 @@ internal object EbookPaginator {
     }
 
     fun contentHeightEm(style: EbookStyle = EbookStyle.DEFAULT): Float {
-        val invAspect = 1f / ASPECT
+        val invAspect = 1f / style.pageAspect.coerceIn(0.25f, 2.8f)
         val v = style.verticalMargin.coerceIn(0f, 0.45f)
         return (invAspect * (1f - 2f * v)).coerceAtLeast(0.2f) / style.fontFraction.coerceAtLeast(0.01f)
     }
