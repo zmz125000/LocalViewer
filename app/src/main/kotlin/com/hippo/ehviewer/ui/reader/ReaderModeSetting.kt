@@ -11,6 +11,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.integerArrayResource
@@ -373,12 +374,34 @@ private fun CameraRawSetting() = Column {
             steps = 99,
         )
     }
+    SwitchChoice(
+        title = stringResource(id = R.string.pref_reader_raw_hdr_linear),
+        summary = stringResource(id = R.string.pref_reader_raw_hdr_linear_summary),
+        field = Settings.readerRawHdrLinear.asMutableState(),
+    )
     CommitSliderChoice(
         title = stringResource(id = R.string.pref_reader_raw_exposure),
-        summary = stringResource(id = R.string.pref_reader_raw_exposure_summary),
         range = -30..30,
         field = Settings.readerRawExposure.asMutableState(),
         valueText = { "%+.1f".format(it / 10f) },
+    )
+    CommitSliderChoice(
+        title = stringResource(id = R.string.pref_reader_raw_shadows),
+        range = -100..100,
+        field = Settings.readerRawShadows.asMutableState(),
+        valueText = { "%+d".format(it) },
+    )
+    CommitSliderChoice(
+        title = stringResource(id = R.string.pref_reader_raw_midtones),
+        range = -100..100,
+        field = Settings.readerRawMidtones.asMutableState(),
+        valueText = { "%+d".format(it) },
+    )
+    CommitSliderChoice(
+        title = stringResource(id = R.string.pref_reader_raw_highlights),
+        range = -100..100,
+        field = Settings.readerRawHighlights.asMutableState(),
+        valueText = { "%+d".format(it) },
     )
     CommitSliderChoice(
         title = stringResource(id = R.string.pref_reader_raw_highlight),
@@ -387,6 +410,12 @@ private fun CameraRawSetting() = Column {
         field = Settings.readerRawHighlight.asMutableState(),
         valueText = { "%.1f".format(it / 10f) },
     )
+    TextButton(
+        onClick = { Settings.resetReaderRaw() },
+        modifier = Modifier.padding(horizontal = 4.dp),
+    ) {
+        Text(text = stringResource(id = R.string.pref_reader_raw_reset))
+    }
 }
 
 @Composable

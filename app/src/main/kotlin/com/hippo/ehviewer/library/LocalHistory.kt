@@ -658,6 +658,98 @@ object LocalHistory {
     }
 
     /**
+     * History for a local folder reader (library row or browse folder gallery).
+     * SMB / WebDAV record from the reader args alone. Local used to require
+     * [BrowseSession.localStack], so History → reader (no parent dir pushed)
+     * never bumped the row. Prefer identity already on [info].
+     */
+    suspend fun recordLocalFolderReader(
+        path: String,
+        info: BaseGalleryInfo?,
+        pages: Int = 0,
+    ) {
+        val fallback = path.trimEnd('/').substringAfterLast('/').ifEmpty { "Folder" }
+        if (recordFromLocalGalleryInfo(info, pages, fallback)) return
+        val frame = BrowseSession.localStack.lastOrNull() ?: run {
+            info?.let { EhDB.putHistoryInfo(it) }
+            return
+        }
+        val rel = if (path == frame.path) {
+            frame.relativePath
+        } else {
+            val name = path.trimEnd('/').substringAfterLast('/')
+            if (frame.relativePath.isEmpty()) name else "${frame.relativePath}/$name"
+        }
+        recordLocalFolderGallery(
+            rootId = frame.rootId,
+            relativePath = rel,
+            title = info?.title ?: fallback,
+            thumbKey = info?.thumbKey,
+            pages = pages.takeIf { it > 0 } ?: info?.pages ?: 0,
+            info = info,
+        )
+    }
+
+    /**
+     * History for a local zip-as-dir reader. Same identity rule as
+     * [recordLocalFolderReader]: do not depend on the browse stack.
+     */
+    suspend fun recordLocalZipFolderReader(
+        zipPath: String,
+        innerRel: String,
+        info: BaseGalleryInfo?,
+        pages: Int,
+    ) {
+        val fallback = innerRel.trim('/').substringAfterLast('/')
+            .ifEmpty { zipPath.trimEnd('/').substringAfterLast('/').ifEmpty { "Archive" } }
+        if (recordFromLocalGalleryInfo(info, pages, fallback)) return
+        val hist = zipAsDirHistoryRel(zipPath, innerRel, BrowseSession.localStack.lastOrNull())
+        if (hist != null) {
+            recordLocalFolderGallery(
+                rootId = hist.first,
+                relativePath = hist.second,
+                title = info?.title ?: fallback,
+                thumbKey = info?.thumbKey,
+                pages = pages,
+                info = info,
+            )
+        } else {
+            info?.let { EhDB.putHistoryInfo(it) }
+        }
+    }
+
+    /**
+     * @return true when [info] already names a library or local folder gallery
+     * and that history row was recorded.
+     */
+    private suspend fun recordFromLocalGalleryInfo(
+        info: BaseGalleryInfo?,
+        pages: Int,
+        titleFallback: String,
+    ): Boolean {
+        val gallery = info ?: return false
+        return when (val target = parse(gallery)) {
+            is LocalHistoryTarget.LibraryGallery -> {
+                val lib = LocalLibrary.loadGallery(target.galleryId) ?: return false
+                recordLibraryGallery(lib)
+                true
+            }
+            is LocalHistoryTarget.LocalFolderGallery -> {
+                recordLocalFolderGallery(
+                    rootId = target.rootId,
+                    relativePath = target.relativePath,
+                    title = gallery.title?.ifBlank { null } ?: titleFallback,
+                    thumbKey = gallery.thumbKey,
+                    pages = pages.takeIf { it > 0 } ?: gallery.pages,
+                    info = gallery,
+                )
+                true
+            }
+            else -> false
+        }
+    }
+
+    /**
      * Local browse folder gallery → History opens reader (not dir listing).
      * [thumbKey]: absolute cover path. Null keeps prior key on re-record (sibling hop).
      * Gid matches reader progress: [stableGalleryId](rootId, rel).

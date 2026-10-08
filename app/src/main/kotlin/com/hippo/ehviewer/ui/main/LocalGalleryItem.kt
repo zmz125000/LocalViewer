@@ -60,6 +60,7 @@ import com.ehviewer.core.model.GalleryInfo
 import com.ehviewer.core.ui.component.ElevatedCard
 import com.ehviewer.core.util.withIOContext
 import com.hippo.ehviewer.EhDB
+import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.coil.CoverThumb
 import com.hippo.ehviewer.coil.coverThumbRequest
 import com.hippo.ehviewer.library.ArchiveCoverCache
@@ -337,6 +338,8 @@ fun HistoryListItem(
         readProgress = readProgress,
     )
     val listDecodePx = CoverThumb.listDecodePx()
+    val browseFolderThumbs by Settings.browseFolderThumbs.collectAsState()
+    val directoryWithoutThumb = LocalHistory.isBrowseDirectory(info) && !browseFolderThumbs
     val coverKey = remember(info.gid, info.thumbKey, info.token, info.uploader) {
         historyCoverKey(info)
     }
@@ -353,15 +356,29 @@ fun HistoryListItem(
             BrowseListSupportingContent(text = metaLine, typeIcon = placeholderIcon)
         },
         leadingContent = {
-            CoverImage(
-                coverPath = coverKey,
-                progressGid = info.gid,
-                sizePx = listDecodePx,
-                placeholder = placeholderIcon,
-                modifier = Modifier
-                    .size(LibraryListLeadSize)
-                    .clip(ShapeDefaults.Medium),
-            )
+            if (directoryWithoutThumb) {
+                Box(
+                    modifier = Modifier.size(LibraryListLeadSize),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        Icons.Default.Folder,
+                        contentDescription = null,
+                        modifier = Modifier.size(BrowseListLeadingIconSize),
+                        tint = MaterialTheme.colorScheme.primary,
+                    )
+                }
+            } else {
+                CoverImage(
+                    coverPath = coverKey,
+                    progressGid = info.gid,
+                    sizePx = listDecodePx,
+                    placeholder = placeholderIcon,
+                    modifier = Modifier
+                        .size(LibraryListLeadSize)
+                        .clip(ShapeDefaults.Medium),
+                )
+            }
         },
         trailingContent = overflow?.let { actions ->
             {
@@ -504,8 +521,9 @@ fun HistoryGridItem(
 
 /**
  * History **Directories** section grid cell — same square layout as Library
- * [FavoriteSourceGridCell]: full-bleed cover + bottom scrim when a thumb is cached;
- * otherwise 42.dp folder icon + caption (Lan/Cloud badge for network browse pins).
+ * [FavoriteSourceGridCell]: full-bleed cover + bottom scrim when folder thumbs are on
+ * and a thumb is cached. Off ([Settings.browseFolderThumbs]) keeps the folder icon
+ * and does not resolve a thumb. Lan/Cloud badge for network browse pins.
  */
 @Composable
 fun HistoryDirectoryGridItem(
@@ -517,14 +535,17 @@ fun HistoryDirectoryGridItem(
 ) {
     val namePadH = GalleryGridDefaults.namePaddingH()
     val namePadBottom = GalleryGridDefaults.namePaddingBottom()
+    val browseFolderThumbs by Settings.browseFolderThumbs.collectAsState()
     val coverKey = remember(info.gid, info.thumbKey, info.token, info.uploader) {
         historyCoverKey(info)
     }
-    var resolvedThumb by remember(coverKey) { mutableStateOf<String?>(null) }
-    LaunchedEffect(coverKey) {
-        resolvedThumb = withIOContext { HistoryThumbKey.resolveReadablePath(coverKey) }
+    var resolvedThumb by remember(coverKey, browseFolderThumbs) { mutableStateOf<String?>(null) }
+    if (browseFolderThumbs) {
+        LaunchedEffect(coverKey) {
+            resolvedThumb = withIOContext { HistoryThumbKey.resolveReadablePath(coverKey) }
+        }
     }
-    val useThumbStyle = resolvedThumb != null
+    val useThumbStyle = browseFolderThumbs && resolvedThumb != null
     val networkBadge = when (info.token) {
         SMB_BROWSE_TOKEN -> Icons.Default.Lan
         WEBDAV_BROWSE_TOKEN -> Icons.Default.Cloud

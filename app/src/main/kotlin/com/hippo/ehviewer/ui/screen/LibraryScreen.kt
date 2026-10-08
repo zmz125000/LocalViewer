@@ -845,10 +845,13 @@ private fun FavoriteSourceListRow(
     onLongClick: () -> Unit,
 ) {
     val haptic = LocalHapticFeedback.current
+    val browseFolderThumbs by Settings.browseFolderThumbs.collectAsState()
     val folderThumbKey = folderFavoriteThumbKey(fav)
-    var resolvedThumb by remember(folderThumbKey) { mutableStateOf<String?>(null) }
-    LaunchedEffect(folderThumbKey) {
-        resolvedThumb = withIOContext { HistoryThumbKey.resolveReadablePath(folderThumbKey) }
+    var resolvedThumb by remember(folderThumbKey, browseFolderThumbs) { mutableStateOf<String?>(null) }
+    if (browseFolderThumbs && folderThumbKey != null) {
+        LaunchedEffect(folderThumbKey) {
+            resolvedThumb = withIOContext { HistoryThumbKey.resolveReadablePath(folderThumbKey) }
+        }
     }
     val leadSize = 56.dp
     val listDecodePx = CoverThumb.listDecodePx()
@@ -884,7 +887,7 @@ private fun FavoriteSourceListRow(
                         .size(leadSize)
                         .clip(ShapeDefaults.Medium),
                 )
-                resolvedThumb != null -> CoverImage(
+                browseFolderThumbs && resolvedThumb != null -> CoverImage(
                     coverPath = folderThumbKey,
                     sizePx = listDecodePx,
                     placeholder = Icons.Default.Folder,
@@ -920,8 +923,10 @@ private fun FavoriteSourceListRow(
 /**
  * Square favourite grid cell (column width from [GalleryGridDefaults]).
  * Sources: 42.dp icon above caption.
- * Galleries + folder favourites with a **cache-hit** thumb: full-bleed cover + bottom
- * label scrim (same as favourite gallery). Miss / no key keeps classic icon layout.
+ * Galleries, and folder favourites with a **cache-hit** thumb while
+ * [Settings.browseFolderThumbs] is on: full-bleed cover + bottom label scrim.
+ * Folder thumbs off, or a miss / no key: classic folder icon layout. The thumb
+ * resolve effect does not run when folder thumbs are off.
  */
 @Composable
 internal fun FavoriteSourceGridCell(
@@ -934,12 +939,16 @@ internal fun FavoriteSourceGridCell(
 ) {
     val namePadH = GalleryGridDefaults.namePaddingH()
     val namePadBottom = GalleryGridDefaults.namePaddingBottom()
+    val browseFolderThumbs by Settings.browseFolderThumbs.collectAsState()
     val folderThumbKey = folderFavoriteThumbKey(fav)
-    var resolvedFolderThumb by remember(folderThumbKey) { mutableStateOf<String?>(null) }
-    LaunchedEffect(folderThumbKey) {
-        resolvedFolderThumb = withIOContext { HistoryThumbKey.resolveReadablePath(folderThumbKey) }
+    var resolvedFolderThumb by remember(folderThumbKey, browseFolderThumbs) { mutableStateOf<String?>(null) }
+    if (browseFolderThumbs && folderThumbKey != null) {
+        LaunchedEffect(folderThumbKey) {
+            resolvedFolderThumb = withIOContext { HistoryThumbKey.resolveReadablePath(folderThumbKey) }
+        }
     }
-    val useGalleryThumbStyle = fav is FavoriteBrowseSource.Gallery || resolvedFolderThumb != null
+    val useGalleryThumbStyle = fav is FavoriteBrowseSource.Gallery ||
+        (browseFolderThumbs && resolvedFolderThumb != null)
     ElevatedCard(
         onClick = onClick,
         onLongClick = onLongClick,

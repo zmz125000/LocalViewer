@@ -556,15 +556,30 @@ fun BrowseDirectoryRow(
                 ),
             )
         },
-        // Same 56dp leading slot as [BrowseFolderGalleryRow] (icon placeholder when no thumb).
+        // Same 56dp leading slot as [BrowseFolderGalleryRow]. Thumbs off: folder icon only,
+        // so [BrowseCoverThumb]'s fetch effect is not started.
         leadingContent = {
-            BrowseCoverThumb(
-                cover = cover.takeIf { showFolderThumb },
-                decodeSizePx = CoverThumb.listDecodePx(),
-                retryKey = thumbRetryKey,
-                allowRemoteFetch = allowRemoteFetch,
-                placeholderIcon = Icons.Default.Folder,
-            )
+            if (showFolderThumb && cover != null) {
+                BrowseCoverThumb(
+                    cover = cover,
+                    decodeSizePx = CoverThumb.listDecodePx(),
+                    retryKey = thumbRetryKey,
+                    allowRemoteFetch = allowRemoteFetch,
+                    placeholderIcon = Icons.Default.Folder,
+                )
+            } else {
+                Box(
+                    modifier = Modifier.size(56.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        Icons.Default.Folder,
+                        contentDescription = null,
+                        modifier = Modifier.size(BrowseListLeadingIconSize),
+                        tint = MaterialTheme.colorScheme.primary,
+                    )
+                }
+            }
         },
         trailingContent = overflow?.let { actions ->
             {

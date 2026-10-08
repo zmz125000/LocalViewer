@@ -108,12 +108,10 @@ import com.hippo.ehviewer.gallery.useStreamArchivePageLoader
 import com.hippo.ehviewer.gallery.useTarChunkPageLoader
 import com.hippo.ehviewer.gallery.useWebDavFolderPageLoader
 import com.hippo.ehviewer.gallery.useZipFolderPageLoader
-import com.hippo.ehviewer.library.BrowseSession
 import com.hippo.ehviewer.library.FolderGalleryIndex
 import com.hippo.ehviewer.library.GallerySiblingNavigator
 import com.hippo.ehviewer.library.LandscapeCoverMarks
 import com.hippo.ehviewer.library.LocalHistory
-import com.hippo.ehviewer.library.LocalLibrary
 import com.hippo.ehviewer.library.MediaStoreFs
 import com.hippo.ehviewer.library.ReaderImageList
 import com.hippo.ehviewer.library.ZipAsDirListing
@@ -153,7 +151,6 @@ import eu.kanade.tachiyomi.ui.reader.ReaderContentOverlay
 import eu.kanade.tachiyomi.ui.reader.ReaderPageSheetMeta
 import eu.kanade.tachiyomi.ui.reader.setting.DecodeSizeType
 import eu.kanade.tachiyomi.ui.reader.setting.ReadingModeType
-import java.io.File
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.coroutines.resume
 import kotlinx.coroutines.CancellationException
@@ -468,51 +465,17 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
                     pages = args.info?.pages ?: 0,
                     info = args.info,
                 )
-                is ReaderScreenArgs.LocalFolder -> {
-                    val libId = args.info?.gid
-                    val lib = libId?.let { LocalLibrary.loadGallery(it) }
-                    if (lib != null) {
-                        LocalHistory.recordLibraryGallery(lib)
-                    } else {
-                        val frame = BrowseSession.localStack.lastOrNull() ?: return@withIOContext
-                        val rel = if (args.path == frame.path) {
-                            frame.relativePath
-                        } else {
-                            val name = args.path.toPath().name
-                            if (frame.relativePath.isEmpty()) name else "${frame.relativePath}/$name"
-                        }
-                        LocalHistory.recordLocalFolderGallery(
-                            rootId = frame.rootId,
-                            relativePath = rel,
-                            title = args.info?.title ?: args.path.toPath().name,
-                            thumbKey = args.info?.thumbKey,
-                            pages = args.info?.pages ?: 0,
-                            info = args.info,
-                        )
-                    }
-                }
-                is ReaderScreenArgs.LocalZipFolder -> {
-                    val hist = LocalHistory.zipAsDirHistoryRel(
-                        args.zipPath,
-                        args.innerRel,
-                        BrowseSession.localStack.lastOrNull(),
-                    )
-                    if (hist != null) {
-                        LocalHistory.recordLocalFolderGallery(
-                            rootId = hist.first,
-                            relativePath = hist.second,
-                            title = args.info?.title
-                                ?: args.innerRel.trim('/').substringAfterLast('/').ifEmpty {
-                                    File(args.zipPath).name
-                                },
-                            thumbKey = args.info?.thumbKey,
-                            pages = args.imageNames.size,
-                            info = args.info,
-                        )
-                    } else {
-                        args.info?.let { LocalHistory.ensureGalleryForProgress(it) }
-                    }
-                }
+                is ReaderScreenArgs.LocalFolder -> LocalHistory.recordLocalFolderReader(
+                    path = args.path,
+                    info = args.info,
+                    pages = args.info?.pages ?: 0,
+                )
+                is ReaderScreenArgs.LocalZipFolder -> LocalHistory.recordLocalZipFolderReader(
+                    zipPath = args.zipPath,
+                    innerRel = args.innerRel,
+                    info = args.info,
+                    pages = args.imageNames.size,
+                )
                 is ReaderScreenArgs.SmbFolder -> LocalHistory.recordSmbFolderGallery(
                     sourceId = args.sourceId,
                     remoteDir = args.remoteDir,
@@ -564,9 +527,13 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
                 // Camera RAW decode, exposure, white balance, and highlights change the bitmap.
                 readerCameraRaw.changesFlow().filter { pageLoader.containsRawStill() },
                 readerRawExposure.changesFlow().filter { pageLoader.containsRawStill() },
+                readerRawShadows.changesFlow().filter { pageLoader.containsRawStill() },
+                readerRawMidtones.changesFlow().filter { pageLoader.containsRawStill() },
+                readerRawHighlights.changesFlow().filter { pageLoader.containsRawStill() },
                 readerRawWhiteBalance.changesFlow().filter { pageLoader.containsRawStill() },
                 readerRawKelvin.changesFlow().filter { pageLoader.containsRawStill() },
                 readerRawHighlight.changesFlow().filter { pageLoader.containsRawStill() },
+                readerRawHdrLinear.changesFlow().filter { pageLoader.containsRawStill() },
             ).collect {
                 pageLoader.restart()
             }
@@ -963,30 +930,11 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
                     sibling.let { s ->
                         withIOContext {
                             when (s) {
-                                is ReaderScreenArgs.LocalFolder -> {
-                                    val libId = s.info?.gid
-                                    val lib = libId?.let { LocalLibrary.loadGallery(it) }
-                                    if (lib != null) {
-                                        LocalHistory.recordLibraryGallery(lib)
-                                        return@withIOContext
-                                    }
-                                    val frame = BrowseSession.localStack.lastOrNull()
-                                        ?: return@withIOContext
-                                    val rel = if (s.path == frame.path) {
-                                        frame.relativePath
-                                    } else {
-                                        val name = s.path.toPath().name
-                                        if (frame.relativePath.isEmpty()) name else "${frame.relativePath}/$name"
-                                    }
-                                    LocalHistory.recordLocalFolderGallery(
-                                        rootId = frame.rootId,
-                                        relativePath = rel,
-                                        title = s.info?.title ?: s.path.toPath().name,
-                                        thumbKey = s.info?.thumbKey,
-                                        pages = s.info?.pages ?: 0,
-                                        info = s.info,
-                                    )
-                                }
+                                is ReaderScreenArgs.LocalFolder -> LocalHistory.recordLocalFolderReader(
+                                    path = s.path,
+                                    info = s.info,
+                                    pages = s.info?.pages ?: 0,
+                                )
                                 is ReaderScreenArgs.WebDavFolder -> {
                                     LocalHistory.recordWebDavFolderGallery(
                                         sourceId = s.sourceId,
@@ -1032,28 +980,12 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
                                 is ReaderScreenArgs.Archive -> {
                                     LocalHistory.recordLocalArchive(s.path)
                                 }
-                                is ReaderScreenArgs.LocalZipFolder -> {
-                                    val hist = LocalHistory.zipAsDirHistoryRel(
-                                        s.zipPath,
-                                        s.innerRel,
-                                        BrowseSession.localStack.lastOrNull(),
-                                    )
-                                    if (hist != null) {
-                                        LocalHistory.recordLocalFolderGallery(
-                                            rootId = hist.first,
-                                            relativePath = hist.second,
-                                            title = s.info?.title
-                                                ?: s.innerRel.trim('/').substringAfterLast('/').ifEmpty {
-                                                    File(s.zipPath).name
-                                                },
-                                            thumbKey = s.info?.thumbKey,
-                                            pages = s.imageNames.size,
-                                            info = s.info,
-                                        )
-                                    } else {
-                                        s.info?.let { LocalHistory.ensureGalleryForProgress(it) }
-                                    }
-                                }
+                                is ReaderScreenArgs.LocalZipFolder -> LocalHistory.recordLocalZipFolderReader(
+                                    zipPath = s.zipPath,
+                                    innerRel = s.innerRel,
+                                    info = s.info,
+                                    pages = s.imageNames.size,
+                                )
                                 is ReaderScreenArgs.LocalImageList -> Unit
                             }
                         }
