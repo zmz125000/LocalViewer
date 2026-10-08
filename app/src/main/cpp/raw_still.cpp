@@ -514,8 +514,8 @@ float zone_smooth(float edge0, float edge1, float x) {
 }
 
 // shadows, midtones, and highlights are −1..1. 0 leaves the pixel alone.
-// The weight is taken from compressed luminance so a value above 1 still counts
-// as a highlight, and each slider mostly moves its own part of the picture.
+// Applied to the developed sample. The weight is taken from compressed luminance
+// so a value above 1 still counts as a highlight.
 void apply_raw_zones(float& r, float& g, float& b, float shadows, float midtones, float highlights) {
     shadows = std::isfinite(shadows) ? std::clamp(shadows, -1.f, 1.f) : 0.f;
     midtones = std::isfinite(midtones) ? std::clamp(midtones, -1.f, 1.f) : 0.f;
@@ -618,13 +618,10 @@ bool pack_image(const libraw_processed_image_t* img, int max_edge, int present, 
                 float rgb[3];
                 const float scale = linear_hdr ? paper : white;
                 for (int c = 0; c < 3; ++c) rgb[c] = static_cast<float>(ch[c] / scale);
-                // LibRaw's linear RGB, before the camera look. The tone curve then
-                // shapes the adjusted values instead of a slider fighting the shoulder.
-                apply_raw_zones(rgb[0], rgb[1], rgb[2], shadows, midtones, highlights);
                 auto rec_luma = [](float r, float g, float b) {
                     return 0.2126f * r + 0.7152f * g + 0.0722f * b;
                 };
-                const float lum = rec_luma(rgb[0], rgb[1], rgb[2]) * scale;
+                const float lum = rec_luma(static_cast<float>(ch[0]), static_cast<float>(ch[1]), static_cast<float>(ch[2]));
                 if (look && !linear_hdr && hdr && lum > paper) {
                     // Curve the paper-white version of this color, then extend with the
                     // hue/sat result (no shoulder) so the roll-off stays proportional.
@@ -645,6 +642,9 @@ bool pack_image(const libraw_processed_image_t* img, int max_edge, int present, 
                     if (!std::isfinite(gain) || gain < 0.f) gain = 1.f;
                     for (int c = 0; c < 3; ++c) rgb[c] *= gain;
                 }
+                // After the camera look. The HDR look rebuilds brightness from the
+                // tone curve, which cancels a zone change made on the linear input.
+                apply_raw_zones(rgb[0], rgb[1], rgb[2], shadows, midtones, highlights);
                 if (!deep) {
                     for (int c = 0; c < 3; ++c) {
                         int v = static_cast<int>(std::lround(rawlook::srgb_encode(rgb[c]) * 255.f));
