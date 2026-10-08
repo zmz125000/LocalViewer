@@ -110,9 +110,10 @@ object Settings : DataStorePreferences(null) {
     val browseRecentExpanded = boolPref("browse_recent_expanded", false)
 
     /**
-     * When true, folder browser directory grid cells show a cover thumb from lazy-scan
-     * metadata (direct image, else first image from ≤3 leaf peeks). Off = icon only.
-     * Default on; also exposed under Settings → General.
+     * When true, folder cells show a cover thumb from lazy-scan metadata (direct image,
+     * else first image from ≤3 leaf peeks): folder-browser directories, history directory
+     * pins, and folder favourites. Off = folder icon layout, and those cells do not
+     * resolve or fetch a thumb. Default on; also exposed under Settings → General.
      */
     val browseFolderThumbs = boolPref("browse_folder_thumbs", true)
 
