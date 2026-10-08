@@ -6,9 +6,9 @@
  *   present 1: deep color, Display P3 float16 clamped to 0..1, after the camera look.
  *   present 2: deep color + Android 16 HDR, Rec.2020 float16, after the camera look.
  *              The look (hue/saturation, tone curve, baseline exposure) matches deep
- *              color, on full-scale sensor white. Pixels above the 90th-percentile
- *              paper white are then lifted past 1 so the clip is HDR headroom.
- *              Dividing by that percentile before the curve brightens the whole frame.
+ *              color up to the 90th-percentile paper white. Above that, the tone
+ *              curve is not applied: its shoulder flattens highlight gradation into
+ *              white, and boosting those pixels only makes the white brighter.
  *              The advanced-color switch is not a third mode;
  *              the caller selects 2 whenever HDR display is on and the panel is HDR.
  * Every ABI: embedded JPEG preview for covers and for a failed demosaic.
@@ -591,25 +591,29 @@ bool pack_image(const libraw_processed_image_t* img, int max_edge, int present, 
                 float rgb[3];
                 const float scale = linear_hdr ? paper : white;
                 for (int c = 0; c < 3; ++c) rgb[c] = static_cast<float>(ch[c] / scale);
-                if (look && !linear_hdr) {
+                auto rec_luma = [](float r, float g, float b) {
+                    return 0.2126f * r + 0.7152f * g + 0.0722f * b;
+                };
+                const float lum = rec_luma(static_cast<float>(ch[0]), static_cast<float>(ch[1]), static_cast<float>(ch[2]));
+                if (look && !linear_hdr && hdr && lum > paper) {
+                    // Curve the paper-white version of this color, then extend with the
+                    // hue/sat result (no shoulder) so the roll-off stays proportional.
+                    const float u = lum / paper;
+                    float at_paper[3] = {rgb[0] / u, rgb[1] / u, rgb[2] / u};
+                    rawlook::apply_camera_look(*look, exposure_ev, at_paper[0], at_paper[1], at_paper[2]);
+                    rawlook::apply_camera_look(*look, exposure_ev, rgb[0], rgb[1], rgb[2], false);
+                    const float lin_luma = rec_luma(rgb[0], rgb[1], rgb[2]);
+                    const float target = rec_luma(at_paper[0], at_paper[1], at_paper[2]) * u;
+                    if (lin_luma > 1e-4f && target > 0.f) {
+                        const float gain = target / lin_luma;
+                        for (int c = 0; c < 3; ++c) rgb[c] *= gain;
+                    }
+                } else if (look && !linear_hdr) {
                     rawlook::apply_camera_look(*look, exposure_ev, rgb[0], rgb[1], rgb[2]);
                 } else {
                     float gain = std::exp2(std::isfinite(exposure_ev) ? exposure_ev : 0.f);
                     if (!std::isfinite(gain) || gain < 0.f) gain = 1.f;
                     for (int c = 0; c < 3; ++c) rgb[c] *= gain;
-                }
-                if (hdr && !linear_hdr) {
-                    const float lum = 0.2126f * static_cast<float>(ch[0]) + 0.7152f * static_cast<float>(ch[1]) +
-                                      0.0722f * static_cast<float>(ch[2]);
-                    if (lum > paper) {
-                        const float u = lum / paper;
-                        const float peak_c = std::max(rgb[0], std::max(rgb[1], rgb[2]));
-                        const float target = peak_c + (u - 1.f);
-                        if (peak_c > 1e-4f && target > peak_c) {
-                            const float scale = target / peak_c;
-                            for (int c = 0; c < 3; ++c) rgb[c] *= scale;
-                        }
-                    }
                 }
                 if (!deep) {
                     for (int c = 0; c < 3; ++c) {
