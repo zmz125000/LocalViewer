@@ -509,7 +509,7 @@ float raw_linear_sample(float scene_over_white, float exposure_ev, float highlig
 
 bool pack_image(const libraw_processed_image_t* img, int max_edge, int present, float panel_boost,
                 float exposure_ev, float highlight_stops, const rawlook::CameraLook* look, bool hdr_linear,
-                Decoded& out) {
+                float camera_white, Decoded& out) {
     if (!img || img->width == 0 || img->height == 0) return false;
     if (img->type != LIBRAW_IMAGE_BITMAP) return false;
     const int sw = img->width;
@@ -534,9 +534,10 @@ bool pack_image(const libraw_processed_image_t* img, int max_edge, int present, 
     // 10000/203 matches hdr_encode.h kMaxLinear. HDR does not clamp to 1.
     const float panel = std::isfinite(panel_boost) ? std::clamp(panel_boost, 1.f, 64.f) : 1.f;
     const float cap = hdr ? std::min(panel, 10000.f / 203.f) : 1.f;
-    // Full scale is the camera-look input, same as deep color. The 90th percentile
-    // is only the HDR split: brighter pixels gain headroom after the curve.
-    const float white = linear16 ? 65535.f : 255.f;
+    // camera_white is the 16-bit code of the camera white level after LibRaw
+    // has left highlight headroom in the buffer. 0 means full scale.
+    const float full = linear16 ? 65535.f : 255.f;
+    const float white = (linear16 && camera_white > 1.f && camera_white < full) ? camera_white : full;
     float paper = white;
     if (hdr && linear16) {
         float sensor_peak = white;
@@ -582,12 +583,6 @@ bool pack_image(const libraw_processed_image_t* img, int max_edge, int present, 
             } else {
                 double ch[3];
                 for (int c = 0; c < 3; ++c) ch[c] = acc[c] / count;
-                // A channel sitting on the 16-bit ceiling is a clipped sensor sample.
-                // Leaving the other channels below it is the purple highlight.
-                const double mx = std::max(ch[0], std::max(ch[1], ch[2]));
-                if (mx >= 65280.0) {
-                    ch[0] = ch[1] = ch[2] = mx;
-                }
                 float rgb[3];
                 const float scale = linear_hdr ? paper : white;
                 for (int c = 0; c < 3; ++c) rgb[c] = static_cast<float>(ch[c] / scale);
@@ -863,23 +858,69 @@ void configure_process(LibRaw& raw, int present, int max_edge, int demosaic_qual
         }
         if (pixels > 24000000LL) p.half_size = 1;
     }
+    // 0 flattens every channel that reaches the white level to the same code,
+    // before exposure, so later EV cannot bring the detail back. 2 keeps that
+    // headroom and blends the clipped channel instead of leaving it pink.
+    p.highlight = 2;
+    p.gamm[0] = 1.0;
+    p.gamm[1] = 1.0;
     if (present == 0) {
         p.output_bps = 16;
         p.output_color = 1;  // linear sRGB. The sRGB transfer is applied after the camera look.
-        p.highlight = 0;
-        p.gamm[0] = 1.f;
-        p.gamm[1] = 1.f;
     } else {
         p.output_bps = 16;
         p.output_color = present == 2 ? 8 : 7;  // Rec.2020 or DCI-P3 D65
-        // 0 clips a saturated pixel to white. 1 leaves it pink.
-        p.highlight = 0;
-        p.gamm[0] = 1.0;
-        p.gamm[1] = 1.0;
     }
 }
 
-bool process_open_raw(LibRaw& raw, const uint8_t* tiff, size_t tiff_len, int max_edge, int present, float panel_boost,
+// LibRaw maps camera white to 65535 and clips anything above it. Samples between
+// the camera white level and the real sensor peak are still in the file; this
+// raises the white level so they survive in the 16-bit image. The scale-colors
+// hook is protected, so only a subclass can install it.
+struct HeadroomRaw : LibRaw {
+    float sat_fit = 1.f;
+    HeadroomRaw() { callbacks.pre_scalecolors_cb = &HeadroomRaw::keep_sensor_headroom; }
+
+    static void keep_sensor_headroom(void* ctx) {
+        auto* raw = static_cast<HeadroomRaw*>(ctx);
+        if (!raw) return;
+        unsigned maximum = raw->imgdata.color.maximum;
+        unsigned data_max = raw->imgdata.color.data_maximum;
+        if (maximum == 0 || data_max <= maximum) return;
+        unsigned cap = maximum > (std::numeric_limits<unsigned>::max() / 8u) ? std::numeric_limits<unsigned>::max()
+                                                                              : maximum * 8u;
+        unsigned raised = std::min(data_max, cap);
+        if (raised <= maximum) return;
+        raw->sat_fit = static_cast<float>(raised) / static_cast<float>(maximum);
+        raw->imgdata.color.maximum = raised;
+    }
+};
+
+// highlight 2 scales to the strongest white-balance channel, which darkens the
+// frame versus highlight 0. pre_mul was divided by that peak, so the span is
+// 1/min(pre_mul). Combined with the raised white level, this is how far camera
+// white sits below the 16-bit ceiling.
+float highlight_fit(const LibRaw& raw, float sat_fit) {
+    float dmin = 1e30f;
+    bool any = false;
+    for (int c = 0; c < 4; ++c) {
+        float v = raw.imgdata.color.pre_mul[c];
+        if (!(v > 0.f) || !std::isfinite(v)) continue;
+        dmin = std::min(dmin, v);
+        any = true;
+    }
+    float wb_fit = 1.f;
+    if (any && dmin > 0.f && dmin < 1.f) wb_fit = 1.f / dmin;
+    if (!std::isfinite(wb_fit) || wb_fit < 1.f) wb_fit = 1.f;
+    if (wb_fit > 8.f) wb_fit = 8.f;
+    float sat = std::isfinite(sat_fit) && sat_fit > 1.f ? sat_fit : 1.f;
+    if (sat > 8.f) sat = 8.f;
+    float fit = wb_fit * sat;
+    if (!std::isfinite(fit) || fit < 1.f) return 1.f;
+    return fit;
+}
+
+bool process_open_raw(HeadroomRaw& raw, const uint8_t* tiff, size_t tiff_len, int max_edge, int present, float panel_boost,
                       int demosaic_qual, int wb_mode, float exposure_ev, float highlight_stops, int kelvin,
                       bool hdr_linear, Decoded& out) {
     configure_process(raw, present, max_edge, demosaic_qual, wb_mode, kelvin);
@@ -887,6 +928,8 @@ bool process_open_raw(LibRaw& raw, const uint8_t* tiff, size_t tiff_len, int max
     // After unpack: lossless JPEG may have cleared the DNG black tag.
     apply_missing_dng_black(raw, tiff, tiff_len);
     if (raw.dcraw_process() != LIBRAW_SUCCESS) return false;
+    const float fit = highlight_fit(raw, raw.sat_fit);
+    const float camera_white = fit > 1.f ? 65535.f / fit : 65535.f;
     int err = 0;
     libraw_processed_image_t* img = raw.dcraw_make_mem_image(&err);
     if (!img || err != LIBRAW_SUCCESS) {
@@ -912,7 +955,8 @@ bool process_open_raw(LibRaw& raw, const uint8_t* tiff, size_t tiff_len, int max
         rawlook::prepare_camera_look(tiff, tiff_len, temp, space, look);
         look_ptr = &look;
     }
-    bool ok = pack_image(img, max_edge, present, panel_boost, pack_ev, highlight_stops, look_ptr, linear_hdr, out);
+    bool ok = pack_image(img, max_edge, present, panel_boost, pack_ev, highlight_stops, look_ptr, linear_hdr,
+                          camera_white, out);
     LibRaw::dcraw_clear_mem(img);
     return ok;
 }
@@ -933,7 +977,7 @@ bool libraw_thumb_file(const char* path, const uint8_t* mem, size_t mem_len, con
         ok = write_file(out_path, img->data, img->data_size);
     } else if (img->type == LIBRAW_IMAGE_BITMAP && img->bits == 8 && img->colors >= 3) {
         Decoded packed;
-        if (pack_image(img, 0, /*present=*/0, 1.f, 0.f, 0.f, nullptr, false, packed)) {
+        if (pack_image(img, 0, /*present=*/0, 1.f, 0.f, 0.f, nullptr, false, 0.f, packed)) {
             ok = write_rgba8_jpeg(packed.pixels.data(), packed.w, packed.h, out_path, 85);
         }
     }
@@ -942,7 +986,7 @@ bool libraw_thumb_file(const char* path, const uint8_t* mem, size_t mem_len, con
 }
 
 bool demosaic_cover_jpeg(const char* path, const uint8_t* mem, size_t mem_len, const char* out_path) {
-    LibRaw raw;
+    HeadroomRaw raw;
     request_embedded_matrix(raw);
     int rc = mem ? raw.open_buffer(mem, mem_len) : raw.open_file(path);
     if (rc != LIBRAW_SUCCESS) return false;
@@ -1027,7 +1071,7 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeRawFileToDirect(JNIEnv* env, jcla
     if (!path) return nullptr;
     jbyteArray result = nullptr;
     try {
-        LibRaw raw;
+        HeadroomRaw raw;
         request_embedded_matrix(raw);
         if (raw.open_file(path) == LIBRAW_SUCCESS) {
             Decoded decoded;
@@ -1086,7 +1130,7 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeRawBytesToDirect(JNIEnv* env, jcl
     if (!bytes) return nullptr;
     jbyteArray result = nullptr;
     try {
-        LibRaw raw;
+        HeadroomRaw raw;
         request_embedded_matrix(raw);
         if (raw.open_buffer(bytes, static_cast<size_t>(len)) == LIBRAW_SUCCESS) {
             Decoded decoded;

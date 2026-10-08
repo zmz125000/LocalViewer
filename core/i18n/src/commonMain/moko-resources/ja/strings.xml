@@ -283,7 +283,7 @@
     <string name="pref_reader_raw_wb_kelvin">ケルビン</string>
     <string name="pref_reader_raw_kelvin">色温度</string>
     <string name="pref_reader_raw_kelvin_summary">RAW 画像の色温度です。ホワイトバランスがケルビンのときに使います。</string>
-    <string name="pref_reader_raw_highlight">ハイライト</string>
+    <string name="pref_reader_raw_highlight">ハイライトブースト</string>
     <string name="pref_reader_raw_highlight_summary">明るい部分をペーパーホワイトへ寄せます。</string>
     <string name="pref_reader_raw_hdr_linear">HDR リニア Rec.2020</string>
     <string name="pref_reader_raw_hdr_linear_summary">HDR RAW ではカメラルックを使わず、リニア Rec.2020 のままにします。</string>
