@@ -1480,15 +1480,32 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_convertJxrBytesToUltraHdrMaxEdge(
 }
 
 /**
- * Untagged linear scRGB → panel headroom.
+ * Untagged linear scRGB uses 1.0 = 80 nits. Direct float16 uses 1.0 = 203 nits,
+ * so leaving the codes unchanged lifts midtones against a reference monitor.
+ * The Ultra HDR JPEG is tone-mapped before display and already matches that monitor.
+ * Scale RGB only. Alpha stays. Integer sRGB and ICC frames must not come here.
+ */
+void rebase_untagged_scrgb(std::vector<uint16_t>& rgba, unsigned w, unsigned h) {
+    constexpr float kScRgbWhiteNits = 80.f;
+    const float scale = kScRgbWhiteNits / kSdrWhiteNits;
+    const size_t npx = static_cast<size_t>(w) * h;
+    if (w == 0 || h == 0 || rgba.size() < npx * 4) return;
+    for (size_t i = 0; i < npx; i++) {
+        rgba[i * 4 + 0] = float_to_half(half_to_float(rgba[i * 4 + 0]) * scale);
+        rgba[i * 4 + 1] = float_to_half(half_to_float(rgba[i * 4 + 1]) * scale);
+        rgba[i * 4 + 2] = float_to_half(half_to_float(rgba[i * 4 + 2]) * scale);
+    }
+    ALOGI("JXR direct scRGB rebase 80/203 %ux%u", w, h);
+}
+
+/**
+ * Untagged linear scRGB → panel headroom, after [rebase_untagged_scrgb].
  *
- * File 1.0 is scRGB paper white (80 nits). This app still treats 1.0 as its own
- * paper white, matching the unfitted picture. Samples at or below half the panel
- * ceiling stay on that picture. The top stop absorbs the tail that used to clip,
- * in log space, so the hottest channel lands on [panel_boost].
- * A cap at or below 1, or a peak that already fits, leaves the frame alone.
- * Do not call this on the Ultra HDR encode path. Do not call it after an ICC
- * transform or on integer sRGB.
+ * Samples at or below half the panel ceiling stay on the rebased picture.
+ * The top stop absorbs the tail that would still clip, in log space, so the
+ * hottest channel lands on [panel_boost]. A cap at or below 1, or a peak that
+ * already fits, leaves the frame alone.
+ * Do not call this on the Ultra HDR encode path.
  */
 void fit_untagged_jxr_highlights(std::vector<uint16_t>& rgba, unsigned w, unsigned h,
                                  float panel_boost) {
@@ -1565,8 +1582,9 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeJxrBytesToDirect(JNIEnv* env, jcl
         if (maxEdge > 0) {
             scale_rgba_f16_max_edge(rgba, w, h, static_cast<unsigned>(maxEdge));
         }
-        // Fit after the long-edge cap so the peak is the one that will be shown.
+        // Rebase before the fit so the shoulder sees 203-nit units.
         if (untagged_linear) {
+            rebase_untagged_scrgb(rgba, w, h);
             fit_untagged_jxr_highlights(rgba, w, h, panelBoost);
         }
         // Peak (and optional force) decides 8888 vs F16; float JXR often peaks > 1.25.
