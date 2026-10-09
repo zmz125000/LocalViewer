@@ -290,8 +290,10 @@ class PdfReaderActivity : AppCompatActivity() {
                 progressGid = progressGid,
                 onPageChanged = { lastVisiblePage = it },
                 onClose = {
+                    // Leave the composed page up through the exit animation.
+                    // onDestroy releases the session. Nulling doc here draws the
+                    // open spinner over the page the user just double-tapped.
                     stopOpenEngines()
-                    closeSession()
                     finish()
                 },
                 onHopSibling = { next -> hopSibling(next) },
@@ -317,7 +319,7 @@ class PdfReaderActivity : AppCompatActivity() {
     override fun onDestroy() {
         flushProgress()
         stopOpenEngines()
-        closeSession()
+        closeSession(clearUi = false)
         super.onDestroy()
     }
 
@@ -506,11 +508,13 @@ class PdfReaderActivity : AppCompatActivity() {
         }
     }
 
-    private fun closeSession(removeToken: Boolean = true) {
+    private fun closeSession(removeToken: Boolean = true, clearUi: Boolean = true) {
         val loader = imageLoader
         val toClose = doc
-        imageLoader = null
-        doc = null
+        if (clearUi) {
+            imageLoader = null
+            doc = null
+        }
         // Page render holds PdfSession's lock until PdfRenderer returns. Waiting
         // for that on the main thread freezes the process if the user leaves
         // while the page spinner is still up.
