@@ -158,11 +158,20 @@ private fun CameraRawSetting() = Column {
         summary = stringResource(id = R.string.pref_reader_raw_camera_look_summary),
         field = Settings.readerRawCameraLook.asMutableState(),
     )
+    val hdrLinear = Settings.readerRawHdrLinear.asMutableState()
     SwitchChoice(
         title = stringResource(id = R.string.pref_reader_raw_hdr_linear),
         summary = stringResource(id = R.string.pref_reader_raw_hdr_linear_summary),
-        field = Settings.readerRawHdrLinear.asMutableState(),
+        field = hdrLinear,
     )
+    AnimatedVisibility(visible = hdrLinear.value) {
+        CommitSliderChoice(
+            title = stringResource(id = R.string.pref_reader_raw_shoulder),
+            range = 0..100,
+            field = Settings.readerRawShoulder.asMutableState(),
+            valueText = { "$it" },
+        )
+    }
     CommitSliderChoice(
         title = stringResource(id = R.string.pref_reader_raw_exposure),
         range = -30..30,

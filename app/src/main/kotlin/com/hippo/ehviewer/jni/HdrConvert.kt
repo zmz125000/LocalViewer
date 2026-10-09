@@ -113,6 +113,9 @@ external fun decodeAvifBytesToDirect(
  * [highlightStops] compresses deep-color and HDR samples above 1 after the tone curve.
  * [cameraLook] applies hue, saturation, and the tone curve for 8-bit and deep color.
  * HDR ignores it. [hdrLinear] skips the camera look for HDR and keeps linear Rec.2020.
+ * [shoulder] is 0..1 and applies only to linear HDR. 0 leaves camera white at 1,
+ * 0.5 opens the highlight tail to the sampled peak over paper white, and 1 opens
+ * that peak to the panel cap.
  * [shadows], [midtones], and [highlights] are −1..1. 0 leaves that zone alone.
  */
 external fun decodeRawFileToDirect(
@@ -126,6 +129,7 @@ external fun decodeRawFileToDirect(
     highlightStops: Float,
     hdrLinear: Boolean,
     cameraLook: Boolean,
+    shoulder: Float,
     shadows: Float,
     midtones: Float,
     highlights: Float,
@@ -144,6 +148,7 @@ external fun decodeRawBytesToDirect(
     highlightStops: Float,
     hdrLinear: Boolean,
     cameraLook: Boolean,
+    shoulder: Float,
     shadows: Float,
     midtones: Float,
     highlights: Float,

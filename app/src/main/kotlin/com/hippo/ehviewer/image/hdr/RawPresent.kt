@@ -46,7 +46,8 @@ fun rawContentBoost(mode: RawPresent, peakOverWhite: Float, panelBoost: Float): 
  * DNG BaselineExposure. Non-linear HDR then lifts only pixels above the
  * 90th-percentile paper white, so that headroom sits above 1. Linear HDR
  * skips the look, keeps this scale at and below paper white, and opens the
- * brighter tail so the sampled peak lands above 1.
+ * brighter tail. The shoulder amount selects that opening: none, the sampled
+ * peak at peak/paper, or the panel cap.
  * [highlightStops] compresses only samples above 1, then the result is clamped to [cap].
  *
  * On the deep-color and 8-bit paths the native pack applies the camera look first

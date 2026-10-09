@@ -910,6 +910,8 @@
     <string name="pref_reader_raw_camera_look_summary">对 RAW SDR 应用色调曲线</string>
     <string name="pref_reader_raw_hdr_linear">HDR 线性 Rec.2020</string>
     <string name="pref_reader_raw_hdr_linear_summary">HDR RAW 跳过相机风格，保持线性 Rec.2020。</string>
+    <string name="pref_reader_raw_shoulder">HDR 肩部</string>
+    <string name="pref_reader_raw_shoulder_summary">0 将相机白保持在 1。50 自动展开高光。100 将高光展开到屏幕上限。</string>
     <string name="pref_custom_brightness">自定义亮度</string>
     <string name="pref_custom_color_filter">自定义滤镜</string>
     <string name="pref_keep_screen_on">保持屏幕常亮</string>
