@@ -34,6 +34,15 @@ class TextCharsetTest {
     }
 
     @Test
+    fun doubleEncodedUtf8ApostropheBecomesRightQuote() {
+        val title = "The author\u2019s Preface to the Second Edition"
+        val once = title.toByteArray(StandardCharsets.UTF_8)
+        val twice = String(once, Charsets.ISO_8859_1).toByteArray(StandardCharsets.UTF_8)
+        assertEquals(title, TextCharset.decode(twice, htmlHint = true))
+        assertEquals(title, TextCharset.decode(once, htmlHint = true))
+    }
+
+    @Test
     fun windows1252EmdashIsNotGbk() {
         val body = "Science and Practice\r\n\r\n  153.8'52\u2014dc21 00-026647\r\nCredits"
         val bytes = body.toByteArray(Charset.forName("windows-1252"))

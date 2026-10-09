@@ -82,10 +82,52 @@ internal object TextCharset {
         if (forced != null) {
             val bom = bom(bytes)
             val offset = if (bom != null && sameFamily(bom.first, forced)) bom.second else 0
-            return String(bytes, offset, bytes.size - offset, forced)
+            return finish(String(bytes, offset, bytes.size - offset, forced), forced)
         }
         val (cs, offset) = detect(bytes, htmlHint, pref)
-        return String(bytes, offset, bytes.size - offset, cs)
+        return finish(String(bytes, offset, bytes.size - offset, cs), cs)
+    }
+
+    /**
+     * EPUB nav labels sometimes save UTF-8 punctuation as Latin-1 and encode
+     * that again. U+2019 then shows up as `â` plus U+0080 and U+0099.
+     * Only a UTF-8 decode is repaired, and only a run that contains those
+     * controls and becomes strict UTF-8 without them.
+     */
+    private fun finish(text: String, cs: Charset): String {
+        if (!sameFamily(cs, UTF8)) return text
+        return repairDoubleEncodedUtf8(text)
+    }
+
+    private fun repairDoubleEncodedUtf8(text: String): String {
+        if (text.isEmpty() || text.none { it.code in 0x80..0x9F }) return text
+        val out = StringBuilder(text.length)
+        var i = 0
+        while (i < text.length) {
+            if (text[i].code > 0xFF) {
+                out.append(text[i])
+                i++
+                continue
+            }
+            var j = i
+            var hasC1 = false
+            while (j < text.length && text[j].code <= 0xFF) {
+                if (text[j].code in 0x80..0x9F) hasC1 = true
+                j++
+            }
+            val run = text.substring(i, j)
+            out.append(if (hasC1) undoLatin1Utf8(run) ?: run else run)
+            i = j
+        }
+        return out.toString()
+    }
+
+    /** Latin-1 bytes of [run], if they are strict UTF-8 and drop the C1 controls. */
+    private fun undoLatin1Utf8(run: String): String? {
+        val bytes = ByteArray(run.length) { run[it].code.toByte() }
+        val decoded = ZipNameDecoder.decodeOrNull(bytes, UTF8) ?: return null
+        if (decoded == run || decoded.any { it.code in 0x80..0x9F }) return null
+        return decoded
     }
 
     fun detect(bytes: ByteArray, htmlHint: Boolean = false, pref: Int = PREF_AUTO): Pair<Charset, Int> {
