@@ -189,7 +189,8 @@ class Image private constructor(
      * Content HDR boost / capacity (linear), for diagnostics / future headroom.
      * Gain-map path: read-only [HdrGainmapConvert.contentPeakBoost] (never rewrite
      * [android.graphics.Gainmap.displayRatioForFullHdr]). Lib-direct: decode peak.
-     * Window headroom currently stays automatic ([com.hippo.ehviewer.util.setReaderColorMode]).
+     * Gain-map pages leave window headroom automatic. Lib-direct F16 requests this
+     * boost ([com.hippo.ehviewer.util.setReaderColorMode]).
      */
     val contentHdrBoost: Float
 

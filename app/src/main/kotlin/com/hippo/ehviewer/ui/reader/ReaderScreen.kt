@@ -802,20 +802,27 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
             // Any status emission in the window → re-evaluate HDR (WCG stays session-wide).
             statusFlows.merge().collect {
                 var anyHdr = false
-                var maxBoost = 1f
+                var anyGainMap = false
+                var directBoost = 1f
                 for (idx in range) {
                     val img = (pageLoader.pages.getOrNull(idx)?.status as? PageStatus.Ready)
                         ?.image
                         ?: continue
                     // Gain-map Ultra HDR or lib-direct absolute HDR (F16 / linear extended).
-                    if (img.isHdrContent) {
-                        anyHdr = true
-                        maxBoost = maxOf(maxBoost, img.contentHdrBoost)
+                    if (!img.isHdrContent) continue
+                    anyHdr = true
+                    if (img.hasGainmap) {
+                        anyGainMap = true
+                    } else {
+                        directBoost = maxOf(directBoost, img.contentHdrBoost)
                     }
                 }
+                // A gain map in the window stays on automatic headroom. Direct F16
+                // asks for its fitted peak so the highlight tail is inside the panel.
+                val headroom = if (anyGainMap) 1f else directBoost
                 // Option A: advanced → session WCG (not only when isWideGamutContent).
                 // HDR still wins the single colorMode slot in setReaderColorMode.
-                applyColorMode(anyHdr, maxBoost)
+                applyColorMode(anyHdr, headroom)
             }
         }
     }

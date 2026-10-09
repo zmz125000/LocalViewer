@@ -179,7 +179,14 @@ object LibDirectDecode {
             val outBoost = FloatArray(1)
             val pixels = when (route.codec) {
                 LibCodec.Jxl -> decodeJxlBytesToDirect(bytes, maxEdge, advanced, outInfo, outBoost)
-                LibCodec.Jxr -> decodeJxrBytesToDirect(bytes, maxEdge, advanced, outInfo, outBoost)
+                LibCodec.Jxr -> decodeJxrBytesToDirect(
+                    bytes,
+                    maxEdge,
+                    advanced,
+                    jxrHighlightCap(),
+                    outInfo,
+                    outBoost,
+                )
                 LibCodec.Jpeg2000 -> decodeJpeg2000BytesToDirect(bytes, maxEdge, advanced, outInfo, outBoost)
                     ?: packJpeg2000(bytes, maxEdge, outInfo, outBoost)
                 LibCodec.AvifPq -> decodeAvifBytesToDirect(bytes, maxEdge, advanced, outInfo, outBoost)
@@ -333,6 +340,18 @@ object LibDirectDecode {
         val display = appCtx.getSystemService(DisplayManager::class.java)
             ?.getDisplay(Display.DEFAULT_DISPLAY)
         return HdrDisplayInfo.maxDisplayBoost(display)
+    }
+
+    /**
+     * Ceiling for untagged JXR highlights. Uses the panel's highest ratio, not the
+     * live ratio, because this decode usually runs before the window enters HDR mode
+     * and the live ratio is still 1. HDR display off leaves the tail alone.
+     */
+    private fun jxrHighlightCap(): Float {
+        if (!Settings.readerHdrDisplay.value) return 1f
+        val display = appCtx.getSystemService(DisplayManager::class.java)
+            ?.getDisplay(Display.DEFAULT_DISPLAY)
+        return HdrDisplayInfo.hdrCapabilityBoost(display)
     }
 
     private fun rawExposureEv(): Float = (Settings.readerRawExposure.value / 10f).coerceIn(-3f, 3f)

@@ -56,6 +56,9 @@ external fun convertJxlBytesToUltraHdrMaxEdge(input: ByteArray, outputPath: Stri
  * [outBoost] length ≥ 1: content HDR boost (linear) for window headroom.
  * [maxEdge] 0 = full resolution; else long-edge cap after decode.
  * [advancedColor] high bit depth + preserve P3 SDR / BT.2020 HDR primaries.
+ * [panelBoost] is the panel HDR/SDR ceiling. Untagged linear JXR leaves samples
+ * at or below half that ceiling unchanged and rolls the clipping tail into the
+ * top stop. A ceiling ≤ 1 leaves the frame unchanged.
  *
  * @return pixel bytes (RGBA order) or null on failure / unsupported ABI.
  */
@@ -63,6 +66,7 @@ external fun decodeJxrBytesToDirect(
     input: ByteArray,
     maxEdge: Int,
     advancedColor: Boolean,
+    panelBoost: Float,
     outInfo: IntArray,
     outBoost: FloatArray,
 ): ByteArray?

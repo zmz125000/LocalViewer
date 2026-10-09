@@ -163,6 +163,9 @@ bool guid_eq(const PKPixelFormatGUID& a, const PKPixelFormatGUID& b) {
  *
  * HDR (linear scRGB, 1.0 ≈ paper white): half / float / 13.3 fixed-point.
  * SDR unsigned integer (sRGB-encoded by default): 8/16-bit RGB(A)/BGR(A)/gray + RGB101010.
+ * Direct display of untagged linear scRGB keeps samples that already fit the panel
+ * and rolls only the clipping tail into the top stop. Ultra HDR encode keeps the
+ * original codes so the gain map can do that fit at display time.
  */
 enum class JxrPix {
     RgbaF32,
@@ -384,7 +387,9 @@ bool setup_full_frame(PKImageDecode* dec, PKPixelFormatGUID* fmt) {
  *   straight alpha onto black. false for direct Bitmap display — keep A.
  */
 bool decode_jxr_from_memory(const uint8_t* data, size_t len, std::vector<uint16_t>& out_rgba,
-                            unsigned& w, unsigned& h, bool composite_alpha_on_black = true) {
+                            unsigned& w, unsigned& h, bool composite_alpha_on_black = true,
+                            bool* out_untagged_linear = nullptr) {
+    if (out_untagged_linear) *out_untagged_linear = false;
     if (!data || len == 0) return false;
 
     PKFactory* factory = nullptr;
@@ -769,6 +774,14 @@ bool decode_jxr_from_memory(const uint8_t* data, size_t len, std::vector<uint16_
     // to those formats. Direct display keeps straight alpha for transparency.
     if (composite_alpha_on_black) {
         composite_straight_alpha_on_black(out_rgba, npx);
+    }
+    if (out_untagged_linear) {
+        // Half, float, and 13.3 fixed are linear scRGB when no color context won.
+        // Integer formats are sRGB-encoded. An ICC transform already produced linear
+        // sRGB, so those frames must not be fitted again.
+        const bool linear_storage = rgba_half || rgb_half || rgba_float || rgb_float ||
+            pix == JxrPix::Fixed16;
+        *out_untagged_linear = linear_storage && !have_valid_icc;
     }
     return true;
 }
@@ -1467,16 +1480,89 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_convertJxrBytesToUltraHdrMaxEdge(
 }
 
 /**
+ * Untagged linear scRGB uses 1.0 = 80 nits. Direct float16 uses 1.0 = 203 nits,
+ * so leaving the codes unchanged lifts midtones against a reference monitor.
+ * The Ultra HDR JPEG is tone-mapped before display and already matches that monitor.
+ * Scale RGB only. Alpha stays. Integer sRGB and ICC frames must not come here.
+ */
+void rebase_untagged_scrgb(std::vector<uint16_t>& rgba, unsigned w, unsigned h) {
+    constexpr float kScRgbWhiteNits = 80.f;
+    const float scale = kScRgbWhiteNits / kSdrWhiteNits;
+    const size_t npx = static_cast<size_t>(w) * h;
+    if (w == 0 || h == 0 || rgba.size() < npx * 4) return;
+    for (size_t i = 0; i < npx; i++) {
+        rgba[i * 4 + 0] = float_to_half(half_to_float(rgba[i * 4 + 0]) * scale);
+        rgba[i * 4 + 1] = float_to_half(half_to_float(rgba[i * 4 + 1]) * scale);
+        rgba[i * 4 + 2] = float_to_half(half_to_float(rgba[i * 4 + 2]) * scale);
+    }
+    ALOGI("JXR direct scRGB rebase 80/203 %ux%u", w, h);
+}
+
+/**
+ * Untagged linear scRGB → panel headroom, after [rebase_untagged_scrgb].
+ *
+ * Samples at or below half the panel ceiling stay on the rebased picture.
+ * The top stop absorbs the tail that would still clip, in log space, so the
+ * hottest channel lands on [panel_boost]. A cap at or below 1, or a peak that
+ * already fits, leaves the frame alone.
+ * Do not call this on the Ultra HDR encode path.
+ */
+void fit_untagged_jxr_highlights(std::vector<uint16_t>& rgba, unsigned w, unsigned h,
+                                 float panel_boost) {
+    if (!std::isfinite(panel_boost) || panel_boost <= 1.f || w == 0 || h == 0) return;
+    float cap = panel_boost;
+    if (cap > kMaxLinear) cap = kMaxLinear;
+    const size_t npx = static_cast<size_t>(w) * h;
+    if (rgba.size() < npx * 4) return;
+
+    float peak = 1.f;
+    for (size_t i = 0; i < npx; i++) {
+        float a = half_to_float(rgba[i * 4 + 3]);
+        if (!std::isfinite(a) || a <= 0.f) continue;
+        const float m = fmax3(half_to_float(rgba[i * 4 + 0]), half_to_float(rgba[i * 4 + 1]),
+                              half_to_float(rgba[i * 4 + 2]));
+        if (std::isfinite(m) && m > peak) peak = m;
+    }
+    if (!(peak > cap)) return;
+    // One stop under the ceiling. Starting the roll-off at 1 flattens the frame.
+    float knee = cap * 0.5f;
+    if (knee < 1.f) knee = 1.f;
+    if (!(peak > knee)) return;
+    const float denom = std::log2(peak / knee);
+    const float gain = std::log2(cap / knee);
+    if (!(denom > 0.f) || !(gain > 0.f)) return;
+
+    for (size_t i = 0; i < npx; i++) {
+        float r = half_to_float(rgba[i * 4 + 0]);
+        float g = half_to_float(rgba[i * 4 + 1]);
+        float b = half_to_float(rgba[i * 4 + 2]);
+        const float m = fmax3(r, g, b);
+        if (!std::isfinite(m) || m <= knee) continue;
+        const float out = knee * std::exp2(std::log2(m / knee) / denom * gain);
+        const float scale = out / m;
+        r *= scale;
+        g *= scale;
+        b *= scale;
+        rgba[i * 4 + 0] = float_to_half(r);
+        rgba[i * 4 + 1] = float_to_half(g);
+        rgba[i * 4 + 2] = float_to_half(b);
+    }
+    ALOGI("JXR direct highlight fit peak=%.3f knee=%.3f cap=%.3f %ux%u", peak, knee, cap, w, h);
+}
+
+/**
  * JXR → direct display pixels (skip UHDR JPEG).
  * outInfo int[≥6]: w, h, format, isHdr, gamut, transferCICP
  * outBoost float[1]: contentHdrBoost
  * advancedColor: WCG preserve + high bit depth
+ * panelBoost: HDR/SDR ceiling for untagged linear highlights. ≤1 leaves them alone.
  * @return pixel bytes or null
  */
 extern "C" JNIEXPORT jbyteArray JNICALL
 Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeJxrBytesToDirect(JNIEnv* env, jclass,
                                                                 jbyteArray jInput, jint maxEdge,
                                                                 jboolean advancedColor,
+                                                                jfloat panelBoost,
                                                                 jintArray jOutInfo,
                                                                 jfloatArray jOutBoost) {
     if (!jInput || !jOutInfo || !jOutBoost) return nullptr;
@@ -1490,10 +1576,16 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeJxrBytesToDirect(JNIEnv* env, jcl
     unsigned w = 0, h = 0;
     jbyteArray result = nullptr;
     // Preserve transparency: do not composite onto black (UHDR convert paths do).
+    bool untagged_linear = false;
     if (decode_jxr_from_memory(reinterpret_cast<const uint8_t*>(bytes), static_cast<size_t>(len),
-                               rgba, w, h, /*composite_alpha_on_black=*/false)) {
+                               rgba, w, h, /*composite_alpha_on_black=*/false, &untagged_linear)) {
         if (maxEdge > 0) {
             scale_rgba_f16_max_edge(rgba, w, h, static_cast<unsigned>(maxEdge));
+        }
+        // Rebase before the fit so the shoulder sees 203-nit units.
+        if (untagged_linear) {
+            rebase_untagged_scrgb(rgba, w, h);
+            fit_untagged_jxr_highlights(rgba, w, h, panelBoost);
         }
         // Peak (and optional force) decides 8888 vs F16; float JXR often peaks > 1.25.
         // JXR path has no reliable CICP here — treat as BT.709 scRGB-like.
