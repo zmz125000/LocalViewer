@@ -84,34 +84,29 @@ fun ReaderGeneralSetting(isDocument: Boolean = false) = Column(modifier = Modifi
         field = hiResOptimize,
     )
     AnimatedVisibility(visible = !hiResOptimize.value) {
-        Column {
-            SpinnerChoice(
-                title = stringResource(id = R.string.pref_decode_size),
-                entries = arrayOf(
-                    stringResource(id = R.string.pref_decode_size_1_5x),
-                    stringResource(id = R.string.pref_decode_size_2x),
-                    stringResource(id = R.string.pref_decode_size_2_5x),
-                    stringResource(id = R.string.pref_decode_size_3x),
-                    stringResource(id = R.string.pref_decode_size_origin),
-                ),
-                values = listOf(0, 1, 2, 3, 4),
-                field = Settings.readerDecodeSize.asMutableState(),
-            )
-            SpinnerChoice(
-                title = stringResource(id = R.string.pref_decode_scaler),
-                entries = arrayOf(
-                    stringResource(id = R.string.pref_image_scaler_default),
-                    stringResource(id = R.string.pref_image_scaler_nearest),
-                    stringResource(id = R.string.pref_image_scaler_bilinear),
-                    stringResource(id = R.string.pref_image_scaler_bspline),
-                    stringResource(id = R.string.pref_image_scaler_catmull),
-                    stringResource(id = R.string.pref_image_scaler_mitchell),
-                    stringResource(id = R.string.pref_image_scaler_lanczos),
-                ),
-                values = listOf(0, 1, 2, 3, 4, 5, 6),
-                field = Settings.readerDecodeScaler.asMutableState(),
-            )
-        }
+        SpinnerChoice(
+            title = stringResource(id = R.string.pref_decode_size),
+            entries = arrayOf(
+                stringResource(id = R.string.pref_decode_size_1_5x),
+                stringResource(id = R.string.pref_decode_size_2x),
+                stringResource(id = R.string.pref_decode_size_2_5x),
+                stringResource(id = R.string.pref_decode_size_3x),
+                stringResource(id = R.string.pref_decode_size_origin),
+            ),
+            values = listOf(0, 1, 2, 3, 4),
+            field = Settings.readerDecodeSize.asMutableState(),
+        )
+    }
+    val softwareDownscale = Settings.readerHiResSoftwareDownscale.asMutableState()
+    AnimatedVisibility(visible = hiResOptimize.value) {
+        SwitchChoice(
+            title = stringResource(id = R.string.pref_reader_hi_res_software_downscale),
+            summary = stringResource(id = R.string.pref_reader_hi_res_software_downscale_summary),
+            field = softwareDownscale,
+        )
+    }
+    AnimatedVisibility(visible = !hiResOptimize.value || softwareDownscale.value) {
+        DecodeScalerChoice()
     }
     SwitchChoice(
         title = stringResource(id = R.string.pref_pdf_direct_image),
@@ -185,4 +180,22 @@ fun ReaderGeneralSetting(isDocument: Boolean = false) = Column(modifier = Modifi
             field = Settings.readWithVolumeKeysInverted.asMutableState(),
         )
     }
+}
+
+@Composable
+private fun DecodeScalerChoice() {
+    SpinnerChoice(
+        title = stringResource(id = R.string.pref_decode_scaler),
+        entries = arrayOf(
+            stringResource(id = R.string.pref_image_scaler_default),
+            stringResource(id = R.string.pref_image_scaler_nearest),
+            stringResource(id = R.string.pref_image_scaler_bilinear),
+            stringResource(id = R.string.pref_image_scaler_bspline),
+            stringResource(id = R.string.pref_image_scaler_catmull),
+            stringResource(id = R.string.pref_image_scaler_mitchell),
+            stringResource(id = R.string.pref_image_scaler_lanczos),
+        ),
+        values = listOf(0, 1, 2, 3, 4, 5, 6),
+        field = Settings.readerDecodeScaler.asMutableState(),
+    )
 }

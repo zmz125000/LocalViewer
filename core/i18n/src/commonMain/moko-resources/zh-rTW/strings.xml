@@ -844,6 +844,8 @@
     <string name="pref_reader_hardware_bitmap_summary">更快的 Coil 路徑（GPU 點陣圖）。會關閉裁邊與 QR 廣告偵測，避免先軟體解碼再拷貝。</string>
     <string name="pref_reader_hi_res_optimize">高解析度最佳化繪製</string>
     <string name="pref_reader_hi_res_optimize_summary">照片以 4096 像素解碼。放大時載入原始尺寸。</string>
+    <string name="pref_reader_hi_res_software_downscale">使用軟體縮小</string>
+    <string name="pref_reader_hi_res_software_downscale_summary">以縮小解碼方式重新取樣 4096 像素預覽。</string>
     <string name="pref_reader_lib_direct_bitmap">原生直出點陣圖（實驗）</string>
     <string name="pref_reader_lib_direct_bitmap_summary">將 JXL／JXR／PQ-AVIF 直接解碼為 Bitmap，略過 Ultra HDR JPEG 轉換。</string>
     <string name="pref_reader_hdr_display">HDR 顯示</string>

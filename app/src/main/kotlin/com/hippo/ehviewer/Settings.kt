@@ -862,12 +862,18 @@ object Settings : DataStorePreferences(null) {
     val readerImageScaler = intPref("pref_reader_image_scaler", 0)
 
     /**
-     * Kernel used once when decode size is 1.5×–3×. 0 keeps the codec's own
+     * Kernel used once when decode size is 1.5×–3×, and for the 4096 px hi-res
+     * cap when [readerHiResSoftwareDownscale] is on. 0 keeps the codec's own
      * subsample. 1–6 decode the full frame in software and resample down.
-     * Same order as [readerImageScaler]. Original size, optimized high-res
-     * rendering, and lib-direct pages skip it.
+     * Same order as [readerImageScaler]. Original size and lib-direct pages skip it.
      */
     val readerDecodeScaler = intPref("pref_reader_decode_scaler", 0)
+
+    /**
+     * When [readerHiResOptimize] is on, resample the 4096 px preview with
+     * [readerDecodeScaler] instead of the codec subsample. Default off.
+     */
+    val readerHiResSoftwareDownscale = boolPref("pref_reader_hi_res_software_downscale", false)
 
     /**
      * Coil path only: skip the software intermediate used for QR detection and border crop.
