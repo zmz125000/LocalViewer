@@ -410,8 +410,7 @@ sealed class BrowseCover {
 }
 
 /** Folder thumb: loose image, or archive/PDF first page when that file is the cover. */
-fun directoryBrowseCover(path: Path): BrowseCover =
-    if (isArchiveFileName(path.name)) BrowseCover.LocalArchive(path) else BrowseCover.Local(path)
+fun directoryBrowseCover(path: Path): BrowseCover = if (isArchiveFileName(path.name)) BrowseCover.LocalArchive(path) else BrowseCover.Local(path)
 
 /** Stable identity for [ReaderPageThumb] (reader photo-grid thumbs written after decode). */
 fun browseCoverThumbIdentity(cover: BrowseCover?): String? = when (cover) {
@@ -2079,13 +2078,15 @@ enum class BrowseFolderSection {
     Files,
 }
 
-/** Rows of the folder Recent strip before the header is tapped. Same in list and grid. */
-const val BROWSE_RECENT_PREVIEW_ROWS = 2
+/** Collapsed folder Recent strip: one grid row, two list rows. */
+const val BROWSE_RECENT_PREVIEW_GRID_ROWS = 1
+const val BROWSE_RECENT_PREVIEW_LIST_ROWS = 2
 
-/** Item cap for the collapsed Recent strip (two rows × the current column count). */
+/** Item cap for the collapsed Recent strip (preview rows × the current column count). */
 fun browseRecentPreviewLimit(grid: Boolean, gridColumnCount: Int, listColumnCount: Int): Int {
     val columns = (if (grid) gridColumnCount else listColumnCount).coerceAtLeast(1)
-    return columns * BROWSE_RECENT_PREVIEW_ROWS
+    val rows = if (grid) BROWSE_RECENT_PREVIEW_GRID_ROWS else BROWSE_RECENT_PREVIEW_LIST_ROWS
+    return columns * rows
 }
 
 /**
@@ -2113,7 +2114,7 @@ fun rememberRecentStripExpanded(
 
 /**
  * Header gestures for Recent. A fully collapsed section opens on tap or long-press.
- * Otherwise tap switches two rows / full list, and long-press collapses the section.
+ * Otherwise tap switches the preview rows / full list, and long-press collapses the section.
  */
 fun onRecentHeaderGesture(
     collapsed: Boolean,

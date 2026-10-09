@@ -3,12 +3,16 @@ package com.hippo.ehviewer.ui.reader
 import android.os.Build
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Brightness5
 import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -18,6 +22,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringArrayResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.unit.dp
 import androidx.core.graphics.alpha
 import androidx.core.graphics.blue
 import androidx.core.graphics.green
@@ -26,9 +31,13 @@ import com.ehviewer.core.i18n.R
 import com.ehviewer.core.ui.component.RollingNumber
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.asMutableState
+import com.hippo.ehviewer.ui.settings.Preference
 
 @Composable
-fun ColorFilterSetting(showImageScaler: Boolean = true) = Column(modifier = Modifier.verticalScroll(rememberScrollState()).navigationBarsPadding()) {
+fun ColorFilterSetting(
+    showImageScaler: Boolean = true,
+    showCameraRaw: Boolean = false,
+) = Column(modifier = Modifier.verticalScroll(rememberScrollState()).navigationBarsPadding()) {
     if (showImageScaler) ImageScalerChoice()
     val customBrightness = Settings.customBrightness.asMutableState()
     SwitchChoice(
@@ -100,6 +109,89 @@ fun ColorFilterSetting(showImageScaler: Boolean = true) = Column(modifier = Modi
     SwitchChoice(
         title = stringResource(id = R.string.pref_inverted_colors),
         field = Settings.invertedColors.asMutableState(),
+    )
+    if (showCameraRaw) {
+        val cameraRaw = Settings.readerCameraRaw.asMutableState()
+        AnimatedVisibility(visible = cameraRaw.value) {
+            CameraRawSetting()
+        }
+    }
+}
+
+@Composable
+private fun CameraRawSetting() = Column {
+    Spacer(modifier = Modifier.size(16.dp))
+    Text(
+        text = stringResource(id = R.string.pref_reader_camera_raw),
+        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    val whiteBalance = Settings.readerRawWhiteBalance.asMutableState()
+    SpinnerChoice(
+        title = stringResource(id = R.string.pref_reader_raw_white_balance),
+        entries = arrayOf(
+            stringResource(id = R.string.pref_reader_raw_wb_camera),
+            stringResource(id = R.string.pref_reader_raw_wb_auto),
+            stringResource(id = R.string.pref_reader_raw_wb_daylight),
+            stringResource(id = R.string.pref_reader_raw_wb_cloudy),
+            stringResource(id = R.string.pref_reader_raw_wb_shade),
+            stringResource(id = R.string.pref_reader_raw_wb_tungsten),
+            stringResource(id = R.string.pref_reader_raw_wb_fluorescent),
+            stringResource(id = R.string.pref_reader_raw_wb_flash),
+            stringResource(id = R.string.pref_reader_raw_wb_kelvin),
+        ),
+        values = listOf(0, 1, 2, 3, 4, 5, 6, 7, 8),
+        field = whiteBalance,
+    )
+    AnimatedVisibility(visible = whiteBalance.value == 8) {
+        CommitSliderChoice(
+            title = stringResource(id = R.string.pref_reader_raw_kelvin),
+            summary = stringResource(id = R.string.pref_reader_raw_kelvin_summary),
+            range = 2000..12000,
+            field = Settings.readerRawKelvin.asMutableState(),
+            valueText = { "$it K" },
+            steps = 99,
+        )
+    }
+    SwitchChoice(
+        title = stringResource(id = R.string.pref_reader_raw_hdr_linear),
+        summary = stringResource(id = R.string.pref_reader_raw_hdr_linear_summary),
+        field = Settings.readerRawHdrLinear.asMutableState(),
+    )
+    CommitSliderChoice(
+        title = stringResource(id = R.string.pref_reader_raw_exposure),
+        range = -30..30,
+        field = Settings.readerRawExposure.asMutableState(),
+        valueText = { "%+.1f".format(it / 10f) },
+    )
+    CommitSliderChoice(
+        title = stringResource(id = R.string.pref_reader_raw_shadows),
+        range = -100..100,
+        field = Settings.readerRawShadows.asMutableState(),
+        valueText = { "%+d".format(it) },
+    )
+    CommitSliderChoice(
+        title = stringResource(id = R.string.pref_reader_raw_midtones),
+        range = -100..100,
+        field = Settings.readerRawMidtones.asMutableState(),
+        valueText = { "%+d".format(it) },
+    )
+    CommitSliderChoice(
+        title = stringResource(id = R.string.pref_reader_raw_highlights),
+        range = -100..100,
+        field = Settings.readerRawHighlights.asMutableState(),
+        valueText = { "%+d".format(it) },
+    )
+    CommitSliderChoice(
+        title = stringResource(id = R.string.pref_reader_raw_highlight),
+        summary = stringResource(id = R.string.pref_reader_raw_highlight_summary),
+        range = 0..30,
+        field = Settings.readerRawHighlight.asMutableState(),
+        valueText = { "%.1f".format(it / 10f) },
+    )
+    Preference(
+        title = stringResource(id = R.string.pref_reader_raw_reset),
+        onClick = { Settings.resetReaderRaw() },
     )
 }
 

@@ -157,6 +157,15 @@ fun isMobiFileName(name: String): Boolean {
     return FileUtils.getExtensionFromFilename(name)?.lowercase() == "mobi"
 }
 
+/** MOBI, AZW, and AZW3 share the PalmDB container. Not [isMobiFileName] (`.mobi` only). */
+private val MOBI_CONTAINER_EXTENSIONS = setOf("mobi", "azw", "azw3")
+
+fun isMobiContainerFileName(name: String): Boolean {
+    if (name.startsWith('.')) return false
+    val ext = FileUtils.getExtensionFromFilename(name)?.lowercase() ?: return false
+    return ext in MOBI_CONTAINER_EXTENSIONS
+}
+
 /**
  * Built-in PDF-reader ebooks (text + TOC pages). Not the image/gallery reader.
  * HTML still honors [com.hippo.ehviewer.Settings.openHtmlWithBrowser] first.

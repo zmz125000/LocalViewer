@@ -4,15 +4,22 @@ import java.io.ByteArrayOutputStream
 import java.nio.charset.Charset
 
 /**
- * Basic MOBI / AZW: PalmDOC (none or LZ77) text plus image records.
- * DRM and Huff/CDIC (typical KF8-only) are skipped.
+ * MOBI / AZW / AZW3: PalmDOC (none or LZ77) text plus raw image records.
+ * Hybrid files prefer the KF8 section after the BOUNDARY record (EXTH 121)
+ * when that section is PalmDOC or uncompressed. kindle:embed:NNNN is hex.
+ * DRM and Huff/CDIC (typical Kindle-store KF8) are skipped.
  */
 internal object MobiText {
     private const val COMPRESSION_NONE = 1
     private const val COMPRESSION_PALMDOC = 2
     private const val HUFF = 17480
+
+    /** Image-reader and direct-image reads. Text ebook open stays at 48 MiB. */
+    const val MAX_IMAGE_BYTES = 256L * 1024L * 1024L
     private val INDX = byteArrayOf('I'.code.toByte(), 'N'.code.toByte(), 'D'.code.toByte(), 'X'.code.toByte())
     private val TAGX = byteArrayOf('T'.code.toByte(), 'A'.code.toByte(), 'G'.code.toByte(), 'X'.code.toByte())
+    private val BOUNDARY = "BOUNDARY".encodeToByteArray()
+    private val KINDLE_EMBED = Regex("""(?i)kindle:embed:([0-9a-f]+)""")
 
     data class Book(
         val chapters: List<EbookChapter>,
@@ -23,52 +30,110 @@ internal object MobiText {
         if (bytes.size < 78 + 16) return null
         val records = recordOffsets(bytes) ?: return null
         if (records.size < 2) return null
-        val rec0 = slice(bytes, records[0], records.getOrNull(1) ?: bytes.size) ?: return null
-        if (rec0.size < 16) return null
-        val compression = u16(rec0, 0)
-        val textLen = u32(rec0, 4)
-        val textRecords = u16(rec0, 8)
-        val encryption = u16(rec0, 12)
-        if (encryption != 0 || textRecords <= 0) return null
-        if (compression == HUFF || (compression != COMPRESSION_NONE && compression != COMPRESSION_PALMDOC)) {
-            return null
+        val kf8 = kf8Section(bytes, records)
+        if (kf8 != null) {
+            parseAt(bytes, records, kf8, title)?.let { return it }
         }
-        val mobi = rec0.size >= 20 && rec0[16] == 'M'.code.toByte() && rec0[17] == 'O'.code.toByte() &&
-            rec0[18] == 'B'.code.toByte() && rec0[19] == 'I'.code.toByte()
-        val headerLen = if (mobi && rec0.size >= 24) u32(rec0, 20) else 0
-        val encoding = if (mobi && headerLen >= 16 && rec0.size >= 16 + 16) u32(rec0, 16 + 12) else 1252
-        // Extra-data flags sit at record 0 offset 0xF2 once the MOBI header is at least 0xE4.
-        // They describe trailer bytes on every text record. Leaving those bytes in makes
-        // PalmDOC emit a few garbage characters about every 4096 bytes.
-        val extraFlags = if (mobi && headerLen >= 0xE4 && rec0.size >= 0xF4) u16(rec0, 0xF2) else 0
-        val firstImage = if (mobi && headerLen > 112 && rec0.size >= 16 + 112) u32(rec0, 16 + 108) else -1
-        // NCX index record. Present once the MOBI header reaches 0xF8. 0xFFFFFFFF means none.
-        // Hybrid files leave that field empty and keep the contents INDX at the first non-book record.
-        val ncxField = if (mobi && headerLen >= 0xF8 && rec0.size >= 16 + 0xF8) u32(rec0, 16 + 0xF4) else -1
-        val firstNonBook = if (mobi && headerLen >= 0x44 && rec0.size >= 16 + 0x44) u32(rec0, 16 + 0x40) else -1
-        val ncxIndex = when {
-            isIndx(bytes, records, ncxField) -> ncxField
-            firstNonBook > textRecords && isIndx(bytes, records, firstNonBook) -> firstNonBook
-            else -> -1
-        }
+        return parseAt(bytes, records, 0, title)
+    }
 
+    /**
+     * Image-magic records in file order. KF8 images win when that section parses;
+     * otherwise record 0. Fonts and index records are dropped without shifting recindex.
+     */
+    fun imageBlobs(bytes: ByteArray): List<ByteArray> {
+        if (bytes.size < 78 + 16) return emptyList()
+        val records = recordOffsets(bytes) ?: return emptyList()
+        if (records.size < 2) return emptyList()
+        val kf8 = kf8Section(bytes, records)
+        if (kf8 != null) {
+            val fromKf8 = collectImages(bytes, records, kf8)
+            if (fromKf8.isNotEmpty()) return fromKf8.values.toList()
+        }
+        return collectImages(bytes, records, 0).values.toList()
+    }
+
+    /**
+     * Embedded pages of a comic / image book, or null when the file is a text novel
+     * (fewer than three full-page images, or visible text longer than a caption).
+     */
+    fun imageBookPages(bytes: ByteArray): List<ByteArray>? {
+        val book = parse(bytes, "") ?: return null
+        if (book.chapters.size < 3) return null
+        val pages = ArrayList<ByteArray>(book.chapters.size)
+        for (chapter in book.chapters) {
+            var image: EbookImages.Ref? = null
+            for (part in EbookImages.split(chapter.text)) {
+                when (part) {
+                    is EbookImages.Part.Text -> if (part.text.isNotBlank()) return null
+                    is EbookImages.Part.Image -> {
+                        if (image != null || !part.ref.fullPage) return null
+                        image = part.ref
+                    }
+                }
+            }
+            val ref = image ?: return null
+            pages += book.images[ref.key] ?: return null
+        }
+        return pages
+    }
+
+    /** jpg / png / gif / bmp / webp, or null when [chunk] is not an image record. */
+    fun imageExt(chunk: ByteArray): String? {
+        if (chunk.size < 8) return null
+        if (chunk[0] == 0xFF.toByte() && chunk[1] == 0xD8.toByte()) return "jpg"
+        if (chunk[0] == 0x89.toByte() && chunk[1] == 'P'.code.toByte() &&
+            chunk[2] == 'N'.code.toByte() && chunk[3] == 'G'.code.toByte()
+        ) {
+            return "png"
+        }
+        if (chunk[0] == 'G'.code.toByte() && chunk[1] == 'I'.code.toByte() && chunk[2] == 'F'.code.toByte()) {
+            return "gif"
+        }
+        if (chunk[0] == 'B'.code.toByte() && chunk[1] == 'M'.code.toByte()) return "bmp"
+        if (chunk.size >= 12 &&
+            chunk[0] == 'R'.code.toByte() && chunk[1] == 'I'.code.toByte() &&
+            chunk[2] == 'F'.code.toByte() && chunk[3] == 'F'.code.toByte() &&
+            chunk[8] == 'W'.code.toByte() && chunk[9] == 'E'.code.toByte() &&
+            chunk[10] == 'B'.code.toByte() && chunk[11] == 'P'.code.toByte()
+        ) {
+            return "webp"
+        }
+        return null
+    }
+
+    fun key(index: Int): String = "mobi:$index"
+
+    private data class Section(
+        val compression: Int,
+        val textLen: Int,
+        val textRecords: Int,
+        val extraFlags: Int,
+        val encoding: Int,
+        val firstImage: Int,
+        val ncxIndex: Int,
+    )
+
+    private fun parseAt(bytes: ByteArray, records: List<Int>, section: Int, title: String): Book? {
+        val head = readSection(bytes, records, section) ?: return null
         // PalmDOC splits the uncompressed stream every 4096 bytes, which cuts UTF-8
         // characters in half. Decode the joined bytes once; per-record decode turns
         // that cut into replacement characters.
         val raw = ByteArrayOutputStream()
-        for (n in 1..textRecords) {
-            if (n >= records.size) break
-            val end = records.getOrNull(n + 1) ?: bytes.size
-            var chunk = slice(bytes, records[n], end) ?: continue
-            if (extraFlags != 0) {
-                chunk = stripExtra(chunk, extraFlags)
+        for (n in 1..head.textRecords) {
+            val recIndex = section + n
+            if (recIndex >= records.size) break
+            val end = records.getOrNull(recIndex + 1) ?: bytes.size
+            var chunk = slice(bytes, records[recIndex], end) ?: continue
+            if (head.extraFlags != 0) {
+                chunk = stripExtra(chunk, head.extraFlags)
             }
-            val plain = when (compression) {
+            val plain = when (head.compression) {
                 COMPRESSION_NONE -> chunk
                 else -> palmdoc(chunk)
             }
-            if (textLen > 0) {
-                val room = textLen - raw.size()
+            if (head.textLen > 0) {
+                val room = head.textLen - raw.size()
                 if (room <= 0) break
                 if (plain.size <= room) raw.write(plain) else raw.write(plain, 0, room)
             } else {
@@ -76,19 +141,8 @@ internal object MobiText {
             }
         }
         val htmlBytes = raw.toByteArray()
-        val html = decode(htmlBytes, encoding)
-
-        val imageRecs = LinkedHashMap<Int, ByteArray>()
-        if (firstImage > 0) {
-            val imageStop = if (ncxIndex > firstImage) ncxIndex else records.size
-            for (n in firstImage until imageStop) {
-                val end = records.getOrNull(n + 1) ?: bytes.size
-                val chunk = slice(bytes, records[n], end) ?: continue
-                if (chunk.size < 8) continue
-                val index = n - firstImage + 1
-                imageRecs[index] = chunk
-            }
-        }
+        val html = decode(htmlBytes, head.encoding)
+        val imageRecs = imageRecords(bytes, records, head.firstImage, head.ncxIndex)
         val marked = markRecindex(html, imageRecs)
         val visible = marked.replace(Regex("\uE000[^\uE002]*\uE002"), "")
         val comic = imageRecs.size >= 3 && visible.length <= imageRecs.size * 40
@@ -96,15 +150,15 @@ internal object MobiText {
         val chapters = if (comic) {
             imageRecs.keys.sorted().map { idx ->
                 val key = key(idx)
-                val bytes = imageRecs.getValue(idx)
-                blobs[key] = bytes
-                val size = EbookImages.sizeOf(bytes)
+                val image = imageRecs.getValue(idx)
+                blobs[key] = image
+                val size = EbookImages.sizeOf(image)
                 val aspect = if (size != null) size.first.toFloat() / size.second else 0.75f
                 EbookChapter("", EbookImages.marker(key, aspect, fullPage = true, size?.first ?: 0), 0)
             }
         } else {
-            val ncx = readNcx(records, bytes, ncxIndex, encoding)
-            val fromNcx = chaptersFromNcx(htmlBytes, html, ncx, imageRecs, blobs, encoding, title)
+            val ncx = readNcx(records, bytes, head.ncxIndex, head.encoding)
+            val fromNcx = chaptersFromNcx(htmlBytes, html, ncx, imageRecs, blobs, head.encoding, title)
             if (fromNcx != null) {
                 fromNcx
             } else {
@@ -119,7 +173,119 @@ internal object MobiText {
         return Book(chapters, blobs)
     }
 
-    fun key(index: Int): String = "mobi:$index"
+    private fun collectImages(bytes: ByteArray, records: List<Int>, section: Int): Map<Int, ByteArray> {
+        val head = readSection(bytes, records, section) ?: return emptyMap()
+        return imageRecords(bytes, records, head.firstImage, head.ncxIndex)
+    }
+
+    /** Recindex stays `record - firstImage + 1`. Non-image magics are omitted. */
+    private fun imageRecords(
+        bytes: ByteArray,
+        records: List<Int>,
+        firstImage: Int,
+        ncxIndex: Int,
+    ): LinkedHashMap<Int, ByteArray> {
+        val imageRecs = LinkedHashMap<Int, ByteArray>()
+        if (firstImage <= 0) return imageRecs
+        val imageStop = if (ncxIndex > firstImage) ncxIndex else records.size
+        for (n in firstImage until imageStop) {
+            if (n !in records.indices) break
+            val end = records.getOrNull(n + 1) ?: bytes.size
+            val chunk = slice(bytes, records[n], end) ?: continue
+            if (imageExt(chunk) == null) continue
+            imageRecs[n - firstImage + 1] = chunk
+        }
+        return imageRecs
+    }
+
+    /**
+     * KF8 PalmDOC header record. EXTH 121 is the boundary record number.
+     * A record whose payload is `BOUNDARY` means the next record is KF8.
+     * Some files point 121 at the KF8 PalmDOC header itself.
+     */
+    private fun kf8Section(bytes: ByteArray, records: List<Int>): Int? {
+        val rec0 = slice(bytes, records[0], records.getOrNull(1) ?: bytes.size) ?: return null
+        if (rec0.size < 16 + 0x74 || !isMobiAt(rec0, 16)) return null
+        val headerLen = u32(rec0, 20)
+        if (headerLen < 0x74 || 16 + headerLen > rec0.size) return null
+        if (u32(rec0, 16 + 0x70) and 0x40 == 0) return null
+        val boundary = readExthU32(rec0, 16 + headerLen, 121) ?: return null
+        if (boundary !in records.indices) return null
+        val boundaryBytes = recordBytes(bytes, records, boundary) ?: return null
+        val section = when {
+            boundaryBytes.startsWith(BOUNDARY) -> boundary + 1
+            looksLikePalmDoc(boundaryBytes) -> boundary
+            else -> return null
+        }
+        if (section !in records.indices || section == 0) return null
+        return section
+    }
+
+    private fun readExthU32(rec0: ByteArray, exthAt: Int, tag: Int): Int? {
+        if (exthAt < 0 || exthAt + 12 > rec0.size) return null
+        if (!rec0.regionMatches(exthAt, byteArrayOf('E'.code.toByte(), 'X'.code.toByte(), 'T'.code.toByte(), 'H'.code.toByte()))) {
+            return null
+        }
+        val count = u32(rec0, exthAt + 8)
+        if (count <= 0 || count > 4096) return null
+        var pos = exthAt + 12
+        repeat(count) {
+            if (pos + 8 > rec0.size) return null
+            val type = u32(rec0, pos)
+            val len = u32(rec0, pos + 4)
+            if (len < 8 || pos + len > rec0.size) return null
+            if (type == tag && len >= 12) return u32(rec0, pos + 8)
+            pos += len
+        }
+        return null
+    }
+
+    private fun readSection(bytes: ByteArray, records: List<Int>, section: Int): Section? {
+        if (section !in records.indices) return null
+        val next = records.getOrNull(section + 1) ?: bytes.size
+        val rec0 = slice(bytes, records[section], next) ?: return null
+        if (rec0.size < 16) return null
+        val compression = u16(rec0, 0)
+        val textLen = u32(rec0, 4)
+        val textRecords = u16(rec0, 8)
+        val encryption = u16(rec0, 12)
+        if (encryption != 0 || textRecords <= 0) return null
+        if (compression == HUFF || (compression != COMPRESSION_NONE && compression != COMPRESSION_PALMDOC)) {
+            return null
+        }
+        val mobi = isMobiAt(rec0, 16)
+        val headerLen = if (mobi && rec0.size >= 24) u32(rec0, 20) else 0
+        val encoding = if (mobi && headerLen >= 16 && rec0.size >= 16 + 16) u32(rec0, 16 + 12) else 1252
+        // Extra-data flags sit at record offset 0xF2 once the MOBI header is at least 0xE4.
+        // They describe trailer bytes on every text record. Leaving those bytes in makes
+        // PalmDOC emit a few garbage characters about every 4096 bytes.
+        val extraFlags = if (mobi && headerLen >= 0xE4 && rec0.size >= 0xF4) u16(rec0, 0xF2) else 0
+        val firstImage = if (mobi && headerLen > 112 && rec0.size >= 16 + 112) u32(rec0, 16 + 108) else -1
+        // NCX index record. Present once the MOBI header reaches 0xF8. 0xFFFFFFFF means none.
+        // Hybrid files leave that field empty and keep the contents INDX at the first non-book record.
+        val ncxField = if (mobi && headerLen >= 0xF8 && rec0.size >= 16 + 0xF8) u32(rec0, 16 + 0xF4) else -1
+        val firstNonBook = if (mobi && headerLen >= 0x44 && rec0.size >= 16 + 0x44) u32(rec0, 16 + 0x40) else -1
+        val textEnd = section + textRecords
+        val ncxIndex = when {
+            isIndx(bytes, records, ncxField) -> ncxField
+            firstNonBook > textEnd && isIndx(bytes, records, firstNonBook) -> firstNonBook
+            else -> -1
+        }
+        return Section(compression, textLen, textRecords, extraFlags, encoding, firstImage, ncxIndex)
+    }
+
+    private fun isMobiAt(rec: ByteArray, at: Int): Boolean = rec.size >= at + 4 &&
+        rec[at] == 'M'.code.toByte() && rec[at + 1] == 'O'.code.toByte() &&
+        rec[at + 2] == 'B'.code.toByte() && rec[at + 3] == 'I'.code.toByte()
+
+    private fun looksLikePalmDoc(rec: ByteArray): Boolean {
+        if (rec.size < 20) return false
+        val compression = u16(rec, 0)
+        if (compression != COMPRESSION_NONE && compression != COMPRESSION_PALMDOC && compression != HUFF) {
+            return false
+        }
+        return isMobiAt(rec, 16)
+    }
 
     internal fun palmdoc(data: ByteArray): ByteArray {
         val out = ArrayList<Byte>(data.size * 2)
@@ -158,7 +324,7 @@ internal object MobiText {
         val img = Regex("""(?is)<img\b([^>]*)/?>""")
         return img.replace(html) { m ->
             val attrs = attrs(m.groupValues[1])
-            val rec = attrs["recindex"]?.toIntOrNull()
+            val rec = attrs["recindex"]?.toIntOrNull() ?: kindleEmbedIndex(attrs["src"])
             val bytes = if (rec != null) images[rec] else null
             if (rec != null && bytes != null) {
                 val size = EbookImages.sizeOf(bytes)
@@ -168,6 +334,12 @@ internal object MobiText {
                 ""
             }
         }
+    }
+
+    private fun kindleEmbedIndex(src: String?): Int? {
+        if (src.isNullOrBlank()) return null
+        val hex = KINDLE_EMBED.find(src)?.groupValues?.getOrNull(1) ?: return null
+        return hex.toIntOrNull(16)?.takeIf { it > 0 }
     }
 
     private fun attrs(s: String): Map<String, String> {

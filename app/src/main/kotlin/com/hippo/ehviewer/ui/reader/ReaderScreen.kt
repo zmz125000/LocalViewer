@@ -116,8 +116,10 @@ import com.hippo.ehviewer.library.MediaStoreFs
 import com.hippo.ehviewer.library.ReaderImageList
 import com.hippo.ehviewer.library.ZipAsDirListing
 import com.hippo.ehviewer.library.ZipPaths
+import com.hippo.ehviewer.library.document.MobiImageEngine
 import com.hippo.ehviewer.library.isDocumentFileName
 import com.hippo.ehviewer.library.isEpubFileName
+import com.hippo.ehviewer.library.isMobiContainerFileName
 import com.hippo.ehviewer.library.isSolidArchiveFileName
 import com.hippo.ehviewer.library.isTarArchiveFileName
 import com.hippo.ehviewer.library.isZipArchiveFileName
@@ -1473,7 +1475,8 @@ suspend inline fun <T> usePageLoader(args: ReaderScreenArgs, crossinline block: 
             args.page != -1 -> args.page
             else -> EhDB.getReadProgress(info.gid)
         }
-        if (isDocumentFileName(path.name)) {
+        val leaf = ZipPaths.memberLeafName(args.path) ?: path.name
+        if (isDocumentFileName(leaf) || isMobiContainerFileName(leaf)) {
             useLocalDocumentExtractPageLoader(
                 path,
                 info = info,
@@ -1511,7 +1514,7 @@ suspend inline fun <T> usePageLoader(args: ReaderScreenArgs, crossinline block: 
         val remote = args.remotePath
         val solid = isSolidArchiveFileName(remote)
         val tar = isTarArchiveFileName(remote)
-        val document = isDocumentFileName(remote)
+        val document = isDocumentFileName(remote) || isMobiContainerFileName(remote)
         val byteSource = com.hippo.ehviewer.smb.SmbArchiveByteSource(
             source,
             password,
@@ -1535,7 +1538,11 @@ suspend inline fun <T> usePageLoader(args: ReaderScreenArgs, crossinline block: 
             }
         }
         if (document) {
-            val documentFormat = if (isEpubFileName(remote)) "epub" else "pdf"
+            val documentFormat = when {
+                isEpubFileName(remote) -> "epub"
+                isMobiContainerFileName(remote) -> MobiImageEngine.FORMAT
+                else -> "pdf"
+            }
             useDocumentExtractPageLoader(
                 source = byteSource,
                 cacheKey = cacheKey,
@@ -1627,7 +1634,7 @@ suspend inline fun <T> usePageLoader(args: ReaderScreenArgs, crossinline block: 
         val remote = args.remotePath
         val solid = isSolidArchiveFileName(remote)
         val tar = isTarArchiveFileName(remote)
-        val document = isDocumentFileName(remote)
+        val document = isDocumentFileName(remote) || isMobiContainerFileName(remote)
         val cacheKey = "webdav:${source.id}:$remote"
         val titleHint = remote.substringAfterLast('/').ifEmpty { source.displayName }
         val passwdProvider: PasswdProvider = { invalidator ->
@@ -1652,7 +1659,11 @@ suspend inline fun <T> usePageLoader(args: ReaderScreenArgs, crossinline block: 
             pipeline = !document,
         )
         if (document) {
-            val documentFormat = if (isEpubFileName(remote)) "epub" else "pdf"
+            val documentFormat = when {
+                isEpubFileName(remote) -> "epub"
+                isMobiContainerFileName(remote) -> MobiImageEngine.FORMAT
+                else -> "pdf"
+            }
             useDocumentExtractPageLoader(
                 source = byteSource,
                 cacheKey = cacheKey,

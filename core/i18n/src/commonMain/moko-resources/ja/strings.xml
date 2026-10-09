@@ -260,7 +260,9 @@
     <string name="pref_reader_hi_res_software_downscale">ソフトウェア縮小を使う</string>
     <string name="pref_reader_hi_res_software_downscale_summary">4096 px のプレビューを縮小デコードの方式で再サンプリングします。</string>
     <string name="pref_pdf_direct_image">PDF 直接画像</string>
-    <string name="pref_pdf_direct_image_summary">PDF リーダーの画像 PDF は埋め込み画像でページとフォトグリッドを表示します。オフでは各ページを PDF レンダラーで描画します。</string>
+    <string name="pref_pdf_direct_image_summary">画像 PDF を画像ファイルとして抽出します。</string>
+    <string name="pref_comic_ebook_direct_image">コミック電子書籍の直接画像</string>
+    <string name="pref_comic_ebook_direct_image_summary">MOBI と AZW3 のコミックを画像ファイルとして抽出します。</string>
     <string name="pref_reader_lib_direct_bitmap">UHDR 変換をバイパス</string>
     <string name="pref_reader_lib_direct_bitmap_summary">高度な形式を Bitmap に直接デコードし、Ultra HDR JPEG 変換をスキップします。</string>
     <string name="pref_reader_hdr_display">HDR 表示サポート</string>

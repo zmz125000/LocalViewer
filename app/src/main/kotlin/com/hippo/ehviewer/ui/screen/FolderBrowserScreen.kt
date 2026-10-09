@@ -107,6 +107,7 @@ import com.hippo.ehviewer.library.filterSmallGalleries
 import com.hippo.ehviewer.library.isEbookFileName
 import com.hippo.ehviewer.library.isHtmlFileName
 import com.hippo.ehviewer.library.isImageFileName
+import com.hippo.ehviewer.library.isMobiContainerFileName
 import com.hippo.ehviewer.library.isPdfFileName
 import com.hippo.ehviewer.library.isPdfOrEbookFileName
 import com.hippo.ehviewer.library.isZipArchiveFileName
@@ -137,7 +138,6 @@ import com.hippo.ehviewer.ui.destinations.LibraryScreenDestination
 import com.hippo.ehviewer.ui.main.BrowseArchiveGalleryRow
 import com.hippo.ehviewer.ui.main.BrowseArchiveGridItem
 import com.hippo.ehviewer.ui.main.BrowseCover
-import com.hippo.ehviewer.ui.main.directoryBrowseCover
 import com.hippo.ehviewer.ui.main.BrowseDirectoryGridItem
 import com.hippo.ehviewer.ui.main.BrowseDirectoryRow
 import com.hippo.ehviewer.ui.main.BrowseEmptyHint
@@ -161,6 +161,7 @@ import com.hippo.ehviewer.ui.main.LocalBrowseListHeaderInset
 import com.hippo.ehviewer.ui.main.awaitHttpShareQr
 import com.hippo.ehviewer.ui.main.browseRecentPreviewLimit
 import com.hippo.ehviewer.ui.main.browseZipAsDirTypeLabel
+import com.hippo.ehviewer.ui.main.directoryBrowseCover
 import com.hippo.ehviewer.ui.main.onRecentHeaderGesture
 import com.hippo.ehviewer.ui.main.rememberBrowseSectionCollapse
 import com.hippo.ehviewer.ui.main.rememberRecentStripExpanded
@@ -1591,6 +1592,25 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         navToReader(path, skipPdfPrimary = skipPdfPrimary)
     }
 
+    /** Regular-file MOBI/AZW/AZW3 image reader. Same gallery route as a PDF overflow. */
+    fun openMobiImageReader(path: okio.Path, title: String) {
+        val frame = stack.lastOrNull()
+        if (frame != null && !frame.isZipBrowse) {
+            ReaderGalleryPlaylist.setFromLocalBrowse(
+                rootId = frame.rootId,
+                parentPath = frame.path,
+                parentRelative = frame.relativePath,
+                entries = entries,
+            )
+        }
+        val pathStr = path.toString()
+        launchIO {
+            recordCurrentBrowseFolderHistory(title)
+            LocalHistory.recordLocalArchive(pathStr, title = title)
+        }
+        navToReader(pathStr, skipPdfPrimary = true)
+    }
+
     fun openPdfInOtherApp(entry: BrowseEntry.ArchiveGallery, usePreferredReader: Boolean = true) {
         if (!isPdfFileName(entry.name)) return
         val path = entry.path.toString()
@@ -2149,6 +2169,11 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         } else if (isPdfOrEbookFileName(leaf)) {
             BrowseOverflowActions(
                 kind = BrowseOverflowKind.Pdf,
+                onRead = if (isMobiContainerFileName(leaf)) {
+                    { openMobiImageReader(path, leaf) }
+                } else {
+                    null
+                },
                 onPlay = { openInternalDocument(path) },
                 onExternalPlayer = {
                     if (isPdfFileName(leaf)) {
