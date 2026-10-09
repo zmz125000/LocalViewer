@@ -1,5 +1,6 @@
 package com.hippo.ehviewer.ui.reader
 
+import android.os.Build
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.Crossfade
 import androidx.compose.foundation.layout.Column
@@ -271,6 +272,22 @@ private fun PagerSetting() = Column {
                 field = Settings.navigateToPan.asMutableState(),
             )
         }
+    }
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+        SpinnerChoice(
+            title = stringResource(id = R.string.pref_image_scaler),
+            entries = arrayOf(
+                stringResource(id = R.string.pref_image_scaler_default),
+                stringResource(id = R.string.pref_image_scaler_nearest),
+                stringResource(id = R.string.pref_image_scaler_bilinear),
+                stringResource(id = R.string.pref_image_scaler_bspline),
+                stringResource(id = R.string.pref_image_scaler_catmull),
+                stringResource(id = R.string.pref_image_scaler_mitchell),
+                stringResource(id = R.string.pref_image_scaler_lanczos),
+            ),
+            values = listOf(0, 1, 2, 3, 4, 5, 6),
+            field = Settings.readerImageScaler.asMutableState(),
+        )
     }
     val scaleType = Settings.imageScaleType.asMutableState()
     SpinnerChoice(

@@ -382,9 +382,12 @@ class Image private constructor(
             val hardwareDirect = !platformHbd && (Settings.readerHardwareBitmap.value || hdrSafe)
             // A chosen kernel decodes the full software frame, then resamples once.
             // Default 0 keeps the codec subsample. Gain maps and deep color stay on that path.
+            // Hi-res optimize keeps the codec's 4096 cap. The software kernel is only
+            // the 1.5×–3× decode size, and Original skips it.
             val kernelDownscale = !platformHbd && !hdrSafe &&
-                decodeDownscaleKernel() != 0 &&
-                (longEdgeCap > 0 || !mode.isOriginal)
+                longEdgeCap <= 0 &&
+                !mode.isOriginal &&
+                decodeDownscaleKernel() != 0
             val request = with(appCtx) {
                 imageRequest {
                     onLeft { data(it.source) }
