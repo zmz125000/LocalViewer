@@ -36,6 +36,7 @@ fun SettingsPager(
     isWebtoon: Boolean,
     isDocument: Boolean = false,
     rawLoaded: StateFlow<Boolean> = NoRawLoaded,
+    showImageScaler: Boolean = true,
     modifier: Modifier = Modifier,
 ) {
     val showCameraRaw by rawLoaded.collectAsState()
@@ -71,7 +72,7 @@ fun SettingsPager(
                 when (page) {
                     0 -> ReaderModeSetting(isWebtoon, isDocument, showCameraRaw)
                     1 -> ReaderGeneralSetting(isDocument)
-                    2 -> ColorFilterSetting()
+                    2 -> ColorFilterSetting(showImageScaler)
                 }
             }
         }
