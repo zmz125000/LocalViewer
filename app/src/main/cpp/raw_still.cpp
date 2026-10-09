@@ -216,8 +216,8 @@ float sample_component(const uint8_t* base, int bits, int colors, int x, int y, 
 }
 
 // Diffuse white ≈ 90th percentile of sampled luminance. Peak is the brightest sample.
-// HDR uses this only to decide which pixels sit above paper white. The camera look
-// still divides by full scale, same as deep color.
+// Used only to decide which pixels sit above paper white on the non-linear HDR path.
+// Every pack, including linear HDR, divides by camera white.
 void linear_white_and_peak(const uint8_t* base, int w, int h, int colors, int bits, float& white, float& peak) {
     const int npx = w * h;
     int step = 1;
@@ -248,8 +248,7 @@ void linear_white_and_peak(const uint8_t* base, int w, int h, int colors, int bi
     peak = std::max(peak, white);
 }
 
-// Same mapping as RawPresent.rawLinearSample. scene_over_white is 1 at paper white for HDR,
-// and at sensor white for deep color.
+// Same mapping as RawPresent.rawLinearSample. scene_over_white is 1 at camera white.
 // Highlight stops compress only above 1.
 float raw_linear_sample(float scene_over_white, float exposure_ev, float highlight_stops, float cap) {
     if (!std::isfinite(scene_over_white) || !std::isfinite(exposure_ev) || !std::isfinite(highlight_stops) ||
@@ -334,7 +333,9 @@ bool pack_image(const libraw_processed_image_t* img, int max_edge, int present, 
     const float full = linear16 ? 65535.f : 255.f;
     const float white = (linear16 && camera_white > 1.f && camera_white < full) ? camera_white : full;
     float paper = white;
-    if (hdr && linear16) {
+    // Linear HDR keeps the same camera-white scale as the other paths. Paper white
+    // only splits the non-linear HDR headroom branch.
+    if (hdr && linear16 && !linear_hdr) {
         float sensor_peak = white;
         linear_white_and_peak(img->data, sw, sh, colors, img->bits, paper, sensor_peak);
     }
@@ -379,8 +380,7 @@ bool pack_image(const libraw_processed_image_t* img, int max_edge, int present, 
                 double ch[3];
                 for (int c = 0; c < 3; ++c) ch[c] = acc[c] / count;
                 float rgb[3];
-                const float scale = linear_hdr ? paper : white;
-                for (int c = 0; c < 3; ++c) rgb[c] = static_cast<float>(ch[c] / scale);
+                for (int c = 0; c < 3; ++c) rgb[c] = static_cast<float>(ch[c] / white);
                 auto rec_luma = [](float r, float g, float b) {
                     return 0.2126f * r + 0.7152f * g + 0.0722f * b;
                 };
