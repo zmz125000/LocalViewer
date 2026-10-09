@@ -71,9 +71,9 @@ fun SettingsPager(
         ) { page ->
             ProvideTextStyle(value = MaterialTheme.typography.labelLarge) {
                 when (page) {
-                    0 -> ReaderModeSetting(isWebtoon, isDocument, showCameraRaw)
+                    0 -> ReaderModeSetting(isWebtoon, isDocument)
                     1 -> ReaderGeneralSetting(isDocument, showDirectImage)
-                    2 -> ColorFilterSetting(showImageScaler)
+                    2 -> ColorFilterSetting(showImageScaler, showCameraRaw)
                 }
             }
         }

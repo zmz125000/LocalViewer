@@ -22,7 +22,6 @@ import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.asMutableState
 import com.hippo.ehviewer.library.document.EBOOK_FONT_SIZE_MAX
 import com.hippo.ehviewer.library.document.EBOOK_FONT_SIZE_MIN
-import com.hippo.ehviewer.ui.settings.Preference
 import eu.kanade.tachiyomi.ui.reader.setting.OrientationType
 import eu.kanade.tachiyomi.ui.reader.setting.ReadingModeType
 
@@ -30,7 +29,6 @@ import eu.kanade.tachiyomi.ui.reader.setting.ReadingModeType
 fun ReaderModeSetting(
     isWebtoon: Boolean,
     isDocument: Boolean = false,
-    showCameraRaw: Boolean = false,
 ) = Column(modifier = Modifier.verticalScroll(rememberScrollState()).navigationBarsPadding()) {
     SpinnerChoice(
         title = stringResource(id = R.string.pref_category_reading_mode),
@@ -83,12 +81,6 @@ fun ReaderModeSetting(
         values = listOf(0, 1, 2),
         field = Settings.autoRotateMode.asMutableState(),
     )
-    if (!isDocument && showCameraRaw) {
-        val cameraRaw = Settings.readerCameraRaw.asMutableState()
-        AnimatedVisibility(visible = cameraRaw.value) {
-            CameraRawSetting()
-        }
-    }
     if (isDocument) {
         Spacer(modifier = Modifier.size(8.dp))
         DocumentStyleSetting()
@@ -337,83 +329,6 @@ private fun PagerSetting() = Column {
             )
         }
     }
-}
-
-@Composable
-private fun CameraRawSetting() = Column {
-    Spacer(modifier = Modifier.size(16.dp))
-    Text(
-        text = stringResource(id = R.string.pref_reader_camera_raw),
-        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-    )
-    val whiteBalance = Settings.readerRawWhiteBalance.asMutableState()
-    SpinnerChoice(
-        title = stringResource(id = R.string.pref_reader_raw_white_balance),
-        entries = arrayOf(
-            stringResource(id = R.string.pref_reader_raw_wb_camera),
-            stringResource(id = R.string.pref_reader_raw_wb_auto),
-            stringResource(id = R.string.pref_reader_raw_wb_daylight),
-            stringResource(id = R.string.pref_reader_raw_wb_cloudy),
-            stringResource(id = R.string.pref_reader_raw_wb_shade),
-            stringResource(id = R.string.pref_reader_raw_wb_tungsten),
-            stringResource(id = R.string.pref_reader_raw_wb_fluorescent),
-            stringResource(id = R.string.pref_reader_raw_wb_flash),
-            stringResource(id = R.string.pref_reader_raw_wb_kelvin),
-        ),
-        values = listOf(0, 1, 2, 3, 4, 5, 6, 7, 8),
-        field = whiteBalance,
-    )
-    AnimatedVisibility(visible = whiteBalance.value == 8) {
-        CommitSliderChoice(
-            title = stringResource(id = R.string.pref_reader_raw_kelvin),
-            summary = stringResource(id = R.string.pref_reader_raw_kelvin_summary),
-            range = 2000..12000,
-            field = Settings.readerRawKelvin.asMutableState(),
-            valueText = { "$it K" },
-            steps = 99,
-        )
-    }
-    SwitchChoice(
-        title = stringResource(id = R.string.pref_reader_raw_hdr_linear),
-        summary = stringResource(id = R.string.pref_reader_raw_hdr_linear_summary),
-        field = Settings.readerRawHdrLinear.asMutableState(),
-    )
-    CommitSliderChoice(
-        title = stringResource(id = R.string.pref_reader_raw_exposure),
-        range = -30..30,
-        field = Settings.readerRawExposure.asMutableState(),
-        valueText = { "%+.1f".format(it / 10f) },
-    )
-    CommitSliderChoice(
-        title = stringResource(id = R.string.pref_reader_raw_shadows),
-        range = -100..100,
-        field = Settings.readerRawShadows.asMutableState(),
-        valueText = { "%+d".format(it) },
-    )
-    CommitSliderChoice(
-        title = stringResource(id = R.string.pref_reader_raw_midtones),
-        range = -100..100,
-        field = Settings.readerRawMidtones.asMutableState(),
-        valueText = { "%+d".format(it) },
-    )
-    CommitSliderChoice(
-        title = stringResource(id = R.string.pref_reader_raw_highlights),
-        range = -100..100,
-        field = Settings.readerRawHighlights.asMutableState(),
-        valueText = { "%+d".format(it) },
-    )
-    CommitSliderChoice(
-        title = stringResource(id = R.string.pref_reader_raw_highlight),
-        summary = stringResource(id = R.string.pref_reader_raw_highlight_summary),
-        range = 0..30,
-        field = Settings.readerRawHighlight.asMutableState(),
-        valueText = { "%.1f".format(it / 10f) },
-    )
-    Preference(
-        title = stringResource(id = R.string.pref_reader_raw_reset),
-        onClick = { Settings.resetReaderRaw() },
-    )
 }
 
 @Composable
