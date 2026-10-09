@@ -870,6 +870,14 @@
     <string name="pref_decode_size_2_5x">画面の 2.5×</string>
     <string name="pref_decode_size_3x">画面の 3×</string>
     <string name="pref_decode_size_origin">原寸</string>
+    <string name="pref_image_scaler">画像スケーラー</string>
+    <string name="pref_image_scaler_default">デフォルト</string>
+    <string name="pref_image_scaler_nearest">ニアレスト</string>
+    <string name="pref_image_scaler_bilinear">バイリニア</string>
+    <string name="pref_image_scaler_bspline">B-スプライン</string>
+    <string name="pref_image_scaler_catmull">Catmull-Rom</string>
+    <string name="pref_image_scaler_mitchell">Mitchell-Netravali</string>
+    <string name="pref_image_scaler_lanczos">Lanczos3</string>
     <string name="pref_reader_original_size">常に原寸で読み込む</string>
     <string name="pref_reader_original_size_summary">ファイルのフル解像度でデコード（メモリ多め）。オフ時は画面向け縮小。ページメニューの「オリジナルの画像を表示」で1枚だけ原寸も可。</string>
     <string name="pref_custom_brightness">明るさをカスタマイズ</string>

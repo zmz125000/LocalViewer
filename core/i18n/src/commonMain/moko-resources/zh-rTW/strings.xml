@@ -829,6 +829,14 @@
     <string name="pref_decode_size_2_5x">2.5× 螢幕</string>
     <string name="pref_decode_size_3x">3× 螢幕</string>
     <string name="pref_decode_size_origin">原圖</string>
+    <string name="pref_image_scaler">影像縮放</string>
+    <string name="pref_image_scaler_default">預設</string>
+    <string name="pref_image_scaler_nearest">最近鄰</string>
+    <string name="pref_image_scaler_bilinear">雙線性</string>
+    <string name="pref_image_scaler_bspline">B 樣條</string>
+    <string name="pref_image_scaler_catmull">Catmull-Rom</string>
+    <string name="pref_image_scaler_mitchell">Mitchell-Netravali</string>
+    <string name="pref_image_scaler_lanczos">Lanczos3</string>
     <string name="pref_reader_original_size">一律載入原始影像尺寸</string>
     <string name="pref_reader_original_size_summary">以檔案完整解析度解碼（較占記憶體）。關閉時縮放至螢幕。亦可在頁面選單單次「查看原圖」。</string>
     <string name="pref_reader_hardware_bitmap">硬體點陣圖解碼</string>

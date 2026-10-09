@@ -94,6 +94,12 @@ class Image private constructor(
     isHdrContentDirect: Boolean = false,
     contentHdrBoostOverride: Float? = null,
     isWideGamutDirect: Boolean = false,
+    /**
+     * Coil 8-bit still. The reader may resample this with a draw-time shader.
+     * Gain maps, deep color, animated drawables, and lib-direct bitmaps stay on
+     * the platform blit.
+     */
+    val displayScaler: Boolean = false,
 ) {
     val refcnt = AtomicInt(1)
 
@@ -615,7 +621,11 @@ class Image private constructor(
                     src.left().decodeCoil(checkExtraneousAds, forceOriginal)
                 }
             }
-            return Image(image.image, src).also { it.noteHiResPreview(image.capped) }
+            return Image(
+                image.image,
+                src,
+                displayScaler = image.image.allowsDisplayScaler(),
+            ).also { it.noteHiResPreview(image.capped) }
         }
 
         /**
@@ -676,6 +686,44 @@ class Image private constructor(
             val scale = mode.scale ?: return 0
             return with(appCtx.resources.displayMetrics) {
                 (minOf(widthPixels, heightPixels) * scale).roundToInt().coerceAtLeast(1)
+            }
+        }
+
+        /**
+         * 8-bit Coil stills only. A gain map has to stay on the platform blit, and an
+         * FP16 or 10-bit buffer is a deep-color page even after it becomes HARDWARE.
+         */
+        private fun CoilImage.allowsDisplayScaler(): Boolean {
+            val bitmap = when (this) {
+                is BitmapImageWithExtraInfo -> {
+                    if (hasGainmap) return false
+                    image.bitmap
+                }
+                is BitmapImage -> {
+                    if (detectGainmap()) return false
+                    bitmap
+                }
+                else -> return false
+            }
+            if (bitmap.isRecycled) return false
+            return when (bitmap.config) {
+                Bitmap.Config.ARGB_8888, Bitmap.Config.RGB_565 -> true
+                Bitmap.Config.HARDWARE -> bitmap.hardwareBufferIsEightBit()
+                else -> false
+            }
+        }
+
+        private fun Bitmap.hardwareBufferIsEightBit(): Boolean {
+            val buffer = runCatching { hardwareBuffer }.getOrNull() ?: return true
+            return try {
+                val format = buffer.format
+                format != HardwareBuffer.RGBA_FP16 &&
+                    (
+                        Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+                            format != HardwareBuffer.RGBA_1010102
+                        )
+            } finally {
+                buffer.close()
             }
         }
 
