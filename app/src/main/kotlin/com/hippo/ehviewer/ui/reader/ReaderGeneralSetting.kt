@@ -17,7 +17,10 @@ import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.asMutableState
 
 @Composable
-fun ReaderGeneralSetting(isDocument: Boolean = false) = Column(modifier = Modifier.verticalScroll(rememberScrollState()).navigationBarsPadding()) {
+fun ReaderGeneralSetting(
+    isDocument: Boolean = false,
+    showDirectImage: Boolean = false,
+) = Column(modifier = Modifier.verticalScroll(rememberScrollState()).navigationBarsPadding()) {
     SpinnerChoice(
         title = stringResource(id = R.string.pref_reader_theme),
         entries = stringArrayResource(id = com.hippo.ehviewer.R.array.reader_themes),
@@ -108,11 +111,18 @@ fun ReaderGeneralSetting(isDocument: Boolean = false) = Column(modifier = Modifi
     AnimatedVisibility(visible = !hiResOptimize.value || softwareDownscale.value) {
         DecodeScalerChoice()
     }
-    SwitchChoice(
-        title = stringResource(id = R.string.pref_pdf_direct_image),
-        summary = stringResource(id = R.string.pref_pdf_direct_image_summary),
-        field = Settings.pdfDirectImage.asMutableState(),
-    )
+    if (showDirectImage) {
+        SwitchChoice(
+            title = stringResource(id = R.string.pref_pdf_direct_image),
+            summary = stringResource(id = R.string.pref_pdf_direct_image_summary),
+            field = Settings.pdfDirectImage.asMutableState(),
+        )
+        SwitchChoice(
+            title = stringResource(id = R.string.pref_comic_ebook_direct_image),
+            summary = stringResource(id = R.string.pref_comic_ebook_direct_image_summary),
+            field = Settings.comicEbookDirectImage.asMutableState(),
+        )
+    }
     SwitchChoice(
         title = stringResource(id = R.string.pref_vector_compose_ahead),
         summary = stringResource(id = R.string.pref_vector_compose_ahead_summary),

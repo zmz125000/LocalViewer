@@ -97,14 +97,14 @@ object Settings : DataStorePreferences(null) {
 
     /**
      * Folder-view Recent section. On (default): show items in the current directory
-     * that have a history row, two rows until the header is tapped.
+     * that have a history row, one grid row or two list rows until the header is tapped.
      * Off: hide that section. Empty history also hides it.
      */
     val browseRecentOpen = boolPref("browse_recent_open", true)
 
     /**
      * Long-press of the folder Last opened toggle. Default for a folder you just opened.
-     * On (lock): Recent starts with every item. Off (default, tick): Recent starts at two rows.
+     * On (lock): Recent starts with every item. Off (default, tick): Recent starts at one grid row or two list rows.
      * Tapping the header changes only the folder you are in.
      */
     val browseRecentExpanded = boolPref("browse_recent_expanded", false)
@@ -797,12 +797,19 @@ object Settings : DataStorePreferences(null) {
     val readerGeneratePageThumb = boolPref("pref_reader_generate_page_thumb", false)
 
     /**
-     * PDF reader. On: image PDFs and MOBI/AZW3 comics use embedded images for pages
-     * and the photo grid. Off: every PDF page is [android.graphics.pdf.PdfRenderer];
-     * MOBI/AZW3 comics stay ebook page bitmaps. Text novels stay reflowed either way.
-     * The image reader does not read this flag. Stored default is off.
+     * PDF reader. On: image PDFs use embedded images for pages and the photo grid.
+     * Off: every page is [android.graphics.pdf.PdfRenderer].
+     * Comic ebooks use [comicEbookDirectImage]. The image reader does not read this flag.
+     * Stored default is off.
      */
     val pdfDirectImage = boolPref("pref_pdf_direct_image", false)
+
+    /**
+     * PDF reader. On: MOBI/AZW/AZW3 comics use embedded images for pages and the photo grid.
+     * Off: those comics stay ebook page bitmaps. Text novels stay reflowed either way.
+     * The image reader does not read this flag. Stored default is off.
+     */
+    val comicEbookDirectImage = boolPref("pref_comic_ebook_direct_image", false)
 
     /** Last open tab in the reader settings bottom sheet (0=mode, 1=general, 2=filter). */
     val readerSettingsTab = intPref("pref_reader_settings_tab", 0)

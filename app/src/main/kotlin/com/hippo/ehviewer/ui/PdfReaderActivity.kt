@@ -256,8 +256,8 @@ import okio.Path.Companion.toPath
  * Text / generic PDFs: [PdfRenderer] at the current zoom (vector drawing stays sharp).
  * Image / comic PDFs: native embedded bitmaps via [PdfImageEngine] when
  * [Settings.pdfDirectImage] is on. Off uses [PdfRenderer] for every page and thumb.
- * MOBI / AZW3 comics use the same switch: on serves the embedded images, off keeps
- * the ebook page bitmap. Text novels stay reflowed either way.
+ * MOBI / AZW3 comics use [Settings.comicEbookDirectImage]: on serves the embedded
+ * images, off keeps the ebook page bitmap. Text novels stay reflowed either way.
  *
  * Local / SMB / WebDAV image PDFs read the origin [ArchiveByteSource] directly.
  * Vector PDFs still use a streamdoc PFD with [PdfRenderer].
@@ -357,12 +357,13 @@ class PdfReaderActivity : AppCompatActivity() {
             try {
                 val cacheKey = pdfCacheKeyFromIntent(intent)
                 val directImage = Settings.pdfDirectImage.value
+                val comicDirect = Settings.comicEbookDirectImage.value
                 withContext(Dispatchers.IO) {
                     var created: PdfDocumentModel? = null
                     try {
                         val docName = documentNameFromIntent(intent, nextTitle)
                         if (isEbookFileName(docName)) {
-                            if (directImage && isMobiContainerFileName(docName)) {
+                            if (comicDirect && isMobiContainerFileName(docName)) {
                                 val images = tryOpenMobiDirect(intent, token)
                                 if (images != null) {
                                     created = images
@@ -923,7 +924,7 @@ private fun shouldCacheEbook(cached: List<EbookChapter>?, chapters: List<EbookCh
 private class EbookLoad(val vector: PdfDocumentModel.Vector?, val sourceHeld: Boolean)
 
 /**
- * Comic MOBI / AZW / AZW3 when PDF Direct Image is on: raw embedded images,
+ * Comic MOBI / AZW / AZW3 when Comic Ebook Direct Image is on: raw embedded images,
  * not the ebook page bitmap. Text novels and Huff/DRM files return null.
  */
 private fun tryOpenMobiDirect(intent: Intent, token: String?): PdfDocumentModel.MobiImages? {
@@ -1831,11 +1832,29 @@ private fun PdfReaderScreen(
     val contentsListState = rememberLazyListState()
     val scrollGridToProgress by Settings.photoGridScrollToProgress.collectAsState()
     val directImage by Settings.pdfDirectImage.collectAsState()
+    val comicDirect by Settings.comicEbookDirectImage.collectAsState()
     var appliedDirectImage by remember { mutableStateOf<Boolean?>(null) }
-    LaunchedEffect(directImage) {
-        val previous = appliedDirectImage
+    var appliedComicDirect by remember { mutableStateOf<Boolean?>(null) }
+    val mobiComic = isMobiContainerFileName(title) || when (sourceArgs) {
+        is ReaderScreenArgs.Archive -> isMobiContainerFileName(
+            ZipPaths.memberLeafName(sourceArgs.path) ?: sourceArgs.path,
+        )
+        is ReaderScreenArgs.SmbStreamArchive -> isMobiContainerFileName(sourceArgs.remotePath)
+        is ReaderScreenArgs.WebDavStreamArchive -> isMobiContainerFileName(sourceArgs.remotePath)
+        else -> false
+    }
+    LaunchedEffect(directImage, comicDirect) {
+        val previousPdf = appliedDirectImage
+        val previousComic = appliedComicDirect
         appliedDirectImage = directImage
-        if (previous != null && previous != directImage) onDirectImageChanged()
+        appliedComicDirect = comicDirect
+        val pdfChanged = previousPdf != null && previousPdf != directImage
+        val comicChanged = previousComic != null && previousComic != comicDirect
+        if (mobiComic) {
+            if (comicChanged) onDirectImageChanged()
+        } else if (pdfChanged) {
+            onDirectImageChanged()
+        }
     }
     val fullscreen by Settings.fullscreen.collectAsState()
     val keepScreenOn by Settings.keepScreenOn.collectAsState()
@@ -2602,6 +2621,7 @@ private fun PdfReaderScreen(
                                     isWebtoon = ReadingModeType.isWebtoon(sheetMode),
                                     isDocument = isEbook,
                                     showImageScaler = false,
+                                    showDirectImage = true,
                                     modifier = Modifier.fillMaxSize(),
                                 )
                             }
