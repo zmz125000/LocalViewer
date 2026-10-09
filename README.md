@@ -98,11 +98,12 @@ Thank you for your support.
 * HDR, Wide Color Gamut and 10-bit color mode support.
 * Instant local archive reading with mmap.
 * ZIP/RAR/CBZ/CBR/CBT/PDF/EPUB support over network share.
-* PDF/EPUB/MOBI/FB2/TXT/Markdown Ebook support with text formatting.
+* PDF/EPUB/MOBI/FB2/TXT/AZW3/Markdown Ebook support with text formatting.
 * JXL/JXR/JPG/AVIF/HEIC HDR support.
 * 14-Bit RAW formats decoding with true HDR output.
 * RAW formats support dng/cr2/cr3/nef/nrw/arw/raf/orf/rw2/pef/srw/raw.
 * Compatible with Oppo/OnePlus ProXDR HEIC format.
+* Nearest, Bilinear, B-Spline, Catmull-Rom, Mitchell-Netravali, Lanczos3 image scalers using GPU shader.
 * Open offline html website archive in your browser with built-in HTTP server.
 * Network folder playback for MPV/MX Player/VLC with subtitles and external autio track. 
 * Optimized Async TCP connection poll.
