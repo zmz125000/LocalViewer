@@ -29,7 +29,9 @@ internal class EbookDocument(
 internal object EbookEngine {
     private const val MAX_TEXT_BYTES = 8L * 1024L * 1024L
     private const val MAX_FB2_BYTES = 64L * 1024L * 1024L
-    private const val MAX_CHAPTER_BYTES = 2L * 1024L * 1024L
+
+    // One spine document. Archive.org novels are often a single XHTML of several megabytes.
+    private const val MAX_CHAPTER_BYTES = MAX_TEXT_BYTES
 
     fun open(
         source: ArchiveByteSource,

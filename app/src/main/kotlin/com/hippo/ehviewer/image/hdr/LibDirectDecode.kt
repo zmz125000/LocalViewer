@@ -255,6 +255,8 @@ object LibDirectDecode {
                 kelvin,
                 highlightStops,
                 Settings.readerRawHdrLinear.value && mode == RawPresent.Hdr,
+                Settings.readerRawCameraLook.value,
+                rawShoulder(),
                 shadows,
                 midtones,
                 highlights,
@@ -273,6 +275,8 @@ object LibDirectDecode {
                     kelvin,
                     highlightStops,
                     Settings.readerRawHdrLinear.value && mode == RawPresent.Hdr,
+                    Settings.readerRawCameraLook.value,
+                    rawShoulder(),
                     shadows,
                     midtones,
                     highlights,
@@ -338,6 +342,8 @@ object LibDirectDecode {
     private fun rawKelvin(): Int = Settings.readerRawKelvin.value.coerceIn(2000, 12000)
 
     private fun rawHighlightStops(): Float = (Settings.readerRawHighlight.value / 10f).coerceIn(0f, 3f)
+
+    private fun rawShoulder(): Float = (Settings.readerRawShoulder.value / 100f).coerceIn(0f, 1f)
 
     private fun rawZone(value: Int): Float = (value / 100f).coerceIn(-1f, 1f)
 

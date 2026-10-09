@@ -738,6 +738,61 @@ class EbookEngineTest {
     }
 
     @Test
+    fun epubChapterOverTwoMegabytesIsNotDropped() {
+        val file = File.createTempFile("ebook-big", ".epub")
+        file.deleteOnExit()
+        val over = 2 * 1024 * 1024 + 64 * 1024
+        ZipOutputStream(file.outputStream()).use { zos ->
+            fun put(name: String, body: String) {
+                zos.putNextEntry(ZipEntry(name))
+                zos.write(body.toByteArray(StandardCharsets.UTF_8))
+                zos.closeEntry()
+            }
+            put("mimetype", "application/epub+zip")
+            put(
+                "META-INF/container.xml",
+                """<?xml version="1.0"?><container><rootfiles>
+                    <rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/>
+                    </rootfiles></container>""",
+            )
+            put(
+                "OEBPS/content.opf",
+                """
+                <package>
+                  <manifest>
+                    <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>
+                    <item id="c1" href="big.xhtml" media-type="application/xhtml+xml"/>
+                  </manifest>
+                  <spine>
+                    <itemref idref="nav"/>
+                    <itemref idref="c1"/>
+                  </spine>
+                </package>
+                """.trimIndent(),
+            )
+            put("OEBPS/nav.xhtml", "<html><body><nav epub:type=\"toc\"><ol><li><a href=\"big.xhtml\">Big</a></li></ol></nav></body></html>")
+            zos.putNextEntry(ZipEntry("OEBPS/big.xhtml"))
+            val head = "<html><body><h1>Big</h1>".toByteArray(StandardCharsets.UTF_8)
+            val para = "<p>word</p>".toByteArray(StandardCharsets.UTF_8)
+            val tail = "<p>TAILMARKER</p></body></html>".toByteArray(StandardCharsets.UTF_8)
+            zos.write(head)
+            var n = head.size
+            while (n + tail.size < over) {
+                zos.write(para)
+                n += para.size
+            }
+            zos.write(tail)
+            zos.closeEntry()
+        }
+        FileArchiveByteSource(file).use { src ->
+            val book = EbookEngine.open(src, "big.epub")
+            requireNotNull(book)
+            assertTrue(book.body.any { it.text.contains("TAILMARKER") })
+            assertTrue("pages=${book.pageCount}", book.pageCount > 2)
+        }
+    }
+
+    @Test
     fun epubOpfSpineAndNcxOpenInPdfReaderEngine() {
         val zip = writeEpub()
         FileArchiveByteSource(zip).use { src ->

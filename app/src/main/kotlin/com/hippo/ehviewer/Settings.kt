@@ -1006,16 +1006,32 @@ object Settings : DataStorePreferences(null) {
     val readerRawHighlights = intPref("pref_reader_raw_highlights", 0)
 
     /**
+     * SDR camera look (8-bit and deep color): hue, saturation, tone curve,
+     * and DNG baseline exposure. Off keeps a linear develop plus the exposure slider.
+     * HDR ignores this and uses [readerRawHdrLinear].
+     */
+    val readerRawCameraLook = boolPref("pref_reader_raw_camera_look", true)
+
+    /**
      * HDR RAW stays linear Rec.2020 and skips the camera look.
      * Off keeps hue/saturation, the tone curve, and baseline exposure.
      */
     val readerRawHdrLinear = boolPref("pref_reader_raw_hdr_linear", false)
 
+    /**
+     * Linear HDR shoulder, 0..100. 0 leaves camera white at 1.
+     * 50 opens the tail so the sampled peak lands at peak/paper.
+     * 100 opens that peak to the panel cap. Ignored unless [readerRawHdrLinear] is decoding HDR.
+     */
+    val readerRawShoulder = intPref("pref_reader_raw_shoulder", 50)
+
     /** Restore the RAW image controls to their defaults. Does not turn sensor decode off. */
     fun resetReaderRaw() {
         readerRawWhiteBalance.value = 0
         readerRawKelvin.value = 5200
+        readerRawCameraLook.value = true
         readerRawHdrLinear.value = false
+        readerRawShoulder.value = 50
         readerRawExposure.value = 0
         readerRawShadows.value = 0
         readerRawMidtones.value = 0

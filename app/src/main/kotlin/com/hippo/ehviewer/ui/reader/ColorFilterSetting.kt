@@ -38,6 +38,12 @@ fun ColorFilterSetting(
     showImageScaler: Boolean = true,
     showCameraRaw: Boolean = false,
 ) = Column(modifier = Modifier.verticalScroll(rememberScrollState()).navigationBarsPadding()) {
+    if (showCameraRaw) {
+        val cameraRaw = Settings.readerCameraRaw.asMutableState()
+        AnimatedVisibility(visible = cameraRaw.value) {
+            CameraRawSetting()
+        }
+    }
     if (showImageScaler) ImageScalerChoice()
     val customBrightness = Settings.customBrightness.asMutableState()
     SwitchChoice(
@@ -110,12 +116,6 @@ fun ColorFilterSetting(
         title = stringResource(id = R.string.pref_inverted_colors),
         field = Settings.invertedColors.asMutableState(),
     )
-    if (showCameraRaw) {
-        val cameraRaw = Settings.readerCameraRaw.asMutableState()
-        AnimatedVisibility(visible = cameraRaw.value) {
-            CameraRawSetting()
-        }
-    }
 }
 
 @Composable
@@ -154,10 +154,24 @@ private fun CameraRawSetting() = Column {
         )
     }
     SwitchChoice(
+        title = stringResource(id = R.string.pref_reader_raw_camera_look),
+        summary = stringResource(id = R.string.pref_reader_raw_camera_look_summary),
+        field = Settings.readerRawCameraLook.asMutableState(),
+    )
+    val hdrLinear = Settings.readerRawHdrLinear.asMutableState()
+    SwitchChoice(
         title = stringResource(id = R.string.pref_reader_raw_hdr_linear),
         summary = stringResource(id = R.string.pref_reader_raw_hdr_linear_summary),
-        field = Settings.readerRawHdrLinear.asMutableState(),
+        field = hdrLinear,
     )
+    AnimatedVisibility(visible = hdrLinear.value) {
+        CommitSliderChoice(
+            title = stringResource(id = R.string.pref_reader_raw_shoulder),
+            range = 0..100,
+            field = Settings.readerRawShoulder.asMutableState(),
+            valueText = { "$it" },
+        )
+    }
     CommitSliderChoice(
         title = stringResource(id = R.string.pref_reader_raw_exposure),
         range = -30..30,
