@@ -111,7 +111,8 @@ external fun decodeAvifBytesToDirect(
  * [kelvin] is 2000..12000 and applies when [whiteBalance] is kelvin. Named presets
  * that the file does not store use this same temperature curve.
  * [highlightStops] compresses deep-color and HDR samples above 1 after the tone curve.
- * [hdrLinear] skips the camera look for HDR and keeps linear Rec.2020.
+ * [cameraLook] applies hue, saturation, and the tone curve for 8-bit and deep color.
+ * HDR ignores it. [hdrLinear] skips the camera look for HDR and keeps linear Rec.2020.
  * [shadows], [midtones], and [highlights] are −1..1. 0 leaves that zone alone.
  */
 external fun decodeRawFileToDirect(
@@ -124,6 +125,7 @@ external fun decodeRawFileToDirect(
     kelvin: Int,
     highlightStops: Float,
     hdrLinear: Boolean,
+    cameraLook: Boolean,
     shadows: Float,
     midtones: Float,
     highlights: Float,
@@ -141,6 +143,7 @@ external fun decodeRawBytesToDirect(
     kelvin: Int,
     highlightStops: Float,
     hdrLinear: Boolean,
+    cameraLook: Boolean,
     shadows: Float,
     midtones: Float,
     highlights: Float,

@@ -154,6 +154,11 @@ private fun CameraRawSetting() = Column {
         )
     }
     SwitchChoice(
+        title = stringResource(id = R.string.pref_reader_raw_camera_look),
+        summary = stringResource(id = R.string.pref_reader_raw_camera_look_summary),
+        field = Settings.readerRawCameraLook.asMutableState(),
+    )
+    SwitchChoice(
         title = stringResource(id = R.string.pref_reader_raw_hdr_linear),
         summary = stringResource(id = R.string.pref_reader_raw_hdr_linear_summary),
         field = Settings.readerRawHdrLinear.asMutableState(),

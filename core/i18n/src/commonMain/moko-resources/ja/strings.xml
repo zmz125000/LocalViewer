@@ -296,6 +296,8 @@
     <string name="pref_reader_raw_reset">リセット</string>
     <string name="pref_reader_raw_highlight">HDR ブースト</string>
     <string name="pref_reader_raw_highlight_summary">明るい部分をペーパーホワイトへ寄せます。</string>
+    <string name="pref_reader_raw_camera_look">カメラルック</string>
+    <string name="pref_reader_raw_camera_look_summary">RAW の SDR にトーンカーブを適用します</string>
     <string name="pref_reader_raw_hdr_linear">HDR リニア Rec.2020</string>
     <string name="pref_reader_raw_hdr_linear_summary">HDR RAW ではカメラルックを使わず、リニア Rec.2020 のままにします。</string>
     <string name="pref_eink_refresh">電子ペーパー表示のリフレッシュ</string>

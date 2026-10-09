@@ -881,6 +881,8 @@
     <string name="pref_reader_raw_reset">重設</string>
     <string name="pref_reader_raw_highlight">HDR 增強</string>
     <string name="pref_reader_raw_highlight_summary">將亮部拉向紙白。</string>
+    <string name="pref_reader_raw_camera_look">相機風格</string>
+    <string name="pref_reader_raw_camera_look_summary">對 RAW SDR 套用色調曲線</string>
     <string name="pref_reader_raw_hdr_linear">HDR 線性 Rec.2020</string>
     <string name="pref_reader_raw_hdr_linear_summary">HDR RAW 略過相機風格，保持線性 Rec.2020。</string>
     <string name="pref_custom_brightness">自訂亮度</string>

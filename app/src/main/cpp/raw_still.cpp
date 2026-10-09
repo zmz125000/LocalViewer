@@ -722,7 +722,7 @@ float highlight_fit(const LibRaw& raw, float sat_fit) {
 
 bool process_open_raw(HeadroomRaw& raw, const uint8_t* tiff, size_t tiff_len, int max_edge, int present, float panel_boost,
                       int demosaic_qual, int wb_mode, float exposure_ev, float highlight_stops, int kelvin,
-                      bool hdr_linear, float shadows, float midtones, float highlights, Decoded& out) {
+                      bool hdr_linear, bool camera_look, float shadows, float midtones, float highlights, Decoded& out) {
     configure_process(raw, present, max_edge, demosaic_qual, wb_mode, kelvin);
     if (raw.unpack() != LIBRAW_SUCCESS) return false;
     if (raw.dcraw_process() != LIBRAW_SUCCESS) return false;
@@ -734,11 +734,13 @@ bool process_open_raw(HeadroomRaw& raw, const uint8_t* tiff, size_t tiff_len, in
         if (img) LibRaw::dcraw_clear_mem(img);
         return false;
     }
-    // Linear HDR skips the camera look, so it also skips BaselineExposure.
-    // The other modes apply that exposure inside the look, before the tone curve.
+    // Linear HDR skips the camera look, and so does SDR when the look is off.
+    // Baseline exposure lives inside the look, so those paths skip it too.
+    // HDR still uses the look unless linear HDR is on.
     const bool linear_hdr = present == 2 && hdr_linear;
+    const bool skip_look = linear_hdr || (present != 2 && !camera_look);
     const float user_ev = std::isfinite(exposure_ev) ? exposure_ev : 0.f;
-    const float pack_ev = linear_hdr ? user_ev : user_ev + dng_baseline_ev(raw);
+    const float pack_ev = skip_look ? user_ev : user_ev + dng_baseline_ev(raw);
     int space = present == 2 ? 2 : (present == 1 ? 1 : 0);
     float temp = 5500.f;
     if (wb_mode == 8) {
@@ -749,7 +751,7 @@ bool process_open_raw(HeadroomRaw& raw, const uint8_t* tiff, size_t tiff_len, in
     }
     rawlook::CameraLook look;
     const rawlook::CameraLook* look_ptr = nullptr;
-    if (!linear_hdr) {
+    if (!skip_look) {
         rawlook::prepare_camera_look(tiff, tiff_len, temp, space, look);
         look_ptr = &look;
     }
@@ -791,7 +793,7 @@ bool demosaic_cover_jpeg(const char* path, const uint8_t* mem, size_t mem_len, c
     Decoded decoded;
     // Bilinear is enough for a 512 px cover. Same as-shot process as the reader.
     if (!process_open_raw(raw, mem, mem_len, 512, /*present=*/0, 1.f, /*demosaic_qual=*/0, /*wb_mode=*/0, 0.f, 0.f,
-                          5200, false, 0.f, 0.f, 0.f, decoded)) {
+                          5200, false, /*camera_look=*/true, 0.f, 0.f, 0.f, decoded)) {
         return false;
     }
     if (decoded.format != 0) return false;
@@ -848,7 +850,8 @@ extern "C" JNIEXPORT jbyteArray JNICALL
 Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeRawFileToDirect(JNIEnv* env, jclass, jstring j_path, jint max_edge,
                                                                jint present, jfloat panel_boost, jfloat exposure_ev,
                                                                jint wb_mode, jint kelvin, jfloat highlight_stops,
-                                                               jboolean hdr_linear, jfloat shadows, jfloat midtones,
+                                                               jboolean hdr_linear, jboolean camera_look, jfloat shadows,
+                                                               jfloat midtones,
                                                                jfloat highlights, jintArray j_info, jfloatArray j_boost) {
 #if !defined(EHVIEWER_HDR_CODECS)
     (void)env;
@@ -861,6 +864,7 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeRawFileToDirect(JNIEnv* env, jcla
     (void)kelvin;
     (void)highlight_stops;
     (void)hdr_linear;
+    (void)camera_look;
     (void)shadows;
     (void)midtones;
     (void)highlights;
@@ -892,7 +896,8 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeRawFileToDirect(JNIEnv* env, jcla
                 tiff_len = file.size();
             }
             if (process_open_raw(raw, tiff, tiff_len, max_edge, mode, panel_boost, /*demosaic_qual=*/3, wb, exposure,
-                                 stops, temp, hdr_linear == JNI_TRUE, zone(shadows), zone(midtones), zone(highlights),
+                                 stops, temp, hdr_linear == JNI_TRUE, camera_look == JNI_TRUE, zone(shadows),
+                                 zone(midtones), zone(highlights),
                                  decoded)) {
                 result = decoded_to_java(env, decoded, j_info, j_boost);
             }
@@ -910,7 +915,7 @@ extern "C" JNIEXPORT jbyteArray JNICALL
 Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeRawBytesToDirect(JNIEnv* env, jclass, jbyteArray j_input,
                                                                 jint max_edge, jint present, jfloat panel_boost,
                                                                 jfloat exposure_ev, jint wb_mode, jint kelvin,
-                                                                jfloat highlight_stops, jboolean hdr_linear,
+                                                                jfloat highlight_stops, jboolean hdr_linear, jboolean camera_look,
                                                                 jfloat shadows, jfloat midtones, jfloat highlights,
                                                                 jintArray j_info, jfloatArray j_boost) {
 #if !defined(EHVIEWER_HDR_CODECS)
@@ -924,6 +929,7 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeRawBytesToDirect(JNIEnv* env, jcl
     (void)kelvin;
     (void)highlight_stops;
     (void)hdr_linear;
+    (void)camera_look;
     (void)shadows;
     (void)midtones;
     (void)highlights;
@@ -951,7 +957,8 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeRawBytesToDirect(JNIEnv* env, jcl
             const uint8_t* tiff = reinterpret_cast<const uint8_t*>(bytes);
             size_t tiff_len = static_cast<size_t>(len);
             if (process_open_raw(raw, tiff, tiff_len, max_edge, mode, panel_boost, /*demosaic_qual=*/3, wb, exposure,
-                                 stops, temp, hdr_linear == JNI_TRUE, zone(shadows), zone(midtones), zone(highlights),
+                                 stops, temp, hdr_linear == JNI_TRUE, camera_look == JNI_TRUE, zone(shadows),
+                                 zone(midtones), zone(highlights),
                                  decoded)) {
                 result = decoded_to_java(env, decoded, j_info, j_boost);
             }
