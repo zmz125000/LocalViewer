@@ -2357,6 +2357,7 @@ private fun PdfReaderScreen(
                                             pageLoader = imageLoader,
                                             contentScale = scale,
                                             viewportSize = viewport,
+                                            allowDisplayScaler = false,
                                             horizontalStrip = box == PdfPageBox.Strip,
                                             modifier = if (box == PdfPageBox.Strip) {
                                                 Modifier.fillMaxHeight()
@@ -2547,6 +2548,7 @@ private fun PdfReaderScreen(
                                 SettingsPager(
                                     isWebtoon = ReadingModeType.isWebtoon(sheetMode),
                                     isDocument = isEbook,
+                                    showImageScaler = false,
                                     modifier = Modifier.fillMaxSize(),
                                 )
                             }
@@ -2728,6 +2730,7 @@ private fun PdfSingleImagePage(
                 pageLoader = pageLoader,
                 contentScale = ContentScale.Inside,
                 viewportSize = viewport,
+                allowDisplayScaler = false,
                 modifier = Modifier.fillMaxSize(),
             )
         }

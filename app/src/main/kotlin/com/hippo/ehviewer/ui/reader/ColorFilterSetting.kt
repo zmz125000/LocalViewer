@@ -28,8 +28,8 @@ import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.asMutableState
 
 @Composable
-fun ColorFilterSetting() = Column(modifier = Modifier.verticalScroll(rememberScrollState()).navigationBarsPadding()) {
-    ImageScalerChoice()
+fun ColorFilterSetting(showImageScaler: Boolean = true) = Column(modifier = Modifier.verticalScroll(rememberScrollState()).navigationBarsPadding()) {
+    if (showImageScaler) ImageScalerChoice()
     val customBrightness = Settings.customBrightness.asMutableState()
     SwitchChoice(
         title = stringResource(id = R.string.pref_custom_brightness),

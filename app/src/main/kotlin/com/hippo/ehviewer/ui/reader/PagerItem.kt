@@ -81,6 +81,8 @@ fun PagerItem(
     viewportSize: Size = Size.Zero,
     /** Landscape dual webtoon: height-driven width in a LazyRow. */
     horizontalStrip: Boolean = false,
+    /** PDF and ebook pages stay on the platform blit. */
+    allowDisplayScaler: Boolean = true,
 ) {
     // Scheduling is driven by one ReaderNavigation from the viewport. This item only renders
     // status and owns a display pin; Compose retention no longer determines decode-ahead.
@@ -164,7 +166,7 @@ fun PagerItem(
                 }
                 val previous = shown.image
                 shown.image = display
-                painter = display.toPainter(scalerMode)
+                painter = display.toPainter(scalerMode, allowDisplayScaler)
                 if (previous != null && previous !== display) {
                     // The display list can sample the old bitmap for a frame after the swap.
                     shown.retiring = previous
@@ -464,8 +466,13 @@ private fun Image?.releaseAfterFrames() {
     }
 }
 
-private fun Image.toPainter(scalerMode: IntState) = when (val image = innerImage) {
-    is BitmapImage -> BitmapPainter(image.bitmap, intrinsicSize.toSize(), scalerMode, displayScaler)
+private fun Image.toPainter(scalerMode: IntState, allowScaler: Boolean) = when (val image = innerImage) {
+    is BitmapImage -> BitmapPainter(
+        image.bitmap,
+        intrinsicSize.toSize(),
+        scalerMode,
+        displayScaler && allowScaler,
+    )
     is DrawableImage -> DrawablePainter(image.drawable)
     else -> unreachable()
 }
