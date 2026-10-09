@@ -621,10 +621,12 @@ void configure_white_balance(LibRaw& raw, int wb_mode, int kelvin) {
     }
 }
 
-// identify() copies an embedded color matrix only while opening. 3 always copies it.
-// The default 1 does that for DNG, or when camera white balance is already set.
-void request_embedded_matrix(LibRaw& raw) {
-    raw.imgdata.params.use_camera_matrix = 3;
+// identify() copies an embedded color matrix only while opening.
+// 3 copies it for any file. 1 copies it for DNG, and for other files only when
+// camera white balance is already set. That flag is applied after open, so
+// camera WB (mode 0) asks for 3 here. Other modes stay at 1 and keep Adobe's matrix.
+void request_embedded_matrix(LibRaw& raw, int wb_mode) {
+    raw.imgdata.params.use_camera_matrix = wb_mode == 0 ? 3 : 1;
 }
 
 // LibRaw stores the tag and never multiplies by it. -999 means absent.
@@ -637,8 +639,8 @@ float dng_baseline_ev(const LibRaw& raw) {
 void configure_process(LibRaw& raw, int present, int max_edge, int demosaic_qual, int wb_mode, int kelvin) {
     auto& p = raw.imgdata.params;
     configure_white_balance(raw, wb_mode, kelvin);
-    // Too late to copy a missed matrix. Kept so it matches the value set before open.
-    p.use_camera_matrix = 3;
+    // identify() already copied the matrix. Match the value set before open.
+    p.use_camera_matrix = wb_mode == 0 ? 3 : 1;
     p.user_qual = demosaic_qual;
     p.half_size = 0;
     // Histogram stretch and a lowered white point both brighten past as-shot.
@@ -783,7 +785,7 @@ bool libraw_thumb_file(const char* path, const uint8_t* mem, size_t mem_len, con
 
 bool demosaic_cover_jpeg(const char* path, const uint8_t* mem, size_t mem_len, const char* out_path) {
     HeadroomRaw raw;
-    request_embedded_matrix(raw);
+    request_embedded_matrix(raw, /*wb_mode=*/0);
     int rc = mem ? raw.open_buffer(mem, mem_len) : raw.open_file(path);
     if (rc != LIBRAW_SUCCESS) return false;
     Decoded decoded;
@@ -870,16 +872,16 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeRawFileToDirect(JNIEnv* env, jcla
     const char* path = env->GetStringUTFChars(j_path, nullptr);
     if (!path) return nullptr;
     jbyteArray result = nullptr;
+    const int wb = std::clamp(static_cast<int>(wb_mode), 0, 8);
     try {
         HeadroomRaw raw;
-        request_embedded_matrix(raw);
+        request_embedded_matrix(raw, wb);
         if (raw.open_file(path) == LIBRAW_SUCCESS) {
             Decoded decoded;
             int mode = present < 0 ? 0 : (present > 2 ? 2 : present);
             float exposure = std::isfinite(exposure_ev) ? std::clamp(exposure_ev, -3.f, 3.f) : 0.f;
             float stops = std::isfinite(highlight_stops) ? std::clamp(highlight_stops, 0.f, 3.f) : 0.f;
             auto zone = [](float v) { return std::isfinite(v) ? std::clamp(v, -1.f, 1.f) : 0.f; };
-            int wb = std::clamp(wb_mode, 0, 8);
             int temp = std::clamp(kelvin, 2000, 12000);
             std::vector<uint8_t> file;
             const uint8_t* tiff = nullptr;
@@ -935,16 +937,16 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeRawBytesToDirect(JNIEnv* env, jcl
     jbyte* bytes = env->GetByteArrayElements(j_input, nullptr);
     if (!bytes) return nullptr;
     jbyteArray result = nullptr;
+    const int wb = std::clamp(static_cast<int>(wb_mode), 0, 8);
     try {
         HeadroomRaw raw;
-        request_embedded_matrix(raw);
+        request_embedded_matrix(raw, wb);
         if (raw.open_buffer(bytes, static_cast<size_t>(len)) == LIBRAW_SUCCESS) {
             Decoded decoded;
             int mode = present < 0 ? 0 : (present > 2 ? 2 : present);
             float exposure = std::isfinite(exposure_ev) ? std::clamp(exposure_ev, -3.f, 3.f) : 0.f;
             float stops = std::isfinite(highlight_stops) ? std::clamp(highlight_stops, 0.f, 3.f) : 0.f;
             auto zone = [](float v) { return std::isfinite(v) ? std::clamp(v, -1.f, 1.f) : 0.f; };
-            int wb = std::clamp(wb_mode, 0, 8);
             int temp = std::clamp(kelvin, 2000, 12000);
             const uint8_t* tiff = reinterpret_cast<const uint8_t*>(bytes);
             size_t tiff_len = static_cast<size_t>(len);
