@@ -86,8 +86,8 @@ sealed interface BrowseEntry {
         val hasDocument: Boolean = false,
         val presence: DirPresence,
         /**
-         * Lazy-scan cover for folder thumbs: first direct image, else first image
-         * from a single first-leaf peek (at most 10 entries). Null if none.
+         * Lazy-scan folder thumb: image path, else archive/PDF whose first page
+         * is the cover. Null if none.
          */
         val coverPath: Path? = null,
         override val lastModifiedMs: Long = 0L,
@@ -291,8 +291,8 @@ sealed interface BrowseEntryRemote {
         val hasDocument: Boolean = false,
         val presence: DirPresence,
         /**
-         * Cover image relative to this directory ([relativeName]): basename for a
-         * direct child, or `leaf/file.jpg` when promoted from a ≤3-leaf grand peek.
+         * Folder thumb relative to this directory ([relativeName]): image basename,
+         * else archive/PDF (`book.pdf` or `leaf/book.cbz`).
          */
         val coverFileName: String? = null,
         override val lastModifiedMs: Long = 0L,
@@ -1110,7 +1110,7 @@ fun classifyRemoteListingWithPeeks(
                     var leafHasVideo = false
                     var leafHasGallery = false
                     var leafHasDocument = false
-                    // Folder-thumb cover for real dir S (direct image or first leaf image).
+                    // Folder-thumb cover for real dir S (image, else archive/PDF).
                     val sCoverFileName = remoteDirCoverFileName(peek, e.name, leaves, grandPeeks)
                     val sHasImages = peek.any {
                         !it.isDirectory && !it.name.startsWith('.') &&
@@ -1431,7 +1431,7 @@ fun classifyRemoteListingWithPeeks(
                                 virtual = true,
                             )
                         }
-                        // Direct image, else first-leaf cover (including >3-leaf fallback peek).
+                        // Direct image, else leaf image, else archive/PDF (including >3-leaf peek).
                         val navCover = remoteDirCoverFileName(peek, e.name, leaves, grandPeeks)
                         dirs += BrowseEntryRemote.Directory(
                             name = e.name,
@@ -1685,12 +1685,24 @@ private fun firstImageNameInPeek(peek: List<RemoteChild>): String? {
     return null
 }
 
+/** Natural-first archive/PDF basename. Used only when the peek has no image cover. */
+private fun firstArchiveCoverNameInPeek(peek: List<RemoteChild>): String? {
+    var best: String? = null
+    for (c in peek) {
+        if (c.isDirectory || c.name.startsWith('.') || isProtectedSystemName(c.name)) continue
+        if (!isArchiveFileName(c.name)) continue
+        val name = c.name
+        if (best == null || naturalCompare(name, best) < 0) best = name
+    }
+    return best
+}
+
 /**
- * Folder-thumb cover relative to dir S: direct image basename, else first image from
- * leaf grand-peeks as `leafName/file.jpg` (scan order of [leaves]).
+ * Folder-thumb cover relative to dir S.
+ * Image, then archive/PDF. Each step checks direct children, then the subfolders
+ * already peeked (at most [SMB_PROMOTE_MAX_LEAVES]). No extra list.
  *
- * When [leaves] has more than [SMB_PROMOTE_MAX_LEAVES], only the first leaf is expected
- * in [grandPeeks] (cover-only fallback; full promote is skipped).
+ * When there are more leaves than that, only the first was peeked.
  */
 private fun remoteDirCoverFileName(
     peek: List<RemoteChild>,
@@ -1698,16 +1710,21 @@ private fun remoteDirCoverFileName(
     leaves: List<RemoteChild>,
     grandPeeks: Map<String, List<RemoteChild>>,
 ): String? {
-    firstImageNameInPeek(peek)?.let { return it }
-    if (leaves.isEmpty()) return null
-    val leavesToCheck = if (leaves.size in 1..SMB_PROMOTE_MAX_LEAVES) {
-        leaves
-    } else {
-        listOf(leaves.first())
+    val leavesToCheck = when {
+        leaves.isEmpty() -> emptyList()
+        leaves.size in 1..SMB_PROMOTE_MAX_LEAVES -> leaves
+        else -> listOf(leaves.first())
     }
+    fun leafPeek(leaf: RemoteChild): List<RemoteChild> =
+        grandPeeks["$parentName/${leaf.name}"].orEmpty()
+
+    firstImageNameInPeek(peek)?.let { return it }
     for (leaf in leavesToCheck) {
-        val leafPeek = grandPeeks["$parentName/${leaf.name}"].orEmpty()
-        firstImageNameInPeek(leafPeek)?.let { return "${leaf.name}/$it" }
+        firstImageNameInPeek(leafPeek(leaf))?.let { return "${leaf.name}/$it" }
+    }
+    firstArchiveCoverNameInPeek(peek)?.let { return it }
+    for (leaf in leavesToCheck) {
+        firstArchiveCoverNameInPeek(leafPeek(leaf))?.let { return "${leaf.name}/$it" }
     }
     return null
 }

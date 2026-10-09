@@ -87,6 +87,7 @@ import com.hippo.ehviewer.library.ReaderPageThumb
 import com.hippo.ehviewer.library.VideoThumbnail
 import com.hippo.ehviewer.library.VideoThumbnailSource
 import com.hippo.ehviewer.library.ZipMemberCover
+import com.hippo.ehviewer.library.isArchiveFileName
 import com.hippo.ehviewer.library.isDocumentFileName
 import com.hippo.ehviewer.library.isPdfFileName
 import com.hippo.ehviewer.library.isSolidArchiveFileName
@@ -407,6 +408,10 @@ sealed class BrowseCover {
     /** Extracted PDF/EPUB page in [com.hippo.ehviewer.library.DocumentExtractCache]. */
     data class DocumentPage(val cacheKey: String, val index: Int) : BrowseCover()
 }
+
+/** Folder thumb: loose image, or archive/PDF first page when that file is the cover. */
+fun directoryBrowseCover(path: Path): BrowseCover =
+    if (isArchiveFileName(path.name)) BrowseCover.LocalArchive(path) else BrowseCover.Local(path)
 
 /** Stable identity for [ReaderPageThumb] (reader photo-grid thumbs written after decode). */
 fun browseCoverThumbIdentity(cover: BrowseCover?): String? = when (cover) {

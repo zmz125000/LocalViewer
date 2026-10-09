@@ -32,6 +32,113 @@ class DirectoryListingDocumentTagTest {
     }
 
     @Test
+    fun folderThumbFallsBackToArchiveOrPdf() {
+        val direct = classifyRemoteListingWithPeeks(
+            currentDirName = "Library",
+            entries = listOf(RemoteChild(name = "Books", isDirectory = true)),
+            childPeeks = mapOf(
+                "Books" to listOf(
+                    RemoteChild(name = "b.cbz", isDirectory = false),
+                    RemoteChild(name = "a.pdf", isDirectory = false),
+                ),
+            ),
+        )
+        val books = direct.filterIsInstance<BrowseEntryRemote.Directory>().single()
+        assertEquals("a.pdf", books.coverFileName)
+
+        val imageWins = classifyRemoteListingWithPeeks(
+            currentDirName = "Library",
+            entries = listOf(RemoteChild(name = "Books", isDirectory = true)),
+            childPeeks = mapOf(
+                "Books" to listOf(
+                    RemoteChild(name = "a.pdf", isDirectory = false),
+                    RemoteChild(name = "c.jpg", isDirectory = false),
+                ),
+            ),
+        )
+        assertEquals(
+            "c.jpg",
+            imageWins.filterIsInstance<BrowseEntryRemote.Directory>().single().coverFileName,
+        )
+
+        val nested = classifyRemoteListingWithPeeks(
+            currentDirName = "Library",
+            entries = listOf(RemoteChild(name = "Books", isDirectory = true)),
+            childPeeks = mapOf(
+                "Books" to listOf(RemoteChild(name = "Vol", isDirectory = true)),
+            ),
+            grandPeeks = mapOf(
+                "Books/Vol" to listOf(RemoteChild(name = "01.pdf", isDirectory = false)),
+            ),
+        )
+        assertEquals(
+            "Vol/01.pdf",
+            nested.filterIsInstance<BrowseEntryRemote.Directory>().single().coverFileName,
+        )
+
+        val laterSibling = classifyRemoteListingWithPeeks(
+            currentDirName = "Library",
+            entries = listOf(RemoteChild(name = "Books", isDirectory = true)),
+            childPeeks = mapOf(
+                "Books" to listOf(
+                    RemoteChild(name = "A", isDirectory = true),
+                    RemoteChild(name = "B", isDirectory = true),
+                ),
+            ),
+            grandPeeks = mapOf(
+                "Books/A" to listOf(RemoteChild(name = "notes.txt", isDirectory = false)),
+                "Books/B" to listOf(RemoteChild(name = "01.pdf", isDirectory = false)),
+            ),
+        )
+        assertEquals(
+            "B/01.pdf",
+            laterSibling.filterIsInstance<BrowseEntryRemote.Directory>().single().coverFileName,
+        )
+
+        val thirdLeaf = classifyRemoteListingWithPeeks(
+            currentDirName = "Library",
+            entries = listOf(RemoteChild(name = "Books", isDirectory = true)),
+            childPeeks = mapOf(
+                "Books" to listOf(
+                    RemoteChild(name = "A", isDirectory = true),
+                    RemoteChild(name = "B", isDirectory = true),
+                    RemoteChild(name = "C", isDirectory = true),
+                ),
+            ),
+            grandPeeks = mapOf(
+                "Books/A" to listOf(RemoteChild(name = "notes.txt", isDirectory = false)),
+                "Books/B" to listOf(RemoteChild(name = "notes.txt", isDirectory = false)),
+                "Books/C" to listOf(RemoteChild(name = "02.pdf", isDirectory = false)),
+            ),
+        )
+        assertEquals(
+            "C/02.pdf",
+            thirdLeaf.filterIsInstance<BrowseEntryRemote.Directory>().single().coverFileName,
+        )
+
+        val fourthNotPeeked = classifyRemoteListingWithPeeks(
+            currentDirName = "Library",
+            entries = listOf(RemoteChild(name = "Books", isDirectory = true)),
+            childPeeks = mapOf(
+                "Books" to listOf(
+                    RemoteChild(name = "A", isDirectory = true),
+                    RemoteChild(name = "B", isDirectory = true),
+                    RemoteChild(name = "C", isDirectory = true),
+                    RemoteChild(name = "D", isDirectory = true),
+                ),
+            ),
+            grandPeeks = mapOf(
+                "Books/A" to listOf(RemoteChild(name = "notes.txt", isDirectory = false)),
+                "Books/D" to listOf(RemoteChild(name = "only.pdf", isDirectory = false)),
+            ),
+        )
+        assertEquals(
+            null,
+            fourthNotPeeked.filterIsInstance<BrowseEntryRemote.Directory>().single().coverFileName,
+        )
+    }
+
+    @Test
     fun nestedPdfTagsParentDirAndIsNotPromoted() {
         val entries = classifyRemoteListingWithPeeks(
             currentDirName = "Library",
