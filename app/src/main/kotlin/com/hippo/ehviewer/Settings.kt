@@ -797,9 +797,10 @@ object Settings : DataStorePreferences(null) {
     val readerGeneratePageThumb = boolPref("pref_reader_generate_page_thumb", false)
 
     /**
-     * PDF reader only. On: image PDFs use embedded images for pages and the photo grid.
-     * Off: every page is drawn with [android.graphics.pdf.PdfRenderer].
-     * The image reader does not read this flag. Default on.
+     * PDF reader. On: image PDFs and MOBI/AZW3 comics use embedded images for pages
+     * and the photo grid. Off: every PDF page is [android.graphics.pdf.PdfRenderer];
+     * MOBI/AZW3 comics stay ebook page bitmaps. Text novels stay reflowed either way.
+     * The image reader does not read this flag. Stored default is off.
      */
     val pdfDirectImage = boolPref("pref_pdf_direct_image", false)
 

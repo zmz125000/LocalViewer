@@ -410,8 +410,7 @@ sealed class BrowseCover {
 }
 
 /** Folder thumb: loose image, or archive/PDF first page when that file is the cover. */
-fun directoryBrowseCover(path: Path): BrowseCover =
-    if (isArchiveFileName(path.name)) BrowseCover.LocalArchive(path) else BrowseCover.Local(path)
+fun directoryBrowseCover(path: Path): BrowseCover = if (isArchiveFileName(path.name)) BrowseCover.LocalArchive(path) else BrowseCover.Local(path)
 
 /** Stable identity for [ReaderPageThumb] (reader photo-grid thumbs written after decode). */
 fun browseCoverThumbIdentity(cover: BrowseCover?): String? = when (cover) {

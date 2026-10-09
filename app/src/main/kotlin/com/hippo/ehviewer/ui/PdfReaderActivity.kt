@@ -141,7 +141,9 @@ import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.collectAsState
 import com.hippo.ehviewer.gallery.NavigationKind
 import com.hippo.ehviewer.gallery.Page
+import com.hippo.ehviewer.gallery.PageLoader
 import com.hippo.ehviewer.gallery.PdfRamPageLoader
+import com.hippo.ehviewer.gallery.RamBytesPageLoader
 import com.hippo.ehviewer.gallery.ReaderNavigation
 import com.hippo.ehviewer.library.ArchiveByteSource
 import com.hippo.ehviewer.library.BlockCacheArchiveByteSource
@@ -164,6 +166,7 @@ import com.hippo.ehviewer.library.document.EbookPaginator
 import com.hippo.ehviewer.library.document.EbookParse
 import com.hippo.ehviewer.library.document.EbookResources
 import com.hippo.ehviewer.library.document.EbookStyle
+import com.hippo.ehviewer.library.document.MobiText
 import com.hippo.ehviewer.library.document.PdfContentKind
 import com.hippo.ehviewer.library.document.PdfImageEngine
 import com.hippo.ehviewer.library.document.PdfTocEntry
@@ -171,8 +174,10 @@ import com.hippo.ehviewer.library.document.TextCharset
 import com.hippo.ehviewer.library.document.ebookDisplayFontSize
 import com.hippo.ehviewer.library.document.pdfTocWithFileName
 import com.hippo.ehviewer.library.document.pdfXrefLoadable
+import com.hippo.ehviewer.library.document.readFully
 import com.hippo.ehviewer.library.document.readPdfChapters
 import com.hippo.ehviewer.library.isEbookFileName
+import com.hippo.ehviewer.library.isMobiContainerFileName
 import com.hippo.ehviewer.library.openLocalArchiveByteSource
 import com.hippo.ehviewer.provider.StreamDocumentProvider
 import com.hippo.ehviewer.provider.StreamDocumentRegistry
@@ -251,13 +256,15 @@ import okio.Path.Companion.toPath
  * Text / generic PDFs: [PdfRenderer] at the current zoom (vector drawing stays sharp).
  * Image / comic PDFs: native embedded bitmaps via [PdfImageEngine] when
  * [Settings.pdfDirectImage] is on. Off uses [PdfRenderer] for every page and thumb.
+ * MOBI / AZW3 comics use the same switch: on serves the embedded images, off keeps
+ * the ebook page bitmap. Text novels stay reflowed either way.
  *
  * Local / SMB / WebDAV image PDFs read the origin [ArchiveByteSource] directly.
  * Vector PDFs still use a streamdoc PFD with [PdfRenderer].
  */
 class PdfReaderActivity : AppCompatActivity() {
     private var doc by mutableStateOf<PdfDocumentModel?>(null)
-    private var imageLoader by mutableStateOf<PdfRamPageLoader?>(null)
+    private var imageLoader by mutableStateOf<PageLoader?>(null)
     private var title by mutableStateOf("")
     private var error by mutableStateOf<String?>(null)
     private var streamToken: String? = null
@@ -355,6 +362,14 @@ class PdfReaderActivity : AppCompatActivity() {
                     try {
                         val docName = documentNameFromIntent(intent, nextTitle)
                         if (isEbookFileName(docName)) {
+                            if (directImage && isMobiContainerFileName(docName)) {
+                                val images = tryOpenMobiDirect(intent, token)
+                                if (images != null) {
+                                    created = images
+                                    opened = created
+                                    return@withContext
+                                }
+                            }
                             created = openEbookDocument(
                                 intent,
                                 token,
@@ -427,8 +442,8 @@ class PdfReaderActivity : AppCompatActivity() {
                 sourceArgs = nextArgs
                 error = null
                 doc = model
-                imageLoader = (model as? PdfDocumentModel.Images)?.let { images ->
-                    PdfRamPageLoader(
+                imageLoader = when (val images = model) {
+                    is PdfDocumentModel.Images -> PdfRamPageLoader(
                         scope = lifecycleScope,
                         engine = images.engine,
                         titleHint = title,
@@ -436,6 +451,13 @@ class PdfReaderActivity : AppCompatActivity() {
                         cacheKey = cacheKey,
                         openExtractSource = pdfExtractOpener(intent, token),
                     )
+                    is PdfDocumentModel.MobiImages -> RamBytesPageLoader(
+                        scope = lifecycleScope,
+                        titleHint = title,
+                        pagesBytes = images.pages,
+                        startPage = startPage,
+                    )
+                    else -> null
                 }
                 opened = null
                 if (model is PdfDocumentModel.Vector) {
@@ -900,6 +922,28 @@ private fun shouldCacheEbook(cached: List<EbookChapter>?, chapters: List<EbookCh
 
 private class EbookLoad(val vector: PdfDocumentModel.Vector?, val sourceHeld: Boolean)
 
+/**
+ * Comic MOBI / AZW / AZW3 when PDF Direct Image is on: raw embedded images,
+ * not the ebook page bitmap. Text novels and Huff/DRM files return null.
+ */
+private fun tryOpenMobiDirect(intent: Intent, token: String?): PdfDocumentModel.MobiImages? {
+    var owned: ArchiveByteSource? = null
+    val source = openEbookSource(intent, token) { owned = it } ?: return null
+    return try {
+        val bytes = source.readFully(MobiText.MAX_IMAGE_BYTES) ?: return null
+        val pages = MobiText.imageBookPages(bytes) ?: return null
+        val typed = ArrayList<Pair<ByteArray, String>>(pages.size)
+        for (page in pages) {
+            val ext = MobiText.imageExt(page) ?: return null
+            typed += page to ext
+        }
+        if (typed.size < 3) return null
+        PdfDocumentModel.MobiImages(typed)
+    } finally {
+        releaseUnheldEbook(source, owned)
+    }
+}
+
 private fun openEbookDocument(
     intent: Intent,
     token: String?,
@@ -1072,6 +1116,15 @@ private sealed interface PdfDocumentModel {
             runCatching { engine.close() }
             runCatching { source.close() }
         }
+    }
+
+    /** Raw MOBI / AZW3 comic pages. The loader keeps the bytes; close is a no-op. */
+    class MobiImages(
+        val pages: List<Pair<ByteArray, String>>,
+    ) : PdfDocumentModel {
+        override val pageCount get() = pages.size
+        override val chapters: List<PdfTocEntry> = emptyList()
+        override fun close() = Unit
     }
 }
 
@@ -1750,7 +1803,7 @@ context(_: DialogState)
 private fun PdfReaderScreen(
     title: String,
     doc: PdfDocumentModel?,
-    imageLoader: PdfRamPageLoader?,
+    imageLoader: PageLoader?,
     error: String?,
     startPage: Int,
     progressGid: Long,
@@ -2680,7 +2733,7 @@ private fun PdfZoomStartAlignment(
 @Composable
 private fun PdfSingleImagePage(
     page: Page,
-    pageLoader: PdfRamPageLoader,
+    pageLoader: PageLoader,
     viewWidthPx: Int,
     viewHeightPx: Int,
     scaleType: Int,
@@ -3438,6 +3491,9 @@ private fun PdfPageThumb(
                     is PdfDocumentModel.Images -> runCatching {
                         doc.engine.ensureListedThrough(index)
                         doc.engine.extractBytes(index)?.let(::decodePdfThumb)
+                    }.getOrNull()
+                    is PdfDocumentModel.MobiImages -> runCatching {
+                        doc.pages.getOrNull(index)?.first?.let(::decodePdfThumb)
                     }.getOrNull()
                 }
             }

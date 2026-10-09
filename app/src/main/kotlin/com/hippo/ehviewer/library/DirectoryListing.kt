@@ -1715,8 +1715,7 @@ private fun remoteDirCoverFileName(
         leaves.size in 1..SMB_PROMOTE_MAX_LEAVES -> leaves
         else -> listOf(leaves.first())
     }
-    fun leafPeek(leaf: RemoteChild): List<RemoteChild> =
-        grandPeeks["$parentName/${leaf.name}"].orEmpty()
+    fun leafPeek(leaf: RemoteChild): List<RemoteChild> = grandPeeks["$parentName/${leaf.name}"].orEmpty()
 
     firstImageNameInPeek(peek)?.let { return it }
     for (leaf in leavesToCheck) {

@@ -16,11 +16,14 @@ import com.hippo.ehviewer.library.DocumentExtractCache
 import com.hippo.ehviewer.library.LocalLibrary
 import com.hippo.ehviewer.library.PfdArchiveByteSource
 import com.hippo.ehviewer.library.ReaderPageThumb
+import com.hippo.ehviewer.library.ZipPaths
 import com.hippo.ehviewer.library.document.DocumentImageEngine
 import com.hippo.ehviewer.library.document.EpubEngine
+import com.hippo.ehviewer.library.document.MobiImageEngine
 import com.hippo.ehviewer.library.document.PdfImageEngine
 import com.hippo.ehviewer.library.document.ProgressiveDocumentImageEngine
 import com.hippo.ehviewer.library.isEpubFileName
+import com.hippo.ehviewer.library.isMobiContainerFileName
 import com.hippo.ehviewer.library.isPdfFileName
 import com.hippo.ehviewer.library.openLocalArchiveByteSource
 import java.io.File
@@ -47,7 +50,7 @@ import moe.tarsin.kt.install
 import okio.Path
 
 /**
- * Image-only document reader (PDF/EPUB): index + extract pages into
+ * Image-only document reader (PDF/EPUB/MOBI): index + extract pages into
  * [DocumentExtractCache], same delivery model as solid/stream.
  *
  * Does **not** hold [com.hippo.ehviewer.library.ArchiveAccess] (pure Kotlin ZIP / PDF).
@@ -992,16 +995,21 @@ suspend inline fun <T> useLocalDocumentExtractPageLoader(
     crossinline block: suspend (PageLoader) -> T,
 ): T {
     val pathStr = file.toString()
-    val name = file.name
+    val leaf = ZipPaths.memberLeafName(pathStr) ?: file.name
     val format = when {
-        isEpubFileName(name) -> "epub"
-        isPdfFileName(name) -> "pdf"
-        else -> error("Not a document: $name")
+        isEpubFileName(leaf) -> "epub"
+        isPdfFileName(leaf) -> "pdf"
+        isMobiContainerFileName(leaf) -> MobiImageEngine.FORMAT
+        else -> error("Not a document: $leaf")
     }
-    val pfd = file.openFileDescriptor("r")
-    val source = PfdArchiveByteSource(pfd, ownsPfd = true)
-    // Full filename incl. extension (pdf/epub).
-    val titleHint = name.ifEmpty { "Document" }
+    // zipfile: members have no filesystem descriptor. Unwrap to the zip entry.
+    val source = if (ZipPaths.isZipPath(pathStr)) {
+        openLocalArchiveByteSource(file) ?: error("Cannot open archive member: $leaf")
+    } else {
+        val pfd = file.openFileDescriptor("r")
+        PfdArchiveByteSource(pfd, ownsPfd = true)
+    }
+    val titleHint = leaf.ifEmpty { "Document" }
     // cacheKey = path string so browse thumbs share the same document_extract + cover key.
     return useDocumentExtractPageLoader(
         source = source,
@@ -1014,8 +1022,8 @@ suspend inline fun <T> useLocalDocumentExtractPageLoader(
         remoteSize = runCatching { source.size }.getOrDefault(0L),
         localPathForLibrary = pathStr,
         progressivePdf = format == "pdf",
-        openExtractSource = if (format == "pdf") {
-            { openLocalArchiveByteSource(file) ?: error("Cannot open PDF extract source") }
+        openExtractSource = if (format == "pdf" || ZipPaths.isZipPath(pathStr)) {
+            { openLocalArchiveByteSource(file) ?: error("Cannot open extract source") }
         } else {
             null
         },
@@ -1083,9 +1091,23 @@ internal fun openDocumentEngine(
                 com.hippo.ehviewer.library.PdfPageCounts.note(cacheKey, it.metadataPageCount)
             }
         }
+        isMobiContainer(formatHint, titleHint, cacheKey, cachedIndex) -> {
+            MobiImageEngine.open(source, remoteSize = sizeHint)
+                ?: error("Not a readable MOBI (DRM, Huff/CDIC, or truncated)")
+        }
         else -> error("Unsupported document format: $formatHint")
     }
 }
+
+private fun isMobiContainer(
+    formatHint: String,
+    titleHint: String,
+    cacheKey: String,
+    cachedIndex: DocumentExtractCache.Index?,
+): Boolean = formatHint == MobiImageEngine.FORMAT ||
+    cachedIndex?.format == MobiImageEngine.FORMAT ||
+    isMobiContainerFileName(titleHint) ||
+    isMobiContainerFileName(cacheKey)
 
 @PublishedApi
 internal fun cachedDocumentLoader(

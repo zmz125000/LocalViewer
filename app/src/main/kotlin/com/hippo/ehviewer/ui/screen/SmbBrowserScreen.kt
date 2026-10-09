@@ -103,6 +103,7 @@ import com.hippo.ehviewer.library.isDocumentFileName
 import com.hippo.ehviewer.library.isEbookFileName
 import com.hippo.ehviewer.library.isHtmlFileName
 import com.hippo.ehviewer.library.isImageFileName
+import com.hippo.ehviewer.library.isMobiContainerFileName
 import com.hippo.ehviewer.library.isPdfFileName
 import com.hippo.ehviewer.library.isPdfOrEbookFileName
 import com.hippo.ehviewer.library.isSolidArchiveFileName
@@ -1854,6 +1855,43 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
         onUnsupported = { notSupportedAction() },
     )
 
+    /** Regular-file MOBI/AZW/AZW3 image reader. Gallery extract, not the text ebook. */
+    fun openMobiImageReader(fileName: String) {
+        val src = source ?: return
+        val actualName = fileName.substringAfterLast('/').substringAfterLast('\\')
+        val remote = if (relativeDir.isEmpty()) fileName else SmbGateway.joinRelativePath(relativeDir, fileName)
+        launchIO {
+            recordCurrentBrowseFolderHistory(src.id, actualName)
+            ReaderGalleryPlaylist.setFromSmbBrowse(src.id, relativeDir, entries)
+            val remoteNorm = remote.trim('/')
+            val info = BaseGalleryInfo(
+                gid = stableGalleryId(src.id, "smba:$remoteNorm"),
+                token = SMB_ARCHIVE_TOKEN,
+                title = actualName,
+                pages = 0,
+                favoriteSlot = NOT_FAVORITED,
+                rating = -1f,
+                thumbKey = HistoryThumbKey.smbArchive(src.id, remoteNorm),
+                uploader = "${src.id}\u0000$remoteNorm",
+                category = 1,
+            )
+            LocalHistory.ensureGalleryForProgress(info)
+            LocalHistory.recordSmbStreamArchive(src.id, remoteNorm, title = actualName, info = info)
+            withUIContext {
+                navigator.navigate(
+                    ReaderScreenDestination(
+                        ReaderScreenArgs.SmbStreamArchive(
+                            sourceId = src.id,
+                            remotePath = remoteNorm,
+                            info = info,
+                            skipPdfPrimary = true,
+                        ),
+                    ),
+                ) { launchSingleTop = true }
+            }
+        }
+    }
+
     fun fileOverflow(fileName: String) = if (isHtmlFileName(fileName)) {
         BrowseOverflowActions(
             kind = BrowseOverflowKind.Webpage,
@@ -1874,6 +1912,11 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
     } else if (isPdfOrEbookFileName(fileName)) {
         BrowseOverflowActions(
             kind = BrowseOverflowKind.Pdf,
+            onRead = if (isMobiContainerFileName(fileName)) {
+                { openMobiImageReader(fileName) }
+            } else {
+                null
+            },
             onPlay = { openInternalDocument(fileName) },
             onExternalPlayer = {
                 val src = source

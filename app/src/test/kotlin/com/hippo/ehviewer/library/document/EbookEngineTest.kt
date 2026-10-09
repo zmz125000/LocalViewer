@@ -9,6 +9,7 @@ import java.util.zip.ZipOutputStream
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
 import org.junit.Test
@@ -511,6 +512,103 @@ class EbookEngineTest {
         assertTrue(book!!.chapters.any { it.text.contains("Hello") && it.text.contains("world") })
         assertTrue(book.chapters.any { EbookImages.hasMarker(it.text) })
         assertTrue(book.images.containsKey("mobi:1"))
+        assertEquals(1, MobiText.imageBlobs(file).size)
+        assertNull(MobiText.imageBookPages(file))
+    }
+
+    @Test
+    fun imageBookPagesReadsThreeComicPngs() {
+        val png = tinyPng()
+        val file = mobiFile("", listOf(png, png, png))
+        val pages = MobiText.imageBookPages(file)
+        assertNotNull(pages)
+        assertEquals(3, pages!!.size)
+        assertEquals(3, MobiText.imageBlobs(file).size)
+    }
+
+    @Test
+    fun kf8PalmDocSectionWinsOverThePrimaryText() {
+        val png = tinyPng()
+        val html = """<p>KF8 body</p><img src="kindle:embed:0001" />"""
+        val htmlBytes = html.toByteArray(StandardCharsets.UTF_8)
+        val headerLen = 0x80
+        val exth = ByteArray(24)
+        exth[0] = 'E'.code.toByte()
+        exth[1] = 'X'.code.toByte()
+        exth[2] = 'T'.code.toByte()
+        exth[3] = 'H'.code.toByte()
+        putInt(exth, 4, 24)
+        putInt(exth, 8, 1)
+        putInt(exth, 12, 121)
+        putInt(exth, 16, 12)
+        putInt(exth, 20, 2)
+        val rec0 = ByteArray(16 + headerLen + exth.size)
+        rec0[1] = 1
+        putInt(rec0, 4, 3)
+        rec0[9] = 1
+        rec0[16] = 'M'.code.toByte()
+        rec0[17] = 'O'.code.toByte()
+        rec0[18] = 'B'.code.toByte()
+        rec0[19] = 'I'.code.toByte()
+        putInt(rec0, 20, headerLen)
+        putInt(rec0, 16 + 12, 65001)
+        putInt(rec0, 16 + 0x70, 0x40)
+        exth.copyInto(rec0, 16 + headerLen)
+        val kf8Len = 232
+        val kf8 = ByteArray(16 + kf8Len)
+        kf8[1] = 1
+        putInt(kf8, 4, htmlBytes.size)
+        kf8[9] = 1
+        kf8[16] = 'M'.code.toByte()
+        kf8[17] = 'O'.code.toByte()
+        kf8[18] = 'B'.code.toByte()
+        kf8[19] = 'I'.code.toByte()
+        putInt(kf8, 20, kf8Len)
+        putInt(kf8, 16 + 12, 65001)
+        putInt(kf8, 16 + 108, 5)
+        val records = listOf(
+            rec0,
+            "OLD".toByteArray(StandardCharsets.UTF_8),
+            "BOUNDARY".toByteArray(StandardCharsets.US_ASCII),
+            kf8,
+            htmlBytes,
+            png,
+        )
+        val file = palmDb(records)
+        val book = MobiText.parse(file, "KF8")
+        assertNotNull(book)
+        val body = book!!.chapters.joinToString("") { it.text }
+        assertTrue(body.contains("KF8 body"))
+        assertFalse(body.contains("OLD"))
+        assertTrue(book.chapters.any { EbookImages.hasMarker(it.text) })
+        assertEquals(1, MobiText.imageBlobs(file).size)
+        assertNull(MobiText.imageBookPages(file))
+    }
+
+    private fun tinyPng(): ByteArray {
+        val png = ByteArray(24)
+        png[0] = 0x89.toByte()
+        png[1] = 'P'.code.toByte()
+        png[2] = 'N'.code.toByte()
+        png[3] = 'G'.code.toByte()
+        return png
+    }
+
+    private fun palmDb(records: List<ByteArray>): ByteArray {
+        val n = records.size
+        val header = 78 + n * 8
+        var cursor = header
+        val offsets = IntArray(n)
+        for (i in records.indices) {
+            offsets[i] = cursor
+            cursor += records[i].size
+        }
+        val out = ByteArray(cursor)
+        out[76] = (n ushr 8).toByte()
+        out[77] = n.toByte()
+        for (i in records.indices) putInt(out, 78 + i * 8, offsets[i])
+        for (i in records.indices) records[i].copyInto(out, offsets[i])
+        return out
     }
 
     @Test
