@@ -37,6 +37,31 @@ object HdrDisplayInfo {
 
     fun Activity.maxDisplayBoost(): Float = maxDisplayBoost(displayOrNull())
 
+    /**
+     * Highest HDR/SDR ratio the panel advertises.
+     *
+     * Ignores the momentary [Display.hdrSdrRatio]. That value stays 1 until the
+     * window is already in HDR mode, which is too late for a decode that bakes
+     * the highlight tail into the bitmap.
+     */
+    fun hdrCapabilityBoost(display: Display?): Float {
+        if (display == null) return DEFAULT_BOOST
+        if (Build.VERSION.SDK_INT >= 36) {
+            runCatching {
+                val m = Display::class.java.getMethod("getHighestHdrSdrRatio")
+                val v = (m.invoke(display) as? Number)?.toFloat()
+                if (v != null && v.isFinite() && v > 1f) return v.coerceIn(1f, 64f)
+            }
+        }
+        val fromCaps = boostFromHdrCapabilities(display)
+        if (fromCaps != null && fromCaps > 1f) return fromCaps
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N && display.isHdr) {
+            DEFAULT_BOOST
+        } else {
+            1f
+        }
+    }
+
     private fun Activity.displayOrNull(): Display? = ContextCompat.getDisplayOrDefault(this)
 
     @RequiresApi(Build.VERSION_CODES.UPSIDE_DOWN_CAKE)

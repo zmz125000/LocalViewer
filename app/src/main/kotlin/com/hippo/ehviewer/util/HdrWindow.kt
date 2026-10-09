@@ -18,8 +18,10 @@ import androidx.core.content.ContextCompat
  * embedded ICC (sRGB stays tagged sRGB — no oversaturation). Clear on leave.
  * HDR still wins when composed pages need HDR.
  *
- * Desired HDR headroom stays automatic (`setDesiredHdrHeadroom(0)`) so gain-map
- * weight matches Chrome / system gallery. Never put panel boost into encode metadata.
+ * Gain-map pages keep automatic headroom (`setDesiredHdrHeadroom(0)`) so the map
+ * weight matches Chrome / system gallery. A visible lib-direct F16 page with no
+ * gain map requests its content boost, which for JXR is the fitted panel ceiling.
+ * Never put panel boost into encode metadata.
  *
  * Manifest: [MainActivity] declares `android:colorMode="wideColorGamut"` so the
  * activity surface *can* carry wide color (reader is Compose inside MainActivity).
@@ -54,7 +56,7 @@ fun Activity.supportsWideColorGamut(): Boolean {
 
 /**
  * @param on enable HDR color mode
- * @param contentBoost unused for headroom (kept for call-site compatibility)
+ * @param contentBoost headroom ratio for lib-direct F16. ≤1 keeps automatic headroom.
  */
 fun Activity.setHdrColorMode(on: Boolean, contentBoost: Float = 1f) {
     setReaderColorMode(hdr = on, contentBoost = contentBoost, wideColor = false)
@@ -64,7 +66,8 @@ fun Activity.setHdrColorMode(on: Boolean, contentBoost: Float = 1f) {
  * Reader color mode: HDR wins over WCG when both requested.
  *
  * @param hdr enable [ActivityInfo.COLOR_MODE_HDR] when display supports HDR
- * @param contentBoost unused; headroom is automatic on API 35+
+ * @param contentBoost headroom ratio when this page is lib-direct F16. ≤1, and any
+ *   gain-map page, stay on automatic headroom.
  * @param wideColor enable [ActivityInfo.COLOR_MODE_WIDE_COLOR_GAMUT] when not HDR
  *   and the display is wide-gamut (Android WCG is opt-in)
  * @param force re-apply even when [Window.colorMode] already matches. Needed after
@@ -105,26 +108,28 @@ fun Activity.setReaderColorMode(
 }
 
 /**
- * HDR headroom on API 35+: leave **automatic** (`0f`), matching Chrome / system gallery.
+ * HDR headroom on API 35+.
  *
- * Forcing min(content peak, panel boost) via [Window.setDesiredHdrHeadroom] can over-apply
- * the gain map and lift near-blacks on UHDR JPEG / gain-map AVIF. Documented default is
- * automatic selection from panel + ambient conditions.
- *
- * [contentBoost] is retained for API compatibility / logging only (not applied).
- * Presentation still relies on [ActivityInfo.COLOR_MODE_HDR].
+ * Gain-map pages pass [contentBoost] ≤ 1 and stay automatic (`0f`). Forcing a ratio
+ * there over-applies the gain map and lifts near-blacks. Lib-direct F16 passes the
+ * content peak (JXR: the panel ceiling the highlight tail was fitted to) so the
+ * compositor does not clip that tail.
  */
 private fun Activity.applyDesiredHdrHeadroom(enable: Boolean, contentBoost: Float, force: Boolean = false) {
     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.VANILLA_ICE_CREAM) return
     val key = System.identityHashCode(window)
+    val desired = if (enable && contentBoost.isFinite() && contentBoost > 1f) {
+        contentBoost.coerceIn(1f, 64f)
+    } else {
+        0f
+    }
     try {
-        // 0f = automatic headroom (do not force content/panel boost).
-        if (force || lastDesiredHeadroom[key] != 0f) {
-            window.setDesiredHdrHeadroom(0f)
-            lastDesiredHeadroom[key] = 0f
+        if (force || lastDesiredHeadroom[key] != desired) {
+            window.setDesiredHdrHeadroom(desired)
+            lastDesiredHeadroom[key] = desired
             Log.d(
                 TAG,
-                "desiredHdrHeadroom=auto(0) enable=$enable force=$force contentBoost=$contentBoost",
+                "desiredHdrHeadroom=$desired enable=$enable force=$force contentBoost=$contentBoost",
             )
         }
     } catch (e: Throwable) {
