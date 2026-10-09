@@ -20,9 +20,11 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.WavyProgressIndicatorDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.IntState
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -131,6 +133,9 @@ fun PagerItem(
             // removes zoomable for a frame, and the pager turns the page.
             val shown = remember { ShownImage() }
             var painter by remember { mutableStateOf<Painter?>(null) }
+            val scaler by Settings.readerImageScaler.collectAsState()
+            val scalerMode = remember { mutableIntStateOf(scaler) }
+            scalerMode.intValue = scaler
             // The 4096 page stays pinned while this item is composed. Showing the
             // original used to drop that pin, the cache recycled it, and the next
             // scroll decoded the preview again.
@@ -159,7 +164,7 @@ fun PagerItem(
                 }
                 val previous = shown.image
                 shown.image = display
-                painter = display.toPainter()
+                painter = display.toPainter(scalerMode)
                 if (previous != null && previous !== display) {
                     // The display list can sample the old bitmap for a frame after the swap.
                     shown.retiring = previous
@@ -459,8 +464,8 @@ private fun Image?.releaseAfterFrames() {
     }
 }
 
-private fun Image.toPainter() = when (val image = innerImage) {
-    is BitmapImage -> BitmapPainter(image.bitmap, intrinsicSize.toSize())
+private fun Image.toPainter(scalerMode: IntState) = when (val image = innerImage) {
+    is BitmapImage -> BitmapPainter(image.bitmap, intrinsicSize.toSize(), scalerMode, displayScaler)
     is DrawableImage -> DrawablePainter(image.drawable)
     else -> unreachable()
 }

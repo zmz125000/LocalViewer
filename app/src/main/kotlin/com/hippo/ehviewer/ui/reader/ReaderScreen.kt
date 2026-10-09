@@ -507,7 +507,9 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
                 readerLibDirectBitmap.changesFlow(),
                 // Decode size (1.5×…origin) — re-decode visible pages.
                 readerDecodeSize.changesFlow(),
+                readerDecodeScaler.changesFlow(),
                 readerHiResOptimize.changesFlow(),
+                readerHiResSoftwareDownscale.changesFlow(),
                 // Advanced color changes F16 pack / CS for lib-direct — re-decode.
                 readerAdvancedColor.changesFlow(),
                 // Platform HBD (nested under WCG): software F16 + AHB wrap path.

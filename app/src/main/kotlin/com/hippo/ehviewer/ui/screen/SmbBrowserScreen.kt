@@ -98,6 +98,7 @@ import com.hippo.ehviewer.library.browseScrollLayoutKey
 import com.hippo.ehviewer.library.browseUseGrid
 import com.hippo.ehviewer.library.filterRemoteByContentMode
 import com.hippo.ehviewer.library.filterRemoteSmallGalleries
+import com.hippo.ehviewer.library.isArchiveFileName
 import com.hippo.ehviewer.library.isDocumentFileName
 import com.hippo.ehviewer.library.isEbookFileName
 import com.hippo.ehviewer.library.isHtmlFileName
@@ -2175,12 +2176,14 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                         return BrowseCover.Smb(sourceId, remote)
                     }
                     fun dirCoverFor(dir: BrowseEntryRemote.Directory): BrowseCover? {
-                        zipMemberCover(dir.relativeName, dir.coverFileName)?.let { return it }
                         val fileName = dir.coverFileName ?: return null
+                        val leaf = fileName.substringAfterLast('/')
                         val remote = SmbGateway.joinRelativePath(
                             SmbGateway.joinRelativePath(relativeDir, dir.relativeName),
                             fileName,
                         )
+                        if (isArchiveFileName(leaf)) return BrowseCover.SmbArchive(sourceId, remote)
+                        zipMemberCover(dir.relativeName, fileName)?.let { return it }
                         return BrowseCover.Smb(sourceId, remote)
                     }
                     fun archiveCoverFor(entry: BrowseEntryRemote.ArchiveGallery): BrowseCover? {

@@ -848,6 +848,15 @@
     <string name="pref_decode_size_2_5x">2.5× 屏幕</string>
     <string name="pref_decode_size_3x">3× 屏幕</string>
     <string name="pref_decode_size_origin">原图</string>
+    <string name="pref_decode_scaler">缩小解码</string>
+    <string name="pref_image_scaler">图像缩放</string>
+    <string name="pref_image_scaler_default">默认</string>
+    <string name="pref_image_scaler_nearest">最近邻</string>
+    <string name="pref_image_scaler_bilinear">双线性</string>
+    <string name="pref_image_scaler_bspline">B 样条</string>
+    <string name="pref_image_scaler_catmull">Catmull-Rom</string>
+    <string name="pref_image_scaler_mitchell">Mitchell-Netravali</string>
+    <string name="pref_image_scaler_lanczos">Lanczos3</string>
     <string name="pref_reader_original_size">始终加载原图像素</string>
     <string name="pref_reader_original_size_summary">按文件完整分辨率解码（更占内存）。关闭时缩放到屏幕大小。也可在页面菜单中单次“查看原图”。</string>
     <string name="settings_privacy_scan_hidden_files">扫描隐藏文件</string>
@@ -858,6 +867,8 @@
     <string name="pref_reader_hardware_bitmap_summary">更快的 Coil 路径（GPU 位图）。会关闭裁边与二维码广告检测，避免先软件解码再拷贝。</string>
     <string name="pref_reader_hi_res_optimize">高分辨率优化渲染</string>
     <string name="pref_reader_hi_res_optimize_summary">照片按 4096 像素解码。缩放时加载原始尺寸。</string>
+    <string name="pref_reader_hi_res_software_downscale">使用软件缩小</string>
+    <string name="pref_reader_hi_res_software_downscale_summary">用缩小解码方式重采样 4096 像素预览。</string>
     <string name="pref_reader_lib_direct_bitmap">解码直出位图</string>
     <string name="pref_reader_lib_direct_bitmap_summary">将 JXL / JXR / PQ-AVIF 直接解码为 Bitmap，跳过 Ultra HDR JPEG 转换。</string>
     <string name="pref_reader_hdr_display">HDR 显示</string>

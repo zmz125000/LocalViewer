@@ -11,7 +11,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.integerArrayResource
@@ -23,6 +22,7 @@ import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.asMutableState
 import com.hippo.ehviewer.library.document.EBOOK_FONT_SIZE_MAX
 import com.hippo.ehviewer.library.document.EBOOK_FONT_SIZE_MIN
+import com.hippo.ehviewer.ui.settings.Preference
 import eu.kanade.tachiyomi.ui.reader.setting.OrientationType
 import eu.kanade.tachiyomi.ui.reader.setting.ReadingModeType
 
@@ -410,12 +410,10 @@ private fun CameraRawSetting() = Column {
         field = Settings.readerRawHighlight.asMutableState(),
         valueText = { "%.1f".format(it / 10f) },
     )
-    TextButton(
+    Preference(
+        title = stringResource(id = R.string.pref_reader_raw_reset),
         onClick = { Settings.resetReaderRaw() },
-        modifier = Modifier.padding(horizontal = 4.dp),
-    ) {
-        Text(text = stringResource(id = R.string.pref_reader_raw_reset))
-    }
+    )
 }
 
 @Composable

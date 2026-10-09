@@ -476,7 +476,7 @@ object Settings : DataStorePreferences(null) {
      * Concurrent full-size decodes (lib-direct and platform high bit depth).
      * 1 keeps them serial. 2 allows one extra decode. Other values count as 1.
      */
-    val heavyDecode = intPref("heavy_decode", 1)
+    val heavyDecode = intPref("heavy_decode", 2)
     val downloadOriginImage = boolPref("download_origin_image", false)
     val saveAsCbz = boolPref("save_as_cbz", false)
     val archiveMetadata = boolPref("archive_metadata", true)
@@ -853,6 +853,29 @@ object Settings : DataStorePreferences(null) {
     val readerDecodeSize = intPref("pref_reader_decode_size", 4)
 
     /**
+     * How a Coil still (JPEG, PNG, WebP, and the other daily formats) is sampled
+     * onto the screen. 0 keeps the current GPU bilinear blit. 1–6 are draw-time
+     * shaders on API 33+; API 31–32 ignore this and stay on 0.
+     * RAW and lib-direct advanced formats do not read it.
+     * 1 nearest, 2 bilinear, 3 B-spline, 4 Catmull-Rom, 5 Mitchell-Netravali, 6 Lanczos3.
+     */
+    val readerImageScaler = intPref("pref_reader_image_scaler", 0)
+
+    /**
+     * Kernel used once when decode size is 1.5×–3×, and for the 4096 px hi-res
+     * cap when [readerHiResSoftwareDownscale] is on. 0 keeps the codec's own
+     * subsample. 1–6 decode the full frame in software and resample down.
+     * Same order as [readerImageScaler]. Original size and lib-direct pages skip it.
+     */
+    val readerDecodeScaler = intPref("pref_reader_decode_scaler", 0)
+
+    /**
+     * When [readerHiResOptimize] is on, resample the 4096 px preview with
+     * [readerDecodeScaler] instead of the codec subsample. Default off.
+     */
+    val readerHiResSoftwareDownscale = boolPref("pref_reader_hi_res_software_downscale", false)
+
+    /**
      * Coil path only: skip the software intermediate used for QR detection and border crop.
      *
      * On: [allowHardware] decode, so QR and crop stay off. Off: software decode so those
@@ -879,7 +902,7 @@ object Settings : DataStorePreferences(null) {
      * Network/SMB/WebDAV keep original when on. Browse covers still convert to small JPEG.
      * Camera RAW always uses the direct bitmap, whether this is on or off.
      */
-    val readerLibDirectBitmap = boolPref("pref_reader_lib_direct_bitmap", false)
+    val readerLibDirectBitmap = boolPref("pref_reader_lib_direct_bitmap", true)
 
     /**
      * Window HDR presentation only: when a composed page has a gain map and the

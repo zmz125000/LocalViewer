@@ -145,11 +145,12 @@ while ($true) {
 
 # ダウンロード
 
-| フレーバー    | 最小の Android バージョン      | 注意事項    |
-|----------|--------------------------|---------|
-| Default  | 12                       | 完全なサポート |
-| EasyTier | 12 (arm64-v8a)          | 完全なサポート |
-| HDR      | 14 (arm64-v8a, x86-64)  | 完全なサポート |
+| Flavor      | Minimum Android Version | Features                       |
+|-------------|-------------------------|--------------------------------|
+| Default     | 12                      | Basic                          |
+| Default     | 14 (arm64-v8a, x86-64)  | HDR, GPU Shaders, RAW          |
+| EasyTier    | 12 (arm64-v8a)          | Basic, EasyTier                |
+| EasyTier    | 14 (arm64-v8a)          | HDR, GPU Shaders, RAW, EasyTier|
 
 <a href="https://github.com/zmz125000/LocalViewer/releases">
 <img alt="Get it on GitHub" src="https://github.com/zmz125000/LocalViewer-art/blob/master/get-it-on-github.svg" width="200px"/>

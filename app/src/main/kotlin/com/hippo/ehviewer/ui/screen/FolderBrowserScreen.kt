@@ -137,6 +137,7 @@ import com.hippo.ehviewer.ui.destinations.LibraryScreenDestination
 import com.hippo.ehviewer.ui.main.BrowseArchiveGalleryRow
 import com.hippo.ehviewer.ui.main.BrowseArchiveGridItem
 import com.hippo.ehviewer.ui.main.BrowseCover
+import com.hippo.ehviewer.ui.main.directoryBrowseCover
 import com.hippo.ehviewer.ui.main.BrowseDirectoryGridItem
 import com.hippo.ehviewer.ui.main.BrowseDirectoryRow
 import com.hippo.ehviewer.ui.main.BrowseEmptyHint
@@ -2452,7 +2453,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                     onClick = { enterDir(entry, fromSearch = fromSearch) },
                                     onLongClick = { toggleDirFavorite(entry) },
                                     showFavoriteStar = isDirFavorite(entry),
-                                    cover = entry.coverPath?.let { BrowseCover.Local(it) },
+                                    cover = entry.coverPath?.let { directoryBrowseCover(it) },
                                     showFolderThumb = browseFolderThumbs,
                                     overflow = dirOverflow(entry),
                                 )
@@ -2462,7 +2463,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                     name = entry.name,
                                     onClick = { enterDir(entry, fromSearch = fromSearch) },
                                     onLongClick = { toggleDirFavorite(entry) },
-                                    cover = entry.coverPath?.let { BrowseCover.Local(it) },
+                                    cover = entry.coverPath?.let { directoryBrowseCover(it) },
                                     showFolderThumb = browseFolderThumbs,
                                     lastModifiedMs = entry.lastModifiedMs,
                                     sizeBytes = entry.size,
@@ -2829,7 +2830,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                             onClick = { enterDir(dir) },
                                             onLongClick = { toggleDirFavorite(dir) },
                                             showFavoriteStar = isDirFavorite(dir),
-                                            cover = dir.coverPath?.let { BrowseCover.Local(it) },
+                                            cover = dir.coverPath?.let { directoryBrowseCover(it) },
                                             showFolderThumb = browseFolderThumbs,
                                             overflow = dirOverflow(dir),
                                         )
@@ -2976,7 +2977,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                                 name = dir.name,
                                                 onClick = { enterDir(dir) },
                                                 onLongClick = { toggleDirFavorite(dir) },
-                                                cover = dir.coverPath?.let { BrowseCover.Local(it) },
+                                                cover = dir.coverPath?.let { directoryBrowseCover(it) },
                                                 showFolderThumb = browseFolderThumbs,
                                                 lastModifiedMs = dir.lastModifiedMs,
                                                 sizeBytes = dir.size,
