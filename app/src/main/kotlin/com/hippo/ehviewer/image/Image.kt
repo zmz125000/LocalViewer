@@ -18,6 +18,7 @@
 package com.hippo.ehviewer.image
 
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.graphics.ColorSpace
 import android.graphics.drawable.Animatable
 import android.hardware.HardwareBuffer
@@ -72,6 +73,8 @@ import com.hippo.ehviewer.ktbuilder.execute
 import com.hippo.ehviewer.ktbuilder.imageRequest
 import com.hippo.ehviewer.util.FileUtils
 import eu.kanade.tachiyomi.ui.reader.setting.DecodeSizeType
+import java.io.File
+import java.io.InputStream
 import java.nio.ByteBuffer
 import kotlin.concurrent.atomics.AtomicInt
 import kotlin.concurrent.atomics.decrementAndFetch
@@ -384,9 +387,12 @@ class Image private constructor(
             // Default 0 keeps the codec subsample. Gain maps and deep color stay on that path.
             // The 4096 px hi-res cap uses the kernel only when that toggle is on.
             val softwareHiRes = longEdgeCap > 0 && Settings.readerHiResSoftwareDownscale.value
-            val kernelDownscale = !platformHbd && !hdrSafe &&
+            val kernelRequested = !platformHbd && !hdrSafe &&
                 decodeDownscaleKernel() != 0 &&
                 (softwareHiRes || (longEdgeCap <= 0 && !mode.isOriginal))
+            // Header size only. A frame already within the target never takes the
+            // full software decode; an unreadable header stays on the codec path.
+            val kernelDownscale = kernelRequested && encodedSizeNeedsDownscale(mode, longEdgeCap)
             val request = with(appCtx) {
                 imageRequest {
                     onLeft { data(it.source) }
@@ -523,6 +529,42 @@ class Image private constructor(
                 )
                 else -> wrapped
             }
+        }
+
+        /** True only when the encoded frame is larger than the decode target. Unknown size is false. */
+        private fun Either<ByteBufferSource, PathSource>.encodedSizeNeedsDownscale(
+            mode: DecodeSizeType,
+            longEdgeCap: Int,
+        ): Boolean {
+            val (srcW, srcH) = encodedPixelSize() ?: return false
+            val (dstW, dstH) = decodeOutputSize(srcW, srcH, mode, longEdgeCap)
+            return dstW < srcW || dstH < srcH
+        }
+
+        private fun Either<ByteBufferSource, PathSource>.encodedPixelSize(): Pair<Int, Int>? {
+            val opts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            when (this) {
+                is Either.Right -> {
+                    val file = File(value.source.toString())
+                    if (!file.isFile) return null
+                    BitmapFactory.decodeFile(file.path, opts)
+                }
+                is Either.Left -> {
+                    val dup = value.source.asReadOnlyBuffer()
+                    if (dup.hasArray()) {
+                        BitmapFactory.decodeByteArray(
+                            dup.array(),
+                            dup.arrayOffset() + dup.position(),
+                            dup.remaining(),
+                            opts,
+                        )
+                    } else {
+                        BitmapFactory.decodeStream(dup.asHeaderStream(), null, opts)
+                    }
+                }
+            }
+            if (opts.outWidth <= 0 || opts.outHeight <= 0) return null
+            return opts.outWidth to opts.outHeight
         }
 
         /** Coil FILL / FIT box. A multiplier of 1 or more means the file is already small enough. */
@@ -893,6 +935,17 @@ private fun ByteArray.indexOfAscii(needle: String, length: Int = size): Int {
         return i
     }
     return -1
+}
+
+private fun ByteBuffer.asHeaderStream(): InputStream = object : InputStream() {
+    override fun read(): Int = if (!hasRemaining()) -1 else get().toInt() and 0xff
+
+    override fun read(b: ByteArray, off: Int, len: Int): Int {
+        if (!hasRemaining()) return -1
+        val n = minOf(len, remaining())
+        get(b, off, n)
+        return n
+    }
 }
 
 external fun detectBorder(bitmap: Bitmap): IntArray
