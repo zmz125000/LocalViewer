@@ -829,6 +829,7 @@
     <string name="pref_decode_size_2_5x">2.5× 螢幕</string>
     <string name="pref_decode_size_3x">3× 螢幕</string>
     <string name="pref_decode_size_origin">原圖</string>
+    <string name="pref_decode_scaler">縮小解碼</string>
     <string name="pref_image_scaler">影像縮放</string>
     <string name="pref_image_scaler_default">預設</string>
     <string name="pref_image_scaler_nearest">最近鄰</string>

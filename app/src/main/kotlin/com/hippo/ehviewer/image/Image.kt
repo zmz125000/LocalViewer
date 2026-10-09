@@ -23,6 +23,7 @@ import android.graphics.drawable.Animatable
 import android.hardware.HardwareBuffer
 import android.os.Build
 import android.util.Log
+import androidx.compose.ui.unit.IntRect
 import androidx.compose.ui.unit.IntSize
 import arrow.core.Either
 import arrow.core.left
@@ -379,11 +380,20 @@ class Image private constructor(
             platformHbd: Boolean = false,
         ): CoilImage {
             val hardwareDirect = !platformHbd && (Settings.readerHardwareBitmap.value || hdrSafe)
+            // A chosen kernel decodes the full software frame, then resamples once.
+            // Default 0 keeps the codec subsample. Gain maps and deep color stay on that path.
+            val kernelDownscale = !platformHbd && !hdrSafe &&
+                decodeDownscaleKernel() != 0 &&
+                (longEdgeCap > 0 || !mode.isOriginal)
             val request = with(appCtx) {
                 imageRequest {
                     onLeft { data(it.source) }
                     onRight { data(it.source.toUri()) }
                     when {
+                        kernelDownscale -> {
+                            size(Size.ORIGINAL)
+                            precision(Precision.EXACT)
+                        }
                         longEdgeCap > 0 -> {
                             // Fit inside the square so the long edge, not the short edge, is capped.
                             size(Size(longEdgeCap, longEdgeCap))
@@ -415,6 +425,13 @@ class Image private constructor(
                             hardwareThreshold(Settings.hardwareBitmapThreshold.value)
                             maybeCropBorder(false)
                             detectQrCode(false)
+                        }
+                        kernelDownscale -> {
+                            // Pixels have to stay readable until the resample. Upload runs after.
+                            allowHardware(false)
+                            hardwareThreshold(0)
+                            maybeCropBorder(!hardwareDirect && Settings.cropBorder.value)
+                            detectQrCode(!hardwareDirect && checkExtraneousAds)
                         }
                         hardwareDirect -> {
                             // Decode prefers HARDWARE; late HardwareBitmapInterceptor still upgrades
@@ -452,10 +469,82 @@ class Image private constructor(
                             if (logHbd) Log.i("ReaderColor", msg) else Log.d("ReaderColor", msg)
                         }
                     }
-                    result.image
+                    val decoded = result.image
+                    if (kernelDownscale) decoded.resampleDown(mode, longEdgeCap) else decoded
                 }
                 is ErrorResult -> throw result.throwable
             }
+        }
+
+        /** 0 keeps the codec subsample. 1–6 match the draw-time scaler. */
+        private fun decodeDownscaleKernel(): Int {
+            val kernel = Settings.readerDecodeScaler.value
+            return if (kernel in 1..6) kernel else 0
+        }
+
+        /**
+         * Full-frame software bitmap → decode-size target. No upscale.
+         * Hardware upload was held off so the pixels could be read; it runs here.
+         */
+        private fun CoilImage.resampleDown(mode: DecodeSizeType, longEdgeCap: Int): CoilImage {
+            val kernel = decodeDownscaleKernel()
+            val bitmap = when (this) {
+                is BitmapImageWithExtraInfo -> {
+                    if (hasGainmap) return this
+                    image.bitmap
+                }
+                is BitmapImage -> {
+                    if (detectGainmap()) return this
+                    bitmap
+                }
+                else -> return this
+            }
+            if (bitmap.isRecycled || bitmap.config == Bitmap.Config.HARDWARE) return this
+            if (bitmap.config == Bitmap.Config.RGBA_F16) return this
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                bitmap.config == Bitmap.Config.RGBA_1010102
+            ) {
+                return this
+            }
+            val (dstW, dstH) = decodeOutputSize(bitmap.width, bitmap.height, mode, longEdgeCap)
+            val scaled = if (dstW == bitmap.width && dstH == bitmap.height) {
+                bitmap
+            } else {
+                bitmap.downscaleDecoded(dstW, dstH, kernel).also { if (it !== bitmap) bitmap.recycle() }
+            }
+            val shown = scaled.presentForReader()
+            val wrapped = shown.asImage()
+            return when (this) {
+                is BitmapImageWithExtraInfo -> copy(
+                    image = wrapped,
+                    rect = IntRect(0, 0, wrapped.width, wrapped.height),
+                )
+                else -> wrapped
+            }
+        }
+
+        /** Coil FILL / FIT box. A multiplier of 1 or more means the file is already small enough. */
+        private fun decodeOutputSize(srcW: Int, srcH: Int, mode: DecodeSizeType, longEdgeCap: Int): Pair<Int, Int> {
+            if (srcW <= 0 || srcH <= 0) return srcW to srcH
+            val fill: Boolean
+            val box: Int
+            if (longEdgeCap > 0) {
+                fill = false
+                box = longEdgeCap
+            } else {
+                val scale = mode.scale ?: return srcW to srcH
+                fill = true
+                box = with(appCtx.resources.displayMetrics) {
+                    (minOf(widthPixels, heightPixels) * scale).roundToInt().coerceAtLeast(1)
+                }
+            }
+            val sx = box.toDouble() / srcW
+            val sy = box.toDouble() / srcH
+            val multiplier = if (fill) maxOf(sx, sy) else minOf(sx, sy)
+            if (multiplier >= 1.0) return srcW to srcH
+            val dstW = (srcW * multiplier).roundToInt().coerceAtLeast(1)
+            val dstH = (srcH * multiplier).roundToInt().coerceAtLeast(1)
+            return dstW to dstH
         }
 
         /** WCG + HBD sub-toggle, not gain-map, PNG/APNG with HIGH or UNKNOWN probe. */

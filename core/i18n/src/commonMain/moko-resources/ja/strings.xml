@@ -870,6 +870,7 @@
     <string name="pref_decode_size_2_5x">画面の 2.5×</string>
     <string name="pref_decode_size_3x">画面の 3×</string>
     <string name="pref_decode_size_origin">原寸</string>
+    <string name="pref_decode_scaler">縮小デコード</string>
     <string name="pref_image_scaler">画像スケーラー</string>
     <string name="pref_image_scaler_default">デフォルト</string>
     <string name="pref_image_scaler_nearest">ニアレスト</string>

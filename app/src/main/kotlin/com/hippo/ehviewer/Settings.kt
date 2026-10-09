@@ -862,6 +862,14 @@ object Settings : DataStorePreferences(null) {
     val readerImageScaler = intPref("pref_reader_image_scaler", 0)
 
     /**
+     * Kernel used once when a Coil still is decoded smaller than the file
+     * (decode size 1.5×–3×, or the 4096 px hi-res cap). 0 keeps the codec's
+     * own subsample. 1–6 decode the full frame in software and resample down.
+     * Same order as [readerImageScaler]. Original size and lib-direct pages skip it.
+     */
+    val readerDecodeScaler = intPref("pref_reader_decode_scaler", 0)
+
+    /**
      * Coil path only: skip the software intermediate used for QR detection and border crop.
      *
      * On: [allowHardware] decode, so QR and crop stay off. Off: software decode so those

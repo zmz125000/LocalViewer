@@ -848,6 +848,7 @@
     <string name="pref_decode_size_2_5x">2.5× 屏幕</string>
     <string name="pref_decode_size_3x">3× 屏幕</string>
     <string name="pref_decode_size_origin">原图</string>
+    <string name="pref_decode_scaler">缩小解码</string>
     <string name="pref_image_scaler">图像缩放</string>
     <string name="pref_image_scaler_default">默认</string>
     <string name="pref_image_scaler_nearest">最近邻</string>

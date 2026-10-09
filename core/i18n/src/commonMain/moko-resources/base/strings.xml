@@ -907,6 +907,7 @@
     <string name="pref_decode_size_2_5x">2.5× screen</string>
     <string name="pref_decode_size_3x">3× screen</string>
     <string name="pref_decode_size_origin">Original</string>
+    <string name="pref_decode_scaler">Downscale decode</string>
     <string name="pref_image_scaler">Image scaler</string>
     <string name="pref_image_scaler_default">Default</string>
     <string name="pref_image_scaler_nearest">Nearest</string>
