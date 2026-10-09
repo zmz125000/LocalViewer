@@ -1,5 +1,6 @@
 package com.hippo.ehviewer.ui.reader
 
+import android.os.Build
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.navigationBarsPadding
@@ -28,6 +29,7 @@ import com.hippo.ehviewer.asMutableState
 
 @Composable
 fun ColorFilterSetting() = Column(modifier = Modifier.verticalScroll(rememberScrollState()).navigationBarsPadding()) {
+    ImageScalerChoice()
     val customBrightness = Settings.customBrightness.asMutableState()
     SwitchChoice(
         title = stringResource(id = R.string.pref_custom_brightness),
@@ -98,5 +100,24 @@ fun ColorFilterSetting() = Column(modifier = Modifier.verticalScroll(rememberScr
     SwitchChoice(
         title = stringResource(id = R.string.pref_inverted_colors),
         field = Settings.invertedColors.asMutableState(),
+    )
+}
+
+@Composable
+private fun ImageScalerChoice() {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
+    SpinnerChoice(
+        title = stringResource(id = R.string.pref_image_scaler),
+        entries = arrayOf(
+            stringResource(id = R.string.pref_image_scaler_default),
+            stringResource(id = R.string.pref_image_scaler_nearest),
+            stringResource(id = R.string.pref_image_scaler_bilinear),
+            stringResource(id = R.string.pref_image_scaler_bspline),
+            stringResource(id = R.string.pref_image_scaler_catmull),
+            stringResource(id = R.string.pref_image_scaler_mitchell),
+            stringResource(id = R.string.pref_image_scaler_lanczos),
+        ),
+        values = listOf(0, 1, 2, 3, 4, 5, 6),
+        field = Settings.readerImageScaler.asMutableState(),
     )
 }

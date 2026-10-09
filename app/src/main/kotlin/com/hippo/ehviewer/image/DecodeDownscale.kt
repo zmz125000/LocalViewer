@@ -56,15 +56,19 @@ internal fun decodeKernelWeight(x: Float, kernel: Int): Float {
 
 private fun mitchell(x: Float, b: Float, c: Float): Float {
     if (x < 1f) {
-        return ((12f - 9f * b - 6f * c) * x * x * x +
-            (-18f + 12f * b + 6f * c) * x * x +
-            (6f - 2f * b)) / 6f
+        return (
+            (12f - 9f * b - 6f * c) * x * x * x +
+                (-18f + 12f * b + 6f * c) * x * x +
+                (6f - 2f * b)
+            ) / 6f
     }
     if (x < 2f) {
-        return ((-b - 6f * c) * x * x * x +
-            (6f * b + 30f * c) * x * x +
-            (-12f * b - 48f * c) * x +
-            (8f * b + 24f * c)) / 6f
+        return (
+            (-b - 6f * c) * x * x * x +
+                (6f * b + 30f * c) * x * x +
+                (-12f * b - 48f * c) * x +
+                (8f * b + 24f * c)
+            ) / 6f
     }
     return 0f
 }
