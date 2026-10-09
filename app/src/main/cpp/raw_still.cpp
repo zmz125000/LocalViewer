@@ -9,6 +9,9 @@
  *              color up to the 90th-percentile paper white. Above that, the tone
  *              curve is not applied: its shoulder flattens highlight gradation into
  *              white, and boosting those pixels only makes the white brighter.
+ *              Linear HDR skips the look and keeps the camera-white scale up through
+ *              paper white, then opens the brighter tail so that peak still sits
+ *              above 1.
  *              The advanced-color switch is not a third mode;
  *              the caller selects 2 whenever HDR display is on and the panel is HDR.
  * Every ABI: embedded JPEG preview for covers and for a failed demosaic.
@@ -215,9 +218,10 @@ float sample_component(const uint8_t* base, int bits, int colors, int x, int y, 
     return static_cast<float>(base[i + static_cast<size_t>(channel)]);
 }
 
-// Diffuse white ≈ 90th percentile of sampled luminance. Peak is the brightest sample.
-// Used only to decide which pixels sit above paper white on the non-linear HDR path.
-// Every pack, including linear HDR, divides by camera white.
+// Diffuse white ≈ 90th percentile of sampled luminance. Peak is the brightest
+// sampled luminance. Non-linear HDR uses paper only as the headroom split.
+// Linear HDR keeps the camera-white scale at and below paper, then opens the
+// tail so this peak lands at peak/paper.
 void linear_white_and_peak(const uint8_t* base, int w, int h, int colors, int bits, float& white, float& peak) {
     const int npx = w * h;
     int step = 1;
@@ -235,7 +239,7 @@ void linear_white_and_peak(const uint8_t* base, int w, int h, int colors, int bi
         float b = ch > 2 ? sample_component(base, bits, colors, x, y, w, 2) : r;
         float lum = 0.2126f * r + 0.7152f * g + 0.0722f * b;
         ys.push_back(lum);
-        peak = std::max(peak, std::max(r, std::max(g, b)));
+        peak = std::max(peak, lum);
     }
     if (ys.empty()) {
         white = full;
@@ -246,6 +250,30 @@ void linear_white_and_peak(const uint8_t* base, int w, int h, int colors, int bi
     std::nth_element(ys.begin(), ys.begin() + static_cast<std::ptrdiff_t>(idx), ys.end());
     white = std::max(ys[idx], 1.f);
     peak = std::max(peak, white);
+}
+
+// Linear HDR highlight gain. code_luma, paper, and sensor_peak are 16-bit codes.
+// At and below paper the multiplier is 1, so the pixel stays on the camera-white
+// scale. Above paper, luminance is opened so the sampled peak lands at
+// peak/paper — the same highlight level as dividing the tail by paper — while
+// paper itself stays at paper/camera_white. The body of the frame is unchanged.
+float linear_hdr_highlight_gain(float code_luma, float paper, float sensor_peak, float camera_white) {
+    if (!(code_luma > paper) || !(sensor_peak > paper) || !(paper > 0.f) || !(camera_white > paper)) return 1.f;
+    const float paper_s = paper / camera_white;
+    const float peak_s = sensor_peak / camera_white;
+    const float span = peak_s - paper_s;
+    if (!(span > 0.f)) return 1.f;
+    float target = peak_s / paper_s;
+    const float limit = 10000.f / 203.f;
+    if (target > limit) target = limit;
+    const float slope = (target - paper_s) / span;
+    if (!(slope > 1.f) || !std::isfinite(slope)) return 1.f;
+    const float base = code_luma / camera_white;
+    if (!(base > 1e-4f)) return 1.f;
+    const float out_lum = paper_s + (base - paper_s) * slope;
+    const float gain = out_lum / base;
+    if (!std::isfinite(gain) || !(gain > 0.f)) return 1.f;
+    return gain;
 }
 
 // Same mapping as RawPresent.rawLinearSample. scene_over_white is 1 at camera white.
@@ -333,13 +361,14 @@ bool pack_image(const libraw_processed_image_t* img, int max_edge, int present, 
     const float full = linear16 ? 65535.f : 255.f;
     const float white = (linear16 && camera_white > 1.f && camera_white < full) ? camera_white : full;
     float paper = white;
-    // Linear HDR keeps the same camera-white scale as the other paths. Paper white
-    // only splits the non-linear HDR headroom branch.
-    if (hdr && linear16 && !linear_hdr) {
-        float sensor_peak = white;
+    float sensor_peak = white;
+    // Paper white splits both HDR paths. Linear HDR also uses the sampled peak
+    // to open the highlight tail. The scale below that split stays camera white.
+    if (hdr && linear16) {
         linear_white_and_peak(img->data, sw, sh, colors, img->bits, paper, sensor_peak);
     }
     if (!(paper > 0.f)) paper = 1.f;
+    if (!(sensor_peak > 0.f)) sensor_peak = paper;
 
     out.pixels.assign(bytes, 0);
     out.w = dw;
@@ -401,6 +430,10 @@ bool pack_image(const libraw_processed_image_t* img, int max_edge, int present, 
                 } else if (look && !linear_hdr) {
                     rawlook::apply_camera_look(*look, exposure_ev, rgb[0], rgb[1], rgb[2]);
                 } else {
+                    if (linear_hdr) {
+                        const float lift = linear_hdr_highlight_gain(lum, paper, sensor_peak, white);
+                        for (int c = 0; c < 3; ++c) rgb[c] *= lift;
+                    }
                     float gain = std::exp2(std::isfinite(exposure_ev) ? exposure_ev : 0.f);
                     if (!std::isfinite(gain) || gain < 0.f) gain = 1.f;
                     for (int c = 0; c < 3; ++c) rgb[c] *= gain;
