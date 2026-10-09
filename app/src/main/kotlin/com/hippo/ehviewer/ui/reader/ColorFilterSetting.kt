@@ -38,6 +38,12 @@ fun ColorFilterSetting(
     showImageScaler: Boolean = true,
     showCameraRaw: Boolean = false,
 ) = Column(modifier = Modifier.verticalScroll(rememberScrollState()).navigationBarsPadding()) {
+    if (showCameraRaw) {
+        val cameraRaw = Settings.readerCameraRaw.asMutableState()
+        AnimatedVisibility(visible = cameraRaw.value) {
+            CameraRawSetting()
+        }
+    }
     if (showImageScaler) ImageScalerChoice()
     val customBrightness = Settings.customBrightness.asMutableState()
     SwitchChoice(
@@ -110,12 +116,6 @@ fun ColorFilterSetting(
         title = stringResource(id = R.string.pref_inverted_colors),
         field = Settings.invertedColors.asMutableState(),
     )
-    if (showCameraRaw) {
-        val cameraRaw = Settings.readerCameraRaw.asMutableState()
-        AnimatedVisibility(visible = cameraRaw.value) {
-            CameraRawSetting()
-        }
-    }
 }
 
 @Composable
