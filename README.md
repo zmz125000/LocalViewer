@@ -122,7 +122,6 @@ Thank you for your support.
 * The custom SMBJ and WebDAV clients achieve 1 Gbps network speeds over Wi-Fi 7, so after v1.11.x the image reader defaults to have image caching disabled.
 * Windows 11 JXR HDR screenshots can be displayed directly in fp16 bitmaps without tone mapping, or transcode to Ultra HDR Jpeg. The prefetch and decode ahead is set to 1 for JXR format to avoid OOM crashed.
 * The image loader was tweaked for preloading and decoding 20MB jpg files without any OOM crashes, and smaller files should load instantly.
-* Custom image scaling methods: use GPU shaders for rendering, and use downscale filters for decode time downsampling.
 
 ### To use WebDAV
 
