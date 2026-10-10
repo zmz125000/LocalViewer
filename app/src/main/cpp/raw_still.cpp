@@ -21,6 +21,10 @@
 #include <android/log.h>
 
 #include <jni.h>
+#include <fcntl.h>
+#include <sys/mman.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 #include <algorithm>
 #include <cmath>
@@ -29,6 +33,9 @@
 #include <cstring>
 #include <limits>
 #include <csetjmp>
+#include <functional>
+#include <system_error>
+#include <thread>
 #include <vector>
 
 #include "raw_camera_look.h"
@@ -52,6 +59,9 @@ extern "C" void raw_still_jpeg_bail(j_common_ptr cinfo) {
 namespace {
 
 constexpr const char* kTag = "RawStill";
+// Two heavy decodes may run at once, so keep each to a share of the big cores.
+constexpr unsigned kPackMaxThreads = 4;
+constexpr int kPackMinBandRows = 64;
 
 void log_err(const char* msg) { __android_log_print(ANDROID_LOG_ERROR, kTag, "%s", msg); }
 
@@ -85,6 +95,34 @@ bool read_file(const char* path, std::vector<uint8_t>& out) {
     std::fclose(fp);
     return n == out.size();
 }
+
+// Read-only view of a whole file. Only the pages a parser touches are read in.
+struct MappedFile {
+    const uint8_t* data = nullptr;
+    size_t size = 0;
+
+    explicit MappedFile(const char* path) {
+        int fd = ::open(path, O_RDONLY | O_CLOEXEC);
+        if (fd < 0) return;
+        map(fd);
+        ::close(fd);
+    }
+    // The caller keeps ownership of fd. The mapping outlives it.
+    explicit MappedFile(int fd) { map(fd); }
+    void map(int fd) {
+        struct stat st {};
+        if (fd < 0 || ::fstat(fd, &st) != 0 || !S_ISREG(st.st_mode) || st.st_size <= 0) return;
+        void* p = ::mmap(nullptr, static_cast<size_t>(st.st_size), PROT_READ, MAP_PRIVATE, fd, 0);
+        if (p == MAP_FAILED) return;
+        data = static_cast<const uint8_t*>(p);
+        size = static_cast<size_t>(st.st_size);
+    }
+    ~MappedFile() {
+        if (data) ::munmap(const_cast<uint8_t*>(data), size);
+    }
+    MappedFile(const MappedFile&) = delete;
+    MappedFile& operator=(const MappedFile&) = delete;
+};
 
 // Largest embedded JPEG (SOI + APP/DQT … EOI). One forward pass.
 bool find_embedded_jpeg(const uint8_t* data, size_t len, size_t& off, size_t& nout) {
@@ -387,91 +425,113 @@ bool pack_image(const libraw_processed_image_t* img, int max_edge, int present, 
     // gamut 2 is the shared linear BT.2020 space. Headroom is the half-float values.
     out.gamut = hdr ? 2 : (present == 1 ? 1 : 0);
     out.boost = 1.f;
-    float peak = 1.f;
 
-    for (int y = 0; y < dh; ++y) {
-        int y0 = y * sh / dh;
-        int y1 = std::max(y0 + 1, (y + 1) * sh / dh);
-        for (int x = 0; x < dw; ++x) {
-            int x0 = x * sw / dw;
-            int x1 = std::max(x0 + 1, (x + 1) * sw / dw);
-            double acc[3] = {0, 0, 0};
-            int count = 0;
-            for (int sy = y0; sy < y1; ++sy) {
-                for (int sx = x0; sx < x1; ++sx) {
+    // Rows are independent and write disjoint output, so bands give the same bytes.
+    auto pack_rows = [&](int y_begin, int y_end, float& peak) {
+        for (int y = y_begin; y < y_end; ++y) {
+            int y0 = y * sh / dh;
+            int y1 = std::max(y0 + 1, (y + 1) * sh / dh);
+            for (int x = 0; x < dw; ++x) {
+                int x0 = x * sw / dw;
+                int x1 = std::max(x0 + 1, (x + 1) * sw / dw);
+                double acc[3] = {0, 0, 0};
+                int count = 0;
+                for (int sy = y0; sy < y1; ++sy) {
+                    for (int sx = x0; sx < x1; ++sx) {
+                        for (int c = 0; c < 3; ++c) {
+                            int src_c = colors == 1 ? 0 : std::min(c, colors - 1);
+                            acc[c] += sample_component(img->data, img->bits, colors, sx, sy, sw, src_c);
+                        }
+                        ++count;
+                    }
+                }
+                if (count <= 0) continue;
+                size_t o = (static_cast<size_t>(y) * static_cast<size_t>(dw) + static_cast<size_t>(x)) * (deep ? 8u : 4u);
+                if (!linear16) {
                     for (int c = 0; c < 3; ++c) {
-                        int src_c = colors == 1 ? 0 : std::min(c, colors - 1);
-                        acc[c] += sample_component(img->data, img->bits, colors, sx, sy, sw, src_c);
-                    }
-                    ++count;
-                }
-            }
-            if (count <= 0) continue;
-            size_t o = (static_cast<size_t>(y) * static_cast<size_t>(dw) + static_cast<size_t>(x)) * (deep ? 8u : 4u);
-            if (!linear16) {
-                for (int c = 0; c < 3; ++c) {
-                    int v = static_cast<int>(std::lround(acc[c] / count));
-                    out.pixels[o + static_cast<size_t>(c)] = static_cast<uint8_t>(std::clamp(v, 0, 255));
-                }
-                out.pixels[o + 3] = 255;
-            } else {
-                double ch[3];
-                for (int c = 0; c < 3; ++c) ch[c] = acc[c] / count;
-                float rgb[3];
-                for (int c = 0; c < 3; ++c) rgb[c] = static_cast<float>(ch[c] / white);
-                auto rec_luma = [](float r, float g, float b) {
-                    return 0.2126f * r + 0.7152f * g + 0.0722f * b;
-                };
-                const float lum = rec_luma(static_cast<float>(ch[0]), static_cast<float>(ch[1]), static_cast<float>(ch[2]));
-                if (look && !linear_hdr && hdr && lum > paper) {
-                    // Curve the paper-white version of this color, then extend with the
-                    // hue/sat result (no shoulder) so the roll-off stays proportional.
-                    const float u = lum / paper;
-                    float at_paper[3] = {rgb[0] / u, rgb[1] / u, rgb[2] / u};
-                    rawlook::apply_camera_look(*look, exposure_ev, at_paper[0], at_paper[1], at_paper[2]);
-                    rawlook::apply_camera_look(*look, exposure_ev, rgb[0], rgb[1], rgb[2], false);
-                    const float lin_luma = rec_luma(rgb[0], rgb[1], rgb[2]);
-                    const float target = rec_luma(at_paper[0], at_paper[1], at_paper[2]) * u;
-                    if (lin_luma > 1e-4f && target > 0.f) {
-                        const float gain = target / lin_luma;
-                        for (int c = 0; c < 3; ++c) rgb[c] *= gain;
-                    }
-                } else if (look && !linear_hdr) {
-                    rawlook::apply_camera_look(*look, exposure_ev, rgb[0], rgb[1], rgb[2]);
-                } else {
-                    if (linear_hdr) {
-                        const float lift = linear_hdr_highlight_gain(lum, paper, sensor_peak, white, shoulder, cap);
-                        for (int c = 0; c < 3; ++c) rgb[c] *= lift;
-                    }
-                    float gain = std::exp2(std::isfinite(exposure_ev) ? exposure_ev : 0.f);
-                    if (!std::isfinite(gain) || gain < 0.f) gain = 1.f;
-                    for (int c = 0; c < 3; ++c) rgb[c] *= gain;
-                }
-                // After the camera look. The HDR look rebuilds brightness from the
-                // tone curve, which cancels a zone change made on the linear input.
-                apply_raw_zones(rgb[0], rgb[1], rgb[2], shadows, midtones, highlights);
-                if (!deep) {
-                    for (int c = 0; c < 3; ++c) {
-                        int v = static_cast<int>(std::lround(rawlook::srgb_encode(rgb[c]) * 255.f));
+                        int v = static_cast<int>(std::lround(acc[c] / count));
                         out.pixels[o + static_cast<size_t>(c)] = static_cast<uint8_t>(std::clamp(v, 0, 255));
                     }
                     out.pixels[o + 3] = 255;
                 } else {
-                    // Exposure already ran inside the camera look, ahead of the tone curve.
-                    for (int c = 0; c < 3; ++c) {
-                        float v = raw_linear_sample(rgb[c], 0.f, highlight_stops, cap);
-                        peak = std::max(peak, v);
-                        uint16_t half = float_to_half(v);
-                        out.pixels[o + static_cast<size_t>(c) * 2] = static_cast<uint8_t>(half & 0xff);
-                        out.pixels[o + static_cast<size_t>(c) * 2 + 1] = static_cast<uint8_t>(half >> 8);
+                    double ch[3];
+                    for (int c = 0; c < 3; ++c) ch[c] = acc[c] / count;
+                    float rgb[3];
+                    for (int c = 0; c < 3; ++c) rgb[c] = static_cast<float>(ch[c] / white);
+                    auto rec_luma = [](float r, float g, float b) {
+                        return 0.2126f * r + 0.7152f * g + 0.0722f * b;
+                    };
+                    const float lum = rec_luma(static_cast<float>(ch[0]), static_cast<float>(ch[1]), static_cast<float>(ch[2]));
+                    if (look && !linear_hdr && hdr && lum > paper) {
+                        // Curve the paper-white version of this color, then extend with the
+                        // hue/sat result (no shoulder) so the roll-off stays proportional.
+                        const float u = lum / paper;
+                        float at_paper[3] = {rgb[0] / u, rgb[1] / u, rgb[2] / u};
+                        rawlook::apply_camera_look(*look, exposure_ev, at_paper[0], at_paper[1], at_paper[2]);
+                        rawlook::apply_camera_look(*look, exposure_ev, rgb[0], rgb[1], rgb[2], false);
+                        const float lin_luma = rec_luma(rgb[0], rgb[1], rgb[2]);
+                        const float target = rec_luma(at_paper[0], at_paper[1], at_paper[2]) * u;
+                        if (lin_luma > 1e-4f && target > 0.f) {
+                            const float gain = target / lin_luma;
+                            for (int c = 0; c < 3; ++c) rgb[c] *= gain;
+                        }
+                    } else if (look && !linear_hdr) {
+                        rawlook::apply_camera_look(*look, exposure_ev, rgb[0], rgb[1], rgb[2]);
+                    } else {
+                        if (linear_hdr) {
+                            const float lift = linear_hdr_highlight_gain(lum, paper, sensor_peak, white, shoulder, cap);
+                            for (int c = 0; c < 3; ++c) rgb[c] *= lift;
+                        }
+                        float gain = std::exp2(std::isfinite(exposure_ev) ? exposure_ev : 0.f);
+                        if (!std::isfinite(gain) || gain < 0.f) gain = 1.f;
+                        for (int c = 0; c < 3; ++c) rgb[c] *= gain;
                     }
-                    uint16_t alpha = 0x3c00;
-                    out.pixels[o + 6] = static_cast<uint8_t>(alpha & 0xff);
-                    out.pixels[o + 7] = static_cast<uint8_t>(alpha >> 8);
+                    // After the camera look. The HDR look rebuilds brightness from the
+                    // tone curve, which cancels a zone change made on the linear input.
+                    apply_raw_zones(rgb[0], rgb[1], rgb[2], shadows, midtones, highlights);
+                    if (!deep) {
+                        for (int c = 0; c < 3; ++c) {
+                            int v = static_cast<int>(std::lround(rawlook::srgb_encode(rgb[c]) * 255.f));
+                            out.pixels[o + static_cast<size_t>(c)] = static_cast<uint8_t>(std::clamp(v, 0, 255));
+                        }
+                        out.pixels[o + 3] = 255;
+                    } else {
+                        // Exposure already ran inside the camera look, ahead of the tone curve.
+                        for (int c = 0; c < 3; ++c) {
+                            float v = raw_linear_sample(rgb[c], 0.f, highlight_stops, cap);
+                            peak = std::max(peak, v);
+                            uint16_t half = float_to_half(v);
+                            out.pixels[o + static_cast<size_t>(c) * 2] = static_cast<uint8_t>(half & 0xff);
+                            out.pixels[o + static_cast<size_t>(c) * 2 + 1] = static_cast<uint8_t>(half >> 8);
+                        }
+                        uint16_t alpha = 0x3c00;
+                        out.pixels[o + 6] = static_cast<uint8_t>(alpha & 0xff);
+                        out.pixels[o + 7] = static_cast<uint8_t>(alpha >> 8);
+                    }
                 }
             }
         }
+    };
+
+    const unsigned hw = std::thread::hardware_concurrency();
+    int bands = static_cast<int>(std::clamp(hw == 0 ? 1u : hw, 1u, kPackMaxThreads));
+    bands = std::min(bands, std::max(1, dh / kPackMinBandRows));
+    std::vector<float> peaks(static_cast<size_t>(bands), 1.f);
+    std::vector<std::thread> workers;
+    workers.reserve(static_cast<size_t>(bands - 1));
+    for (int b = 1; b < bands; ++b) {
+        const int y0 = static_cast<int>(static_cast<int64_t>(dh) * b / bands);
+        const int y1 = static_cast<int>(static_cast<int64_t>(dh) * (b + 1) / bands);
+        try {
+            workers.emplace_back(pack_rows, y0, y1, std::ref(peaks[static_cast<size_t>(b)]));
+        } catch (const std::system_error&) {
+            pack_rows(y0, y1, peaks[static_cast<size_t>(b)]);
+        }
     }
+    pack_rows(0, static_cast<int>(static_cast<int64_t>(dh) / bands), peaks[0]);
+    for (auto& w : workers) w.join();
+    float peak = 1.f;
+    for (float p : peaks) peak = std::max(peak, p);
     if (hdr) out.boost = peak;
     return true;
 }
@@ -857,6 +917,36 @@ jbyteArray decoded_to_java(JNIEnv* env, const Decoded& decoded, jintArray j_info
     return arr;
 }
 
+jbyteArray decode_raw_buffer(JNIEnv* env, const uint8_t* data, size_t len, jint max_edge, jint present,
+                             jfloat panel_boost, jfloat exposure_ev, jint wb_mode, jint kelvin, jfloat highlight_stops,
+                             jboolean hdr_linear, jboolean camera_look, jfloat shoulder, jfloat shadows,
+                             jfloat midtones, jfloat highlights, jintArray j_info, jfloatArray j_boost) {
+    jbyteArray result = nullptr;
+    const int wb = std::clamp(static_cast<int>(wb_mode), 0, 8);
+    try {
+        HeadroomRaw raw;
+        request_embedded_matrix(raw, wb);
+        if (raw.open_buffer(data, len) == LIBRAW_SUCCESS) {
+            Decoded decoded;
+            int mode = present < 0 ? 0 : (present > 2 ? 2 : present);
+            float exposure = std::isfinite(exposure_ev) ? std::clamp(exposure_ev, -3.f, 3.f) : 0.f;
+            float stops = std::isfinite(highlight_stops) ? std::clamp(highlight_stops, 0.f, 3.f) : 0.f;
+            auto zone = [](float v) { return std::isfinite(v) ? std::clamp(v, -1.f, 1.f) : 0.f; };
+            int temp = std::clamp(kelvin, 2000, 12000);
+            float shoulder_amount = std::isfinite(shoulder) ? std::clamp(shoulder, 0.f, 1.f) : 0.5f;
+            if (process_open_raw(raw, data, len, max_edge, mode, panel_boost, /*demosaic_qual=*/3, wb, exposure,
+                                 stops, temp, hdr_linear == JNI_TRUE, camera_look == JNI_TRUE, shoulder_amount,
+                                 zone(shadows), zone(midtones), zone(highlights), decoded)) {
+                result = decoded_to_java(env, decoded, j_info, j_boost);
+            }
+        }
+    } catch (...) {
+        log_err("RAW buffer decode failed");
+        result = nullptr;
+    }
+    return result;
+}
+
 #endif  // EHVIEWER_HDR_CODECS
 
 int extract_preview(const char* path, const uint8_t* mem, size_t mem_len, const char* out_path, bool demosaic) {
@@ -932,14 +1022,10 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeRawFileToDirect(JNIEnv* env, jcla
             float stops = std::isfinite(highlight_stops) ? std::clamp(highlight_stops, 0.f, 3.f) : 0.f;
             auto zone = [](float v) { return std::isfinite(v) ? std::clamp(v, -1.f, 1.f) : 0.f; };
             int temp = std::clamp(kelvin, 2000, 12000);
-            std::vector<uint8_t> file;
-            const uint8_t* tiff = nullptr;
-            size_t tiff_len = 0;
             // Camera-look profile tags live in the container.
-            if (read_file(path, file)) {
-                tiff = file.data();
-                tiff_len = file.size();
-            }
+            MappedFile file(path);
+            const uint8_t* tiff = file.data;
+            const size_t tiff_len = file.size;
             float shoulder_amount = std::isfinite(shoulder) ? std::clamp(shoulder, 0.f, 1.f) : 0.5f;
             if (process_open_raw(raw, tiff, tiff_len, max_edge, mode, panel_boost, /*demosaic_qual=*/3, wb, exposure,
                                  stops, temp, hdr_linear == JNI_TRUE, camera_look == JNI_TRUE, shoulder_amount,
@@ -988,31 +1074,10 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeRawBytesToDirect(JNIEnv* env, jcl
     if (len <= 0) return nullptr;
     jbyte* bytes = env->GetByteArrayElements(j_input, nullptr);
     if (!bytes) return nullptr;
-    jbyteArray result = nullptr;
-    const int wb = std::clamp(static_cast<int>(wb_mode), 0, 8);
-    try {
-        HeadroomRaw raw;
-        request_embedded_matrix(raw, wb);
-        if (raw.open_buffer(bytes, static_cast<size_t>(len)) == LIBRAW_SUCCESS) {
-            Decoded decoded;
-            int mode = present < 0 ? 0 : (present > 2 ? 2 : present);
-            float exposure = std::isfinite(exposure_ev) ? std::clamp(exposure_ev, -3.f, 3.f) : 0.f;
-            float stops = std::isfinite(highlight_stops) ? std::clamp(highlight_stops, 0.f, 3.f) : 0.f;
-            auto zone = [](float v) { return std::isfinite(v) ? std::clamp(v, -1.f, 1.f) : 0.f; };
-            int temp = std::clamp(kelvin, 2000, 12000);
-            const uint8_t* tiff = reinterpret_cast<const uint8_t*>(bytes);
-            size_t tiff_len = static_cast<size_t>(len);
-            float shoulder_amount = std::isfinite(shoulder) ? std::clamp(shoulder, 0.f, 1.f) : 0.5f;
-            if (process_open_raw(raw, tiff, tiff_len, max_edge, mode, panel_boost, /*demosaic_qual=*/3, wb, exposure,
-                                 stops, temp, hdr_linear == JNI_TRUE, camera_look == JNI_TRUE, shoulder_amount,
-                                 zone(shadows), zone(midtones), zone(highlights), decoded)) {
-                result = decoded_to_java(env, decoded, j_info, j_boost);
-            }
-        }
-    } catch (...) {
-        log_err("RAW buffer decode failed");
-        result = nullptr;
-    }
+    jbyteArray result = decode_raw_buffer(env, reinterpret_cast<const uint8_t*>(bytes), static_cast<size_t>(len),
+                                          max_edge, present, panel_boost, exposure_ev, wb_mode, kelvin,
+                                          highlight_stops, hdr_linear, camera_look, shoulder, shadows, midtones,
+                                          highlights, j_info, j_boost);
     env->ReleaseByteArrayElements(j_input, bytes, JNI_ABORT);
     return result;
 #endif
@@ -1045,6 +1110,55 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_extractRawPreviewBytes(JNIEnv* env, jcl
                              demosaic == JNI_TRUE);
         env->ReleaseByteArrayElements(j_input, bytes, JNI_ABORT);
     }
+    env->ReleaseStringUTFChars(j_out, out);
+    return rc;
+}
+
+extern "C" JNIEXPORT jbyteArray JNICALL
+Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeRawFdToDirect(JNIEnv* env, jclass, jint fd, jint max_edge, jint present,
+                                                             jfloat panel_boost, jfloat exposure_ev, jint wb_mode,
+                                                             jint kelvin, jfloat highlight_stops, jboolean hdr_linear,
+                                                             jboolean camera_look, jfloat shoulder, jfloat shadows,
+                                                             jfloat midtones, jfloat highlights, jintArray j_info,
+                                                             jfloatArray j_boost) {
+#if !defined(EHVIEWER_HDR_CODECS)
+    (void)env;
+    (void)fd;
+    (void)max_edge;
+    (void)present;
+    (void)panel_boost;
+    (void)exposure_ev;
+    (void)wb_mode;
+    (void)kelvin;
+    (void)highlight_stops;
+    (void)hdr_linear;
+    (void)camera_look;
+    (void)shoulder;
+    (void)shadows;
+    (void)midtones;
+    (void)highlights;
+    (void)j_info;
+    (void)j_boost;
+    return nullptr;
+#else
+    if (!j_info || !j_boost) return nullptr;
+    MappedFile file(static_cast<int>(fd));
+    if (!file.data) return nullptr;
+    return decode_raw_buffer(env, file.data, file.size, max_edge, present, panel_boost, exposure_ev, wb_mode, kelvin,
+                             highlight_stops, hdr_linear, camera_look, shoulder, shadows, midtones, highlights, j_info,
+                             j_boost);
+#endif
+}
+
+extern "C" JNIEXPORT jint JNICALL
+Java_com_hippo_ehviewer_jni_HdrConvertKt_extractRawPreviewFd(JNIEnv* env, jclass, jint fd, jstring j_out,
+                                                             jboolean demosaic) {
+    if (!j_out) return -1;
+    MappedFile file(static_cast<int>(fd));
+    if (!file.data) return -1;
+    const char* out = env->GetStringUTFChars(j_out, nullptr);
+    if (!out) return -1;
+    int rc = extract_preview(nullptr, file.data, file.size, out, demosaic == JNI_TRUE);
     env->ReleaseStringUTFChars(j_out, out);
     return rc;
 }
