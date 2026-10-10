@@ -432,15 +432,24 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
         base.filterByBrowseSearch(search.keyword) { it.name }
     }
 
+    val librarySortPref by Settings.librarySortMode.collectAsState()
+    val libraryDateSort = fromLibrary &&
+        libraryOpenUsesDateSort(LibrarySortMode.fromPref(librarySortPref))
+
     /**
      * Image RegularFiles in the current listing — photo-grid virtual folder **and**
      * Folder-mode loose images (shared reader / cover keys).
+     * Library Date sort uses modified time when the listing has it.
      */
-    val folderImages = remember(filteredEntries) {
+    val folderImages = remember(filteredEntries, libraryDateSort) {
         filteredEntries
             .filterIsInstance<BrowseEntryRemote.RegularFile>()
             .filter { isImageFileName(it.fileName.substringAfterLast('/')) }
-            .sortedWith { a, b -> naturalCompare(a.name, b.name) }
+            .sortedFolderImages(
+                dateSort = libraryDateSort,
+                nameOf = { it.name },
+                dateOf = { it.lastModifiedMs },
+            )
     }
     val searchHint = stringResource(R.string.search_bar_hint, title)
 
@@ -2096,10 +2105,11 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                     val browseSortMode = BrowseSortMode.fromPref(browseSortModePref)
                     val browseSortAscending by Settings.browseSortAscending.collectAsState()
                     val sections = filteredEntries.toRemoteBrowseSections(contentMode)
-                    // UI-only order; listing / folderImages / open-gallery stay name-sorted.
+                    // Library Date uses modified time. Other opens keep the folder-view sort.
                     val dirsRaw = sections.directories
                         .filterIsInstance<BrowseEntryRemote.Directory>()
-                        .sortedForBrowseFolderUi(
+                        .sortedForLibraryOrBrowse(
+                            libraryDateSort,
                             browseSortMode,
                             browseSortAscending,
                             nameOf = { it.name },
@@ -2111,7 +2121,8 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                     } else {
                         dirsRaw
                     }
-                    val galleries = sections.galleries.sortedForBrowseFolderUi(
+                    val galleries = sections.galleries.sortedForLibraryOrBrowse(
+                        libraryDateSort,
                         browseSortMode,
                         browseSortAscending,
                         nameOf = { it.name },
@@ -2119,13 +2130,15 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                     )
                     val videos = sections.videos
                         .filterIsInstance<BrowseEntryRemote.VideoFile>()
-                        .sortedForBrowseFolderUi(
+                        .sortedForLibraryOrBrowse(
+                            libraryDateSort,
                             browseSortMode,
                             browseSortAscending,
                             nameOf = { it.name },
                             dateOf = { it.lastModifiedMs },
                         )
-                    val documents = sections.documents.sortedForBrowseFolderUi(
+                    val documents = sections.documents.sortedForLibraryOrBrowse(
+                        libraryDateSort,
                         browseSortMode,
                         browseSortAscending,
                         nameOf = { it.name },
@@ -2133,7 +2146,8 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                     )
                     val files = sections.files
                         .filterIsInstance<BrowseEntryRemote.RegularFile>()
-                        .sortedForBrowseFolderUi(
+                        .sortedForLibraryOrBrowse(
+                            libraryDateSort,
                             browseSortMode,
                             browseSortAscending,
                             nameOf = { it.name },

@@ -71,6 +71,8 @@ object LocalLibrary {
         return FolderGalleryIndex.videoFileNamesFromLibraryRows(relativeDir, rows)
     }
 
+    suspend fun galleriesForRoot(rootId: Long): List<LocalGalleryEntity> = db.localGalleryDao().listByRootId(rootId)
+
     suspend fun updateGalleryPageAndCover(id: Long, pageCount: Int, coverPath: String?) = db.localGalleryDao().updatePageAndCover(id, pageCount, coverPath)
 
     suspend fun updateGalleryPageAndCoverByContentPath(

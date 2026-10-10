@@ -250,6 +250,27 @@ object MediaStoreFs {
         return names.takeIf { it.isNotEmpty() }
     }
 
+    /** Direct image modified times (DATE_MODIFIED). Null when MediaStore has no images. */
+    fun imageFileMtimes(dir: Path): Map<String, Long>? = mediaChildMtimes(dir) { name -> isImageFileName(name) }
+
+    /** Direct video modified times (DATE_MODIFIED). Null when MediaStore has no videos. */
+    fun videoFileMtimes(dir: Path): Map<String, Long>? = mediaChildMtimes(dir) { name ->
+        isVideoFileName(name) && !isSampleVideoFileName(name)
+    }
+
+    private fun mediaChildMtimes(dir: Path, include: (String) -> Boolean): Map<String, Long>? {
+        val ms = when {
+            dir.isMediaStorePath() -> dir
+            else -> tryConvertSafPathToMediaStore(dir)
+        } ?: return null
+        val map = HashMap<String, Long>()
+        for (child in listChildren(ms)) {
+            if (child.isDirectory || child.lastModifiedMs <= 0L || !include(child.name)) continue
+            map.putIfAbsent(child.name, child.lastModifiedMs)
+        }
+        return map.takeIf { it.isNotEmpty() }
+    }
+
     /**
      * Direct video basenames from MediaStore (no SAF children query).
      * Same path mapping as [imageFileNames] so library/SAF-mode video folders

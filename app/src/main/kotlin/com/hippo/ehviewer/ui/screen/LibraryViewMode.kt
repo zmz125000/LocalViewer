@@ -42,6 +42,7 @@ import com.hippo.ehviewer.asMutableState
 import com.hippo.ehviewer.collectAsState
 import com.hippo.ehviewer.library.ZipPaths
 import com.hippo.ehviewer.library.libraryBrowseRelative
+import com.hippo.ehviewer.library.naturalCompare
 import com.hippo.ehviewer.library.stableGalleryId
 
 /** Library gallery secondary sort ([Settings.librarySortMode]). */
@@ -250,6 +251,113 @@ fun sortLibraryItems(
         )
     else ->
         items.sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it.title })
+}
+
+/** Library search-bar Date sort. Newest first, then case-insensitive name. */
+fun libraryOpenUsesDateSort(sortMode: LibrarySortMode): Boolean = sortMode == LibrarySortMode.Date
+
+/**
+ * Folder listing order for a browser opened from Library.
+ * Date follows the library menu (newest first). Otherwise the folder-view sort.
+ */
+fun <T> Iterable<T>.sortedForLibraryOrBrowse(
+    libraryDateSort: Boolean,
+    browseMode: BrowseSortMode,
+    browseAscending: Boolean,
+    nameOf: (T) -> String,
+    dateOf: (T) -> Long,
+): List<T> = if (libraryDateSort) {
+    sortedWith(
+        compareByDescending<T> { dateOf(it) }
+            .thenBy(String.CASE_INSENSITIVE_ORDER) { nameOf(it) },
+    )
+} else {
+    sortedForBrowseFolderUi(browseMode, browseAscending, nameOf, dateOf)
+}
+
+/**
+ * Photo-grid and loose-image order. Name order unless [dateSort].
+ * When no file has a modified time, stay on name order.
+ */
+fun <T> Iterable<T>.sortedFolderImages(
+    dateSort: Boolean,
+    nameOf: (T) -> String,
+    dateOf: (T) -> Long,
+): List<T> {
+    val named = sortedWith { a, b -> naturalCompare(nameOf(a), nameOf(b)) }
+    if (!dateSort || named.none { dateOf(it) > 0L }) return named
+    return named.sortedWith(
+        compareByDescending<T> { dateOf(it) }
+            .thenBy(String.CASE_INSENSITIVE_ORDER) { nameOf(it) },
+    )
+}
+
+/** Direct image/video file modified times under [folderRelative] (`""` / `"."` = root). */
+fun libraryDirectFileMtimes(
+    rows: List<LocalGalleryEntity>,
+    rootId: Long,
+    folderRelative: String,
+): Map<String, Long> {
+    val folder = libraryBrowseRelative(folderRelative)
+    val out = HashMap<String, Long>()
+    for (row in rows) {
+        if (row.rootId != rootId) continue
+        if (row.kind != LOCAL_GALLERY_KIND_IMAGE_FILE && row.kind != LOCAL_GALLERY_KIND_VIDEO_FILE) continue
+        if (row.mtime <= 0L) continue
+        val rel = libraryBrowseRelative(row.relativePath)
+        val parent = if ('/' in rel) rel.substringBeforeLast('/') else ""
+        if (parent != folder) continue
+        val name = rel.substringAfterLast('/').ifEmpty { row.title }
+        if (name.isEmpty()) continue
+        val prev = out[name]
+        if (prev == null || row.mtime > prev) out[name] = row.mtime
+    }
+    return out
+}
+
+/**
+ * Reader page names for one library folder. Null when Date sort has no modified
+ * times, so the caller keeps the name-ordered file list.
+ */
+fun libraryFolderImageNames(
+    rows: List<LocalGalleryEntity>,
+    rootId: Long,
+    folderRelative: String,
+    dateSort: Boolean,
+): List<String>? {
+    val folder = libraryBrowseRelative(folderRelative)
+    val files = rows.filter { row ->
+        row.rootId == rootId &&
+            row.kind == LOCAL_GALLERY_KIND_IMAGE_FILE &&
+            libraryImageParent(row) == folder
+    }
+    if (files.isEmpty()) return null
+    if (dateSort && files.none { it.mtime > 0L }) return null
+    val ordered = if (dateSort) {
+        files.sortedWith(
+            compareByDescending<LocalGalleryEntity> { it.mtime }
+                .thenBy(String.CASE_INSENSITIVE_ORDER) { it.title },
+        )
+    } else {
+        files.sortedWith { a, b -> naturalCompare(a.title, b.title) }
+    }
+    return ordered.map { it.title }
+}
+
+private fun libraryImageParent(row: LocalGalleryEntity): String {
+    val rel = libraryBrowseRelative(row.relativePath)
+    return if ('/' in rel) rel.substringBeforeLast('/') else ""
+}
+
+fun mergeOpenMtimes(primary: Map<String, Long>, fallback: Map<String, Long>): Map<String, Long> {
+    if (fallback.isEmpty()) return primary
+    if (primary.isEmpty()) return fallback
+    val out = HashMap<String, Long>(fallback.size + primary.size)
+    out.putAll(fallback)
+    for ((name, ms) in primary) {
+        if (ms > 0L) out[name] = ms
+    }
+    return out
 }
 
 /**

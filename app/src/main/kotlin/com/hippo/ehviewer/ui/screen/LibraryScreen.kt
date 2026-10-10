@@ -393,7 +393,17 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
                 }
             }
         } else {
-            navToLocalFolderReader(gallery.contentPath, info)
+            val dated = if (libraryOpenUsesDateSort(librarySortMode)) {
+                libraryFolderImageNames(
+                    allVisibleGalleries,
+                    gallery.rootId,
+                    gallery.relativePath,
+                    dateSort = true,
+                ).orEmpty()
+            } else {
+                emptyList()
+            }
+            navToLocalFolderReader(gallery.contentPath, info, imageNames = dated)
         }
     }
 
@@ -487,7 +497,12 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
                 it.kind == LOCAL_GALLERY_KIND_FOLDER &&
                 it.relativePath == folderKey
         }
-        val names = allVisibleGalleries
+        val names = libraryFolderImageNames(
+            allVisibleGalleries,
+            item.rootId,
+            parentRel,
+            dateSort = libraryOpenUsesDateSort(librarySortMode),
+        ) ?: allVisibleGalleries
             .asSequence()
             .filter {
                 it.rootId == item.rootId &&
