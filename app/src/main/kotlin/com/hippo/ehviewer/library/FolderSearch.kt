@@ -149,7 +149,7 @@ object FolderSearch {
                     lastModifiedMs = child.lastModifiedMs,
                     hidden = hidden,
                 )
-            isArchiveFileName(child.name) || isDocumentFileName(child.name) -> {
+            isBrowsePhotoGalleryFileName(child.name) || isDocumentFileName(child.name) -> {
                 val slash = rel.lastIndexOf('/')
                 BrowseEntryRemote.ArchiveGallery(
                     name = display,

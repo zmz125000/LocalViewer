@@ -78,6 +78,25 @@ class MediaTypesTest {
     }
 
     @Test
+    fun packagedEbooksArePhotoGalleriesLooseTextIsNot() {
+        assertTrue(isPhotoGalleryEbookFileName("novel.mobi"))
+        assertTrue(isPhotoGalleryEbookFileName("comic.AZW3"))
+        assertTrue(isPhotoGalleryEbookFileName("book.azw"))
+        assertTrue(isPhotoGalleryEbookFileName("story.fb2"))
+        assertTrue(isBrowsePhotoGalleryFileName("guide.pdf"))
+        assertTrue(isBrowsePhotoGalleryFileName("book.epub"))
+        assertTrue(isBrowsePhotoGalleryFileName("novel.mobi"))
+        assertFalse(isPhotoGalleryEbookFileName("guide.pdf"))
+        assertFalse(isPhotoGalleryEbookFileName("notes.txt"))
+        assertFalse(isPhotoGalleryEbookFileName("readme.md"))
+        assertFalse(isPhotoGalleryEbookFileName("readme.markdown"))
+        assertFalse(isPhotoGalleryEbookFileName("page.html"))
+        assertFalse(isPhotoGalleryEbookFileName("memo.docx"))
+        assertFalse(isPhotoGalleryEbookFileName(".hidden.mobi"))
+        assertFalse(isBrowsePhotoGalleryFileName("notes.txt"))
+    }
+
+    @Test
     fun zipAsDirExtensionsAreZipAndCbzOnly() {
         assertTrue(isZipArchiveFileName("album.zip"))
         assertTrue(isZipArchiveFileName("album.CBZ"))

@@ -890,9 +890,9 @@
     <string name="pref_reader_photo_grid">Photo grid</string>
     <string name="pref_reader_generate_page_thumb">Generate page thumbs</string>
     <string name="pref_reader_generate_page_thumb_summary">After a page loads, write a photo-grid thumb for later use</string>
-    <string name="pref_pdf_direct_image">PDF Direct Image</string>
-    <string name="pref_pdf_direct_image_summary">Extract Image PDFs as images files.</string>
-    <string name="pref_comic_ebook_direct_image">Comic Ebook Direct Image</string>
+    <string name="pref_pdf_direct_image">PDF direct image</string>
+    <string name="pref_pdf_direct_image_summary">Extract PDFs as image files.</string>
+    <string name="pref_comic_ebook_direct_image">Comic ebook direct image</string>
     <string name="pref_comic_ebook_direct_image_summary">Extract MOBI and AZW3 comics as images files.</string>
     <string name="pref_reader_hide_top_bar">Hide top bar</string>
     <string name="pref_show_reader_seekbar">Show page jumping seekbar</string>

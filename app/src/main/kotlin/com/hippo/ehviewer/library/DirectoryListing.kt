@@ -1116,10 +1116,10 @@ fun classifyRemoteListingWithPeeks(
                         !it.isDirectory && !it.name.startsWith('.') &&
                             !isProtectedSystemName(it.name) && isImageFileName(it.name)
                     }
-                    // Archives as files in S → keep dir S (never promote archives to parent).
+                    // Archives and packaged ebooks in S → keep dir S (never promote them to parent).
                     val sHasArchives = peek.any {
                         !it.isDirectory && !it.name.startsWith('.') &&
-                            !isProtectedSystemName(it.name) && isArchiveFileName(it.name)
+                            !isProtectedSystemName(it.name) && isBrowsePhotoGalleryFileName(it.name)
                     }
                     val sHasDocuments = peek.any {
                         !it.isDirectory && !it.name.startsWith('.') &&
@@ -1571,7 +1571,7 @@ fun classifyRemoteListingWithPeeks(
                     hidden = fileHidden,
                 )
             }
-            isArchiveFileName(e.name) ->
+            isBrowsePhotoGalleryFileName(e.name) ->
                 archives += BrowseEntryRemote.ArchiveGallery(
                     name = e.name,
                     fileName = e.name,
@@ -1792,7 +1792,9 @@ private fun classifyRemoteChild(
         }
         when {
             isImageFileName(e.name) -> imageNames += e.name
-            isArchiveFileName(e.name) -> {
+            isBrowsePhotoGalleryFileName(e.name) -> {
+                // PDF/EPUB/archives and packaged ebooks (mobi/azw/azw3/fb2) are a photo route.
+                // txt / markdown / html stay documents and do not change presence.
                 sawArchive = true
                 if (isBrowseDocumentFileName(e.name)) sawDocument = true
                 // Zip-as-dir: the archive is a folder that may hold documents.

@@ -188,7 +188,9 @@ object ZipAsDirListing {
                 dirs += BrowseEntryRemote.Directory(
                     name = child.name,
                     hasVideo = nested.any { !it.isDirectory && isVideoFileName(it.name) },
-                    hasGallery = false,
+                    hasGallery = nested.any {
+                        !it.isDirectory && isBrowsePhotoGalleryFileName(it.name)
+                    },
                     hasDocument = prefixHasBrowseDocument(cd, joinPrefix(innerPrefix, child.name)),
                     presence = if (nested.isEmpty()) DirPresence.Empty else DirPresence.Navigable,
                     lastModifiedMs = child.lastModifiedMs,
@@ -199,7 +201,7 @@ object ZipAsDirListing {
             }
             val hidden = child.hidden || isDotHiddenName(child.name)
             when {
-                isArchiveFileName(child.name) -> archives += BrowseEntryRemote.ArchiveGallery(
+                isBrowsePhotoGalleryFileName(child.name) -> archives += BrowseEntryRemote.ArchiveGallery(
                     name = child.name,
                     fileName = child.name,
                     size = child.size,
@@ -385,7 +387,7 @@ object ZipAsDirListing {
         val files = listing.children.filter { !it.isDirectory }
         val images = files.filter { isImageFileName(it.name) }
         if (dirs.isEmpty() && images.isNotEmpty() &&
-            files.none { isArchiveFileName(it.name) || isBrowseVideoFileName(it.name) }
+            files.none { isBrowsePhotoGalleryFileName(it.name) || isBrowseVideoFileName(it.name) }
         ) {
             val names = images.map { it.name }.sortedWith { a, b -> naturalCompare(a, b) }
             return ZipSimpleGallery("", names)
@@ -394,6 +396,7 @@ object ZipAsDirListing {
             val leaf = dirs.single().name
             val peek = listing.grandPeeks[leaf] ?: return null
             if (peek.any { it.isDirectory && isPromotableLeafDirName(it.name) }) return null
+            if (peek.any { !it.isDirectory && isPhotoGalleryEbookFileName(it.name) }) return null
             val leafImages = peek.filter { !it.isDirectory && isImageFileName(it.name) }
             if (leafImages.isEmpty()) return null
             val names = leafImages.map { it.name }.sortedWith { a, b -> naturalCompare(a, b) }

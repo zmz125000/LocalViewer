@@ -416,6 +416,89 @@ class DirectoryListingDocumentTagTest {
     }
 
     @Test
+    fun packagedEbooksShowInPhotoLooseTextDoesNot() {
+        val entries = classifyRemoteListingWithPeeks(
+            currentDirName = "Books",
+            entries = listOf(
+                RemoteChild(name = "novel.azw3", isDirectory = false),
+                RemoteChild(name = "comic.mobi", isDirectory = false),
+                RemoteChild(name = "story.fb2", isDirectory = false),
+                RemoteChild(name = "old.AZW", isDirectory = false),
+                RemoteChild(name = "guide.pdf", isDirectory = false),
+                RemoteChild(name = "notes.txt", isDirectory = false),
+                RemoteChild(name = "readme.md", isDirectory = false),
+                RemoteChild(name = "page.html", isDirectory = false),
+                RemoteChild(name = "memo.docx", isDirectory = false),
+            ),
+            childPeeks = emptyMap(),
+        )
+        val photo = entries.filterRemoteByContentMode(BrowseContentMode.Galleries)
+        assertEquals(
+            listOf("comic.mobi", "guide.pdf", "novel.azw3", "old.AZW", "story.fb2"),
+            photo.map { it.name }.sorted(),
+        )
+        assertTrue(photo.all { it is BrowseEntryRemote.ArchiveGallery })
+        val photoSections = photo.toRemoteBrowseSections(BrowseContentMode.Galleries)
+        assertEquals(photo.map { it.name }.sorted(), photoSections.galleries.map { it.name }.sorted())
+        assertTrue(photoSections.documents.isEmpty())
+        val docs = entries.filterRemoteByContentMode(BrowseContentMode.Document)
+        assertEquals(
+            listOf(
+                "comic.mobi",
+                "guide.pdf",
+                "memo.docx",
+                "notes.txt",
+                "novel.azw3",
+                "old.AZW",
+                "page.html",
+                "readme.md",
+                "story.fb2",
+            ),
+            docs.map { it.name }.sorted(),
+        )
+        assertTrue(docs.any { it is BrowseEntryRemote.RegularFile && it.name == "notes.txt" })
+        assertTrue(docs.any { it is BrowseEntryRemote.RegularFile && it.name == "readme.md" })
+
+        val cached = listOf(
+            BrowseEntryRemote.RegularFile(name = "cached.azw3", fileName = "cached.azw3"),
+            BrowseEntryRemote.RegularFile(name = "notes.txt", fileName = "notes.txt"),
+        )
+        val cachedPhoto = cached.filterRemoteByContentMode(BrowseContentMode.Galleries)
+        assertEquals(listOf("cached.azw3"), cachedPhoto.map { it.name })
+        assertTrue(cachedPhoto.single() is BrowseEntryRemote.ArchiveGallery)
+    }
+
+    @Test
+    fun ebookFolderIsAPhotoRouteTextFolderIsNot() {
+        val entries = classifyRemoteListingWithPeeks(
+            currentDirName = "Library",
+            entries = listOf(
+                RemoteChild(name = "Kindle", isDirectory = true),
+                RemoteChild(name = "Notes", isDirectory = true),
+            ),
+            childPeeks = mapOf(
+                "Kindle" to listOf(RemoteChild(name = "novel.azw3", isDirectory = false)),
+                "Notes" to listOf(
+                    RemoteChild(name = "readme.txt", isDirectory = false),
+                    RemoteChild(name = "readme.md", isDirectory = false),
+                ),
+            ),
+        )
+        val kindle = entries.filterIsInstance<BrowseEntryRemote.Directory>().single { it.name == "Kindle" }
+        val notes = entries.filterIsInstance<BrowseEntryRemote.Directory>().single { it.name == "Notes" }
+        assertTrue(kindle.hasGallery)
+        assertTrue(kindle.hasDocument)
+        assertEquals(DirPresence.Navigable, kindle.presence)
+        assertFalse(notes.hasGallery)
+        assertTrue(notes.hasDocument)
+        assertEquals(DirPresence.Empty, notes.presence)
+        val photo = entries.filterRemoteByContentMode(BrowseContentMode.Galleries)
+        assertEquals(listOf("Kindle"), photo.map { it.name })
+        val docs = entries.filterRemoteByContentMode(BrowseContentMode.Document)
+        assertEquals(listOf("Kindle", "Notes"), docs.map { it.name }.sorted())
+    }
+
+    @Test
     fun epubCountsAsDocumentZipDoesNot() {
         val entries = classifyRemoteListingWithPeeks(
             currentDirName = "Library",
