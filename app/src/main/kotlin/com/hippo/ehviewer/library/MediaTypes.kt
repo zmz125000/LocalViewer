@@ -191,6 +191,27 @@ fun isEbookFileName(name: String): Boolean {
     return ext in EBOOK_READER_EXTENSIONS
 }
 
+/**
+ * Packaged ebooks that belong in the Photo filter as galleries, same as PDF and EPUB.
+ * Loose text stays documents-only: txt, Markdown, and HTML.
+ * Not added to [ARCHIVE_EXTENSIONS]; libarchive and image extract stay PDF/EPUB/archives.
+ */
+val PHOTO_GALLERY_EBOOK_EXTENSIONS = setOf(
+    "mobi",
+    "azw",
+    "azw3",
+    "fb2",
+)
+
+fun isPhotoGalleryEbookFileName(name: String): Boolean {
+    if (name.startsWith('.')) return false
+    val ext = FileUtils.getExtensionFromFilename(name)?.lowercase() ?: return false
+    return ext in PHOTO_GALLERY_EBOOK_EXTENSIONS
+}
+
+/** Archive, PDF, EPUB, or a packaged ebook that the Photo filter lists as a gallery. */
+fun isBrowsePhotoGalleryFileName(name: String): Boolean = isArchiveFileName(name) || isPhotoGalleryEbookFileName(name)
+
 fun isPdfOrEbookFileName(name: String): Boolean = isPdfFileName(name) || isEbookFileName(name)
 
 /**

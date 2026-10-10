@@ -93,6 +93,39 @@ fun BrowseEntry.VideoFile.isPromotedVirtual(): Boolean = virtual || name != path
  */
 fun BrowseEntryRemote.VideoFile.isPromotedVirtual(): Boolean = virtual || name != fileName
 
+/** Cached regular rows for packaged ebooks become galleries before the photo filter. */
+private fun BrowseEntry.asPhotoGalleryRow(): BrowseEntry {
+    if (this !is BrowseEntry.RegularFile) return this
+    val leaf = path.name
+    if (!isPhotoGalleryEbookFileName(name) && !isPhotoGalleryEbookFileName(leaf)) return this
+    return BrowseEntry.ArchiveGallery(
+        name = name,
+        path = path,
+        size = size,
+        lastModifiedMs = lastModifiedMs,
+        hidden = hidden,
+        virtual = virtual,
+    )
+}
+
+/** Cached regular rows for packaged ebooks become galleries before the photo filter. */
+private fun BrowseEntryRemote.asPhotoGalleryRow(): BrowseEntryRemote {
+    if (this !is BrowseEntryRemote.RegularFile) return this
+    val norm = fileName.replace('\\', '/').trim('/')
+    val leaf = norm.substringAfterLast('/').ifEmpty { name }
+    if (!isPhotoGalleryEbookFileName(leaf) && !isPhotoGalleryEbookFileName(name)) return this
+    val slash = norm.lastIndexOf('/')
+    return BrowseEntryRemote.ArchiveGallery(
+        name = name,
+        fileName = if (slash < 0) norm.ifEmpty { name } else norm.substring(slash + 1),
+        parentRelativeName = if (slash < 0) "" else norm.substring(0, slash),
+        size = size,
+        lastModifiedMs = lastModifiedMs,
+        hidden = hidden,
+        virtual = virtual,
+    )
+}
+
 fun List<BrowseEntry>.filterByContentMode(
     mode: BrowseContentMode,
     showHiddenFiles: Boolean = true,
@@ -103,7 +136,7 @@ fun List<BrowseEntry>.filterByContentMode(
      * Photo-grid and SMB share-root listings do not use this.
      */
     allTypes: Boolean = false,
-): List<BrowseEntry> = filter { e ->
+): List<BrowseEntry> = map { it.asPhotoGalleryRow() }.filter { e ->
     if (!showHiddenFiles && e.hidden) return@filter false
     if (!showVirtualGalleries && e.virtual) return@filter false
     if (allTypes) return@filter true
@@ -208,7 +241,7 @@ fun List<BrowseEntryRemote>.filterRemoteByContentMode(
     allTypes: Boolean = false,
 ): List<BrowseEntryRemote> {
     val unreachable = cachedUnreachableDirectoryNames(this)
-    return filter { e ->
+    return map { it.asPhotoGalleryRow() }.filter { e ->
         if (e.isUnderUnreachableFolder(unreachable)) return@filter false
         if (!showHiddenFiles && e.hidden) return@filter false
         if (!showVirtualGalleries && e.virtual) return@filter false

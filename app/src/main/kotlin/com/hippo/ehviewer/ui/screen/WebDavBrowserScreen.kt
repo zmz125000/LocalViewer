@@ -2135,7 +2135,9 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                             WebDavGateway.joinRelative(relativeDir, dir.relativeName),
                             fileName,
                         )
-                        if (isArchiveFileName(leaf)) return BrowseCover.WebDavArchive(sourceId, remote)
+                        if (isArchiveFileName(leaf) || isMobiContainerFileName(leaf)) {
+                            return BrowseCover.WebDavArchive(sourceId, remote)
+                        }
                         zipMemberCover(dir.relativeName, fileName)?.let { return it }
                         return BrowseCover.WebDav(sourceId, remote)
                     }
@@ -2143,7 +2145,8 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                         // ZIP/TAR/EPUB stream + solid RAR/7z + documents.
                         if (!isStreamableArchiveFileName(entry.fileName) &&
                             !isSolidArchiveFileName(entry.fileName) &&
-                            !isDocumentFileName(entry.fileName)
+                            !isDocumentFileName(entry.fileName) &&
+                            !isMobiContainerFileName(entry.fileName)
                         ) {
                             return null
                         }

@@ -2260,7 +2260,9 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                             SmbGateway.joinRelativePath(relativeDir, dir.relativeName),
                             fileName,
                         )
-                        if (isArchiveFileName(leaf)) return BrowseCover.SmbArchive(sourceId, remote)
+                        if (isArchiveFileName(leaf) || isMobiContainerFileName(leaf)) {
+                            return BrowseCover.SmbArchive(sourceId, remote)
+                        }
                         zipMemberCover(dir.relativeName, fileName)?.let { return it }
                         return BrowseCover.Smb(sourceId, remote)
                     }
@@ -2268,7 +2270,8 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                         // ZIP/TAR/EPUB stream + solid RAR/7z + documents (lazy first-page extract).
                         if (!isStreamableArchiveFileName(entry.fileName) &&
                             !isSolidArchiveFileName(entry.fileName) &&
-                            !isDocumentFileName(entry.fileName)
+                            !isDocumentFileName(entry.fileName) &&
+                            !isMobiContainerFileName(entry.fileName)
                         ) {
                             return null
                         }

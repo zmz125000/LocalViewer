@@ -549,6 +549,49 @@ class EbookEngineTest {
     }
 
     @Test
+    fun coverPageReadsTheFirstComicImageOnly() {
+        val jpeg = ByteArray(200_000)
+        jpeg[0] = 0xFF.toByte()
+        jpeg[1] = 0xD8.toByte()
+        val file = mobiFile("", listOf(jpeg, jpeg, jpeg), declareFirstImage = false)
+        val source = CountingSource(file)
+        val page = MobiText.coverPage(source)
+        assertNotNull(page)
+        assertEquals("jpg", page!!.ext)
+        assertEquals(200_000, page.length)
+        assertTrue("located cover after ${source.readBytes} bytes", source.readBytes < 64_000)
+        val bytes = ByteArray(16)
+        assertEquals(16, source.readAt(page.offset, bytes, 0, bytes.size))
+        assertEquals(0xFF, bytes[0].toInt() and 0xFF)
+        assertEquals(0xD8, bytes[1].toInt() and 0xFF)
+    }
+
+    @Test
+    fun coverPageOnSampleComicsStaysSmall() {
+        val samples = File("/home/zlx22/LocalViewer/samples")
+        val books = listOf(
+            File(samples, "BiaoRen11(XinNianYueQiang.azw3"),
+            File(samples, "[路邊的藤井]話009-017.mobi"),
+        )
+        assumeTrue(books.all { it.isFile })
+        for (file in books) {
+            val source = CountingFile(file)
+            try {
+                val page = MobiText.coverPage(source)
+                assertNotNull(file.name, page)
+                assertTrue(file.name, page!!.length > 8)
+                assertTrue(file.name, page.ext == "jpg" || page.ext == "png")
+                assertTrue(
+                    "${file.name} located cover after ${source.readBytes}",
+                    source.readBytes < 2L * 1024L * 1024L,
+                )
+            } finally {
+                source.close()
+            }
+        }
+    }
+
+    @Test
     fun comicOpenSkipsImagePayloadsAndThePageIndex() {
         val jpeg = ByteArray(200_000)
         jpeg[0] = 0xFF.toByte()
