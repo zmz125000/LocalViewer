@@ -117,7 +117,13 @@ internal class PageScaler(bitmap: Bitmap) {
     }
 
     private fun ensureTiles(w: Int, h: Int, mode: Int): Boolean {
-        if (tiles.isNotEmpty() && tiledW == w && tiledH == h && tiledMode == mode) return true
+        // A node nothing draws loses its display list. A webtoon page scrolled out of
+        // view stays composed, and drawing those empty nodes on return leaves it blank.
+        if (tiles.isNotEmpty() && tiledW == w && tiledH == h && tiledMode == mode &&
+            tiles.all { it.node.hasDisplayList() }
+        ) {
+            return true
+        }
         discardTiles()
         val plan = scalerCacheTiles(w, h)
         val built = ArrayList<Tile>(plan.size)
