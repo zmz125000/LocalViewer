@@ -163,6 +163,34 @@ internal object MobiText {
         return pagesOf(palm)
     }
 
+    /**
+     * First image record in reader order, without its payload.
+     * Same section choice as [imagePages] (KF8, then the primary section).
+     * Stops at that record: a cover does not probe the rest of the book.
+     */
+    fun coverPage(source: ArchiveByteSource): ImagePage? {
+        val palm = palmOf(source) ?: return null
+        val primary = palm.bytes(0, MAX_HEADER_RECORD) ?: return null
+        val primaryHead = sectionHeader(palm, 0, primary)
+        val kf8 = kf8Section(palm, primary)
+        if (kf8 != null) {
+            val kf8Head = sectionHeader(palm, kf8, null)
+            firstImagePage(palm, kf8Head, primaryHead?.firstImage ?: -1)?.let { return it }
+        }
+        return firstImagePage(palm, primaryHead, -1)
+    }
+
+    private fun firstImagePage(palm: Palm, head: Section?, fallbackFirstImage: Int): ImagePage? {
+        if (head == null) return null
+        val firstImage = if (head.firstImage > 0) head.firstImage else fallbackFirstImage
+        if (firstImage <= 0 || firstImage >= palm.offsets.size) return null
+        val length = palm.length(firstImage)
+        if (length < 8) return null
+        val prefix = palm.bytes(firstImage, 16) ?: return null
+        val ext = imageExt(prefix) ?: return null
+        return ImagePage(1, palm.offsets[firstImage].toLong(), length, ext)
+    }
+
     private data class Section(
         val compression: Int,
         val textLen: Int,

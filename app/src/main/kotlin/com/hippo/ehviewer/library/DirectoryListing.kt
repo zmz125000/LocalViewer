@@ -1690,7 +1690,7 @@ private fun firstArchiveCoverNameInPeek(peek: List<RemoteChild>): String? {
     var best: String? = null
     for (c in peek) {
         if (c.isDirectory || c.name.startsWith('.') || isProtectedSystemName(c.name)) continue
-        if (!isArchiveFileName(c.name)) continue
+        if (!isArchiveFileName(c.name) && !isMobiContainerFileName(c.name)) continue
         val name = c.name
         if (best == null || naturalCompare(name, best) < 0) best = name
     }

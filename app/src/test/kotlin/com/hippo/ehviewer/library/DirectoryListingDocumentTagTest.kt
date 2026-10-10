@@ -489,6 +489,7 @@ class DirectoryListingDocumentTagTest {
         assertTrue(kindle.hasGallery)
         assertTrue(kindle.hasDocument)
         assertEquals(DirPresence.Navigable, kindle.presence)
+        assertEquals("novel.azw3", kindle.coverFileName)
         assertFalse(notes.hasGallery)
         assertTrue(notes.hasDocument)
         assertEquals(DirPresence.Empty, notes.presence)

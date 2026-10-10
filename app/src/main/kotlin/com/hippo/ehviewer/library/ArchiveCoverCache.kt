@@ -24,6 +24,7 @@ import com.hippo.ehviewer.jni.releaseByteBuffer
 import com.hippo.ehviewer.jni.solidCurrentExtension
 import com.hippo.ehviewer.jni.solidExtractCurrentToFd
 import com.hippo.ehviewer.jni.solidNextPlayable
+import com.hippo.ehviewer.library.document.MobiText
 import com.hippo.ehviewer.library.document.PdfImageEngine
 import java.io.File
 import java.security.MessageDigest
@@ -89,6 +90,9 @@ object ArchiveCoverCache {
 
     private const val THUMB_WEBP_QUALITY = OriginDiskCache.THUMB_QUALITY
     private const val FORMAT_VERSION = 2
+
+    /** One comic page read for a MOBI/AZW3 cover. Larger records stay a placeholder. */
+    private const val MAX_MOBI_COVER_BYTES = 32 * 1024 * 1024
 
     private val extractSlots = Semaphore(1)
 
@@ -359,6 +363,15 @@ object ArchiveCoverCache {
     suspend fun ensureCover(archivePath: Path): CoverEnsureResult = withIOContext {
         try {
             val name = archivePath.name
+            if (isMobiContainerFileName(name)) {
+                val key = archivePath.toString()
+                return@withIOContext ensureMobiCover(key) {
+                    val pfd = archivePath.openFileDescriptor("r")
+                    val owned = ParcelFileDescriptor.dup(pfd.fileDescriptor)
+                    pfd.close()
+                    PfdArchiveByteSource(owned, ownsPfd = true)
+                }
+            }
             if (!isArchiveFileName(name)) return@withIOContext CoverEnsureResult.Skip
 
             val solid = isSolidArchiveFileName(name)
@@ -480,6 +493,9 @@ object ArchiveCoverCache {
         if (base.isNotEmpty() && isSolidArchiveFileName(base)) return@withIOContext CoverEnsureResult.Skip
         if (base.isNotEmpty() && isDocumentFileName(base)) {
             return@withIOContext ensureDocumentStreamCover(cacheKey, openSource)
+        }
+        if (base.isNotEmpty() && isMobiContainerFileName(base)) {
+            return@withIOContext ensureMobiCover(cacheKey, openSource)
         }
         ensureStreamCoverInternal(
             cacheKey = cacheKey,
@@ -735,6 +751,49 @@ object ArchiveCoverCache {
             // Budget abort on a larger archive — do not hide the row.
             limited -> CoverEnsureResult.Skip
             else -> CoverEnsureResult.Skip
+        }
+    }
+
+    /**
+     * MOBI / AZW / AZW3 cover: the first image record in reader order.
+     * Does not walk the other pages and does not write a document-extract index.
+     * No image record stays [CoverEnsureResult.Skip] so a text novel keeps its photo row.
+     */
+    private suspend fun ensureMobiCover(
+        cacheKey: String,
+        openSource: suspend () -> ArchiveByteSource,
+    ): CoverEnsureResult {
+        val dest = thumbPathFor(cacheKey, 0L, 0L)
+        existingCover(dest)?.let { return CoverEnsureResult.Hit(it) }
+        return withCoverExtractSlot {
+            existingCover(dest)?.let { return@withCoverExtractSlot CoverEnsureResult.Hit(it) }
+            try {
+                openSource().use { source ->
+                    ArchiveAccess.registerAbortAction {
+                        runCatching { source.close() }
+                    }.use {
+                        val page = MobiText.coverPage(source) ?: return@use CoverEnsureResult.Skip
+                        if (page.length <= 0 || page.length > MAX_MOBI_COVER_BYTES) {
+                            return@use CoverEnsureResult.Skip
+                        }
+                        val bytes = ByteArray(page.length)
+                        var got = 0
+                        while (got < page.length) {
+                            val n = source.readAt(page.offset + got, bytes, got, page.length - got)
+                            if (n <= 0) return@use CoverEnsureResult.Skip
+                            got += n
+                        }
+                        val ext = page.ext ?: MobiText.imageExt(bytes) ?: return@use CoverEnsureResult.Skip
+                        val thumb = writeCoverFromPageBytes(cacheKey, bytes, ext)
+                        if (thumb != null) CoverEnsureResult.Hit(thumb) else CoverEnsureResult.Skip
+                    }
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                logcat("ArchiveCover", e)
+                CoverEnsureResult.Skip
+            }
         }
     }
 
