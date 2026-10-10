@@ -31,7 +31,8 @@ import okio.Path
  *
  * Compressed page bytes stay in [ramPages] until decode; [PageLoader] pins decoded
  * bitmaps for the viewport + decode-ahead window. Page-tree offsets persist to
- * [DocumentExtractCache] so an unfinished index resumes after exit.
+ * [DocumentExtractCache] so an unfinished index resumes after exit. Indexed-color
+ * pages are also written there as WebP; that encode is too heavy to repeat.
  *
  * Indexing stays on the engine parser (one walker). Listed pages extract in
  * parallel through [openExtractSource] and do not take that parser.
@@ -270,6 +271,17 @@ internal class PdfRamPageLoader(
                 markSourceReady(index)
                 return@withOrderedPermits
             }
+            val webpKey = cacheKey?.takeIf { engine.persistsExtract(index) }
+            val cachedWebp = webpKey?.let { key ->
+                DocumentExtractCache.findCachedPage(key, index)?.let { path ->
+                    runCatching { File(path.toString()).readBytes() }.getOrNull()
+                }
+            }
+            if (cachedWebp != null) {
+                if (isDecodedDemand(index)) ramPages[index] = cachedWebp
+                if (ramPages.containsKey(index)) markSourceReady(index)
+                return@withOrderedPermits
+            }
             val pool = extractPool
             val known = if (pool != null && engine.streamOffsetOf(index) >= 0L) {
                 pool.use { source ->
@@ -283,6 +295,10 @@ internal class PdfRamPageLoader(
             val bytes = known ?: engine.extractBytes(index) { bitmap ->
                 publishPreparedBitmap(index, bitmap)
             } ?: return@withOrderedPermits
+            if (webpKey != null) {
+                runCatching { DocumentExtractCache.writePage(webpKey, index, engine.extOf(index) ?: "webp", bytes) }
+                    .onFailure { logcat("PdfRamLoader", it) }
+            }
             if (isDecodedDemand(index)) ramPages[index] = bytes
             if (ramPages.containsKey(index)) markSourceReady(index)
         }

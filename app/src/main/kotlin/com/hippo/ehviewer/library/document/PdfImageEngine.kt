@@ -42,7 +42,7 @@ class PdfImageEngine private constructor(
         val streamLen: Long,
         /** File offset of stream payload after `stream` keyword; -1 if unknown. */
         val streamOffset: Long = -1L,
-        /** Indexed color is re-encoded WebP and always written. Other PDF images may stay in RAM. */
+        /** Indexed color is re-encoded lossless WebP. That encode is heavy, so the result is always written. */
         val persistExtract: Boolean = false,
     ) {
         val hasSeek: Boolean get() = streamOffset >= 0L && streamLen > 0L
@@ -81,7 +81,7 @@ class PdfImageEngine private constructor(
         pages.getOrNull(index)?.ext
     }
 
-    /** Indexed pages must be saved. JPEG, PNG-style Flate, and other images may stay in RAM. */
+    /** Indexed pages are saved whatever the reader network cache toggle says. */
     fun persistsExtract(index: Int): Boolean = synchronized(pagesLock) {
         pages.getOrNull(index)?.persistExtract == true
     }
@@ -119,7 +119,7 @@ class PdfImageEngine private constructor(
             members = pages.mapIndexed { i, p ->
                 DocumentExtractCache.Member(
                     i = i,
-                    name = "${p.objNum}_${p.gen}",
+                    name = if (p.persistExtract) "${p.objNum}_${p.gen}_$INDEXED_TAG" else "${p.objNum}_${p.gen}",
                     ext = p.ext,
                     uncSize = p.streamLen,
                     offset = p.streamOffset,
@@ -233,7 +233,9 @@ class PdfImageEngine private constructor(
         return if (stillWanted()) raw else null
     }
 
-    fun extractBytes(index: Int, onIndexedBitmap: ((Bitmap) -> Boolean)? = null): ByteArray? {
+    override fun extractBytes(index: Int): ByteArray? = extractBytes(index, null)
+
+    fun extractBytes(index: Int, onIndexedBitmap: ((Bitmap) -> Boolean)?): ByteArray? {
         val ref = synchronized(pagesLock) { pages.getOrNull(index) } ?: return null
         return synchronized(parserLock) {
             var lastIo: IOException? = null
@@ -313,6 +315,9 @@ class PdfImageEngine private constructor(
     }
 
     companion object {
+        /** Third `_` part of an index member name. Older indexes omit it. */
+        private const val INDEXED_TAG = "i"
+
         /**
          * Text/generic PDFs keep vector drawing; image-only comics use embedded bitmaps.
          */
@@ -408,6 +413,7 @@ class PdfImageEngine private constructor(
                         height = 0,
                         streamLen = m.uncSize,
                         streamOffset = m.offset,
+                        persistExtract = parts.getOrNull(2) == INDEXED_TAG,
                     )
                 }
                 if (images.isEmpty()) return null

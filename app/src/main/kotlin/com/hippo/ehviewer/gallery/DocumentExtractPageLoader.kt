@@ -162,23 +162,39 @@ internal suspend fun <T> runDocumentExtractPageLoader(
         /** DCT JPEG and other non-indexed images kept in RAM when network page cache is off. */
         val ramPages = ConcurrentHashMap<Int, ByteArray>()
 
-        /**
-         * Network cache off: keep JPEG, PNG-style Flate, JPEG 2000, and other non-indexed
-         * PDF images in [ramPages]. Indexed color is WebP and always hits [DocumentExtractCache].
-         * Local documents always write.
-         */
+        /** Reader network cache off: page bytes stay in [ramPages], for every format and source. */
+        fun cacheOff(): Boolean = Settings.disableReaderNetworkCache.value
+
+        /** Indexed-color WebP is always written; the encode is too heavy to repeat. */
         fun storePdfExtract(index: Int, ext: String, bytes: ByteArray): Path? {
-            val pdf = engine as? PdfImageEngine
-            val keepOnDisk = pdf?.persistsExtract(index) == true ||
-                localPathForLibrary != null ||
-                !Settings.disableReaderNetworkCache.value
-            if (!keepOnDisk) {
+            val indexed = (engine as? PdfImageEngine)?.persistsExtract(index) == true
+            if (cacheOff() && !indexed) {
                 ramPages[index] = bytes
                 return null
             }
             val path = DocumentExtractCache.writePage(cacheKey, index, ext, bytes)
             pagePaths[index] = path
             return path
+        }
+
+        /** EPUB / MOBI page. Null when the page went to [ramPages] or the extract failed. */
+        fun extractEnginePage(index: Int): Path? {
+            if (!cacheOff()) return engine.extractToCache(cacheKey, index)
+            engine.extractBytes(index)?.let { ramPages[index] = it }
+            return null
+        }
+
+        fun noteLibraryPages(cover: Path?) {
+            val pathStr = localPathForLibrary ?: return
+            launch(Dispatchers.IO) {
+                val resolved = cover ?: ArchiveCoverCache.tryDiskCover(pathStr)
+                val gid = info?.gid
+                if (gid != null && gid != 0L) {
+                    LocalLibrary.updateGalleryPageAndCover(gid, engine.pageCount, resolved?.toString())
+                } else {
+                    LocalLibrary.updateGalleryPageAndCoverByContentPath(pathStr, engine.pageCount, resolved?.toString())
+                }
+            }
         }
         val readyWaiters = ConcurrentHashMap<Int, CopyOnWriteArrayList<() -> Unit>>()
         val extractJobs = ConcurrentHashMap<Int, Job>()
@@ -226,7 +242,7 @@ internal suspend fun <T> runDocumentExtractPageLoader(
                         null
                     }
                 } else {
-                    engine.extractToCache(cacheKey, resumePage)
+                    extractEnginePage(resumePage)
                 }
                 seeded?.let { pagePaths[resumePage] = it }
             }
@@ -279,6 +295,9 @@ internal suspend fun <T> runDocumentExtractPageLoader(
                     }
                 }
             }
+        } else if (ramPages.containsKey(0) && coverWritten.compareAndSet(false, true)) {
+            // No page file to encode a cover from. Still record the page count.
+            noteLibraryPages(null)
         }
 
         val loader = install(
@@ -350,7 +369,7 @@ internal suspend fun <T> runDocumentExtractPageLoader(
                 override fun prefetchPages(pages: List<Int>, bounds: IntRange) {
                     // Cache-off matches folder galleries: do not pull source-only pages
                     // into RAM. Decode-ahead still extracts through onRequest.
-                    if (localPathForLibrary == null && Settings.disableReaderNetworkCache.value) return
+                    if (cacheOff()) return
                     // Same gate as decode-ahead: no prefetch until the page tree is listed.
                     if (deferDocumentBackgroundWork(progressiveEngine?.structureComplete ?: true)) {
                         return
@@ -394,7 +413,7 @@ internal suspend fun <T> runDocumentExtractPageLoader(
 
                 override fun onNavigation(demand: ReaderDemand) {
                     visiblePages = demand.navigation.visiblePages
-                    if (localPathForLibrary == null && Settings.disableReaderNetworkCache.value) {
+                    if (cacheOff()) {
                         readyWaiters.forEach { idx, _ ->
                             if (idx !in demand.decodedPages) readyWaiters.remove(idx)
                         }
@@ -501,6 +520,10 @@ internal suspend fun <T> runDocumentExtractPageLoader(
                                 }
                             }
                         }
+                    } else if (path == null && index == 0 && ramPages.containsKey(0) &&
+                        coverWritten.compareAndSet(false, true)
+                    ) {
+                        noteLibraryPages(null)
                     }
                     readyWaiters.remove(index)?.forEach { runCatching { it() } }
                 }
@@ -646,7 +669,7 @@ internal suspend fun <T> runDocumentExtractPageLoader(
                                                     null
                                                 }
                                             } else {
-                                                engine.extractToCache(cacheKey, index)
+                                                extractEnginePage(index)
                                             }
                                             path?.let { pagePaths[index] = it }
                                         }
@@ -757,7 +780,7 @@ internal suspend fun <T> runDocumentExtractPageLoader(
                         storePdfExtract(index, ext, bytes)
                         return
                     }
-                    engine.extractToCache(cacheKey, index)?.let { pagePaths[index] = it }
+                    extractEnginePage(index)?.let { pagePaths[index] = it }
                 }
 
                 /**

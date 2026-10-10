@@ -60,6 +60,13 @@ class MobiImageEngine private constructor(
         return DocumentExtractCache.writePage(cacheKey, index, ext, bytes)
     }
 
+    override fun extractBytes(index: Int): ByteArray? {
+        val page = pages.getOrNull(index) ?: return null
+        val bytes = readExact(page) ?: return null
+        if (extOf(index) == null) MobiText.imageExt(bytes)?.let { sniffed[index] = it }
+        return bytes
+    }
+
     private fun readExact(page: MobiText.ImagePage): ByteArray? {
         if (page.length <= 0) return null
         val buf = ByteArray(page.length)
