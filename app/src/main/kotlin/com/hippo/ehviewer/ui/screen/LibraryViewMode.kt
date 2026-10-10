@@ -253,27 +253,12 @@ fun sortLibraryItems(
         items.sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it.title })
 }
 
-/** Library search-bar Date sort. Newest first, then case-insensitive name. */
-fun libraryOpenUsesDateSort(sortMode: LibrarySortMode): Boolean = sortMode == LibrarySortMode.Date
-
 /**
- * Folder listing order for a browser opened from Library.
- * Date follows the library menu (newest first). Otherwise the folder-view sort.
+ * Library gallery reader and photo-grid open order.
+ * Follows [Settings.libraryPhotoSortByDate], not the library list Name/Date sort.
+ * All photos stays date-sorted on its own.
  */
-fun <T> Iterable<T>.sortedForLibraryOrBrowse(
-    libraryDateSort: Boolean,
-    browseMode: BrowseSortMode,
-    browseAscending: Boolean,
-    nameOf: (T) -> String,
-    dateOf: (T) -> Long,
-): List<T> = if (libraryDateSort) {
-    sortedWith(
-        compareByDescending<T> { dateOf(it) }
-            .thenBy(String.CASE_INSENSITIVE_ORDER) { nameOf(it) },
-    )
-} else {
-    sortedForBrowseFolderUi(browseMode, browseAscending, nameOf, dateOf)
-}
+fun libraryOpenUsesDateSort(photoSortByDate: Boolean): Boolean = photoSortByDate
 
 /**
  * Photo-grid and loose-image order. Name order unless [dateSort].
@@ -362,9 +347,11 @@ fun mergeOpenMtimes(primary: Map<String, Long>, fallback: Map<String, Long>): Ma
 
 /**
  * Library search-bar view menu (standalone from folder [BrowseViewModeMenu]):
- * - Top: Name / Date sort + Last opened
+ * - Top: Name / Date list sort + Last opened + Photo sort by date
  *   - Name + Last open: HISTORY pin, then title
  *   - Date + Last open: blend max(last-open, scan mtime), then title
+ *   - Photo sort by date: gallery reader and photo-grid open order only.
+ *     All photos stays date-sorted either way.
  * - Mid: List / Grid layout
  * - Bottom: Photo grid, All photos, All videos, zip as folder, back to dir, page count,
  *   reading progress, startup scan
@@ -378,6 +365,7 @@ fun LibraryViewModeMenu(modifier: Modifier = Modifier) {
     var sortModePref by Settings.librarySortMode.asMutableState()
     val sortMode = LibrarySortMode.fromPref(sortModePref)
     var libraryRecentOpen by Settings.libraryRecentOpen.asMutableState()
+    var photoSortByDate by Settings.libraryPhotoSortByDate.asMutableState()
     var videoModePref by Settings.libraryVideoMode.asMutableState()
     val videoMode = LibraryVideoMode.fromPref(videoModePref)
     var photoModePref by Settings.libraryPhotoMode.asMutableState()
@@ -434,6 +422,11 @@ fun LibraryViewModeMenu(modifier: Modifier = Modifier) {
                 label = stringResource(R.string.library_sort_last_open),
                 checked = libraryRecentOpen,
                 onClick = { libraryRecentOpen = !libraryRecentOpen },
+            )
+            LibraryMenuToggleItem(
+                label = stringResource(R.string.library_photo_sort_by_date),
+                checked = photoSortByDate,
+                onClick = { photoSortByDate = !photoSortByDate },
             )
             HorizontalDivider()
             LibraryMenuSelectItem(

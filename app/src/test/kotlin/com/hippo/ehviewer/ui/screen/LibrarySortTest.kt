@@ -256,25 +256,9 @@ class LibrarySortTest {
     }
 
     @Test
-    fun libraryFolderOpenUsesDateAheadOfBrowseName() {
-        data class Row(val name: String, val mtime: Long)
-        val rows = listOf(Row("Alpha", 10L), Row("beta", 30L))
-        val dated = rows.sortedForLibraryOrBrowse(
-            libraryDateSort = true,
-            browseMode = BrowseSortMode.Name,
-            browseAscending = true,
-            nameOf = { it.name },
-            dateOf = { it.mtime },
-        )
-        assertEquals(listOf("beta", "Alpha"), dated.map { it.name })
-        val named = rows.sortedForLibraryOrBrowse(
-            libraryDateSort = false,
-            browseMode = BrowseSortMode.Name,
-            browseAscending = true,
-            nameOf = { it.name },
-            dateOf = { it.mtime },
-        )
-        assertEquals(listOf("Alpha", "beta"), named.map { it.name })
+    fun libraryGalleryOpenDateFollowsPhotoPrefNotListSort() {
+        assertFalse(libraryOpenUsesDateSort(photoSortByDate = false))
+        assertTrue(libraryOpenUsesDateSort(photoSortByDate = true))
     }
 
     private fun image(relativePath: String, mtime: Long) = LocalGalleryEntity(
