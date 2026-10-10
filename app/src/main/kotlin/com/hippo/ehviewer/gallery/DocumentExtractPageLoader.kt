@@ -1092,7 +1092,7 @@ internal fun openDocumentEngine(
             }
         }
         isMobiContainer(formatHint, titleHint, cacheKey, cachedIndex) -> {
-            MobiImageEngine.open(source, remoteSize = sizeHint)
+            MobiImageEngine.open(source, remoteSize = sizeHint, cachedIndex = cachedIndex)
                 ?: error("Not a readable MOBI (DRM, Huff/CDIC, or truncated)")
         }
         else -> error("Unsupported document format: $formatHint")

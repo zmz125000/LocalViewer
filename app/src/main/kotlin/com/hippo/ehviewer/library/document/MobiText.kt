@@ -114,8 +114,12 @@ internal object MobiText {
 
     fun key(index: Int): String = "mobi:$index"
 
-    /** One image record. [recindex] is 1-based from the first image, with gaps kept. */
-    data class ImagePage(val recindex: Int, val offset: Long, val length: Int, val ext: String)
+    /**
+     * One image record. [recindex] is 1-based from the first image, with gaps kept.
+     * [ext] is null for a record the markup cites but whose magic was not read.
+     * Sniff it with [imageExt] when the payload is read.
+     */
+    data class ImagePage(val recindex: Int, val offset: Long, val length: Int, val ext: String?)
 
     /**
      * Comic open that did not read image payloads or NCX entries.
@@ -125,7 +129,8 @@ internal object MobiText {
 
     /**
      * Image-page MOBI / AZW3, or null when the file is a text novel, DRM, or Huff/CDIC.
-     * Reads the record table, the text records, and a few bytes of magic per record.
+     * Reads the record table, the text records, and magic only for records the markup
+     * does not cite.
      */
     fun openComic(source: ArchiveByteSource): ComicFile? {
         val palm = palmOf(source) ?: return null
@@ -133,9 +138,9 @@ internal object MobiText {
         val section = kf8Section(palm, primary) ?: 0
         val head = sectionHeader(palm, section, primary) ?: return null
         val fallback = if (section == 0) -1 else sectionHeader(palm, 0, primary)?.firstImage ?: -1
-        val pages = spanList(palm, head, fallback)
-        if (pages.size < 3) return null
         val html = htmlOf(palm, section, head) ?: return null
+        val pages = spanList(palm, head, fallback, citedRecindex(html))
+        if (pages.size < 3) return null
         val visible = EbookHtml.toText(html.replace(IMG_TAG, ""))
         if (visible.length > pages.size * 40) return null
         val chapters = pages.map { page ->
@@ -545,10 +550,27 @@ internal object MobiText {
         val primaryHead = sectionHeader(palm, 0, primary)
         val kf8 = kf8Section(palm, primary)
         if (kf8 != null) {
-            val fromKf8 = spanList(palm, sectionHeader(palm, kf8, null), primaryHead?.firstImage ?: -1)
+            val kf8Head = sectionHeader(palm, kf8, null)
+            val fromKf8 = spanList(palm, kf8Head, primaryHead?.firstImage ?: -1, citedRecindex(palm, kf8, kf8Head))
             if (fromKf8.isNotEmpty()) return fromKf8
         }
-        return spanList(palm, primaryHead, -1)
+        return spanList(palm, primaryHead, -1, citedRecindex(palm, 0, primaryHead))
+    }
+
+    private fun citedRecindex(palm: Palm, section: Int, head: Section?): Set<Int> {
+        if (head == null) return emptySet()
+        return htmlOf(palm, section, head)?.let(::citedRecindex) ?: emptySet()
+    }
+
+    /** Recindex of every `<img>` in [html], by `recindex` or `kindle:embed`. */
+    private fun citedRecindex(html: String): Set<Int> {
+        val out = HashSet<Int>()
+        for (m in IMG_TAG.findAll(html)) {
+            val tag = attrs(m.value)
+            val rec = tag["recindex"]?.toIntOrNull() ?: kindleEmbedIndex(tag["src"]) ?: continue
+            if (rec > 0) out += rec
+        }
+        return out
     }
 
     private fun sectionHeader(palm: Palm, section: Int, primary: ByteArray?): Section? {
@@ -557,19 +579,41 @@ internal object MobiText {
         return sectionHeader(rec0, palm.offsets.size, section) { index, n -> palm.bytes(index, n) }
     }
 
-    private fun spanList(palm: Palm, head: Section?, fallbackFirstImage: Int): List<ImagePage> {
+    /**
+     * Image records from the first image to the NCX or the end of the file.
+     * Records named in [cited] are trusted without their magic: a network source
+     * fetches a whole cache block for each 16-byte probe, and comic records are
+     * spread across the entire file.
+     */
+    private fun spanList(
+        palm: Palm,
+        head: Section?,
+        fallbackFirstImage: Int,
+        cited: Set<Int> = emptySet(),
+    ): List<ImagePage> {
         if (head == null) return emptyList()
         val firstImage = if (head.firstImage > 0) head.firstImage else fallbackFirstImage
         if (firstImage <= 0) return emptyList()
         val imageStop = if (head.ncxIndex > firstImage) head.ncxIndex else palm.offsets.size
+        val range = firstImage until minOf(imageStop, palm.offsets.size)
+        val trusted = cited.filterTo(HashSet()) { firstImage + it - 1 in range }
+        // A wrong first-image guess shifts every recindex. Both ends must be images.
+        if (trusted.isNotEmpty()) {
+            val ends = listOf(trusted.min(), trusted.max())
+            if (ends.any { r -> palm.bytes(firstImage + r - 1, 16)?.let(::imageExt) == null }) trusted.clear()
+        }
         val out = ArrayList<ImagePage>()
-        for (n in firstImage until imageStop) {
-            if (n !in palm.offsets.indices) break
-            val prefix = palm.bytes(n, 16) ?: continue
-            val ext = imageExt(prefix) ?: continue
+        for (n in range) {
             val length = palm.length(n)
             if (length <= 0) continue
-            out += ImagePage(n - firstImage + 1, palm.offsets[n].toLong(), length, ext)
+            val recindex = n - firstImage + 1
+            val ext = if (recindex in trusted) {
+                null
+            } else {
+                val prefix = palm.bytes(n, 16) ?: continue
+                imageExt(prefix) ?: continue
+            }
+            out += ImagePage(recindex, palm.offsets[n].toLong(), length, ext)
         }
         return out
     }

@@ -1129,7 +1129,9 @@ private sealed interface PdfDocumentModel {
         override val pageCount get() = pages.size
         override val chapters: List<PdfTocEntry> = emptyList()
 
-        fun extOf(index: Int): String? = pages.getOrNull(index)?.ext
+        private val sniffed = java.util.concurrent.ConcurrentHashMap<Int, String>()
+
+        fun extOf(index: Int): String? = pages.getOrNull(index)?.ext ?: sniffed[index]
 
         fun pageBytes(index: Int): ByteArray? {
             val page = pages.getOrNull(index) ?: return null
@@ -1141,6 +1143,7 @@ private sealed interface PdfDocumentModel {
                 if (n <= 0) return null
                 got += n
             }
+            if (page.ext == null) MobiText.imageExt(buf)?.let { sniffed[index] = it }
             return buf
         }
 

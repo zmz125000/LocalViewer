@@ -162,7 +162,7 @@ internal object EbookEngine {
             if (total >= MAX_TEXT_BYTES) break
             val key = normHref(item.href)
             if (isImageItem(item)) {
-                val marker = imageMarker(resources, item.href, fullPage = true) ?: continue
+                val marker = pendingMarker(resources, item.href, fullPage = true) ?: continue
                 imageCount++
                 byHref[key] = EbookChapter("", marker, 0)
                 spineOrder += key
@@ -176,7 +176,7 @@ internal object EbookEngine {
             val html = TextCharset.decode(bytes, htmlHint = true)
             val title = firstHeading(html) ?: titleFromName(item.href)
             val base = item.href.substringBeforeLast('/', missingDelimiterValue = "")
-            val text = markHtmlImages(html, base, resources)
+            val text = markHtmlImages(html, base, resources, pending = true)
             textChars += visibleChars(text)
             imageCount += EbookImages.split(text).count { it is EbookImages.Part.Image }
             byHref[key] = EbookChapter(title, text, 0)
@@ -188,11 +188,12 @@ internal object EbookEngine {
         }
         val comic = imageCount >= 4 && textChars <= imageCount * 40
         if (comic) {
+            // Pictures are read when drawn. Reading each one here downloads the whole comic.
             val pages = ArrayList<EbookChapter>()
             val seen = HashSet<String>()
             fun add(path: String) {
                 if (!seen.add(path)) return
-                val marker = imageMarker(resources, path, fullPage = true) ?: return
+                val marker = pendingMarker(resources, path, fullPage = true) ?: return
                 pages += EbookChapter("", marker, 0)
             }
             opf.coverHref?.let { add(it) }
@@ -208,6 +209,10 @@ internal object EbookEngine {
                 }
             }
             if (pages.isNotEmpty()) return EbookParse(pages, resources)
+        }
+        for (key in spineOrder) {
+            val ch = byHref[key] ?: continue
+            byHref[key] = ch.copy(text = resolveMarkers(ch.text, resources))
         }
         fun lookup(href: String): Pair<String, EbookChapter>? {
             val raw = normHref(href.substringBefore('#'))
@@ -256,7 +261,28 @@ internal object EbookEngine {
         return EbookImages.marker(path, aspect, fullPage, width)
     }
 
-    private fun markHtmlImages(html: String, baseDir: String, resources: EbookResources): String {
+    /** Marker without reading the picture. [resolveMarkers] fills in the size for a text book. */
+    private fun pendingMarker(resources: EbookResources, path: String, fullPage: Boolean): String? {
+        if (!resources.has(path)) return null
+        return EbookImages.marker(path, 0.75f, fullPage, 0)
+    }
+
+    /** Pending markers to sized ones. A picture that cannot be read is dropped. */
+    private fun resolveMarkers(text: String, resources: EbookResources): String {
+        if (!EbookImages.hasMarker(text)) return text
+        return MARKER.replace(text) { m ->
+            val ref = (EbookImages.split(m.value).singleOrNull() as? EbookImages.Part.Image)?.ref
+                ?: return@replace m.value
+            imageMarker(resources, ref.key, ref.fullPage).orEmpty()
+        }
+    }
+
+    private fun markHtmlImages(
+        html: String,
+        baseDir: String,
+        resources: EbookResources,
+        pending: Boolean = false,
+    ): String {
         val replaced = IMG_TAG.replace(html) { m ->
             val attrs = parseAttrs(m.groupValues[1])
             val raw = attrs["src"] ?: attrs["href"] ?: attrs["xlink:href"] ?: return@replace ""
@@ -264,7 +290,11 @@ internal object EbookEngine {
                 return@replace ""
             }
             val path = resolveZipPath(baseDir, raw.substringBefore('#').substringBefore('?'))
-            val marker = imageMarker(resources, path, fullPage = false) ?: return@replace ""
+            val marker = if (pending) {
+                pendingMarker(resources, path, fullPage = false)
+            } else {
+                imageMarker(resources, path, fullPage = false)
+            } ?: return@replace ""
             "\n\n$marker\n\n"
         }
         return EbookHtml.toText(replaced)
@@ -777,6 +807,7 @@ internal object EbookEngine {
     )
 
     private val IMG_TAG = Regex("""(?is)<(?:img|image)\b([^>]*)/?>""")
+    private val MARKER = Regex("${EbookImages.START}[^${EbookImages.END}]*${EbookImages.END}")
     private val META_COVER = Regex(
         """(?is)<meta\b[^>]*name\s*=\s*["']cover["'][^>]*content\s*=\s*["']([^"']+)["']""" +
             """|(?is)<meta\b[^>]*content\s*=\s*["']([^"']+)["'][^>]*name\s*=\s*["']cover["']""",
