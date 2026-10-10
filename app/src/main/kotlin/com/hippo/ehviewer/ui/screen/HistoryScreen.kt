@@ -767,13 +767,22 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
                         }
                         withIOContext {
                             LocalHistory.recordLocalFile(path, title = name, thumbKey = info.thumbKey)
-                            OpenPdfExternally.openInternalLocal(
-                                context,
-                                path,
-                                displayName = name,
-                                progressGid = gid,
-                                startPage = page,
-                            )
+                            try {
+                                OpenPdfExternally.openInternalLocal(
+                                    context,
+                                    path,
+                                    displayName = name,
+                                    progressGid = gid,
+                                    startPage = page,
+                                )
+                            } catch (e: Throwable) {
+                                snackbar(
+                                    context.getString(
+                                        R.string.pdf_reader_open_failed,
+                                        e.message ?: e.toString(),
+                                    ),
+                                )
+                            }
                         }
                         return@launch
                     }
