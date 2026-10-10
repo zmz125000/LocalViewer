@@ -62,7 +62,7 @@ class EpubEngine private constructor(
         return DocumentExtractCache.writePage(cacheKey, index, ext, bytes)
     }
 
-    fun extractBytes(index: Int): ByteArray? {
+    override fun extractBytes(index: Int): ByteArray? {
         val page = pages.getOrNull(index) ?: return null
         val entry = zip.find(page.zipName) ?: return null
         return zip.extract(entry)

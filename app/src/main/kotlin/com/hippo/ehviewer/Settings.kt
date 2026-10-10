@@ -454,10 +454,11 @@ object Settings : DataStorePreferences(null) {
     val preloadImage = intPref("preload_image_2", 3)
 
     /**
-     * Skip SMB/WebDAV/stream-archive page writes, and non-indexed images inside a
-     * network image PDF (JPEG, PNG-style Flate, JPEG 2000). Indexed color is WebP
-     * and still saved. Decode from RAM; leftover files may still be read.
-     * Local folders already skip a page cache.
+     * Skip reader page-image writes: SMB/WebDAV folders, stream archives, and document
+     * pages (PDF / EPUB / MOBI in the image reader and PDF direct image, local or network).
+     * Decode from RAM; leftover files may still be read. Local folders already skip a
+     * page cache. Indexed-color PDF pages are re-encoded WebP and still saved, as are
+     * text-ebook pictures, which are not page images.
      * Camera RAW can still be written while this is on: [readerAllowNetworkCacheRaw].
      */
     val disableReaderNetworkCache = boolPref("disable_reader_network_cache", true)

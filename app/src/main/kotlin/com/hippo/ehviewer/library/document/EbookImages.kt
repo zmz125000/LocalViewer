@@ -202,21 +202,33 @@ internal class EbookResources(
         return aspect
     }
 
+    /**
+     * Pictures read on demand (comic pages, EPUB members). Only the last few stay so
+     * page aspect and render share one read; a comic is not pulled into RAM page by page.
+     */
+    private val recent = object : LinkedHashMap<String, ByteArray>(RECENT + 1, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, ByteArray>?): Boolean = size > RECENT
+    }
+
     fun aspect(key: String): Float = aspects[key] ?: 0.75f
+
+    /** True when [key] can be read, without reading the picture. */
+    fun has(key: String): Boolean = key in blobs || key in spans || zip?.find(key)?.let { !it.isDirectory } == true
 
     fun bytes(key: String): ByteArray? {
         blobs[key]?.let { return it }
+        synchronized(recent) { recent[key] }?.let { return it }
         val span = spans[key]
         val held = source
-        if (span != null && held != null) {
-            val (offset, length) = span
-            val got = readExact(held, offset, length) ?: return null
-            remember(key, got)
-            return got
-        }
-        val z = zip ?: return null
-        val entry = z.find(key) ?: return null
-        return z.extract(entry)
+        val got = if (span != null && held != null) {
+            readExact(held, span.first, span.second)
+        } else {
+            val z = zip ?: return null
+            val entry = z.find(key) ?: return null
+            z.extract(entry)
+        } ?: return null
+        synchronized(recent) { recent[key] = got }
+        return got
     }
 
     private fun readExact(source: ArchiveByteSource, offset: Long, length: Int): ByteArray? {
@@ -232,6 +244,7 @@ internal class EbookResources(
     }
 
     fun close() {
+        synchronized(recent) { recent.clear() }
         val held = source ?: return
         runCatching { held.close() }
     }
@@ -239,6 +252,7 @@ internal class EbookResources(
     companion object {
         private const val MAX_BLOB = 8 * 1024 * 1024
         private const val MAX_BLOBS = 64 * 1024 * 1024
+        private const val RECENT = 4
 
         fun epub(source: ArchiveByteSource, zip: ZipCentralDirectory) = EbookResources(source, zip)
 

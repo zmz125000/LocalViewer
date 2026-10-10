@@ -15,6 +15,9 @@ interface DocumentImageEngine : AutoCloseable {
     val pageCount: Int
     fun extOf(index: Int): String?
     fun extractToCache(cacheKey: String, index: Int): Path?
+
+    /** Page bytes without a cache file. Reader network cache off keeps them in RAM. */
+    fun extractBytes(index: Int): ByteArray? = null
     fun toIndex(cacheKey: String, complete: Boolean = true): DocumentExtractCache.Index
 
     override fun close() = Unit
