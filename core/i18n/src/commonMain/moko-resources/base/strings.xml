@@ -913,6 +913,10 @@
     <string name="pref_decode_size_origin">Original</string>
     <string name="pref_decode_scaler">Downscale decode</string>
     <string name="pref_image_scaler">Image scaler</string>
+    <string name="pref_image_scaler_down">Downscale</string>
+    <string name="pref_image_scaler_up">Upscale</string>
+    <string name="pref_image_scaler_up_limit">Upscale limit</string>
+    <string name="pref_image_scaler_up_limit_summary">Pinch zoom past the fitted image uses GPU scale.</string>
     <string name="pref_image_scaler_default">Default</string>
     <string name="pref_image_scaler_nearest">Nearest</string>
     <string name="pref_image_scaler_bilinear">Bilinear</string>

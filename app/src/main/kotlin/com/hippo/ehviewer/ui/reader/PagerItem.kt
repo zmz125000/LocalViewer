@@ -20,10 +20,13 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.WavyProgressIndicatorDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.FloatState
 import androidx.compose.runtime.IntState
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.State
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -67,6 +70,8 @@ import com.hippo.ehviewer.util.AdsPlaceholderFile
 import kotlin.math.max
 import kotlin.math.roundToInt
 import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filterNotNull
@@ -125,6 +130,21 @@ fun PagerItem(
             val image = state.image
             val optimize by Settings.readerHiResOptimize.collectAsState()
             val drawScale = LocalReaderDrawScale.current
+            val zoomSettled = LocalReaderZoomSettled.current
+            // Kernel cache scale. Updated when the pinch and settle animation stop,
+            // not on each zoom frame, so the shader does not run during the gesture.
+            val settledZoom = remember { mutableFloatStateOf(1f) }
+            LaunchedEffect(drawScale, zoomSettled) {
+                // Pinch changes scale every frame and does not set the animation flag.
+                // collectLatest drops that stream. A fling or double-tap keeps the flag
+                // set until the final scale, then one bake runs.
+                snapshotFlow { zoomSettled() to drawScale() }.collectLatest { (settled, scale) ->
+                    if (!settled) return@collectLatest
+                    delay(ZOOM_CACHE_SETTLE_MS)
+                    val zoom = scale?.takeIf { it.isFinite() && it > 0f } ?: 1f
+                    if (settledZoom.floatValue != zoom) settledZoom.floatValue = zoom
+                }
+            }
             val fullFlow = remember(page.index, pageLoader) { pageLoader.hiResFullFlow(page.index) }
             val full by fullFlow.collectAsState()
             var zoomPast by remember(page.index) { mutableStateOf(false) }
@@ -135,9 +155,15 @@ fun PagerItem(
             // removes zoomable for a frame, and the pager turns the page.
             val shown = remember { ShownImage() }
             var painter by remember { mutableStateOf<Painter?>(null) }
-            val scaler by Settings.readerImageScaler.collectAsState()
-            val scalerMode = remember { mutableIntStateOf(scaler) }
-            scalerMode.intValue = scaler
+            val upscale by Settings.readerUpscaleFilter.collectAsState()
+            val downscale by Settings.readerDownscaleFilter.collectAsState()
+            val upscaleLimit by Settings.readerUpscaleLimit.collectAsState()
+            val upMode = remember { mutableIntStateOf(upscale) }
+            val downMode = remember { mutableIntStateOf(downscale) }
+            val limitUpscale = remember { mutableStateOf(upscaleLimit) }
+            upMode.intValue = upscale
+            downMode.intValue = downscale
+            limitUpscale.value = upscaleLimit
             // The 4096 page stays pinned while this item is composed. Showing the
             // original used to drop that pin, the cache recycled it, and the next
             // scroll decoded the preview again.
@@ -158,6 +184,18 @@ fun PagerItem(
                     retiring.releaseAfterFrames()
                 }
             }
+            DisposableEffect(painter) {
+                val held = painter as? BitmapPainter
+                onDispose {
+                    // The outgoing frame can still draw this painter. Drop the kernel
+                    // layer on the frame after that, once the blit is gone.
+                    if (held == null) return@onDispose
+                    val choreographer = Choreographer.getInstance()
+                    choreographer.postFrameCallback {
+                        choreographer.postFrameCallback { held.releaseCache() }
+                    }
+                }
+            }
             LaunchedEffect(display) {
                 if (!display.pin()) {
                     // Recycled / dead image still marked Ready — force a clean reload.
@@ -166,7 +204,7 @@ fun PagerItem(
                 }
                 val previous = shown.image
                 shown.image = display
-                painter = display.toPainter(scalerMode, allowDisplayScaler)
+                painter = display.toPainter(upMode, downMode, limitUpscale, allowDisplayScaler, settledZoom)
                 if (previous != null && previous !== display) {
                     // The display list can sample the old bitmap for a frame after the swap.
                     shown.retiring = previous
@@ -466,12 +504,21 @@ private fun Image?.releaseAfterFrames() {
     }
 }
 
-private fun Image.toPainter(scalerMode: IntState, allowScaler: Boolean) = when (val image = innerImage) {
+private fun Image.toPainter(
+    upMode: IntState,
+    downMode: IntState,
+    limitUpscale: State<Boolean>,
+    allowScaler: Boolean,
+    settledZoom: FloatState,
+) = when (val image = innerImage) {
     is BitmapImage -> BitmapPainter(
         image.bitmap,
         intrinsicSize.toSize(),
-        scalerMode,
+        upMode,
+        downMode,
+        limitUpscale,
         displayScaler && allowScaler,
+        settledZoom,
     )
     is DrawableImage -> DrawablePainter(image.drawable)
     else -> unreachable()
@@ -481,6 +528,9 @@ private const val DEFAULT_ASPECT = 1 / 1.4125f
 
 /** > 0 so fully off-screen composed items are not treated as visible. */
 private const val MIN_ONSCREEN_FRACTION = 0.01f
+
+/** Scale must sit still this long before the kernel cache rebuilds. */
+private const val ZOOM_CACHE_SETTLE_MS = 120L
 
 private val invertMatrix = ColorMatrix(
     floatArrayOf(
