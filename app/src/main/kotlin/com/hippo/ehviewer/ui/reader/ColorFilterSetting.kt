@@ -212,18 +212,30 @@ private fun CameraRawSetting() = Column {
 @Composable
 private fun ImageScalerChoice() {
     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
+    val kernels = arrayOf(
+        stringResource(id = R.string.pref_image_scaler_default),
+        stringResource(id = R.string.pref_image_scaler_nearest),
+        stringResource(id = R.string.pref_image_scaler_bilinear),
+        stringResource(id = R.string.pref_image_scaler_bspline),
+        stringResource(id = R.string.pref_image_scaler_catmull),
+        stringResource(id = R.string.pref_image_scaler_mitchell),
+        stringResource(id = R.string.pref_image_scaler_lanczos),
+    )
+    val values = listOf(0, 1, 2, 3, 4, 5, 6)
     SpinnerChoice(
-        title = stringResource(id = R.string.pref_image_scaler),
-        entries = arrayOf(
-            stringResource(id = R.string.pref_image_scaler_default),
-            stringResource(id = R.string.pref_image_scaler_nearest),
-            stringResource(id = R.string.pref_image_scaler_bilinear),
-            stringResource(id = R.string.pref_image_scaler_bspline),
-            stringResource(id = R.string.pref_image_scaler_catmull),
-            stringResource(id = R.string.pref_image_scaler_mitchell),
-            stringResource(id = R.string.pref_image_scaler_lanczos),
-        ),
-        values = listOf(0, 1, 2, 3, 4, 5, 6),
-        field = Settings.readerImageScaler.asMutableState(),
+        title = stringResource(id = R.string.pref_image_scaler_down),
+        entries = kernels,
+        values = values,
+        field = Settings.readerDownscaleFilter.asMutableState(),
+    )
+    SpinnerChoice(
+        title = stringResource(id = R.string.pref_image_scaler_up),
+        entries = kernels,
+        values = values,
+        field = Settings.readerUpscaleFilter.asMutableState(),
+    )
+    SwitchChoice(
+        title = stringResource(id = R.string.pref_image_scaler_up_limit),
+        field = Settings.readerUpscaleLimit.asMutableState(),
     )
 }

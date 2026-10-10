@@ -189,6 +189,63 @@ internal const val SCALER_CACHE_MAX_EDGE = 8192
 
 internal data class ScalerTile(val x: Int, val y: Int, val width: Int, val height: Int)
 
+/** ~1:1 draws skip both kernels and use the GPU blit. */
+private const val SCALER_RATIO_SLOP = 0.02f
+
+internal data class ScalerDraw(val mode: Int, val cacheW: Int, val cacheH: Int)
+
+/**
+ * Which kernel to bake, and at what pixel size.
+ *
+ * Shrinking uses [downMode]. Enlarging uses [upMode]. When [limitUpscale] is set,
+ * the upscale kernel stops at the fitted image (zoom 1) and a downscale stops at
+ * the source pixels. Pinch past that is a GPU scale of that result.
+ */
+internal fun scalerDrawPlan(
+    layoutW: Int,
+    layoutH: Int,
+    srcW: Int,
+    srcH: Int,
+    zoom: Float,
+    upMode: Int,
+    downMode: Int,
+    limitUpscale: Boolean,
+): ScalerDraw {
+    if (layoutW < 1 || layoutH < 1 || srcW < 1 || srcH < 1) {
+        return ScalerDraw(0, layoutW.coerceAtLeast(1), layoutH.coerceAtLeast(1))
+    }
+    val z = if (zoom.isFinite() && zoom > 1f) zoom else 1f
+    // A small image is already enlarged to fit. The upscale kernel stays at that
+    // fit; pinch past it is GPU. A large image keeps the downscale kernel while
+    // zoom is still shrinking, and stops at the source pixels.
+    val fitEnlarges = enlargesSource(layoutW, layoutH, srcW, srcH, zoom = 1f)
+    val (cacheW, cacheH) = if (limitUpscale && fitEnlarges) {
+        layoutW to layoutH
+    } else {
+        val (w, h) = scalerCachePixelSize(layoutW, layoutH, z)
+        if (limitUpscale) capToSource(w, h, srcW, srcH) else w to h
+    }
+    val mode = kernelForRatio(cacheW, cacheH, srcW, srcH, upMode, downMode)
+    return if (mode <= 2) ScalerDraw(mode, layoutW, layoutH) else ScalerDraw(mode, cacheW, cacheH)
+}
+
+private fun enlargesSource(layoutW: Int, layoutH: Int, srcW: Int, srcH: Int, zoom: Float): Boolean = min(layoutW * zoom / srcW, layoutH * zoom / srcH) > 1f + SCALER_RATIO_SLOP
+
+private fun capToSource(width: Int, height: Int, srcW: Int, srcH: Int): Pair<Int, Int> {
+    val fit = min(1f, min(srcW.toFloat() / width, srcH.toFloat() / height))
+    return (width * fit).roundToInt().coerceAtLeast(1) to (height * fit).roundToInt().coerceAtLeast(1)
+}
+
+private fun kernelForRatio(cacheW: Int, cacheH: Int, srcW: Int, srcH: Int, upMode: Int, downMode: Int): Int {
+    val scale = min(cacheW.toFloat() / srcW, cacheH.toFloat() / srcH)
+    val mode = when {
+        scale > 1f + SCALER_RATIO_SLOP -> upMode
+        scale < 1f - SCALER_RATIO_SLOP -> downMode
+        else -> 0
+    }
+    return mode.coerceIn(0, 6)
+}
+
 /**
  * Pixel size of the kernel cache for a layout rect at [zoom].
  * Zoom at or below 1 keeps the layout size. The long edge stops at

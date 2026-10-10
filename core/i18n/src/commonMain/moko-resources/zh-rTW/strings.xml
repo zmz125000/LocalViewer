@@ -833,6 +833,10 @@
     <string name="pref_decode_size_origin">原圖</string>
     <string name="pref_decode_scaler">縮小解碼</string>
     <string name="pref_image_scaler">影像縮放</string>
+    <string name="pref_image_scaler_down">縮小</string>
+    <string name="pref_image_scaler_up">放大</string>
+    <string name="pref_image_scaler_up_limit">放大限制</string>
+    <string name="pref_image_scaler_up_limit_summary">捏合超過適應畫面後改用 GPU 縮放。</string>
     <string name="pref_image_scaler_default">預設</string>
     <string name="pref_image_scaler_nearest">最近鄰</string>
     <string name="pref_image_scaler_bilinear">雙線性</string>

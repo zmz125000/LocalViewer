@@ -861,19 +861,31 @@ object Settings : DataStorePreferences(null) {
     val readerDecodeSize = intPref("pref_reader_decode_size", 4)
 
     /**
-     * How a Coil still (JPEG, PNG, WebP, and the other daily formats) is sampled
-     * onto the screen. 0 and 2 are the GPU bilinear blit. 1 is the same blit with
-     * filtering off (nearest). 3–6 (B-spline, Catmull-Rom, Mitchell,
-     * Lanczos3) are AGSL kernels baked into a layer so scrolling does not re-shade.
-     * API 31–32 keep modes 3–6 on the bilinear blit. RAW and lib-direct formats do not read it.
+     * Kernel when the page is drawn smaller than the bitmap. 0 and 2 are the GPU
+     * bilinear blit. 1 is nearest. 3–6 are AGSL kernels baked into a layer.
+     * Same order as [readerUpscaleFilter]. The old single scaler pref is this key,
+     * so a saved Lanczos choice stays on shrink and enlarge defaults to the GPU.
+     * API 31–32 keep modes 3–6 on the bilinear blit. RAW and lib-direct formats skip it.
      */
-    val readerImageScaler = intPref("pref_reader_image_scaler", 0)
+    val readerDownscaleFilter = intPref("pref_reader_image_scaler", 0)
+
+    /**
+     * Kernel when the page is drawn larger than the bitmap. Default 0 keeps pinch
+     * enlarge on the GPU blit. 1–6 match [readerDownscaleFilter].
+     */
+    val readerUpscaleFilter = intPref("pref_reader_upscale_filter", 0)
+
+    /**
+     * When on, [readerUpscaleFilter] stops at the fitted image and a downscale stops
+     * at the source pixels. Pinch past that uses GPU scale. Default on.
+     */
+    val readerUpscaleLimit = boolPref("pref_reader_upscale_limit", true)
 
     /**
      * Kernel used once when decode size is 1.5×–3×, and for the 4096 px hi-res
      * cap when [readerHiResSoftwareDownscale] is on. 0 keeps the codec's own
      * subsample. 1–6 decode the full frame in software and resample down.
-     * Same order as [readerImageScaler]. Original size and lib-direct pages skip it.
+     * Same order as [readerDownscaleFilter]. Original size and lib-direct pages skip it.
      */
     val readerDecodeScaler = intPref("pref_reader_decode_scaler", 0)
 

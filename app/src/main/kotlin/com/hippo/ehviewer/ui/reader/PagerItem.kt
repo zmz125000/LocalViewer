@@ -23,6 +23,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.FloatState
 import androidx.compose.runtime.IntState
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.State
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -154,9 +155,15 @@ fun PagerItem(
             // removes zoomable for a frame, and the pager turns the page.
             val shown = remember { ShownImage() }
             var painter by remember { mutableStateOf<Painter?>(null) }
-            val scaler by Settings.readerImageScaler.collectAsState()
-            val scalerMode = remember { mutableIntStateOf(scaler) }
-            scalerMode.intValue = scaler
+            val upscale by Settings.readerUpscaleFilter.collectAsState()
+            val downscale by Settings.readerDownscaleFilter.collectAsState()
+            val upscaleLimit by Settings.readerUpscaleLimit.collectAsState()
+            val upMode = remember { mutableIntStateOf(upscale) }
+            val downMode = remember { mutableIntStateOf(downscale) }
+            val limitUpscale = remember { mutableStateOf(upscaleLimit) }
+            upMode.intValue = upscale
+            downMode.intValue = downscale
+            limitUpscale.value = upscaleLimit
             // The 4096 page stays pinned while this item is composed. Showing the
             // original used to drop that pin, the cache recycled it, and the next
             // scroll decoded the preview again.
@@ -197,7 +204,7 @@ fun PagerItem(
                 }
                 val previous = shown.image
                 shown.image = display
-                painter = display.toPainter(scalerMode, allowDisplayScaler, settledZoom)
+                painter = display.toPainter(upMode, downMode, limitUpscale, allowDisplayScaler, settledZoom)
                 if (previous != null && previous !== display) {
                     // The display list can sample the old bitmap for a frame after the swap.
                     shown.retiring = previous
@@ -498,14 +505,18 @@ private fun Image?.releaseAfterFrames() {
 }
 
 private fun Image.toPainter(
-    scalerMode: IntState,
+    upMode: IntState,
+    downMode: IntState,
+    limitUpscale: State<Boolean>,
     allowScaler: Boolean,
     settledZoom: FloatState,
 ) = when (val image = innerImage) {
     is BitmapImage -> BitmapPainter(
         image.bitmap,
         intrinsicSize.toSize(),
-        scalerMode,
+        upMode,
+        downMode,
+        limitUpscale,
         displayScaler && allowScaler,
         settledZoom,
     )

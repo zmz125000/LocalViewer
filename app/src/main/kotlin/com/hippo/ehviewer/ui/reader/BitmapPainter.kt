@@ -6,6 +6,7 @@ import android.graphics.Paint
 import android.graphics.RectF
 import androidx.compose.runtime.FloatState
 import androidx.compose.runtime.IntState
+import androidx.compose.runtime.State
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.geometry.toRect
 import androidx.compose.ui.graphics.drawscope.DrawScope
@@ -18,7 +19,9 @@ import androidx.compose.ui.util.fastRoundToInt
 class BitmapPainter(
     private val bitmap: Bitmap,
     override val intrinsicSize: Size,
-    private val scalerMode: IntState,
+    private val upMode: IntState,
+    private val downMode: IntState,
+    private val limitUpscale: State<Boolean>,
     /** Coil 8-bit still. RAW and advanced formats pass false and keep the platform blit. */
     private val allowScaler: Boolean,
     /**
@@ -44,18 +47,28 @@ class BitmapPainter(
     override fun DrawScope.onDraw() = drawIntoCanvas { canvas ->
         dstRect.right = size.width.fastRoundToInt().toFloat()
         dstRect.bottom = size.height.fastRoundToInt().toFloat()
-        val mode = if (allowScaler) scalerMode.intValue else 0
         val native = canvas.nativeCanvas
-        if (mode == 1 || mode == 2) {
-            releaseShader()
-            if (dstRect.width() >= 1f && dstRect.height() >= 1f) {
-                matrix.setRectToRect(srcRect, dstRect, Matrix.ScaleToFit.FILL)
-                native.drawBitmap(bitmap, matrix, if (mode == 1) nearestPaint else paint)
-                return@drawIntoCanvas
-            }
+        val plan = if (!allowScaler || dstRect.width() < 1f || dstRect.height() < 1f) {
+            ScalerDraw(0, 1, 1)
+        } else {
+            scalerDrawPlan(
+                layoutW = dstRect.width().toInt(),
+                layoutH = dstRect.height().toInt(),
+                srcW = bitmap.width,
+                srcH = bitmap.height,
+                zoom = settledZoom.floatValue,
+                upMode = upMode.intValue,
+                downMode = downMode.intValue,
+                limitUpscale = limitUpscale.value,
+            )
         }
-        val zoom = if (allowScaler) settledZoom.floatValue else 1f
-        if (drawDisplayScaler(native, bitmap, dstRect, mode, zoom)) return@drawIntoCanvas
+        if (plan.mode <= 2) {
+            releaseShader()
+            matrix.setRectToRect(srcRect, dstRect, Matrix.ScaleToFit.FILL)
+            native.drawBitmap(bitmap, matrix, if (plan.mode == 1) nearestPaint else paint)
+            return@drawIntoCanvas
+        }
+        if (drawDisplayScaler(native, dstRect, plan.mode, plan.cacheW, plan.cacheH)) return@drawIntoCanvas
         releaseShader()
         matrix.setRectToRect(srcRect, dstRect, Matrix.ScaleToFit.FILL)
         native.drawBitmap(bitmap, matrix, paint)
@@ -63,10 +76,10 @@ class BitmapPainter(
 
     private fun drawDisplayScaler(
         canvas: android.graphics.Canvas,
-        bitmap: Bitmap,
         dst: RectF,
         mode: Int,
-        zoom: Float,
+        cacheW: Int,
+        cacheH: Int,
     ): Boolean {
         if (!DisplayScaler.wantsShader(mode) || scalerFailed || dst.width() < 1f || dst.height() < 1f) {
             return false
@@ -78,7 +91,6 @@ class BitmapPainter(
             android.util.Log.e("DisplayScaler", "shader unavailable", e)
             return false
         }
-        val (cacheW, cacheH) = scalerCachePixelSize(dst.width().toInt(), dst.height().toInt(), zoom)
         return try {
             DisplayScaler.draw(scaler, canvas, dst, mode, cacheW, cacheH)
         } catch (e: RuntimeException) {

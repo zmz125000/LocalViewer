@@ -46,6 +46,36 @@ class ScalerCacheTileTest {
     }
 
     @Test
+    fun `large photo uses the downscale kernel until the source pixels`() {
+        val fit = scalerDrawPlan(1000, 1500, 4000, 6000, zoom = 1f, upMode = 6, downMode = 4, limitUpscale = true)
+        assertEquals(ScalerDraw(4, 1000, 1500), fit)
+        val closer = scalerDrawPlan(1000, 1500, 4000, 6000, zoom = 2f, upMode = 6, downMode = 4, limitUpscale = true)
+        assertEquals(ScalerDraw(4, 2000, 3000), closer)
+        val pastNative = scalerDrawPlan(1000, 1500, 4000, 6000, zoom = 5f, upMode = 6, downMode = 4, limitUpscale = true)
+        assertEquals(0, pastNative.mode)
+    }
+
+    @Test
+    fun `upscale limit keeps pinch enlarge on the fitted kernel`() {
+        val fit = scalerDrawPlan(1000, 1500, 500, 750, zoom = 1f, upMode = 6, downMode = 4, limitUpscale = true)
+        assertEquals(ScalerDraw(6, 1000, 1500), fit)
+        val pinched = scalerDrawPlan(1000, 1500, 500, 750, zoom = 3f, upMode = 6, downMode = 4, limitUpscale = true)
+        assertEquals(ScalerDraw(6, 1000, 1500), pinched)
+    }
+
+    @Test
+    fun `upscale limit off bakes the enlarge kernel at the zoom`() {
+        val pinched = scalerDrawPlan(1000, 1500, 500, 750, zoom = 3f, upMode = 6, downMode = 4, limitUpscale = false)
+        assertEquals(ScalerDraw(6, 3000, 4500), pinched)
+    }
+
+    @Test
+    fun `one to one fit stays on the gpu blit`() {
+        val fit = scalerDrawPlan(1000, 1500, 1000, 1500, zoom = 1f, upMode = 6, downMode = 4, limitUpscale = true)
+        assertEquals(0, fit.mode)
+    }
+
+    @Test
     fun `empty size has no tiles`() {
         assertEquals(emptyList<ScalerTile>(), scalerCacheTiles(0, 100))
         assertEquals(emptyList<ScalerTile>(), scalerCacheTiles(100, 0))
