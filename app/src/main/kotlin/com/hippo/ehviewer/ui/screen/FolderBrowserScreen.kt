@@ -310,12 +310,11 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         base.filterByBrowseSearch(search.keyword) { it.name }
     }
 
-    val librarySortPref by Settings.librarySortMode.collectAsState()
-    val libraryDateSort = fromLibrary &&
-        libraryOpenUsesDateSort(LibrarySortMode.fromPref(librarySortPref))
+    val libraryPhotoDate by Settings.libraryPhotoSortByDate.collectAsState()
+    val libraryDateSort = fromLibrary && libraryOpenUsesDateSort(libraryPhotoDate)
 
     fun libraryDateSortNow(): Boolean = fromLibrary &&
-        libraryOpenUsesDateSort(LibrarySortMode.fromPref(Settings.librarySortMode.value))
+        libraryOpenUsesDateSort(Settings.libraryPhotoSortByDate.value)
 
     /**
      * Image RegularFiles in name order. Folder Name/Date does not change this.
@@ -511,7 +510,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         entries = stampOpenMtimes(entries, mtimes)
     }
 
-    /** Fill modified times so a Library Date open can order photo-grid and video-folder rows. */
+    /** Fill modified times so a date-sorted library photo grid can order its rows. */
     fun stampLibraryOpenDates(frame: BrowseSession.LocalFrame) {
         if (!libraryDateSortNow()) return
         launchIO {
@@ -561,7 +560,6 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         listedPath = frameListKey(frame)
         loading = false
         refreshing = false
-        stampLibraryOpenDates(frame)
         error = null
     }
 
@@ -692,14 +690,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         if (!force && frame.videoFolder && !frame.isZipBrowse) {
             val shownVideos = entries.filterIsInstance<BrowseEntry.VideoFile>()
             val alreadyShown = listedPath == targetPath && shownVideos.isNotEmpty()
-            val missingDates = libraryDateSortNow() && shownVideos.any { it.lastModifiedMs <= 0L }
-            if (alreadyShown && !missingDates) {
-                loading = false
-                refreshing = false
-                return
-            }
-            if (alreadyShown && missingDates) {
-                stampLibraryOpenDates(frame)
+            if (alreadyShown) {
                 loading = false
                 refreshing = false
                 return
@@ -2498,12 +2489,11 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                     val browseSortMode = BrowseSortMode.fromPref(browseSortModePref)
                     val browseSortAscending by Settings.browseSortAscending.collectAsState()
                     val sections = filteredEntries.toBrowseSections(contentMode)
-                    // Library Date uses modified time. Other opens keep the folder-view sort.
-                    // Reader pages stay on folderImages order (name, or Library Date).
+                    // Folder listing follows the folder-view Name/Date setting.
+                    // Library photo sort by date changes the reader and photo-grid open only.
                     val dirsRaw = sections.directories
                         .filterIsInstance<BrowseEntry.Directory>()
-                        .sortedForLibraryOrBrowse(
-                            libraryDateSort,
+                        .sortedForBrowseFolderUi(
                             browseSortMode,
                             browseSortAscending,
                             nameOf = { it.name },
@@ -2515,8 +2505,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                     } else {
                         dirsRaw
                     }
-                    val galleries = sections.galleries.sortedForLibraryOrBrowse(
-                        libraryDateSort,
+                    val galleries = sections.galleries.sortedForBrowseFolderUi(
                         browseSortMode,
                         browseSortAscending,
                         nameOf = { it.name },
@@ -2524,15 +2513,13 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                     )
                     val videos = sections.videos
                         .filterIsInstance<BrowseEntry.VideoFile>()
-                        .sortedForLibraryOrBrowse(
-                            libraryDateSort,
+                        .sortedForBrowseFolderUi(
                             browseSortMode,
                             browseSortAscending,
                             nameOf = { it.name },
                             dateOf = { it.lastModifiedMs },
                         )
-                    val documents = sections.documents.sortedForLibraryOrBrowse(
-                        libraryDateSort,
+                    val documents = sections.documents.sortedForBrowseFolderUi(
                         browseSortMode,
                         browseSortAscending,
                         nameOf = { it.name },
@@ -2540,8 +2527,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                     )
                     val files = sections.files
                         .filterIsInstance<BrowseEntry.RegularFile>()
-                        .sortedForLibraryOrBrowse(
-                            libraryDateSort,
+                        .sortedForBrowseFolderUi(
                             browseSortMode,
                             browseSortAscending,
                             nameOf = { it.name },

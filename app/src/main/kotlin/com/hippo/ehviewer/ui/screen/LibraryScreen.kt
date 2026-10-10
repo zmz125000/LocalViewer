@@ -393,7 +393,7 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
                 }
             }
         } else {
-            val dated = if (libraryOpenUsesDateSort(librarySortMode)) {
+            val dated = if (libraryOpenUsesDateSort(Settings.libraryPhotoSortByDate.value)) {
                 libraryFolderImageNames(
                     allVisibleGalleries,
                     gallery.rootId,
@@ -501,7 +501,7 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
             allVisibleGalleries,
             item.rootId,
             parentRel,
-            dateSort = libraryOpenUsesDateSort(librarySortMode),
+            dateSort = libraryOpenUsesDateSort(Settings.libraryPhotoSortByDate.value),
         ) ?: allVisibleGalleries
             .asSequence()
             .filter {

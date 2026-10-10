@@ -567,6 +567,13 @@ object Settings : DataStorePreferences(null) {
     val librarySortMode = intPref("library_sort_mode", 0)
 
     /**
+     * Library gallery reader and photo-grid open order. Off (default) is name.
+     * On is newest modified time, then name. Does not sort the library list.
+     * All photos stays date-sorted on its own.
+     */
+    val libraryPhotoSortByDate = boolPref("library_photo_sort_by_date", false)
+
+    /**
      * Library screen section: 0 = photos (default), 1 = videos.
      * Toggled by tapping the Photos / Videos section header.
      */
@@ -597,7 +604,7 @@ object Settings : DataStorePreferences(null) {
      * Lives in app data, not [android.content.Context.getCacheDir]. Default off.
      * Turning this off deletes existing markers.
      */
-    val saveFileMarkers = boolPref("save_file_markers", true).observed(::updateWhenSaveFileMarkersChanges)
+    val saveFileMarkers = boolPref("save_file_markers", false).observed(::updateWhenSaveFileMarkersChanges)
 
     // Advanced
     val saveParseErrorBody = boolPref("save_parse_error_body", true)

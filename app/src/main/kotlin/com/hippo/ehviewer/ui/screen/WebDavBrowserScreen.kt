@@ -397,9 +397,8 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
         base.filterByBrowseSearch(search.keyword) { it.name }
     }
 
-    val librarySortPref by Settings.librarySortMode.collectAsState()
-    val libraryDateSort = fromLibrary &&
-        libraryOpenUsesDateSort(LibrarySortMode.fromPref(librarySortPref))
+    val libraryPhotoDate by Settings.libraryPhotoSortByDate.collectAsState()
+    val libraryDateSort = fromLibrary && libraryOpenUsesDateSort(libraryPhotoDate)
 
     /**
      * Image RegularFiles in name order. Folder Name/Date does not change this.
@@ -2007,11 +2006,10 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                     val browseSortMode = BrowseSortMode.fromPref(browseSortModePref)
                     val browseSortAscending by Settings.browseSortAscending.collectAsState()
                     val sections = filteredEntries.toRemoteBrowseSections(contentMode)
-                    // Library Date uses modified time. Other opens keep the folder-view sort.
+                    // Folder listing follows the folder-view Name/Date setting.
                     val dirsRaw = sections.directories
                         .filterIsInstance<BrowseEntryRemote.Directory>()
-                        .sortedForLibraryOrBrowse(
-                            libraryDateSort,
+                        .sortedForBrowseFolderUi(
                             browseSortMode,
                             browseSortAscending,
                             nameOf = { it.name },
@@ -2023,8 +2021,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                     } else {
                         dirsRaw
                     }
-                    val galleries = sections.galleries.sortedForLibraryOrBrowse(
-                        libraryDateSort,
+                    val galleries = sections.galleries.sortedForBrowseFolderUi(
                         browseSortMode,
                         browseSortAscending,
                         nameOf = { it.name },
@@ -2032,15 +2029,13 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                     )
                     val videos = sections.videos
                         .filterIsInstance<BrowseEntryRemote.VideoFile>()
-                        .sortedForLibraryOrBrowse(
-                            libraryDateSort,
+                        .sortedForBrowseFolderUi(
                             browseSortMode,
                             browseSortAscending,
                             nameOf = { it.name },
                             dateOf = { it.lastModifiedMs },
                         )
-                    val documents = sections.documents.sortedForLibraryOrBrowse(
-                        libraryDateSort,
+                    val documents = sections.documents.sortedForBrowseFolderUi(
                         browseSortMode,
                         browseSortAscending,
                         nameOf = { it.name },
@@ -2048,8 +2043,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                     )
                     val files = sections.files
                         .filterIsInstance<BrowseEntryRemote.RegularFile>()
-                        .sortedForLibraryOrBrowse(
-                            libraryDateSort,
+                        .sortedForBrowseFolderUi(
                             browseSortMode,
                             browseSortAscending,
                             nameOf = { it.name },
