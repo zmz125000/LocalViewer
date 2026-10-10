@@ -3,7 +3,6 @@ package com.hippo.ehviewer.ui.reader
 import android.graphics.Bitmap
 import android.graphics.BitmapShader
 import android.graphics.Canvas
-import android.graphics.Matrix
 import android.graphics.Paint
 import android.graphics.RectF
 import android.graphics.RenderNode
@@ -19,25 +18,15 @@ import kotlin.math.roundToInt
  * Draw-time resample of a Coil still. Mode 0 is the caller's GPU bilinear blit.
  * API 31 and 32 have no [RuntimeShader], so every mode stays on that blit.
  *
- * Modes 1 and 2 are the hardware nearest / linear samplers. Modes 3–6 are AGSL
- * kernels. A [RuntimeShader] recorded in the page display list is executed again
- * on every scroll frame, which is what drops the reader to ~50 fps. Those kernels
+ * Modes 1 and 2 are [android.graphics.Canvas.drawBitmap] with filtering off or on,
+ * using the same source-to-dest matrix as mode 0. A [BitmapShader] local matrix
+ * is not used: on a recording canvas it is ignored and a 48 MP frame stays 1:1.
+ * Modes 3–6 are AGSL kernels. A [RuntimeShader] recorded in the page display list
+ * is executed again on every scroll frame, which is what drops the reader to ~50 fps. Those kernels
  * are rasterized once into [RenderNode] compositing layers and scrolled as textures.
  */
 internal object DisplayScaler {
-    fun wantsHardware(mode: Int): Boolean = mode in 1..2 && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
-
     fun wantsShader(mode: Int): Boolean = mode in 3..6 && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
-
-    fun createHardware(bitmap: Bitmap): Any {
-        check(Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU)
-        return HardwareBlit(bitmap)
-    }
-
-    fun drawHardware(blit: Any, canvas: Canvas, dst: RectF, mode: Int) {
-        check(Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU)
-        (blit as HardwareBlit).draw(canvas, dst, mode)
-    }
 
     fun create(bitmap: Bitmap): Any {
         check(Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU)
@@ -53,29 +42,6 @@ internal object DisplayScaler {
     fun release(scaler: Any) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
         (scaler as PageScaler).release()
-    }
-}
-
-/** One hardware sampler per page. Replayed as a single textured quad while scrolling. */
-@RequiresApi(33)
-internal class HardwareBlit(bitmap: Bitmap) {
-    private val shader = BitmapShader(bitmap, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP)
-    private val paint = Paint(Paint.DITHER_FLAG).apply { shader = this@HardwareBlit.shader }
-    private val matrix = Matrix()
-    private val src = RectF(0f, 0f, bitmap.width.toFloat(), bitmap.height.toFloat())
-    private var mode = -1
-
-    fun draw(canvas: Canvas, dst: RectF, sampleMode: Int) {
-        if (mode != sampleMode) {
-            shader.setFilterMode(
-                if (sampleMode == 1) BitmapShader.FILTER_MODE_NEAREST else BitmapShader.FILTER_MODE_LINEAR,
-            )
-            mode = sampleMode
-        }
-        // Canvas position → bitmap texel. Inverse of drawBitmap's src-to-dst matrix.
-        matrix.setRectToRect(dst, src, Matrix.ScaleToFit.FILL)
-        shader.setLocalMatrix(matrix)
-        canvas.drawRect(dst, paint)
     }
 }
 

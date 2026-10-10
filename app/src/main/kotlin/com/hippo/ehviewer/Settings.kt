@@ -862,10 +862,10 @@ object Settings : DataStorePreferences(null) {
 
     /**
      * How a Coil still (JPEG, PNG, WebP, and the other daily formats) is sampled
-     * onto the screen. 0 keeps the GPU bilinear blit. On API 33+, 1 is hardware
-     * nearest and 2 is hardware linear. 3–6 (B-spline, Catmull-Rom, Mitchell,
+     * onto the screen. 0 and 2 are the GPU bilinear blit. 1 is the same blit with
+     * filtering off (nearest). 3–6 (B-spline, Catmull-Rom, Mitchell,
      * Lanczos3) are AGSL kernels baked into a layer so scrolling does not re-shade.
-     * API 31–32 ignore this and stay on 0. RAW and lib-direct formats do not read it.
+     * API 31–32 keep modes 3–6 on the bilinear blit. RAW and lib-direct formats do not read it.
      */
     val readerImageScaler = intPref("pref_reader_image_scaler", 0)
 
