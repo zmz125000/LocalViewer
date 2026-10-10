@@ -35,4 +35,46 @@ class EbookSiblingPlaylistTest {
         assertEquals(ReaderScreenArgs.Archive(zip.toString(), page = -1, info = null), skipDocx)
         assertNull(ReaderGalleryPlaylist.sibling(ReaderScreenArgs.Archive(zip.toString()), next = true))
     }
+
+    @Test
+    fun networkEbooksHopWhetherGalleryOrFile() {
+        ReaderGalleryPlaylist.setFromSmbBrowse(
+            sourceId = 4L,
+            parentRelative = "books",
+            entries = listOf(
+                BrowseEntryRemote.ArchiveGallery(name = "guide.pdf", fileName = "guide.pdf"),
+                BrowseEntryRemote.ArchiveGallery(name = "novel.azw3", fileName = "novel.azw3"),
+                BrowseEntryRemote.RegularFile(name = "notes.txt", fileName = "notes.txt"),
+                BrowseEntryRemote.ArchiveGallery(name = "story.fb2", fileName = "story.fb2"),
+                BrowseEntryRemote.RegularFile(name = "page.html", fileName = "page.html"),
+                BrowseEntryRemote.ArchiveGallery(name = "book.epub", fileName = "book.epub"),
+                BrowseEntryRemote.RegularFile(name = "readme.md", fileName = "readme.md"),
+                BrowseEntryRemote.ArchiveGallery(name = "old.mobi", fileName = "old.mobi"),
+                BrowseEntryRemote.RegularFile(name = "memo.docx", fileName = "memo.docx"),
+            ),
+        )
+        val order = listOf(
+            "books/guide.pdf",
+            "books/novel.azw3",
+            "books/notes.txt",
+            "books/story.fb2",
+            "books/page.html",
+            "books/book.epub",
+            "books/readme.md",
+            "books/old.mobi",
+        )
+        for (i in 0 until order.lastIndex) {
+            val next = ReaderGalleryPlaylist.sibling(
+                ReaderScreenArgs.SmbStreamArchive(4L, order[i]),
+                next = true,
+            )
+            assertEquals(order[i + 1], (next as ReaderScreenArgs.SmbStreamArchive).remotePath)
+        }
+        assertNull(
+            ReaderGalleryPlaylist.sibling(
+                ReaderScreenArgs.SmbStreamArchive(4L, order.last()),
+                next = true,
+            ),
+        )
+    }
 }

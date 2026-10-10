@@ -183,11 +183,9 @@ object ReaderGalleryPlaylist {
                     Item.SmbFolder(sourceId, remote, names, info)
                 }
                 is BrowseEntryRemote.ArchiveGallery -> {
-                    // Stream ZIP/TAR + solid RAR/7z fake-stream share SmbStreamArchive keys.
-                    if (!isStreamableArchiveFileName(e.fileName) &&
-                        !isSolidArchiveFileName(e.fileName) &&
-                        !isDocumentFileName(e.fileName)
-                    ) {
+                    // Stream ZIP/TAR, solid RAR/7z, PDF/EPUB, and every ebook
+                    // (mobi/azw/azw3/fb2 are galleries; txt stays a regular file).
+                    if (!isSiblingHopArchive(e.fileName, e.name)) {
                         return@mapNotNull null
                     }
                     val remote = joinRemoteArchivePath(
@@ -270,10 +268,7 @@ object ReaderGalleryPlaylist {
                     Item.WebDavFolder(sourceId, remote, names, info)
                 }
                 is BrowseEntryRemote.ArchiveGallery -> {
-                    if (!isStreamableArchiveFileName(e.fileName) &&
-                        !isSolidArchiveFileName(e.fileName) &&
-                        !isDocumentFileName(e.fileName)
-                    ) {
+                    if (!isSiblingHopArchive(e.fileName, e.name)) {
                         return@mapNotNull null
                     }
                     val remote = joinRemoteArchivePath(
