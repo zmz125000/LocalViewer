@@ -50,6 +50,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.Hub
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -83,12 +84,14 @@ import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
@@ -100,6 +103,7 @@ import com.ehviewer.core.i18n.R
 import com.ehviewer.core.ui.component.FastScrollLazyVerticalGrid
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.collectAsState
+import com.hippo.ehviewer.easytier.EasyTierRuntime
 import com.hippo.ehviewer.library.BrowseFavorites
 import com.hippo.ehviewer.library.BrowseSession
 import com.hippo.ehviewer.library.ExplorerWindows
@@ -113,11 +117,14 @@ import com.hippo.ehviewer.library.safFolderLabel
 import com.hippo.ehviewer.library.toBaseGalleryInfo
 import com.hippo.ehviewer.smb.SmbRepository
 import com.hippo.ehviewer.ui.destinations.BrowseScreenDestination
+import com.hippo.ehviewer.ui.destinations.EasyTierScreenDestination
 import com.hippo.ehviewer.ui.destinations.FolderBrowserScreenDestination
 import com.hippo.ehviewer.ui.destinations.HistoryScreenDestination
 import com.hippo.ehviewer.ui.destinations.LibraryScreenDestination
 import com.hippo.ehviewer.ui.destinations.SmbBrowserScreenDestination
 import com.hippo.ehviewer.ui.destinations.WebDavBrowserScreenDestination
+import com.hippo.ehviewer.ui.easytier.EasyTierDialog
+import com.hippo.ehviewer.ui.easytier.rememberEasyTierStartButtonAction
 import com.hippo.ehviewer.ui.main.BrowseSectionHeader
 import com.hippo.ehviewer.ui.main.GalleryGridDefaults
 import com.hippo.ehviewer.ui.main.LocalBrowseListHeaderInset
@@ -440,6 +447,10 @@ private fun ExplorerPanel(
     val activeId = ExplorerWindows.activeId
     val windows = ExplorerWindows.windows
     val layoutDirection = LocalLayoutDirection.current
+    var showEasyTierDialog by remember { mutableStateOf(false) }
+    val easyTierState by EasyTierRuntime.state.collectAsState()
+    val startEasyTierVpn = rememberEasyTierStartButtonAction()
+    val haptic = LocalHapticFeedback.current
     Column(
         Modifier
             .fillMaxSize()
@@ -513,6 +524,25 @@ private fun ExplorerPanel(
                 )
             }
             val duplicateEnabled = activeId != null
+            Icon(
+                Icons.Default.Hub,
+                contentDescription = stringResource(R.string.settings_easytier),
+                modifier = Modifier
+                    .padding(8.dp)
+                    .size(headerIconSize)
+                    .combinedClickable(
+                        onClick = startEasyTierVpn,
+                        onLongClick = {
+                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                            showEasyTierDialog = true
+                        },
+                    ),
+                tint = if (easyTierState.connectingOrRunning) {
+                    MaterialTheme.colorScheme.primary
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                },
+            )
             Icon(
                 Icons.Default.ContentCopy,
                 contentDescription = stringResource(R.string.explorer_duplicate),
@@ -593,6 +623,16 @@ private fun ExplorerPanel(
                 }
             }
         }
+    }
+    if (showEasyTierDialog) {
+        EasyTierDialog(
+            onDismiss = { showEasyTierDialog = false },
+            onOpenFullSettings = {
+                showEasyTierDialog = false
+                onNavigated()
+                navigator.navigate(EasyTierScreenDestination)
+            },
+        )
     }
 }
 
