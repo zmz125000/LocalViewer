@@ -161,6 +161,30 @@ external fun decodeRawBytesToDirect(
 ): ByteArray?
 
 /**
+ * Same as [decodeRawFileToDirect] for a regular file opened as [fd], which the
+ * caller keeps open and closes. The file is mapped, not copied. Returns null
+ * when [fd] cannot be mapped.
+ */
+external fun decodeRawFdToDirect(
+    fd: Int,
+    maxEdge: Int,
+    present: Int,
+    panelBoost: Float,
+    exposureEv: Float,
+    whiteBalance: Int,
+    kelvin: Int,
+    highlightStops: Float,
+    hdrLinear: Boolean,
+    cameraLook: Boolean,
+    shoulder: Float,
+    shadows: Float,
+    midtones: Float,
+    highlights: Float,
+    outInfo: IntArray,
+    outBoost: FloatArray,
+): ByteArray?
+
+/**
  * Write an embedded JPEG preview to [outPath].
  * [demosaicFallback]: on 64-bit, a missing preview becomes a half-size demosaic
  * JPEG (long edge 512). Reader failure passes false so a missing preview stays missing.
@@ -170,3 +194,6 @@ external fun decodeRawBytesToDirect(
 external fun extractRawPreviewFile(path: String, outPath: String, demosaicFallback: Boolean): Int
 
 external fun extractRawPreviewBytes(input: ByteArray, outPath: String, demosaicFallback: Boolean): Int
+
+/** [extractRawPreviewFile] for a mapped regular file. -1 when [fd] cannot be mapped. */
+external fun extractRawPreviewFd(fd: Int, outPath: String, demosaicFallback: Boolean): Int

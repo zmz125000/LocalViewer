@@ -5,7 +5,11 @@ import android.graphics.BitmapFactory
 import android.graphics.ColorSpace
 import android.hardware.display.DisplayManager
 import android.os.Build
+import android.os.ParcelFileDescriptor
+import android.system.Os
+import android.system.OsConstants
 import android.view.Display
+import com.ehviewer.core.files.openFileDescriptor
 import com.ehviewer.core.files.read
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.image.ByteBufferSource
@@ -19,8 +23,10 @@ import com.hippo.ehviewer.jni.decodeJpeg2000BytesToDirect
 import com.hippo.ehviewer.jni.decodeJxlBytesToDirect
 import com.hippo.ehviewer.jni.decodeJxrBytesToDirect
 import com.hippo.ehviewer.jni.decodeRawBytesToDirect
+import com.hippo.ehviewer.jni.decodeRawFdToDirect
 import com.hippo.ehviewer.jni.decodeRawFileToDirect
 import com.hippo.ehviewer.jni.extractRawPreviewBytes
+import com.hippo.ehviewer.jni.extractRawPreviewFd
 import com.hippo.ehviewer.jni.extractRawPreviewFile
 import com.hippo.ehviewer.util.FileUtils
 import com.hippo.ehviewer.util.HdrDisplayInfo
@@ -31,6 +37,7 @@ import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import kotlinx.io.readByteArray
+import okio.Path
 import okio.Path.Companion.toOkioPath
 import splitties.init.appCtx
 
@@ -209,14 +216,26 @@ object LibDirectDecode {
     private fun decodeRawUnlocked(src: ImageSource, maxEdge: Int): LibDirectResult? {
         val path = (src as? PathSource)?.source
         if (path != null && !isPhysicalRawPath(path.toString())) {
-            return runCatching { path.withLocalRawFile { decodeRawFromFile(it, maxEdge) } }
+            return runCatching { decodeRawContent(path, maxEdge) }
                 .getOrElse { e ->
-                    android.util.Log.e("LibDirectDecode", "RAW content copy failed: $path", e)
+                    android.util.Log.e("LibDirectDecode", "RAW content open failed: $path", e)
                     null
                 }
         }
-        return decodeRawLocal(src, maxEdge)
+        return decodeRawLocal(RawInput.Source(src), maxEdge)
     }
+
+    /** SAF and MediaStore files are mapped in place. Pipes and unmappable files are copied. */
+    private fun decodeRawContent(path: Path, maxEdge: Int): LibDirectResult? {
+        path.openFileDescriptor("r").use { pfd ->
+            if (pfd.isRegularFile()) decodeRawLocal(RawInput.Fd(pfd.fd), maxEdge)?.let { return it }
+        }
+        return path.withLocalRawFile { decodeRawFromFile(it, maxEdge) }
+    }
+
+    private fun ParcelFileDescriptor.isRegularFile(): Boolean = runCatching {
+        OsConstants.S_ISREG(Os.fstat(fileDescriptor).st_mode)
+    }.getOrDefault(false)
 
     private fun decodeRawFromFile(file: File, maxEdge: Int): LibDirectResult? {
         val local = object : PathSource {
@@ -224,22 +243,29 @@ object LibDirectDecode {
             override val type = "image/x-raw"
             override fun close() = Unit
         }
-        return decodeRawLocal(local, maxEdge)
+        return decodeRawLocal(RawInput.Source(local), maxEdge)
     }
 
-    private fun decodeRawLocal(src: ImageSource, maxEdge: Int): LibDirectResult? {
+    private sealed interface RawInput {
+        data class Source(val src: ImageSource) : RawInput
+
+        /** Open regular file. Native code maps it; the caller closes it. */
+        data class Fd(val fd: Int) : RawInput
+    }
+
+    private fun decodeRawLocal(input: RawInput, maxEdge: Int): LibDirectResult? {
         if (!Settings.readerCameraRaw.value) {
-            return rawPreviewFallback(src) ?: decodeRawPresent(src, maxEdge, RawPresent.EightBit)
+            return rawPreviewFallback(input) ?: decodeRawPresent(input, maxEdge, RawPresent.EightBit)
         }
         val mode = rawPresentMode(
             hdrDisplay = Settings.readerHdrDisplay.value,
             advancedColor = Settings.readerAdvancedColor.value,
             panelHdr = rawPanelIsHdr(),
         )
-        return decodeRawPresent(src, maxEdge, mode) ?: rawPreviewFallback(src)
+        return decodeRawPresent(input, maxEdge, mode) ?: rawPreviewFallback(input)
     }
 
-    private fun decodeRawPresent(src: ImageSource, maxEdge: Int, mode: RawPresent): LibDirectResult? {
+    private fun decodeRawPresent(input: RawInput, maxEdge: Int, mode: RawPresent): LibDirectResult? {
         val edge = rawDecodeEdge(maxEdge)
         val panelBoost = if (mode == RawPresent.Hdr) rawPanelBoost() else 1f
         val outInfo = IntArray(6)
@@ -251,8 +277,27 @@ object LibDirectDecode {
         val shadows = rawZone(Settings.readerRawShadows.value)
         val midtones = rawZone(Settings.readerRawMidtones.value)
         val highlights = rawZone(Settings.readerRawHighlights.value)
-        val pixels = when (src) {
-            is PathSource -> decodeRawFileToDirect(
+        val src = (input as? RawInput.Source)?.src
+        val pixels = when {
+            input is RawInput.Fd -> decodeRawFdToDirect(
+                input.fd,
+                edge,
+                mode.ordinal,
+                panelBoost,
+                exposureEv,
+                whiteBalance,
+                kelvin,
+                highlightStops,
+                Settings.readerRawHdrLinear.value && mode == RawPresent.Hdr,
+                Settings.readerRawCameraLook.value,
+                rawShoulder(),
+                shadows,
+                midtones,
+                highlights,
+                outInfo,
+                outBoost,
+            )
+            src is PathSource -> decodeRawFileToDirect(
                 src.source.toString(),
                 edge,
                 mode.ordinal,
@@ -270,7 +315,7 @@ object LibDirectDecode {
                 outInfo,
                 outBoost,
             )
-            is ByteBufferSource -> {
+            src is ByteBufferSource -> {
                 val bytes = readBytes(src) ?: return null
                 decodeRawBytesToDirect(
                     bytes,
@@ -291,20 +336,24 @@ object LibDirectDecode {
                     outBoost,
                 )
             }
+            else -> null
         } ?: return null
         return bitmapFromPacked(pixels, outInfo, outBoost, wrapHardware = true)
     }
 
     /** Embedded JPEG only. A missing preview stays a page error; covers demosaic separately. */
-    private fun rawPreviewFallback(src: ImageSource): LibDirectResult? {
+    private fun rawPreviewFallback(input: RawInput): LibDirectResult? {
         val jpeg = File.createTempFile("rawprev", ".jpg", appCtx.cacheDir)
         return try {
             val wrote = try {
-                when (src) {
-                    is PathSource -> extractRawPreviewFile(src.source.toString(), jpeg.absolutePath, false) == 0
-                    is ByteBufferSource -> {
-                        val bytes = readBytes(src) ?: return null
-                        extractRawPreviewBytes(bytes, jpeg.absolutePath, false) == 0
+                when (input) {
+                    is RawInput.Fd -> extractRawPreviewFd(input.fd, jpeg.absolutePath, false) == 0
+                    is RawInput.Source -> when (val src = input.src) {
+                        is PathSource -> extractRawPreviewFile(src.source.toString(), jpeg.absolutePath, false) == 0
+                        is ByteBufferSource -> {
+                            val bytes = readBytes(src) ?: return null
+                            extractRawPreviewBytes(bytes, jpeg.absolutePath, false) == 0
+                        }
                     }
                 }
             } catch (_: UnsatisfiedLinkError) {
