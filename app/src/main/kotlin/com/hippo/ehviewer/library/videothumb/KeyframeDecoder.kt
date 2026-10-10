@@ -261,6 +261,14 @@ internal class YuvPlanes(
     }
 
     companion object {
+        /**
+         * Layouts a ByteBuffer decoder still writes into [MediaFormat.KEY_COLOR_FORMAT].
+         * Same numbers as the deprecated CodecCapabilities YUV420 planar / semi-planar fields.
+         * [MediaCodecInfo.CodecCapabilities.COLOR_FormatYUV420Flexible] is only a request, not a layout.
+         */
+        private const val COLOR_FORMAT_YUV420_PLANAR = 19
+        private const val COLOR_FORMAT_YUV420_SEMI_PLANAR = 21
+
         fun from(image: Image): YuvPlanes? {
             val sampleBytes = when (image.format) {
                 ImageFormat.YUV_420_888 -> 1
@@ -298,11 +306,11 @@ internal class YuvPlanes(
             val bottom = format.intOr("crop-bottom", height - 1)
             val ySize = stride * sliceHeight
             val (u, v, uvRowStride, uvPixelStride) = when (format.intOr(MediaFormat.KEY_COLOR_FORMAT, 0)) {
-                MediaCodecInfo.CodecCapabilities.COLOR_FormatYUV420Planar -> {
+                COLOR_FORMAT_YUV420_PLANAR -> {
                     val chroma = (stride / 2) * (sliceHeight / 2)
                     Quad(buffer.sliceAt(ySize), buffer.sliceAt(ySize + chroma), stride / 2, 1)
                 }
-                MediaCodecInfo.CodecCapabilities.COLOR_FormatYUV420SemiPlanar ->
+                COLOR_FORMAT_YUV420_SEMI_PLANAR ->
                     Quad(buffer.sliceAt(ySize), buffer.sliceAt(ySize + 1), stride, 2)
                 else -> return null
             }
