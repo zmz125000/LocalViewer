@@ -531,6 +531,8 @@ private fun ExplorerPanel(
                     .padding(8.dp)
                     .size(headerIconSize)
                     .combinedClickable(
+                        interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
+                        indication = null,
                         onClick = startEasyTierVpn,
                         onLongClick = {
                             haptic.performHapticFeedback(HapticFeedbackType.LongPress)
@@ -550,6 +552,8 @@ private fun ExplorerPanel(
                     .padding(8.dp)
                     .size(headerIconSize)
                     .clickable(
+                        interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
+                        indication = null,
                         enabled = duplicateEnabled,
                         onClick = {
                             val copy = ExplorerWindows.duplicateActive() ?: return@clickable
