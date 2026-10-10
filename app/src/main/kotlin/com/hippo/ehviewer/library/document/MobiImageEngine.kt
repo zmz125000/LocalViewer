@@ -9,12 +9,13 @@ import okio.Path
  * cover and illustrations, or a comic's pages). Text is not reflowed.
  */
 class MobiImageEngine private constructor(
-    private val pages: List<Pair<ByteArray, String>>,
+    private val source: ArchiveByteSource,
+    private val pages: List<MobiText.ImagePage>,
     private val remoteSize: Long,
 ) : DocumentImageEngine {
     override val pageCount: Int get() = pages.size
 
-    override fun extOf(index: Int): String? = pages.getOrNull(index)?.second
+    override fun extOf(index: Int): String? = pages.getOrNull(index)?.ext
 
     override fun toIndex(cacheKey: String, complete: Boolean): DocumentExtractCache.Index = DocumentExtractCache.Index(
         v = DocumentExtractCache.INDEX_VERSION,
@@ -22,22 +23,35 @@ class MobiImageEngine private constructor(
         remoteSize = remoteSize,
         format = FORMAT,
         complete = complete,
-        members = pages.mapIndexed { i, (bytes, ext) ->
+        members = pages.mapIndexed { i, page ->
             DocumentExtractCache.Member(
                 i = i,
                 name = "mobi:${i + 1}",
-                ext = ext,
-                uncSize = bytes.size.toLong(),
+                ext = page.ext,
+                uncSize = page.length.toLong(),
             )
         },
     )
 
     override fun extractToCache(cacheKey: String, index: Int): Path? {
-        val (bytes, ext) = pages.getOrNull(index) ?: return null
-        if (DocumentExtractCache.isPageCached(cacheKey, index, ext)) {
-            return DocumentExtractCache.pagePath(cacheKey, index, ext)
+        val page = pages.getOrNull(index) ?: return null
+        if (DocumentExtractCache.isPageCached(cacheKey, index, page.ext)) {
+            return DocumentExtractCache.pagePath(cacheKey, index, page.ext)
         }
-        return DocumentExtractCache.writePage(cacheKey, index, ext, bytes)
+        val bytes = readExact(page) ?: return null
+        return DocumentExtractCache.writePage(cacheKey, index, page.ext, bytes)
+    }
+
+    private fun readExact(page: MobiText.ImagePage): ByteArray? {
+        if (page.length <= 0) return null
+        val buf = ByteArray(page.length)
+        var got = 0
+        while (got < page.length) {
+            val n = source.readAt(page.offset + got, buf, got, page.length - got)
+            if (n <= 0) return null
+            got += n
+        }
+        return buf
     }
 
     companion object {
@@ -46,14 +60,11 @@ class MobiImageEngine private constructor(
         /**
          * @return engine, or null when the container cannot be read.
          * An empty [pageCount] means the book has no image records.
+         * Image bytes are read in [extractToCache], not here.
          */
         fun open(source: ArchiveByteSource, remoteSize: Long = 0L): MobiImageEngine? {
-            val bytes = source.readFully(MobiText.MAX_IMAGE_BYTES) ?: return null
-            val pages = MobiText.imageBlobs(bytes).mapNotNull { chunk ->
-                val ext = MobiText.imageExt(chunk) ?: return@mapNotNull null
-                chunk to ext
-            }
-            return MobiImageEngine(pages, remoteSize)
+            val pages = MobiText.imagePages(source) ?: return null
+            return MobiImageEngine(source, pages, remoteSize)
         }
     }
 }

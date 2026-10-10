@@ -43,3 +43,42 @@ internal class RamBytesPageLoader(
         notifySourceReady(index, orgImg)
     }
 }
+
+/**
+ * MOBI / AZW3 comic pages addressed by record offset. The open reads the index;
+ * each [openSource] reads that one record.
+ */
+internal class MobiSpanPageLoader(
+    scope: CoroutineScope,
+    titleHint: String,
+    private val pageCount: Int,
+    private val extensionOf: (Int) -> String?,
+    private val readPage: (Int) -> ByteArray?,
+    startPage: Int,
+) : PageLoader(
+    scope,
+    info = null,
+    startPage = startPage,
+    initialSize = pageCount,
+) {
+    override val title: String = titleHint
+
+    override fun getImageExtension(index: Int): String? = extensionOf(index)
+
+    override fun savePage(index: Int, file: Path): Boolean = runCatching {
+        val bytes = readPage(index) ?: return@runCatching false
+        File(file.toString()).writeBytes(bytes)
+        true
+    }.getOrDefault(false)
+
+    override fun openSource(index: Int): ImageSource {
+        val bytes = readPage(index) ?: error("page")
+        return byteBufferSource(ByteBuffer.wrap(bytes)) {}
+    }
+
+    override fun prefetchPages(pages: List<Int>, bounds: IntRange) = Unit
+
+    override fun onRequest(index: Int, force: Boolean, orgImg: Boolean) {
+        notifySourceReady(index, orgImg)
+    }
+}

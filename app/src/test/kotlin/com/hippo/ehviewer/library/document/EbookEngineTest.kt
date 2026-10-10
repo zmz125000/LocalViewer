@@ -527,6 +527,167 @@ class EbookEngineTest {
     }
 
     @Test
+    fun mobiUnsetExtraFlagsLeaveTheTextAlone() {
+        // 0xFFFF is "no trailers". Treating it as flags would eat the ending.
+        val sentence = "哲学思考是一种多少有点让人感到晕眩的活动，无法得出任何东西。尾"
+        val file = mobiFile(sentence, emptyList(), extraFlags = 0xFFFF)
+        val book = MobiText.parse(file, "Story")
+        assertNotNull(book)
+        val body = book!!.chapters.joinToString("") { it.text }
+        assertTrue(body.contains("无法得出任何东西。尾"))
+        assertFalse(body.contains('\uFFFD'))
+    }
+
+    @Test
+    fun mobiZeroFirstImageStillFindsFollowingImages() {
+        val png = tinyPng()
+        val file = mobiFile("", listOf(png, png, png), declareFirstImage = false)
+        assertEquals(3, MobiText.imageBlobs(file).size)
+        val pages = MobiText.imageBookPages(file)
+        assertNotNull(pages)
+        assertEquals(3, pages!!.size)
+    }
+
+    @Test
+    fun comicOpenSkipsImagePayloadsAndThePageIndex() {
+        val jpeg = ByteArray(200_000)
+        jpeg[0] = 0xFF.toByte()
+        jpeg[1] = 0xD8.toByte()
+        val html = "<html><body>" +
+            (1..3).joinToString("") { "<img recindex=\"${it.toString().padStart(5, '0')}\" />" } +
+            "</body></html>"
+        val ncx = ByteArray(80_000)
+        ncx[0] = 'I'.code.toByte()
+        ncx[1] = 'N'.code.toByte()
+        ncx[2] = 'D'.code.toByte()
+        ncx[3] = 'X'.code.toByte()
+        val file = mobiFile(html, listOf(jpeg, jpeg, jpeg), ncx = listOf(ncx), declareFirstImage = false)
+        val source = CountingSource(file)
+        val parsed = EbookEngine.parseBook(source, "comic.azw3")
+        assertNotNull(parsed)
+        assertEquals(3, parsed!!.chapters.size)
+        assertTrue(parsed.chapters.all { !it.inToc })
+        assertTrue("read ${source.readBytes} of ${file.size}", source.readBytes < 64_000)
+        val bytes = parsed.resources!!.bytes("mobi:1")
+        assertNotNull(bytes)
+        assertEquals(200_000, bytes!!.size)
+        assertEquals(0xFF, bytes[0].toInt() and 0xFF)
+    }
+
+    @Test
+    fun longTextIsNotAComicOpen() {
+        val jpeg = ByteArray(32)
+        jpeg[0] = 0xFF.toByte()
+        jpeg[1] = 0xD8.toByte()
+        val html = "word ".repeat(400) + (1..3).joinToString("") { "<img recindex=\"0000$it\" />" }
+        val file = mobiFile(html, listOf(jpeg, jpeg, jpeg))
+        assertNull(MobiText.openComic(CountingSource(file)))
+    }
+
+    @Test
+    fun sampleComicsOpenWithoutReadingThePictures() {
+        val samples = File("/home/zlx22/LocalViewer/samples")
+        val books = listOf(
+            File(samples, "BiaoRen11(XinNianYueQiang.azw3") to 200,
+            File(samples, "[路邊的藤井]話009-017.mobi") to 170,
+        )
+        assumeTrue(books.all { it.first.isFile })
+        for ((file, minPages) in books) {
+            val source = CountingFile(file)
+            val comic = MobiText.openComic(source)
+            assertNotNull(file.name, comic)
+            assertTrue(comic!!.pages.size >= minPages)
+            assertTrue(comic.chapters.all { !it.inToc })
+            assertTrue(
+                "${file.name} read ${source.readBytes} of ${file.length()}",
+                source.readBytes < 800_000,
+            )
+            source.close()
+        }
+    }
+
+    @Test
+    fun htmlWrappersDoNotHideAComic() {
+        val png = tinyPng()
+        val html = "<html><head><style>${"x".repeat(500)}</style></head><body>" +
+            (1..3).joinToString("") { "<img recindex=\"${it.toString().padStart(5, '0')}\" />" } +
+            "</body></html>"
+        val file = mobiFile(html, listOf(png, png, png))
+        val pages = MobiText.imageBookPages(file)
+        assertNotNull(pages)
+        assertEquals(3, pages!!.size)
+    }
+
+    @Test
+    fun kindleEmbedUsesKindleBase32() {
+        val png = tinyPng()
+        val html = "${"word ".repeat(400)}<img src=\"kindle:embed:0010\" />"
+        val file = mobiFile(html, List(32) { png })
+        val book = MobiText.parse(file, "Story")
+        assertNotNull(book)
+        assertTrue(book!!.images.containsKey("mobi:32"))
+        assertFalse(book.images.containsKey("mobi:16"))
+    }
+
+    @Test
+    fun kf8EmbedUsesThePrimaryImageWhenItsOwnIndexIsZero() {
+        val png = tinyPng()
+        val html = """<p>KF8 body</p><img src="kindle:embed:0001" />"""
+        val htmlBytes = html.toByteArray(StandardCharsets.UTF_8)
+        val headerLen = 0x80
+        val exth = ByteArray(24)
+        exth[0] = 'E'.code.toByte()
+        exth[1] = 'X'.code.toByte()
+        exth[2] = 'T'.code.toByte()
+        exth[3] = 'H'.code.toByte()
+        putInt(exth, 4, 24)
+        putInt(exth, 8, 1)
+        putInt(exth, 12, 121)
+        putInt(exth, 16, 12)
+        putInt(exth, 20, 3)
+        val rec0 = ByteArray(16 + headerLen + exth.size)
+        rec0[1] = 1
+        putInt(rec0, 4, 3)
+        rec0[9] = 1
+        rec0[16] = 'M'.code.toByte()
+        rec0[17] = 'O'.code.toByte()
+        rec0[18] = 'B'.code.toByte()
+        rec0[19] = 'I'.code.toByte()
+        putInt(rec0, 20, headerLen)
+        putInt(rec0, 16 + 12, 65001)
+        putInt(rec0, 16 + 0x70, 0x40)
+        exth.copyInto(rec0, 16 + headerLen)
+        val kf8Len = 232
+        val kf8 = ByteArray(16 + kf8Len)
+        kf8[1] = 1
+        putInt(kf8, 4, htmlBytes.size)
+        kf8[9] = 1
+        kf8[16] = 'M'.code.toByte()
+        kf8[17] = 'O'.code.toByte()
+        kf8[18] = 'B'.code.toByte()
+        kf8[19] = 'I'.code.toByte()
+        putInt(kf8, 20, kf8Len)
+        putInt(kf8, 16 + 12, 65001)
+        val records = listOf(
+            rec0,
+            "OLD".toByteArray(StandardCharsets.UTF_8),
+            png,
+            "BOUNDARY".toByteArray(StandardCharsets.US_ASCII),
+            kf8,
+            htmlBytes,
+        )
+        val file = palmDb(records)
+        val book = MobiText.parse(file, "KF8")
+        assertNotNull(book)
+        val body = book!!.chapters.joinToString("") { it.text }
+        assertTrue(body.contains("KF8 body"))
+        assertFalse(body.contains("OLD"))
+        assertTrue(book.chapters.any { EbookImages.hasMarker(it.text) })
+        assertTrue(book.images.containsKey("mobi:1"))
+        assertEquals(1, MobiText.imageBlobs(file).size)
+    }
+
+    @Test
     fun kf8PalmDocSectionWinsOverThePrimaryText() {
         val png = tinyPng()
         val html = """<p>KF8 body</p><img src="kindle:embed:0001" />"""
@@ -1103,10 +1264,11 @@ class EbookEngineTest {
         trailing: ByteArray = ByteArray(0),
         textParts: List<ByteArray>? = null,
         ncx: List<ByteArray> = emptyList(),
+        declareFirstImage: Boolean = true,
     ): ByteArray {
         val text = html.toByteArray(StandardCharsets.UTF_8)
         val parts = textParts ?: listOf(text + trailing)
-        val headerLen = if (ncx.isEmpty()) 232 else 0xF8
+        val headerLen = 0xF8
         val rec0 = ByteArray(16 + headerLen)
         rec0[1] = 1
         putInt(rec0, 4, if (textParts == null) text.size else parts.sumOf { it.size })
@@ -1119,11 +1281,13 @@ class EbookEngineTest {
         putInt(rec0, 20, headerLen)
         putInt(rec0, 16 + 12, 65001)
         val imageAt = 1 + parts.size + ncx.size
-        putInt(rec0, 16 + 108, if (images.isEmpty()) -1 else imageAt)
+        val declared = if (images.isEmpty() || !declareFirstImage) 0 else imageAt
+        putInt(rec0, 16 + 108, declared)
         if (ncx.isNotEmpty()) putInt(rec0, 16 + 0xF4, 1 + parts.size)
         if (extraFlags != 0) {
-            rec0[0xF2] = (extraFlags ushr 8).toByte()
-            rec0[0xF3] = extraFlags.toByte()
+            val at = 16 + 0xF2
+            rec0[at] = (extraFlags ushr 8).toByte()
+            rec0[at + 1] = extraFlags.toByte()
         }
         val records = ArrayList<ByteArray>()
         records += rec0
@@ -1199,6 +1363,39 @@ class EbookEngineTest {
             put("OEBPS/ch2.xhtml", "<html><body><h1>Second Two</h1><p>${"beta ".repeat(40)}</p></body></html>")
         }
         return file
+    }
+
+    private class CountingSource(private val data: ByteArray) : com.hippo.ehviewer.library.ArchiveByteSource {
+        var readBytes = 0L
+        override val size: Long = data.size.toLong()
+
+        override fun readAt(offset: Long, buf: ByteArray, off: Int, len: Int): Int {
+            if (len <= 0 || offset < 0L || offset >= data.size) return 0
+            val n = minOf(len, data.size - offset.toInt())
+            data.copyInto(buf, off, offset.toInt(), offset.toInt() + n)
+            readBytes += n
+            return n
+        }
+
+        override fun close() = Unit
+    }
+
+    private class CountingFile(file: File) : com.hippo.ehviewer.library.ArchiveByteSource {
+        private val raf = java.io.RandomAccessFile(file, "r")
+        override val size: Long = file.length()
+        var readBytes = 0L
+
+        override fun readAt(offset: Long, buf: ByteArray, off: Int, len: Int): Int {
+            if (len <= 0 || offset < 0L || offset >= size) return 0
+            raf.seek(offset)
+            val n = raf.read(buf, off, minOf(len.toLong(), size - offset).toInt())
+            if (n > 0) readBytes += n
+            return if (n < 0) 0 else n
+        }
+
+        override fun close() {
+            raf.close()
+        }
     }
 
     private fun charset(vararg names: String): Charset {

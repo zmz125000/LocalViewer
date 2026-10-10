@@ -139,11 +139,11 @@ import com.ehviewer.core.util.logcat
 import com.hippo.ehviewer.EhDB
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.collectAsState
+import com.hippo.ehviewer.gallery.MobiSpanPageLoader
 import com.hippo.ehviewer.gallery.NavigationKind
 import com.hippo.ehviewer.gallery.Page
 import com.hippo.ehviewer.gallery.PageLoader
 import com.hippo.ehviewer.gallery.PdfRamPageLoader
-import com.hippo.ehviewer.gallery.RamBytesPageLoader
 import com.hippo.ehviewer.gallery.ReaderNavigation
 import com.hippo.ehviewer.library.ArchiveByteSource
 import com.hippo.ehviewer.library.BlockCacheArchiveByteSource
@@ -174,7 +174,6 @@ import com.hippo.ehviewer.library.document.TextCharset
 import com.hippo.ehviewer.library.document.ebookDisplayFontSize
 import com.hippo.ehviewer.library.document.pdfTocWithFileName
 import com.hippo.ehviewer.library.document.pdfXrefLoadable
-import com.hippo.ehviewer.library.document.readFully
 import com.hippo.ehviewer.library.document.readPdfChapters
 import com.hippo.ehviewer.library.isEbookFileName
 import com.hippo.ehviewer.library.isMobiContainerFileName
@@ -454,10 +453,12 @@ class PdfReaderActivity : AppCompatActivity() {
                         cacheKey = cacheKey,
                         openExtractSource = pdfExtractOpener(intent, token),
                     )
-                    is PdfDocumentModel.MobiImages -> RamBytesPageLoader(
+                    is PdfDocumentModel.MobiImages -> MobiSpanPageLoader(
                         scope = lifecycleScope,
                         titleHint = title,
-                        pagesBytes = images.pages,
+                        pageCount = images.pageCount,
+                        extensionOf = images::extOf,
+                        readPage = { images.pageBytes(it) },
                         startPage = startPage,
                     )
                     else -> null
@@ -934,18 +935,14 @@ private class EbookLoad(val vector: PdfDocumentModel.Vector?, val sourceHeld: Bo
 private fun tryOpenMobiDirect(intent: Intent, token: String?): PdfDocumentModel.MobiImages? {
     var owned: ArchiveByteSource? = null
     val source = openEbookSource(intent, token) { owned = it } ?: return null
+    var held = false
     return try {
-        val bytes = source.readFully(MobiText.MAX_IMAGE_BYTES) ?: return null
-        val pages = MobiText.imageBookPages(bytes) ?: return null
-        val typed = ArrayList<Pair<ByteArray, String>>(pages.size)
-        for (page in pages) {
-            val ext = MobiText.imageExt(page) ?: return null
-            typed += page to ext
-        }
-        if (typed.size < 3) return null
-        PdfDocumentModel.MobiImages(typed)
+        val comic = MobiText.openComic(source) ?: return null
+        if (comic.pages.size < 3) return null
+        held = true
+        PdfDocumentModel.MobiImages(source, owned, comic.pages)
     } finally {
-        releaseUnheldEbook(source, owned)
+        if (!held) releaseUnheldEbook(source, owned)
     }
 }
 
@@ -1123,13 +1120,35 @@ private sealed interface PdfDocumentModel {
         }
     }
 
-    /** Raw MOBI / AZW3 comic pages. The loader keeps the bytes; close is a no-op. */
+    /** Raw MOBI / AZW3 comic pages. Records are read when a page is shown. */
     class MobiImages(
-        val pages: List<Pair<ByteArray, String>>,
+        private val source: ArchiveByteSource,
+        private val owned: ArchiveByteSource?,
+        private val pages: List<MobiText.ImagePage>,
     ) : PdfDocumentModel {
         override val pageCount get() = pages.size
         override val chapters: List<PdfTocEntry> = emptyList()
-        override fun close() = Unit
+
+        fun extOf(index: Int): String? = pages.getOrNull(index)?.ext
+
+        fun pageBytes(index: Int): ByteArray? {
+            val page = pages.getOrNull(index) ?: return null
+            if (page.length <= 0) return null
+            val buf = ByteArray(page.length)
+            var got = 0
+            while (got < page.length) {
+                val n = source.readAt(page.offset + got, buf, got, page.length - got)
+                if (n <= 0) return null
+                got += n
+            }
+            return buf
+        }
+
+        override fun close() {
+            runCatching { source.close() }
+            val extra = owned
+            if (extra != null && extra !== source) runCatching { extra.close() }
+        }
     }
 }
 
@@ -3517,7 +3536,7 @@ private fun PdfPageThumb(
                         doc.engine.extractBytes(index)?.let(::decodePdfThumb)
                     }.getOrNull()
                     is PdfDocumentModel.MobiImages -> runCatching {
-                        doc.pages.getOrNull(index)?.first?.let(::decodePdfThumb)
+                        doc.pageBytes(index)?.let(::decodePdfThumb)
                     }.getOrNull()
                 }
             }
