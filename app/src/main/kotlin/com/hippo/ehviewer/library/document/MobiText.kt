@@ -1,5 +1,6 @@
 package com.hippo.ehviewer.library.document
 
+import com.hippo.ehviewer.library.ArchiveByteSource
 import java.io.ByteArrayOutputStream
 import java.nio.charset.Charset
 
@@ -21,6 +22,10 @@ internal object MobiText {
     private val TAGX = byteArrayOf('T'.code.toByte(), 'A'.code.toByte(), 'G'.code.toByte(), 'X'.code.toByte())
     private val BOUNDARY = "BOUNDARY".encodeToByteArray()
     private val KINDLE_EMBED = Regex("""(?i)kindle:embed:([0-9a-v]+)""")
+    private val IMG_TAG = Regex("""(?is)<img\b[^>]*>""")
+    private const val MAX_HEADER_RECORD = 256 * 1024
+    private const val MAX_TEXT_RECORD = 1024 * 1024
+    private const val MAX_COMIC_TEXT = 2 * 1024 * 1024
 
     data class Book(
         val chapters: List<EbookChapter>,
@@ -109,6 +114,50 @@ internal object MobiText {
 
     fun key(index: Int): String = "mobi:$index"
 
+    /** One image record. [recindex] is 1-based from the first image, with gaps kept. */
+    data class ImagePage(val recindex: Int, val offset: Long, val length: Int, val ext: String)
+
+    /**
+     * Comic open that did not read image payloads or NCX entries.
+     * [chapters] are full-page pictures and are not contents rows.
+     */
+    data class ComicFile(val chapters: List<EbookChapter>, val pages: List<ImagePage>)
+
+    /**
+     * Image-page MOBI / AZW3, or null when the file is a text novel, DRM, or Huff/CDIC.
+     * Reads the record table, the text records, and a few bytes of magic per record.
+     */
+    fun openComic(source: ArchiveByteSource): ComicFile? {
+        val palm = palmOf(source) ?: return null
+        val primary = palm.bytes(0, MAX_HEADER_RECORD) ?: return null
+        val section = kf8Section(palm, primary) ?: 0
+        val head = sectionHeader(palm, section, primary) ?: return null
+        val fallback = if (section == 0) -1 else sectionHeader(palm, 0, primary)?.firstImage ?: -1
+        val pages = spanList(palm, head, fallback)
+        if (pages.size < 3) return null
+        val html = htmlOf(palm, section, head) ?: return null
+        val visible = EbookHtml.toText(html.replace(IMG_TAG, ""))
+        if (visible.length > pages.size * 40) return null
+        val chapters = pages.map { page ->
+            EbookChapter(
+                "",
+                EbookImages.marker(key(page.recindex), 0.75f, fullPage = true, widthPx = 0),
+                0,
+                inToc = false,
+            )
+        }
+        return ComicFile(chapters, pages)
+    }
+
+    /**
+     * Image records in reader order, without their payloads.
+     * Null when the container header cannot be read.
+     */
+    fun imagePages(source: ArchiveByteSource): List<ImagePage>? {
+        val palm = palmOf(source) ?: return null
+        return pagesOf(palm)
+    }
+
     private data class Section(
         val compression: Int,
         val textLen: Int,
@@ -168,7 +217,13 @@ internal object MobiText {
                 blobs[key] = image
                 val size = EbookImages.sizeOf(image)
                 val aspect = if (size != null) size.first.toFloat() / size.second else 0.75f
-                EbookChapter("", EbookImages.marker(key, aspect, fullPage = true, size?.first ?: 0), 0)
+                // A page list is not a contents. The NCX of these files is one row per image.
+                EbookChapter(
+                    "",
+                    EbookImages.marker(key, aspect, fullPage = true, size?.first ?: 0),
+                    0,
+                    inToc = false,
+                )
             }
         } else {
             val ncx = readNcx(records, bytes, head.ncxIndex, head.encoding)
@@ -199,11 +254,9 @@ internal object MobiText {
     }
 
     /** First record at or after [start] whose payload is an image, or -1. */
-    private fun findFirstImage(bytes: ByteArray, records: List<Int>, start: Int): Int {
-        for (n in start until records.size) {
-            if (n !in records.indices) break
-            val end = records.getOrNull(n + 1) ?: bytes.size
-            val chunk = slice(bytes, records[n], end) ?: continue
+    private fun findFirstImage(start: Int, recordCount: Int, peek: (Int) -> ByteArray?): Int {
+        for (n in start until recordCount) {
+            val chunk = peek(n) ?: continue
             if (imageExt(chunk) != null) return n
         }
         return -1
@@ -275,6 +328,23 @@ internal object MobiText {
         if (section !in records.indices) return null
         val next = records.getOrNull(section + 1) ?: bytes.size
         val rec0 = slice(bytes, records[section], next) ?: return null
+        return sectionHeader(rec0, records.size, section) { index, n ->
+            if (index !in records.indices) return@sectionHeader null
+            val end = records.getOrNull(index + 1) ?: bytes.size
+            slice(bytes, records[index], minOf(end, records[index] + n))
+        }
+    }
+
+    /**
+     * Header fields plus the first image record. [peek] reads at most [n] bytes of a
+     * record, so a comic index does not pull JPEG payloads or the NCX body.
+     */
+    private fun sectionHeader(
+        rec0: ByteArray,
+        recordCount: Int,
+        section: Int,
+        peek: (index: Int, n: Int) -> ByteArray?,
+    ): Section? {
         if (rec0.size < 16) return null
         val compression = u16(rec0, 0)
         val textLen = u32(rec0, 4)
@@ -296,16 +366,17 @@ internal object MobiText {
         // Calibre and some AZW3 comics leave First Image at 0 and still store JPEGs
         // after the text records. Recindex stays `record - firstImage + 1`.
         if (firstImage <= 0) {
-            firstImage = findFirstImage(bytes, records, section + textRecords + 1)
+            firstImage = findFirstImage(section + textRecords + 1, recordCount) { peek(it, 16) }
         }
         // NCX index record. Present once the MOBI header reaches 0xF8. 0xFFFFFFFF means none.
         // Hybrid files leave that field empty and keep the contents INDX at the first non-book record.
+        // Only the four-byte magic is read here. Comic open does not walk the entries.
         val ncxField = if (mobi && headerLen >= 0xF8 && rec0.size >= 16 + 0xF8) u32(rec0, 16 + 0xF4) else -1
         val firstNonBook = if (mobi && headerLen >= 0x44 && rec0.size >= 16 + 0x44) u32(rec0, 16 + 0x40) else -1
         val textEnd = section + textRecords
         val ncxIndex = when {
-            isIndx(bytes, records, ncxField) -> ncxField
-            firstNonBook > textEnd && isIndx(bytes, records, firstNonBook) -> firstNonBook
+            indxMagic(peek(ncxField, 4)) -> ncxField
+            firstNonBook > textEnd && indxMagic(peek(firstNonBook, 4)) -> firstNonBook
             else -> -1
         }
         return Section(compression, textLen, textRecords, extraFlags, encoding, firstImage, ncxIndex)
@@ -405,12 +476,131 @@ internal object MobiText {
 
     private data class TagSpec(val tag: Int, val valuesPerEntry: Int, val mask: Int, val endFlag: Int)
 
-    private fun isIndx(file: ByteArray, records: List<Int>, index: Int): Boolean {
-        if (index !in records.indices) return false
-        val start = records[index]
-        if (start < 0 || start + 4 > file.size) return false
-        return file[start] == INDX[0] && file[start + 1] == INDX[1] &&
-            file[start + 2] == INDX[2] && file[start + 3] == INDX[3]
+    private fun indxMagic(prefix: ByteArray?): Boolean = prefix != null && prefix.startsWith(INDX)
+
+    private class Palm(
+        val size: Int,
+        val offsets: IntArray,
+        val read: (offset: Int, length: Int) -> ByteArray?,
+    ) {
+        fun length(index: Int): Int {
+            if (index !in offsets.indices) return 0
+            val start = offsets[index]
+            val end = if (index + 1 < offsets.size) offsets[index + 1] else size
+            return (end - start).coerceAtLeast(0)
+        }
+
+        fun bytes(index: Int, max: Int = Int.MAX_VALUE): ByteArray? {
+            val start = offsets.getOrNull(index) ?: return null
+            val n = minOf(length(index), max)
+            if (n <= 0) return ByteArray(0)
+            return read(start, n)
+        }
+    }
+
+    private fun palmOf(source: ArchiveByteSource): Palm? {
+        val sizeL = runCatching { source.size }.getOrDefault(-1L)
+        if (sizeL <= 78L || sizeL > MAX_IMAGE_BYTES) return null
+        val size = sizeL.toInt()
+        val head = readExact(source, 0L, 78) ?: return null
+        val n = u16(head, 76)
+        if (n < 2 || n > 100_000) return null
+        val table = readExact(source, 78L, n * 8) ?: return null
+        val offsets = IntArray(n)
+        for (i in 0 until n) {
+            val off = u32(table, i * 8)
+            if (off < 0 || off > size) return null
+            offsets[i] = off
+        }
+        return Palm(size, offsets) { offset, length -> readExact(source, offset.toLong(), length) }
+    }
+
+    /** Text records of [section] only. A record past [MAX_TEXT_RECORD] is not a comic. */
+    private fun htmlOf(palm: Palm, section: Int, head: Section): String? {
+        if (head.textLen <= 0) return ""
+        if (head.textLen > MAX_COMIC_TEXT) return null
+        val raw = ByteArrayOutputStream()
+        for (n in 1..head.textRecords) {
+            val recIndex = section + n
+            if (palm.length(recIndex) > MAX_TEXT_RECORD) return null
+            val chunk = palm.bytes(recIndex, MAX_TEXT_RECORD) ?: continue
+            val stripped = if (head.extraFlags != 0) stripExtra(chunk, head.extraFlags) else chunk
+            val plain = when (head.compression) {
+                COMPRESSION_NONE -> stripped
+                else -> palmdoc(stripped)
+            }
+            val room = head.textLen - raw.size()
+            if (room <= 0) break
+            if (plain.size <= room) raw.write(plain) else raw.write(plain, 0, room)
+        }
+        return decode(raw.toByteArray(), head.encoding)
+    }
+
+    /**
+     * Same image list as [imageBlobs]: KF8 when that section has images, else record 0.
+     * Payloads stay on disk.
+     */
+    private fun pagesOf(palm: Palm): List<ImagePage> {
+        val primary = palm.bytes(0, MAX_HEADER_RECORD) ?: return emptyList()
+        val primaryHead = sectionHeader(palm, 0, primary)
+        val kf8 = kf8Section(palm, primary)
+        if (kf8 != null) {
+            val fromKf8 = spanList(palm, sectionHeader(palm, kf8, null), primaryHead?.firstImage ?: -1)
+            if (fromKf8.isNotEmpty()) return fromKf8
+        }
+        return spanList(palm, primaryHead, -1)
+    }
+
+    private fun sectionHeader(palm: Palm, section: Int, primary: ByteArray?): Section? {
+        val rec = if (section == 0 && primary != null) primary else palm.bytes(section, MAX_HEADER_RECORD)
+        val rec0 = rec ?: return null
+        return sectionHeader(rec0, palm.offsets.size, section) { index, n -> palm.bytes(index, n) }
+    }
+
+    private fun spanList(palm: Palm, head: Section?, fallbackFirstImage: Int): List<ImagePage> {
+        if (head == null) return emptyList()
+        val firstImage = if (head.firstImage > 0) head.firstImage else fallbackFirstImage
+        if (firstImage <= 0) return emptyList()
+        val imageStop = if (head.ncxIndex > firstImage) head.ncxIndex else palm.offsets.size
+        val out = ArrayList<ImagePage>()
+        for (n in firstImage until imageStop) {
+            if (n !in palm.offsets.indices) break
+            val prefix = palm.bytes(n, 16) ?: continue
+            val ext = imageExt(prefix) ?: continue
+            val length = palm.length(n)
+            if (length <= 0) continue
+            out += ImagePage(n - firstImage + 1, palm.offsets[n].toLong(), length, ext)
+        }
+        return out
+    }
+
+    private fun kf8Section(palm: Palm, rec0: ByteArray): Int? {
+        if (rec0.size < 16 + 0x74 || !isMobiAt(rec0, 16)) return null
+        val headerLen = u32(rec0, 20)
+        if (headerLen < 0x74 || 16 + headerLen > rec0.size) return null
+        if (u32(rec0, 16 + 0x70) and 0x40 == 0) return null
+        val boundary = readExthU32(rec0, 16 + headerLen, 121) ?: return null
+        if (boundary !in palm.offsets.indices) return null
+        val boundaryBytes = palm.bytes(boundary, MAX_HEADER_RECORD) ?: return null
+        val section = when {
+            boundaryBytes.startsWith(BOUNDARY) -> boundary + 1
+            looksLikePalmDoc(boundaryBytes) -> boundary
+            else -> return null
+        }
+        if (section !in palm.offsets.indices || section == 0) return null
+        return section
+    }
+
+    private fun readExact(source: ArchiveByteSource, offset: Long, length: Int): ByteArray? {
+        if (length <= 0) return ByteArray(0)
+        val buf = ByteArray(length)
+        var got = 0
+        while (got < length) {
+            val n = source.readAt(offset + got, buf, got, length - got)
+            if (n <= 0) return null
+            got += n
+        }
+        return buf
     }
 
     /**

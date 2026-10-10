@@ -549,6 +549,64 @@ class EbookEngineTest {
     }
 
     @Test
+    fun comicOpenSkipsImagePayloadsAndThePageIndex() {
+        val jpeg = ByteArray(200_000)
+        jpeg[0] = 0xFF.toByte()
+        jpeg[1] = 0xD8.toByte()
+        val html = "<html><body>" +
+            (1..3).joinToString("") { "<img recindex=\"${it.toString().padStart(5, '0')}\" />" } +
+            "</body></html>"
+        val ncx = ByteArray(80_000)
+        ncx[0] = 'I'.code.toByte()
+        ncx[1] = 'N'.code.toByte()
+        ncx[2] = 'D'.code.toByte()
+        ncx[3] = 'X'.code.toByte()
+        val file = mobiFile(html, listOf(jpeg, jpeg, jpeg), ncx = listOf(ncx), declareFirstImage = false)
+        val source = CountingSource(file)
+        val parsed = EbookEngine.parseBook(source, "comic.azw3")
+        assertNotNull(parsed)
+        assertEquals(3, parsed!!.chapters.size)
+        assertTrue(parsed.chapters.all { !it.inToc })
+        assertTrue("read ${source.readBytes} of ${file.size}", source.readBytes < 64_000)
+        val bytes = parsed.resources!!.bytes("mobi:1")
+        assertNotNull(bytes)
+        assertEquals(200_000, bytes!!.size)
+        assertEquals(0xFF, bytes[0].toInt() and 0xFF)
+    }
+
+    @Test
+    fun longTextIsNotAComicOpen() {
+        val jpeg = ByteArray(32)
+        jpeg[0] = 0xFF.toByte()
+        jpeg[1] = 0xD8.toByte()
+        val html = "word ".repeat(400) + (1..3).joinToString("") { "<img recindex=\"0000$it\" />" }
+        val file = mobiFile(html, listOf(jpeg, jpeg, jpeg))
+        assertNull(MobiText.openComic(CountingSource(file)))
+    }
+
+    @Test
+    fun sampleComicsOpenWithoutReadingThePictures() {
+        val samples = File("/home/zlx22/LocalViewer/samples")
+        val books = listOf(
+            File(samples, "BiaoRen11(XinNianYueQiang.azw3") to 200,
+            File(samples, "[路邊的藤井]話009-017.mobi") to 170,
+        )
+        assumeTrue(books.all { it.first.isFile })
+        for ((file, minPages) in books) {
+            val source = CountingFile(file)
+            val comic = MobiText.openComic(source)
+            assertNotNull(file.name, comic)
+            assertTrue(comic!!.pages.size >= minPages)
+            assertTrue(comic.chapters.all { !it.inToc })
+            assertTrue(
+                "${file.name} read ${source.readBytes} of ${file.length()}",
+                source.readBytes < 800_000,
+            )
+            source.close()
+        }
+    }
+
+    @Test
     fun htmlWrappersDoNotHideAComic() {
         val png = tinyPng()
         val html = "<html><head><style>${"x".repeat(500)}</style></head><body>" +
@@ -1305,6 +1363,39 @@ class EbookEngineTest {
             put("OEBPS/ch2.xhtml", "<html><body><h1>Second Two</h1><p>${"beta ".repeat(40)}</p></body></html>")
         }
         return file
+    }
+
+    private class CountingSource(private val data: ByteArray) : com.hippo.ehviewer.library.ArchiveByteSource {
+        var readBytes = 0L
+        override val size: Long = data.size.toLong()
+
+        override fun readAt(offset: Long, buf: ByteArray, off: Int, len: Int): Int {
+            if (len <= 0 || offset < 0L || offset >= data.size) return 0
+            val n = minOf(len, data.size - offset.toInt())
+            data.copyInto(buf, off, offset.toInt(), offset.toInt() + n)
+            readBytes += n
+            return n
+        }
+
+        override fun close() = Unit
+    }
+
+    private class CountingFile(file: File) : com.hippo.ehviewer.library.ArchiveByteSource {
+        private val raf = java.io.RandomAccessFile(file, "r")
+        override val size: Long = file.length()
+        var readBytes = 0L
+
+        override fun readAt(offset: Long, buf: ByteArray, off: Int, len: Int): Int {
+            if (len <= 0 || offset < 0L || offset >= size) return 0
+            raf.seek(offset)
+            val n = raf.read(buf, off, minOf(len.toLong(), size - offset).toInt())
+            if (n > 0) readBytes += n
+            return if (n < 0) 0 else n
+        }
+
+        override fun close() {
+            raf.close()
+        }
     }
 
     private fun charset(vararg names: String): Charset {

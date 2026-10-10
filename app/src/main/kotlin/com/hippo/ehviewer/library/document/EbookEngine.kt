@@ -82,6 +82,12 @@ internal object EbookEngine {
     }
 
     private fun parseMobi(source: ArchiveByteSource, fileName: String): EbookParse {
+        // Comics are a record index plus the text records. The page index is not a TOC,
+        // and the JPEG payloads are read when a page is drawn.
+        MobiText.openComic(source)?.let { comic ->
+            val resources = EbookResources.mobiSpans(source, comic.pages)
+            return EbookParse(comic.chapters, resources)
+        }
         val bytes = source.readFully(MobiText.MAX_IMAGE_BYTES) ?: return EbookParse(emptyList())
         val book = MobiText.parse(bytes, titleFromName(fileName)) ?: return EbookParse(emptyList())
         val resources = if (book.images.isEmpty()) null else EbookResources.mobi(book.images)

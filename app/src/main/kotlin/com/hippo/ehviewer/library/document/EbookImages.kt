@@ -178,18 +178,19 @@ internal object EbookImages {
 
 /**
  * Bytes for an inline or comic image. EPUB keeps the ZIP open. MOBI keeps
- * the image records that were copied out while the file was read.
+ * either copied records or record spans in the still-open file.
  */
 internal class EbookResources(
     private val source: ArchiveByteSource?,
     private val zip: ZipCentralDirectory?,
+    private val spans: Map<String, Pair<Long, Int>> = emptyMap(),
     private val blobs: MutableMap<String, ByteArray> = HashMap(),
     private val aspects: MutableMap<String, Float> = HashMap(),
 ) {
     var blobBytes: Int = 0
         private set
 
-    val hasImages: Boolean get() = aspects.isNotEmpty() || blobs.isNotEmpty()
+    val hasImages: Boolean get() = aspects.isNotEmpty() || blobs.isNotEmpty() || spans.isNotEmpty()
 
     fun remember(key: String, bytes: ByteArray): Float {
         val aspect = EbookImages.aspectOf(bytes).takeIf { it > 0.05f } ?: 0.75f
@@ -205,9 +206,29 @@ internal class EbookResources(
 
     fun bytes(key: String): ByteArray? {
         blobs[key]?.let { return it }
+        val span = spans[key]
+        val held = source
+        if (span != null && held != null) {
+            val (offset, length) = span
+            val got = readExact(held, offset, length) ?: return null
+            remember(key, got)
+            return got
+        }
         val z = zip ?: return null
         val entry = z.find(key) ?: return null
         return z.extract(entry)
+    }
+
+    private fun readExact(source: ArchiveByteSource, offset: Long, length: Int): ByteArray? {
+        if (length <= 0) return null
+        val buf = ByteArray(length)
+        var got = 0
+        while (got < length) {
+            val n = source.readAt(offset + got, buf, got, length - got)
+            if (n <= 0) return null
+            got += n
+        }
+        return buf
     }
 
     fun close() {
@@ -225,6 +246,13 @@ internal class EbookResources(
             val res = EbookResources(source = null, zip = null)
             for ((k, v) in blobs) res.remember(k, v)
             return res
+        }
+
+        /** Comic pages stay in [source] until a page is drawn. */
+        fun mobiSpans(source: ArchiveByteSource, pages: List<MobiText.ImagePage>): EbookResources {
+            val spans = LinkedHashMap<String, Pair<Long, Int>>(pages.size)
+            for (page in pages) spans[MobiText.key(page.recindex)] = page.offset to page.length
+            return EbookResources(source, zip = null, spans = spans)
         }
     }
 }
