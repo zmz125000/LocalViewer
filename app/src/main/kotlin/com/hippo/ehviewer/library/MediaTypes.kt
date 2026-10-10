@@ -192,6 +192,17 @@ fun isEbookFileName(name: String): Boolean {
 }
 
 /**
+ * Double-tap sibling in the PDF reader and the image reader.
+ * Comic archives stay. Every ebook stays too, whether the listing stored it
+ * as an archive gallery (pdf, epub, mobi, azw, azw3, fb2) or a regular file.
+ */
+fun isSiblingHopArchive(fileName: String, displayName: String = fileName): Boolean = isStreamableArchiveFileName(fileName) ||
+    isSolidArchiveFileName(fileName) ||
+    isDocumentFileName(fileName) ||
+    isEbookFileName(fileName) ||
+    isEbookFileName(displayName)
+
+/**
  * Packaged ebooks that belong in the Photo filter as galleries, same as PDF and EPUB.
  * Loose text stays documents-only: txt, Markdown, and HTML.
  * Not added to [ARCHIVE_EXTENSIONS]; libarchive and image extract stay PDF/EPUB/archives.

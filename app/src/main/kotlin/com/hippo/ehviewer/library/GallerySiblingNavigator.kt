@@ -185,11 +185,7 @@ object GallerySiblingNavigator {
             when (e) {
                 is BrowseEntryRemote.FolderGallery -> e
                 is BrowseEntryRemote.ArchiveGallery ->
-                    e.takeIf {
-                        isStreamableArchiveFileName(it.fileName) ||
-                            isSolidArchiveFileName(it.fileName) ||
-                            isDocumentFileName(it.fileName)
-                    }
+                    e.takeIf { isSiblingHopArchive(it.fileName, it.name) }
                 is BrowseEntryRemote.RegularFile ->
                     e.takeIf { isEbookFileName(it.fileName) || isEbookFileName(it.name) }
                 else -> null
@@ -298,11 +294,7 @@ object GallerySiblingNavigator {
             when (e) {
                 is BrowseEntryRemote.FolderGallery -> e
                 is BrowseEntryRemote.ArchiveGallery ->
-                    e.takeIf {
-                        isStreamableArchiveFileName(it.fileName) ||
-                            isSolidArchiveFileName(it.fileName) ||
-                            isDocumentFileName(it.fileName)
-                    }
+                    e.takeIf { isSiblingHopArchive(it.fileName, it.name) }
                 is BrowseEntryRemote.RegularFile ->
                     e.takeIf { isEbookFileName(it.fileName) || isEbookFileName(it.name) }
                 else -> null
