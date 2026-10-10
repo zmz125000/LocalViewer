@@ -310,15 +310,40 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         base.filterByBrowseSearch(search.keyword) { it.name }
     }
 
+    val librarySortPref by Settings.librarySortMode.collectAsState()
+    val libraryDateSort = fromLibrary &&
+        libraryOpenUsesDateSort(LibrarySortMode.fromPref(librarySortPref))
+
+    fun libraryDateSortNow(): Boolean = fromLibrary &&
+        libraryOpenUsesDateSort(LibrarySortMode.fromPref(Settings.librarySortMode.value))
+
     /**
-     * Image RegularFiles in the current listing — photo-grid virtual folder **and**
-     * Folder-mode loose images (shared reader / cover keys).
+     * Image RegularFiles in name order. Folder Name/Date does not change this.
+     * The photo grid applies its own visit-only Date override on top.
      */
     val folderImages = remember(filteredEntries) {
         filteredEntries
             .filterIsInstance<BrowseEntry.RegularFile>()
             .filter { isImageFileName(it.name) }
             .sortedWith { a, b -> naturalCompare(a.name, b.name) }
+    }
+    val photoGridKey = if (photoGrid) {
+        stack.lastOrNull()?.let { "${it.rootId}|${it.path}|${it.relativePath}|${it.zipInnerRel}" }
+    } else {
+        null
+    }
+    val gridSort = rememberPhotoGridSort(photoGridKey, libraryDateSort && photoGridKey != null)
+    val photoGridImages = remember(folderImages, photoGrid, gridSort.mode, gridSort.ascending) {
+        if (!photoGrid) {
+            folderImages
+        } else {
+            folderImages.sortedPhotoGridPages(
+                gridSort.mode,
+                gridSort.ascending,
+                nameOf = { it.name },
+                dateOf = { it.lastModifiedMs },
+            )
+        }
     }
 
     /** Path the current [entries] belong to — avoids showing the wrong dir during reload. */
@@ -429,12 +454,91 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         zipInnerRel = parent.zipInnerRel,
     )
 
-    fun applyLocalPhotoGridFiles(frame: BrowseSession.LocalFrame, names: List<String>) {
-        entries = FolderGalleryIndex.photoGridLocalFiles(frame.path, frame.zipInnerRel, names)
+    fun stampOpenMtimes(listed: List<BrowseEntry>, mtimes: Map<String, Long>): List<BrowseEntry> {
+        if (mtimes.isEmpty()) return listed
+        return listed.map { entry ->
+            when (entry) {
+                is BrowseEntry.RegularFile -> {
+                    val ms = mtimes[entry.name] ?: 0L
+                    if (ms > 0L) entry.copy(lastModifiedMs = ms) else entry
+                }
+                is BrowseEntry.VideoFile -> {
+                    val ms = mtimes[entry.name] ?: 0L
+                    if (ms > 0L) entry.copy(lastModifiedMs = ms) else entry
+                }
+                else -> entry
+            }
+        }
+    }
+
+    suspend fun mtimesForLibraryOpen(frame: BrowseSession.LocalFrame): Map<String, Long> {
+        val folder = if (frame.isZipBrowse) {
+            ZipAsDirListing.virtualRelativeDir(frame.relativePath, frame.zipInnerRel.orEmpty())
+        } else {
+            frame.relativePath
+        }
+        val db = libraryDirectFileMtimes(LocalLibrary.galleriesForRoot(frame.rootId), frame.rootId, folder)
+        val root = LocalLibrary.loadRoot(frame.rootId)
+        val rootPath = root?.let { LocalLibrary.rootPath(it) }
+        val indexed = if (rootPath == null) {
+            emptyMap()
+        } else {
+            FolderGalleryIndex.loadLocalDirectMtimes(
+                frame.rootId,
+                LocalFolderListing.rootConfigKey(rootPath, frame.preferMediaStore),
+                folder,
+                rootAbs = rootPath,
+            )
+        }
+        var merged = mergeOpenMtimes(db, indexed)
+        if (merged.isEmpty() && !frame.isZipBrowse) {
+            val path = frame.path.toPath()
+            val media = if (frame.videoFolder) {
+                MediaStoreFs.videoFileMtimes(path)
+            } else {
+                MediaStoreFs.imageFileMtimes(path)
+            }
+            if (media != null) merged = media
+        }
+        return merged
+    }
+
+    LaunchedEffect(photoGridKey, gridSort.mode) {
+        if (photoGridKey == null || gridSort.mode != BrowseSortMode.Date) return@LaunchedEffect
+        val frame = stack.lastOrNull() ?: return@LaunchedEffect
+        val mtimes = withIOContext { mtimesForLibraryOpen(frame) }
+        if (mtimes.isEmpty()) return@LaunchedEffect
+        entries = stampOpenMtimes(entries, mtimes)
+    }
+
+    /** Fill modified times so a Library Date open can order photo-grid and video-folder rows. */
+    fun stampLibraryOpenDates(frame: BrowseSession.LocalFrame) {
+        if (!libraryDateSortNow()) return
+        launchIO {
+            val mtimes = mtimesForLibraryOpen(frame)
+            if (mtimes.isEmpty()) return@launchIO
+            withUIContext {
+                val current = stack.lastOrNull() ?: return@withUIContext
+                if (frameListKey(current) != frameListKey(frame)) return@withUIContext
+                entries = stampOpenMtimes(entries, mtimes)
+            }
+        }
+    }
+
+    fun applyLocalPhotoGridFiles(
+        frame: BrowseSession.LocalFrame,
+        names: List<String>,
+        mtimes: Map<String, Long> = emptyMap(),
+    ) {
+        entries = stampOpenMtimes(
+            FolderGalleryIndex.photoGridLocalFiles(frame.path, frame.zipInnerRel, names),
+            mtimes,
+        )
         listedPath = frameListKey(frame)
         loading = false
         refreshing = false
         error = null
+        if (mtimes.isEmpty()) stampLibraryOpenDates(frame)
     }
 
     fun applyLocalVideoFolderFiles(frame: BrowseSession.LocalFrame, names: List<String>) {
@@ -457,6 +561,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         listedPath = frameListKey(frame)
         loading = false
         refreshing = false
+        stampLibraryOpenDates(frame)
         error = null
     }
 
@@ -545,9 +650,17 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         val targetPath = frameListKey(frame)
         // Photo-grid open: same complete index the reader uses — no directory scan.
         if (!force && frame.photoGrid) {
-            val alreadyShown = listedPath == targetPath &&
-                entries.any { it is BrowseEntry.RegularFile && isImageFileName(it.name) }
-            if (alreadyShown) {
+            val shownImages = entries.filter { it is BrowseEntry.RegularFile && isImageFileName(it.name) }
+            val alreadyShown = listedPath == targetPath && shownImages.isNotEmpty()
+            val missingDates = libraryDateSortNow() &&
+                shownImages.any { (it as BrowseEntry.RegularFile).lastModifiedMs <= 0L }
+            if (alreadyShown && !missingDates) {
+                loading = false
+                refreshing = false
+                return
+            }
+            if (alreadyShown && missingDates) {
+                stampLibraryOpenDates(frame)
                 loading = false
                 refreshing = false
                 return
@@ -570,15 +683,23 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                 null
             } ?: MediaStoreFs.imageFileNames(frame.path.toPath())
             if (!names.isNullOrEmpty()) {
-                applyLocalPhotoGridFiles(frame, names)
+                val mtimes = mtimesForLibraryOpen(frame)
+                applyLocalPhotoGridFiles(frame, names, mtimes)
                 return
             }
         }
         // Video-folder overlay: library index / DB file list — no browse classify scan.
         if (!force && frame.videoFolder && !frame.isZipBrowse) {
-            val alreadyShown = listedPath == targetPath &&
-                entries.any { it is BrowseEntry.VideoFile }
-            if (alreadyShown) {
+            val shownVideos = entries.filterIsInstance<BrowseEntry.VideoFile>()
+            val alreadyShown = listedPath == targetPath && shownVideos.isNotEmpty()
+            val missingDates = libraryDateSortNow() && shownVideos.any { it.lastModifiedMs <= 0L }
+            if (alreadyShown && !missingDates) {
+                loading = false
+                refreshing = false
+                return
+            }
+            if (alreadyShown && missingDates) {
+                stampLibraryOpenDates(frame)
                 loading = false
                 refreshing = false
                 return
@@ -1365,6 +1486,8 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         updateStack(stack + newFrame)
         if (names != null) {
             applyLocalPhotoGridFiles(newFrame, names)
+        } else if (libraryDateSortNow()) {
+            stampLibraryOpenDates(newFrame)
         }
     }
 
@@ -1498,7 +1621,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
             openNestedFolderImage(frame, parentRel, fileName, file)
             return
         }
-        val images = folderImages
+        val images = if (photoGrid) photoGridImages else folderImages
         val page = images.indexOfFirst { it.path == file.path }.coerceAtLeast(0)
         if (frame.isZipBrowse) {
             val inner = frame.zipInnerRel.orEmpty()
@@ -2252,6 +2375,11 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                         BrowseViewModeMenu(
                             folder = if (virtual.isVirtual) null else folderId,
                             hideContentModes = virtual.hideContentModes,
+                            ephemeralSort = if (photoGrid) gridSort.mode else null,
+                            ephemeralAscending = gridSort.ascending,
+                            onEphemeralSort = if (photoGrid) gridSort.onSelect else null,
+                            ephemeralUseList = if (photoGrid) gridSort.useList else null,
+                            onEphemeralLayout = if (photoGrid) gridSort.onUseList else null,
                         )
                         IconButton(
                             onClick = {
@@ -2370,10 +2498,12 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                     val browseSortMode = BrowseSortMode.fromPref(browseSortModePref)
                     val browseSortAscending by Settings.browseSortAscending.collectAsState()
                     val sections = filteredEntries.toBrowseSections(contentMode)
-                    // UI-only order; DirectoryListing / folderImages / open-gallery stay name-sorted.
+                    // Library Date uses modified time. Other opens keep the folder-view sort.
+                    // Reader pages stay on folderImages order (name, or Library Date).
                     val dirsRaw = sections.directories
                         .filterIsInstance<BrowseEntry.Directory>()
-                        .sortedForBrowseFolderUi(
+                        .sortedForLibraryOrBrowse(
+                            libraryDateSort,
                             browseSortMode,
                             browseSortAscending,
                             nameOf = { it.name },
@@ -2385,7 +2515,8 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                     } else {
                         dirsRaw
                     }
-                    val galleries = sections.galleries.sortedForBrowseFolderUi(
+                    val galleries = sections.galleries.sortedForLibraryOrBrowse(
+                        libraryDateSort,
                         browseSortMode,
                         browseSortAscending,
                         nameOf = { it.name },
@@ -2393,13 +2524,15 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                     )
                     val videos = sections.videos
                         .filterIsInstance<BrowseEntry.VideoFile>()
-                        .sortedForBrowseFolderUi(
+                        .sortedForLibraryOrBrowse(
+                            libraryDateSort,
                             browseSortMode,
                             browseSortAscending,
                             nameOf = { it.name },
                             dateOf = { it.lastModifiedMs },
                         )
-                    val documents = sections.documents.sortedForBrowseFolderUi(
+                    val documents = sections.documents.sortedForLibraryOrBrowse(
+                        libraryDateSort,
                         browseSortMode,
                         browseSortAscending,
                         nameOf = { it.name },
@@ -2407,7 +2540,8 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                     )
                     val files = sections.files
                         .filterIsInstance<BrowseEntry.RegularFile>()
-                        .sortedForBrowseFolderUi(
+                        .sortedForLibraryOrBrowse(
+                            libraryDateSort,
                             browseSortMode,
                             browseSortAscending,
                             nameOf = { it.name },
@@ -2778,6 +2912,49 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                             CircularWavyProgressIndicator()
                         }
+                    } else if (photoGrid && gridSort.useList) {
+                        val frame = stack.lastOrNull()
+                        val progressGid = frame?.let {
+                            if (it.isZipBrowse) {
+                                val histRel = ZipAsDirListing.historyGalleryRelative(
+                                    it.relativePath,
+                                    it.zipInnerRel.orEmpty(),
+                                )
+                                stableGalleryId(it.rootId, "zip:$histRel")
+                            } else {
+                                stableGalleryId(it.rootId, it.relativePath.ifEmpty { "." })
+                            }
+                        } ?: 0L
+                        val listState = rememberLocalPhotoGridState(
+                            pathKey = pathKey,
+                            listMode = 0,
+                            progressGid = progressGid,
+                            imageCount = photoGridImages.size,
+                        )
+                        CompositionLocalProvider(LocalBrowseListHeaderInset provides GalleryGridDefaults.margin()) {
+                            FastScrollLazyVerticalGrid(
+                                columns = GalleryGridDefaults.listColumns(),
+                                state = listState,
+                                modifier = Modifier.nestedScroll(scrollBehavior.nestedScrollConnection).fillMaxSize(),
+                                contentPadding = GalleryGridDefaults.listVerticalContentPadding(),
+                            ) {
+                                searchSection(grid = false)
+                                items(photoGridImages, key = { "pg-${it.path}" }) { file ->
+                                    BrowseFileRow(
+                                        modifier = Modifier.thenIf(animateItems) { animateItem() },
+                                        name = file.name,
+                                        cover = BrowseCover.Local(file.path),
+                                        showPhotoThumb = true,
+                                        onClick = { openFolderImage(file) },
+                                        onLongClick = { openExternalFile(file.path) },
+                                        fileName = file.path.name,
+                                        sizeBytes = file.size,
+                                        lastModifiedMs = file.lastModifiedMs,
+                                        overflow = fileOverflow(file.path),
+                                    )
+                                }
+                            }
+                        }
                     } else if (photoGrid) {
                         // Virtual image-only grid for a folder gallery (long-press).
                         val frame = stack.lastOrNull()
@@ -2796,7 +2973,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                             pathKey = pathKey,
                             listMode = scrollLayoutKey,
                             progressGid = progressGid,
-                            imageCount = folderImages.size,
+                            imageCount = photoGridImages.size,
                         )
                         val gridSpacing = GalleryGridDefaults.spacedBy()
                         FastScrollLazyVerticalGrid(
@@ -2810,7 +2987,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                             verticalArrangement = gridSpacing,
                         ) {
                             searchSection(grid = true)
-                            items(folderImages, key = { "pg-${it.path}" }) { file ->
+                            items(photoGridImages, key = { "pg-${it.path}" }) { file ->
                                 BrowsePhotoGridImageItem(
                                     modifier = Modifier.thenIf(animateItems) { animateItem() },
                                     name = file.name,

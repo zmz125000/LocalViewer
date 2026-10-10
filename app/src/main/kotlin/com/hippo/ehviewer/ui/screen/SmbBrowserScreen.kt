@@ -432,15 +432,46 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
         base.filterByBrowseSearch(search.keyword) { it.name }
     }
 
+    val librarySortPref by Settings.librarySortMode.collectAsState()
+    val libraryDateSort = fromLibrary &&
+        libraryOpenUsesDateSort(LibrarySortMode.fromPref(librarySortPref))
+
     /**
-     * Image RegularFiles in the current listing — photo-grid virtual folder **and**
-     * Folder-mode loose images (shared reader / cover keys).
+     * Image RegularFiles in name order. Folder Name/Date does not change this.
+     * The photo grid applies its own visit-only Date override on top.
      */
     val folderImages = remember(filteredEntries) {
         filteredEntries
             .filterIsInstance<BrowseEntryRemote.RegularFile>()
             .filter { isImageFileName(it.fileName.substringAfterLast('/')) }
             .sortedWith { a, b -> naturalCompare(a.name, b.name) }
+    }
+    val photoGridKey = if (photoGrid) "$sourceId|${photoGridDir.orEmpty()}" else null
+    val gridSort = rememberPhotoGridSort(photoGridKey, libraryDateSort && photoGridKey != null)
+    val photoGridImages = remember(folderImages, photoGrid, gridSort.mode, gridSort.ascending) {
+        if (!photoGrid) {
+            folderImages
+        } else {
+            folderImages.sortedPhotoGridPages(
+                gridSort.mode,
+                gridSort.ascending,
+                nameOf = { it.name },
+                dateOf = { it.lastModifiedMs },
+            )
+        }
+    }
+    LaunchedEffect(photoGridKey, gridSort.mode, source?.id) {
+        if (photoGridKey == null || gridSort.mode != BrowseSortMode.Date) return@LaunchedEffect
+        val src = source ?: return@LaunchedEffect
+        val mtimes = withIOContext {
+            FolderGalleryIndex.loadSmbDirectMtimes(
+                src.id,
+                SmbGateway.sourceConfigKey(src),
+                photoGridDir.orEmpty(),
+            )
+        }
+        if (mtimes.isEmpty()) return@LaunchedEffect
+        entries = FolderGalleryIndex.stampRemoteMtimes(entries, mtimes)
     }
     val searchHint = stringResource(R.string.search_bar_hint, title)
 
@@ -1151,7 +1182,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
             openNestedFolderImage(parentRel, fileName)
             return
         }
-        val images = folderImages
+        val images = if (photoGrid) photoGridImages else folderImages
         val page = images.indexOfFirst { it.fileName == file.fileName }.coerceAtLeast(0)
         val names = images.map { it.fileName }
         val coverKey = names.firstOrNull()?.let { coverName ->
@@ -2004,6 +2035,11 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                             folder = if (virtual.isVirtual) null else folderId,
                             skipAncestorKeys = smbModeSkipAncestors,
                             hideContentModes = virtual.hideContentModes,
+                            ephemeralSort = if (photoGrid) gridSort.mode else null,
+                            ephemeralAscending = gridSort.ascending,
+                            onEphemeralSort = if (photoGrid) gridSort.onSelect else null,
+                            ephemeralUseList = if (photoGrid) gridSort.useList else null,
+                            onEphemeralLayout = if (photoGrid) gridSort.onUseList else null,
                         )
                         IconButton(
                             enabled = refreshEnabled,
@@ -2096,10 +2132,11 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                     val browseSortMode = BrowseSortMode.fromPref(browseSortModePref)
                     val browseSortAscending by Settings.browseSortAscending.collectAsState()
                     val sections = filteredEntries.toRemoteBrowseSections(contentMode)
-                    // UI-only order; listing / folderImages / open-gallery stay name-sorted.
+                    // Library Date uses modified time. Other opens keep the folder-view sort.
                     val dirsRaw = sections.directories
                         .filterIsInstance<BrowseEntryRemote.Directory>()
-                        .sortedForBrowseFolderUi(
+                        .sortedForLibraryOrBrowse(
+                            libraryDateSort,
                             browseSortMode,
                             browseSortAscending,
                             nameOf = { it.name },
@@ -2111,7 +2148,8 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                     } else {
                         dirsRaw
                     }
-                    val galleries = sections.galleries.sortedForBrowseFolderUi(
+                    val galleries = sections.galleries.sortedForLibraryOrBrowse(
+                        libraryDateSort,
                         browseSortMode,
                         browseSortAscending,
                         nameOf = { it.name },
@@ -2119,13 +2157,15 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                     )
                     val videos = sections.videos
                         .filterIsInstance<BrowseEntryRemote.VideoFile>()
-                        .sortedForBrowseFolderUi(
+                        .sortedForLibraryOrBrowse(
+                            libraryDateSort,
                             browseSortMode,
                             browseSortAscending,
                             nameOf = { it.name },
                             dateOf = { it.lastModifiedMs },
                         )
-                    val documents = sections.documents.sortedForBrowseFolderUi(
+                    val documents = sections.documents.sortedForLibraryOrBrowse(
+                        libraryDateSort,
                         browseSortMode,
                         browseSortAscending,
                         nameOf = { it.name },
@@ -2133,7 +2173,8 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                     )
                     val files = sections.files
                         .filterIsInstance<BrowseEntryRemote.RegularFile>()
-                        .sortedForBrowseFolderUi(
+                        .sortedForLibraryOrBrowse(
+                            libraryDateSort,
                             browseSortMode,
                             browseSortAscending,
                             nameOf = { it.name },
@@ -2603,6 +2644,41 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                             CircularWavyProgressIndicator()
                         }
+                    } else if (photoGrid && gridSort.useList) {
+                        val progressGid = stableGalleryId(sourceId, "smb:$relativeDir")
+                        val listState = rememberSmbPhotoGridState(
+                            sourceId = sourceId,
+                            relativeDir = "$dirKey#pg",
+                            listMode = 0,
+                            progressGid = progressGid,
+                            imageCount = photoGridImages.size,
+                        )
+                        CompositionLocalProvider(LocalBrowseListHeaderInset provides GalleryGridDefaults.margin()) {
+                            FastScrollLazyVerticalGrid(
+                                columns = GalleryGridDefaults.listColumns(),
+                                state = listState,
+                                modifier = Modifier.nestedScroll(scrollBehavior.nestedScrollConnection).fillMaxSize(),
+                                contentPadding = GalleryGridDefaults.listVerticalContentPadding(),
+                            ) {
+                                searchSection(grid = false)
+                                items(photoGridImages, key = { "pg-${it.fileName}" }) { file ->
+                                    BrowseFileRow(
+                                        modifier = Modifier.thenIf(animateItems) { animateItem() },
+                                        name = file.name,
+                                        cover = imageCoverFor(file),
+                                        showPhotoThumb = true,
+                                        thumbRetryKey = refreshToken,
+                                        allowRemoteFetch = allowRemoteThumbs,
+                                        onClick = { openFolderImage(file) },
+                                        onLongClick = { openExternalFile(file.fileName) },
+                                        fileName = file.fileName,
+                                        sizeBytes = file.size,
+                                        lastModifiedMs = file.lastModifiedMs,
+                                        overflow = fileOverflow(file.fileName),
+                                    )
+                                }
+                            }
+                        }
                     } else if (photoGrid) {
                         val progressGid = stableGalleryId(sourceId, "smb:$relativeDir")
                         val gridState = rememberSmbPhotoGridState(
@@ -2610,7 +2686,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                             relativeDir = "$dirKey#pg",
                             listMode = scrollLayoutKey,
                             progressGid = progressGid,
-                            imageCount = folderImages.size,
+                            imageCount = photoGridImages.size,
                         )
                         val gridSpacing = GalleryGridDefaults.spacedBy()
                         FastScrollLazyVerticalGrid(
@@ -2624,7 +2700,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                             verticalArrangement = gridSpacing,
                         ) {
                             searchSection(grid = true)
-                            items(folderImages, key = { "pg-${it.fileName}" }) { file ->
+                            items(photoGridImages, key = { "pg-${it.fileName}" }) { file ->
                                 BrowsePhotoGridImageItem(
                                     modifier = Modifier.thenIf(animateItems) { animateItem() },
                                     name = file.name,

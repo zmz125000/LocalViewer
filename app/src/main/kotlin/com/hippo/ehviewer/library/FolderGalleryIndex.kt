@@ -200,6 +200,63 @@ object FolderGalleryIndex {
     /** Image rows for a photo-grid overlay; same order as the reader page list. */
     fun photoGridRemoteFiles(names: List<String>): List<BrowseEntryRemote.RegularFile> = names.map { name -> BrowseEntryRemote.RegularFile(name = name, fileName = name) }
 
+    /** Direct image/video modified times stored on a classified listing. Nested paths are skipped. */
+    fun directChildMtimes(entries: List<BrowseEntryRemote>): Map<String, Long> {
+        val out = HashMap<String, Long>()
+        for (entry in entries) {
+            val fileName: String
+            val ms: Long
+            when (entry) {
+                is BrowseEntryRemote.RegularFile -> {
+                    fileName = entry.fileName
+                    ms = entry.lastModifiedMs
+                }
+                is BrowseEntryRemote.VideoFile -> {
+                    fileName = entry.fileName
+                    ms = entry.lastModifiedMs
+                }
+                else -> continue
+            }
+            if (ms <= 0L) continue
+            val path = fileName.replace('\\', '/').trim('/')
+            if (path.isEmpty() || '/' in path) continue
+            out.putIfAbsent(path, ms)
+        }
+        return out
+    }
+
+    fun stampRemoteMtimes(
+        entries: List<BrowseEntryRemote>,
+        mtimes: Map<String, Long>,
+    ): List<BrowseEntryRemote> {
+        if (mtimes.isEmpty()) return entries
+        return entries.map { entry ->
+            when (entry) {
+                is BrowseEntryRemote.RegularFile -> {
+                    val ms = mtimes[entry.name] ?: return@map entry
+                    if (ms > 0L) entry.copy(lastModifiedMs = ms) else entry
+                }
+                is BrowseEntryRemote.VideoFile -> {
+                    val ms = mtimes[entry.name] ?: return@map entry
+                    if (ms > 0L) entry.copy(lastModifiedMs = ms) else entry
+                }
+                else -> entry
+            }
+        }
+    }
+
+    /** Modified times from the cached listing of [folderDir], if that listing is already stored. */
+    suspend fun loadLocalDirectMtimes(
+        rootId: Long,
+        configKey: String,
+        folderDir: String,
+        rootAbs: Path? = null,
+    ): Map<String, Long> {
+        val folder = normalizeGalleryRelativeDir(folderDir)
+        val entries = localListing(rootId, configKey, folder, rootAbs) ?: return emptyMap()
+        return directChildMtimes(entries)
+    }
+
     /**
      * Local photo-grid files. [zipInnerRel] non-null means [dirPath] is the zip/cbz and
      * names are members under that prefix (`zipfile:` paths).
@@ -467,6 +524,24 @@ object FolderGalleryIndex {
             galleryDir,
             rootAbs = rootPath,
         )
+    }
+
+    suspend fun loadSmbDirectMtimes(
+        sourceId: Long,
+        configKey: String,
+        folderDir: String,
+    ): Map<String, Long> {
+        val folder = BrowseSession.normalizeBrowseRelativeDir(folderDir)
+        return directChildMtimes(smbListing(sourceId, configKey, folder).orEmpty())
+    }
+
+    suspend fun loadWebDavDirectMtimes(
+        sourceId: Long,
+        configKey: String,
+        folderDir: String,
+    ): Map<String, Long> {
+        val folder = BrowseSession.normalizeBrowseRelativeDir(folderDir)
+        return directChildMtimes(webDavListing(sourceId, configKey, folder).orEmpty())
     }
 
     suspend fun siblingListingSmb(

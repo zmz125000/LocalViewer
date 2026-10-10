@@ -190,6 +190,98 @@ class LibrarySortTest {
         assertEquals(1, page)
     }
 
+    @Test
+    fun photoGridOpensByNameUntilDateOverride() {
+        data class File(val name: String, val mtime: Long)
+        val files = listOf(File("b.jpg", 10L), File("a.jpg", 30L))
+        val opened = files.sortedPhotoGridPages(
+            BrowseSortMode.Name,
+            ascending = true,
+            nameOf = { it.name },
+            dateOf = { it.mtime },
+        )
+        assertEquals(listOf("a.jpg", "b.jpg"), opened.map { it.name })
+        val dated = files.sortedPhotoGridPages(
+            BrowseSortMode.Date,
+            ascending = false,
+            nameOf = { it.name },
+            dateOf = { it.mtime },
+        )
+        assertEquals(listOf("a.jpg", "b.jpg"), dated.map { it.name })
+        val oldestFirst = files.sortedPhotoGridPages(
+            BrowseSortMode.Date,
+            ascending = true,
+            nameOf = { it.name },
+            dateOf = { it.mtime },
+        )
+        assertEquals(listOf("b.jpg", "a.jpg"), oldestFirst.map { it.name })
+    }
+
+    @Test
+    fun libraryDateOpenOrdersFolderImagesNewestFirst() {
+        data class File(val name: String, val mtime: Long)
+        val files = listOf(File("a.jpg", 10L), File("b.jpg", 30L), File("c.jpg", 0L))
+        val dated = files.sortedFolderImages(dateSort = true, nameOf = { it.name }, dateOf = { it.mtime })
+        assertEquals(listOf("b.jpg", "a.jpg", "c.jpg"), dated.map { it.name })
+        val named = files.sortedFolderImages(dateSort = false, nameOf = { it.name }, dateOf = { it.mtime })
+        assertEquals(listOf("a.jpg", "b.jpg", "c.jpg"), named.map { it.name })
+        val noTimes = listOf(File("b.jpg", 0L), File("a.jpg", 0L))
+        assertEquals(
+            listOf("a.jpg", "b.jpg"),
+            noTimes.sortedFolderImages(dateSort = true, nameOf = { it.name }, dateOf = { it.mtime }).map { it.name },
+        )
+    }
+
+    @Test
+    fun libraryDirectFileMtimesStayInTheOpenedFolder() {
+        val rows = listOf(
+            image("Album/a.jpg", 10L),
+            image("Album/b.jpg", 40L),
+            image("Album/Sub/c.jpg", 99L),
+            image("other.jpg", 50L),
+            item(9, "Album", mtime = 80L, kind = LOCAL_GALLERY_KIND_FOLDER),
+        )
+        val mtimes = libraryDirectFileMtimes(rows, rootId = 1L, folderRelative = "Album")
+        assertEquals(mapOf("a.jpg" to 10L, "b.jpg" to 40L), mtimes)
+        val names = libraryFolderImageNames(rows, 1L, "Album", dateSort = true)
+        assertEquals(listOf("b.jpg", "a.jpg"), names)
+        assertEquals(null, libraryFolderImageNames(rows, 1L, "missing", dateSort = true))
+    }
+
+    @Test
+    fun libraryFolderOpenUsesDateAheadOfBrowseName() {
+        data class Row(val name: String, val mtime: Long)
+        val rows = listOf(Row("Alpha", 10L), Row("beta", 30L))
+        val dated = rows.sortedForLibraryOrBrowse(
+            libraryDateSort = true,
+            browseMode = BrowseSortMode.Name,
+            browseAscending = true,
+            nameOf = { it.name },
+            dateOf = { it.mtime },
+        )
+        assertEquals(listOf("beta", "Alpha"), dated.map { it.name })
+        val named = rows.sortedForLibraryOrBrowse(
+            libraryDateSort = false,
+            browseMode = BrowseSortMode.Name,
+            browseAscending = true,
+            nameOf = { it.name },
+            dateOf = { it.mtime },
+        )
+        assertEquals(listOf("Alpha", "beta"), named.map { it.name })
+    }
+
+    private fun image(relativePath: String, mtime: Long) = LocalGalleryEntity(
+        id = libraryImageFileId(1L, relativePath),
+        rootId = 1L,
+        relativePath = relativePath,
+        title = relativePath.substringAfterLast('/'),
+        kind = LOCAL_GALLERY_KIND_IMAGE_FILE,
+        pageCount = 0,
+        coverPath = "/sdcard/$relativePath",
+        contentPath = "/sdcard/$relativePath",
+        mtime = mtime,
+    )
+
     private fun item(
         id: Long,
         title: String,

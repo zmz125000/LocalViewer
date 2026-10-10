@@ -10,6 +10,8 @@ import com.ehviewer.core.files.toUri
 import com.ehviewer.core.util.logcat
 import com.ehviewer.core.util.withIOContext
 import com.hippo.ehviewer.Settings
+import com.hippo.ehviewer.library.videothumb.FetchGate
+import com.hippo.ehviewer.library.videothumb.KeyframeThumbnailer
 import com.hippo.ehviewer.smb.SmbArchiveByteSource
 import com.hippo.ehviewer.smb.SmbCache
 import com.hippo.ehviewer.smb.SmbPasswordStore
@@ -108,12 +110,15 @@ sealed interface VideoThumbnailSource {
  * Lazy video frame extraction for visible browse rows.
  *
  * **Pipeline:**
- * - **Network:** fetch head+tail (or TS contiguous head) under I/O timeout, **close the
- *   remote**, then MMR decode from the in-RAM / temp snapshot. Never leave
- *   [MediaMetadataRetriever] reading a live SMB/WebDAV handle — app [ON_STOP] closes
- *   browse pools and that used to stick `media.extractor` at 100% CPU.
- * - **Local:** full-file MMR with keyframe seeks **2s → 30s**.
- * - Seeks use only [MediaMetadataRetriever.OPTION_CLOSEST_SYNC].
+ * - **MP4/MOV, MKV/WebM, TS/M2TS (local and remote):** [KeyframeThumbnailer] reads the
+ *   container index, fetches the exact bytes of one keyframe per seek target under the
+ *   host's fetch slot and a global byte budget, then decodes it with MediaCodec after the
+ *   slot is released. Cancellation closes the remote; decode is cooperative.
+ * - **Other containers (MMR fallback):** remote = head+tail snapshot, **close the
+ *   remote**, then MMR from RAM. Never leave [MediaMetadataRetriever] reading a live
+ *   SMB/WebDAV handle — app [ON_STOP] closes browse pools and that used to stick
+ *   `media.extractor` at 100% CPU. Local = full-file MMR, keyframe seeks **2s → 30s**
+ *   ([MediaMetadataRetriever.OPTION_CLOSEST_SYNC] only).
  *
  * **Timeout / leave-folder safety:**
  * - MMR runs on [decodePool]. Waiter uses [withTimeout] only — **never**
@@ -135,7 +140,7 @@ object VideoThumbnail {
     /** Parallel native MMR decodes (and abandoned-worker budget). */
     private const val MAX_CONCURRENT_EXTRACTIONS = 3
 
-    /** Parallel remote head/tail probes (pipeline with decode). */
+    /** Parallel local-archive (ZIP member) fetches and snapshot probes. */
     private const val MAX_CONCURRENT_PROBES = 3
 
     /**
@@ -156,9 +161,6 @@ object VideoThumbnail {
 
     /** Native setDataSource + multi-seek keyframe grabs. Waiter abandons; no cross-thread release. */
     private const val DECODE_TIMEOUT_MS = 2_500L
-
-    /** Large-file ranged open + multi-seek (I/O + decode share one waiter). */
-    private const val RANGED_NETWORK_TIMEOUT_MS = 5_000L
 
     /** Leave room for release after last seek inside the decode budget. */
     private const val SEEK_BUDGET_MS = 2_400L
@@ -558,166 +560,134 @@ object VideoThumbnail {
     }
 
     /**
-     * Local: decode only. Network: probe under [probeSemaphore] (closes remote), then
-     * decode the snapshot under [extractSemaphore] — never MMR over a live pool handle.
+     * Index-first for every source: [KeyframeThumbnailer] parses MP4/MOV, MKV/WebM or
+     * TS/M2TS and fetches exactly one keyframe per seek target. Containers it does not
+     * index fall back to [MediaMetadataRetriever]: the platform path for local files, an
+     * offline head(+tail) snapshot for remote ones (never MMR over a live remote handle).
      *
-     * @param persistTarget when the waiter is cancelled/timed out but native still returns
-     * a frame, write WebP here so the next visit is a disk hit.
+     * @param persistTarget when an MMR waiter is cancelled/timed out but native still
+     * returns a frame, write WebP here so the next visit is a disk hit.
      */
     private suspend fun extractThumbnailFrame(
         source: VideoThumbnailSource,
         persistTarget: File,
         gen: Long,
-    ): Bitmap? = when (source) {
-        is VideoThumbnailSource.Local -> {
-            if (skipIfPaused(privacyLogLabel(source))) return null
-            val zipMember = ZipPaths.parse(source.path)
-            if (zipMember != null) {
-                probeSemaphore.withPermit {
+    ): Bitmap? {
+        if (skipIfPaused(privacyLogLabel(source))) return null
+        ensureFolder(gen)
+        return when (source) {
+            is VideoThumbnailSource.Local -> {
+                val zipMember = ZipPaths.parse(source.path)
+                if (zipMember != null) {
                     val (zipAbs, member) = zipMember
-                    val zip = openLocalArchiveByteSource(zipAbs.toPath()) ?: return@withPermit null
+                    val zip = openLocalArchiveByteSource(zipAbs.toPath()) ?: return null
                     val memberSrc = ZipMemberByteSource.open(
                         zip,
                         member,
                         ownsZip = true,
                         prefixCap = ZipMemberByteSource.DEFLATE_PREFIX_CAP,
-                    )
-                        ?: run {
-                            runCatching { zip.close() }
-                            return@withPermit null
-                        }
-                    extractNetworkFrame(memberSrc, source, persistTarget, gen)
-                }
-            } else {
-                extractSemaphore.withPermit {
-                    extractLocalFrame(source, persistTarget)
+                    ) ?: run {
+                        runCatching { zip.close() }
+                        return null
+                    }
+                    extractRemoteFrame(memberSrc, source, persistTarget, gen, localArchiveGate)
+                } else {
+                    extractLocalKeyframe(source, gen)?.let { return it }
+                    ensureFolder(gen)
+                    extractSemaphore.withPermit { extractLocalFrame(source, persistTarget) }
                 }
             }
-        }
-        is VideoThumbnailSource.Smb -> {
-            if (skipIfPaused(privacyLogLabel(source))) return null
-            ensureFolder(gen)
-            val smb = SmbRepository.load(source.sourceId) ?: error("SMB source missing")
-            probeSemaphore.withPermit {
-                if (skipIfPaused(privacyLogLabel(source))) return@withPermit null
-                ensureFolder(gen)
-                SmbCache.withBrowseThumbFetchSlot {
-                    ensureFolder(gen)
-                    val raw = SmbArchiveByteSource(
-                        source = smb,
-                        password = SmbPasswordStore.get(source.sourceId),
-                        remoteRelativeFile = source.remoteRelativeFile,
-                        pipeline = false,
-                        readahead = false,
-                        yieldable = true,
-                    )
-                    extractNetworkFrame(raw, source, persistTarget, gen)
-                }
+            is VideoThumbnailSource.Smb -> {
+                val smb = SmbRepository.load(source.sourceId) ?: error("SMB source missing")
+                val raw = SmbArchiveByteSource(
+                    source = smb,
+                    password = SmbPasswordStore.get(source.sourceId),
+                    remoteRelativeFile = source.remoteRelativeFile,
+                    pipeline = false,
+                    readahead = false,
+                    yieldable = true,
+                )
+                extractRemoteFrame(raw, source, persistTarget, gen, smbGate)
             }
-        }
-        is VideoThumbnailSource.WebDav -> {
-            if (skipIfPaused(privacyLogLabel(source))) return null
-            ensureFolder(gen)
-            val webDav = WebDavRepository.load(source.sourceId) ?: error("WebDAV source missing")
-            probeSemaphore.withPermit {
-                if (skipIfPaused(privacyLogLabel(source))) return@withPermit null
-                ensureFolder(gen)
-                WebDavCache.withBrowseThumbFetchSlot {
-                    ensureFolder(gen)
-                    val raw = WebDavArchiveByteSource(
-                        source = webDav,
-                        password = WebDavPasswordStore.get(source.sourceId),
-                        remoteRelativeFile = source.remoteRelativeFile,
-                        pipeline = false,
-                        readahead = false,
-                    )
-                    extractNetworkFrame(raw, source, persistTarget, gen)
-                }
+            is VideoThumbnailSource.WebDav -> {
+                val webDav = WebDavRepository.load(source.sourceId) ?: error("WebDAV source missing")
+                val raw = WebDavArchiveByteSource(
+                    source = webDav,
+                    password = WebDavPasswordStore.get(source.sourceId),
+                    remoteRelativeFile = source.remoteRelativeFile,
+                    pipeline = false,
+                    readahead = false,
+                )
+                extractRemoteFrame(raw, source, persistTarget, gen, webDavGate)
             }
         }
     }
 
+    private val smbGate = object : FetchGate {
+        override suspend fun <T> withSlot(block: suspend () -> T): T = SmbCache.withBrowseThumbFetchSlot(block)
+    }
+
+    private val webDavGate = object : FetchGate {
+        override suspend fun <T> withSlot(block: suspend () -> T): T = WebDavCache.withBrowseThumbFetchSlot(block)
+    }
+
+    private val localArchiveGate = object : FetchGate {
+        override suspend fun <T> withSlot(block: suspend () -> T): T = probeSemaphore.withPermit { block() }
+    }
+
+    /** Keyframe path for a plain local file; null means "let MMR try". */
+    private suspend fun extractLocalKeyframe(source: VideoThumbnailSource.Local, gen: Long): Bitmap? {
+        val raw = withIOContext { openLocalArchiveByteSource(source.path.toPath()) } ?: return null
+        try {
+            return when (val result = extractKeyframe(raw, source, FetchGate.None)) {
+                is KeyframeThumbnailer.Result.Frame -> result.bitmap
+                else -> null
+            }
+        } finally {
+            runCatching { raw.close() }
+            ensureFolder(gen)
+        }
+    }
+
+    private suspend fun extractKeyframe(
+        raw: ArchiveByteSource,
+        source: VideoThumbnailSource,
+        gate: FetchGate,
+    ): KeyframeThumbnailer.Result = KeyframeThumbnailer.extract(
+        raw = raw,
+        label = privacyLogLabel(source),
+        maxEdge = EDGE_PX,
+        gate = gate,
+        score = ::visibleSampleCount,
+        goodScore = MIN_VISIBLE_SAMPLES,
+    )
+
     /**
-     * Small / TS: offline head(+tail) snapshot then decode.
-     * Large (>100 MiB) non-TS: ranged RAM [CachingRangeMediaDataSource] so **30s**
-     * keyframe seek can hit real bytes (not sparse holes).
+     * SMB / WebDAV / ZIP member. Keyframe path first; unknown containers (AVI, WMV, FLV…)
+     * and sequential (deflated) members use an offline snapshot for MMR. Closes [raw].
      */
-    private suspend fun extractNetworkFrame(
+    private suspend fun extractRemoteFrame(
         raw: ArchiveByteSource,
         source: VideoThumbnailSource,
         persistTarget: File,
         gen: Long,
+        gate: FetchGate,
     ): Bitmap? {
         try {
-            ensureFolder(gen)
-            val sizeHint = source.knownSizeBytes.takeIf { it > 0L } ?: raw.size
-            val ts = isMpegTsVideoName(source.fileName) || !raw.isRandomAccess
-            return if (!ts && sizeHint > LARGE_FILE_BYTES) {
-                extractSemaphore.withPermit {
-                    ensureFolder(gen)
-                    decodeRangedNetwork(raw, source, persistTarget, sizeHint)
+            if (raw.isRandomAccess) {
+                when (val result = extractKeyframe(raw, source, gate)) {
+                    is KeyframeThumbnailer.Result.Frame -> return result.bitmap
+                    KeyframeThumbnailer.Result.Failed -> return null
+                    KeyframeThumbnailer.Result.Transient -> throw TransientVideoThumbException()
+                    KeyframeThumbnailer.Result.Unsupported -> Unit
                 }
-            } else {
-                val snapshot = fetchProbeSnapshot(raw, source) ?: return null
                 ensureFolder(gen)
-                extractSemaphore.withPermit { decodeSnapshot(snapshot, source, persistTarget) }
             }
-        } catch (e: CancellationException) {
+            val snapshot = gate.withSlot { fetchProbeSnapshot(raw, source) } ?: return null
+            ensureFolder(gen)
+            return extractSemaphore.withPermit { decodeSnapshot(snapshot, source, persistTarget) }
+        } finally {
             runCatching { raw.close() }
-            throw e
-        }
-    }
-
-    /**
-     * Large network file: keep [raw] open for sparse page reads; 30s-first seek.
-     * [onBrowseFolderChanged] / background rotates pools so abandoned workers do not
-     * block the next folder.
-     */
-    private suspend fun decodeRangedNetwork(
-        raw: ArchiveByteSource,
-        source: VideoThumbnailSource,
-        persistTarget: File,
-        knownSizeBytes: Long,
-    ): Bitmap? {
-        val label = privacyLogLabel(source)
-        val mds = CachingRangeMediaDataSource(raw)
-        val closed = AtomicBoolean(false)
-        val closeAll = {
-            if (closed.compareAndSet(false, true)) {
-                runCatching { mds.close() }
-                runCatching { raw.close() }
-            }
-        }
-        return try {
-            val size = knownSizeBytes.takeIf { it > 0L } ?: raw.size
-            if (size > 0L) {
-                val headLen = minOf(PROBE_HEAD_BYTES.toLong(), size).toInt()
-                mds.prefetch(0L, headLen)
-                if (size > headLen + PROBE_TAIL_BYTES) {
-                    mds.prefetch(size - PROBE_TAIL_BYTES, PROBE_TAIL_BYTES)
-                }
-            }
-            decodeFrameWatchdog(
-                label = label,
-                timeoutMs = RANGED_NETWORK_TIMEOUT_MS,
-                setDataSource = { it.setDataSource(mds) },
-                getFrame = { cancelled ->
-                    selectKeyframeFrame(
-                        preferEarlyOnly = false,
-                        cancelled = cancelled,
-                        knownSizeBytes = size,
-                    )
-                },
-                cleanup = { closeAll() },
-                onAbandon = { closeAll() },
-                persistTarget = persistTarget,
-            )
-        } catch (e: CancellationException) {
-            closeAll()
-            throw e
-        } catch (e: Throwable) {
-            closeAll()
-            throw e
         }
     }
 
