@@ -11,7 +11,9 @@ import android.graphics.RuntimeShader
 import android.graphics.Shader
 import android.os.Build
 import androidx.annotation.RequiresApi
+import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.roundToInt
 
 /**
  * Draw-time resample of a Coil still. Mode 0 is the caller's GPU bilinear blit.
@@ -42,9 +44,9 @@ internal object DisplayScaler {
         return PageScaler(bitmap)
     }
 
-    fun draw(scaler: Any, canvas: Canvas, dst: RectF, mode: Int): Boolean {
+    fun draw(scaler: Any, canvas: Canvas, dst: RectF, mode: Int, cacheW: Int, cacheH: Int): Boolean {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return false
-        (scaler as PageScaler).draw(canvas, dst, mode)
+        (scaler as PageScaler).draw(canvas, dst, mode, cacheW, cacheH)
         return true
     }
 
@@ -91,6 +93,7 @@ internal class PageScaler(bitmap: Bitmap) {
     private val paint = Paint().apply { isDither = true }
     private val directShaders = arrayOfNulls<RuntimeShader>(4)
     private var tiles = emptyList<Tile>()
+
     // Display list holds the native shader. This keeps the Java peer alive until the layer is dropped.
     private val retainedShaders = ArrayList<RuntimeShader>()
     private var tiledW = 0
@@ -98,12 +101,12 @@ internal class PageScaler(bitmap: Bitmap) {
     private var tiledMode = 0
     private var cacheUnsupported = false
 
-    fun draw(canvas: Canvas, dst: RectF, mode: Int) {
-        val w = dst.width().toInt().coerceAtLeast(1)
-        val h = dst.height().toInt().coerceAtLeast(1)
+    fun draw(canvas: Canvas, dst: RectF, mode: Int, cacheW: Int, cacheH: Int) {
+        val w = cacheW.coerceAtLeast(1)
+        val h = cacheH.coerceAtLeast(1)
         val kernel = mode.coerceIn(3, 6)
         if (!cacheUnsupported && blitCached(canvas, dst, w, h, kernel)) return
-        drawDirect(canvas, dst, w, h, kernel)
+        drawDirect(canvas, dst, kernel)
     }
 
     fun release() {
@@ -120,9 +123,14 @@ internal class PageScaler(bitmap: Bitmap) {
             false
         }
         if (!ready) return false
+        val sx = dst.width() / tiledW.coerceAtLeast(1)
+        val sy = dst.height() / tiledH.coerceAtLeast(1)
         canvas.save()
         try {
+            // Cache is in zoomed pixels. Fit it to the layout rect; telephoto's
+            // layer scale then lands those pixels on the screen.
             canvas.translate(dst.left, dst.top)
+            canvas.scale(sx, sy)
             for (tile in tiles) {
                 canvas.save()
                 try {
@@ -178,10 +186,10 @@ internal class PageScaler(bitmap: Bitmap) {
         return built.isNotEmpty()
     }
 
-    private fun drawDirect(canvas: Canvas, dst: RectF, w: Int, h: Int, mode: Int) {
+    private fun drawDirect(canvas: Canvas, dst: RectF, mode: Int) {
         val shader = directShader(mode)
         shader.setFloatUniform("dstOrigin", 0f, 0f)
-        shader.setFloatUniform("dstSize", w.toFloat(), h.toFloat())
+        shader.setFloatUniform("dstSize", dst.width().coerceAtLeast(1f), dst.height().coerceAtLeast(1f))
         paint.shader = shader
         canvas.drawRect(dst, paint)
     }
@@ -214,6 +222,25 @@ internal class PageScaler(bitmap: Bitmap) {
 internal const val SCALER_CACHE_MAX_EDGE = 8192
 
 internal data class ScalerTile(val x: Int, val y: Int, val width: Int, val height: Int)
+
+/**
+ * Pixel size of the kernel cache for a layout rect at [zoom].
+ * Zoom at or below 1 keeps the layout size. The long edge stops at
+ * max(layout, [maxEdge]) so a deep pinch cannot allocate a full-page 8× texture.
+ */
+internal fun scalerCachePixelSize(
+    layoutW: Int,
+    layoutH: Int,
+    zoom: Float,
+    maxEdge: Int = SCALER_CACHE_MAX_EDGE,
+): Pair<Int, Int> {
+    if (layoutW < 1 || layoutH < 1) return layoutW.coerceAtLeast(0) to layoutH.coerceAtLeast(0)
+    val z = if (zoom.isFinite() && zoom > 1f) zoom else 1f
+    val longEdge = max(layoutW, layoutH)
+    val limit = max(longEdge, maxEdge.coerceAtLeast(1))
+    val used = if (longEdge * z <= limit) z else limit.toFloat() / longEdge
+    return (layoutW * used).roundToInt().coerceAtLeast(1) to (layoutH * used).roundToInt().coerceAtLeast(1)
+}
 
 internal fun scalerCacheTiles(width: Int, height: Int, maxEdge: Int = SCALER_CACHE_MAX_EDGE): List<ScalerTile> {
     if (width < 1 || height < 1 || maxEdge < 1) return emptyList()

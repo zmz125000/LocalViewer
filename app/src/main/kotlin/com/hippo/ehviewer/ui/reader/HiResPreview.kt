@@ -11,6 +11,12 @@ import me.saket.telephoto.zoomable.ZoomableState
 
 internal val LocalReaderDrawScale = compositionLocalOf<() -> Float?> { { 1f } }
 
+/**
+ * True when a pinch, pan, or zoom animation is not running.
+ * The scaler kernel bakes on this edge instead of on every zoom frame.
+ */
+internal val LocalReaderZoomSettled = compositionLocalOf<() -> Boolean> { { true } }
+
 /** Graphics-layer scale applied by telephoto, or null until the gesture state exists. */
 internal fun ZoomableState.readerDrawScaleOrNull(): Float? {
     val transformation = contentTransformation
@@ -19,10 +25,18 @@ internal fun ZoomableState.readerDrawScaleOrNull(): Float? {
     return scale.takeIf { it.isFinite() && it > 0f }
 }
 
+/** False while telephoto is animating a fling, rubber-band, or double-tap zoom. */
+internal fun ZoomableState.readerZoomSettled(): Boolean = !isAnimationRunning
+
 @Composable
 internal fun readerDrawScaleProvider(state: ZoomableState, content: @Composable () -> Unit) {
     val scale = remember(state) { { state.readerDrawScaleOrNull() } }
-    CompositionLocalProvider(LocalReaderDrawScale provides scale, content = content)
+    val settled = remember(state) { { state.readerZoomSettled() } }
+    CompositionLocalProvider(
+        LocalReaderDrawScale provides scale,
+        LocalReaderZoomSettled provides settled,
+        content = content,
+    )
 }
 
 /** True when the fitted image, times the current zoom, is larger than the preview edge. */

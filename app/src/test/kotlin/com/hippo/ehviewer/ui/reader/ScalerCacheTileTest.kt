@@ -34,6 +34,18 @@ class ScalerCacheTileTest {
     }
 
     @Test
+    fun `zoom at rest keeps the layout size`() {
+        assertEquals(1080 to 2400, scalerCachePixelSize(1080, 2400, zoom = 1f))
+        assertEquals(1080 to 2400, scalerCachePixelSize(1080, 2400, zoom = 0.5f))
+    }
+
+    @Test
+    fun `settled zoom bakes extra pixels up to the layer edge`() {
+        assertEquals(2160 to 4800, scalerCachePixelSize(1080, 2400, zoom = 2f))
+        assertEquals(3686 to 8192, scalerCachePixelSize(1080, 2400, zoom = 8f))
+    }
+
+    @Test
     fun `empty size has no tiles`() {
         assertEquals(emptyList<ScalerTile>(), scalerCacheTiles(0, 100))
         assertEquals(emptyList<ScalerTile>(), scalerCacheTiles(100, 0))

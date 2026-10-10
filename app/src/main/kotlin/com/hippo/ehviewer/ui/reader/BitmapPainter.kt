@@ -4,6 +4,7 @@ import android.graphics.Bitmap
 import android.graphics.Matrix
 import android.graphics.Paint
 import android.graphics.RectF
+import androidx.compose.runtime.FloatState
 import androidx.compose.runtime.IntState
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.geometry.toRect
@@ -20,6 +21,11 @@ class BitmapPainter(
     private val scalerMode: IntState,
     /** Coil 8-bit still. RAW and advanced formats pass false and keep the platform blit. */
     private val allowScaler: Boolean,
+    /**
+     * Zoom written only after the pinch and its settle animation finish.
+     * Reading it here redraws once, then the kernel bakes at that scale.
+     */
+    private val settledZoom: FloatState,
 ) : Painter() {
     private val srcRect = intrinsicSize.toRect().toAndroidRectF()
     private val dstRect = RectF()
@@ -43,7 +49,8 @@ class BitmapPainter(
         val mode = if (allowScaler) scalerMode.intValue else 0
         val native = canvas.nativeCanvas
         if (drawHardware(native, dstRect, mode)) return@drawIntoCanvas
-        if (drawDisplayScaler(native, bitmap, dstRect, mode)) return@drawIntoCanvas
+        val zoom = if (allowScaler) settledZoom.floatValue else 1f
+        if (drawDisplayScaler(native, bitmap, dstRect, mode, zoom)) return@drawIntoCanvas
         releaseShader()
         matrix.setRectToRect(srcRect, dstRect, Matrix.ScaleToFit.FILL)
         native.drawBitmap(bitmap, matrix, paint)
@@ -73,6 +80,7 @@ class BitmapPainter(
         bitmap: Bitmap,
         dst: RectF,
         mode: Int,
+        zoom: Float,
     ): Boolean {
         if (!DisplayScaler.wantsShader(mode) || scalerFailed || dst.width() < 1f || dst.height() < 1f) {
             return false
@@ -84,8 +92,9 @@ class BitmapPainter(
             android.util.Log.e("DisplayScaler", "shader unavailable", e)
             return false
         }
+        val (cacheW, cacheH) = scalerCachePixelSize(dst.width().toInt(), dst.height().toInt(), zoom)
         return try {
-            DisplayScaler.draw(scaler, canvas, dst, mode)
+            DisplayScaler.draw(scaler, canvas, dst, mode, cacheW, cacheH)
         } catch (e: RuntimeException) {
             scalerFailed = true
             releaseShader()
