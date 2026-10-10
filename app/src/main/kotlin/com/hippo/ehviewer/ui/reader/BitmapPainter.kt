@@ -24,8 +24,16 @@ class BitmapPainter(
     private val srcRect = intrinsicSize.toRect().toAndroidRectF()
     private val dstRect = RectF()
     private val matrix = Matrix()
+    private var hardwareBlit: Any? = null
     private var pageScaler: Any? = null
     private var scalerFailed = false
+
+    /** Drop the cached kernel layer after this painter leaves the display list. */
+    fun releaseCache() {
+        pageScaler?.let { DisplayScaler.release(it) }
+        pageScaler = null
+        hardwareBlit = null
+    }
 
     // Reading [scalerMode] here subscribes the draw, so a settings change repaints
     // without building a new painter. Mode 0 and API 31 stay on the platform blit.
@@ -33,9 +41,31 @@ class BitmapPainter(
         dstRect.right = size.width.fastRoundToInt().toFloat()
         dstRect.bottom = size.height.fastRoundToInt().toFloat()
         val mode = if (allowScaler) scalerMode.intValue else 0
-        if (drawDisplayScaler(canvas.nativeCanvas, bitmap, dstRect, mode)) return@drawIntoCanvas
+        val native = canvas.nativeCanvas
+        if (drawHardware(native, dstRect, mode)) return@drawIntoCanvas
+        if (drawDisplayScaler(native, bitmap, dstRect, mode)) return@drawIntoCanvas
+        releaseShader()
         matrix.setRectToRect(srcRect, dstRect, Matrix.ScaleToFit.FILL)
-        canvas.nativeCanvas.drawBitmap(bitmap, matrix, paint)
+        native.drawBitmap(bitmap, matrix, paint)
+    }
+
+    private fun drawHardware(canvas: android.graphics.Canvas, dst: RectF, mode: Int): Boolean {
+        if (!DisplayScaler.wantsHardware(mode) || dst.width() < 1f || dst.height() < 1f) return false
+        releaseShader()
+        val blit = hardwareBlit ?: try {
+            DisplayScaler.createHardware(bitmap).also { hardwareBlit = it }
+        } catch (e: RuntimeException) {
+            android.util.Log.e("DisplayScaler", "hardware sampler unavailable", e)
+            return false
+        }
+        return try {
+            DisplayScaler.drawHardware(blit, canvas, dst, mode)
+            true
+        } catch (e: RuntimeException) {
+            hardwareBlit = null
+            android.util.Log.e("DisplayScaler", "hardware sampler failed", e)
+            false
+        }
     }
 
     private fun drawDisplayScaler(
@@ -58,10 +88,15 @@ class BitmapPainter(
             DisplayScaler.draw(scaler, canvas, dst, mode)
         } catch (e: RuntimeException) {
             scalerFailed = true
-            pageScaler = null
+            releaseShader()
             android.util.Log.e("DisplayScaler", "shader draw failed", e)
             false
         }
+    }
+
+    private fun releaseShader() {
+        pageScaler?.let { DisplayScaler.release(it) }
+        pageScaler = null
     }
 }
 

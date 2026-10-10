@@ -158,6 +158,18 @@ fun PagerItem(
                     retiring.releaseAfterFrames()
                 }
             }
+            DisposableEffect(painter) {
+                val held = painter as? BitmapPainter
+                onDispose {
+                    // The outgoing frame can still draw this painter. Drop the kernel
+                    // layer on the frame after that, once the blit is gone.
+                    if (held == null) return@onDispose
+                    val choreographer = Choreographer.getInstance()
+                    choreographer.postFrameCallback {
+                        choreographer.postFrameCallback { held.releaseCache() }
+                    }
+                }
+            }
             LaunchedEffect(display) {
                 if (!display.pin()) {
                     // Recycled / dead image still marked Ready — force a clean reload.
