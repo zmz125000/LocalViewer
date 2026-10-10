@@ -114,11 +114,14 @@ sealed interface VideoThumbnailSource {
  *   container index, fetches the exact bytes of one keyframe per seek target under the
  *   host's fetch slot and a global byte budget, then decodes it with MediaCodec after the
  *   slot is released. Cancellation closes the remote; decode is cooperative.
- * - **Other containers (MMR fallback):** remote = head+tail snapshot, **close the
- *   remote**, then MMR from RAM. Never leave [MediaMetadataRetriever] reading a live
- *   SMB/WebDAV handle — app [ON_STOP] closes browse pools and that used to stick
- *   `media.extractor` at 100% CPU. Local = full-file MMR, keyframe seeks **2s → 30s**
+ * - **Other indexed containers:** remote = head+tail snapshot, **close the remote**,
+ *   then MMR from RAM. Never leave [MediaMetadataRetriever] reading a live SMB/WebDAV
+ *   handle — app [ON_STOP] closes browse pools and that used to stick `media.extractor`
+ *   at 100% CPU. Local = full-file MMR, keyframe seeks **2s → 30s**
  *   ([MediaMetadataRetriever.OPTION_CLOSEST_SYNC] only).
+ * - **Blacklist (AVI, WMV/ASF, FLV, MPG/MPEG, VOB, OGV):** not attempted. No MediaStore
+ *   thumb, no keyframe index, no MMR. Every other playable video is attempted. MMR
+ *   cannot be interrupted, and those containers often stick it.
  *
  * **Timeout / leave-folder safety:**
  * - MMR runs on [decodePool]. Waiter uses [withTimeout] only — **never**
@@ -435,6 +438,8 @@ object VideoThumbnail {
             return@withIOContext null
         }
         if (skipIfPaused(privacyLogLabel(source))) return@withIOContext null
+        // Blacklisted containers never reach MediaCodec or MediaMetadataRetriever.
+        if (!isPlatformVideoThumbFileName(source.fileName)) return@withIOContext null
 
         val mutex = pathLocks.getOrPut(source.cacheIdentity) { Mutex() }
         mutex.withLock {
@@ -663,8 +668,9 @@ object VideoThumbnail {
     )
 
     /**
-     * SMB / WebDAV / ZIP member. Keyframe path first; unknown containers (AVI, WMV, FLV…)
-     * and sequential (deflated) members use an offline snapshot for MMR. Closes [raw].
+     * SMB / WebDAV / ZIP member. Keyframe path first; an indexed container the sniffer
+     * does not recognize uses an offline snapshot for MMR. Blacklisted containers
+     * never get here. Closes [raw].
      */
     private suspend fun extractRemoteFrame(
         raw: ArchiveByteSource,

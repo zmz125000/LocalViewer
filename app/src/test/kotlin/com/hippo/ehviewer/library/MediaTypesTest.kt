@@ -119,6 +119,32 @@ class MediaTypesTest {
     }
 
     @Test
+    fun platformVideoThumbsUseABlacklist() {
+        assertTrue(isPlatformVideoThumbFileName("clip.mp4"))
+        assertTrue(isPlatformVideoThumbFileName("film.MKV"))
+        assertTrue(isPlatformVideoThumbFileName("show.webm"))
+        assertTrue(isPlatformVideoThumbFileName("clip.m4v"))
+        assertTrue(isPlatformVideoThumbFileName("phone.3gp"))
+        assertTrue(isPlatformVideoThumbFileName("movie.mov"))
+        assertTrue(isPlatformVideoThumbFileName("stream.ts"))
+        assertTrue(isPlatformVideoThumbFileName("disc.m2ts"))
+        assertTrue(isPlatformVideoThumbFileName("cam.mts"))
+        assertTrue(isPlatformVideoThumbFileName("dir/clip.mp4"))
+        assertFalse(isPlatformVideoThumbFileName("old.avi"))
+        assertFalse(isPlatformVideoThumbFileName("old.AVI"))
+        assertFalse(isPlatformVideoThumbFileName("tape.wmv"))
+        assertFalse(isPlatformVideoThumbFileName("tape.asf"))
+        assertFalse(isPlatformVideoThumbFileName("flash.flv"))
+        assertFalse(isPlatformVideoThumbFileName("disc.mpg"))
+        assertFalse(isPlatformVideoThumbFileName("disc.mpeg"))
+        assertFalse(isPlatformVideoThumbFileName("dvd.vob"))
+        assertFalse(isPlatformVideoThumbFileName("clip.ogv"))
+        assertFalse(isPlatformVideoThumbFileName(".hidden.mp4"))
+        assertTrue(isVideoFileName("old.avi"))
+        assertTrue(isVideoFileName("tape.wmv"))
+    }
+
+    @Test
     fun zipMemberCoverExtractIsImageAndVideoOnly() {
         assertTrue(isZipMemberCoverExtractAllowed("Album/a.jpg"))
         assertTrue(isZipMemberCoverExtractAllowed("clip.MP4"))
