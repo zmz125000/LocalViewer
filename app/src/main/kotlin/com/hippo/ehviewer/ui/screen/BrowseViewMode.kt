@@ -93,6 +93,17 @@ fun <T> Iterable<T>.sortedPhotoGridPages(
     return named.sortedForBrowseFolderUi(BrowseSortMode.Date, ascending, nameOf, dateOf)
 }
 
+/** Changes when photo-grid page order changes, so progress scroll runs again. */
+fun photoGridProgressOrderKey(
+    mode: BrowseSortMode,
+    ascending: Boolean,
+    names: List<String>,
+): Int {
+    var hash = mode.ordinal * 2 + if (ascending) 1 else 0
+    for (name in names) hash = 31 * hash + name.hashCode()
+    return hash
+}
+
 /** In-memory Name/Date for the current photo grid. Reset when [folderKey] changes. */
 class PhotoGridSortControls(
     val mode: BrowseSortMode,

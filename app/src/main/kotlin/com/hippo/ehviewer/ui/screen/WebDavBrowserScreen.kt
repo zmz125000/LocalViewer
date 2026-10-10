@@ -2527,6 +2527,11 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                             listMode = 0,
                             progressGid = progressGid,
                             imageCount = photoGridImages.size,
+                            orderKey = photoGridProgressOrderKey(
+                                gridSort.mode,
+                                gridSort.ascending,
+                                photoGridImages.map { it.name },
+                            ),
                         )
                         CompositionLocalProvider(LocalBrowseListHeaderInset provides GalleryGridDefaults.margin()) {
                             FastScrollLazyVerticalGrid(
@@ -2562,6 +2567,11 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                             listMode = scrollLayoutKey,
                             progressGid = progressGid,
                             imageCount = photoGridImages.size,
+                            orderKey = photoGridProgressOrderKey(
+                                gridSort.mode,
+                                gridSort.ascending,
+                                photoGridImages.map { it.name },
+                            ),
                         )
                         val gridSpacing = GalleryGridDefaults.spacedBy()
                         FastScrollLazyVerticalGrid(

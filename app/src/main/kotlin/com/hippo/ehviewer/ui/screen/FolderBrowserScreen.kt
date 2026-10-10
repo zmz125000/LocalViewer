@@ -2930,6 +2930,11 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                             listMode = 0,
                             progressGid = progressGid,
                             imageCount = photoGridImages.size,
+                            orderKey = photoGridProgressOrderKey(
+                                gridSort.mode,
+                                gridSort.ascending,
+                                photoGridImages.map { it.name },
+                            ),
                         )
                         CompositionLocalProvider(LocalBrowseListHeaderInset provides GalleryGridDefaults.margin()) {
                             FastScrollLazyVerticalGrid(
@@ -2974,6 +2979,11 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                             listMode = scrollLayoutKey,
                             progressGid = progressGid,
                             imageCount = photoGridImages.size,
+                            orderKey = photoGridProgressOrderKey(
+                                gridSort.mode,
+                                gridSort.ascending,
+                                photoGridImages.map { it.name },
+                            ),
                         )
                         val gridSpacing = GalleryGridDefaults.spacedBy()
                         FastScrollLazyVerticalGrid(
@@ -3384,6 +3394,7 @@ internal fun rememberLocalPhotoGridState(
     listMode: Int,
     progressGid: Long,
     imageCount: Int,
+    orderKey: Any = Unit,
 ): LazyGridState {
     val state = remember(pathKey, listMode) { LazyGridState(0, 0) }
     DisposableEffect(pathKey, listMode, state) {
@@ -3400,7 +3411,7 @@ internal fun rememberLocalPhotoGridState(
         gridState = state,
         imageCount = imageCount,
         progressGid = progressGid,
-        layoutKey = pathKey to listMode,
+        layoutKey = Triple(pathKey, listMode, orderKey),
         loadSaved = { BrowseSession.localScroll(pathKey, listMode) },
     )
     return state
@@ -3408,7 +3419,8 @@ internal fun rememberLocalPhotoGridState(
 
 /**
  * Apply [EhDB] page progress to a photo-grid after items layout when
- * [Settings.photoGridScrollToProgress] is on.
+ * [Settings.photoGridScrollToProgress] is on. [layoutKey] includes the page
+ * order, so a date-sorted reader page is applied again once that order is ready.
  * Re-runs on [Lifecycle.Event.ON_RESUME] so return-from-reader lands on the latest page.
  * When the setting is off (or progress is 0), restores saved grid scroll on first open.
  */
@@ -3519,6 +3531,7 @@ internal fun rememberSmbPhotoGridState(
     listMode: Int,
     progressGid: Long,
     imageCount: Int,
+    orderKey: Any = Unit,
 ): LazyGridState {
     val pathKey = "$sourceId|$relativeDir"
     val state = remember(pathKey, listMode) { LazyGridState(0, 0) }
@@ -3537,7 +3550,7 @@ internal fun rememberSmbPhotoGridState(
         gridState = state,
         imageCount = imageCount,
         progressGid = progressGid,
-        layoutKey = pathKey to listMode,
+        layoutKey = Triple(pathKey, listMode, orderKey),
         loadSaved = { BrowseSession.smbScroll(sourceId, relativeDir, listMode) },
     )
     return state

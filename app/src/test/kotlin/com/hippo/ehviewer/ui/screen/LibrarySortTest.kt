@@ -191,6 +191,13 @@ class LibrarySortTest {
     }
 
     @Test
+    fun progressOrderKeyChangesWhenDateOrderChanges() {
+        val name = photoGridProgressOrderKey(BrowseSortMode.Name, true, listOf("a.jpg", "b.jpg"))
+        val dated = photoGridProgressOrderKey(BrowseSortMode.Date, false, listOf("b.jpg", "a.jpg"))
+        assertTrue(name != dated)
+    }
+
+    @Test
     fun photoGridOpensByNameUntilDateOverride() {
         data class File(val name: String, val mtime: Long)
         val files = listOf(File("b.jpg", 10L), File("a.jpg", 30L))

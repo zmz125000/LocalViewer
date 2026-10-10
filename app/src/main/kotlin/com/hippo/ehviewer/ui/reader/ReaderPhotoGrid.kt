@@ -13,6 +13,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.unit.Dp
@@ -30,6 +31,7 @@ import com.hippo.ehviewer.ui.main.BrowseCover
 import com.hippo.ehviewer.ui.main.BrowsePhotoGridImageItem
 import com.hippo.ehviewer.ui.main.GalleryGridDefaults
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 import okio.Path.Companion.toPath
 
 /** Shared cap for reader settings / small photo-grid sheets (skip partial expand). */
@@ -175,9 +177,17 @@ fun ReaderPhotoGridSheet(
     onJumpToPage: (Int) -> Unit,
 ) {
     val pageCount = pageLoader.size
+    // Reader page index. Date-sorted opens use that same page list, so this is the date-order page.
+    val pageIndex = (currentPage - 1).coerceAtLeast(0)
     val gridState = rememberLazyGridState(
-        initialFirstVisibleItemIndex = (currentPage - 1).coerceIn(0, (pageCount - 1).coerceAtLeast(0)),
+        initialFirstVisibleItemIndex = pageIndex.coerceIn(0, (pageCount - 1).coerceAtLeast(0)),
     )
+    LaunchedEffect(pageIndex, pageCount) {
+        if (pageCount <= 0) return@LaunchedEffect
+        snapshotFlow { gridState.layoutInfo.totalItemsCount }.first { it > 0 }
+        val max = (gridState.layoutInfo.totalItemsCount - 1).coerceAtLeast(0)
+        gridState.scrollToItem(pageIndex.coerceAtMost(max))
+    }
     // First frame is placeholders only so the sheet can paint immediately; local
     // Coil decode and SMB/WebDAV thumb IO start on the next frame.
     var allowRemoteFetch by remember { mutableStateOf(false) }
