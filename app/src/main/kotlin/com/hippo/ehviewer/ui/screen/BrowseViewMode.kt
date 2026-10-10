@@ -76,6 +76,49 @@ fun <T> Iterable<T>.sortedForBrowseFolderUi(
 }
 
 /**
+ * Photo-grid page order. Name is the open order. Date is a visit-only override:
+ * it does not follow [Settings.browseSortMode]. No modified times keeps name order.
+ */
+fun <T> Iterable<T>.sortedPhotoGridPages(
+    mode: BrowseSortMode,
+    ascending: Boolean,
+    nameOf: (T) -> String,
+    dateOf: (T) -> Long,
+): List<T> {
+    val named = sortedWith { a, b -> naturalCompare(nameOf(a), nameOf(b)) }
+    if (mode != BrowseSortMode.Date) {
+        return if (ascending) named else named.asReversed()
+    }
+    if (named.none { dateOf(it) > 0L }) return named
+    return named.sortedForBrowseFolderUi(BrowseSortMode.Date, ascending, nameOf, dateOf)
+}
+
+/** In-memory Name/Date for the current photo grid. Reset when [folderKey] changes. */
+class PhotoGridSortControls(
+    val mode: BrowseSortMode,
+    val ascending: Boolean,
+    val onSelect: (BrowseSortMode) -> Unit,
+)
+
+@Composable
+fun rememberPhotoGridSort(folderKey: Any?, libraryDateSort: Boolean): PhotoGridSortControls {
+    var mode by remember(folderKey) {
+        mutableStateOf(if (libraryDateSort) BrowseSortMode.Date else BrowseSortMode.Name)
+    }
+    var ascending by remember(folderKey) {
+        mutableStateOf(!libraryDateSort)
+    }
+    return PhotoGridSortControls(mode, ascending) { selected ->
+        if (selected == mode) {
+            ascending = !ascending
+        } else {
+            mode = selected
+            ascending = selected != BrowseSortMode.Date
+        }
+    }
+}
+
+/**
  * Effective content filter for [folder]: own persist, inherited persist, RAM override,
  * or the global pref.
  */
@@ -111,6 +154,13 @@ fun BrowseViewModeMenu(
     folder: BrowseFolderId? = null,
     skipAncestorKeys: Set<String> = emptySet(),
     hideContentModes: Boolean = false,
+    /**
+     * Photo-grid Name/Date. When set, those rows do not write [Settings.browseSortMode].
+     * Leaving the grid drops the override, so the next open is name order again.
+     */
+    ephemeralSort: BrowseSortMode? = null,
+    ephemeralAscending: Boolean = true,
+    onEphemeralSort: ((BrowseSortMode) -> Unit)? = null,
 ) {
     var expanded by remember { mutableStateOf(false) }
     val listMode by Settings.listMode.collectAsState()
@@ -139,7 +189,14 @@ fun BrowseViewModeMenu(
     }
     val haptic = LocalHapticFeedback.current
 
+    val sortMode = ephemeralSort ?: browseSortMode
+    val sortAscending = if (onEphemeralSort != null) ephemeralAscending else browseSortAscending
+
     fun selectBrowseSort(mode: BrowseSortMode) {
+        if (onEphemeralSort != null) {
+            onEphemeralSort(mode)
+            return
+        }
         if (browseSortMode == mode) {
             browseSortAscending = !browseSortAscending
         } else {
@@ -244,14 +301,14 @@ fun BrowseViewModeMenu(
             // Under List/Grid: Name / Date with ↑↓ (folder UI only; not Library sort).
             SortMenuItem(
                 label = stringResource(R.string.library_sort_name),
-                selected = browseSortMode == BrowseSortMode.Name,
-                ascending = browseSortAscending,
+                selected = sortMode == BrowseSortMode.Name,
+                ascending = sortAscending,
                 onClick = { selectBrowseSort(BrowseSortMode.Name) },
             )
             SortMenuItem(
                 label = stringResource(R.string.library_sort_date),
-                selected = browseSortMode == BrowseSortMode.Date,
-                ascending = browseSortAscending,
+                selected = sortMode == BrowseSortMode.Date,
+                ascending = sortAscending,
                 onClick = { selectBrowseSort(BrowseSortMode.Date) },
             )
             // Tap shows or hides Recent and does not change the lock.

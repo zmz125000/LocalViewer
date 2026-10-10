@@ -437,19 +437,41 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
         libraryOpenUsesDateSort(LibrarySortMode.fromPref(librarySortPref))
 
     /**
-     * Image RegularFiles in the current listing — photo-grid virtual folder **and**
-     * Folder-mode loose images (shared reader / cover keys).
-     * Library Date sort uses modified time when the listing has it.
+     * Image RegularFiles in name order. Folder Name/Date does not change this.
+     * The photo grid applies its own visit-only Date override on top.
      */
-    val folderImages = remember(filteredEntries, libraryDateSort) {
+    val folderImages = remember(filteredEntries) {
         filteredEntries
             .filterIsInstance<BrowseEntryRemote.RegularFile>()
             .filter { isImageFileName(it.fileName.substringAfterLast('/')) }
-            .sortedFolderImages(
-                dateSort = libraryDateSort,
+            .sortedWith { a, b -> naturalCompare(a.name, b.name) }
+    }
+    val photoGridKey = if (photoGrid) "$sourceId|${photoGridDir.orEmpty()}" else null
+    val gridSort = rememberPhotoGridSort(photoGridKey, libraryDateSort && photoGridKey != null)
+    val photoGridImages = remember(folderImages, photoGrid, gridSort.mode, gridSort.ascending) {
+        if (!photoGrid) {
+            folderImages
+        } else {
+            folderImages.sortedPhotoGridPages(
+                gridSort.mode,
+                gridSort.ascending,
                 nameOf = { it.name },
                 dateOf = { it.lastModifiedMs },
             )
+        }
+    }
+    LaunchedEffect(photoGridKey, gridSort.mode, source?.id) {
+        if (photoGridKey == null || gridSort.mode != BrowseSortMode.Date) return@LaunchedEffect
+        val src = source ?: return@LaunchedEffect
+        val mtimes = withIOContext {
+            FolderGalleryIndex.loadSmbDirectMtimes(
+                src.id,
+                SmbGateway.sourceConfigKey(src),
+                photoGridDir.orEmpty(),
+            )
+        }
+        if (mtimes.isEmpty()) return@LaunchedEffect
+        entries = FolderGalleryIndex.stampRemoteMtimes(entries, mtimes)
     }
     val searchHint = stringResource(R.string.search_bar_hint, title)
 
@@ -1160,7 +1182,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
             openNestedFolderImage(parentRel, fileName)
             return
         }
-        val images = folderImages
+        val images = if (photoGrid) photoGridImages else folderImages
         val page = images.indexOfFirst { it.fileName == file.fileName }.coerceAtLeast(0)
         val names = images.map { it.fileName }
         val coverKey = names.firstOrNull()?.let { coverName ->
@@ -2013,6 +2035,9 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                             folder = if (virtual.isVirtual) null else folderId,
                             skipAncestorKeys = smbModeSkipAncestors,
                             hideContentModes = virtual.hideContentModes,
+                            ephemeralSort = if (photoGrid) gridSort.mode else null,
+                            ephemeralAscending = gridSort.ascending,
+                            onEphemeralSort = if (photoGrid) gridSort.onSelect else null,
                         )
                         IconButton(
                             enabled = refreshEnabled,
@@ -2624,7 +2649,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                             relativeDir = "$dirKey#pg",
                             listMode = scrollLayoutKey,
                             progressGid = progressGid,
-                            imageCount = folderImages.size,
+                            imageCount = photoGridImages.size,
                         )
                         val gridSpacing = GalleryGridDefaults.spacedBy()
                         FastScrollLazyVerticalGrid(
@@ -2638,7 +2663,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                             verticalArrangement = gridSpacing,
                         ) {
                             searchSection(grid = true)
-                            items(folderImages, key = { "pg-${it.fileName}" }) { file ->
+                            items(photoGridImages, key = { "pg-${it.fileName}" }) { file ->
                                 BrowsePhotoGridImageItem(
                                     modifier = Modifier.thenIf(animateItems) { animateItem() },
                                     name = file.name,

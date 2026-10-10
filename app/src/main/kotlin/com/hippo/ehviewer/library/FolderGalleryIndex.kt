@@ -225,6 +225,26 @@ object FolderGalleryIndex {
         return out
     }
 
+    fun stampRemoteMtimes(
+        entries: List<BrowseEntryRemote>,
+        mtimes: Map<String, Long>,
+    ): List<BrowseEntryRemote> {
+        if (mtimes.isEmpty()) return entries
+        return entries.map { entry ->
+            when (entry) {
+                is BrowseEntryRemote.RegularFile -> {
+                    val ms = mtimes[entry.name] ?: return@map entry
+                    if (ms > 0L) entry.copy(lastModifiedMs = ms) else entry
+                }
+                is BrowseEntryRemote.VideoFile -> {
+                    val ms = mtimes[entry.name] ?: return@map entry
+                    if (ms > 0L) entry.copy(lastModifiedMs = ms) else entry
+                }
+                else -> entry
+            }
+        }
+    }
+
     /** Modified times from the cached listing of [folderDir], if that listing is already stored. */
     suspend fun loadLocalDirectMtimes(
         rootId: Long,
@@ -504,6 +524,24 @@ object FolderGalleryIndex {
             galleryDir,
             rootAbs = rootPath,
         )
+    }
+
+    suspend fun loadSmbDirectMtimes(
+        sourceId: Long,
+        configKey: String,
+        folderDir: String,
+    ): Map<String, Long> {
+        val folder = BrowseSession.normalizeBrowseRelativeDir(folderDir)
+        return directChildMtimes(smbListing(sourceId, configKey, folder).orEmpty())
+    }
+
+    suspend fun loadWebDavDirectMtimes(
+        sourceId: Long,
+        configKey: String,
+        folderDir: String,
+    ): Map<String, Long> {
+        val folder = BrowseSession.normalizeBrowseRelativeDir(folderDir)
+        return directChildMtimes(webDavListing(sourceId, configKey, folder).orEmpty())
     }
 
     suspend fun siblingListingSmb(

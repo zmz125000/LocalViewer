@@ -191,6 +191,33 @@ class LibrarySortTest {
     }
 
     @Test
+    fun photoGridOpensByNameUntilDateOverride() {
+        data class File(val name: String, val mtime: Long)
+        val files = listOf(File("b.jpg", 10L), File("a.jpg", 30L))
+        val opened = files.sortedPhotoGridPages(
+            BrowseSortMode.Name,
+            ascending = true,
+            nameOf = { it.name },
+            dateOf = { it.mtime },
+        )
+        assertEquals(listOf("a.jpg", "b.jpg"), opened.map { it.name })
+        val dated = files.sortedPhotoGridPages(
+            BrowseSortMode.Date,
+            ascending = false,
+            nameOf = { it.name },
+            dateOf = { it.mtime },
+        )
+        assertEquals(listOf("a.jpg", "b.jpg"), dated.map { it.name })
+        val oldestFirst = files.sortedPhotoGridPages(
+            BrowseSortMode.Date,
+            ascending = true,
+            nameOf = { it.name },
+            dateOf = { it.mtime },
+        )
+        assertEquals(listOf("b.jpg", "a.jpg"), oldestFirst.map { it.name })
+    }
+
+    @Test
     fun libraryDateOpenOrdersFolderImagesNewestFirst() {
         data class File(val name: String, val mtime: Long)
         val files = listOf(File("a.jpg", 10L), File("b.jpg", 30L), File("c.jpg", 0L))
