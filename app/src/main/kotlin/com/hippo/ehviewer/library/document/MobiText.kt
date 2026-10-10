@@ -6,20 +6,21 @@ import java.nio.charset.Charset
 /**
  * MOBI / AZW / AZW3: PalmDOC (none or LZ77) text plus raw image records.
  * Hybrid files prefer the KF8 section after the BOUNDARY record (EXTH 121)
- * when that section is PalmDOC or uncompressed. kindle:embed:NNNN is hex.
- * DRM and Huff/CDIC (typical Kindle-store KF8) are skipped.
+ * when that section is PalmDOC or uncompressed. kindle:embed:NNNN is Kindle
+ * base32 (0-9 then A-V). Digits 0-9 and A-F match hex. DRM and Huff/CDIC
+ * (typical Kindle-store KF8) are skipped.
  */
 internal object MobiText {
     private const val COMPRESSION_NONE = 1
     private const val COMPRESSION_PALMDOC = 2
     private const val HUFF = 17480
 
-    /** Image-reader and direct-image reads. Text ebook open stays at 48 MiB. */
+    /** Image reader, direct image, and text open. A 48 MiB cap drops record offsets past the cut. */
     const val MAX_IMAGE_BYTES = 256L * 1024L * 1024L
     private val INDX = byteArrayOf('I'.code.toByte(), 'N'.code.toByte(), 'D'.code.toByte(), 'X'.code.toByte())
     private val TAGX = byteArrayOf('T'.code.toByte(), 'A'.code.toByte(), 'G'.code.toByte(), 'X'.code.toByte())
     private val BOUNDARY = "BOUNDARY".encodeToByteArray()
-    private val KINDLE_EMBED = Regex("""(?i)kindle:embed:([0-9a-f]+)""")
+    private val KINDLE_EMBED = Regex("""(?i)kindle:embed:([0-9a-v]+)""")
 
     data class Book(
         val chapters: List<EbookChapter>,
@@ -30,11 +31,14 @@ internal object MobiText {
         if (bytes.size < 78 + 16) return null
         val records = recordOffsets(bytes) ?: return null
         if (records.size < 2) return null
+        val primary = readSection(bytes, records, 0)
         val kf8 = kf8Section(bytes, records)
         if (kf8 != null) {
-            parseAt(bytes, records, kf8, title)?.let { return it }
+            // KF8 markup often cites the primary image run (kindle:embed:0001).
+            // Its own tail is indexes, not the JPEGs.
+            parseAt(bytes, records, kf8, title, primary?.firstImage ?: -1)?.let { return it }
         }
-        return parseAt(bytes, records, 0, title)
+        return parseAt(bytes, records, 0, title, -1)
     }
 
     /**
@@ -45,12 +49,13 @@ internal object MobiText {
         if (bytes.size < 78 + 16) return emptyList()
         val records = recordOffsets(bytes) ?: return emptyList()
         if (records.size < 2) return emptyList()
+        val primary = readSection(bytes, records, 0)
         val kf8 = kf8Section(bytes, records)
         if (kf8 != null) {
-            val fromKf8 = collectImages(bytes, records, kf8)
+            val fromKf8 = collectImages(bytes, records, kf8, primary?.firstImage ?: -1)
             if (fromKf8.isNotEmpty()) return fromKf8.values.toList()
         }
-        return collectImages(bytes, records, 0).values.toList()
+        return collectImages(bytes, records, 0, -1).values.toList()
     }
 
     /**
@@ -114,8 +119,15 @@ internal object MobiText {
         val ncxIndex: Int,
     )
 
-    private fun parseAt(bytes: ByteArray, records: List<Int>, section: Int, title: String): Book? {
+    private fun parseAt(
+        bytes: ByteArray,
+        records: List<Int>,
+        section: Int,
+        title: String,
+        fallbackFirstImage: Int,
+    ): Book? {
         val head = readSection(bytes, records, section) ?: return null
+        val firstImage = if (head.firstImage > 0) head.firstImage else fallbackFirstImage
         // PalmDOC splits the uncompressed stream every 4096 bytes, which cuts UTF-8
         // characters in half. Decode the joined bytes once; per-record decode turns
         // that cut into replacement characters.
@@ -142,9 +154,11 @@ internal object MobiText {
         }
         val htmlBytes = raw.toByteArray()
         val html = decode(htmlBytes, head.encoding)
-        val imageRecs = imageRecords(bytes, records, head.firstImage, head.ncxIndex)
+        val imageRecs = imageRecords(bytes, records, firstImage, head.ncxIndex)
         val marked = markRecindex(html, imageRecs)
-        val visible = marked.replace(Regex("\uE000[^\uE002]*\uE002"), "")
+        // Caption budget is visible text. Calibre wrappers around full-page images
+        // are longer than the images × 40 budget and would hide a comic.
+        val visible = EbookHtml.toText(marked.replace(Regex("\uE000[^\uE002]*\uE002"), ""))
         val comic = imageRecs.size >= 3 && visible.length <= imageRecs.size * 40
         val blobs = LinkedHashMap<String, ByteArray>()
         val chapters = if (comic) {
@@ -173,9 +187,26 @@ internal object MobiText {
         return Book(chapters, blobs)
     }
 
-    private fun collectImages(bytes: ByteArray, records: List<Int>, section: Int): Map<Int, ByteArray> {
+    private fun collectImages(
+        bytes: ByteArray,
+        records: List<Int>,
+        section: Int,
+        fallbackFirstImage: Int,
+    ): Map<Int, ByteArray> {
         val head = readSection(bytes, records, section) ?: return emptyMap()
-        return imageRecords(bytes, records, head.firstImage, head.ncxIndex)
+        val firstImage = if (head.firstImage > 0) head.firstImage else fallbackFirstImage
+        return imageRecords(bytes, records, firstImage, head.ncxIndex)
+    }
+
+    /** First record at or after [start] whose payload is an image, or -1. */
+    private fun findFirstImage(bytes: ByteArray, records: List<Int>, start: Int): Int {
+        for (n in start until records.size) {
+            if (n !in records.indices) break
+            val end = records.getOrNull(n + 1) ?: bytes.size
+            val chunk = slice(bytes, records[n], end) ?: continue
+            if (imageExt(chunk) != null) return n
+        }
+        return -1
     }
 
     /** Recindex stays `record - firstImage + 1`. Non-image magics are omitted. */
@@ -256,11 +287,17 @@ internal object MobiText {
         val mobi = isMobiAt(rec0, 16)
         val headerLen = if (mobi && rec0.size >= 24) u32(rec0, 20) else 0
         val encoding = if (mobi && headerLen >= 16 && rec0.size >= 16 + 16) u32(rec0, 16 + 12) else 1252
-        // Extra-data flags sit at record offset 0xF2 once the MOBI header is at least 0xE4.
-        // They describe trailer bytes on every text record. Leaving those bytes in makes
-        // PalmDOC emit a few garbage characters about every 4096 bytes.
-        val extraFlags = if (mobi && headerLen >= 0xE4 && rec0.size >= 0xF4) u16(rec0, 0xF2) else 0
-        val firstImage = if (mobi && headerLen > 112 && rec0.size >= 16 + 112) u32(rec0, 16 + 108) else -1
+        // Trailers sit on every text record. MOBI+0xF2 holds the flags once headerLen
+        // reaches 0xF4. 0 and 0xFFFF mean none. Record offset 0xF2 is the FCIS low half,
+        // and stripping with that value corrupts the text about every 4096 bytes.
+        val rawFlags = if (mobi && headerLen >= 0xF4 && rec0.size >= 16 + 0xF4) u16(rec0, 16 + 0xF2) else 0
+        val extraFlags = if (rawFlags == 0 || rawFlags == 0xFFFF) 0 else rawFlags
+        var firstImage = if (mobi && headerLen > 112 && rec0.size >= 16 + 112) u32(rec0, 16 + 108) else -1
+        // Calibre and some AZW3 comics leave First Image at 0 and still store JPEGs
+        // after the text records. Recindex stays `record - firstImage + 1`.
+        if (firstImage <= 0) {
+            firstImage = findFirstImage(bytes, records, section + textRecords + 1)
+        }
         // NCX index record. Present once the MOBI header reaches 0xF8. 0xFFFFFFFF means none.
         // Hybrid files leave that field empty and keep the contents INDX at the first non-book record.
         val ncxField = if (mobi && headerLen >= 0xF8 && rec0.size >= 16 + 0xF8) u32(rec0, 16 + 0xF4) else -1
@@ -338,8 +375,23 @@ internal object MobiText {
 
     private fun kindleEmbedIndex(src: String?): Int? {
         if (src.isNullOrBlank()) return null
-        val hex = KINDLE_EMBED.find(src)?.groupValues?.getOrNull(1) ?: return null
-        return hex.toIntOrNull(16)?.takeIf { it > 0 }
+        val token = KINDLE_EMBED.find(src)?.groupValues?.getOrNull(1) ?: return null
+        return kindleBase32(token)?.takeIf { it > 0 }
+    }
+
+    /** Kindle embed alphabet. 0-9 and A-F have the same values as hex. */
+    private fun kindleBase32(token: String): Int? {
+        var value = 0
+        for (ch in token) {
+            val digit = when (val c = ch.uppercaseChar()) {
+                in '0'..'9' -> c - '0'
+                in 'A'..'V' -> c - 'A' + 10
+                else -> return null
+            }
+            if (value > (Int.MAX_VALUE - digit) / 32) return null
+            value = value * 32 + digit
+        }
+        return value
     }
 
     private fun attrs(s: String): Map<String, String> {

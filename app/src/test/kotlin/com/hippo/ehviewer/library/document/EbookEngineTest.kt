@@ -527,6 +527,109 @@ class EbookEngineTest {
     }
 
     @Test
+    fun mobiUnsetExtraFlagsLeaveTheTextAlone() {
+        // 0xFFFF is "no trailers". Treating it as flags would eat the ending.
+        val sentence = "哲学思考是一种多少有点让人感到晕眩的活动，无法得出任何东西。尾"
+        val file = mobiFile(sentence, emptyList(), extraFlags = 0xFFFF)
+        val book = MobiText.parse(file, "Story")
+        assertNotNull(book)
+        val body = book!!.chapters.joinToString("") { it.text }
+        assertTrue(body.contains("无法得出任何东西。尾"))
+        assertFalse(body.contains('\uFFFD'))
+    }
+
+    @Test
+    fun mobiZeroFirstImageStillFindsFollowingImages() {
+        val png = tinyPng()
+        val file = mobiFile("", listOf(png, png, png), declareFirstImage = false)
+        assertEquals(3, MobiText.imageBlobs(file).size)
+        val pages = MobiText.imageBookPages(file)
+        assertNotNull(pages)
+        assertEquals(3, pages!!.size)
+    }
+
+    @Test
+    fun htmlWrappersDoNotHideAComic() {
+        val png = tinyPng()
+        val html = "<html><head><style>${"x".repeat(500)}</style></head><body>" +
+            (1..3).joinToString("") { "<img recindex=\"${it.toString().padStart(5, '0')}\" />" } +
+            "</body></html>"
+        val file = mobiFile(html, listOf(png, png, png))
+        val pages = MobiText.imageBookPages(file)
+        assertNotNull(pages)
+        assertEquals(3, pages!!.size)
+    }
+
+    @Test
+    fun kindleEmbedUsesKindleBase32() {
+        val png = tinyPng()
+        val html = "${"word ".repeat(400)}<img src=\"kindle:embed:0010\" />"
+        val file = mobiFile(html, List(32) { png })
+        val book = MobiText.parse(file, "Story")
+        assertNotNull(book)
+        assertTrue(book!!.images.containsKey("mobi:32"))
+        assertFalse(book.images.containsKey("mobi:16"))
+    }
+
+    @Test
+    fun kf8EmbedUsesThePrimaryImageWhenItsOwnIndexIsZero() {
+        val png = tinyPng()
+        val html = """<p>KF8 body</p><img src="kindle:embed:0001" />"""
+        val htmlBytes = html.toByteArray(StandardCharsets.UTF_8)
+        val headerLen = 0x80
+        val exth = ByteArray(24)
+        exth[0] = 'E'.code.toByte()
+        exth[1] = 'X'.code.toByte()
+        exth[2] = 'T'.code.toByte()
+        exth[3] = 'H'.code.toByte()
+        putInt(exth, 4, 24)
+        putInt(exth, 8, 1)
+        putInt(exth, 12, 121)
+        putInt(exth, 16, 12)
+        putInt(exth, 20, 3)
+        val rec0 = ByteArray(16 + headerLen + exth.size)
+        rec0[1] = 1
+        putInt(rec0, 4, 3)
+        rec0[9] = 1
+        rec0[16] = 'M'.code.toByte()
+        rec0[17] = 'O'.code.toByte()
+        rec0[18] = 'B'.code.toByte()
+        rec0[19] = 'I'.code.toByte()
+        putInt(rec0, 20, headerLen)
+        putInt(rec0, 16 + 12, 65001)
+        putInt(rec0, 16 + 0x70, 0x40)
+        exth.copyInto(rec0, 16 + headerLen)
+        val kf8Len = 232
+        val kf8 = ByteArray(16 + kf8Len)
+        kf8[1] = 1
+        putInt(kf8, 4, htmlBytes.size)
+        kf8[9] = 1
+        kf8[16] = 'M'.code.toByte()
+        kf8[17] = 'O'.code.toByte()
+        kf8[18] = 'B'.code.toByte()
+        kf8[19] = 'I'.code.toByte()
+        putInt(kf8, 20, kf8Len)
+        putInt(kf8, 16 + 12, 65001)
+        val records = listOf(
+            rec0,
+            "OLD".toByteArray(StandardCharsets.UTF_8),
+            png,
+            "BOUNDARY".toByteArray(StandardCharsets.US_ASCII),
+            kf8,
+            htmlBytes,
+        )
+        val file = palmDb(records)
+        val book = MobiText.parse(file, "KF8")
+        assertNotNull(book)
+        val body = book!!.chapters.joinToString("") { it.text }
+        assertTrue(body.contains("KF8 body"))
+        assertFalse(body.contains("OLD"))
+        assertTrue(book.chapters.any { EbookImages.hasMarker(it.text) })
+        assertTrue(book.images.containsKey("mobi:1"))
+        assertEquals(1, MobiText.imageBlobs(file).size)
+    }
+
+    @Test
     fun kf8PalmDocSectionWinsOverThePrimaryText() {
         val png = tinyPng()
         val html = """<p>KF8 body</p><img src="kindle:embed:0001" />"""
@@ -1103,10 +1206,11 @@ class EbookEngineTest {
         trailing: ByteArray = ByteArray(0),
         textParts: List<ByteArray>? = null,
         ncx: List<ByteArray> = emptyList(),
+        declareFirstImage: Boolean = true,
     ): ByteArray {
         val text = html.toByteArray(StandardCharsets.UTF_8)
         val parts = textParts ?: listOf(text + trailing)
-        val headerLen = if (ncx.isEmpty()) 232 else 0xF8
+        val headerLen = 0xF8
         val rec0 = ByteArray(16 + headerLen)
         rec0[1] = 1
         putInt(rec0, 4, if (textParts == null) text.size else parts.sumOf { it.size })
@@ -1119,11 +1223,13 @@ class EbookEngineTest {
         putInt(rec0, 20, headerLen)
         putInt(rec0, 16 + 12, 65001)
         val imageAt = 1 + parts.size + ncx.size
-        putInt(rec0, 16 + 108, if (images.isEmpty()) -1 else imageAt)
+        val declared = if (images.isEmpty() || !declareFirstImage) 0 else imageAt
+        putInt(rec0, 16 + 108, declared)
         if (ncx.isNotEmpty()) putInt(rec0, 16 + 0xF4, 1 + parts.size)
         if (extraFlags != 0) {
-            rec0[0xF2] = (extraFlags ushr 8).toByte()
-            rec0[0xF3] = extraFlags.toByte()
+            val at = 16 + 0xF2
+            rec0[at] = (extraFlags ushr 8).toByte()
+            rec0[at + 1] = extraFlags.toByte()
         }
         val records = ArrayList<ByteArray>()
         records += rec0

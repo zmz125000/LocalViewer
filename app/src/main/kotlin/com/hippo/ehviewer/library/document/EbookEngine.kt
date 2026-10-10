@@ -82,7 +82,7 @@ internal object EbookEngine {
     }
 
     private fun parseMobi(source: ArchiveByteSource, fileName: String): EbookParse {
-        val bytes = source.readFully(48L * 1024L * 1024L) ?: return EbookParse(emptyList())
+        val bytes = source.readFully(MobiText.MAX_IMAGE_BYTES) ?: return EbookParse(emptyList())
         val book = MobiText.parse(bytes, titleFromName(fileName)) ?: return EbookParse(emptyList())
         val resources = if (book.images.isEmpty()) null else EbookResources.mobi(book.images)
         return EbookParse(book.chapters, resources)
