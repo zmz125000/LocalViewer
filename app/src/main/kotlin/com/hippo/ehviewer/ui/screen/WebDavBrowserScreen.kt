@@ -1917,6 +1917,8 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                             ephemeralSort = if (photoGrid) gridSort.mode else null,
                             ephemeralAscending = gridSort.ascending,
                             onEphemeralSort = if (photoGrid) gridSort.onSelect else null,
+                            ephemeralUseList = if (photoGrid) gridSort.useList else null,
+                            onEphemeralLayout = if (photoGrid) gridSort.onUseList else null,
                         )
                         IconButton(
                             onClick = {
@@ -2516,6 +2518,41 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                     if (browseRecentOpen && historyTimeByGid == null && !photoGrid) {
                         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                             CircularWavyProgressIndicator()
+                        }
+                    } else if (photoGrid && gridSort.useList) {
+                        val progressGid = stableGalleryId(sourceId, "webdav:$relativeDir")
+                        val listState = rememberSmbPhotoGridState(
+                            sourceId = sourceId,
+                            relativeDir = "dav|$dirKey#pg",
+                            listMode = 0,
+                            progressGid = progressGid,
+                            imageCount = photoGridImages.size,
+                        )
+                        CompositionLocalProvider(LocalBrowseListHeaderInset provides GalleryGridDefaults.margin()) {
+                            FastScrollLazyVerticalGrid(
+                                columns = GalleryGridDefaults.listColumns(),
+                                state = listState,
+                                modifier = Modifier.nestedScroll(scrollBehavior.nestedScrollConnection).fillMaxSize(),
+                                contentPadding = GalleryGridDefaults.listVerticalContentPadding(),
+                            ) {
+                                searchSection(grid = false)
+                                items(photoGridImages, key = { "pg-${it.fileName}" }) { file ->
+                                    BrowseFileRow(
+                                        modifier = Modifier.thenIf(animateItems) { animateItem() },
+                                        name = file.name,
+                                        cover = imageCoverFor(file),
+                                        showPhotoThumb = true,
+                                        thumbRetryKey = refreshToken,
+                                        allowRemoteFetch = allowRemoteThumbs,
+                                        onClick = { openFolderImage(file) },
+                                        onLongClick = { openExternalFile(file.fileName) },
+                                        fileName = file.fileName,
+                                        sizeBytes = file.size,
+                                        lastModifiedMs = file.lastModifiedMs,
+                                        overflow = fileOverflow(file.fileName),
+                                    )
+                                }
+                            }
                         }
                     } else if (photoGrid) {
                         val progressGid = stableGalleryId(sourceId, "webdav:$relativeDir")

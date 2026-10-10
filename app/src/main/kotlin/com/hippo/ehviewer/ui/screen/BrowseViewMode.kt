@@ -98,6 +98,9 @@ class PhotoGridSortControls(
     val mode: BrowseSortMode,
     val ascending: Boolean,
     val onSelect: (BrowseSortMode) -> Unit,
+    /** Visit-only. Photo grid still opens as a grid; List does not write [Settings.listMode]. */
+    val useList: Boolean,
+    val onUseList: (Boolean) -> Unit,
 )
 
 @Composable
@@ -108,14 +111,21 @@ fun rememberPhotoGridSort(folderKey: Any?, libraryDateSort: Boolean): PhotoGridS
     var ascending by remember(folderKey) {
         mutableStateOf(!libraryDateSort)
     }
-    return PhotoGridSortControls(mode, ascending) { selected ->
-        if (selected == mode) {
-            ascending = !ascending
-        } else {
-            mode = selected
-            ascending = selected != BrowseSortMode.Date
-        }
-    }
+    var useList by remember(folderKey) { mutableStateOf(false) }
+    return PhotoGridSortControls(
+        mode = mode,
+        ascending = ascending,
+        onSelect = { selected ->
+            if (selected == mode) {
+                ascending = !ascending
+            } else {
+                mode = selected
+                ascending = selected != BrowseSortMode.Date
+            }
+        },
+        useList = useList,
+        onUseList = { useList = it },
+    )
 }
 
 /**
@@ -161,6 +171,9 @@ fun BrowseViewModeMenu(
     ephemeralSort: BrowseSortMode? = null,
     ephemeralAscending: Boolean = true,
     onEphemeralSort: ((BrowseSortMode) -> Unit)? = null,
+    /** Photo-grid List/Grid. Null uses [Settings.listMode]. True shows list for this visit. */
+    ephemeralUseList: Boolean? = null,
+    onEphemeralLayout: ((Boolean) -> Unit)? = null,
 ) {
     var expanded by remember { mutableStateOf(false) }
     val listMode by Settings.listMode.collectAsState()
@@ -171,7 +184,11 @@ fun BrowseViewModeMenu(
         folder?.let { BrowseModePersist.resolve(it, skipAncestorKeys) }
     }
     val contentMode = match?.effective ?: BrowseContentMode.fromPref(contentModePref)
-    val useGrid = !contentMode.forceList && listMode == 1
+    val useGrid = if (onEphemeralLayout != null) {
+        ephemeralUseList != true
+    } else {
+        !contentMode.forceList && listMode == 1
+    }
     var browseSortModePref by Settings.browseSortMode.asMutableState()
     var browseSortAscending by Settings.browseSortAscending.asMutableState()
     val browseSortMode = BrowseSortMode.fromPref(browseSortModePref)
@@ -212,6 +229,11 @@ fun BrowseViewModeMenu(
                 .combinedClickable(
                     onClick = { expanded = true },
                     onLongClick = {
+                        if (onEphemeralLayout != null) {
+                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                            onEphemeralLayout(ephemeralUseList != true)
+                            return@combinedClickable
+                        }
                         if (contentMode.forceList) return@combinedClickable
                         haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                         Settings.listMode.value = if (listMode == 0) 1 else 0
@@ -286,7 +308,11 @@ fun BrowseViewModeMenu(
                 label = stringResource(R.string.browse_layout_list),
                 mark = if (!useGrid) ModeMark.Tick else ModeMark.None,
                 onClick = {
-                    Settings.listMode.value = 0
+                    if (onEphemeralLayout != null) {
+                        onEphemeralLayout(true)
+                    } else {
+                        Settings.listMode.value = 0
+                    }
                     expanded = false
                 },
             )
@@ -294,7 +320,11 @@ fun BrowseViewModeMenu(
                 label = stringResource(R.string.browse_layout_grid),
                 mark = if (useGrid) ModeMark.Tick else ModeMark.None,
                 onClick = {
-                    Settings.listMode.value = 1
+                    if (onEphemeralLayout != null) {
+                        onEphemeralLayout(false)
+                    } else {
+                        Settings.listMode.value = 1
+                    }
                     expanded = false
                 },
             )

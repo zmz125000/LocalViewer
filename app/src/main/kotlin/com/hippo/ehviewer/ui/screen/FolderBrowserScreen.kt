@@ -2378,6 +2378,8 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                             ephemeralSort = if (photoGrid) gridSort.mode else null,
                             ephemeralAscending = gridSort.ascending,
                             onEphemeralSort = if (photoGrid) gridSort.onSelect else null,
+                            ephemeralUseList = if (photoGrid) gridSort.useList else null,
+                            onEphemeralLayout = if (photoGrid) gridSort.onUseList else null,
                         )
                         IconButton(
                             onClick = {
@@ -2909,6 +2911,49 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                     if (browseRecentOpen && historyTimeByGid == null && !photoGrid) {
                         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                             CircularWavyProgressIndicator()
+                        }
+                    } else if (photoGrid && gridSort.useList) {
+                        val frame = stack.lastOrNull()
+                        val progressGid = frame?.let {
+                            if (it.isZipBrowse) {
+                                val histRel = ZipAsDirListing.historyGalleryRelative(
+                                    it.relativePath,
+                                    it.zipInnerRel.orEmpty(),
+                                )
+                                stableGalleryId(it.rootId, "zip:$histRel")
+                            } else {
+                                stableGalleryId(it.rootId, it.relativePath.ifEmpty { "." })
+                            }
+                        } ?: 0L
+                        val listState = rememberLocalPhotoGridState(
+                            pathKey = pathKey,
+                            listMode = 0,
+                            progressGid = progressGid,
+                            imageCount = photoGridImages.size,
+                        )
+                        CompositionLocalProvider(LocalBrowseListHeaderInset provides GalleryGridDefaults.margin()) {
+                            FastScrollLazyVerticalGrid(
+                                columns = GalleryGridDefaults.listColumns(),
+                                state = listState,
+                                modifier = Modifier.nestedScroll(scrollBehavior.nestedScrollConnection).fillMaxSize(),
+                                contentPadding = GalleryGridDefaults.listVerticalContentPadding(),
+                            ) {
+                                searchSection(grid = false)
+                                items(photoGridImages, key = { "pg-${it.path}" }) { file ->
+                                    BrowseFileRow(
+                                        modifier = Modifier.thenIf(animateItems) { animateItem() },
+                                        name = file.name,
+                                        cover = BrowseCover.Local(file.path),
+                                        showPhotoThumb = true,
+                                        onClick = { openFolderImage(file) },
+                                        onLongClick = { openExternalFile(file.path) },
+                                        fileName = file.path.name,
+                                        sizeBytes = file.size,
+                                        lastModifiedMs = file.lastModifiedMs,
+                                        overflow = fileOverflow(file.path),
+                                    )
+                                }
+                            }
                         }
                     } else if (photoGrid) {
                         // Virtual image-only grid for a folder gallery (long-press).
