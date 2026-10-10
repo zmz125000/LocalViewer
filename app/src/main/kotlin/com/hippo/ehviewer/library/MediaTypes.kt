@@ -269,6 +269,28 @@ val VIDEO_EXTENSIONS = setOf(
     "ts", "m2ts", "mts", "3gp", "mpg", "mpeg", "vob", "ogv",
 )
 
+/**
+ * Playable videos that must not be sent to MediaCodec or
+ * [android.media.MediaMetadataRetriever]. That retriever cannot be interrupted,
+ * and these containers often stick it. Every other [VIDEO_EXTENSIONS] entry is attempted.
+ */
+val PLATFORM_VIDEO_THUMB_BLOCKED_EXTENSIONS = setOf(
+    "avi",
+    "wmv",
+    "asf",
+    "flv",
+    "mpg",
+    "mpeg",
+    "vob",
+    "ogv",
+)
+
+fun isPlatformVideoThumbFileName(name: String): Boolean {
+    if (!isVideoFileName(name)) return false
+    val ext = FileUtils.getExtensionFromFilename(name)?.lowercase() ?: return false
+    return ext !in PLATFORM_VIDEO_THUMB_BLOCKED_EXTENSIONS
+}
+
 fun isVideoFileName(name: String): Boolean {
     if (name.startsWith('.')) return false
     val ext = FileUtils.getExtensionFromFilename(name)?.lowercase() ?: return false
