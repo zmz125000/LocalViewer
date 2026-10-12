@@ -106,8 +106,10 @@ import com.hippo.ehviewer.library.isImageFileName
 import com.hippo.ehviewer.library.isMobiContainerFileName
 import com.hippo.ehviewer.library.isPdfFileName
 import com.hippo.ehviewer.library.isPdfOrEbookFileName
+import com.hippo.ehviewer.library.isPlatformVideoThumbFileName
 import com.hippo.ehviewer.library.isSolidArchiveFileName
 import com.hippo.ehviewer.library.isStreamableArchiveFileName
+import com.hippo.ehviewer.library.isVideoFileName
 import com.hippo.ehviewer.library.isZipArchiveFileName
 import com.hippo.ehviewer.library.isZipMemberTooLarge
 import com.hippo.ehviewer.library.isZipPlainFolderListing
@@ -346,12 +348,18 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
     fun toggleDirFavorite(name: String, coverFileName: String? = null) {
         val rel = dirRelative(name)
         val coverKey = coverFileName?.let { fileName ->
+            val leaf = fileName.substringAfterLast('/')
+            if (ZipAsDirListing.zipAsDirCoverParts(relativeDir, name, fileName) != null &&
+                isVideoFileName(leaf)
+            ) {
+                return@let null
+            }
             val coverRemote = if (rel.isEmpty()) {
                 fileName
             } else {
                 SmbGateway.joinRelativePath(rel, fileName)
             }
-            HistoryThumbKey.smb(sourceId, coverRemote)
+            HistoryThumbKey.looseRemoteCoverKey(smb = true, sourceId, coverRemote)
         }
         BrowseFavorites.toggleSmbFolder(sourceId, rel, thumbKey = coverKey)
     }
@@ -2262,6 +2270,12 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                         )
                         if (isArchiveFileName(leaf) || isMobiContainerFileName(leaf)) {
                             return BrowseCover.SmbArchive(sourceId, remote)
+                        }
+                        if (isVideoFileName(leaf)) {
+                            // Blocked containers are not thumbs. Zip-as-dir members are not either.
+                            if (!isPlatformVideoThumbFileName(leaf)) return null
+                            if (zipMemberCover(dir.relativeName, fileName) != null) return null
+                            return BrowseCover.Smb(sourceId, remote)
                         }
                         zipMemberCover(dir.relativeName, fileName)?.let { return it }
                         return BrowseCover.Smb(sourceId, remote)

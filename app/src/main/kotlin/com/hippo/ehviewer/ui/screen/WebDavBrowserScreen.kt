@@ -106,8 +106,10 @@ import com.hippo.ehviewer.library.isImageFileName
 import com.hippo.ehviewer.library.isMobiContainerFileName
 import com.hippo.ehviewer.library.isPdfFileName
 import com.hippo.ehviewer.library.isPdfOrEbookFileName
+import com.hippo.ehviewer.library.isPlatformVideoThumbFileName
 import com.hippo.ehviewer.library.isSolidArchiveFileName
 import com.hippo.ehviewer.library.isStreamableArchiveFileName
+import com.hippo.ehviewer.library.isVideoFileName
 import com.hippo.ehviewer.library.isZipArchiveFileName
 import com.hippo.ehviewer.library.isZipMemberTooLarge
 import com.hippo.ehviewer.library.isZipPlainFolderListing
@@ -311,12 +313,18 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
     fun toggleDirFavorite(name: String, coverFileName: String? = null) {
         val rel = dirRelative(name)
         val coverKey = coverFileName?.let { fileName ->
+            val leaf = fileName.substringAfterLast('/')
+            if (ZipAsDirListing.zipAsDirCoverParts(relativeDir, name, fileName) != null &&
+                isVideoFileName(leaf)
+            ) {
+                return@let null
+            }
             val coverRemote = if (rel.isEmpty()) {
                 fileName
             } else {
                 WebDavGateway.joinRelative(rel, fileName)
             }
-            HistoryThumbKey.webdav(sourceId, coverRemote)
+            HistoryThumbKey.looseRemoteCoverKey(smb = false, sourceId, coverRemote)
         }
         BrowseFavorites.toggleWebDavFolder(sourceId, rel, thumbKey = coverKey)
     }
@@ -2137,6 +2145,11 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                         )
                         if (isArchiveFileName(leaf) || isMobiContainerFileName(leaf)) {
                             return BrowseCover.WebDavArchive(sourceId, remote)
+                        }
+                        if (isVideoFileName(leaf)) {
+                            if (!isPlatformVideoThumbFileName(leaf)) return null
+                            if (zipMemberCover(dir.relativeName, fileName) != null) return null
+                            return BrowseCover.WebDav(sourceId, remote)
                         }
                         zipMemberCover(dir.relativeName, fileName)?.let { return it }
                         return BrowseCover.WebDav(sourceId, remote)

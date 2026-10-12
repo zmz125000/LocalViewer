@@ -139,6 +139,134 @@ class DirectoryListingDocumentTagTest {
     }
 
     @Test
+    fun folderThumbPrefersImageThenSupportedVideoThenArchive() {
+        fun cover(children: List<RemoteChild>, grand: Map<String, List<RemoteChild>> = emptyMap()): String? {
+            val entries = classifyRemoteListingWithPeeks(
+                currentDirName = "Library",
+                entries = listOf(RemoteChild(name = "Shows", isDirectory = true)),
+                childPeeks = mapOf("Shows" to children),
+                grandPeeks = grand,
+            )
+            return entries.filterIsInstance<BrowseEntryRemote.Directory>().single().coverFileName
+        }
+
+        assertEquals(
+            "c.jpg",
+            cover(
+                listOf(
+                    RemoteChild(name = "a.mp4", isDirectory = false),
+                    RemoteChild(name = "b.pdf", isDirectory = false),
+                    RemoteChild(name = "c.jpg", isDirectory = false),
+                ),
+            ),
+        )
+        assertEquals(
+            "a.mp4",
+            cover(
+                listOf(
+                    RemoteChild(name = "b.pdf", isDirectory = false),
+                    RemoteChild(name = "a.mp4", isDirectory = false),
+                ),
+            ),
+        )
+        // Blocked containers are not the thumb; the next eligible video is.
+        assertEquals(
+            "c.mkv",
+            cover(
+                listOf(
+                    RemoteChild(name = "a.avi", isDirectory = false),
+                    RemoteChild(name = "b.mpg", isDirectory = false),
+                    RemoteChild(name = "c.mkv", isDirectory = false),
+                    RemoteChild(name = "d.pdf", isDirectory = false),
+                ),
+            ),
+        )
+        assertEquals(
+            "b.pdf",
+            cover(
+                listOf(
+                    RemoteChild(name = "a.avi", isDirectory = false),
+                    RemoteChild(name = "b.pdf", isDirectory = false),
+                ),
+            ),
+        )
+        assertEquals(
+            "Vol/c.jpg",
+            cover(
+                children = listOf(
+                    RemoteChild(name = "a.mp4", isDirectory = false),
+                    RemoteChild(name = "Vol", isDirectory = true),
+                ),
+                grand = mapOf("Shows/Vol" to listOf(RemoteChild(name = "c.jpg", isDirectory = false))),
+            ),
+        )
+        assertEquals(
+            "Vol/a.mp4",
+            cover(
+                children = listOf(
+                    RemoteChild(name = "b.pdf", isDirectory = false),
+                    RemoteChild(name = "Vol", isDirectory = true),
+                ),
+                grand = mapOf("Shows/Vol" to listOf(RemoteChild(name = "a.mp4", isDirectory = false))),
+            ),
+        )
+
+        val mixed = classifyRemoteListingWithPeeks(
+            currentDirName = "Library",
+            entries = listOf(
+                RemoteChild(name = "Movies", isDirectory = true),
+                RemoteChild(name = "pack.zip", isDirectory = true),
+            ),
+            childPeeks = mapOf(
+                "Movies" to listOf(
+                    RemoteChild(name = "a.mp4", isDirectory = false),
+                    RemoteChild(name = "b.pdf", isDirectory = false),
+                ),
+                "pack.zip" to listOf(
+                    RemoteChild(name = "a.mp4", isDirectory = false),
+                    RemoteChild(name = "b.pdf", isDirectory = false),
+                ),
+            ),
+            zipAsDir = true,
+        )
+        val byName = mixed.filterIsInstance<BrowseEntryRemote.Directory>().associate { it.name to it.coverFileName }
+        assertEquals("a.mp4", byName["Movies"])
+        assertEquals("b.pdf", byName["pack.zip"])
+
+        val insideZip = classifyRemoteListingWithPeeks(
+            currentDirName = "Album",
+            entries = listOf(RemoteChild(name = "Album", isDirectory = true)),
+            childPeeks = mapOf(
+                "Album" to listOf(
+                    RemoteChild(name = "clip.mp4", isDirectory = false),
+                    RemoteChild(name = "01.pdf", isDirectory = false),
+                ),
+            ),
+            skipVideoCovers = true,
+        )
+        assertEquals(
+            "01.pdf",
+            insideZip.filterIsInstance<BrowseEntryRemote.Directory>().single().coverFileName,
+        )
+
+        val videosOnly = classifyRemoteListingWithPeeks(
+            currentDirName = "Library",
+            entries = listOf(RemoteChild(name = "Clips", isDirectory = true)),
+            childPeeks = mapOf(
+                "Clips" to listOf(
+                    RemoteChild(name = "b.avi", isDirectory = false),
+                    RemoteChild(name = "a.webm", isDirectory = false),
+                    RemoteChild(name = "c.mp4", isDirectory = false),
+                ),
+            ),
+        )
+        assertEquals(
+            "a.webm",
+            videosOnly.filterIsInstance<BrowseEntryRemote.Directory>().single().coverFileName,
+        )
+    }
+
+    @Test
     fun nestedPdfTagsParentDirAndIsNotPromoted() {
         val entries = classifyRemoteListingWithPeeks(
             currentDirName = "Library",
