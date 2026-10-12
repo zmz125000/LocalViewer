@@ -197,3 +197,24 @@ external fun extractRawPreviewBytes(input: ByteArray, outPath: String, demosaicF
 
 /** [extractRawPreviewFile] for a mapped regular file. -1 when [fd] cannot be mapped. */
 external fun extractRawPreviewFd(fd: Int, outPath: String, demosaicFallback: Boolean): Int
+
+/**
+ * Encode packed pixels to [outPath].
+ *
+ * [mode] 0 baseline JPEG, 1 Ultra HDR JPEG, 2 PNG, 3 16-bit PNG.
+ * [f16] selects linear half-float RGBA (8 bytes per pixel). Otherwise the buffer
+ * is sRGB RGBA_8888 (4 bytes, R,G,B,A). [gamut] is 0 BT.709, 1 Display P3, 2 BT.2100.
+ * [premultiplied] un-associates alpha before encode. 8-bit JPEG (HDR) is baseline.
+ *
+ * @return 0 on success. armeabi-v7a returns -100.
+ */
+external fun encodeStillExport(
+    pixels: ByteArray,
+    width: Int,
+    height: Int,
+    f16: Boolean,
+    gamut: Int,
+    mode: Int,
+    premultiplied: Boolean,
+    outPath: String,
+): Int

@@ -993,6 +993,13 @@
     <string name="action_copy">コピー</string>
     <string name="action_save">保存</string>
     <string name="action_save_to">名前を付けて保存…</string>
+    <string name="convert_to">変換…</string>
+    <string name="convert_back">戻る</string>
+    <string name="convert_auto">自動（リーダーの画像）</string>
+    <string name="convert_jpeg">JPEG</string>
+    <string name="convert_jpeg_hdr">JPEG（HDR）</string>
+    <string name="convert_png">PNG</string>
+    <string name="convert_png_16">PNG（16ビット）</string>
     <string name="wide_color_gamut">Display P3 カラースペースを使用する</string>
     <string name="settings_eh_request_news_timepicker">ニュースをリクエストする時間を設定</string>
     <string name="dark_theme_follow_system">システムに従う</string>

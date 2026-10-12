@@ -25,6 +25,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import com.ehviewer.core.i18n.R
+import com.hippo.ehviewer.image.hdr.StillExportTarget
 import com.hippo.ehviewer.shortcuts.FolderHomeShortcut
 import com.hippo.ehviewer.shortcuts.FolderShortcutTarget
 
@@ -71,6 +72,8 @@ data class BrowseOverflowActions(
     val onShareViaHttp: (() -> Unit)? = null,
     /** Home-screen pin for this item. Null hides the menu row. */
     val shortcut: FolderShortcutTarget? = null,
+    /** JXL, JXR, and camera RAW. Null hides Convert to…. */
+    val onConvert: ((StillExportTarget) -> Unit)? = null,
 )
 
 @Composable
@@ -80,6 +83,7 @@ fun BrowseItemOverflowButton(
     modifier: Modifier = Modifier,
 ) {
     var expanded by remember { mutableStateOf(false) }
+    var convertMenu by remember { mutableStateOf(false) }
     val context = LocalContext.current
     val shortcutUnsupported = stringResource(R.string.browse_shortcut_unsupported)
     val grid = placement == BrowseOverflowPlacement.GridBottomEnd
@@ -110,11 +114,39 @@ fun BrowseItemOverflowButton(
         )
         DropdownMenu(
             expanded = expanded,
-            onDismissRequest = { expanded = false },
+            onDismissRequest = {
+                expanded = false
+                convertMenu = false
+            },
         ) {
             fun run(action: (() -> Unit)?) {
                 expanded = false
+                convertMenu = false
                 (action ?: actions.onUnsupported)()
+            }
+            if (convertMenu && actions.onConvert != null) {
+                val convert = actions.onConvert
+                DropdownMenuItem(
+                    text = { Text(stringResource(R.string.convert_back)) },
+                    onClick = { convertMenu = false },
+                )
+                listOf(
+                    StillExportTarget.Auto to R.string.convert_auto,
+                    StillExportTarget.Jpeg to R.string.convert_jpeg,
+                    StillExportTarget.JpegHdr to R.string.convert_jpeg_hdr,
+                    StillExportTarget.Png to R.string.convert_png,
+                    StillExportTarget.Png16 to R.string.convert_png_16,
+                ).forEach { (target, label) ->
+                    DropdownMenuItem(
+                        text = { Text(stringResource(label)) },
+                        onClick = {
+                            expanded = false
+                            convertMenu = false
+                            convert(target)
+                        },
+                    )
+                }
+                return@DropdownMenu
             }
             when (actions.kind) {
                 BrowseOverflowKind.Gallery -> {
@@ -201,6 +233,12 @@ fun BrowseItemOverflowButton(
                 text = { Text(stringResource(R.string.action_save_to)) },
                 onClick = { run(actions.onSaveAs) },
             )
+            if (actions.onConvert != null) {
+                DropdownMenuItem(
+                    text = { Text(stringResource(R.string.convert_to)) },
+                    onClick = { convertMenu = true },
+                )
+            }
             if (actions.onOpenInNewTab != null) {
                 DropdownMenuItem(
                     text = { Text(stringResource(R.string.browse_open_in_new_tab)) },

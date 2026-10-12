@@ -36,6 +36,7 @@ extern "C" {
 }
 #include <csetjmp>
 #include <cstdio>
+#include <zlib.h>
 
 // jxrlib (Microsoft / brion jpegxr packaging)
 extern "C" {
@@ -1372,6 +1373,299 @@ void scale_rgba_f16_max_edge(std::vector<uint16_t>& rgba, unsigned& w, unsigned&
     rgba.swap(out);
     w = nw;
     h = nh;
+}
+
+namespace {
+
+constexpr int kExportJpeg = 0;
+constexpr int kExportJpegHdr = 1;
+constexpr int kExportPng = 2;
+constexpr int kExportPng16 = 3;
+
+uhdr_color_gamut_t export_gamut(int gamut) {
+    if (gamut == 1) return UHDR_CG_DISPLAY_P3;
+    if (gamut == 2) return UHDR_CG_BT_2100;
+    return UHDR_CG_BT_709;
+}
+
+void unpremultiply_f16(uint16_t* rgba, size_t pixels) {
+    for (size_t i = 0; i < pixels; i++) {
+        float a = half_to_float(rgba[i * 4 + 3]);
+        if (!std::isfinite(a) || a <= 0.f) {
+            rgba[i * 4 + 0] = float_to_half(0.f);
+            rgba[i * 4 + 1] = float_to_half(0.f);
+            rgba[i * 4 + 2] = float_to_half(0.f);
+            rgba[i * 4 + 3] = float_to_half(0.f);
+            continue;
+        }
+        if (a > 1.f) a = 1.f;
+        float r = half_to_float(rgba[i * 4 + 0]) / a;
+        float g = half_to_float(rgba[i * 4 + 1]) / a;
+        float b = half_to_float(rgba[i * 4 + 2]) / a;
+        rgba[i * 4 + 0] = float_to_half(std::isfinite(r) && r > 0.f ? r : 0.f);
+        rgba[i * 4 + 1] = float_to_half(std::isfinite(g) && g > 0.f ? g : 0.f);
+        rgba[i * 4 + 2] = float_to_half(std::isfinite(b) && b > 0.f ? b : 0.f);
+        rgba[i * 4 + 3] = float_to_half(a);
+    }
+}
+
+void unpremultiply_u8(uint8_t* rgba, size_t pixels) {
+    for (size_t i = 0; i < pixels; i++) {
+        const unsigned a = rgba[i * 4 + 3];
+        if (a == 0) {
+            rgba[i * 4 + 0] = 0;
+            rgba[i * 4 + 1] = 0;
+            rgba[i * 4 + 2] = 0;
+            continue;
+        }
+        if (a == 255) continue;
+        for (int c = 0; c < 3; c++) {
+            const unsigned v = (static_cast<unsigned>(rgba[i * 4 + c]) * 255u + a / 2u) / a;
+            rgba[i * 4 + c] = static_cast<uint8_t>(v > 255u ? 255u : v);
+        }
+    }
+}
+
+void png_to_709(float& r, float& g, float& b, uhdr_color_gamut_t cg) {
+    if (cg == UHDR_CG_BT_2100) {
+        linear_bt2020_to_bt709(r, g, b);
+    } else if (cg == UHDR_CG_DISPLAY_P3) {
+        linear_p3_to_bt709(r, g, b);
+    }
+    if (!std::isfinite(r) || r < 0.f) r = 0.f;
+    if (!std::isfinite(g) || g < 0.f) g = 0.f;
+    if (!std::isfinite(b) || b < 0.f) b = 0.f;
+}
+
+void be32(std::vector<uint8_t>& out, uint32_t v) {
+    out.push_back(static_cast<uint8_t>((v >> 24) & 0xff));
+    out.push_back(static_cast<uint8_t>((v >> 16) & 0xff));
+    out.push_back(static_cast<uint8_t>((v >> 8) & 0xff));
+    out.push_back(static_cast<uint8_t>(v & 0xff));
+}
+
+void png_chunk(std::vector<uint8_t>& out, const char type[4], const uint8_t* data, size_t n) {
+    be32(out, static_cast<uint32_t>(n));
+    const size_t start = out.size();
+    out.insert(out.end(), type, type + 4);
+    if (n > 0 && data) out.insert(out.end(), data, data + n);
+    const uLong crc = crc32(0L, out.data() + start, static_cast<uInt>(4 + n));
+    be32(out, static_cast<uint32_t>(crc));
+}
+
+int encode_png_file(unsigned w, unsigned h, int bit_depth, const std::vector<uint8_t>& raw,
+                    const char* out_path) {
+    const size_t row_bytes = static_cast<size_t>(w) * 4u * (bit_depth == 16 ? 2u : 1u) + 1u;
+    if (raw.size() != row_bytes * h) return -46;
+    z_stream strm{};
+    if (deflateInit(&strm, Z_BEST_SPEED) != Z_OK) return -47;
+    std::vector<uint8_t> idat;
+    idat.resize(deflateBound(&strm, static_cast<uLong>(raw.size())));
+    strm.next_in = const_cast<Bytef*>(raw.data());
+    strm.avail_in = static_cast<uInt>(raw.size());
+    strm.next_out = idat.data();
+    strm.avail_out = static_cast<uInt>(idat.size());
+    const int zrc = deflate(&strm, Z_FINISH);
+    const size_t produced = idat.size() - strm.avail_out;
+    deflateEnd(&strm);
+    if (zrc != Z_STREAM_END) return -48;
+    idat.resize(produced);
+
+    std::vector<uint8_t> file;
+    file.reserve(8 + 12 + 13 + 12 + idat.size() + 12);
+    const uint8_t sig[8] = {137, 80, 78, 71, 13, 10, 26, 10};
+    file.insert(file.end(), sig, sig + 8);
+    uint8_t ihdr[13];
+    ihdr[0] = static_cast<uint8_t>((w >> 24) & 0xff);
+    ihdr[1] = static_cast<uint8_t>((w >> 16) & 0xff);
+    ihdr[2] = static_cast<uint8_t>((w >> 8) & 0xff);
+    ihdr[3] = static_cast<uint8_t>(w & 0xff);
+    ihdr[4] = static_cast<uint8_t>((h >> 24) & 0xff);
+    ihdr[5] = static_cast<uint8_t>((h >> 16) & 0xff);
+    ihdr[6] = static_cast<uint8_t>((h >> 8) & 0xff);
+    ihdr[7] = static_cast<uint8_t>(h & 0xff);
+    ihdr[8] = static_cast<uint8_t>(bit_depth);
+    ihdr[9] = 6;  // RGBA
+    ihdr[10] = 0;
+    ihdr[11] = 0;
+    ihdr[12] = 0;
+    png_chunk(file, "IHDR", ihdr, 13);
+    png_chunk(file, "IDAT", idat.data(), idat.size());
+    png_chunk(file, "IEND", nullptr, 0);
+    if (!write_file(out_path, file.data(), file.size())) return -49;
+    return 0;
+}
+
+void put_be16(uint8_t* dst, unsigned v) {
+    dst[0] = static_cast<uint8_t>((v >> 8) & 0xff);
+    dst[1] = static_cast<uint8_t>(v & 0xff);
+}
+
+int encode_png_from_f16(unsigned w, unsigned h, const uint16_t* rgba, uhdr_color_gamut_t cg,
+                        bool sixteen, const char* out_path) {
+    const size_t pixels = static_cast<size_t>(w) * h;
+    const size_t sample = sixteen ? 2u : 1u;
+    std::vector<uint8_t> raw((static_cast<size_t>(w) * 4u * sample + 1u) * h);
+    size_t o = 0;
+    for (unsigned y = 0; y < h; y++) {
+        raw[o++] = 0;  // filter None
+        for (unsigned x = 0; x < w; x++) {
+            const size_t i = (static_cast<size_t>(y) * w + x) * 4;
+            float r = half_to_float(rgba[i + 0]);
+            float g = half_to_float(rgba[i + 1]);
+            float b = half_to_float(rgba[i + 2]);
+            float a = half_to_float(rgba[i + 3]);
+            png_to_709(r, g, b, cg);
+            if (!std::isfinite(a) || a < 0.f) a = 0.f;
+            if (a > 1.f) a = 1.f;
+            if (sixteen) {
+                put_be16(raw.data() + o, static_cast<unsigned>(srgb_oetf(r) * 65535.f + 0.5f));
+                put_be16(raw.data() + o + 2, static_cast<unsigned>(srgb_oetf(g) * 65535.f + 0.5f));
+                put_be16(raw.data() + o + 4, static_cast<unsigned>(srgb_oetf(b) * 65535.f + 0.5f));
+                put_be16(raw.data() + o + 6, static_cast<unsigned>(a * 65535.f + 0.5f));
+                o += 8;
+            } else {
+                raw[o++] = linear_to_srgb_u8(r);
+                raw[o++] = linear_to_srgb_u8(g);
+                raw[o++] = linear_to_srgb_u8(b);
+                raw[o++] = static_cast<uint8_t>(a * 255.f + 0.5f);
+            }
+        }
+    }
+    return encode_png_file(w, h, sixteen ? 16 : 8, raw, out_path);
+}
+
+int encode_png_from_u8(unsigned w, unsigned h, const uint8_t* rgba, bool sixteen,
+                       const char* out_path) {
+    const size_t sample = sixteen ? 2u : 1u;
+    std::vector<uint8_t> raw((static_cast<size_t>(w) * 4u * sample + 1u) * h);
+    size_t o = 0;
+    for (unsigned y = 0; y < h; y++) {
+        raw[o++] = 0;
+        for (unsigned x = 0; x < w; x++) {
+            const size_t i = (static_cast<size_t>(y) * w + x) * 4;
+            if (sixteen) {
+                for (int c = 0; c < 4; c++) {
+                    const unsigned v = static_cast<unsigned>(rgba[i + c]) * 257u;
+                    put_be16(raw.data() + o, v);
+                    o += 2;
+                }
+            } else {
+                raw[o++] = rgba[i + 0];
+                raw[o++] = rgba[i + 1];
+                raw[o++] = rgba[i + 2];
+                raw[o++] = rgba[i + 3];
+            }
+        }
+    }
+    return encode_png_file(w, h, sixteen ? 16 : 8, raw, out_path);
+}
+
+int encode_srgb_jpeg_u8(unsigned w, unsigned h, const uint8_t* rgba, const char* out_path) {
+    if (!rgba || !out_path || w == 0 || h == 0) return -40;
+    const size_t pixels = static_cast<size_t>(w) * h;
+    std::vector<uint8_t> rgb(pixels * 3);
+    for (size_t i = 0; i < pixels; i++) {
+        rgb[i * 3 + 0] = rgba[i * 4 + 0];
+        rgb[i * 3 + 1] = rgba[i * 4 + 1];
+        rgb[i * 3 + 2] = rgba[i * 4 + 2];
+    }
+    FILE* fp = fopen(out_path, "wb");
+    if (!fp) return -41;
+    jpeg_compress_struct cinfo{};
+    JpegErr jerr{};
+    cinfo.err = jpeg_std_error(&jerr.pub);
+    jerr.pub.error_exit = jpeg_err_exit;
+    if (setjmp(jerr.jump)) {
+        jpeg_destroy_compress(&cinfo);
+        fclose(fp);
+        return -42;
+    }
+    jpeg_create_compress(&cinfo);
+    jpeg_stdio_dest(&cinfo, fp);
+    cinfo.image_width = w;
+    cinfo.image_height = h;
+    cinfo.input_components = 3;
+    cinfo.in_color_space = JCS_RGB;
+    jpeg_set_defaults(&cinfo);
+    jpeg_set_quality(&cinfo, kJpegQualityBaseline, TRUE);
+    cinfo.comp_info[0].h_samp_factor = 1;
+    cinfo.comp_info[0].v_samp_factor = 1;
+    cinfo.comp_info[1].h_samp_factor = 1;
+    cinfo.comp_info[1].v_samp_factor = 1;
+    cinfo.comp_info[2].h_samp_factor = 1;
+    cinfo.comp_info[2].v_samp_factor = 1;
+    jpeg_start_compress(&cinfo, TRUE);
+    while (cinfo.next_scanline < cinfo.image_height) {
+        JSAMPROW row = rgb.data() + static_cast<size_t>(cinfo.next_scanline) * w * 3;
+        jpeg_write_scanlines(&cinfo, &row, 1);
+    }
+    jpeg_finish_compress(&cinfo);
+    jpeg_destroy_compress(&cinfo);
+    fclose(fp);
+    return 0;
+}
+
+}  // namespace
+
+/**
+ * Encode a reader bitmap or a full-res direct pack.
+ * mode: 0 baseline JPEG, 1 Ultra HDR JPEG (force), 2 PNG, 3 16-bit PNG.
+ * 8-bit samples are already sRGB. F16 samples are linear; SDR encode uses the
+ * same OETF / P3 ICC / BT.2100→709 path as the reader convert. PNG rematrixes
+ * wide gamut to BT.709 because the file is untagged.
+ * 8-bit JPEG (HDR) stays a baseline JPEG. There is no headroom to put in a gain map.
+ */
+int encode_still_export(const uint8_t* src, size_t src_len, unsigned w, unsigned h, bool f16,
+                        int gamut, int mode, bool premultiplied, const char* out_path) {
+    if (!src || !out_path || w == 0 || h == 0) return -50;
+    const size_t pixels = static_cast<size_t>(w) * static_cast<size_t>(h);
+    const size_t bpp = f16 ? 8u : 4u;
+    if (pixels == 0 || pixels > 80000000u || src_len < pixels * bpp) return -51;
+    const uhdr_color_gamut_t cg = export_gamut(gamut);
+    if (f16) {
+        std::vector<uint16_t> rgba(pixels * 4);
+        memcpy(rgba.data(), src, pixels * 8);
+        if (premultiplied) unpremultiply_f16(rgba.data(), pixels);
+        if (mode == kExportJpegHdr) {
+            return encode_linear_rgba_f16_to_uhdr(w, h, rgba.data(), out_path, cg, 0.f, true);
+        }
+        if (mode == kExportPng || mode == kExportPng16) {
+            return encode_png_from_f16(w, h, rgba.data(), cg, mode == kExportPng16, out_path);
+        }
+        return encode_baseline_sdr_jpeg(w, h, rgba.data(), out_path, cg);
+    }
+    std::vector<uint8_t> rgba(pixels * 4);
+    memcpy(rgba.data(), src, pixels * 4);
+    if (premultiplied) unpremultiply_u8(rgba.data(), pixels);
+    if (mode == kExportPng || mode == kExportPng16) {
+        return encode_png_from_u8(w, h, rgba.data(), mode == kExportPng16, out_path);
+    }
+    return encode_srgb_jpeg_u8(w, h, rgba.data(), out_path);
+}
+
+extern "C" JNIEXPORT jint JNICALL
+Java_com_hippo_ehviewer_jni_HdrConvertKt_encodeStillExport(JNIEnv* env, jclass, jbyteArray jPixels,
+                                                           jint width, jint height, jboolean f16,
+                                                           jint gamut, jint mode,
+                                                           jboolean premultiplied, jstring jOut) {
+    if (!jPixels || !jOut || width <= 0 || height <= 0) return -52;
+    const jsize len = env->GetArrayLength(jPixels);
+    if (len <= 0) return -53;
+    jbyte* bytes = env->GetByteArrayElements(jPixels, nullptr);
+    if (!bytes) return -54;
+    const char* out_path = env->GetStringUTFChars(jOut, nullptr);
+    if (!out_path) {
+        env->ReleaseByteArrayElements(jPixels, bytes, JNI_ABORT);
+        return -55;
+    }
+    const int rc = encode_still_export(reinterpret_cast<const uint8_t*>(bytes),
+                                       static_cast<size_t>(len), static_cast<unsigned>(width),
+                                       static_cast<unsigned>(height), f16 == JNI_TRUE, gamut, mode,
+                                       premultiplied == JNI_TRUE, out_path);
+    env->ReleaseStringUTFChars(jOut, out_path);
+    env->ReleaseByteArrayElements(jPixels, bytes, JNI_ABORT);
+    return rc;
 }
 
 extern "C" JNIEXPORT jint JNICALL

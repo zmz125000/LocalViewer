@@ -765,6 +765,14 @@ abstract class PageLoader(
         return FileUtils.sanitizeFilename("$stem.${ext.lowercase()}")
     }
 
+    override fun sourceLeafName(index: Int): String? {
+        getOriginalImageFileName(index)?.let { return it }
+        val ext = getImageExtension(index)?.removePrefix(".")?.ifBlank { null } ?: return null
+        return "page.$ext"
+    }
+
+    override fun saveOriginal(index: Int, file: Path): Boolean = savePage(index, file)
+
     private fun requestDecode(index: Int) {
         if (index !in 0 until size) return
         val page = pages.getOrNull(index) ?: return

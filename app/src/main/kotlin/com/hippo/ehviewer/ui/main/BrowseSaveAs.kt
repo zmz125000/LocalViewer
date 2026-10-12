@@ -48,6 +48,7 @@ import com.hippo.ehviewer.webdav.WebDavGateway
 import com.hippo.ehviewer.webdav.WebDavPasswordStore
 import com.hippo.ehviewer.webdav.WebDavRepository
 import java.io.File
+import java.io.FileOutputStream
 import java.io.OutputStream
 import kotlin.coroutines.CoroutineContext
 import kotlin.coroutines.coroutineContext
@@ -63,6 +64,7 @@ import moe.tarsin.snackbar
 import moe.tarsin.string
 import okio.Path
 import okio.Path.Companion.toPath
+import splitties.init.appCtx
 
 /**
  * Browse overflow **Save to…** (SAF picker, same as reader long-press [saveTo]) and
@@ -289,17 +291,44 @@ object BrowseSaveAs {
     }
 
     private suspend fun writeLocalFile(path: Path, dest: Uri, counter: ByteCounter) {
+        dest.openOutputStream().use { writeLocalBytes(path, CountingOutputStream(it, counter)) }
+    }
+
+    private suspend fun writeLocalBytes(path: Path, out: OutputStream) {
         ZipPaths.parse(path)?.let { (zipAbs, member) ->
             val bytes = withLocalZipCentralDirectory(zipAbs.toPath()) { cd ->
                 val entry = cd.find(member) ?: error("Missing ZIP member $member")
                 cd.extract(entry, SAVE_EXTRACT_MAX_BYTES)
                     ?: error("Cannot extract $member")
             } ?: error("Cannot read ZIP")
-            dest.openOutputStream().use { it.write(bytes) }
-            counter.add(bytes.size)
+            out.write(bytes)
             return
         }
-        copyCounted(path, dest.toOkioPath(), counter)
+        copyCounted(path, out)
+    }
+
+    internal suspend fun stageLocalForConvert(path: Path): File = stageForConvert { writeLocalBytes(path, it) }
+
+    internal suspend fun stageSmbForConvert(sourceId: Long, relativeFile: String): File {
+        val (source, password) = smbCreds(sourceId)
+        return stageForConvert { writeSmbFile(source, password, relativeFile, it) }
+    }
+
+    internal suspend fun stageWebDavForConvert(sourceId: Long, relativeFile: String): File {
+        val (source, password) = webDavCreds(sourceId)
+        return stageForConvert { writeWebDavFile(source, password, relativeFile, it) }
+    }
+
+    private suspend fun stageForConvert(write: suspend (OutputStream) -> Unit): File {
+        val tmp = File.createTempFile("still-src", null, appCtx.cacheDir)
+        try {
+            FileOutputStream(tmp).use { write(it) }
+            check(tmp.length() > 0L) { "Empty source" }
+            return tmp
+        } catch (t: Throwable) {
+            tmp.delete()
+            throw t
+        }
     }
 
     private fun shareCachedFile(ctx: Context, origin: Path, displayName: String) {

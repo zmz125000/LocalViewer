@@ -108,6 +108,8 @@ import com.hippo.ehviewer.gallery.useStreamArchivePageLoader
 import com.hippo.ehviewer.gallery.useTarChunkPageLoader
 import com.hippo.ehviewer.gallery.useWebDavFolderPageLoader
 import com.hippo.ehviewer.gallery.useZipFolderPageLoader
+import com.hippo.ehviewer.image.hdr.StillExportTarget
+import com.hippo.ehviewer.image.hdr.isStillExportFileName
 import com.hippo.ehviewer.library.FolderGalleryIndex
 import com.hippo.ehviewer.library.GallerySiblingNavigator
 import com.hippo.ehviewer.library.LandscapeCoverMarks
@@ -919,6 +921,13 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
                                 copy = { launchIO { with(pageLoader) { copy(page) } } },
                                 save = { launchIO { with(pageLoader) { save(page) } } },
                                 saveTo = { launchIO { with(pageLoader) { saveTo(page) } } },
+                                convert = pageLoader.sourceLeafName(page.index)
+                                    ?.takeIf { isStillExportFileName(it) }
+                                    ?.let {
+                                        { target: StillExportTarget ->
+                                            launchIO { with(pageLoader) { convertTo(page, target) } }
+                                        }
+                                    },
                                 showAds = { page.unblock() }.takeIf { blocked },
                                 // hide() ends with onDismissRequest → dispose once.
                                 dismiss = { launch { runCatching { state.hide() }.onFailure { dispose() } } },

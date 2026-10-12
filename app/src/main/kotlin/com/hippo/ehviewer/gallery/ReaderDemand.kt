@@ -50,6 +50,15 @@ interface ReaderSession : AutoCloseable {
     fun getImageFilename(index: Int): String?
     fun save(index: Int, file: Path): Boolean
 
+    /** Original file name, including a JXL / JXR / RAW extension when the page has one. */
+    fun sourceLeafName(index: Int): String? = getImageFilename(index)
+
+    /**
+     * Copy the original page bytes. Unlike [save], this does not substitute a
+     * cached Ultra HDR JPEG.
+     */
+    fun saveOriginal(index: Int, file: Path): Boolean = save(index, file)
+
     /**
      * Ensure page [index] is on disk for photo-grid thumbs (extract only, no decode).
      * Default no-op for sessions that are not document extract.

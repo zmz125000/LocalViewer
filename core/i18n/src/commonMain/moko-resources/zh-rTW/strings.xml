@@ -805,6 +805,13 @@
     <string name="action_copy">複製</string>
     <string name="action_save">儲存</string>
     <string name="action_save_to">儲存到&#8230;</string>
+    <string name="convert_to">轉換為…</string>
+    <string name="convert_back">返回</string>
+    <string name="convert_auto">自動（閱讀器點陣圖）</string>
+    <string name="convert_jpeg">JPEG</string>
+    <string name="convert_jpeg_hdr">JPEG（HDR）</string>
+    <string name="convert_png">PNG</string>
+    <string name="convert_png_16">PNG（16 位元）</string>
     <string name="pref_category_general">一般</string>
     <string name="pref_fullscreen">全螢幕</string>
     <string name="pref_page_transitions">翻頁轉場動畫</string>
