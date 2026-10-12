@@ -549,7 +549,11 @@ object LocalHistory {
                 ?.filterIsInstance<BrowseEntry.Directory>()
                 ?.firstOrNull { it.path.toString() == currentPath || it.name == dirName }
                 ?.coverPath?.toString()?.takeIf { it.isNotBlank() }
-                ?.let { return it }
+                ?.let { raw ->
+                    val zipLeaf = ZipPaths.memberLeafName(raw)
+                    if (zipLeaf != null && isVideoFileName(zipLeaf)) return null
+                    return HistoryThumbKey.coerceVideoCoverKey(raw)
+                }
         }
 
         return BrowseFavorites.thumbKeyFor(BrowseFavorites.localFolderKey(rootId, rel))
@@ -642,7 +646,10 @@ object LocalHistory {
         smb: Boolean,
     ): String? {
         if (coverFileName.isNullOrBlank()) return null
+        val leaf = coverFileName.substringAfterLast('/').substringAfterLast('\\')
         val parts = ZipAsDirListing.zipAsDirCoverParts(listedDir, relativeName, coverFileName)
+        // Video members of a zip-as-dir folder are not covers.
+        if (parts != null && isVideoFileName(leaf)) return null
         if (parts != null) {
             return if (smb) {
                 HistoryThumbKey.smbZip(sourceId, parts.first, parts.second)
@@ -654,7 +661,7 @@ object LocalHistory {
             if (relativeName.isEmpty()) listedDir else joinRemote(listedDir, relativeName),
             coverFileName,
         )
-        return if (smb) HistoryThumbKey.smb(sourceId, remote) else HistoryThumbKey.webdav(sourceId, remote)
+        return HistoryThumbKey.looseRemoteCoverKey(smb, sourceId, remote)
     }
 
     /**

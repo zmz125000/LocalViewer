@@ -75,8 +75,24 @@ object HistoryThumbKey {
      */
     fun coerceVideoCoverKey(path: String): String {
         if (path.isBlank() || isLogicalKey(path)) return path
+        // Zip-as-dir members stay zip paths. Video members are not folder covers.
+        if (ZipPaths.memberLeafName(path) != null) return path
         val name = path.substringAfterLast('/').substringAfterLast('\\')
         return if (isVideoFileName(name) || isVideoFileName(path)) videoLocal(path) else path
+    }
+
+    /**
+     * Folder-favourite / history key for a loose remote file.
+     * Platform videos use the video-thumb cache. Blocked containers return null
+     * so they are not stored as an image thumb path.
+     */
+    fun looseRemoteCoverKey(smb: Boolean, sourceId: Long, remoteRelativeFile: String): String? {
+        val leaf = remoteRelativeFile.substringAfterLast('/').substringAfterLast('\\')
+        if (isVideoFileName(leaf)) {
+            if (!isPlatformVideoThumbFileName(leaf)) return null
+            return if (smb) videoSmb(sourceId, remoteRelativeFile) else videoWebdav(sourceId, remoteRelativeFile)
+        }
+        return if (smb) smb(sourceId, remoteRelativeFile) else webdav(sourceId, remoteRelativeFile)
     }
 
     fun videoSmb(sourceId: Long, remoteRelativeFile: String): String {

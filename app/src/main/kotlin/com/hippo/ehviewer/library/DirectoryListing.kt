@@ -1022,6 +1022,11 @@ fun classifyRemoteListingWithPeeks(
      * mode can reach documents inside zip-as-dir (same idea as [sawArchive] for Galleries).
      */
     zipAsDir: Boolean = false,
+    /**
+     * Zip interior listings. Video members are not folder covers there.
+     * A zip file shown as a directory skips videos even when this is false.
+     */
+    skipVideoCovers: Boolean = false,
 ): List<BrowseEntryRemote> {
     val dirs = ArrayList<BrowseEntryRemote.Directory>()
     val leafGalleries = ArrayList<BrowseEntryRemote.FolderGallery>()
@@ -1110,8 +1115,14 @@ fun classifyRemoteListingWithPeeks(
                     var leafHasVideo = false
                     var leafHasGallery = false
                     var leafHasDocument = false
-                    // Folder-thumb cover for real dir S (image, else archive/PDF).
-                    val sCoverFileName = remoteDirCoverFileName(peek, e.name, leaves, grandPeeks)
+                    // Folder-thumb cover for real dir S (image, else video, else archive/PDF).
+                    val sCoverFileName = remoteDirCoverFileName(
+                        peek,
+                        e.name,
+                        leaves,
+                        grandPeeks,
+                        skipVideoCovers = skipVideoCovers || (zipAsDir && isZipArchiveFileName(e.name)),
+                    )
                     val sHasImages = peek.any {
                         !it.isDirectory && !it.name.startsWith('.') &&
                             !isProtectedSystemName(it.name) && isImageFileName(it.name)
@@ -1431,8 +1442,14 @@ fun classifyRemoteListingWithPeeks(
                                 virtual = true,
                             )
                         }
-                        // Direct image, else leaf image, else archive/PDF (including >3-leaf peek).
-                        val navCover = remoteDirCoverFileName(peek, e.name, leaves, grandPeeks)
+                        // Direct image, else leaf image, else video, else archive/PDF.
+                        val navCover = remoteDirCoverFileName(
+                            peek,
+                            e.name,
+                            leaves,
+                            grandPeeks,
+                            skipVideoCovers = skipVideoCovers || (zipAsDir && isZipArchiveFileName(e.name)),
+                        )
                         dirs += BrowseEntryRemote.Directory(
                             name = e.name,
                             hasVideo = kind.hasVideo,
@@ -1499,6 +1516,13 @@ fun classifyRemoteListingWithPeeks(
                     }
                     is RemoteChildKind.VideoOnly -> {
                         val single = kind.videoFileNames.singleOrNull()
+                        val videoCover = if (
+                            skipVideoCovers || (zipAsDir && isZipArchiveFileName(e.name))
+                        ) {
+                            null
+                        } else {
+                            firstVideoCoverNameInPeek(peek)
+                        }
                         when {
                             isSampleDirName(e.name) ->
                                 dirs += BrowseEntryRemote.Directory(
@@ -1527,6 +1551,7 @@ fun classifyRemoteListingWithPeeks(
                                     hasGallery = false,
                                     hasDocument = kind.hasDocument,
                                     presence = DirPresence.PromotedShell,
+                                    coverFileName = videoCover,
                                     lastModifiedMs = e.lastModifiedMs,
                                     size = e.size,
                                     hidden = entryHidden,
@@ -1539,6 +1564,7 @@ fun classifyRemoteListingWithPeeks(
                                     hasGallery = false,
                                     hasDocument = kind.hasDocument,
                                     presence = DirPresence.VideoOnly,
+                                    coverFileName = videoCover,
                                     lastModifiedMs = e.lastModifiedMs,
                                     size = e.size,
                                     hidden = entryHidden,
@@ -1685,7 +1711,22 @@ private fun firstImageNameInPeek(peek: List<RemoteChild>): String? {
     return null
 }
 
-/** Natural-first archive/PDF basename. Used only when the peek has no image cover. */
+/**
+ * Natural-first video basename that [isPlatformVideoThumbFileName] accepts.
+ * Blocked containers (avi, wmv, …) are skipped so the next eligible file wins.
+ */
+private fun firstVideoCoverNameInPeek(peek: List<RemoteChild>): String? {
+    var best: String? = null
+    for (c in peek) {
+        if (c.isDirectory || c.name.startsWith('.') || isProtectedSystemName(c.name)) continue
+        if (!isPlatformVideoThumbFileName(c.name)) continue
+        val name = c.name
+        if (best == null || naturalCompare(name, best) < 0) best = name
+    }
+    return best
+}
+
+/** Natural-first archive/PDF basename. Used only when the peek has no image or video cover. */
 private fun firstArchiveCoverNameInPeek(peek: List<RemoteChild>): String? {
     var best: String? = null
     for (c in peek) {
@@ -1699,16 +1740,19 @@ private fun firstArchiveCoverNameInPeek(peek: List<RemoteChild>): String? {
 
 /**
  * Folder-thumb cover relative to dir S.
- * Image, then archive/PDF. Each step checks direct children, then the subfolders
- * already peeked (at most [SMB_PROMOTE_MAX_LEAVES]). No extra list.
+ * Image, then a platform video thumb, then archive/PDF. Each step checks direct
+ * children, then the subfolders already peeked (at most [SMB_PROMOTE_MAX_LEAVES]).
+ * No extra list.
  *
- * When there are more leaves than that, only the first was peeked.
+ * [skipVideoCovers] is set for a zip shown as a folder and for folders inside that zip.
+ * When there are more leaves than the peek limit, only the first was peeked.
  */
 private fun remoteDirCoverFileName(
     peek: List<RemoteChild>,
     parentName: String,
     leaves: List<RemoteChild>,
     grandPeeks: Map<String, List<RemoteChild>>,
+    skipVideoCovers: Boolean = false,
 ): String? {
     val leavesToCheck = when {
         leaves.isEmpty() -> emptyList()
@@ -1720,6 +1764,12 @@ private fun remoteDirCoverFileName(
     firstImageNameInPeek(peek)?.let { return it }
     for (leaf in leavesToCheck) {
         firstImageNameInPeek(leafPeek(leaf))?.let { return "${leaf.name}/$it" }
+    }
+    if (!skipVideoCovers) {
+        firstVideoCoverNameInPeek(peek)?.let { return it }
+        for (leaf in leavesToCheck) {
+            firstVideoCoverNameInPeek(leafPeek(leaf))?.let { return "${leaf.name}/$it" }
+        }
     }
     firstArchiveCoverNameInPeek(peek)?.let { return it }
     for (leaf in leavesToCheck) {

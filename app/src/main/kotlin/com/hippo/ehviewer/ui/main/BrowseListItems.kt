@@ -87,11 +87,14 @@ import com.hippo.ehviewer.library.ReaderPageThumb
 import com.hippo.ehviewer.library.VideoThumbnail
 import com.hippo.ehviewer.library.VideoThumbnailSource
 import com.hippo.ehviewer.library.ZipMemberCover
+import com.hippo.ehviewer.library.ZipPaths
 import com.hippo.ehviewer.library.isArchiveFileName
 import com.hippo.ehviewer.library.isDocumentFileName
 import com.hippo.ehviewer.library.isMobiContainerFileName
 import com.hippo.ehviewer.library.isPdfFileName
+import com.hippo.ehviewer.library.isPlatformVideoThumbFileName
 import com.hippo.ehviewer.library.isSolidArchiveFileName
+import com.hippo.ehviewer.library.isVideoFileName
 import com.hippo.ehviewer.library.isZipArchiveFileName
 import com.hippo.ehviewer.library.safFolderLabel
 import com.hippo.ehviewer.library.stableGalleryId
@@ -410,11 +413,52 @@ sealed class BrowseCover {
     data class DocumentPage(val cacheKey: String, val index: Int) : BrowseCover()
 }
 
-/** Folder thumb: loose image, or archive/PDF first page when that file is the cover. */
-fun directoryBrowseCover(path: Path): BrowseCover = if (isArchiveFileName(path.name) || isMobiContainerFileName(path.name)) {
-    BrowseCover.LocalArchive(path)
-} else {
-    BrowseCover.Local(path)
+/**
+ * Folder thumb: loose image, platform video frame, or archive/PDF first page.
+ * Zip-member videos and blocked containers (avi, wmv, …) are not covers.
+ */
+fun directoryBrowseCover(path: Path): BrowseCover? {
+    val raw = path.toString()
+    val leaf = ZipPaths.memberLeafName(raw) ?: path.name
+    if (isVideoFileName(leaf)) {
+        if (ZipPaths.isZipPath(raw) || !isPlatformVideoThumbFileName(leaf)) return null
+        return BrowseCover.Local(path)
+    }
+    return if (isArchiveFileName(path.name) || isMobiContainerFileName(path.name)) {
+        BrowseCover.LocalArchive(path)
+    } else {
+        BrowseCover.Local(path)
+    }
+}
+
+/** Loose video file chosen as a folder cover. Zip members stay on the image/archive path. */
+fun BrowseCover.folderVideoThumbSource(knownSizeBytes: Long = 0L): VideoThumbnailSource? = when (this) {
+    is BrowseCover.Local -> {
+        val raw = path.toString()
+        val leaf = ZipPaths.memberLeafName(raw) ?: path.name
+        if (ZipPaths.isZipPath(raw) || !isPlatformVideoThumbFileName(leaf)) {
+            null
+        } else {
+            VideoThumbnailSource.Local(raw, knownSizeBytes)
+        }
+    }
+    is BrowseCover.Smb -> {
+        val leaf = remoteRelativeFile.substringAfterLast('/').substringAfterLast('\\')
+        if (!isPlatformVideoThumbFileName(leaf)) {
+            null
+        } else {
+            VideoThumbnailSource.Smb(sourceId, remoteRelativeFile, knownSizeBytes)
+        }
+    }
+    is BrowseCover.WebDav -> {
+        val leaf = remoteRelativeFile.substringAfterLast('/').substringAfterLast('\\')
+        if (!isPlatformVideoThumbFileName(leaf)) {
+            null
+        } else {
+            VideoThumbnailSource.WebDav(sourceId, remoteRelativeFile, knownSizeBytes)
+        }
+    }
+    else -> null
 }
 
 /** Stable identity for [ReaderPageThumb] (reader photo-grid thumbs written after decode). */
@@ -568,7 +612,18 @@ fun BrowseDirectoryRow(
         // Same 56dp leading slot as [BrowseFolderGalleryRow]. Thumbs off: folder icon only,
         // so [BrowseCoverThumb]'s fetch effect is not started.
         leadingContent = {
-            if (showFolderThumb && cover != null) {
+            val videoSource = if (showFolderThumb) cover?.folderVideoThumbSource() else null
+            if (videoSource != null) {
+                BrowseVideoThumbnail(
+                    source = videoSource,
+                    modifier = Modifier
+                        .size(56.dp)
+                        .clip(ShapeDefaults.Medium),
+                    iconSize = BrowseListLeadingIconSize,
+                    allowRemoteFetch = allowRemoteFetch,
+                    decodeSizePx = CoverThumb.listDecodePx(),
+                )
+            } else if (showFolderThumb && cover != null) {
                 BrowseCoverThumb(
                     cover = cover,
                     decodeSizePx = CoverThumb.listDecodePx(),
@@ -922,20 +977,36 @@ fun BrowseDirectoryGridItem(
             if (useThumbStyle) {
                 // Same as Library [FavoriteSourceGridCell] gallery: cover fills cell; label on scrim.
                 Box(Modifier.fillMaxSize().clip(ShapeDefaults.Medium)) {
-                    BrowseCoverThumb(
-                        cover = cover,
-                        modifier = Modifier.fillMaxSize(),
-                        placeholderSize = BrowseGridPlaceholderIconSize,
-                        decodeSizePx = CoverThumb.gridDecodePx(
-                            screenWidthDp = LocalConfiguration.current.screenWidthDp,
-                            columns = GalleryGridDefaults.columnCount(),
-                            margin = GalleryGridDefaults.margin(),
-                            gutter = GalleryGridDefaults.gutter(),
-                        ),
-                        retryKey = thumbRetryKey,
-                        allowRemoteFetch = allowRemoteFetch,
-                        placeholderIcon = Icons.Default.Folder,
-                    )
+                    val videoSource = cover.folderVideoThumbSource()
+                    if (videoSource != null) {
+                        BrowseVideoThumbnail(
+                            source = videoSource,
+                            modifier = Modifier.fillMaxSize(),
+                            iconSize = BrowseGridPlaceholderIconSize,
+                            allowRemoteFetch = allowRemoteFetch,
+                            decodeSizePx = CoverThumb.gridDecodePx(
+                                screenWidthDp = LocalConfiguration.current.screenWidthDp,
+                                columns = GalleryGridDefaults.columnCount(),
+                                margin = GalleryGridDefaults.margin(),
+                                gutter = GalleryGridDefaults.gutter(),
+                            ),
+                        )
+                    } else {
+                        BrowseCoverThumb(
+                            cover = cover,
+                            modifier = Modifier.fillMaxSize(),
+                            placeholderSize = BrowseGridPlaceholderIconSize,
+                            decodeSizePx = CoverThumb.gridDecodePx(
+                                screenWidthDp = LocalConfiguration.current.screenWidthDp,
+                                columns = GalleryGridDefaults.columnCount(),
+                                margin = GalleryGridDefaults.margin(),
+                                gutter = GalleryGridDefaults.gutter(),
+                            ),
+                            retryKey = thumbRetryKey,
+                            allowRemoteFetch = allowRemoteFetch,
+                            placeholderIcon = Icons.Default.Folder,
+                        )
+                    }
                     if (showFavoriteStar) {
                         Icon(
                             Icons.Default.Star,

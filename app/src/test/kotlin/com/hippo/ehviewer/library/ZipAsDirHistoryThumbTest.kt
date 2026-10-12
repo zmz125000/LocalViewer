@@ -51,6 +51,38 @@ class ZipAsDirHistoryThumbTest {
     }
 
     @Test
+    fun looseVideoFolderCoverUsesVideoThumbKeyAndSkipsZipMembers() {
+        assertEquals(
+            HistoryThumbKey.videoSmb(3L, "share/Shows/a.mp4"),
+            LocalHistory.zipOrRemoteThumbKey(3L, "share", "Shows", "a.mp4", smb = true),
+        )
+        assertEquals(
+            HistoryThumbKey.videoWebdav(3L, "share/Shows/b.mkv"),
+            LocalHistory.zipOrRemoteThumbKey(3L, "share", "Shows", "b.mkv", smb = false),
+        )
+        assertEquals(
+            null,
+            LocalHistory.zipOrRemoteThumbKey(3L, "share", "Shows", "old.avi", smb = true),
+        )
+        assertEquals(
+            null,
+            LocalHistory.zipOrRemoteThumbKey(3L, "share", "pack.zip", "clip.mp4", smb = true),
+        )
+        assertEquals(
+            HistoryThumbKey.smbZip(3L, "share/pack.zip", "01.jpg"),
+            LocalHistory.zipOrRemoteThumbKey(3L, "share", "pack.zip", "01.jpg", smb = true),
+        )
+        assertEquals(
+            null,
+            HistoryThumbKey.looseRemoteCoverKey(smb = true, sourceId = 3L, remoteRelativeFile = "Shows/old.wmv"),
+        )
+        assertEquals(
+            HistoryThumbKey.videoSmb(3L, "Shows/a.mp4"),
+            HistoryThumbKey.looseRemoteCoverKey(smb = true, sourceId = 3L, remoteRelativeFile = "Shows/a.mp4"),
+        )
+    }
+
+    @Test
     fun localVideoFolderCoverIsVidLocalNotRawPath() {
         val video = "/sdcard/Movies/Show/a.mp4"
         assertEquals(HistoryThumbKey.videoLocal(video), HistoryThumbKey.coerceVideoCoverKey(video))

@@ -86,6 +86,7 @@ import com.hippo.ehviewer.library.EmptyArchiveRegistry
 import com.hippo.ehviewer.library.ExplorerWindows
 import com.hippo.ehviewer.library.FolderGalleryIndex
 import com.hippo.ehviewer.library.FolderSearch
+import com.hippo.ehviewer.library.HistoryThumbKey
 import com.hippo.ehviewer.library.LOCAL_FOLDER_TOKEN
 import com.hippo.ehviewer.library.LOCAL_GALLERY_TOKEN
 import com.hippo.ehviewer.library.LocalFolderListing
@@ -110,6 +111,7 @@ import com.hippo.ehviewer.library.isImageFileName
 import com.hippo.ehviewer.library.isMobiContainerFileName
 import com.hippo.ehviewer.library.isPdfFileName
 import com.hippo.ehviewer.library.isPdfOrEbookFileName
+import com.hippo.ehviewer.library.isVideoFileName
 import com.hippo.ehviewer.library.isZipArchiveFileName
 import com.hippo.ehviewer.library.isZipPlainFolderListingLocal
 import com.hippo.ehviewer.library.listBrowseChildrenRaw
@@ -369,7 +371,13 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         val frame = stack.lastOrNull() ?: return
         val rel = if (frame.relativePath.isEmpty()) dir.name else "${frame.relativePath}/${dir.name}"
         // Same cache-key idea as History: absolute cover path for Library fav cell.
-        BrowseFavorites.toggleLocalFolder(frame.rootId, rel, thumbKey = dir.coverPath?.toString())
+        val rawCover = dir.coverPath?.toString()
+        val thumbKey = when {
+            rawCover.isNullOrBlank() -> null
+            ZipPaths.memberLeafName(rawCover)?.let(::isVideoFileName) == true -> null
+            else -> HistoryThumbKey.coerceVideoCoverKey(rawCover)
+        }
+        BrowseFavorites.toggleLocalFolder(frame.rootId, rel, thumbKey = thumbKey)
     }
 
     fun isDirFavorite(dir: BrowseEntry.Directory): Boolean {

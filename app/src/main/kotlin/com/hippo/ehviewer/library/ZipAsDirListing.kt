@@ -343,6 +343,7 @@ object ZipAsDirListing {
             childPeeks = childPeeks,
             grandPeeks = grandPeeks,
             zipAsDir = true,
+            skipVideoCovers = true,
         )
     }
 
