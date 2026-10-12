@@ -290,6 +290,39 @@ object BrowseSaveAs {
         return path
     }
 
+    /** Folder for Auto (original size). Opens immediately; the file name is chosen after decode. */
+    context(_: SnackbarHostState, _: Context)
+    internal suspend fun pickConvertDirectory(): Path? = pickTreeDir()
+
+    /** Writes [source] into [dir] as [displayName]. A local name that already exists gets a suffix. */
+    internal fun writeConvertFile(dir: Path, displayName: String, source: File): Path {
+        val name = uniqueConvertName(dir, FileUtils.sanitizeFilename(displayName))
+        if (dir.toString().startsWith('/')) {
+            val dest = dir / name
+            source.inputStream().use { input -> dest.sink().use { input.copyTo(it) } }
+            return dest
+        }
+        val child = dir.createSafChild(name, createDocumentMime(name))
+        child.toUri().openOutputStream().use { out ->
+            source.inputStream().use { it.copyTo(out) }
+        }
+        return child
+    }
+
+    private fun uniqueConvertName(dir: Path, name: String): String {
+        if (!dir.toString().startsWith('/')) return name
+        val dot = name.lastIndexOf('.')
+        val stem = if (dot > 0) name.substring(0, dot) else name
+        val ext = if (dot > 0) name.substring(dot) else ""
+        var candidate = name
+        var i = 2
+        while ((dir / candidate).exists()) {
+            candidate = "$stem ($i)$ext"
+            i++
+        }
+        return candidate
+    }
+
     private suspend fun writeLocalFile(path: Path, dest: Uri, counter: ByteCounter) {
         dest.openOutputStream().use { writeLocalBytes(path, CountingOutputStream(it, counter)) }
     }

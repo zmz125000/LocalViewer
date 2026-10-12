@@ -836,12 +836,10 @@ void jpeg_err_exit(j_common_ptr cinfo) {
  * Pure SDR → baseline JPEG (no gain map). Avoids libultrahdr epsilon-bump of
  * max_content_boost when min==max (≈1.07), which made tools show ratio ≠ 1.0.
  *
- * Color policy (lib-direct **off** convert path):
- * - **Display P3**: keep P3 primaries + sRGB-curve OETF + embed Display P3 ICC
- *   (APP2) so Coil/ImageDecoder can present WCG without rematrix crush.
- * - **BT.2100** (rare pure-SDR): rematrix → BT.709, untagged sRGB JPEG
- *   (no PQ/HLG in baseline).
- * - **BT.709**: sRGB OETF, untagged (or optional 709 ICC not required).
+ * Color policy:
+ * - Keep the pixel primaries (BT.709, Display P3, or BT.2020).
+ * - Encode with the sRGB curve and embed the matching ICC (APP2).
+ * - If that ICC cannot be built, rematrix to BT.709 and embed an sRGB profile.
  *
  * Quality [kJpegQualityBaseline], 4:4:4 chroma (no 4:2:0 color blur on 4K stills).
  */
@@ -850,17 +848,13 @@ int encode_baseline_sdr_jpeg(unsigned w, unsigned h, const uint16_t* rgba, const
     if (!rgba || !out_path || w == 0 || h == 0) return -30;
     const size_t pixels = static_cast<size_t>(w) * static_cast<size_t>(h);
     std::vector<uint8_t> rgb(pixels * 3);
-    // Keep P3 for WCG-capable convert; only BT.2100 SDR is rematrixed to 709.
-    const bool preserve_p3 = (cg == UHDR_CG_DISPLAY_P3);
-    const bool rematrix_2020 = (cg == UHDR_CG_BT_2100);
+    if (cg != UHDR_CG_BT_709 && cg != UHDR_CG_DISPLAY_P3 && cg != UHDR_CG_BT_2100) {
+        cg = UHDR_CG_BT_709;
+    }
     for (size_t i = 0; i < pixels; i++) {
         float r = half_to_float(rgba[i * 4 + 0]);
         float g = half_to_float(rgba[i * 4 + 1]);
         float b = half_to_float(rgba[i * 4 + 2]);
-        if (rematrix_2020) {
-            linear_bt2020_to_bt709(r, g, b);
-        }
-        // preserve_p3: leave linear P3 as-is; OETF matches Display P3 (same as sRGB curve).
         if (!std::isfinite(r) || r < 0.f) r = 0.f;
         if (!std::isfinite(g) || g < 0.f) g = 0.f;
         if (!std::isfinite(b) || b < 0.f) b = 0.f;
@@ -875,27 +869,30 @@ int encode_baseline_sdr_jpeg(unsigned w, unsigned h, const uint16_t* rgba, const
         return -31;
     }
 
-    // P3 ICC for ImageDecoder / Coil (includes ICC_PROFILE chunk header for APP2).
-    std::shared_ptr<ultrahdr::DataStruct> icc;
-    if (preserve_p3) {
-        icc = ultrahdr::IccHelper::writeIccProfile(UHDR_CT_SRGB, UHDR_CG_DISPLAY_P3);
-        if (!icc || !icc->getData() || icc->getLength() == 0) {
-            ALOGE("P3 ICC build failed — falling back to rematrix 709 baseline");
-            icc.reset();
-            // Re-encode pixels with rematrix so untagged JPEG is not wrong-primaries.
-            for (size_t i = 0; i < pixels; i++) {
-                float r = half_to_float(rgba[i * 4 + 0]);
-                float g = half_to_float(rgba[i * 4 + 1]);
-                float b = half_to_float(rgba[i * 4 + 2]);
+    // APP2 payload includes the ICC_PROFILE identifier. The curve is sRGB;
+    // the profile primaries match the samples.
+    std::shared_ptr<ultrahdr::DataStruct> icc =
+        ultrahdr::IccHelper::writeIccProfile(UHDR_CT_SRGB, cg);
+    if ((!icc || !icc->getData() || icc->getLength() == 0) && cg != UHDR_CG_BT_709) {
+        ALOGE("ICC build failed for cg=%d — rematrix to BT.709", (int)cg);
+        icc.reset();
+        for (size_t i = 0; i < pixels; i++) {
+            float r = half_to_float(rgba[i * 4 + 0]);
+            float g = half_to_float(rgba[i * 4 + 1]);
+            float b = half_to_float(rgba[i * 4 + 2]);
+            if (cg == UHDR_CG_DISPLAY_P3) {
                 linear_p3_to_bt709(r, g, b);
-                if (!std::isfinite(r) || r < 0.f) r = 0.f;
-                if (!std::isfinite(g) || g < 0.f) g = 0.f;
-                if (!std::isfinite(b) || b < 0.f) b = 0.f;
-                rgb[i * 3 + 0] = linear_to_srgb_u8(r);
-                rgb[i * 3 + 1] = linear_to_srgb_u8(g);
-                rgb[i * 3 + 2] = linear_to_srgb_u8(b);
+            } else {
+                linear_bt2020_to_bt709(r, g, b);
             }
+            if (!std::isfinite(r) || r < 0.f) r = 0.f;
+            if (!std::isfinite(g) || g < 0.f) g = 0.f;
+            if (!std::isfinite(b) || b < 0.f) b = 0.f;
+            rgb[i * 3 + 0] = linear_to_srgb_u8(r);
+            rgb[i * 3 + 1] = linear_to_srgb_u8(g);
+            rgb[i * 3 + 2] = linear_to_srgb_u8(b);
         }
+        icc = ultrahdr::IccHelper::writeIccProfile(UHDR_CT_SRGB, UHDR_CG_BT_709);
     }
 
     jpeg_compress_struct cinfo{};
@@ -963,8 +960,8 @@ int encode_baseline_sdr_jpeg(unsigned w, unsigned h, const uint16_t* rgba, const
  * [fixed_peak_nits] > 0: skip full-frame peak scan (thumbs: 203 SDR / 1000 HDR).
  * [fixed_peak_nits] ≤ 0: p99.99 scan of max(R,G,B) (full pages).
  *
- * [cg] must match [rgba] primaries for Ultra HDR. Baseline SDR keeps P3+ICC
- * (see encode_baseline_sdr_jpeg); BT.2100 pure-SDR rematrixes to 709.
+ * [cg] must match [rgba] primaries for Ultra HDR. Baseline SDR keeps those
+ * primaries and embeds a matching sRGB-curve ICC (see encode_baseline_sdr_jpeg).
  */
 int encode_linear_rgba_f16_to_uhdr(unsigned w, unsigned h, const uint16_t* rgba,
                                    const char* out_path, uhdr_color_gamut_t cg,
@@ -1426,15 +1423,46 @@ void unpremultiply_u8(uint8_t* rgba, size_t pixels) {
     }
 }
 
-void png_to_709(float& r, float& g, float& b, uhdr_color_gamut_t cg) {
-    if (cg == UHDR_CG_BT_2100) {
-        linear_bt2020_to_bt709(r, g, b);
-    } else if (cg == UHDR_CG_DISPLAY_P3) {
-        linear_p3_to_bt709(r, g, b);
-    }
+void clamp_png_rgb(float& r, float& g, float& b) {
     if (!std::isfinite(r) || r < 0.f) r = 0.f;
     if (!std::isfinite(g) || g < 0.f) g = 0.f;
     if (!std::isfinite(b) || b < 0.f) b = 0.f;
+}
+
+/**
+ * Raw ICC profile (no JPEG APP2 wrapper) for pixels encoded with the sRGB curve
+ * in [cg] primaries. Display P3 and BT.2020 stay in their own primaries.
+ */
+std::vector<uint8_t> export_srgb_icc(uhdr_color_gamut_t cg) {
+    if (cg != UHDR_CG_BT_709 && cg != UHDR_CG_DISPLAY_P3 && cg != UHDR_CG_BT_2100) {
+        cg = UHDR_CG_BT_709;
+    }
+    auto icc = ultrahdr::IccHelper::writeIccProfile(UHDR_CT_SRGB, cg);
+    if (!icc || !icc->getData() || icc->getLength() <= ultrahdr::kICCIdentifierSize) return {};
+    const auto* bytes = static_cast<const uint8_t*>(icc->getData());
+    return std::vector<uint8_t>(bytes + ultrahdr::kICCIdentifierSize, bytes + icc->getLength());
+}
+
+std::vector<uint8_t> png_iccp_data(const std::vector<uint8_t>& profile) {
+    if (profile.empty()) return {};
+    z_stream strm{};
+    if (deflateInit(&strm, Z_BEST_SPEED) != Z_OK) return {};
+    std::vector<uint8_t> compressed(deflateBound(&strm, static_cast<uLong>(profile.size())));
+    strm.next_in = const_cast<Bytef*>(profile.data());
+    strm.avail_in = static_cast<uInt>(profile.size());
+    strm.next_out = compressed.data();
+    strm.avail_out = static_cast<uInt>(compressed.size());
+    const int zrc = deflate(&strm, Z_FINISH);
+    const size_t produced = compressed.size() - strm.avail_out;
+    deflateEnd(&strm);
+    if (zrc != Z_STREAM_END || produced == 0) return {};
+    const char keyword[] = "ICC Profile";
+    std::vector<uint8_t> data;
+    data.reserve(sizeof(keyword) + 1 + produced);
+    data.insert(data.end(), keyword, keyword + sizeof(keyword));
+    data.push_back(0);
+    data.insert(data.end(), compressed.begin(), compressed.begin() + static_cast<std::ptrdiff_t>(produced));
+    return data;
 }
 
 void be32(std::vector<uint8_t>& out, uint32_t v) {
@@ -1454,7 +1482,7 @@ void png_chunk(std::vector<uint8_t>& out, const char type[4], const uint8_t* dat
 }
 
 int encode_png_file(unsigned w, unsigned h, int bit_depth, const std::vector<uint8_t>& raw,
-                    const char* out_path) {
+                    const char* out_path, const std::vector<uint8_t>& icc) {
     const size_t row_bytes = static_cast<size_t>(w) * 4u * (bit_depth == 16 ? 2u : 1u) + 1u;
     if (raw.size() != row_bytes * h) return -46;
     z_stream strm{};
@@ -1490,6 +1518,9 @@ int encode_png_file(unsigned w, unsigned h, int bit_depth, const std::vector<uin
     ihdr[11] = 0;
     ihdr[12] = 0;
     png_chunk(file, "IHDR", ihdr, 13);
+    const std::vector<uint8_t> iccp = png_iccp_data(icc);
+    if (!icc.empty() && iccp.empty()) return -45;
+    if (!iccp.empty()) png_chunk(file, "iCCP", iccp.data(), iccp.size());
     png_chunk(file, "IDAT", idat.data(), idat.size());
     png_chunk(file, "IEND", nullptr, 0);
     if (!write_file(out_path, file.data(), file.size())) return -49;
@@ -1515,7 +1546,7 @@ int encode_png_from_f16(unsigned w, unsigned h, const uint16_t* rgba, uhdr_color
             float g = half_to_float(rgba[i + 1]);
             float b = half_to_float(rgba[i + 2]);
             float a = half_to_float(rgba[i + 3]);
-            png_to_709(r, g, b, cg);
+            clamp_png_rgb(r, g, b);
             if (!std::isfinite(a) || a < 0.f) a = 0.f;
             if (a > 1.f) a = 1.f;
             if (sixteen) {
@@ -1532,11 +1563,13 @@ int encode_png_from_f16(unsigned w, unsigned h, const uint16_t* rgba, uhdr_color
             }
         }
     }
-    return encode_png_file(w, h, sixteen ? 16 : 8, raw, out_path);
+    const std::vector<uint8_t> icc = export_srgb_icc(cg);
+    if (icc.empty()) return -45;
+    return encode_png_file(w, h, sixteen ? 16 : 8, raw, out_path, icc);
 }
 
 int encode_png_from_u8(unsigned w, unsigned h, const uint8_t* rgba, bool sixteen,
-                       const char* out_path) {
+                       const char* out_path, uhdr_color_gamut_t cg) {
     const size_t sample = sixteen ? 2u : 1u;
     std::vector<uint8_t> raw((static_cast<size_t>(w) * 4u * sample + 1u) * h);
     size_t o = 0;
@@ -1558,10 +1591,13 @@ int encode_png_from_u8(unsigned w, unsigned h, const uint8_t* rgba, bool sixteen
             }
         }
     }
-    return encode_png_file(w, h, sixteen ? 16 : 8, raw, out_path);
+    const std::vector<uint8_t> icc = export_srgb_icc(cg);
+    if (icc.empty()) return -45;
+    return encode_png_file(w, h, sixteen ? 16 : 8, raw, out_path, icc);
 }
 
-int encode_srgb_jpeg_u8(unsigned w, unsigned h, const uint8_t* rgba, const char* out_path) {
+int encode_srgb_jpeg_u8(unsigned w, unsigned h, const uint8_t* rgba, const char* out_path,
+                        uhdr_color_gamut_t cg) {
     if (!rgba || !out_path || w == 0 || h == 0) return -40;
     const size_t pixels = static_cast<size_t>(w) * h;
     std::vector<uint8_t> rgb(pixels * 3);
@@ -1596,6 +1632,19 @@ int encode_srgb_jpeg_u8(unsigned w, unsigned h, const uint8_t* rgba, const char*
     cinfo.comp_info[2].h_samp_factor = 1;
     cinfo.comp_info[2].v_samp_factor = 1;
     jpeg_start_compress(&cinfo, TRUE);
+    auto icc = ultrahdr::IccHelper::writeIccProfile(UHDR_CT_SRGB, cg);
+    if (!icc || !icc->getData() || icc->getLength() == 0) {
+        jpeg_destroy_compress(&cinfo);
+        fclose(fp);
+        return -43;
+    }
+    const auto len = static_cast<unsigned int>(icc->getLength());
+    if (len > 65533u) {
+        jpeg_destroy_compress(&cinfo);
+        fclose(fp);
+        return -44;
+    }
+    jpeg_write_marker(&cinfo, JPEG_APP0 + 2, static_cast<const JOCTET*>(icc->getData()), len);
     while (cinfo.next_scanline < cinfo.image_height) {
         JSAMPROW row = rgb.data() + static_cast<size_t>(cinfo.next_scanline) * w * 3;
         jpeg_write_scanlines(&cinfo, &row, 1);
@@ -1611,9 +1660,9 @@ int encode_srgb_jpeg_u8(unsigned w, unsigned h, const uint8_t* rgba, const char*
 /**
  * Encode a reader bitmap or a full-res direct pack.
  * mode: 0 baseline JPEG, 1 Ultra HDR JPEG (force), 2 PNG, 3 16-bit PNG.
- * 8-bit samples are already sRGB. F16 samples are linear; SDR encode uses the
- * same OETF / P3 ICC / BT.2100→709 path as the reader convert. PNG rematrixes
- * wide gamut to BT.709 because the file is untagged.
+ * 8-bit samples are already encoded. F16 samples are linear. SDR JPEG and PNG
+ * apply the sRGB curve and embed an ICC profile for the pixel primaries
+ * (BT.709, Display P3, or BT.2020). PNG keeps those primaries.
  * 8-bit JPEG (HDR) stays a baseline JPEG. There is no headroom to put in a gain map.
  */
 int encode_still_export(const uint8_t* src, size_t src_len, unsigned w, unsigned h, bool f16,
@@ -1639,9 +1688,9 @@ int encode_still_export(const uint8_t* src, size_t src_len, unsigned w, unsigned
     memcpy(rgba.data(), src, pixels * 4);
     if (premultiplied) unpremultiply_u8(rgba.data(), pixels);
     if (mode == kExportPng || mode == kExportPng16) {
-        return encode_png_from_u8(w, h, rgba.data(), mode == kExportPng16, out_path);
+        return encode_png_from_u8(w, h, rgba.data(), mode == kExportPng16, out_path, cg);
     }
-    return encode_srgb_jpeg_u8(w, h, rgba.data(), out_path);
+    return encode_srgb_jpeg_u8(w, h, rgba.data(), out_path, cg);
 }
 
 extern "C" JNIEXPORT jint JNICALL
