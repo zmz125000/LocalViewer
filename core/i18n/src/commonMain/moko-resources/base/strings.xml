@@ -1090,6 +1090,7 @@
     <string name="convert_to">Convert to…</string>
     <string name="convert_back">Back</string>
     <string name="convert_auto">Auto (reader bitmap)</string>
+    <string name="convert_auto_original">Auto (original size)</string>
     <string name="convert_jpeg">JPEG</string>
     <string name="convert_jpeg_hdr">JPEG (HDR)</string>
     <string name="convert_png">PNG</string>

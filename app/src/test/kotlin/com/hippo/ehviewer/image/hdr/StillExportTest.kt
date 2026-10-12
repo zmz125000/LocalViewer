@@ -15,6 +15,17 @@ class StillExportTest {
     }
 
     @Test
+    fun originalSizeUsesTheSameRuleAndHdrIsUltraHdr() {
+        assertEquals(StillExportTarget.JpegHdr, StillExportTarget.AutoOriginal.resolve(hdr = true, f16 = true))
+        assertEquals(StillExportTarget.JpegHdr, StillExportTarget.AutoOriginal.resolve(hdr = true, f16 = false))
+        assertEquals(StillExportTarget.Png16, StillExportTarget.AutoOriginal.resolve(hdr = false, f16 = true))
+        assertEquals(StillExportTarget.Jpeg, StillExportTarget.AutoOriginal.resolve(hdr = false, f16 = false))
+        assertEquals(1, StillExportTarget.AutoOriginal.resolve(hdr = true, f16 = false).exportMode())
+        assertEquals("jpg", StillExportTarget.AutoOriginal.resolve(hdr = true, f16 = true).fileExtension())
+        assertEquals("png", StillExportTarget.AutoOriginal.resolve(hdr = false, f16 = true).fileExtension())
+    }
+
+    @Test
     fun explicitTargetsKeepTheirExtension() {
         assertEquals("jpg", StillExportTarget.Jpeg.fileExtension())
         assertEquals("jpg", StillExportTarget.JpegHdr.fileExtension())

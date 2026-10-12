@@ -7,10 +7,13 @@ import com.hippo.ehviewer.util.FileUtils
  *
  * [Auto] is resolved from a bitmap already in memory: HDR (including a gain map)
  * becomes Ultra HDR JPEG, fp16 SDR becomes 16-bit PNG, and 8-bit becomes JPEG.
+ * [AutoOriginal] uses that same rule after a full-resolution decode of the file.
+ * HDR from that decode is written with the Ultra HDR JPEG encoder.
  * The other targets always redecode the source at the reader's full-res cap.
  */
 enum class StillExportTarget {
     Auto,
+    AutoOriginal,
     Jpeg,
     JpegHdr,
     Png,
@@ -31,8 +34,10 @@ fun resolveStillExportAuto(hdr: Boolean, f16: Boolean): StillExportTarget = when
     else -> StillExportTarget.Jpeg
 }
 
+fun StillExportTarget.usesAutoRule(): Boolean = this == StillExportTarget.Auto || this == StillExportTarget.AutoOriginal
+
 fun StillExportTarget.resolve(hdr: Boolean, f16: Boolean): StillExportTarget = when (this) {
-    StillExportTarget.Auto -> resolveStillExportAuto(hdr, f16)
+    StillExportTarget.Auto, StillExportTarget.AutoOriginal -> resolveStillExportAuto(hdr, f16)
     else -> this
 }
 
@@ -41,7 +46,7 @@ fun StillExportTarget.exportMode(): Int = when (this) {
     StillExportTarget.JpegHdr -> 1
     StillExportTarget.Png -> 2
     StillExportTarget.Png16 -> 3
-    StillExportTarget.Auto, StillExportTarget.Jpeg -> 0
+    StillExportTarget.Auto, StillExportTarget.AutoOriginal, StillExportTarget.Jpeg -> 0
 }
 
 fun StillExportTarget.fileExtension(): String = when (this) {

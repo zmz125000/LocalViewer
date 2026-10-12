@@ -10,6 +10,7 @@ import com.ehviewer.core.util.withIOContext
 import com.hippo.ehviewer.gallery.Page
 import com.hippo.ehviewer.gallery.ReaderSession
 import com.hippo.ehviewer.image.PathSource
+import com.hippo.ehviewer.image.hdr.DirectPixels
 import com.hippo.ehviewer.image.hdr.LibDirectDecode
 import com.hippo.ehviewer.image.hdr.StillExportTarget
 import com.hippo.ehviewer.image.hdr.copyExportFrame
@@ -17,6 +18,7 @@ import com.hippo.ehviewer.image.hdr.mimeType
 import com.hippo.ehviewer.image.hdr.residentExportImage
 import com.hippo.ehviewer.image.hdr.resolve
 import com.hippo.ehviewer.image.hdr.stillExportFileName
+import com.hippo.ehviewer.image.hdr.usesAutoRule
 import com.hippo.ehviewer.image.hdr.writeResolved
 import com.hippo.ehviewer.ui.main.BrowseSaveAs
 import com.hippo.ehviewer.util.awaitActivityResult
@@ -46,13 +48,26 @@ suspend fun convertTo(page: Page, target: StillExportTarget) {
         snackbar(string(R.string.error_cant_save_image))
         return
     }
+    val original = if (target == StillExportTarget.AutoOriginal) {
+        decodeOriginalPixels(loader, page.index, leaf)
+    } else {
+        null
+    }
+    if (target == StillExportTarget.AutoOriginal && original == null) {
+        snackbar(string(R.string.error_cant_save_image))
+        return
+    }
     try {
-        val resolved = frame?.let { target.resolve(it.hdr, it.f16) } ?: target
+        val resolved = when {
+            frame != null -> target.resolve(frame.hdr, frame.f16)
+            original != null -> target.resolve(original.isHdr, original.f16)
+            else -> target
+        }
         val saved = pickAndWrite(leaf, resolved) { dest ->
-            if (frame != null) {
-                writeTemp(dest) { frame.writeResolved(resolved, it) }
-            } else {
-                writeFullRes(loader, page.index, leaf, resolved, dest)
+            when {
+                frame != null -> writeTemp(dest) { frame.writeResolved(resolved, it) }
+                original != null -> writeTemp(dest) { original.writeResolved(resolved, it) }
+                else -> writeFullRes(loader, page.index, leaf, resolved, dest)
             }
         }
         if (!saved) snackbar(string(R.string.error_cant_save_image))
@@ -89,7 +104,7 @@ private suspend fun convertStaged(leaf: String, target: StillExportTarget, stage
 
 context(_: SnackbarHostState, _: Context)
 private suspend fun convertStagedUnchecked(leaf: String, target: StillExportTarget, stage: suspend () -> File) {
-    val autoPixels = if (target == StillExportTarget.Auto) {
+    val autoPixels = if (target.usesAutoRule()) {
         val file = withIOContext { stage() }
         try {
             withIOContext { LibDirectDecode.decodePixels(file.asPathSource(), leaf, maxEdge = 0) }
@@ -99,7 +114,7 @@ private suspend fun convertStagedUnchecked(leaf: String, target: StillExportTarg
     } else {
         null
     }
-    if (target == StillExportTarget.Auto && autoPixels == null) {
+    if (target.usesAutoRule() && autoPixels == null) {
         snackbar(string(R.string.error_cant_save_image))
         return
     }
@@ -145,6 +160,24 @@ private suspend fun pickAndWrite(
         snackbar(string(R.string.error_cant_find_activity))
     }.getOrDefault(true)
     return !picked || ok
+}
+
+/** Full-resolution file decode. HDR pixels are later encoded as Ultra HDR JPEG. */
+private suspend fun decodeOriginalPixels(
+    loader: ReaderSession,
+    index: Int,
+    leaf: String,
+): DirectPixels? = withIOContext {
+    val src = File.createTempFile("still-src", null, appCtx.cacheDir)
+    try {
+        if (!loader.saveOriginal(index, src.toOkioPath())) {
+            null
+        } else {
+            LibDirectDecode.decodePixels(src.asPathSource(), leaf, maxEdge = 0)
+        }
+    } finally {
+        src.delete()
+    }
 }
 
 private suspend fun writeFullRes(

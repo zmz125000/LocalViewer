@@ -996,6 +996,7 @@
     <string name="convert_to">変換…</string>
     <string name="convert_back">戻る</string>
     <string name="convert_auto">自動（リーダーの画像）</string>
+    <string name="convert_auto_original">自動（元のサイズ）</string>
     <string name="convert_jpeg">JPEG</string>
     <string name="convert_jpeg_hdr">JPEG（HDR）</string>
     <string name="convert_png">PNG</string>

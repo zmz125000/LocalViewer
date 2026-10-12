@@ -1098,6 +1098,8 @@ fun classifyRemoteListingWithPeeks(
                         val leafName: String,
                         val relativeName: String,
                         val lastModifiedMs: Long = 0L,
+                        /** Platform-video basename under [relativeName]. Blocked containers stay unset. */
+                        val coverFileName: String? = null,
                     )
 
                     /** Single video file lifted to parent Videos section (`@S-leaf` display). */
@@ -1167,6 +1169,12 @@ fun classifyRemoteListingWithPeeks(
                                             leafName = leaf.name,
                                             relativeName = key,
                                             lastModifiedMs = leaf.lastModifiedMs,
+                                            coverFileName = promotedVideoCoverName(
+                                                leafPeek,
+                                                e.name,
+                                                zipAsDir,
+                                                skipVideoCovers,
+                                            ),
                                         )
                                     }
                                     leafHasVideo = true
@@ -1213,6 +1221,12 @@ fun classifyRemoteListingWithPeeks(
                                             leafName = leaf.name,
                                             relativeName = key,
                                             lastModifiedMs = leaf.lastModifiedMs,
+                                            coverFileName = promotedVideoCoverName(
+                                                leafPeek,
+                                                e.name,
+                                                zipAsDir,
+                                                skipVideoCovers,
+                                            ),
                                         )
                                         leafHasVideo = true
                                     }
@@ -1298,6 +1312,7 @@ fun classifyRemoteListingWithPeeks(
                                 hasVideo = true,
                                 hasGallery = false,
                                 presence = DirPresence.PromotedVideoLeaf,
+                                coverFileName = v.coverFileName,
                                 lastModifiedMs = v.lastModifiedMs,
                                 hidden = entryHidden,
                                 virtual = true,
@@ -1709,6 +1724,21 @@ private fun firstImageNameInPeek(peek: List<RemoteChild>): String? {
         if (isImageFileName(c.name)) return c.name
     }
     return null
+}
+
+/**
+ * Cover for a promoted `@` video folder. Relative to the leaf, so the row can
+ * use the same platform-video thumb as a real video directory. Zip interiors
+ * and blocked containers stay without a video cover.
+ */
+private fun promotedVideoCoverName(
+    peek: List<RemoteChild>,
+    parentName: String,
+    zipAsDir: Boolean,
+    skipVideoCovers: Boolean,
+): String? {
+    if (skipVideoCovers || (zipAsDir && isZipArchiveFileName(parentName))) return null
+    return firstVideoCoverNameInPeek(peek)
 }
 
 /**
