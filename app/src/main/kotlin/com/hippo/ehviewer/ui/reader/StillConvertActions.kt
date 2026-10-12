@@ -14,12 +14,9 @@ import com.hippo.ehviewer.image.PathSource
 import com.hippo.ehviewer.image.hdr.DirectPixels
 import com.hippo.ehviewer.image.hdr.LibDirectDecode
 import com.hippo.ehviewer.image.hdr.StillExportTarget
-import com.hippo.ehviewer.image.hdr.copyExportFrame
 import com.hippo.ehviewer.image.hdr.mimeType
-import com.hippo.ehviewer.image.hdr.residentExportImage
 import com.hippo.ehviewer.image.hdr.resolve
 import com.hippo.ehviewer.image.hdr.stillExportFileName
-import com.hippo.ehviewer.image.hdr.usesAutoRule
 import com.hippo.ehviewer.image.hdr.writeResolved
 import com.hippo.ehviewer.ui.main.BrowseSaveAs
 import com.hippo.ehviewer.util.awaitActivityResult
@@ -40,33 +37,15 @@ suspend fun convertTo(page: Page, target: StillExportTarget) {
         snackbar(string(R.string.error_cant_save_image))
         return
     }
-    val frame = if (target == StillExportTarget.Auto) {
-        residentExportImage(loader, page)?.copyExportFrame()
-    } else {
-        null
-    }
-    if (target == StillExportTarget.Auto && frame == null) {
-        snackbar(string(R.string.error_cant_save_image))
-        return
-    }
     if (target == StillExportTarget.AutoOriginal) {
         val saved = saveOriginalSize(leaf) { decodeOriginalPixels(loader, page.index, leaf) }
         if (!saved) snackbar(string(R.string.error_cant_save_image))
         return
     }
-    try {
-        val resolved = frame?.let { target.resolve(it.hdr, it.f16) } ?: target
-        val saved = pickAndWrite(leaf, resolved) { dest ->
-            if (frame != null) {
-                writeTemp(dest) { frame.writeResolved(resolved, it) }
-            } else {
-                writeFullRes(loader, page.index, leaf, resolved, dest)
-            }
-        }
-        if (!saved) snackbar(string(R.string.error_cant_save_image))
-    } finally {
-        frame?.close()
+    val saved = pickAndWrite(leaf, target) { dest ->
+        writeFullRes(loader, page.index, leaf, target, dest)
     }
+    if (!saved) snackbar(string(R.string.error_cant_save_image))
 }
 
 context(_: SnackbarHostState, _: Context)
@@ -109,23 +88,8 @@ private suspend fun convertStagedUnchecked(leaf: String, target: StillExportTarg
         if (!saved) snackbar(string(R.string.error_cant_save_image))
         return
     }
-    val autoPixels = if (target.usesAutoRule()) {
-        val file = withIOContext { stage() }
-        try {
-            withIOContext { LibDirectDecode.decodePixels(file.asPathSource(), leaf, maxEdge = 0) }
-        } finally {
-            file.delete()
-        }
-    } else {
-        null
-    }
-    if (target.usesAutoRule() && autoPixels == null) {
-        snackbar(string(R.string.error_cant_save_image))
-        return
-    }
-    val resolved = autoPixels?.let { target.resolve(it.isHdr, it.f16) } ?: target
-    val saved = pickAndWrite(leaf, resolved) { dest ->
-        val pixels = autoPixels ?: withIOContext {
+    val saved = pickAndWrite(leaf, target) { dest ->
+        val pixels = withIOContext {
             val file = stage()
             try {
                 LibDirectDecode.decodePixels(file.asPathSource(), leaf, maxEdge = 0)
@@ -136,7 +100,7 @@ private suspend fun convertStagedUnchecked(leaf: String, target: StillExportTarg
         if (pixels == null) {
             false
         } else {
-            writeTemp(dest) { pixels.writeResolved(resolved, it) }
+            writeTemp(dest) { pixels.writeResolved(target, it) }
         }
     }
     if (!saved) snackbar(string(R.string.error_cant_save_image))

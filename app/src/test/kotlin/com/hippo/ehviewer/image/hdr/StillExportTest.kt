@@ -52,10 +52,4 @@ class StillExportTest {
         assertFalse(isStillExportFileName("a.png"))
         assertFalse(isStillExportFileName("a.tif"))
     }
-
-    @Test
-    fun autoPrefersTheFullBitmapWhenItIsAlive() {
-        assertTrue(preferFullResidentBitmap(fullBitmapAlive = true))
-        assertFalse(preferFullResidentBitmap(fullBitmapAlive = false))
-    }
 }

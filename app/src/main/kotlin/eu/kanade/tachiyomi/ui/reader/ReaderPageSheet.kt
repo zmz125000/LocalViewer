@@ -61,7 +61,6 @@ fun ReaderPageSheetMeta(
     Column(modifier = Modifier.verticalScroll(rememberScrollState()).navigationBarsPadding()) {
         if (pickingConvert && convert != null) {
             Item(icon = Icons.AutoMirrored.Filled.ArrowBack, text = R.string.convert_back, onClick = { pickingConvert = false }, close = false)
-            Item(icon = Icons.Default.Save, text = R.string.convert_auto, onClick = { convert(StillExportTarget.Auto) })
             Item(icon = Icons.Default.Save, text = R.string.convert_auto_original, onClick = { convert(StillExportTarget.AutoOriginal) })
             Item(icon = Icons.Default.Save, text = R.string.convert_jpeg, onClick = { convert(StillExportTarget.Jpeg) })
             Item(icon = Icons.Default.Save, text = R.string.convert_jpeg_hdr, onClick = { convert(StillExportTarget.JpegHdr) })

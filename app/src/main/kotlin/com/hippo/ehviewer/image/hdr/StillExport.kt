@@ -5,14 +5,11 @@ import com.hippo.ehviewer.util.FileUtils
 /**
  * Convert-to targets for JXL, JXR, and camera RAW.
  *
- * [Auto] is resolved from a bitmap already in memory: HDR (including a gain map)
- * becomes Ultra HDR JPEG, fp16 SDR becomes 16-bit PNG, and 8-bit becomes JPEG.
- * [AutoOriginal] uses that same rule after a full-resolution decode of the file.
- * HDR from that decode is written with the Ultra HDR JPEG encoder.
+ * [AutoOriginal] decodes the file at full resolution, then picks the format:
+ * HDR becomes Ultra HDR JPEG, fp16 SDR becomes 16-bit PNG, and 8-bit becomes JPEG.
  * The other targets always redecode the source at the reader's full-res cap.
  */
 enum class StillExportTarget {
-    Auto,
     AutoOriginal,
     Jpeg,
     JpegHdr,
@@ -34,10 +31,8 @@ fun resolveStillExportAuto(hdr: Boolean, f16: Boolean): StillExportTarget = when
     else -> StillExportTarget.Jpeg
 }
 
-fun StillExportTarget.usesAutoRule(): Boolean = this == StillExportTarget.Auto || this == StillExportTarget.AutoOriginal
-
 fun StillExportTarget.resolve(hdr: Boolean, f16: Boolean): StillExportTarget = when (this) {
-    StillExportTarget.Auto, StillExportTarget.AutoOriginal -> resolveStillExportAuto(hdr, f16)
+    StillExportTarget.AutoOriginal -> resolveStillExportAuto(hdr, f16)
     else -> this
 }
 
@@ -46,7 +41,7 @@ fun StillExportTarget.exportMode(): Int = when (this) {
     StillExportTarget.JpegHdr -> 1
     StillExportTarget.Png -> 2
     StillExportTarget.Png16 -> 3
-    StillExportTarget.Auto, StillExportTarget.AutoOriginal, StillExportTarget.Jpeg -> 0
+    StillExportTarget.AutoOriginal, StillExportTarget.Jpeg -> 0
 }
 
 fun StillExportTarget.fileExtension(): String = when (this) {
@@ -64,10 +59,3 @@ fun stillExportFileName(sourceName: String, target: StillExportTarget): String {
     val stem = FileUtils.getNameFromFilename(leaf)?.takeIf { it.isNotBlank() } ?: "image"
     return FileUtils.sanitizeFilename("$stem.${target.fileExtension()}")
 }
-
-/**
- * Hi-res optimize keeps a 4096 px bitmap and, once pinch has decoded it, the full
- * bitmap. Auto uses the full one when that bitmap is still alive, and does not
- * start a decode to obtain it.
- */
-fun preferFullResidentBitmap(fullBitmapAlive: Boolean): Boolean = fullBitmapAlive
