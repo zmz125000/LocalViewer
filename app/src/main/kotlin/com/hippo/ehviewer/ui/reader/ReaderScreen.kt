@@ -907,7 +907,7 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
                         fun dispose() {
                             if (cont.isActive) cont.resume(Unit)
                         }
-                        val state = rememberModalBottomSheetState()
+                        val state = rememberModalBottomSheetState(skipPartiallyExpanded = true)
                         ModalBottomSheet(
                             onDismissRequest = { dispose() },
                             modifier = Modifier.windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top)),
@@ -1256,7 +1256,7 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
                             dragHandle = null,
                             contentWindowInsets = { WindowInsets() },
                         ) {
-                            Box(Modifier.readerSheetBox(GalleryGridDefaults.capReaderSheet())) {
+                            Box(Modifier.readerSettingsSheetBox()) {
                                 SettingsPager(
                                     isWebtoon = isWebtoon,
                                     rawLoaded = pageLoader.rawLoaded,

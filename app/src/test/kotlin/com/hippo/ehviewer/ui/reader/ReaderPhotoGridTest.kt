@@ -129,6 +129,25 @@ class ReaderPhotoGridTest {
     }
 
     @Test
+    fun settingsSheetTabletPortraitIsHalfScreen() {
+        assertEquals(
+            READER_SETTINGS_TABLET_PORTRAIT_HEIGHT_FRACTION,
+            readerSettingsSheetHeightFraction(tablet = true, landscape = false),
+        )
+        assertEquals(READER_SHEET_HEIGHT_FRACTION, readerSettingsSheetHeightFraction(tablet = true, landscape = true))
+        assertEquals(READER_SHEET_HEIGHT_FRACTION, readerSettingsSheetHeightFraction(tablet = false, landscape = false))
+        assertEquals(READER_SHEET_HEIGHT_FRACTION, readerSettingsSheetHeightFraction(tablet = false, landscape = true))
+        assertEquals(
+            400.dp,
+            readerSheetHeightDp(
+                screenHeightDp = 800,
+                capHeight = true,
+                fraction = readerSettingsSheetHeightFraction(tablet = true, landscape = false),
+            ),
+        )
+    }
+
+    @Test
     fun localZipPageCoverUsesEncodedMemberPath() {
         val cover = readerPageCover(
             ReaderScreenArgs.LocalZipFolder("/sdcard/pack.zip", "Album", listOf("a.jpg")),
