@@ -114,6 +114,10 @@ fun AnimatedVisibilityScope.EhScreen(navigator: DestinationsNavigator) = Screen(
                 title = stringResource(id = R.string.browse_folder_thumbs),
                 state = Settings.browseFolderThumbs.asMutableState(),
             )
+            SwitchPreference(
+                title = stringResource(id = R.string.settings_video_folder_cover),
+                state = Settings.videoFolderCover.asMutableState(),
+            )
             val alwaysExitToDir = Settings.alwaysExitToDir.asMutableState()
             val historyDirBackToUpper = Settings.historyDirBackToUpper.asMutableState()
             val sidePanelDirBackToUpper = Settings.sidePanelDirBackToUpper.asMutableState()

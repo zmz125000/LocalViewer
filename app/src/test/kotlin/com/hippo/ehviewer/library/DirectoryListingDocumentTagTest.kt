@@ -267,6 +267,41 @@ class DirectoryListingDocumentTagTest {
     }
 
     @Test
+    fun videoFolderCoverOffSkipsVideoCover() {
+        val previous = videoFolderCoversFromSettings
+        videoFolderCoversFromSettings = { false }
+        try {
+            val mixed = classifyRemoteListingWithPeeks(
+                currentDirName = "Library",
+                entries = listOf(RemoteChild(name = "Shows", isDirectory = true)),
+                childPeeks = mapOf(
+                    "Shows" to listOf(
+                        RemoteChild(name = "a.mp4", isDirectory = false),
+                        RemoteChild(name = "b.pdf", isDirectory = false),
+                    ),
+                ),
+            )
+            assertEquals(
+                "b.pdf",
+                mixed.filterIsInstance<BrowseEntryRemote.Directory>().single().coverFileName,
+            )
+            val videosOnly = classifyRemoteListingWithPeeks(
+                currentDirName = "Library",
+                entries = listOf(RemoteChild(name = "Clips", isDirectory = true)),
+                childPeeks = mapOf(
+                    "Clips" to listOf(RemoteChild(name = "a.webm", isDirectory = false)),
+                ),
+            )
+            assertEquals(
+                null,
+                videosOnly.filterIsInstance<BrowseEntryRemote.Directory>().single().coverFileName,
+            )
+        } finally {
+            videoFolderCoversFromSettings = previous
+        }
+    }
+
+    @Test
     fun promotedVideoFolderUsesPlatformVideoCover() {
         val entries = classifyRemoteListingWithPeeks(
             currentDirName = "Library",
