@@ -272,7 +272,8 @@ val VIDEO_EXTENSIONS = setOf(
 /**
  * Playable videos that must not be sent to MediaCodec or
  * [android.media.MediaMetadataRetriever]. That retriever cannot be interrupted,
- * and these containers often stick it. Every other [VIDEO_EXTENSIONS] entry is attempted.
+ * and these containers often stick it. Filenames containing Hi10P are the same:
+ * High 10 AVC often hangs the decoder. Every other [VIDEO_EXTENSIONS] entry is attempted.
  */
 val PLATFORM_VIDEO_THUMB_BLOCKED_EXTENSIONS = setOf(
     "avi",
@@ -287,6 +288,7 @@ val PLATFORM_VIDEO_THUMB_BLOCKED_EXTENSIONS = setOf(
 
 fun isPlatformVideoThumbFileName(name: String): Boolean {
     if (!isVideoFileName(name)) return false
+    if (name.contains("hi10p", ignoreCase = true)) return false
     val ext = FileUtils.getExtensionFromFilename(name)?.lowercase() ?: return false
     return ext !in PLATFORM_VIDEO_THUMB_BLOCKED_EXTENSIONS
 }
