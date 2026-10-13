@@ -124,30 +124,80 @@ struct MappedFile {
     MappedFile& operator=(const MappedFile&) = delete;
 };
 
-// Largest embedded JPEG (SOI + APP/DQT … EOI). One forward pass.
+// 8-bit baseline, extended, or progressive JPEG. Lossless and 12-bit fail on Android.
+bool android_jpeg(const uint8_t* data, size_t len, int* pixels, size_t* jlen) {
+    if (!data || !pixels || !jlen || len < 4 || data[0] != 0xff || data[1] != 0xd8) return false;
+    size_t i = 2;
+    int px = 0;
+    bool saw = false;
+    while (i + 1 < len) {
+        if (data[i] != 0xff) return false;
+        while (i < len && data[i] == 0xff) i++;
+        if (i >= len) return false;
+        uint8_t marker = data[i++];
+        if (marker == 0x00 || marker == 0x01 || (marker >= 0xd0 && marker <= 0xd7)) continue;
+        if (marker == 0xd9) return false;
+        if (i + 2 > len) return false;
+        size_t seg = (static_cast<size_t>(data[i]) << 8) | data[i + 1];
+        if (seg < 2 || i + seg > len) return false;
+        if (marker == 0xc0 || marker == 0xc1 || marker == 0xc2) {
+            if (seg < 8 || i + 7 >= len) return false;
+            int prec = data[i + 2];
+            int h = (static_cast<int>(data[i + 3]) << 8) | data[i + 4];
+            int w = (static_cast<int>(data[i + 5]) << 8) | data[i + 6];
+            if (prec != 8 || w <= 0 || h <= 0) return false;
+            px = (w > 0 && h > 100000000 / w) ? 100000000 : w * h;
+            saw = true;
+        } else if (marker == 0xc3 || (marker >= 0xc5 && marker <= 0xc7) || (marker >= 0xc9 && marker <= 0xcb) ||
+                   (marker >= 0xcd && marker <= 0xcf)) {
+            return false;
+        }
+        if (marker == 0xda) {
+            if (!saw) return false;
+            size_t e = i + seg;
+            while (e + 1 < len) {
+                if (data[e] == 0xff) {
+                    uint8_t n = data[e + 1];
+                    if (n == 0xd9) {
+                        *pixels = px;
+                        *jlen = e + 2;
+                        return true;
+                    }
+                    if (n != 0x00 && !(n >= 0xd0 && n <= 0xd7) && n != 0xff) {
+                        e++;
+                        continue;
+                    }
+                }
+                e++;
+            }
+            return false;
+        }
+        i += seg;
+    }
+    return false;
+}
+
+// Largest 8-bit embedded JPEG by pixel count, so a fat 12-bit strip or a small tile loses.
 bool find_embedded_jpeg(const uint8_t* data, size_t len, size_t& off, size_t& nout) {
+    int best_px = 0;
     size_t best_off = 0;
     size_t best_len = 0;
-    size_t soi = static_cast<size_t>(-1);
     if (len < 4) return false;
-    for (size_t i = 0; i + 1 < len; ++i) {
-        if (data[i] != 0xff) continue;
-        uint8_t marker = data[i + 1];
-        if (marker == 0xd8 && i + 3 < len && data[i + 2] == 0xff) {
-            uint8_t app = data[i + 3];
-            if (app == 0xe0 || app == 0xe1 || app == 0xe2 || app == 0xdb) soi = i;
-            ++i;
-            continue;
+    for (size_t i = 0; i + 3 < len; ++i) {
+        if (data[i] != 0xff || data[i + 1] != 0xd8 || data[i + 2] != 0xff) continue;
+        uint8_t app = data[i + 3];
+        if (app != 0xe0 && app != 0xe1 && app != 0xe2 && app != 0xdb && app != 0xc0 && app != 0xc4) continue;
+        int px = 0;
+        size_t jlen = 0;
+        size_t window = len - i;
+        if (window > 20u * 1024u * 1024u) window = 20u * 1024u * 1024u;
+        if (!android_jpeg(data + i, window, &px, &jlen)) continue;
+        if (jlen >= 512 && (px > best_px || (px == best_px && jlen > best_len))) {
+            best_px = px;
+            best_off = i;
+            best_len = jlen;
         }
-        if (marker == 0xd9 && soi != static_cast<size_t>(-1)) {
-            size_t cand = i + 2 - soi;
-            if (cand > best_len) {
-                best_len = cand;
-                best_off = soi;
-            }
-            soi = static_cast<size_t>(-1);
-            ++i;
-        }
+        if (jlen > 1) i += jlen - 1;
     }
     if (best_len < 512) return false;
     off = best_off;
@@ -878,7 +928,11 @@ bool libraw_thumb_file(const char* path, const uint8_t* mem, size_t mem_len, con
     }
     bool ok = false;
     if (img->type == LIBRAW_IMAGE_JPEG && img->data_size > 512) {
-        ok = write_file(out_path, img->data, img->data_size);
+        int px = 0;
+        size_t jlen = 0;
+        if (android_jpeg(img->data, img->data_size, &px, &jlen) && jlen >= 512) {
+            ok = write_file(out_path, img->data, jlen);
+        }
     } else if (img->type == LIBRAW_IMAGE_BITMAP && img->bits == 8 && img->colors >= 3) {
         Decoded packed;
         if (pack_image(img, 0, /*present=*/0, 1.f, 0.f, 0.f, nullptr, false, 0.5f, 0.f, 0.f, 0.f, 0.f, packed)) {

@@ -307,7 +307,7 @@ object LibDirectDecode {
 
     private fun decodeRawLocal(input: RawInput, maxEdge: Int): PackedPixels? {
         if (!Settings.readerCameraRaw.value) {
-            return rawPreviewPacked(input) ?: decodeRawPresent(input, maxEdge, RawPresent.EightBit)
+            return rawPreviewPacked(input)
         }
         val mode = rawPresentMode(
             hdrDisplay = Settings.readerHdrDisplay.value,
@@ -393,7 +393,7 @@ object LibDirectDecode {
         return PackedPixels(pixels, outInfo, outBoost, advanced = true, premultiplied = true)
     }
 
-    /** Embedded JPEG only. A missing preview stays a page error; covers demosaic separately. */
+    /** Embedded JPEG only. A missing preview stays a page error. */
     private fun rawPreviewPacked(input: RawInput): PackedPixels? {
         val jpeg = File.createTempFile("rawprev", ".jpg", appCtx.cacheDir)
         return try {

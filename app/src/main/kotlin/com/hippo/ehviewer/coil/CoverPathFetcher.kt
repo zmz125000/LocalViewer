@@ -52,7 +52,7 @@ class CoverPathFetcher(
         val ext = FileUtils.getExtensionFromFilename(hint)?.lowercase()
             ?: FileUtils.getExtensionFromFilename(resolved.name)?.lowercase()
         val openPath = when {
-            isRawStillExtension(ext) -> RawPreviewCache.ensureJpeg(resolved, demosaicFallback = true)
+            isRawStillExtension(ext) -> RawPreviewCache.ensureJpeg(resolved, demosaicFallback = false)
                 ?: throw FileNotFoundException("RAW preview missing: ${data.path}")
             isHdrConvertCandidateExtension(ext) -> HdrConvertCache.ensureCoilReady(resolved, hint)
             else -> resolved

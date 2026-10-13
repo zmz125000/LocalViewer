@@ -15,7 +15,7 @@ import okio.Path.Companion.toOkioPath
 import splitties.init.appCtx
 
 /**
- * Embedded JPEG (or a 512 px demosaic) for a RAW still, so Coil never opens the RAW.
+ * Embedded JPEG for a RAW still, so Coil never opens the RAW. A missing preview stays missing.
  * Keyed by path, length, and mtime. Cover and browse thumbs share the file.
  */
 object RawPreviewCache {
