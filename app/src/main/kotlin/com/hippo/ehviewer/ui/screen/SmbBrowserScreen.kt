@@ -70,6 +70,8 @@ import com.ehviewer.core.util.withUIContext
 import com.hippo.ehviewer.EhDB
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.collectAsState
+import com.hippo.ehviewer.image.hdr.StillExportTarget
+import com.hippo.ehviewer.image.hdr.isStillExportFileName
 import com.hippo.ehviewer.library.ARCHIVE_DOWNLOAD_WARN_BYTES
 import com.hippo.ehviewer.library.ArchiveCoverCache
 import com.hippo.ehviewer.library.ArchiveTooLargeException
@@ -169,6 +171,7 @@ import com.hippo.ehviewer.ui.main.rememberRecentStripExpanded
 import com.hippo.ehviewer.ui.navToReader
 import com.hippo.ehviewer.ui.navToSmbFolderReader
 import com.hippo.ehviewer.ui.reader.ReaderScreenArgs
+import com.hippo.ehviewer.ui.reader.convertSmbStill
 import com.hippo.ehviewer.ui.tools.awaitConfirmationOrCancel
 import com.hippo.ehviewer.util.LocalNetworkPermission
 import com.hippo.ehviewer.util.addTextToClipboard
@@ -1660,6 +1663,16 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
         }
     }
 
+    fun smbConvertAction(fileName: String): ((StillExportTarget) -> Unit)? {
+        if (!isStillExportFileName(fileName)) return null
+        val src = source ?: return null
+        val leaf = fileName.substringAfterLast('/').substringAfterLast('\\')
+        val remote = if (relativeDir.isEmpty()) fileName else SmbGateway.joinRelativePath(relativeDir, fileName)
+        return { target ->
+            launchIO { with(context) { convertSmbStill(src.id, remote, leaf, target) } }
+        }
+    }
+
     fun saveSmbFile(fileName: String, displayName: String = fileName.substringAfterLast('/')) {
         val src = source ?: return
         val remote = if (relativeDir.isEmpty()) fileName else SmbGateway.joinRelativePath(relativeDir, fileName)
@@ -2005,6 +2018,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
             onSaveAs = { saveSmbFile(fileName) },
             onShare = { shareSmbFile(fileName) },
             onShareViaHttp = smbHttpShareFile(fileName),
+            onConvert = smbConvertAction(fileName),
             onOpenFolder = {
                 openBrowseFolder(FolderSearch.openFolderTarget(fileName, isDirectory = false))
             },

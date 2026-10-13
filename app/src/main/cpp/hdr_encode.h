@@ -94,9 +94,9 @@ inline float half_to_float(uint16_t h) {
  * thumbs use Bitmap JPEG Q85 @ 768px separately.
  *
  * Baseline SDR color:
- *   - Display P3: keep primaries + embed P3 ICC (WCG-capable convert for Coil).
- *   - BT.2100 pure SDR: rematrix → 709 (no PQ/HLG in baseline).
- *   - BT.709: sRGB OETF.
+ *   - Keep BT.709, Display P3, or BT.2020 primaries.
+ *   - sRGB OETF plus a matching ICC profile.
+ *   - Rematrix to BT.709 only when that profile cannot be built.
  *
  * [cg] must match the primaries of [rgba] for Ultra HDR encode:
  *   UHDR_CG_BT_709     — BT.709 / scRGB-like

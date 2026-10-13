@@ -119,9 +119,10 @@ sealed interface VideoThumbnailSource {
  *   handle — app [ON_STOP] closes browse pools and that used to stick `media.extractor`
  *   at 100% CPU. Local = full-file MMR, keyframe seeks **2s → 30s**
  *   ([MediaMetadataRetriever.OPTION_CLOSEST_SYNC] only).
- * - **Blacklist (AVI, WMV/ASF, FLV, MPG/MPEG, VOB, OGV):** not attempted. No MediaStore
- *   thumb, no keyframe index, no MMR. Every other playable video is attempted. MMR
- *   cannot be interrupted, and those containers often stick it.
+ * - **Blacklist (AVI, WMV/ASF, FLV, MPG/MPEG, VOB, OGV, and any filename containing
+ *   Hi10P):** not attempted. No MediaStore thumb, no keyframe index, no MMR. Every
+ *   other playable video is attempted. MMR cannot be interrupted, and those containers
+ *   often stick it. Hi10P (High 10 AVC) often hangs MediaCodec.
  *
  * **Timeout / leave-folder safety:**
  * - MMR runs on [decodePool]. Waiter uses [withTimeout] only — **never**
@@ -438,7 +439,7 @@ object VideoThumbnail {
             return@withIOContext null
         }
         if (skipIfPaused(privacyLogLabel(source))) return@withIOContext null
-        // Blacklisted containers never reach MediaCodec or MediaMetadataRetriever.
+        // Blacklisted containers and Hi10P filenames never reach MediaCodec or MediaMetadataRetriever.
         if (!isPlatformVideoThumbFileName(source.fileName)) return@withIOContext null
 
         val mutex = pathLocks.getOrPut(source.cacheIdentity) { Mutex() }
@@ -670,7 +671,7 @@ object VideoThumbnail {
     /**
      * SMB / WebDAV / ZIP member. Keyframe path first; an indexed container the sniffer
      * does not recognize uses an offline snapshot for MMR. Blacklisted containers
-     * never get here. Closes [raw].
+     * and Hi10P filenames never get here. Closes [raw].
      */
     private suspend fun extractRemoteFrame(
         raw: ArchiveByteSource,

@@ -1,5 +1,6 @@
 package com.hippo.ehviewer.ui.reader
 
+import android.content.res.Configuration
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -34,23 +35,46 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import okio.Path.Companion.toPath
 
-/** Shared cap for reader settings / small photo-grid sheets (skip partial expand). */
+/** Shared cap for reader sheets that skip partial expand (phone portrait, tablet landscape). */
 const val READER_SHEET_HEIGHT_FRACTION = 0.7f
+
+/** Image-reader settings on a tablet in portrait. */
+const val READER_SETTINGS_TABLET_PORTRAIT_HEIGHT_FRACTION = 0.5f
 
 /**
  * Absolute sheet height from the screen, not [fillMaxHeight]. ModalBottomSheet
  * first-measures with unbounded max height; a fractional fill is a no-op there
  * and a [fillMaxSize] LazyGrid then composes every cell (100 full-res thumbs).
  */
-fun readerSheetHeightDp(screenHeightDp: Int, capHeight: Boolean): Dp {
+fun readerSheetHeightDp(
+    screenHeightDp: Int,
+    capHeight: Boolean,
+    fraction: Float = READER_SHEET_HEIGHT_FRACTION,
+): Dp {
     val screen = screenHeightDp.coerceAtLeast(1).dp
-    return if (capHeight) screen * READER_SHEET_HEIGHT_FRACTION else screen
+    return if (capHeight) screen * fraction else screen
 }
 
 @Composable
-fun Modifier.readerSheetBox(capHeight: Boolean): Modifier {
-    val height = readerSheetHeightDp(LocalConfiguration.current.screenHeightDp, capHeight)
+fun Modifier.readerSheetBox(
+    capHeight: Boolean,
+    fraction: Float = READER_SHEET_HEIGHT_FRACTION,
+): Modifier {
+    val height = readerSheetHeightDp(LocalConfiguration.current.screenHeightDp, capHeight, fraction)
     return fillMaxWidth().height(height)
+}
+
+/** Tablet portrait settings stay at half the screen; other layouts keep [READER_SHEET_HEIGHT_FRACTION]. */
+fun readerSettingsSheetHeightFraction(tablet: Boolean, landscape: Boolean): Float = if (tablet && !landscape) READER_SETTINGS_TABLET_PORTRAIT_HEIGHT_FRACTION else READER_SHEET_HEIGHT_FRACTION
+
+@Composable
+fun Modifier.readerSettingsSheetBox(): Modifier {
+    val configuration = LocalConfiguration.current
+    val fraction = readerSettingsSheetHeightFraction(
+        tablet = configuration.smallestScreenWidthDp >= WIDTH_DP_MEDIUM_LOWER_BOUND,
+        landscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE,
+    )
+    return readerSheetBox(GalleryGridDefaults.capReaderSheet(), fraction)
 }
 
 /** Photo grid uses the capped box below this page count; larger galleries fill the screen. */

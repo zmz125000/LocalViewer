@@ -273,7 +273,7 @@ object HdrConvertCache {
         val edge = maxEdge.coerceIn(64, 2048)
         val route = classifyPath(source, fileNameHint)
         if (route is StillRoute.Lib && route.codec == LibCodec.Raw) {
-            val preview = RawPreviewCache.ensureJpeg(source, demosaicFallback = true) ?: return@withContext false
+            val preview = RawPreviewCache.ensureJpeg(source, demosaicFallback = false) ?: return@withContext false
             val rawOk = writePlatformThumb(preview, dest, edge, quality)
             if (rawOk && OriginDiskCache.existingThumb(dest) != null) {
                 onDecoded?.let { reportThumbSize(dest, it) }
@@ -431,7 +431,7 @@ object HdrConvertCache {
         if (route is StillRoute.Lib && route.codec == LibCodec.Raw) {
             val preview = File.createTempFile("rawprev", ".jpg", appCtx.cacheDir)
             val rawOk = try {
-                extractRawPreviewBytes(bytes, preview.absolutePath, true) == 0 &&
+                extractRawPreviewBytes(bytes, preview.absolutePath, false) == 0 &&
                     writePlatformThumb(preview.toOkioPath(), destJpeg, edge, quality)
             } finally {
                 preview.delete()

@@ -267,6 +267,82 @@ class DirectoryListingDocumentTagTest {
     }
 
     @Test
+    fun videoFolderCoverOffSkipsVideoCover() {
+        val previous = videoFolderCoversFromSettings
+        videoFolderCoversFromSettings = { false }
+        try {
+            val mixed = classifyRemoteListingWithPeeks(
+                currentDirName = "Library",
+                entries = listOf(RemoteChild(name = "Shows", isDirectory = true)),
+                childPeeks = mapOf(
+                    "Shows" to listOf(
+                        RemoteChild(name = "a.mp4", isDirectory = false),
+                        RemoteChild(name = "b.pdf", isDirectory = false),
+                    ),
+                ),
+            )
+            assertEquals(
+                "b.pdf",
+                mixed.filterIsInstance<BrowseEntryRemote.Directory>().single().coverFileName,
+            )
+            val videosOnly = classifyRemoteListingWithPeeks(
+                currentDirName = "Library",
+                entries = listOf(RemoteChild(name = "Clips", isDirectory = true)),
+                childPeeks = mapOf(
+                    "Clips" to listOf(RemoteChild(name = "a.webm", isDirectory = false)),
+                ),
+            )
+            assertEquals(
+                null,
+                videosOnly.filterIsInstance<BrowseEntryRemote.Directory>().single().coverFileName,
+            )
+        } finally {
+            videoFolderCoversFromSettings = previous
+        }
+    }
+
+    @Test
+    fun promotedVideoFolderUsesPlatformVideoCover() {
+        val entries = classifyRemoteListingWithPeeks(
+            currentDirName = "Library",
+            entries = listOf(RemoteChild(name = "Show", isDirectory = true)),
+            childPeeks = mapOf(
+                "Show" to listOf(RemoteChild(name = "Season", isDirectory = true)),
+            ),
+            grandPeeks = mapOf(
+                "Show/Season" to listOf(
+                    RemoteChild(name = "b.mkv", isDirectory = false),
+                    RemoteChild(name = "a.mp4", isDirectory = false),
+                    RemoteChild(name = "c.avi", isDirectory = false),
+                ),
+            ),
+        )
+        val promoted = entries.filterIsInstance<BrowseEntryRemote.Directory>()
+            .single { it.presence == DirPresence.PromotedVideoLeaf }
+        assertEquals("@Show", promoted.name)
+        assertEquals("Show/Season", promoted.relativeName)
+        assertEquals("a.mp4", promoted.coverFileName)
+
+        val insideZip = classifyRemoteListingWithPeeks(
+            currentDirName = "Library",
+            entries = listOf(RemoteChild(name = "pack.zip", isDirectory = true)),
+            childPeeks = mapOf(
+                "pack.zip" to listOf(RemoteChild(name = "Season", isDirectory = true)),
+            ),
+            grandPeeks = mapOf(
+                "pack.zip/Season" to listOf(
+                    RemoteChild(name = "a.mp4", isDirectory = false),
+                    RemoteChild(name = "b.mkv", isDirectory = false),
+                ),
+            ),
+            zipAsDir = true,
+        )
+        val zipped = insideZip.filterIsInstance<BrowseEntryRemote.Directory>()
+            .single { it.presence == DirPresence.PromotedVideoLeaf }
+        assertEquals(null, zipped.coverFileName)
+    }
+
+    @Test
     fun nestedPdfTagsParentDirAndIsNotPromoted() {
         val entries = classifyRemoteListingWithPeeks(
             currentDirName = "Library",

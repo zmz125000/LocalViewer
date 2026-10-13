@@ -108,6 +108,8 @@ import com.hippo.ehviewer.gallery.useStreamArchivePageLoader
 import com.hippo.ehviewer.gallery.useTarChunkPageLoader
 import com.hippo.ehviewer.gallery.useWebDavFolderPageLoader
 import com.hippo.ehviewer.gallery.useZipFolderPageLoader
+import com.hippo.ehviewer.image.hdr.StillExportTarget
+import com.hippo.ehviewer.image.hdr.isStillExportFileName
 import com.hippo.ehviewer.library.FolderGalleryIndex
 import com.hippo.ehviewer.library.GallerySiblingNavigator
 import com.hippo.ehviewer.library.LandscapeCoverMarks
@@ -905,7 +907,7 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
                         fun dispose() {
                             if (cont.isActive) cont.resume(Unit)
                         }
-                        val state = rememberModalBottomSheetState()
+                        val state = rememberModalBottomSheetState(skipPartiallyExpanded = true)
                         ModalBottomSheet(
                             onDismissRequest = { dispose() },
                             modifier = Modifier.windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top)),
@@ -919,6 +921,13 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
                                 copy = { launchIO { with(pageLoader) { copy(page) } } },
                                 save = { launchIO { with(pageLoader) { save(page) } } },
                                 saveTo = { launchIO { with(pageLoader) { saveTo(page) } } },
+                                convert = pageLoader.sourceLeafName(page.index)
+                                    ?.takeIf { isStillExportFileName(it) }
+                                    ?.let {
+                                        { target: StillExportTarget ->
+                                            launchIO { with(pageLoader) { convertTo(page, target) } }
+                                        }
+                                    },
                                 showAds = { page.unblock() }.takeIf { blocked },
                                 // hide() ends with onDismissRequest → dispose once.
                                 dismiss = { launch { runCatching { state.hide() }.onFailure { dispose() } } },
@@ -1247,7 +1256,7 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
                             dragHandle = null,
                             contentWindowInsets = { WindowInsets() },
                         ) {
-                            Box(Modifier.readerSheetBox(GalleryGridDefaults.capReaderSheet())) {
+                            Box(Modifier.readerSettingsSheetBox()) {
                                 SettingsPager(
                                     isWebtoon = isWebtoon,
                                     rawLoaded = pageLoader.rawLoaded,

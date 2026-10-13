@@ -48,6 +48,7 @@ import com.hippo.ehviewer.webdav.WebDavGateway
 import com.hippo.ehviewer.webdav.WebDavPasswordStore
 import com.hippo.ehviewer.webdav.WebDavRepository
 import java.io.File
+import java.io.FileOutputStream
 import java.io.OutputStream
 import kotlin.coroutines.CoroutineContext
 import kotlin.coroutines.coroutineContext
@@ -63,6 +64,7 @@ import moe.tarsin.snackbar
 import moe.tarsin.string
 import okio.Path
 import okio.Path.Companion.toPath
+import splitties.init.appCtx
 
 /**
  * Browse overflow **Save to…** (SAF picker, same as reader long-press [saveTo]) and
@@ -288,18 +290,78 @@ object BrowseSaveAs {
         return path
     }
 
+    /** Folder for Auto (original size). Opens immediately; the file name is chosen after decode. */
+    context(_: SnackbarHostState, _: Context)
+    internal suspend fun pickConvertDirectory(): Path? = pickTreeDir()
+
+    /** Writes [source] into [dir] as [displayName]. A local name that already exists gets a suffix. */
+    internal fun writeConvertFile(dir: Path, displayName: String, source: File): Path {
+        val name = uniqueConvertName(dir, FileUtils.sanitizeFilename(displayName))
+        if (dir.toString().startsWith('/')) {
+            val dest = dir / name
+            source.inputStream().use { input -> dest.sink().use { input.copyTo(it) } }
+            return dest
+        }
+        val child = dir.createSafChild(name, createDocumentMime(name))
+        child.toUri().openOutputStream().use { out ->
+            source.inputStream().use { it.copyTo(out) }
+        }
+        return child
+    }
+
+    private fun uniqueConvertName(dir: Path, name: String): String {
+        if (!dir.toString().startsWith('/')) return name
+        val dot = name.lastIndexOf('.')
+        val stem = if (dot > 0) name.substring(0, dot) else name
+        val ext = if (dot > 0) name.substring(dot) else ""
+        var candidate = name
+        var i = 2
+        while ((dir / candidate).exists()) {
+            candidate = "$stem ($i)$ext"
+            i++
+        }
+        return candidate
+    }
+
     private suspend fun writeLocalFile(path: Path, dest: Uri, counter: ByteCounter) {
+        dest.openOutputStream().use { writeLocalBytes(path, CountingOutputStream(it, counter)) }
+    }
+
+    private suspend fun writeLocalBytes(path: Path, out: OutputStream) {
         ZipPaths.parse(path)?.let { (zipAbs, member) ->
             val bytes = withLocalZipCentralDirectory(zipAbs.toPath()) { cd ->
                 val entry = cd.find(member) ?: error("Missing ZIP member $member")
                 cd.extract(entry, SAVE_EXTRACT_MAX_BYTES)
                     ?: error("Cannot extract $member")
             } ?: error("Cannot read ZIP")
-            dest.openOutputStream().use { it.write(bytes) }
-            counter.add(bytes.size)
+            out.write(bytes)
             return
         }
-        copyCounted(path, dest.toOkioPath(), counter)
+        copyCounted(path, out)
+    }
+
+    internal suspend fun stageLocalForConvert(path: Path): File = stageForConvert { writeLocalBytes(path, it) }
+
+    internal suspend fun stageSmbForConvert(sourceId: Long, relativeFile: String): File {
+        val (source, password) = smbCreds(sourceId)
+        return stageForConvert { writeSmbFile(source, password, relativeFile, it) }
+    }
+
+    internal suspend fun stageWebDavForConvert(sourceId: Long, relativeFile: String): File {
+        val (source, password) = webDavCreds(sourceId)
+        return stageForConvert { writeWebDavFile(source, password, relativeFile, it) }
+    }
+
+    private suspend fun stageForConvert(write: suspend (OutputStream) -> Unit): File {
+        val tmp = File.createTempFile("still-src", null, appCtx.cacheDir)
+        try {
+            FileOutputStream(tmp).use { write(it) }
+            check(tmp.length() > 0L) { "Empty source" }
+            return tmp
+        } catch (t: Throwable) {
+            tmp.delete()
+            throw t
+        }
     }
 
     private fun shareCachedFile(ctx: Context, origin: Path, displayName: String) {

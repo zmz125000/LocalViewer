@@ -95,8 +95,10 @@
     <string name="browse_layout_list">List</string>
     <string name="browse_layout_grid">Grid</string>
     <string name="browse_view_mode">View mode</string>
-    <string name="browse_folder_thumbs">Folder thumbs</string>
+    <string name="browse_folder_thumbs">Folder cover</string>
     <string name="settings_browse_folder_thumbs_summary">Show cover thumbs for folders.</string>
+    <string name="settings_video_folder_cover">Video folder cover</string>
+    <string name="settings_video_folder_cover_summary">When on, a folder with no image can use a video as its cover. Off skips that while listing the directory.</string>
     <string name="settings_use_media3_player">Use Media3 player</string>
     <string name="settings_use_media3_player_summary">On: tap opens in-app player, long-press opens external app. Off: tap external, long-press in-app.</string>
     <string name="settings_use_media3_player_for_library">Use Media3 player for library</string>
@@ -1089,6 +1091,13 @@
     <string name="action_copy">Copy</string>
     <string name="action_save">Save</string>
     <string name="action_save_to">Save to…</string>
+    <string name="convert_to">Convert to…</string>
+    <string name="convert_back">Back</string>
+    <string name="convert_auto_original">Auto (original size)</string>
+    <string name="convert_jpeg">JPEG</string>
+    <string name="convert_jpeg_hdr">JPEG (HDR)</string>
+    <string name="convert_png">PNG</string>
+    <string name="convert_png_16">PNG (16-bit)</string>
     <string name="wide_color_gamut">Use Display P3 color space</string>
     <string name="settings_eh_request_news_timepicker">Set time to request news</string>
     <string name="dark_theme_follow_system">Follow system</string>

@@ -92,6 +92,8 @@
     <string name="browse_view_mode">表示モード</string>
     <string name="browse_folder_thumbs">フォルダサムネイル</string>
     <string name="settings_browse_folder_thumbs_summary">フォルダ一覧で表紙サムネイルを表示します（ギャラリー表紙と同じキャッシュを使用）。</string>
+    <string name="settings_video_folder_cover">動画をフォルダ表紙にする</string>
+    <string name="settings_video_folder_cover_summary">オンのとき、画像がないフォルダは動画を表紙にします。オフではディレクトリ一覧で動画を表紙にしません。</string>
     <string name="browse_menu_photo_grid">フォトグリッド</string>
     <string name="browse_item_more">その他</string>
     <string name="browse_action_not_supported">この操作はサポートされていません</string>
@@ -993,6 +995,13 @@
     <string name="action_copy">コピー</string>
     <string name="action_save">保存</string>
     <string name="action_save_to">名前を付けて保存…</string>
+    <string name="convert_to">変換…</string>
+    <string name="convert_back">戻る</string>
+    <string name="convert_auto_original">自動（元のサイズ）</string>
+    <string name="convert_jpeg">JPEG</string>
+    <string name="convert_jpeg_hdr">JPEG（HDR）</string>
+    <string name="convert_png">PNG</string>
+    <string name="convert_png_16">PNG（16ビット）</string>
     <string name="wide_color_gamut">Display P3 カラースペースを使用する</string>
     <string name="settings_eh_request_news_timepicker">ニュースをリクエストする時間を設定</string>
     <string name="dark_theme_follow_system">システムに従う</string>

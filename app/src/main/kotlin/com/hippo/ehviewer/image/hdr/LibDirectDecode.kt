@@ -58,6 +58,23 @@ data class LibDirectResult(
 )
 
 /**
+ * Packed pixels from the same reader decode used for display, before the
+ * hardware-bitmap wrap. Full-res export encodes these bytes instead of reading
+ * the GPU copy back.
+ */
+data class DirectPixels(
+    val pixels: ByteArray,
+    val width: Int,
+    val height: Int,
+    val f16: Boolean,
+    val isHdr: Boolean,
+    /** 0 BT.709, 1 Display P3, 2 BT.2100. Matches the direct-pack outInfo gamut. */
+    val gamut: Int,
+    /** Lib-direct pack is premultiplied. Embedded RAW JPEG previews are straight. */
+    val premultiplied: Boolean,
+)
+
+/**
  * Decode JXR / JXL / PQ-AVIF straight to a display [Bitmap] for the experimental
  * reader present mode ([com.hippo.ehviewer.Settings.readerLibDirectBitmap]).
  *
@@ -161,11 +178,50 @@ object LibDirectDecode {
         }
     }
 
+    /**
+     * Same decode as [decode], including reader RAW present settings, but the
+     * packed pixels are kept. [maxEdge] 0 is full resolution (RAW still caps at
+     * [RAW_FULL_EDGE]). Does not start from the 4096 px preview.
+     */
+    suspend fun decodePixels(
+        src: ImageSource,
+        fileNameHint: String,
+        maxEdge: Int = 0,
+    ): DirectPixels? = withContext(Dispatchers.IO) {
+        withHeavyDecode {
+            decodePacked(src, fileNameHint, maxEdge)?.let(::directPixels)
+        }
+    }
+
+    private fun directPixels(packed: PackedPixels): DirectPixels? {
+        val w = packed.outInfo.getOrNull(0) ?: 0
+        val h = packed.outInfo.getOrNull(1) ?: 0
+        if (w <= 0 || h <= 0 || packed.pixels.isEmpty()) return null
+        return DirectPixels(
+            pixels = packed.pixels,
+            width = w,
+            height = h,
+            f16 = packed.outInfo.getOrNull(2) == 1,
+            isHdr = packed.outInfo.getOrNull(3) != 0,
+            gamut = packed.outInfo.getOrNull(4) ?: 0,
+            premultiplied = packed.premultiplied,
+        )
+    }
+
     private fun decodeUnlocked(
         src: ImageSource,
         fileNameHint: String,
         maxEdge: Int,
     ): LibDirectResult? {
+        val packed = decodePacked(src, fileNameHint, maxEdge) ?: return null
+        return bitmapFromPacked(packed.pixels, packed.outInfo, packed.outBoost, wrapHardware = packed.advanced)
+    }
+
+    private fun decodePacked(
+        src: ImageSource,
+        fileNameHint: String,
+        maxEdge: Int,
+    ): PackedPixels? {
         val pathName = (src as? PathSource)?.source?.name
         val rawName = when {
             isRawStillExtension(FileUtils.getExtensionFromFilename(fileNameHint)) -> fileNameHint
@@ -173,39 +229,35 @@ object LibDirectDecode {
             else -> pathName?.ifBlank { null } ?: fileNameHint
         }
         if (isRawStillExtension(FileUtils.getExtensionFromFilename(rawName))) {
-            return decodeRawUnlocked(src, maxEdge)
+            return decodeRawPacked(src, maxEdge)
         }
         // Scope source bytes tightly so they are eligible for GC before Bitmap.create.
-        val packed = run {
-            val bytes = readBytes(src) ?: return null
-            if (bytes.isEmpty()) return null
-            val route = classify(bytes, bytes.size, fileNameHint)
-            if (route !is StillRoute.Lib) return null
-            val advanced = Settings.readerAdvancedColor.value
-            val outInfo = IntArray(6)
-            val outBoost = FloatArray(1)
-            val pixels = when (route.codec) {
-                LibCodec.Jxl -> decodeJxlBytesToDirect(bytes, maxEdge, advanced, outInfo, outBoost)
-                LibCodec.Jxr -> decodeJxrBytesToDirect(
-                    bytes,
-                    maxEdge,
-                    advanced,
-                    jxrHighlightCap(),
-                    outInfo,
-                    outBoost,
-                )
-                LibCodec.Jpeg2000 -> decodeJpeg2000BytesToDirect(bytes, maxEdge, advanced, outInfo, outBoost)
-                    ?: packJpeg2000(bytes, maxEdge, outInfo, outBoost)
-                LibCodec.AvifPq -> decodeAvifBytesToDirect(bytes, maxEdge, advanced, outInfo, outBoost)
-                LibCodec.Raw -> return decodeRawUnlocked(
-                    byteBufferSource(ByteBuffer.wrap(bytes)) {},
-                    maxEdge,
-                )
-            } ?: return null
-            // [bytes] ends with this block; only packed pixels + meta remain.
-            PackedPixels(pixels, outInfo, outBoost, advanced)
-        }
-        return bitmapFromPacked(packed.pixels, packed.outInfo, packed.outBoost, wrapHardware = packed.advanced)
+        val bytes = readBytes(src) ?: return null
+        if (bytes.isEmpty()) return null
+        val route = classify(bytes, bytes.size, fileNameHint)
+        if (route !is StillRoute.Lib) return null
+        val advanced = Settings.readerAdvancedColor.value
+        val outInfo = IntArray(6)
+        val outBoost = FloatArray(1)
+        val pixels = when (route.codec) {
+            LibCodec.Jxl -> decodeJxlBytesToDirect(bytes, maxEdge, advanced, outInfo, outBoost)
+            LibCodec.Jxr -> decodeJxrBytesToDirect(
+                bytes,
+                maxEdge,
+                advanced,
+                jxrHighlightCap(),
+                outInfo,
+                outBoost,
+            )
+            LibCodec.Jpeg2000 -> decodeJpeg2000BytesToDirect(bytes, maxEdge, advanced, outInfo, outBoost)
+                ?: packJpeg2000(bytes, maxEdge, outInfo, outBoost)
+            LibCodec.AvifPq -> decodeAvifBytesToDirect(bytes, maxEdge, advanced, outInfo, outBoost)
+            LibCodec.Raw -> return decodeRawPacked(
+                byteBufferSource(ByteBuffer.wrap(bytes)) {},
+                maxEdge,
+            )
+        } ?: return null
+        return PackedPixels(pixels, outInfo, outBoost, advanced, premultiplied = true)
     }
 
     /**
@@ -213,7 +265,7 @@ object LibDirectDecode {
      * is hundreds of megabytes. The hi-res preview stays at 4096. Above 24 MP
      * that preview demosaics at half size; 24 MP and under stay full size.
      */
-    private fun decodeRawUnlocked(src: ImageSource, maxEdge: Int): LibDirectResult? {
+    private fun decodeRawPacked(src: ImageSource, maxEdge: Int): PackedPixels? {
         val path = (src as? PathSource)?.source
         if (path != null && !isPhysicalRawPath(path.toString())) {
             return runCatching { decodeRawContent(path, maxEdge) }
@@ -226,7 +278,7 @@ object LibDirectDecode {
     }
 
     /** SAF and MediaStore files are mapped in place. Pipes and unmappable files are copied. */
-    private fun decodeRawContent(path: Path, maxEdge: Int): LibDirectResult? {
+    private fun decodeRawContent(path: Path, maxEdge: Int): PackedPixels? {
         path.openFileDescriptor("r").use { pfd ->
             if (pfd.isRegularFile()) decodeRawLocal(RawInput.Fd(pfd.fd), maxEdge)?.let { return it }
         }
@@ -237,7 +289,7 @@ object LibDirectDecode {
         OsConstants.S_ISREG(Os.fstat(fileDescriptor).st_mode)
     }.getOrDefault(false)
 
-    private fun decodeRawFromFile(file: File, maxEdge: Int): LibDirectResult? {
+    private fun decodeRawFromFile(file: File, maxEdge: Int): PackedPixels? {
         val local = object : PathSource {
             override val source = file.toOkioPath()
             override val type = "image/x-raw"
@@ -253,19 +305,19 @@ object LibDirectDecode {
         data class Fd(val fd: Int) : RawInput
     }
 
-    private fun decodeRawLocal(input: RawInput, maxEdge: Int): LibDirectResult? {
+    private fun decodeRawLocal(input: RawInput, maxEdge: Int): PackedPixels? {
         if (!Settings.readerCameraRaw.value) {
-            return rawPreviewFallback(input) ?: decodeRawPresent(input, maxEdge, RawPresent.EightBit)
+            return rawPreviewPacked(input)
         }
         val mode = rawPresentMode(
             hdrDisplay = Settings.readerHdrDisplay.value,
             advancedColor = Settings.readerAdvancedColor.value,
             panelHdr = rawPanelIsHdr(),
         )
-        return decodeRawPresent(input, maxEdge, mode) ?: rawPreviewFallback(input)
+        return decodeRawPresent(input, maxEdge, mode) ?: rawPreviewPacked(input)
     }
 
-    private fun decodeRawPresent(input: RawInput, maxEdge: Int, mode: RawPresent): LibDirectResult? {
+    private fun decodeRawPresent(input: RawInput, maxEdge: Int, mode: RawPresent): PackedPixels? {
         val edge = rawDecodeEdge(maxEdge)
         val panelBoost = if (mode == RawPresent.Hdr) rawPanelBoost() else 1f
         val outInfo = IntArray(6)
@@ -338,11 +390,11 @@ object LibDirectDecode {
             }
             else -> null
         } ?: return null
-        return bitmapFromPacked(pixels, outInfo, outBoost, wrapHardware = true)
+        return PackedPixels(pixels, outInfo, outBoost, advanced = true, premultiplied = true)
     }
 
-    /** Embedded JPEG only. A missing preview stays a page error; covers demosaic separately. */
-    private fun rawPreviewFallback(input: RawInput): LibDirectResult? {
+    /** Embedded JPEG only. A missing preview stays a page error. */
+    private fun rawPreviewPacked(input: RawInput): PackedPixels? {
         val jpeg = File.createTempFile("rawprev", ".jpg", appCtx.cacheDir)
         return try {
             val wrote = try {
@@ -361,15 +413,38 @@ object LibDirectDecode {
             }
             if (!wrote || jpeg.length() <= 0L) return null
             val bitmap = BitmapFactory.decodeFile(jpeg.absolutePath) ?: return null
-            LibDirectResult(
-                bitmap = bitmap,
-                isHdrContent = false,
-                contentHdrBoost = 1f,
-                isWideGamutSource = false,
-            )
+            try {
+                straightRgbaPacked(bitmap)
+            } finally {
+                bitmap.recycle()
+            }
         } finally {
             jpeg.delete()
         }
+    }
+
+    /** [Bitmap.getPixels] is straight alpha. Opaque embedded JPEGs stay unchanged. */
+    private fun straightRgbaPacked(bitmap: Bitmap): PackedPixels? {
+        val w = bitmap.width
+        val h = bitmap.height
+        if (w <= 0 || h <= 0) return null
+        val argb = IntArray(w * h)
+        bitmap.getPixels(argb, 0, w, 0, 0, w, h)
+        val packed = ByteArray(w * h * 4)
+        var i = 0
+        for (p in argb) {
+            packed[i++] = ((p shr 16) and 0xff).toByte()
+            packed[i++] = ((p shr 8) and 0xff).toByte()
+            packed[i++] = (p and 0xff).toByte()
+            packed[i++] = ((p ushr 24) and 0xff).toByte()
+        }
+        return PackedPixels(
+            pixels = packed,
+            outInfo = intArrayOf(w, h, 0, 0, 0, 0),
+            outBoost = floatArrayOf(1f),
+            advanced = false,
+            premultiplied = false,
+        )
     }
 
     private fun rawDecodeEdge(maxEdge: Int): Int = when {
@@ -494,6 +569,7 @@ object LibDirectDecode {
         val outInfo: IntArray,
         val outBoost: FloatArray,
         val advanced: Boolean,
+        val premultiplied: Boolean,
     )
 
     private fun readBytes(src: ImageSource): ByteArray? = when (src) {

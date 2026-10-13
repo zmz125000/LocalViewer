@@ -997,6 +997,14 @@ fun isPromotableLeafDirName(name: String): Boolean = !name.startsWith('.') &&
     !isSampleDirName(name)
 
 /**
+ * Bound from [com.hippo.ehviewer.Settings] init to the Video folder cover pref.
+ * Null in unit tests: video covers stay on, matching the pref default.
+ */
+internal var videoFolderCoversFromSettings: (() -> Boolean)? = null
+
+private fun videoFolderCoversEnabled(): Boolean = videoFolderCoversFromSettings?.invoke() ?: true
+
+/**
  * Classify an SMB (or other remote) directory listing.
  *
  * Unlike local SAF, remote [share.list] already returns every child name, so the
@@ -1028,6 +1036,8 @@ fun classifyRemoteListingWithPeeks(
      */
     skipVideoCovers: Boolean = false,
 ): List<BrowseEntryRemote> {
+    // Pref off skips the video step. Zip interiors still pass skipVideoCovers = true.
+    val skipVideoCoversEffective = skipVideoCovers || !videoFolderCoversEnabled()
     val dirs = ArrayList<BrowseEntryRemote.Directory>()
     val leafGalleries = ArrayList<BrowseEntryRemote.FolderGallery>()
     var coverFileName: String? = null
@@ -1098,6 +1108,8 @@ fun classifyRemoteListingWithPeeks(
                         val leafName: String,
                         val relativeName: String,
                         val lastModifiedMs: Long = 0L,
+                        /** Platform-video basename under [relativeName]. Blocked containers stay unset. */
+                        val coverFileName: String? = null,
                     )
 
                     /** Single video file lifted to parent Videos section (`@S-leaf` display). */
@@ -1121,7 +1133,7 @@ fun classifyRemoteListingWithPeeks(
                         e.name,
                         leaves,
                         grandPeeks,
-                        skipVideoCovers = skipVideoCovers || (zipAsDir && isZipArchiveFileName(e.name)),
+                        skipVideoCovers = skipVideoCoversEffective || (zipAsDir && isZipArchiveFileName(e.name)),
                     )
                     val sHasImages = peek.any {
                         !it.isDirectory && !it.name.startsWith('.') &&
@@ -1167,6 +1179,12 @@ fun classifyRemoteListingWithPeeks(
                                             leafName = leaf.name,
                                             relativeName = key,
                                             lastModifiedMs = leaf.lastModifiedMs,
+                                            coverFileName = promotedVideoCoverName(
+                                                leafPeek,
+                                                e.name,
+                                                zipAsDir,
+                                                skipVideoCoversEffective,
+                                            ),
                                         )
                                     }
                                     leafHasVideo = true
@@ -1213,6 +1231,12 @@ fun classifyRemoteListingWithPeeks(
                                             leafName = leaf.name,
                                             relativeName = key,
                                             lastModifiedMs = leaf.lastModifiedMs,
+                                            coverFileName = promotedVideoCoverName(
+                                                leafPeek,
+                                                e.name,
+                                                zipAsDir,
+                                                skipVideoCoversEffective,
+                                            ),
                                         )
                                         leafHasVideo = true
                                     }
@@ -1298,6 +1322,7 @@ fun classifyRemoteListingWithPeeks(
                                 hasVideo = true,
                                 hasGallery = false,
                                 presence = DirPresence.PromotedVideoLeaf,
+                                coverFileName = v.coverFileName,
                                 lastModifiedMs = v.lastModifiedMs,
                                 hidden = entryHidden,
                                 virtual = true,
@@ -1448,7 +1473,7 @@ fun classifyRemoteListingWithPeeks(
                             e.name,
                             leaves,
                             grandPeeks,
-                            skipVideoCovers = skipVideoCovers || (zipAsDir && isZipArchiveFileName(e.name)),
+                            skipVideoCovers = skipVideoCoversEffective || (zipAsDir && isZipArchiveFileName(e.name)),
                         )
                         dirs += BrowseEntryRemote.Directory(
                             name = e.name,
@@ -1517,7 +1542,7 @@ fun classifyRemoteListingWithPeeks(
                     is RemoteChildKind.VideoOnly -> {
                         val single = kind.videoFileNames.singleOrNull()
                         val videoCover = if (
-                            skipVideoCovers || (zipAsDir && isZipArchiveFileName(e.name))
+                            skipVideoCoversEffective || (zipAsDir && isZipArchiveFileName(e.name))
                         ) {
                             null
                         } else {
@@ -1709,6 +1734,21 @@ private fun firstImageNameInPeek(peek: List<RemoteChild>): String? {
         if (isImageFileName(c.name)) return c.name
     }
     return null
+}
+
+/**
+ * Cover for a promoted `@` video folder. Relative to the leaf, so the row can
+ * use the same platform-video thumb as a real video directory. Zip interiors
+ * and blocked containers stay without a video cover.
+ */
+private fun promotedVideoCoverName(
+    peek: List<RemoteChild>,
+    parentName: String,
+    zipAsDir: Boolean,
+    skipVideoCovers: Boolean,
+): String? {
+    if (skipVideoCovers || (zipAsDir && isZipArchiveFileName(parentName))) return null
+    return firstVideoCoverNameInPeek(peek)
 }
 
 /**

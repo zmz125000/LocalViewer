@@ -87,6 +87,8 @@
     <string name="browse_view_mode">檢視模式</string>
     <string name="browse_folder_thumbs">資料夾縮圖</string>
     <string name="settings_browse_folder_thumbs_summary">在瀏覽中為資料夾顯示封面縮圖（共用圖庫封面的縮圖快取）。</string>
+    <string name="settings_video_folder_cover">影片資料夾封面</string>
+    <string name="settings_video_folder_cover_summary">開啟時，沒有圖片的資料夾可以用影片作為封面。關閉則目錄列表不再把影片標為封面。</string>
     <string name="settings_use_media3_player">使用 Media3 播放器</string>
     <string name="settings_use_media3_player_summary">開啟：單擊應用內播放，長按外部應用。關閉：單擊外部應用，長按應用內播放。</string>
     <string name="settings_use_media3_player_for_library">圖庫使用 Media3 播放器</string>
@@ -805,6 +807,13 @@
     <string name="action_copy">複製</string>
     <string name="action_save">儲存</string>
     <string name="action_save_to">儲存到&#8230;</string>
+    <string name="convert_to">轉換為…</string>
+    <string name="convert_back">返回</string>
+    <string name="convert_auto_original">自動（原始尺寸）</string>
+    <string name="convert_jpeg">JPEG</string>
+    <string name="convert_jpeg_hdr">JPEG（HDR）</string>
+    <string name="convert_png">PNG</string>
+    <string name="convert_png_16">PNG（16 位元）</string>
     <string name="pref_category_general">一般</string>
     <string name="pref_fullscreen">全螢幕</string>
     <string name="pref_page_transitions">翻頁轉場動畫</string>

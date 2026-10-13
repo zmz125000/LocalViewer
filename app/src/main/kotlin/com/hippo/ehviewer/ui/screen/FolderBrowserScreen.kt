@@ -74,6 +74,7 @@ import com.ehviewer.core.util.withUIContext
 import com.hippo.ehviewer.EhDB
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.collectAsState
+import com.hippo.ehviewer.image.hdr.isStillExportFileName
 import com.hippo.ehviewer.library.ArchiveCoverCache
 import com.hippo.ehviewer.library.BrowseContentMode
 import com.hippo.ehviewer.library.BrowseEntry
@@ -171,6 +172,7 @@ import com.hippo.ehviewer.ui.navToLocalFolderReader
 import com.hippo.ehviewer.ui.navToLocalZipFolderReader
 import com.hippo.ehviewer.ui.navToReader
 import com.hippo.ehviewer.ui.reader.ReaderScreenArgs
+import com.hippo.ehviewer.ui.reader.convertLocalStill
 import com.hippo.ehviewer.util.addTextToClipboard
 import com.ramcosta.composedestinations.annotation.Destination
 import com.ramcosta.composedestinations.annotation.RootGraph
@@ -2338,6 +2340,11 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                 onSaveAs = { saveLocalFile(path) },
                 onShare = { shareLocalFile(path) },
                 onShareViaHttp = localHttpShareFile(path),
+                onConvert = if (isStillExportFileName(leaf)) {
+                    { target -> launchIO { with(context) { convertLocalStill(path, leaf, target) } } }
+                } else {
+                    null
+                },
                 onOpenFolder = {
                     openBrowseFolder(FolderSearch.openFolderTarget(relativeName, isDirectory = false))
                 },

@@ -358,7 +358,7 @@ suspend inline fun <T> useSmbFolderPageLoader(
                         if (isDecodedDemand(index)) ramPages[index] = bytes
                         return
                     }
-                    // RAW images on needs the sensor bytes. Off keeps the embedded JPEG.
+                    // RAW images on needs the sensor bytes. Off uses the embedded JPEG only.
                     if (!Settings.readerCameraRaw.value &&
                         isRawStillExtension(FileUtils.getExtensionFromFilename(name))
                     ) {
@@ -371,13 +371,11 @@ suspend inline fun <T> useSmbFolderPageLoader(
                         } catch (_: Throwable) {
                             null
                         }
-                        if (jpeg != null) {
-                            if (isDecodedDemand(index)) {
-                                ramPages[index] = jpeg
-                                ramJpegPages.add(index)
-                            }
-                            return
+                        if (jpeg != null && isDecodedDemand(index)) {
+                            ramPages[index] = jpeg
+                            ramJpegPages.add(index)
                         }
+                        return
                     }
                     val sink = RamByteSink()
                     SmbGateway.downloadFile(source, password, rel, sink)

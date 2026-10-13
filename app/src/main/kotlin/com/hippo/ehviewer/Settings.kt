@@ -12,6 +12,7 @@ import androidx.compose.runtime.remember
 import com.ehviewer.core.preferences.DataStorePreferences
 import com.ehviewer.core.preferences.PrefDelegate
 import com.ehviewer.core.preferences.edit
+import com.hippo.ehviewer.library.videoFolderCoversFromSettings
 import eu.kanade.tachiyomi.ui.reader.setting.OrientationType
 import eu.kanade.tachiyomi.ui.reader.setting.ReadingModeType
 import java.util.Locale
@@ -116,6 +117,18 @@ object Settings : DataStorePreferences(null) {
      * resolve or fetch a thumb. Default on; also exposed under Settings → General.
      */
     val browseFolderThumbs = boolPref("browse_folder_thumbs", true)
+
+    /**
+     * When true (default), directory listing may mark a platform video as a folder
+     * cover after images and before archives. Off skips that mark. Zip interiors
+     * never use a video cover. Cached listings and history are left as they are.
+     * Settings → General.
+     */
+    val videoFolderCover = boolPref("video_folder_cover", true)
+
+    init {
+        videoFolderCoversFromSettings = { videoFolderCover.value }
+    }
 
     /**
      * Persist completed SMB/WebDAV/local-folder lazy-scan listings, one JSON file per folder

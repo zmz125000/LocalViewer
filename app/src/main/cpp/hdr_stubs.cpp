@@ -100,3 +100,9 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeAvifBytesToDirect(JNIEnv*, jclass
                                                                  jboolean, jintArray, jfloatArray) {
     return nullptr;
 }
+
+extern "C" JNIEXPORT jint JNICALL
+Java_com_hippo_ehviewer_jni_HdrConvertKt_encodeStillExport(JNIEnv*, jclass, jbyteArray, jint, jint,
+                                                           jboolean, jint, jint, jboolean, jstring) {
+    return kUnsupportedAbi;
+}

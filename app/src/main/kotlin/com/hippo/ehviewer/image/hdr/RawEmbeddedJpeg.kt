@@ -57,6 +57,17 @@ internal suspend fun readEmbeddedRawJpeg(
             located = locateEmbeddedRawJpeg(header, fileSize)
         }
     }
+    if (header.size >= 8 &&
+        (header[0] == 'I'.code.toByte() || header[0] == 'M'.code.toByte()) &&
+        header[0] == header[1]
+    ) {
+        // IFD0 can sit past the prefix (DNG). Range-read directories instead of
+        // pulling the sensor bytes that lie in front of them.
+        val remote = collectTiffJpegSpans(header, fileSize, readAt)
+        if (remote.isNotEmpty()) {
+            located = located.copy(exact = remote)
+        }
+    }
     val ordered = located.exact.sortedByDescending { it.length }
     for (span in ordered) {
         if (!spanFits(span, fileSize)) continue
@@ -65,12 +76,160 @@ internal suspend fun readEmbeddedRawJpeg(
         if (body.size < span.length || !isJpegSoi(body)) continue
         // The tag length can run past EOI (Panasonic 0x0127). Keep the JPEG only.
         val jpeg = finishExactJpeg(body) ?: continue
+        // Canon strips are lossless 12/14-bit JPEG. Android cannot decode those.
+        if (androidJpegPixels(jpeg) == null) continue
         return largerFollowingJpeg(jpeg, span.offset, fileSize, readAt) ?: jpeg
     }
     val start = located.untilEoi ?: return null
     if (start < 0L || start >= fileSize) return null
     val streamed = readJpegMarkers(start, fileSize, readAt) ?: return null
+    if (androidJpegPixels(streamed) == null) return null
     return largerFollowingJpeg(streamed, start, fileSize, readAt) ?: streamed
+}
+
+/**
+ * Width times height when [jpeg] is an 8-bit baseline, extended, or progressive
+ * JPEG. Null for lossless, 12-bit, and arithmetic JPEG, which BitmapFactory rejects.
+ */
+internal fun androidJpegPixels(jpeg: ByteArray): Long? {
+    if (!isJpegSoi(jpeg)) return null
+    var i = 2
+    while (i + 1 < jpeg.size) {
+        if (jpeg[i] != 0xff.toByte()) return null
+        while (i < jpeg.size && jpeg[i] == 0xff.toByte()) i++
+        if (i >= jpeg.size) return null
+        val marker = jpeg[i].toInt() and 0xff
+        i++
+        if (marker == 0xD9 || marker == 0xDA) return null
+        if (marker == 0x00 || marker == 0x01 || marker in 0xD0..0xD7) continue
+        if (i + 2 > jpeg.size) return null
+        val seg = ((jpeg[i].toInt() and 0xff) shl 8) or (jpeg[i + 1].toInt() and 0xff)
+        if (seg < 2) return null
+        if (marker == 0xC0 || marker == 0xC1 || marker == 0xC2) {
+            if (seg < 8 || i + 7 >= jpeg.size) return null
+            val precision = jpeg[i + 2].toInt() and 0xff
+            val height = ((jpeg[i + 3].toInt() and 0xff) shl 8) or (jpeg[i + 4].toInt() and 0xff)
+            val width = ((jpeg[i + 5].toInt() and 0xff) shl 8) or (jpeg[i + 6].toInt() and 0xff)
+            if (precision != 8 || width <= 0 || height <= 0) return null
+            return width.toLong() * height.toLong()
+        }
+        val next = i + seg
+        if (next > jpeg.size) return null
+        i = next
+    }
+    return null
+}
+
+/**
+ * TIFF JPEG spans from IFD0, including an IFD that lives past [header].
+ * [header] satisfies reads that fall inside it.
+ */
+private suspend fun collectTiffJpegSpans(
+    header: ByteArray,
+    fileSize: Long,
+    readAt: suspend (Long, Int) -> ByteArray?,
+): List<RawJpegSpan> {
+    val be = header[0] == 'M'.code.toByte()
+    val chunks = HashMap<Long, ByteArray>()
+    val chunkSize = 64 * 1024
+    if (header.isNotEmpty()) chunks[0L] = header
+    suspend fun u8(off: Long): Int {
+        if (off < 0L || off >= fileSize) return -1
+        val base = if (off < header.size) 0L else off - off % chunkSize
+        var buf = chunks[base]
+        if (buf == null) {
+            val n = minOf(chunkSize.toLong(), fileSize - base).toInt()
+            buf = readAt(base, n) ?: return -1
+            chunks[base] = buf
+        }
+        val i = (off - base).toInt()
+        if (i < 0 || i >= buf.size) return -1
+        return buf[i].toInt() and 0xff
+    }
+    suspend fun u16(off: Long): Int {
+        val a = u8(off)
+        val b = u8(off + 1)
+        if (a < 0 || b < 0) return -1
+        return if (be) (a shl 8) or b else (b shl 8) or a
+    }
+    suspend fun u32(off: Long): Long {
+        var v = 0L
+        for (k in 0 until 4) {
+            val b = u8(off + if (be) k else 3 - k)
+            if (b < 0) return -1L
+            v = (v shl 8) or b.toLong()
+        }
+        return v
+    }
+    val exact = ArrayList<RawJpegSpan>()
+    val seen = HashSet<Long>()
+    suspend fun ifd(off: Long, depth: Int) {
+        if (depth > 8 || off <= 0L || !seen.add(off)) return
+        val count = u16(off)
+        if (count <= 0 || count > 512) return
+        val pos = off + 2
+        if (pos + count * 12L + 4 > fileSize) return
+        val subs = ArrayList<Long>()
+        var jOff = LongArray(0)
+        var jLen = LongArray(0)
+        for (i in 0 until count) {
+            val e = pos + i * 12L
+            val tag = u16(e)
+            val typ = u16(e + 2)
+            val cnt = u32(e + 4)
+            if (tag < 0 || typ < 0 || cnt < 0L) return
+            suspend fun values(): LongArray? {
+                val size = when (typ) {
+                    1, 7 -> 1
+                    3 -> 2
+                    4 -> 4
+                    else -> return LongArray(0)
+                }
+                if (cnt > 64) return null
+                val nbytes = size * cnt
+                val rawOff: Long
+                if (nbytes <= 4) {
+                    rawOff = e + 8
+                } else {
+                    val p = u32(e + 8)
+                    if (p < 0 || p + nbytes > fileSize) return null
+                    rawOff = p
+                }
+                val out = LongArray(cnt.toInt())
+                for (k in 0 until cnt.toInt()) {
+                    out[k] = when (typ) {
+                        3 -> u16(rawOff + k * 2L).toLong()
+                        4 -> u32(rawOff + k * 4L)
+                        else -> u8(rawOff + k).toLong()
+                    }
+                    if (out[k] < 0L) return null
+                }
+                return out
+            }
+            when (tag) {
+                0x014A, 0x8769 -> values()?.let { subs.addAll(it.toList()) }
+                0x0111, 0x0201 -> values()?.let { jOff = it }
+                0x0117, 0x0202 -> values()?.let { jLen = it }
+                0x002E, 0x0127 -> {
+                    if (typ == 7 && cnt in RAW_JPEG_PREVIEW_MIN.toLong()..RAW_JPEG_MAX.toLong()) {
+                        val blob = u32(e + 8)
+                        exactSpan(blob, cnt.toInt(), fileSize)?.let { exact.add(it) }
+                    }
+                }
+            }
+        }
+        val pairs = minOf(jOff.size, jLen.size)
+        for (p in 0 until pairs) {
+            exactSpan(jOff[p], jLen[p].toInt(), fileSize)?.let { exact.add(it) }
+        }
+        val next = u32(pos + count * 12L)
+        for (s in subs) {
+            ifd(s, depth + 1)
+        }
+        if (next > 0L) ifd(next, depth)
+    }
+    ifd(u32(4), 0)
+    return exact
 }
 
 internal fun locateEmbeddedRawJpeg(header: ByteArray, fileSize: Long): RawJpegLocate {
@@ -309,7 +468,11 @@ private suspend fun largerFollowingJpeg(
     }
     if (soi < 0) return null
     val next = readJpegMarkers(end + soi, fileSize, readAt) ?: return null
-    return if (next.size > body.size) next else null
+    val currentPx = androidJpegPixels(body) ?: return null
+    val nextPx = androidJpegPixels(next) ?: return null
+    // A lossy-DNG tile can be fatter in bytes than the full preview and still
+    // smaller on screen. Follow only when the next JPEG shows more pixels.
+    return if (nextPx > currentPx) next else null
 }
 
 /**

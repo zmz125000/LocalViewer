@@ -83,6 +83,8 @@
     <string name="browse_view_mode">视图模式</string>
     <string name="browse_folder_thumbs">文件夹缩略图</string>
     <string name="settings_browse_folder_thumbs_summary">在浏览中为文件夹显示封面缩略图（复用画廊封面的缩略图缓存）。</string>
+    <string name="settings_video_folder_cover">视频文件夹封面</string>
+    <string name="settings_video_folder_cover_summary">开启时，没有图片的文件夹可以用视频作为封面。关闭则目录列表不再把视频标为封面。</string>
     <string name="settings_use_media3_player">使用 Media3 播放器</string>
     <string name="settings_use_media3_player_summary">开启：单击应用内播放，长按外部应用。关闭：单击外部应用，长按应用内播放。</string>
     <string name="settings_use_media3_player_for_library">图库使用 Media3 播放器</string>
@@ -824,6 +826,13 @@
     <string name="action_copy">复制</string>
     <string name="action_save">保存</string>
     <string name="action_save_to">保存到…</string>
+    <string name="convert_to">转换为…</string>
+    <string name="convert_back">返回</string>
+    <string name="convert_auto_original">自动（原始尺寸）</string>
+    <string name="convert_jpeg">JPEG</string>
+    <string name="convert_jpeg_hdr">JPEG（HDR）</string>
+    <string name="convert_png">PNG</string>
+    <string name="convert_png_16">PNG（16 位）</string>
     <string name="pref_category_general">通用</string>
     <string name="pref_fullscreen">全屏</string>
     <string name="pref_page_transitions">页面过渡动画</string>
