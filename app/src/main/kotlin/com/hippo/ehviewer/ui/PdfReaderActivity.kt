@@ -2622,6 +2622,7 @@ private fun PdfReaderScreen(
                                 viewHeightPx = heightPx,
                                 scaleType = scaleType,
                                 isVertical = readingMode == ReadingModeType.VERTICAL,
+                                styleGeneration = ebookStyleGen,
                                 onClick = pageClick,
                                 onDoubleClick = doubleTap,
                                 onRenderZoom = { dualZoom = it },
@@ -2921,6 +2922,7 @@ private fun PdfDualSpread(
     viewHeightPx: Int,
     scaleType: Int,
     isVertical: Boolean,
+    styleGeneration: Int = 0,
     onClick: (Offset) -> Unit,
     onDoubleClick: DoubleClickToZoomListener,
     onRenderZoom: (Float) -> Unit,
@@ -2941,7 +2943,7 @@ private fun PdfDualSpread(
     var rightAspect by remember(right) { mutableFloatStateOf(1f / 1.414f) }
     val leftIndex = left
     val rightIndex = right
-    LaunchedEffect(leftIndex, rightIndex) {
+    LaunchedEffect(leftIndex, rightIndex, styleGeneration) {
         if (!gap) {
             leftAspect = aspectOf(leftIndex)
             rightAspect = aspectOf(rightIndex)
@@ -3050,7 +3052,7 @@ private fun PdfSingleVectorPage(
     containPage: Boolean = false,
 ) {
     val zoomableState = rememberZoomableState(zoomSpec = PdfZoomSpec)
-    val (aspect, aspectReady) = rememberPdfPageAspect(session, index)
+    val (aspect, aspectReady) = rememberPdfPageAspect(session, index, styleGeneration)
     val contentSize = Size(
         viewWidthPx.toFloat().coerceAtLeast(1f),
         (viewWidthPx / aspect.coerceAtLeast(0.01f)).coerceAtLeast(1f),
@@ -3081,6 +3083,7 @@ private fun PdfSingleVectorPage(
             if (!t.isSpecified) 1f else t.scale.scaleX.coerceAtLeast(1f)
         }
     }
+    val zoomedIn = (zoomableState.zoomFraction ?: 0f) > 0.01f
     var renderZoom by remember { mutableFloatStateOf(1f) }
     LaunchedEffect(zoomableState) {
         snapshotFlow { liveZoom }
@@ -3125,6 +3128,14 @@ private fun PdfSingleVectorPage(
             .fillMaxSize()
             .zoomable(
                 state = zoomableState,
+                // A fitted ebook page matches the viewer. Pan at rest steals the
+                // pager drag after rotation, while the old tall aspect is still
+                // larger than the landscape viewport.
+                gestures = if (!containPage || zoomedIn) {
+                    EnabledZoomGestures.ZoomAndPan
+                } else {
+                    EnabledZoomGestures(zoom = true, pan = false)
+                },
                 onClick = onClick,
                 onDoubleClick = onDoubleClick,
             ),
@@ -3156,7 +3167,7 @@ private fun PdfVectorPage(
     styleGeneration: Int = 0,
     containPage: Boolean = false,
 ) {
-    val (aspect, aspectReady) = rememberPdfPageAspect(session, index)
+    val (aspect, aspectReady) = rememberPdfPageAspect(session, index, styleGeneration)
     val renderWidth = if (!aspectReady) {
         0
     } else {
@@ -3714,10 +3725,17 @@ private const val DEFAULT_PDF_ASPECT = 1f / 1.41421356f
 
 /** PDF page aspect from PdfRenderer, not the bitmap pixel ratio (integer rounding twitch). */
 @Composable
-private fun rememberPdfPageAspect(session: PageBitmapSession, index: Int): Pair<Float, Boolean> {
+private fun rememberPdfPageAspect(
+    session: PageBitmapSession,
+    index: Int,
+    styleGeneration: Int = 0,
+): Pair<Float, Boolean> {
     var aspect by remember(session, index) { mutableFloatStateOf(DEFAULT_PDF_ASPECT) }
     var ready by remember(session, index) { mutableStateOf(false) }
-    LaunchedEffect(session, index) {
+    // Ebook text pages change aspect on rotation. The session is the same object,
+    // so this has to rerun when the layout generation changes or the pager keeps
+    // the portrait sheet and Fit shrinks it into the landscape viewport.
+    LaunchedEffect(session, index, styleGeneration) {
         aspect = withContext(Dispatchers.IO) {
             runCatching { session.pageAspect(index) }.getOrDefault(DEFAULT_PDF_ASPECT)
         }.coerceAtLeast(0.01f)
