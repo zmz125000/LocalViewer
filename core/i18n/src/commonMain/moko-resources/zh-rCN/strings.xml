@@ -207,7 +207,7 @@
     <string name="settings_advanced_unlimit_foreground_service_summary">关闭：空闲 20 分钟后结束 HTTP 会话与前台服务。</string>
     <string name="history_unavailable">此项目已不可用</string>
     <string name="settings_ebook_check_file_change">检查电子书文件变更</string>
-    <string name="settings_ebook_check_file_change_summary">打开网络文本前，检查文件是否已更改。</string>
+    <string name="settings_ebook_check_file_change_summary">打开网络电子书前，检查文件是否已更改。</string>
     <string name="settings_network_folder_index_cache">文件夹索引缓存</string>
     <string name="settings_network_folder_index_cache_summary">关闭时仅将文件夹索引保存在内存中；开启时也会保存到磁盘。</string>
     <string name="settings_network_folder_index_quick_scan">文件夹缓存快速扫描</string>
