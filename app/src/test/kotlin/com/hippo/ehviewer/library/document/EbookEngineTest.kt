@@ -248,6 +248,12 @@ class EbookEngineTest {
         assertEquals(1000f, ebookDisplayedPageWidthDp(1000f, 700f, wide), 1f)
         val half = ebookTextPageAspect(1000f, 700f, halfWidth = true)
         assertEquals(500f, ebookDisplayedPageWidthDp(1000f, 700f, half, halfWidth = true), 1f)
+        // Open-fold landscape: a paper sheet is wider than half the screen.
+        // The horizontal strip must lock to that half or the type is larger.
+        val fold = ebookTextPageAspect(1400f, 1100f, halfWidth = true, lockToViewer = true)
+        assertEquals(700f / 1100f, fold, 0.001f)
+        assertEquals(700f, ebookDisplayedPageWidthDp(1400f, 1100f, fold, halfWidth = true), 1f)
+        assertTrue(1100f * EbookPaginator.ASPECT > 700f)
     }
 
     @Test

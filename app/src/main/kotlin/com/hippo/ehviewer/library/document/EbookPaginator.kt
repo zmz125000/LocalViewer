@@ -25,15 +25,20 @@ internal const val EBOOK_FONT_REFERENCE_WIDTH_DP = 360f
  * fills the width. A wider window (open fold, landscape, free-form) grows the
  * page up to the viewer so it is not a paper column in the center.
  * [halfWidth] is one side of a dual-page spread.
+ * [lockToViewer] keeps that half exactly. Webtoon horizontal draws the page at
+ * height × aspect, so a leftover A-series sheet is wider than half a foldable
+ * and the type comes out larger than the other modes.
  */
 internal fun ebookTextPageAspect(
     viewerWidthDp: Float,
     viewerHeightDp: Float,
     halfWidth: Boolean = false,
+    lockToViewer: Boolean = false,
 ): Float {
     val width = (if (halfWidth) viewerWidthDp / 2f else viewerWidthDp).coerceAtLeast(1f)
     val height = viewerHeightDp.coerceAtLeast(1f)
     val viewer = (width / height).coerceIn(0.3f, 2.5f)
+    if (lockToViewer) return viewer
     return max(EbookPaginator.ASPECT, viewer)
 }
 

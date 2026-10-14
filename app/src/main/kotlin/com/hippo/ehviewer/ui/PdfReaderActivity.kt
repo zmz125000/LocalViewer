@@ -1438,12 +1438,14 @@ private fun ebookSinglePageAspect(context: Context): Float {
     val cfg = context.resources.configuration
     val landscape = cfg.orientation == Configuration.ORIENTATION_LANDSCAPE
     val dualActive = dualPageActive(Settings.dualPageLandscape.value, landscape)
-    val half = isPagerDual(dualActive, mode) || isWebtoonHorizontal(dualActive, mode)
+    val webtoonStrip = isWebtoonHorizontal(dualActive, mode)
+    val half = isPagerDual(dualActive, mode) || webtoonStrip
     if (ReadingModeType.isWebtoon(mode) || half) {
         return ebookTextPageAspect(
             cfg.screenWidthDp.toFloat(),
             cfg.screenHeightDp.toFloat(),
             halfWidth = half,
+            lockToViewer = webtoonStrip,
         )
     }
     val dm = context.resources.displayMetrics
@@ -2034,7 +2036,12 @@ private fun PdfReaderScreen(
     // half the viewer so two pages fill one screen, same as single-page dual.
     val ebookHalfPage = pagerDual || (isEbook && webtoonHorizontal)
     val ebookPageAspect = if (!singlePageEbook) {
-        ebookTextPageAspect(viewerWidthDp, viewerHeightDp, halfWidth = ebookHalfPage)
+        ebookTextPageAspect(
+            viewerWidthDp,
+            viewerHeightDp,
+            halfWidth = ebookHalfPage,
+            lockToViewer = isEbook && webtoonHorizontal,
+        )
     } else {
         (if (measuredViewerAspect > 0f && viewerSizeCurrent) measuredViewerAspect else screenAspect).coerceIn(0.3f, 2.5f)
     }
