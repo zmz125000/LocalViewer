@@ -240,21 +240,30 @@ class EbookEngineTest {
     }
 
     @Test
-    fun landscapeFontIsAboutOnePointFourTimesSlider() {
-        assertEquals(18, ebookDisplayFontSize(18, landscape = false))
-        val landscape = ebookDisplayFontSize(18, landscape = true)
+    fun fontSizeKeepsTheSameEmWhenTheWindowChanges() {
+        // Folded phone, page fills the width. The slider is the fraction.
+        assertEquals(18, ebookDisplayFontSize(18, displayedPageWidthDp = 360f))
+        // Same phone on its side: A-series sheet fits the short edge, so the
+        // fraction rises and the em stays put.
+        val phoneLandscape = ebookDisplayedPageWidthDp(800f, 360f, EbookPaginator.ASPECT)
+        val landscape = ebookDisplayFontSize(18, phoneLandscape)
         assertEquals(25, landscape)
-        assertTrue(landscape > 18)
-        assertTrue(landscape < (18 * 1.5f).toInt())
-        val portraitPages = EbookPaginator.paginate(
+        // Unfolded window is wider. The fraction falls instead of growing the type.
+        val opened = ebookDisplayedPageWidthDp(700f, 1000f, EbookPaginator.ASPECT)
+        val open = ebookDisplayFontSize(18, opened)
+        assertTrue(open < 18)
+        val em = { size: Int, width: Float -> size / 560f * width }
+        assertEquals(em(18, 360f), em(landscape, phoneLandscape), 0.6f)
+        assertEquals(em(18, 360f), em(open, opened), 0.6f)
+        val closedPages = EbookPaginator.paginate(
             listOf(EbookChapter("t", "测".repeat(800))),
-            EbookStyle(fontSize = ebookDisplayFontSize(18, landscape = false)),
+            EbookStyle(fontSize = 18),
         ).first
-        val landscapePages = EbookPaginator.paginate(
+        val openPages = EbookPaginator.paginate(
             listOf(EbookChapter("t", "测".repeat(800))),
-            EbookStyle(fontSize = ebookDisplayFontSize(18, landscape = true)),
+            EbookStyle(fontSize = open),
         ).first
-        assertTrue(landscapePages.size > portraitPages.size)
+        assertTrue(openPages.size < closedPages.size)
     }
 
     @Test

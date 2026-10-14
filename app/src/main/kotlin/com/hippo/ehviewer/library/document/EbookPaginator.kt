@@ -1,5 +1,6 @@
 package com.hippo.ehviewer.library.document
 
+import kotlin.math.min
 import kotlin.math.roundToInt
 
 /**
@@ -11,13 +12,38 @@ internal const val EBOOK_FONT_SIZE_DEFAULT = 18
 internal const val EBOOK_FONT_SIZE_MIN = 6
 internal const val EBOOK_FONT_SIZE_MAX = 30
 
-/** Landscape type is about 1.4× the slider. Portrait uses the slider as-is. */
-internal const val EBOOK_LANDSCAPE_FONT_SCALE = 1.4f
+/**
+ * Page width where the slider number is the glyph fraction as stored.
+ * A folded phone is about this wide, so the same slider keeps that em when the
+ * window opens, rotates, or becomes a free-form size.
+ */
+internal const val EBOOK_FONT_REFERENCE_WIDTH_DP = 360f
 
-internal fun ebookDisplayFontSize(slider: Int, landscape: Boolean): Int {
+/**
+ * Width of the page bitmap on screen. Fit/contain: the page is no wider than
+ * the viewer and no taller than it. [halfWidth] is a dual-page cell.
+ */
+internal fun ebookDisplayedPageWidthDp(
+    viewerWidthDp: Float,
+    viewerHeightDp: Float,
+    pageAspect: Float,
+    halfWidth: Boolean = false,
+): Float {
+    val width = (if (halfWidth) viewerWidthDp / 2f else viewerWidthDp).coerceAtLeast(1f)
+    val height = viewerHeightDp.coerceAtLeast(1f)
+    val aspect = pageAspect.coerceIn(0.25f, 2.8f)
+    return min(width, height * aspect).coerceAtLeast(1f)
+}
+
+/**
+ * Slider em, converted to the page-width fraction for [displayedPageWidthDp].
+ * Narrow sheets (a landscape phone) increase the fraction; a wide unfolded
+ * window decreases it. The on-screen em stays the reference-width size.
+ */
+internal fun ebookDisplayFontSize(slider: Int, displayedPageWidthDp: Float): Int {
     val base = slider.coerceIn(EBOOK_FONT_SIZE_MIN, EBOOK_FONT_SIZE_MAX)
-    if (!landscape) return base
-    return (base * EBOOK_LANDSCAPE_FONT_SCALE).roundToInt()
+    val width = displayedPageWidthDp.coerceAtLeast(1f)
+    return (base * EBOOK_FONT_REFERENCE_WIDTH_DP / width).roundToInt().coerceAtLeast(1)
 }
 
 internal data class EbookStyle(
@@ -47,8 +73,9 @@ internal data class EbookStyle(
     val margin: Float get() = marginPercent / 100f
     val verticalMargin: Float get() = verticalMarginPercent / 100f
 
-    // Landscape may exceed the slider max (30 × 1.4). Do not clamp that back to 30.
-    val fontFraction: Float get() = fontSize.coerceAtLeast(EBOOK_FONT_SIZE_MIN) / 560f
+    // Display size may sit outside the slider range: a narrow sheet goes above
+    // the max, a wide unfolded window goes below the min. Do not clamp either.
+    val fontFraction: Float get() = fontSize.coerceAtLeast(1) / 560f
 
     companion object {
         val DEFAULT = EbookStyle()
