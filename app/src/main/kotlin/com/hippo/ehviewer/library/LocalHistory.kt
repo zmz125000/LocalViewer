@@ -681,12 +681,7 @@ object LocalHistory {
             info?.let { EhDB.putHistoryInfo(it) }
             return
         }
-        val rel = if (path == frame.path) {
-            frame.relativePath
-        } else {
-            val name = path.trimEnd('/').substringAfterLast('/')
-            if (frame.relativePath.isEmpty()) name else "${frame.relativePath}/$name"
-        }
+        val rel = localFolderHistoryRelative(BrowseSession.localStack, path)
         recordLocalFolderGallery(
             rootId = frame.rootId,
             relativePath = rel,
