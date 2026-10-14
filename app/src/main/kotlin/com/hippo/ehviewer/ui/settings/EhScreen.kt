@@ -161,6 +161,11 @@ fun AnimatedVisibilityScope.EhScreen(navigator: DestinationsNavigator) = Screen(
                 title = stringResource(id = R.string.settings_browse_archive_page_count),
                 state = Settings.browseArchivePageCount.asMutableState(),
             )
+            SwitchPreference(
+                title = stringResource(id = R.string.settings_ebook_check_file_change),
+                summary = stringResource(id = R.string.settings_ebook_check_file_change_summary),
+                state = Settings.ebookCheckFileChange.asMutableState(),
+            )
             val context = LocalContext.current
             val pdfReaderMode = Settings.pdfReaderMode.asMutableState()
             val pdfModeEntries = stringArrayResource(id = com.hippo.ehviewer.R.array.pdf_reader_mode_entries)

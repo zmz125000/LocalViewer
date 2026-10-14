@@ -171,6 +171,8 @@ import com.hippo.ehviewer.library.document.PdfImageEngine
 import com.hippo.ehviewer.library.document.PdfTocEntry
 import com.hippo.ehviewer.library.document.TextCharset
 import com.hippo.ehviewer.library.document.ebookDisplayFontSize
+import com.hippo.ehviewer.library.document.ebookDisplayedPageWidthDp
+import com.hippo.ehviewer.library.document.ebookTextPageAspect
 import com.hippo.ehviewer.library.document.pdfTocWithFileName
 import com.hippo.ehviewer.library.document.pdfXrefLoadable
 import com.hippo.ehviewer.library.document.readPdfChapters
@@ -371,15 +373,15 @@ class PdfReaderActivity : AppCompatActivity() {
                                     return@withContext
                                 }
                             }
+                            val pageAspect = ebookSinglePageAspect(this@PdfReaderActivity)
                             created = openEbookDocument(
                                 intent,
                                 token,
                                 docName,
                                 cacheKey,
                                 startPage = nextStart,
-                                landscape = resources.configuration.orientation ==
-                                    Configuration.ORIENTATION_LANDSCAPE,
-                                pageAspect = ebookSinglePageAspect(this@PdfReaderActivity),
+                                pageWidthDp = ebookOpenPageWidthDp(this@PdfReaderActivity, pageAspect),
+                                pageAspect = pageAspect,
                                 stillWanted = { isActive },
                             )
                             // Publish before returning so a cancelled withContext resume
@@ -900,7 +902,7 @@ private fun unsizedEbookCache(
     token: String?,
     cacheKey: String?,
     charsetKey: String,
-    landscape: Boolean,
+    pageWidthDp: Float,
     startPage: Int,
     stillWanted: () -> Boolean,
     pageAspect: Float,
@@ -912,7 +914,7 @@ private fun unsizedEbookCache(
     return ebookVector(
         cached,
         resources = null,
-        landscape,
+        pageWidthDp,
         startPage,
         stillWanted,
         fromCache = true,
@@ -951,7 +953,7 @@ private fun openEbookDocument(
     fileName: String,
     cacheKey: String?,
     startPage: Int,
-    landscape: Boolean,
+    pageWidthDp: Float,
     pageAspect: Float,
     stillWanted: () -> Boolean,
 ): PdfDocumentModel.Vector? {
@@ -959,13 +961,13 @@ private fun openEbookDocument(
     val charsetPref = Settings.ebookCharset.value
     val forced = TextCharset.forcedCharset(charsetPref)
     val charsetKey = TextCharset.cacheLabel(charsetPref)
-    unsizedEbookCache(token, cacheKey, charsetKey, landscape, startPage, stillWanted, pageAspect)?.let { return it }
+    unsizedEbookCache(token, cacheKey, charsetKey, pageWidthDp, startPage, stillWanted, pageAspect)?.let { return it }
     var owned: ArchiveByteSource? = null
     val source = openEbookSource(intent, token) { owned = it } ?: return null
     var sourceHeld = false
     return try {
         val loaded = readOpenedEbook(
-            source, fileName, cacheKey, charsetKey, charsetPref, forced, landscape, startPage, stillWanted,
+            source, fileName, cacheKey, charsetKey, charsetPref, forced, pageWidthDp, startPage, stillWanted,
             pageAspect,
         )
         sourceHeld = loaded.sourceHeld
@@ -991,13 +993,18 @@ private fun readOpenedEbook(
     charsetKey: String,
     charsetPref: Int,
     forced: java.nio.charset.Charset?,
-    landscape: Boolean,
+    pageWidthDp: Float,
     startPage: Int,
     stillWanted: () -> Boolean,
     pageAspect: Float,
 ): EbookLoad {
-    val size = runCatching { source.size }.getOrDefault(-1L)
-    val cached = cachedEbookChapters(cacheKey, size, charsetKey)
+    val savedBody = savedNetworkEbookBody(cacheKey, charsetKey)
+    val size = if (savedBody != null) {
+        -1L
+    } else {
+        runCatching { source.size }.getOrDefault(-1L)
+    }
+    val cached = savedBody ?: cachedEbookChapters(cacheKey, size, charsetKey)
     val book = if (cached != null) {
         EbookParse(cached, null)
     } else {
@@ -1012,13 +1019,23 @@ private fun readOpenedEbook(
     val vector = ebookVector(
         chapters,
         book.resources,
-        landscape,
+        pageWidthDp,
         startPage,
         stillWanted,
         fromCache = cached != null,
         pageAspect = pageAspect,
     )
     return EbookLoad(vector, vector != null && book.resources != null)
+}
+
+/**
+ * Network text book with file-change checks off: the saved body, without
+ * stating the remote file. Null asks the caller to read a live size.
+ */
+private fun savedNetworkEbookBody(cacheKey: String?, charsetKey: String): List<EbookChapter>? {
+    if (cacheKey == null || Settings.ebookCheckFileChange.value) return null
+    if (!cacheKey.startsWith("smb:") && !cacheKey.startsWith("webdav:")) return null
+    return EbookBodyCache.loadLast(cacheKey, charsetKey)
 }
 
 private fun cachedEbookChapters(cacheKey: String?, size: Long, charsetKey: String): List<EbookChapter>? {
@@ -1048,13 +1065,13 @@ private fun releaseUnheldEbook(source: ArchiveByteSource, owned: ArchiveByteSour
 private fun ebookVector(
     chapters: List<EbookChapter>,
     resources: EbookResources?,
-    landscape: Boolean,
+    pageWidthDp: Float,
     startPage: Int,
     stillWanted: () -> Boolean,
     fromCache: Boolean,
     pageAspect: Float = EbookPaginator.ASPECT,
 ): PdfDocumentModel.Vector? {
-    val style = ebookStyleFromSettings(landscape, pageAspect)
+    val style = ebookStyleFromSettings(pageWidthDp, pageAspect)
     val session = EbookSession(chapters, style, ebookPaintFromSettings(dark = false), resources)
     if (!session.ensurePagesThrough(startPage.coerceAtLeast(0), stillWanted)) {
         session.close()
@@ -1415,25 +1432,50 @@ private fun ebookAlignJustifies(align: Int): Boolean = align == Settings.EBOOK_A
 
 private fun ebookAlignHyphenates(align: Int): Boolean = align == Settings.EBOOK_ALIGN_START_HYPHEN || align == Settings.EBOOK_ALIGN_JUSTIFY_HYPHEN
 
-/** Viewer width/height for paged text. Webtoon and dual-page keep the A-series sheet. */
+/** Viewer width/height for paged text. Wide windows grow past the A-series sheet. */
 private fun ebookSinglePageAspect(context: Context): Float {
-    val mode = ReadingModeType.fromPreference(Settings.readingMode.value).let {
-        if (it == ReadingModeType.DEFAULT) ReadingModeType.RIGHT_TO_LEFT else it
-    }
-    if (ReadingModeType.isWebtoon(mode)) return EbookPaginator.ASPECT
-    val landscape = context.resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
-    if (isPagerDual(dualPageActive(Settings.dualPageLandscape.value, landscape), mode)) {
-        return EbookPaginator.ASPECT
+    val mode = ebookReadingMode()
+    val cfg = context.resources.configuration
+    val landscape = cfg.orientation == Configuration.ORIENTATION_LANDSCAPE
+    val dualActive = dualPageActive(Settings.dualPageLandscape.value, landscape)
+    val webtoonStrip = isWebtoonHorizontal(dualActive, mode)
+    val half = isPagerDual(dualActive, mode) || webtoonStrip
+    if (ReadingModeType.isWebtoon(mode) || half) {
+        return ebookTextPageAspect(
+            cfg.screenWidthDp.toFloat(),
+            cfg.screenHeightDp.toFloat(),
+            halfWidth = half,
+            lockToViewer = webtoonStrip,
+        )
     }
     val dm = context.resources.displayMetrics
     return (dm.widthPixels.toFloat() / dm.heightPixels.coerceAtLeast(1)).coerceIn(0.3f, 2.5f)
 }
 
+/** Page width used to turn the font slider into a fraction before the viewer is measured. */
+private fun ebookOpenPageWidthDp(context: Context, pageAspect: Float): Float {
+    val cfg = context.resources.configuration
+    val landscape = cfg.orientation == Configuration.ORIENTATION_LANDSCAPE
+    val mode = ebookReadingMode()
+    val dualActive = dualPageActive(Settings.dualPageLandscape.value, landscape)
+    val half = isPagerDual(dualActive, mode) || isWebtoonHorizontal(dualActive, mode)
+    return ebookDisplayedPageWidthDp(
+        cfg.screenWidthDp.toFloat(),
+        cfg.screenHeightDp.toFloat(),
+        pageAspect,
+        halfWidth = half,
+    )
+}
+
+private fun ebookReadingMode(): ReadingModeType = ReadingModeType.fromPreference(Settings.readingMode.value).let {
+    if (it == ReadingModeType.DEFAULT) ReadingModeType.RIGHT_TO_LEFT else it
+}
+
 private fun ebookStyleFromSettings(
-    landscape: Boolean,
+    pageWidthDp: Float,
     pageAspect: Float = EbookPaginator.ASPECT,
 ): EbookStyle = EbookStyle(
-    fontSize = ebookDisplayFontSize(Settings.ebookFontSize.value, landscape),
+    fontSize = ebookDisplayFontSize(Settings.ebookFontSize.value, pageWidthDp),
     lineHeightPercent = Settings.ebookLineHeight.value.coerceIn(100, 200),
     paragraphPercent = Settings.ebookParagraphSpacing.value.coerceIn(0, 200),
     indentEm = Settings.ebookIndent.value.coerceIn(0, 2),
@@ -1922,10 +1964,9 @@ private fun PdfReaderScreen(
         ebookMargin,
         ebookVerticalMargin,
         ebookParaMode,
-        isLandscape,
     ) {
         EbookStyle(
-            fontSize = ebookDisplayFontSize(ebookFontSize, isLandscape),
+            fontSize = ebookFontSize,
             lineHeightPercent = ebookLineHeight.coerceIn(100, 200),
             paragraphPercent = ebookParagraph.coerceIn(0, 200),
             indentEm = ebookIndent.coerceIn(0, 2),
@@ -1978,17 +2019,43 @@ private fun PdfReaderScreen(
     val pagerDual = isPagerDual(dualActive, readingMode)
     val webtoonHorizontal = isWebtoonHorizontal(dualActive, readingMode)
     var measuredViewerAspect by remember { mutableFloatStateOf(0f) }
+    var measuredViewerWidthDp by remember { mutableFloatStateOf(0f) }
+    var measuredViewerHeightDp by remember { mutableFloatStateOf(0f) }
+    var measuredAtScreenWidthDp by remember { mutableIntStateOf(0) }
+    var measuredAtScreenHeightDp by remember { mutableIntStateOf(0) }
     val singlePageEbook = isEbook && !isWebtoon && !pagerDual
-    val screenAspect = LocalConfiguration.current.let { cfg ->
-        cfg.screenWidthDp.toFloat() / cfg.screenHeightDp.coerceAtLeast(1).toFloat()
-    }
+    val screenWidthDp = LocalConfiguration.current.screenWidthDp
+    val screenHeightDp = LocalConfiguration.current.screenHeightDp.coerceAtLeast(1)
+    val screenAspect = screenWidthDp.toFloat() / screenHeightDp.toFloat()
+    val viewerSizeCurrent = measuredAtScreenWidthDp == screenWidthDp &&
+        measuredAtScreenHeightDp == screenHeightDp &&
+        measuredViewerWidthDp > 0f
+    val viewerWidthDp = if (viewerSizeCurrent) measuredViewerWidthDp else screenWidthDp.toFloat()
+    val viewerHeightDp = if (viewerSizeCurrent) measuredViewerHeightDp else screenHeightDp.toFloat()
+    // Webtoon horizontal is a strip, not a pager spread. Size each text page to
+    // half the viewer so two pages fill one screen, same as single-page dual.
+    val ebookHalfPage = pagerDual || (isEbook && webtoonHorizontal)
     val ebookPageAspect = if (!singlePageEbook) {
-        EbookPaginator.ASPECT
+        ebookTextPageAspect(
+            viewerWidthDp,
+            viewerHeightDp,
+            halfWidth = ebookHalfPage,
+            lockToViewer = isEbook && webtoonHorizontal,
+        )
     } else {
-        (if (measuredViewerAspect > 0f) measuredViewerAspect else screenAspect).coerceIn(0.3f, 2.5f)
+        (if (measuredViewerAspect > 0f && viewerSizeCurrent) measuredViewerAspect else screenAspect).coerceIn(0.3f, 2.5f)
     }
-    val pagedEbookLayout = remember(ebookLayout, ebookPageAspect) {
-        if (ebookLayout.pageAspect == ebookPageAspect) ebookLayout else ebookLayout.copy(pageAspect = ebookPageAspect)
+    val displayedPageWidthDp = ebookDisplayedPageWidthDp(
+        viewerWidthDp,
+        viewerHeightDp,
+        ebookPageAspect,
+        halfWidth = ebookHalfPage,
+    )
+    val pagedEbookLayout = remember(ebookLayout, ebookPageAspect, displayedPageWidthDp, ebookFontSize) {
+        ebookLayout.copy(
+            pageAspect = ebookPageAspect,
+            fontSize = ebookDisplayFontSize(ebookFontSize, displayedPageWidthDp),
+        )
     }
     // Off (default): compose a page as it reaches the screen. On: keep the next page composed.
     val composeAhead by Settings.vectorComposeAhead.collectAsState()
@@ -2314,10 +2381,18 @@ private fun PdfReaderScreen(
                             .collect { renderZoom = it }
                     }
                     val heightPx = with(LocalDensity.current) { maxHeight.roundToPx() }.coerceAtLeast(1)
-                    if (singlePageEbook && widthPx > 0) {
+                    if (isEbook && widthPx > 0) {
                         val next = widthPx.toFloat() / heightPx.toFloat()
+                        val widthDp = maxWidth.value
+                        val heightDp = maxHeight.value
                         SideEffect {
-                            if (abs(measuredViewerAspect - next) > 0.02f) measuredViewerAspect = next
+                            if (abs(measuredViewerWidthDp - widthDp) > 1f) measuredViewerWidthDp = widthDp
+                            if (abs(measuredViewerHeightDp - heightDp) > 1f) measuredViewerHeightDp = heightDp
+                            if (measuredAtScreenWidthDp != screenWidthDp) measuredAtScreenWidthDp = screenWidthDp
+                            if (measuredAtScreenHeightDp != screenHeightDp) measuredAtScreenHeightDp = screenHeightDp
+                            if (singlePageEbook && abs(measuredViewerAspect - next) > 0.02f) {
+                                measuredViewerAspect = next
+                            }
                         }
                     }
                     // Contain the page. Single-page text uses the viewer aspect so Fit
@@ -3173,7 +3248,8 @@ private fun PdfPageBitmap(
     }
     val frame = when {
         containPage && box == PdfPageBox.Webtoon -> Modifier.fillMaxWidth()
-        containPage && box == PdfPageBox.Strip -> Modifier.fillMaxHeight()
+        containPage && box == PdfPageBox.Strip ->
+            Modifier.fillMaxHeight().aspectRatio(safeAspect, matchHeightConstraintsFirst = true)
         box == PdfPageBox.Strip ->
             Modifier.fillMaxHeight().aspectRatio(safeAspect, matchHeightConstraintsFirst = true)
         // Placeholder must have a real height. A zero-height row makes LazyColumn

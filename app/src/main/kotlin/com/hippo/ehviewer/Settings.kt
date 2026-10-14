@@ -138,6 +138,13 @@ object Settings : DataStorePreferences(null) {
     val networkFolderIndexCache = boolPref("network_folder_index_cache", true)
 
     /**
+     * Before the PDF viewer opens a network text book, stat the remote file and
+     * drop the saved body when the size changed. Off reopens the saved body and
+     * does not contact the server for that check.
+     */
+    val ebookCheckFileChange = boolPref("ebook_check_file_change", false)
+
+    /**
      * On any RAM or disk listing-cache hit, run the fast current-directory scan that detects
      * added and deleted child folders. Off returns the cached listing without re-list work.
      * Applies to network and local folder browse.
@@ -766,7 +773,7 @@ object Settings : DataStorePreferences(null) {
     const val EBOOK_CHARSET_1252 = 12
 
     /** Body type size 6–30, larger = larger glyphs. Fraction of page width, not content width. */
-    val ebookFontSize = intPref("pref_ebook_font_size", 18)
+    val ebookFontSize = intPref("pref_ebook_font_size", 24)
 
     /**
      * TXT/HTML/FB2/Markdown decode. 0=auto (default), then language-biased auto

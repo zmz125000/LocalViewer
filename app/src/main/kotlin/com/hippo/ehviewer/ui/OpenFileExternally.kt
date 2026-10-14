@@ -2182,6 +2182,18 @@ object OpenFileExternally {
     }
 
     /**
+     * Saved network text book with file-change checks off: skip the remote stat
+     * and let the reader open the saved body. Null means probe as usual.
+     */
+    private suspend fun cachedNetworkEbookSize(displayName: String, cacheKey: String): Long? {
+        if (Settings.ebookCheckFileChange.value) return null
+        if (!isEbookFileName(displayName)) return null
+        val charset = TextCharset.cacheLabel(Settings.ebookCharset.value)
+        val hit = withIOContext { EbookBodyCache.hasLast(cacheKey, charset) }
+        return if (hit) -1L else null
+    }
+
+    /**
      * A positive size opens the file. A missing size opens a saved ebook body.
      * Empty or unreachable with no saved body throws, so the browser snackbar
      * runs and the reader stays closed.
@@ -2208,12 +2220,13 @@ object OpenFileExternally {
         val isVideo = DefaultVideoPlayer.isVideoMime(mimeType) || isBrowseVideoFileName(displayName)
         // Video size is taken from the sticky open. A browse-pool STAT waits behind thumbs
         // and the data NIO group; PDF/archives still probe so viewers get Content-Length.
+        val ebookCacheKey = "smb:$sourceId:${remoteRelativeFile.trim('/')}"
         val sizeBytes = if (isVideo) {
             -1L
         } else {
-            withIOContext {
+            cachedNetworkEbookSize(displayName, ebookCacheKey) ?: withIOContext {
                 val probed = SmbGateway.fileSizeOrNull(source, password, remoteRelativeFile)
-                streamSizeOrCachedEbook(probed, displayName, "smb:$sourceId:${remoteRelativeFile.trim('/')}")
+                streamSizeOrCachedEbook(probed, displayName, ebookCacheKey)
             }
         }
         return StreamDocumentRegistry.register(
@@ -2248,17 +2261,18 @@ object OpenFileExternally {
         }
         val password = WebDavPasswordStore.get(sourceId)
         val isVideo = DefaultVideoPlayer.isVideoMime(mimeType) || isBrowseVideoFileName(displayName)
+        val ebookCacheKey = "webdav:$sourceId:${remoteRelativeFile.trim('/')}"
         val sizeBytes = if (isVideo) {
             -1L
         } else {
-            withIOContext {
+            cachedNetworkEbookSize(displayName, ebookCacheKey) ?: withIOContext {
                 val probed = WebDavClient.fileSizeOrNull(
                     source,
                     password,
                     remoteRelativeFile,
                     sticky = true,
                 )
-                streamSizeOrCachedEbook(probed, displayName, "webdav:$sourceId:${remoteRelativeFile.trim('/')}")
+                streamSizeOrCachedEbook(probed, displayName, ebookCacheKey)
             }
         }
         return StreamDocumentRegistry.register(

@@ -67,6 +67,13 @@ internal object EbookBodyCache {
         return body.chapters.map { EbookChapter(it.title, it.text, it.depth) }
     }
 
+    /** True when a saved body file exists. Does not parse it or compare size. */
+    fun hasLast(cacheKey: String, charset: String = "auto"): Boolean {
+        if (cacheKey.isEmpty()) return false
+        val file = fileFor(cacheKey, charset)
+        return file.isFile && file.length() > 0L
+    }
+
     /**
      * Last saved body when the share cannot be sized (offline history).
      * A live size still goes through [load], which misses when the file changed.

@@ -1,5 +1,7 @@
 package com.hippo.ehviewer.library.document
 
+import kotlin.math.max
+import kotlin.math.min
 import kotlin.math.roundToInt
 
 /**
@@ -7,17 +9,64 @@ import kotlin.math.roundToInt
  * reader scales the bitmap. Glyph size is a fraction of **page** width (not
  * content width), so margin/padding change line length, not type size.
  */
-internal const val EBOOK_FONT_SIZE_DEFAULT = 18
-internal const val EBOOK_FONT_SIZE_MIN = 6
-internal const val EBOOK_FONT_SIZE_MAX = 30
+internal const val EBOOK_FONT_SIZE_DEFAULT = 24
+internal const val EBOOK_FONT_SIZE_MIN = 12
+internal const val EBOOK_FONT_SIZE_MAX = 36
 
-/** Landscape type is about 1.4× the slider. Portrait uses the slider as-is. */
-internal const val EBOOK_LANDSCAPE_FONT_SCALE = 1.4f
+/**
+ * Page width where the slider number is the glyph fraction as stored.
+ * A folded phone is about this wide, so the same slider keeps that em when the
+ * window opens, rotates, or becomes a free-form size.
+ */
+internal const val EBOOK_FONT_REFERENCE_WIDTH_DP = 360f
 
-internal fun ebookDisplayFontSize(slider: Int, landscape: Boolean): Int {
+/**
+ * Text-page width/height. A tall phone stays the A-series sheet, which already
+ * fills the width. A wider window (open fold, landscape, free-form) grows the
+ * page up to the viewer so it is not a paper column in the center.
+ * [halfWidth] is one side of a dual-page spread.
+ * [lockToViewer] keeps that half exactly. Webtoon horizontal draws the page at
+ * height × aspect, so a leftover A-series sheet is wider than half a foldable
+ * and the type comes out larger than the other modes.
+ */
+internal fun ebookTextPageAspect(
+    viewerWidthDp: Float,
+    viewerHeightDp: Float,
+    halfWidth: Boolean = false,
+    lockToViewer: Boolean = false,
+): Float {
+    val width = (if (halfWidth) viewerWidthDp / 2f else viewerWidthDp).coerceAtLeast(1f)
+    val height = viewerHeightDp.coerceAtLeast(1f)
+    val viewer = (width / height).coerceIn(0.3f, 2.5f)
+    if (lockToViewer) return viewer
+    return max(EbookPaginator.ASPECT, viewer)
+}
+
+/**
+ * Width of the page bitmap on screen. Fit/contain: the page is no wider than
+ * the viewer and no taller than it. [halfWidth] is a dual-page cell.
+ */
+internal fun ebookDisplayedPageWidthDp(
+    viewerWidthDp: Float,
+    viewerHeightDp: Float,
+    pageAspect: Float,
+    halfWidth: Boolean = false,
+): Float {
+    val width = (if (halfWidth) viewerWidthDp / 2f else viewerWidthDp).coerceAtLeast(1f)
+    val height = viewerHeightDp.coerceAtLeast(1f)
+    val aspect = pageAspect.coerceIn(0.25f, 2.8f)
+    return min(width, height * aspect).coerceAtLeast(1f)
+}
+
+/**
+ * Slider em, converted to the page-width fraction for [displayedPageWidthDp].
+ * Narrow sheets (a landscape phone) increase the fraction; a wide unfolded
+ * window decreases it. The on-screen em stays the reference-width size.
+ */
+internal fun ebookDisplayFontSize(slider: Int, displayedPageWidthDp: Float): Int {
     val base = slider.coerceIn(EBOOK_FONT_SIZE_MIN, EBOOK_FONT_SIZE_MAX)
-    if (!landscape) return base
-    return (base * EBOOK_LANDSCAPE_FONT_SCALE).roundToInt()
+    val width = displayedPageWidthDp.coerceAtLeast(1f)
+    return (base * EBOOK_FONT_REFERENCE_WIDTH_DP / width).roundToInt().coerceAtLeast(1)
 }
 
 internal data class EbookStyle(
@@ -47,8 +96,9 @@ internal data class EbookStyle(
     val margin: Float get() = marginPercent / 100f
     val verticalMargin: Float get() = verticalMarginPercent / 100f
 
-    // Landscape may exceed the slider max (30 × 1.4). Do not clamp that back to 30.
-    val fontFraction: Float get() = fontSize.coerceAtLeast(EBOOK_FONT_SIZE_MIN) / 560f
+    // Display size may sit outside the slider range: a narrow sheet goes above
+    // the max, a wide unfolded window goes below the min. Do not clamp either.
+    val fontFraction: Float get() = fontSize.coerceAtLeast(1) / 560f
 
     companion object {
         val DEFAULT = EbookStyle()

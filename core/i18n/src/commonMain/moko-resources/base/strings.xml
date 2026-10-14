@@ -529,6 +529,8 @@
     <string name="image_saved">Image saved to %s</string>
     <string name="settings_eh">EH</string>
     <string name="settings_general">General</string>
+    <string name="settings_ebook_check_file_change">Check ebook file changes</string>
+    <string name="settings_ebook_check_file_change_summary">Before opening a network text book, check whether the file changed.</string>
     <string name="settings_network_folder_index_cache">Folder index cache</string>
     <string name="settings_network_folder_index_cache_summary">Off keeps folder indexes in RAM only; on also saves them to disk.</string>
     <string name="settings_network_folder_index_quick_scan">Folder cache quick scan</string>
