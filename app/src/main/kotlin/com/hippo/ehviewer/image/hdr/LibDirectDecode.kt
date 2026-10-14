@@ -460,10 +460,11 @@ object LibDirectDecode {
         return display.isHdr
     }
 
+    /** Highest panel ratio, as for [jxrHighlightCap]: the live ratio is still 1 when this decode runs. */
     private fun rawPanelBoost(): Float {
         val display = appCtx.getSystemService(DisplayManager::class.java)
             ?.getDisplay(Display.DEFAULT_DISPLAY)
-        return HdrDisplayInfo.maxDisplayBoost(display)
+        return HdrDisplayInfo.hdrCapabilityBoost(display)
     }
 
     /**

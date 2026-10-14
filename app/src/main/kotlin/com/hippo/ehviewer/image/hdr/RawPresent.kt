@@ -43,11 +43,10 @@ fun rawContentBoost(mode: RawPresent, peakOverWhite: Float, panelBoost: Float): 
  * LibRaw 16-bit sample divided by camera white.
  *
  * Deep color and non-linear HDR run the camera look on that scale, including
- * DNG BaselineExposure. Non-linear HDR then lifts only pixels above the
- * 90th-percentile paper white, so that headroom sits above 1. Linear HDR
- * skips the look, keeps this scale at and below paper white, and opens the
- * brighter tail. The shoulder amount selects that opening: none, the sampled
- * peak at peak/paper, or the panel cap.
+ * DNG BaselineExposure. Linear HDR skips the look and keeps this scale. Both HDR
+ * paths then apply one smooth highlight gain: 1 up to two stops below the sampled
+ * peak, rising from there so the peak moves toward the panel cap. The shoulder
+ * amount (linear HDR) or 0.5 (camera look) sets how far, from none to the cap.
  * [highlightStops] compresses only samples above 1, then the result is clamped to [cap].
  *
  * On the deep-color and 8-bit paths the native pack applies the camera look first
