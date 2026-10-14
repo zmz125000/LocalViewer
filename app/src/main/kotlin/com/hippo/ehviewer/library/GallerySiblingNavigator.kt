@@ -112,16 +112,18 @@ object GallerySiblingNavigator {
         return when (target) {
             is BrowseEntry.ArchiveGallery -> ReaderScreenArgs.Archive(target.path.toString())
             is BrowseEntry.FolderGallery -> {
-                // [frame] is the listing parent (browse stack / History open), so its
-                // relativePath is already the gallery parent — do not peel another segment.
+                // Parent relative is the directory that contains both galleries.
+                // Inside rawbig, the top frame is rawbig itself — joining that
+                // relative with the sibling name saved `rawbig/untitled folder`.
                 val rootId = frame?.rootId ?: 0L
-                val parentRel = frame?.relativePath.orEmpty().trim('/')
+                val parentRel = siblingListingParentRelative(BrowseSession.localStack, currentPath)
                 zipAsDirSiblingArgs(rootId, parentRel, target) ?: run {
-                    val rel = when {
-                        target.path.toString() == parent.toString() -> parentRel.ifEmpty { "." }
-                        parentRel.isEmpty() -> target.name
-                        else -> "$parentRel/${target.name}"
-                    }
+                    val rel = folderGalleryRelativeUnder(
+                        parentRel,
+                        target.relativeName,
+                        target.name,
+                        target.path.toString() == parent.toString(),
+                    )
                     val normRel = rel.trim('/').let { if (it == "." || it.isEmpty()) "" else it }
                     val gid = stableGalleryId(rootId, rel.ifEmpty { "." })
                     val info = BaseGalleryInfo(
@@ -405,4 +407,72 @@ object GallerySiblingNavigator {
         val parentRel = parentRelativeOfFile(remote)
         return parentRel to liveList(parentRel)
     }
+}
+
+internal fun normalizeBrowseRel(relativePath: String): String = relativePath.trim('/').let { if (it == "." || it.isEmpty()) "" else it }
+
+/**
+ * Relative path of the directory that contains [galleryPath].
+ *
+ * The browse stack's top frame is that parent when the reader was opened from
+ * the parent listing. It is the gallery itself when the reader was opened from
+ * inside the folder (`rawbig`). Sibling history must use the parent relative,
+ * otherwise the next gallery is stored as `rawbig/untitled folder`.
+ */
+internal fun siblingListingParentRelative(
+    stack: List<BrowseSession.LocalFrame>,
+    galleryPath: String,
+): String {
+    val gallery = galleryPath.trimEnd('/')
+    val parent = gallery.substringBeforeLast('/').takeIf { it.isNotEmpty() && it != gallery }
+    val frame = stack.lastOrNull() ?: return ""
+    if (parent != null && frame.path.trimEnd('/') == parent) {
+        return normalizeBrowseRel(frame.relativePath)
+    }
+    if (parent != null && stack.size >= 2) {
+        val prev = stack[stack.lastIndex - 1]
+        if (prev.path.trimEnd('/') == parent) return normalizeBrowseRel(prev.relativePath)
+    }
+    if (frame.path.trimEnd('/') == gallery) {
+        return parentRelativeOfFile(normalizeBrowseRel(frame.relativePath))
+    }
+    val frameParent = frame.path.trimEnd('/').substringBeforeLast('/')
+    if (parent != null && frameParent == parent) {
+        return parentRelativeOfFile(normalizeBrowseRel(frame.relativePath))
+    }
+    return normalizeBrowseRel(frame.relativePath)
+}
+
+/** History relative for a folder gallery listed under [parentRel]. */
+internal fun folderGalleryRelativeUnder(
+    parentRel: String,
+    childRelative: String,
+    childName: String,
+    isParentItself: Boolean,
+): String {
+    val parent = normalizeBrowseRel(parentRel)
+    if (isParentItself) return parent.ifEmpty { "." }
+    val child = normalizeBrowseRel(childRelative).ifEmpty { childName.trim('/') }
+    return when {
+        child.isEmpty() -> parent.ifEmpty { "." }
+        parent.isEmpty() -> child
+        else -> "$parent/$child"
+    }
+}
+
+/**
+ * History relative for [galleryPath] given the live browse stack.
+ * The open gallery keeps the frame relative; a sibling is joined onto the parent.
+ */
+internal fun localFolderHistoryRelative(
+    stack: List<BrowseSession.LocalFrame>,
+    galleryPath: String,
+): String {
+    val frame = stack.lastOrNull()
+    if (frame != null && frame.path.trimEnd('/') == galleryPath.trimEnd('/')) {
+        return normalizeBrowseRel(frame.relativePath)
+    }
+    val parentRel = siblingListingParentRelative(stack, galleryPath)
+    val name = galleryPath.trimEnd('/').substringAfterLast('/').ifEmpty { "Folder" }
+    return if (parentRel.isEmpty()) name else "$parentRel/$name"
 }

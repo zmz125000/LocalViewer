@@ -166,7 +166,6 @@ private fun CameraRawSetting() = Column {
     )
     CommitSliderChoice(
         title = stringResource(id = R.string.pref_reader_raw_shoulder),
-        summary = stringResource(id = R.string.pref_reader_raw_shoulder_summary),
         range = 0..100,
         field = Settings.readerRawShoulder.asMutableState(),
         valueText = { "$it" },
