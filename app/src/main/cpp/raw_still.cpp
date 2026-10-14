@@ -4,12 +4,14 @@
  * 64-bit: LibRaw demosaic → packed RGBA for the reader.
  *   present 0: 8-bit sRGB. Linear samples, then the camera look, then the sRGB transfer.
  *   present 1: deep color, Display P3 float16 clamped to 0..1, after the camera look.
- *   present 2: deep color + Android 16 HDR, Rec.2020 float16. The render is the
+ *   present 2: deep color + Android 16 HDR. Working space is linear Rec.2020, and
+ *              the stored samples are linear scRGB: the HDR window composites there,
+ *              and Rec.2020 numbers shown as scRGB look washed out. The render is the
  *              deep-color camera look, or with linear HDR the scene-linear samples
- *              (camera white = 1). One highlight gain (hdr_highlight_gain) then opens
- *              the top two stops below the sampled peak toward the panel cap. Below
- *              that knee the gain is 1, so the body matches the SDR render. Linear
- *              HDR takes the amount from the shoulder slider; the look uses 0.5.
+ *              (camera white = 1). One highlight gain then opens the top two stops
+ *              below the sampled peak. The shoulder slider sets that opening for
+ *              both HDR modes. The gain keeps the color from before the tone curve,
+ *              whose shoulder otherwise turns highlights white.
  *              The advanced-color switch is not a third mode;
  *              the caller selects 2 whenever HDR display is on and the panel is HDR.
  * Every ABI: embedded JPEG preview for covers and for a failed demosaic.
@@ -332,30 +334,46 @@ float sampled_peak_luma(const uint8_t* base, int w, int h, int colors, int bits)
 
 // Stops below the highlight anchor where the HDR gain starts.
 constexpr float kHdrKneeStops = 2.f;
-// The camera-look HDR path has no shoulder slider; it uses the slider's midpoint.
-constexpr float kLookHdrShoulder = 0.5f;
+
+// 0 below the knee, 1 at and above the anchor. Smoothstep, so the slope matches
+// at both ends.
+float hdr_highlight_weight(float scene_luma, float anchor) {
+    if (!(anchor > 0.f) || !std::isfinite(scene_luma)) return 0.f;
+    const float knee = anchor * std::exp2(-kHdrKneeStops);
+    if (!(scene_luma > knee)) return 0.f;
+    const float t = std::min(1.f, std::log2(scene_luma / knee) / kHdrKneeStops);
+    return t * t * (3.f - 2.f * t);
+}
 
 // HDR highlight gain shared by camera-look and linear HDR. Multiplies the SDR
 // (or linear) render, so 1 keeps that render.
 // scene_luma and anchor are scene luminance after exposure, camera white = 1.
 // anchor is the sampled highlight peak, at least camera white. base_at_anchor is
-// the render's output for a neutral at the anchor. Below anchor·2^-kHdrKneeStops
-// the gain is 1. It then rises along a smoothstep in log2 luminance, so the curve
-// has no slope jump, and from the anchor up it holds at the peak gain.
+// the render's output for a neutral at the anchor. Below the knee the gain is 1.
+// It then rises with hdr_highlight_weight, and from the anchor up it holds.
 // shoulder 0 keeps the render, 1 puts the anchor at the panel cap, and 0.5 is
-// halfway between the two in stops.
+// halfway between the two in stops. Both HDR modes use the shoulder slider.
 float hdr_highlight_gain(float scene_luma, float anchor, float base_at_anchor, float shoulder, float cap) {
-    if (!(shoulder > 0.f) || !(anchor > 0.f) || !(base_at_anchor > 0.f) || !std::isfinite(scene_luma)) return 1.f;
-    const float knee = anchor * std::exp2(-kHdrKneeStops);
-    if (!(scene_luma > knee)) return 1.f;
+    const float w = hdr_highlight_weight(scene_luma, anchor);
+    if (!(w > 0.f) || !(shoulder > 0.f) || !(base_at_anchor > 0.f)) return 1.f;
     const float amount = std::min(shoulder, 1.f);
     const float panel = std::isfinite(cap) && cap > 1.f ? std::min(cap, 10000.f / 203.f) : 1.f;
     const float peak_gain_stops = amount * std::log2(std::max(panel, base_at_anchor) / base_at_anchor);
     if (!(peak_gain_stops > 0.f)) return 1.f;
-    const float t = std::min(1.f, std::log2(scene_luma / knee) / kHdrKneeStops);
-    const float w = t * t * (3.f - 2.f * t);
     const float gain = std::exp2(peak_gain_stops * w);
     return std::isfinite(gain) && gain > 0.f ? gain : 1.f;
+}
+
+// Linear Rec.2020 to linear scRGB (BT.709 primaries, D65, no adaptation).
+// Same matrix as hdr_encode.h linear_bt2020_to_bt709. Values outside sRGB go
+// negative or above the source peak; scRGB keeps both.
+void rec2020_to_scrgb(float& r, float& g, float& b) {
+    const float nr = 1.6604910021f * r + -0.5876411388f * g + -0.0728498633f * b;
+    const float ng = -0.1245504745f * r + 1.1328998971f * g + -0.0083494226f * b;
+    const float nb = -0.0181507634f * r + -0.1005788980f * g + 1.1187296614f * b;
+    r = nr;
+    g = ng;
+    b = nb;
 }
 
 // Same mapping as RawPresent.rawLinearSample. scene_over_white is 1 at camera white.
@@ -448,7 +466,7 @@ bool pack_image(const libraw_processed_image_t* img, int max_edge, int present, 
     // anchor never drops below camera white, so a dim frame is not expanded.
     float anchor = 1.f;
     float base_at_anchor = 1.f;
-    const float hdr_shoulder = linear_hdr ? shoulder : kLookHdrShoulder;
+    const float hdr_shoulder = std::isfinite(shoulder) ? std::clamp(shoulder, 0.f, 1.f) : 0.5f;
     if (hdr && linear16) {
         const float peak = sampled_peak_luma(img->data, sw, sh, colors, img->bits) / white * exposure_gain;
         if (std::isfinite(peak) && peak > 1.f) anchor = peak;
@@ -460,8 +478,9 @@ bool pack_image(const libraw_processed_image_t* img, int max_edge, int present, 
     out.h = dh;
     out.format = deep ? 1 : 0;
     out.is_hdr = hdr ? 1 : 0;
-    // gamut 2 is the shared linear BT.2020 space. Headroom is the half-float values.
-    out.gamut = hdr ? 2 : (present == 1 ? 1 : 0);
+    // 0 is sRGB: 8-bit after the transfer, or HDR linear scRGB (values above 1, and
+    // negatives for colors outside sRGB). 1 is linear Display P3, clamped to 0..1.
+    out.gamut = present == 1 ? 1 : 0;
     out.boost = 1.f;
 
     // Rows are independent and write disjoint output, so bands give the same bytes.
@@ -498,10 +517,26 @@ bool pack_image(const libraw_processed_image_t* img, int max_edge, int present, 
                     for (int c = 0; c < 3; ++c) rgb[c] = static_cast<float>(ch[c] / white);
                     const float scene_luma = bt2020_luma(rgb[0], rgb[1], rgb[2]) * exposure_gain;
                     // HDR runs the same look as deep color, so the body matches it.
+                    // pre is that color before the tone curve.
+                    float pre[3] = {rgb[0] * exposure_gain, rgb[1] * exposure_gain, rgb[2] * exposure_gain};
                     if (look && !linear_hdr) {
-                        rawlook::apply_camera_look(*look, exposure_ev, rgb[0], rgb[1], rgb[2]);
+                        rawlook::apply_camera_look(*look, exposure_ev, rgb[0], rgb[1], rgb[2], pre);
                     } else {
-                        for (int c = 0; c < 3; ++c) rgb[c] *= exposure_gain;
+                        for (int c = 0; c < 3; ++c) rgb[c] = pre[c];
+                    }
+                    if (hdr && look && !linear_hdr && hdr_shoulder > 0.f) {
+                        // The curve's shoulder moves highlights toward white. Put the
+                        // pre-curve color back across the same knee the gain opens,
+                        // at the curved luminance, so the body is unchanged.
+                        const float w = hdr_highlight_weight(scene_luma, anchor);
+                        const float curved = bt2020_luma(rgb[0], rgb[1], rgb[2]);
+                        const float before = bt2020_luma(pre[0], pre[1], pre[2]);
+                        if (w > 0.f && before > 1e-4f && curved > 0.f) {
+                            const float s = curved / before;
+                            for (int c = 0; c < 3; ++c) {
+                                rgb[c] = rgb[c] * (1.f - w) + std::max(pre[c], 0.f) * s * w;
+                            }
+                        }
                     }
                     apply_raw_zones(rgb[0], rgb[1], rgb[2], shadows, midtones, highlights);
                     if (hdr) {
@@ -520,12 +555,16 @@ bool pack_image(const libraw_processed_image_t* img, int max_edge, int present, 
                         // it, so a saturated highlight keeps its hue at the panel cap.
                         float hdr_scale = 1.f;
                         if (hdr) {
+                            // Cap in Rec.2020, where 1 is camera white. An sRGB channel
+                            // above 1 can be an ordinary saturated color, so the cap has
+                            // to run before the scRGB conversion.
                             const float m = std::max(rgb[0], std::max(rgb[1], rgb[2]));
                             if (m > 0.f) hdr_scale = raw_linear_sample(m, 0.f, highlight_stops, cap) / m;
+                            for (int c = 0; c < 3; ++c) rgb[c] = std::max(rgb[c], 0.f) * hdr_scale;
+                            rec2020_to_scrgb(rgb[0], rgb[1], rgb[2]);
                         }
                         for (int c = 0; c < 3; ++c) {
-                            float v = hdr ? std::max(rgb[c], 0.f) * hdr_scale
-                                          : raw_linear_sample(rgb[c], 0.f, highlight_stops, cap);
+                            float v = hdr ? rgb[c] : raw_linear_sample(rgb[c], 0.f, highlight_stops, cap);
                             peak = std::max(peak, v);
                             uint16_t half = float_to_half(v);
                             out.pixels[o + static_cast<size_t>(c) * 2] = static_cast<uint8_t>(half & 0xff);

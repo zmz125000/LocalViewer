@@ -46,7 +46,9 @@ fun rawContentBoost(mode: RawPresent, peakOverWhite: Float, panelBoost: Float): 
  * DNG BaselineExposure. Linear HDR skips the look and keeps this scale. Both HDR
  * paths then apply one smooth highlight gain: 1 up to two stops below the sampled
  * peak, rising from there so the peak moves toward the panel cap. The shoulder
- * amount (linear HDR) or 0.5 (camera look) sets how far, from none to the cap.
+ * amount sets how far, from none to the cap, for both HDR modes. Camera-look HDR
+ * keeps the pre-curve highlight color, so the tone curve's shoulder does not
+ * turn that headroom white. The stored samples are linear scRGB.
  * [highlightStops] compresses only samples above 1, then the result is clamped to [cap].
  *
  * On the deep-color and 8-bit paths the native pack applies the camera look first

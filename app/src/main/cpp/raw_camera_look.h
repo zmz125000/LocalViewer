@@ -301,9 +301,13 @@ inline void apply_hue_map(const HueMap& map, float& r, float& g, float& b) {
     b = bb;
 }
 
-inline void apply_camera_look(const CameraLook& look, float exposure_ev, float& r, float& g, float& b) {
+// pre_tone, when set, receives the same color before the tone curve. HDR uses it
+// to put highlight color back: the curve's shoulder pulls bright colors toward white.
+inline void apply_camera_look(const CameraLook& look, float exposure_ev, float& r, float& g, float& b,
+                              float* pre_tone = nullptr) {
     if (!std::isfinite(r) || !std::isfinite(g) || !std::isfinite(b)) {
         r = g = b = 0.f;
+        if (pre_tone) pre_tone[0] = pre_tone[1] = pre_tone[2] = 0.f;
         return;
     }
     r = std::max(r, 0.f);
@@ -317,6 +321,11 @@ inline void apply_camera_look(const CameraLook& look, float exposure_ev, float& 
         r *= gain;
         g *= gain;
         b *= gain;
+        if (pre_tone) {
+            pre_tone[0] = r;
+            pre_tone[1] = g;
+            pre_tone[2] = b;
+        }
         return;
     }
     mul3(to_prophoto(look.space), r, g, b);
@@ -328,6 +337,16 @@ inline void apply_camera_look(const CameraLook& look, float exposure_ev, float& 
     g *= gain;
     b *= gain;
     if (look.has_look) apply_hue_map(look.look, r, g, b);
+    if (pre_tone) {
+        float pr = r;
+        float pg = g;
+        float pb = b;
+        mul3(from_prophoto(look.space), pr, pg, pb);
+        if (!std::isfinite(pr) || !std::isfinite(pg) || !std::isfinite(pb)) pr = pg = pb = 0.f;
+        pre_tone[0] = pr;
+        pre_tone[1] = pg;
+        pre_tone[2] = pb;
+    }
     if (look.tone_active) apply_rgb_tone(look, r, g, b);
     mul3(from_prophoto(look.space), r, g, b);
     if (!std::isfinite(r) || !std::isfinite(g) || !std::isfinite(b)) r = g = b = 0.f;
