@@ -998,8 +998,13 @@ private fun readOpenedEbook(
     stillWanted: () -> Boolean,
     pageAspect: Float,
 ): EbookLoad {
-    val size = runCatching { source.size }.getOrDefault(-1L)
-    val cached = cachedEbookChapters(cacheKey, size, charsetKey)
+    val savedBody = savedNetworkEbookBody(cacheKey, charsetKey)
+    val size = if (savedBody != null) {
+        -1L
+    } else {
+        runCatching { source.size }.getOrDefault(-1L)
+    }
+    val cached = savedBody ?: cachedEbookChapters(cacheKey, size, charsetKey)
     val book = if (cached != null) {
         EbookParse(cached, null)
     } else {
@@ -1021,6 +1026,16 @@ private fun readOpenedEbook(
         pageAspect = pageAspect,
     )
     return EbookLoad(vector, vector != null && book.resources != null)
+}
+
+/**
+ * Network text book with file-change checks off: the saved body, without
+ * stating the remote file. Null asks the caller to read a live size.
+ */
+private fun savedNetworkEbookBody(cacheKey: String?, charsetKey: String): List<EbookChapter>? {
+    if (cacheKey == null || Settings.ebookCheckFileChange.value) return null
+    if (!cacheKey.startsWith("smb:") && !cacheKey.startsWith("webdav:")) return null
+    return EbookBodyCache.loadLast(cacheKey, charsetKey)
 }
 
 private fun cachedEbookChapters(cacheKey: String?, size: Long, charsetKey: String): List<EbookChapter>? {

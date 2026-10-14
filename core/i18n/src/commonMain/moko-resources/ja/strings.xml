@@ -186,6 +186,8 @@
     <string name="back_to_library">ライブラリに戻る</string>
     <string name="go_to_first_page">最初のページへ</string>
     <string name="go_to_next_gallery">次のギャラリー</string>
+    <string name="settings_ebook_check_file_change">電子書籍のファイル変更を確認</string>
+    <string name="settings_ebook_check_file_change_summary">ネットワーク上のテキストを開く前に、ファイルが変更されたか確認します。</string>
     <string name="settings_network_folder_index_cache">フォルダーのインデックスキャッシュ</string>
     <string name="settings_network_folder_index_cache_summary">オフの場合、フォルダーのインデックスは RAM のみに保持します。オンの場合、ディスクにも保存します。</string>
     <string name="settings_network_folder_index_quick_scan">フォルダーキャッシュのクイックスキャン</string>
