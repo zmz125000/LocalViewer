@@ -38,6 +38,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.lazy.grid.items
@@ -744,7 +745,7 @@ private fun ExplorerFavoritesGrid(
     val labelStyle = MaterialTheme.typography.labelMedium
     val gridState = remember { LazyGridState() }
     FastScrollLazyVerticalGrid(
-        columns = GalleryGridDefaults.columns(),
+        columns = GridCells.Adaptive(80.dp),
         state = gridState,
         modifier = Modifier.fillMaxSize(),
         contentPadding = GalleryGridDefaults.margin().let { inset ->
