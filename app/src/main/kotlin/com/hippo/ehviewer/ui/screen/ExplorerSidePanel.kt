@@ -38,7 +38,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.lazy.grid.items
@@ -785,15 +784,11 @@ private fun ExplorerFavoritesGrid(
     val favorites = remember(roots, smb, webDav, visibleGalleries, favoriteKeys) {
         resolveFavoriteBrowseSources(roots, smb, webDav, visibleGalleries, favoriteKeys)
     }
-    val thumbColumns by Settings.thumbColumns.collectAsState()
-    val columnCount = thumbColumns.coerceIn(1, 10).let { columns ->
-        if (tablet) (columns - 1).coerceAtLeast(1) else columns
-    }
     val iconSize = if (tablet) ExplorerGridIconSizeTablet else ExplorerGridIconSize
     val labelStyle = MaterialTheme.typography.labelMedium
     val gridState = remember { LazyGridState() }
     FastScrollLazyVerticalGrid(
-        columns = GridCells.Fixed(columnCount),
+        columns = GalleryGridDefaults.columns(),
         state = gridState,
         modifier = Modifier.fillMaxSize(),
         contentPadding = GalleryGridDefaults.margin().let { inset ->
@@ -813,7 +808,6 @@ private fun ExplorerFavoritesGrid(
         items(favorites, key = { "fav-${it.key}" }) { fav ->
             FavoriteSourceGridCell(
                 fav = fav,
-                columns = columnCount,
                 iconSize = iconSize,
                 labelStyle = labelStyle,
                 onClick = {
@@ -830,7 +824,6 @@ private fun ExplorerFavoritesGrid(
             items(smb, key = { "smb-${it.id}" }) { source ->
                 FavoriteSourceGridCell(
                     fav = FavoriteBrowseSource.Smb(source),
-                    columns = columnCount,
                     iconSize = iconSize,
                     labelStyle = labelStyle,
                     onClick = {
@@ -844,7 +837,6 @@ private fun ExplorerFavoritesGrid(
             items(webDav, key = { "dav-${it.id}" }) { source ->
                 FavoriteSourceGridCell(
                     fav = FavoriteBrowseSource.WebDav(source),
-                    columns = columnCount,
                     iconSize = iconSize,
                     labelStyle = labelStyle,
                     onClick = {
@@ -863,7 +855,6 @@ private fun ExplorerFavoritesGrid(
             items(roots, key = { "root-${it.id}" }) { root ->
                 FavoriteSourceGridCell(
                     fav = FavoriteBrowseSource.Local(root),
-                    columns = columnCount,
                     iconSize = iconSize,
                     labelStyle = labelStyle,
                     onClick = {

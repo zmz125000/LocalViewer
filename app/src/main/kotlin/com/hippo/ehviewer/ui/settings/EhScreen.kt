@@ -97,10 +97,11 @@ fun AnimatedVisibilityScope.EhScreen(navigator: DestinationsNavigator) = Screen(
                 )
             }
             IntSliderPreference(
-                maxValue = 10,
-                minValue = 1,
+                maxValue = Settings.GRID_CELL_MAX_DP,
+                minValue = Settings.GRID_CELL_MIN_DP,
+                step = (Settings.GRID_CELL_MAX_DP - Settings.GRID_CELL_MIN_DP) / Settings.GRID_CELL_STEP_DP - 1,
                 title = stringResource(id = R.string.settings_eh_thumb_columns),
-                state = Settings.thumbColumns.asMutableState(),
+                state = Settings.gridCellSize.asMutableState(),
             )
             SwitchPreference(
                 title = stringResource(id = R.string.settings_eh_show_gallery_pages),

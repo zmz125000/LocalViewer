@@ -41,20 +41,6 @@ object CoverThumb {
             decodePx(with(density) { cardHeight.roundToPx() })
         }
     }
-
-    /**
-     * Grid cell edge from screen layout: (width − 2×margin − (cols−1)×gutter) / cols.
-     */
-    @Composable
-    fun gridDecodePx(screenWidthDp: Int, columns: Int, margin: Dp, gutter: Dp): Int {
-        val density = LocalDensity.current
-        return remember(screenWidthDp, columns, margin, gutter, density.density) {
-            val cols = columns.coerceAtLeast(1)
-            val cellDp = ((screenWidthDp.dp - margin * 2 - gutter * (cols - 1)) / cols)
-                .coerceAtLeast(80.dp)
-            decodePx(with(density) { cellDp.roundToPx() })
-        }
-    }
 }
 
 /**

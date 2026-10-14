@@ -13,35 +13,89 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.dimensionResource
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.window.core.layout.WindowSizeClass.Companion.WIDTH_DP_MEDIUM_LOWER_BOUND
+import com.ehviewer.core.ui.util.LocalWindowSizeClass
+import com.ehviewer.core.ui.util.isMediumWidthOrWider
 import com.hippo.ehviewer.R
 import com.hippo.ehviewer.Settings
+import com.hippo.ehviewer.coil.CoverThumb
 import com.hippo.ehviewer.collectAsState
-import kotlin.math.ceil
 
 /**
  * Shared Library / Browse thumb-grid layout.
  *
- * Portrait columns = [Settings.thumbColumns] as set.
- * Landscape = that value × 1.5, rounded up (e.g. 3 → 5, 4 → 6).
- * Edge inset and inter-cell gutter come from tablet-qualified dimens.
+ * [Settings.gridCellSize] is the minimum cell edge. [GridCells.Adaptive] then
+ * stretches cells so the row fills the width; [gutter] and [margin] stay fixed.
+ * Column count follows the window, including fold and free-form sizes.
  */
 object GalleryGridDefaults {
+    /** M3 NavigationRail container width. Medium+ windows place it beside the grid. */
+    private val MainNavRailWidth = 80.dp
+
+    @Composable
+    fun cellSize(): Dp {
+        val stored by Settings.gridCellSize.collectAsState()
+        val dp = stored.coerceIn(Settings.GRID_CELL_MIN_DP, Settings.GRID_CELL_MAX_DP)
+        return dp.dp
+    }
+
+    /**
+     * Columns that fit [cellSize] in the current content width, using the same
+     * count as [GridCells.Adaptive]. Extra pixels are shared by the cells.
+     */
     @Composable
     fun columnCount(): Int {
-        val thumbColumns by Settings.thumbColumns.collectAsState()
-        val landscape =
-            LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
-        return remember(thumbColumns, landscape) {
-            effectiveColumnCount(thumbColumns, landscape)
+        val minCell = cellSize()
+        val gutter = gutter()
+        val available = contentWidth()
+        val density = LocalDensity.current
+        return remember(minCell, gutter, available, density) {
+            with(density) {
+                adaptiveColumnCount(
+                    available.roundToPx(),
+                    minCell.roundToPx(),
+                    gutter.roundToPx(),
+                )
+            }
         }
     }
 
     @Composable
-    fun columns(): GridCells = GridCells.Fixed(columnCount())
+    fun columns(): GridCells = GridCells.Adaptive(cellSize())
+
+    /** Decode edge for a fitted grid cell (after stretch), not the raw minimum. */
+    @Composable
+    fun gridDecodePx(): Int {
+        val columns = columnCount()
+        val gutter = gutter()
+        val available = contentWidth()
+        val density = LocalDensity.current
+        return remember(columns, gutter, available, density) {
+            val cols = columns.coerceAtLeast(1)
+            val cell = ((available - gutter * (cols - 1)) / cols).coerceAtLeast(1.dp)
+            CoverThumb.decodePx(with(density) { cell.roundToPx() })
+        }
+    }
+
+    /**
+     * Width the main grid actually lays out in: window width, minus the nav rail
+     * on medium+ windows, minus horizontal [margin].
+     */
+    @Composable
+    private fun contentWidth(): Dp {
+        val screenWidthDp = LocalConfiguration.current.screenWidthDp
+        val rail = if (LocalWindowSizeClass.current.isMediumWidthOrWider) {
+            MainNavRailWidth
+        } else {
+            0.dp
+        }
+        val horizontalInset = margin() * 2
+        return (screenWidthDp.dp - rail - horizontalInset).coerceAtLeast(0.dp)
+    }
 
     /**
      * Phone/tablet × portrait/landscape from [Configuration.smallestScreenWidthDp]
@@ -107,11 +161,16 @@ object GalleryGridDefaults {
     fun namePaddingBottom(): Dp = dimensionResource(R.dimen.gallery_grid_name_padding_bottom)
 }
 
-/** Portrait: setting as-is. Landscape: ceil(setting × 1.5). No width-class minimum. */
-internal fun effectiveColumnCount(thumbColumns: Int, landscape: Boolean): Int {
-    val base = thumbColumns.coerceIn(1, 10)
-    if (!landscape) return base
-    return ceil(base * 1.5).toInt().coerceAtLeast(1)
+/**
+ * Column count for [androidx.compose.foundation.lazy.grid.GridCells.Adaptive]:
+ * `(available + gutter) / (minCell + gutter)`, at least 1.
+ * Leftover width is not a gap; the grid splits it across the cells.
+ */
+internal fun adaptiveColumnCount(availablePx: Int, minCellPx: Int, gutterPx: Int): Int {
+    val min = minCellPx.coerceAtLeast(1)
+    val gutter = gutterPx.coerceAtLeast(0)
+    val available = availablePx.coerceAtLeast(0)
+    return ((available + gutter) / (min + gutter)).coerceAtLeast(1)
 }
 
 /**

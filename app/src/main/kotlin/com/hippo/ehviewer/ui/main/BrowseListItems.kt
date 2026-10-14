@@ -47,7 +47,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -984,24 +983,14 @@ fun BrowseDirectoryGridItem(
                             modifier = Modifier.fillMaxSize(),
                             iconSize = BrowseGridPlaceholderIconSize,
                             allowRemoteFetch = allowRemoteFetch,
-                            decodeSizePx = CoverThumb.gridDecodePx(
-                                screenWidthDp = LocalConfiguration.current.screenWidthDp,
-                                columns = GalleryGridDefaults.columnCount(),
-                                margin = GalleryGridDefaults.margin(),
-                                gutter = GalleryGridDefaults.gutter(),
-                            ),
+                            decodeSizePx = GalleryGridDefaults.gridDecodePx(),
                         )
                     } else {
                         BrowseCoverThumb(
                             cover = cover,
                             modifier = Modifier.fillMaxSize(),
                             placeholderSize = BrowseGridPlaceholderIconSize,
-                            decodeSizePx = CoverThumb.gridDecodePx(
-                                screenWidthDp = LocalConfiguration.current.screenWidthDp,
-                                columns = GalleryGridDefaults.columnCount(),
-                                margin = GalleryGridDefaults.margin(),
-                                gutter = GalleryGridDefaults.gutter(),
-                            ),
+                            decodeSizePx = GalleryGridDefaults.gridDecodePx(),
                             retryKey = thumbRetryKey,
                             allowRemoteFetch = allowRemoteFetch,
                             placeholderIcon = Icons.Default.Folder,
@@ -1127,12 +1116,7 @@ fun BrowseFolderGalleryGridItem(
                     cover = cover,
                     modifier = Modifier.fillMaxSize().clip(ShapeDefaults.Medium),
                     placeholderSize = BrowseGridPlaceholderIconSize,
-                    decodeSizePx = CoverThumb.gridDecodePx(
-                        screenWidthDp = LocalConfiguration.current.screenWidthDp,
-                        columns = GalleryGridDefaults.columnCount(),
-                        margin = GalleryGridDefaults.margin(),
-                        gutter = GalleryGridDefaults.gutter(),
-                    ),
+                    decodeSizePx = GalleryGridDefaults.gridDecodePx(),
                     retryKey = thumbRetryKey,
                     allowRemoteFetch = allowRemoteFetch,
                     progressGid = progressGid,
@@ -1179,12 +1163,7 @@ fun BrowsePhotoGridImageItem(
                     cover = cover,
                     modifier = Modifier.fillMaxSize().clip(ShapeDefaults.Medium),
                     placeholderSize = BrowseGridPlaceholderIconSize,
-                    decodeSizePx = CoverThumb.gridDecodePx(
-                        screenWidthDp = LocalConfiguration.current.screenWidthDp,
-                        columns = GalleryGridDefaults.columnCount(),
-                        margin = GalleryGridDefaults.margin(),
-                        gutter = GalleryGridDefaults.gutter(),
-                    ),
+                    decodeSizePx = GalleryGridDefaults.gridDecodePx(),
                     retryKey = thumbRetryKey,
                     allowRemoteFetch = allowRemoteFetch,
                     photoGridThumb = true,
@@ -1229,12 +1208,7 @@ fun BrowseArchiveGridItem(
                     cover = cover,
                     modifier = Modifier.fillMaxSize().clip(ShapeDefaults.Medium),
                     placeholderSize = BrowseGridPlaceholderIconSize,
-                    decodeSizePx = CoverThumb.gridDecodePx(
-                        screenWidthDp = LocalConfiguration.current.screenWidthDp,
-                        columns = GalleryGridDefaults.columnCount(),
-                        margin = GalleryGridDefaults.margin(),
-                        gutter = GalleryGridDefaults.gutter(),
-                    ),
+                    decodeSizePx = GalleryGridDefaults.gridDecodePx(),
                     retryKey = thumbRetryKey,
                     allowRemoteFetch = allowRemoteFetch,
                     placeholderIcon = Icons.AutoMirrored.Filled.InsertDriveFile,

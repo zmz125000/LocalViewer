@@ -575,7 +575,7 @@
     <string name="settings_eh_detail_size">Detail width</string>
     <string name="settings_eh_detail_size_long">Long</string>
     <string name="settings_eh_detail_size_short">Short</string>
-    <string name="settings_eh_thumb_columns">Thumb columns</string>
+    <string name="settings_eh_thumb_columns">Grid size</string>
     <string name="settings_eh_show_jpn_title">Show Japanese title</string>
     <string name="settings_eh_show_jpn_title_summary">Require enabling Japanese Title in Settings on EHentai website</string>
     <string name="settings_eh_show_gallery_pages">Show gallery page count</string>
