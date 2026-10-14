@@ -1437,12 +1437,13 @@ private fun ebookSinglePageAspect(context: Context): Float {
     val mode = ebookReadingMode()
     val cfg = context.resources.configuration
     val landscape = cfg.orientation == Configuration.ORIENTATION_LANDSCAPE
-    val dual = isPagerDual(dualPageActive(Settings.dualPageLandscape.value, landscape), mode)
-    if (ReadingModeType.isWebtoon(mode) || dual) {
+    val dualActive = dualPageActive(Settings.dualPageLandscape.value, landscape)
+    val half = isPagerDual(dualActive, mode) || isWebtoonHorizontal(dualActive, mode)
+    if (ReadingModeType.isWebtoon(mode) || half) {
         return ebookTextPageAspect(
             cfg.screenWidthDp.toFloat(),
             cfg.screenHeightDp.toFloat(),
-            halfWidth = dual,
+            halfWidth = half,
         )
     }
     val dm = context.resources.displayMetrics
@@ -1453,7 +1454,9 @@ private fun ebookSinglePageAspect(context: Context): Float {
 private fun ebookOpenPageWidthDp(context: Context, pageAspect: Float): Float {
     val cfg = context.resources.configuration
     val landscape = cfg.orientation == Configuration.ORIENTATION_LANDSCAPE
-    val half = isPagerDual(dualPageActive(Settings.dualPageLandscape.value, landscape), ebookReadingMode())
+    val mode = ebookReadingMode()
+    val dualActive = dualPageActive(Settings.dualPageLandscape.value, landscape)
+    val half = isPagerDual(dualActive, mode) || isWebtoonHorizontal(dualActive, mode)
     return ebookDisplayedPageWidthDp(
         cfg.screenWidthDp.toFloat(),
         cfg.screenHeightDp.toFloat(),
@@ -2027,8 +2030,11 @@ private fun PdfReaderScreen(
         measuredViewerWidthDp > 0f
     val viewerWidthDp = if (viewerSizeCurrent) measuredViewerWidthDp else screenWidthDp.toFloat()
     val viewerHeightDp = if (viewerSizeCurrent) measuredViewerHeightDp else screenHeightDp.toFloat()
+    // Webtoon horizontal is a strip, not a pager spread. Size each text page to
+    // half the viewer so two pages fill one screen, same as single-page dual.
+    val ebookHalfPage = pagerDual || (isEbook && webtoonHorizontal)
     val ebookPageAspect = if (!singlePageEbook) {
-        ebookTextPageAspect(viewerWidthDp, viewerHeightDp, halfWidth = pagerDual)
+        ebookTextPageAspect(viewerWidthDp, viewerHeightDp, halfWidth = ebookHalfPage)
     } else {
         (if (measuredViewerAspect > 0f && viewerSizeCurrent) measuredViewerAspect else screenAspect).coerceIn(0.3f, 2.5f)
     }
@@ -2036,7 +2042,7 @@ private fun PdfReaderScreen(
         viewerWidthDp,
         viewerHeightDp,
         ebookPageAspect,
-        halfWidth = pagerDual,
+        halfWidth = ebookHalfPage,
     )
     val pagedEbookLayout = remember(ebookLayout, ebookPageAspect, displayedPageWidthDp, ebookFontSize) {
         ebookLayout.copy(
@@ -3235,7 +3241,8 @@ private fun PdfPageBitmap(
     }
     val frame = when {
         containPage && box == PdfPageBox.Webtoon -> Modifier.fillMaxWidth()
-        containPage && box == PdfPageBox.Strip -> Modifier.fillMaxHeight()
+        containPage && box == PdfPageBox.Strip ->
+            Modifier.fillMaxHeight().aspectRatio(safeAspect, matchHeightConstraintsFirst = true)
         box == PdfPageBox.Strip ->
             Modifier.fillMaxHeight().aspectRatio(safeAspect, matchHeightConstraintsFirst = true)
         // Placeholder must have a real height. A zero-height row makes LazyColumn

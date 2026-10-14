@@ -9,9 +9,9 @@ import kotlin.math.roundToInt
  * reader scales the bitmap. Glyph size is a fraction of **page** width (not
  * content width), so margin/padding change line length, not type size.
  */
-internal const val EBOOK_FONT_SIZE_DEFAULT = 18
-internal const val EBOOK_FONT_SIZE_MIN = 6
-internal const val EBOOK_FONT_SIZE_MAX = 30
+internal const val EBOOK_FONT_SIZE_DEFAULT = 24
+internal const val EBOOK_FONT_SIZE_MIN = 12
+internal const val EBOOK_FONT_SIZE_MAX = 36
 
 /**
  * Page width where the slider number is the glyph fraction as stored.
@@ -72,8 +72,8 @@ internal data class EbookStyle(
     val marginPercent: Int = 7,
     val verticalMarginPercent: Int = 2,
     /**
-     * Page width / height. Single-page mode uses the viewer. Other text modes
-     * use [ebookTextPageAspect] so a wide window is not letterboxed to A-series.
+     * Page width / height. A-series keeps webtoon sheets stable. Single-page mode
+     * uses the viewer so the page fills the screen instead of letterboxing.
      */
     val pageAspect: Float = EbookPaginator.ASPECT,
     val justify: Boolean = false,
