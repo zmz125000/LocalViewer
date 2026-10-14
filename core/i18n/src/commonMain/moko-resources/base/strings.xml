@@ -977,7 +977,7 @@
     <string name="pref_reader_raw_hdr_linear">HDR linear Rec.2020</string>
     <string name="pref_reader_raw_hdr_linear_summary">HDR RAW skips the camera look and stays linear Rec.2020.</string>
     <string name="pref_reader_raw_shoulder">HDR shoulder</string>
-    <string name="pref_reader_raw_shoulder_summary">0 keeps camera white at 1. 50 opens highlights automatically. 100 opens them to the panel.</string>
+    <string name="pref_reader_raw_shoulder_summary">Opens HDR highlights for camera look and linear HDR. 0 leaves them, 50 is halfway, 100 reaches the panel.</string>
     <string name="pref_custom_brightness">Custom brightness</string>
     <string name="pref_grayscale">Grayscale</string>
     <string name="pref_inverted_colors">Inverted</string>

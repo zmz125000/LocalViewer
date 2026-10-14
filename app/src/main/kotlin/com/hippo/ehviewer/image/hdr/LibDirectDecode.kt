@@ -594,9 +594,9 @@ object LibDirectDecode {
         return when {
             // Linear F16 in Display P3 primaries (advanced WCG/deep color).
             f16 && gamut == 1 -> displayP3LinearExtended
-            // Linear F16 in BT.2020 primaries. JXL and camera RAW HDR share this.
-            // API 37 cannot pair an ICC transfer with a max above 1; HardwareBuffer
-            // still stores half-floats above 1, which is the headroom.
+            // Linear F16 in BT.2020 primaries (JXL / AVIF). HardwareBuffer stores
+            // half-floats above 1, which is the headroom. Camera RAW HDR is gamut 0:
+            // linear scRGB, because the HDR window composites in that space.
             f16 && gamut == 2 -> bt2020LinearExtended
             f16 -> ColorSpace.get(ColorSpace.Named.LINEAR_EXTENDED_SRGB)
             gamut == 1 -> ColorSpace.get(ColorSpace.Named.DISPLAY_P3)
