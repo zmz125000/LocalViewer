@@ -303,7 +303,7 @@ object Settings : DataStorePreferences(null) {
 
     /** Slider bounds for [gridCellSize]. Step divides the range so every stop lands on a dp. */
     const val GRID_CELL_MIN_DP = 50
-    const val GRID_CELL_MAX_DP = 150
+    const val GRID_CELL_MAX_DP = 200
     const val GRID_CELL_STEP_DP = 10
     const val GRID_CELL_DEFAULT_DP = 100
 

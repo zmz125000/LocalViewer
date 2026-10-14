@@ -788,8 +788,15 @@ private fun ExplorerFavoritesGrid(
     val iconSize = if (tablet) ExplorerGridIconSizeTablet else ExplorerGridIconSize
     val labelStyle = MaterialTheme.typography.labelMedium
     val gridState = remember { LazyGridState() }
+    // Phone panel is a narrow sheet, so 80dp keeps about three columns.
+    // Tablets use the same scale as the library grid or the cells stay tiny.
+    val panelCell = if (tablet) {
+        80.dp * 1.3f
+    } else {
+        80.dp
+    }
     FastScrollLazyVerticalGrid(
-        columns = GridCells.Adaptive(80.dp),
+        columns = GridCells.Adaptive(panelCell),
         state = gridState,
         modifier = Modifier.fillMaxSize(),
         contentPadding = GalleryGridDefaults.margin().let { inset ->
