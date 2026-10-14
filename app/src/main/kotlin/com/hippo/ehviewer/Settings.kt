@@ -1072,9 +1072,9 @@ object Settings : DataStorePreferences(null) {
     val readerRawHdrLinear = boolPref("pref_reader_raw_hdr_linear", false)
 
     /**
-     * Linear HDR shoulder, 0..100. 0 leaves camera white at 1.
-     * 50 opens the tail so the sampled peak lands at peak/paper.
-     * 100 opens that peak to the panel cap. Ignored unless [readerRawHdrLinear] is decoding HDR.
+     * Linear HDR shoulder, 0..100. 0 leaves the scene-linear samples (camera white at 1).
+     * 100 lifts the sampled peak to the panel cap; 50 lifts it halfway there in stops.
+     * Only the top two stops below the peak change. Ignored unless [readerRawHdrLinear] is decoding HDR.
      */
     val readerRawShoulder = intPref("pref_reader_raw_shoulder", 50)
 

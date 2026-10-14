@@ -6,7 +6,8 @@
 // The tone curve is ProfileToneCurve when the file has one. Otherwise it is the
 // Adobe Camera Raw default curve (dng_tone_curve_acr3_default). Maps run in linear
 // ProPhoto, which is the space the DNG spec uses for these tables.
-// HDR (space 2) extends that curve with slope 1 above 1, so headroom stays scene-linear.
+// Above 1 the curve continues at its end slope in every space. HDR expands highlights
+// afterwards (raw_still.cpp), so the look itself is the same as deep color.
 
 #include <cmath>
 #include <cstddef>
@@ -38,7 +39,6 @@ struct CameraLook {
     HueMap look;
     bool has_hue = false;
     bool has_look = false;
-    bool overrange = false;
     int space = 0;
 };
 
@@ -99,16 +99,6 @@ inline float srgb_decode(float x) {
     return std::pow((x + 0.055f) / 1.055f, 2.4f);
 }
 
-inline float encode_overrange(float x) {
-    x = std::max(x, 0.f);
-    return x * (256.f + x) / (256.f * (1.f + x));
-}
-
-inline float decode_overrange(float x) {
-    x = std::max(x, 0.f);
-    return 16.f * ((8.f * x) - 8.f + std::sqrt(std::max(0.f, 64.f * x * x - 127.f * x + 64.f)));
-}
-
 inline void rgb_to_hsv(float r, float g, float b, float& h, float& s, float& v) {
     r = std::max(r, 0.f);
     g = std::max(g, 0.f);
@@ -160,11 +150,9 @@ inline float tone_map(const CameraLook& look, float x) {
     if (n < 2 || !std::isfinite(x)) return x > 0.f ? x : 0.f;
     if (!(x > 0.f)) return 0.f;
     if (x > 1.f) {
-        // The curve's end slope is the SDR shoulder (the Camera Raw default is ~0.13).
-        // HDR keeps one scene stop per stop above sensor white, or the headroom
-        // compresses onto paper white and the frame no longer reads as HDR.
-        float slope = look.overrange ? 1.f : look.tone_slope;
-        return look.tone[n - 1] + (x - 1.f) * slope;
+        // The curve's end slope (the Camera Raw default is ~0.13), so the curve stays
+        // smooth at camera white. HDR opens this range with a gain after the look.
+        return look.tone[n - 1] + (x - 1.f) * look.tone_slope;
     }
     float y = x * static_cast<float>(n - 1);
     int i = static_cast<int>(y);
@@ -272,19 +260,21 @@ inline void sample_hue_map(const HueMap& map, float h, float s, float v_enc, flo
     val_scale = lerp_sat(v0, 2) * (1.f - vf) + lerp_sat(v1, 2) * vf;
 }
 
-inline void apply_hue_map(const HueMap& map, float& r, float& g, float& b, bool overrange = false) {
+inline void apply_hue_map(const HueMap& map, float& r, float& g, float& b) {
     if (!map.valid()) return;
-    // 3D tables in HDR use the DNG SDK overrange fit so values above 1 still index the table.
-    // 2.5D tables do not. The sRGB encoding tag applies only when the value axis has more than one sample.
-    bool compress = overrange && map.val > 1;
+    // The sRGB encoding tag applies only when the value axis has more than one sample.
     bool srgb = map.val > 1 && map.encoding == 1;
     float rr = r;
     float gg = g;
     float bb = b;
+    // Hue and saturation do not depend on scale. A color above 1 is looked up at
+    // value 1, the table's top row, and keeps its brightness above that.
+    const float over = std::max(rr, std::max(gg, bb));
+    const bool compress = over > 1.f && std::isfinite(over);
     if (compress) {
-        rr = encode_overrange(rr);
-        gg = encode_overrange(gg);
-        bb = encode_overrange(bb);
+        rr /= over;
+        gg /= over;
+        bb /= over;
     }
     float h, s, v;
     rgb_to_hsv(rr, gg, bb, h, s, v);
@@ -302,16 +292,16 @@ inline void apply_hue_map(const HueMap& map, float& r, float& g, float& b, bool 
     v = srgb ? srgb_decode(v_enc) : v_enc;
     hsv_to_rgb(h, s, v, rr, gg, bb);
     if (compress) {
-        rr = decode_overrange(rr);
-        gg = decode_overrange(gg);
-        bb = decode_overrange(bb);
+        rr *= over;
+        gg *= over;
+        bb *= over;
     }
     r = rr;
     g = gg;
     b = bb;
 }
 
-inline void apply_camera_look(const CameraLook& look, float exposure_ev, float& r, float& g, float& b, bool tone = true) {
+inline void apply_camera_look(const CameraLook& look, float exposure_ev, float& r, float& g, float& b) {
     if (!std::isfinite(r) || !std::isfinite(g) || !std::isfinite(b)) {
         r = g = b = 0.f;
         return;
@@ -333,12 +323,12 @@ inline void apply_camera_look(const CameraLook& look, float exposure_ev, float& 
     r = std::max(r, 0.f);
     g = std::max(g, 0.f);
     b = std::max(b, 0.f);
-    if (look.has_hue) apply_hue_map(look.hue, r, g, b, look.overrange);
+    if (look.has_hue) apply_hue_map(look.hue, r, g, b);
     r *= gain;
     g *= gain;
     b *= gain;
-    if (look.has_look) apply_hue_map(look.look, r, g, b, look.overrange);
-    if (tone && look.tone_active) apply_rgb_tone(look, r, g, b);
+    if (look.has_look) apply_hue_map(look.look, r, g, b);
+    if (look.tone_active) apply_rgb_tone(look, r, g, b);
     mul3(from_prophoto(look.space), r, g, b);
     if (!std::isfinite(r) || !std::isfinite(g) || !std::isfinite(b)) r = g = b = 0.f;
 }
@@ -700,7 +690,6 @@ inline int read_longs(const uint8_t* data, size_t len, bool le, uint32_t count, 
 inline void prepare_camera_look(const uint8_t* data, size_t len, float temp_k, int space, CameraLook& look) {
     look = CameraLook();
     look.space = space == 1 || space == 2 ? space : 0;
-    look.overrange = space == 2;
     set_acr3(look);
     if (!data || len < 8) return;
     bool le = data[0] == 'I' && data[1] == 'I';
