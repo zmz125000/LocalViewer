@@ -1,5 +1,6 @@
 package eu.kanade.tachiyomi.ui.reader
 
+import android.content.res.Configuration
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.size
@@ -9,6 +10,7 @@ import androidx.compose.material.icons.automirrored.outlined.MenuBook
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material.icons.outlined.ViewColumn
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExposedDropdownMenuAnchorType
 import androidx.compose.material3.ExposedDropdownMenuBox
@@ -25,6 +27,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -89,6 +92,15 @@ fun BottomReaderBar(
             onClick = { Settings.imageScaleType.value = ScaleFitCycle.next(scaleFit.prefValue).prefValue },
             imageVector = scaleFit.icon,
             contentDescription = stringResource(scaleFit.stringRes),
+        )
+    }
+    // Dual pages: landscape only. Portrait keeps the preference but never shows two pages.
+    if (LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE) {
+        val dualPage by Settings.dualPageLandscape.collectAsState()
+        ActionButton(
+            onClick = { Settings.dualPageLandscape.value = !dualPage },
+            imageVector = Icons.Outlined.ViewColumn,
+            contentDescription = stringResource(R.string.pref_dual_page_landscape),
         )
     }
     if (showLandscapeCover) {
