@@ -84,13 +84,17 @@
 
     <string-array name="multi_thread_download_entries" translatable="false">
         <item>1</item>
+        <item>2</item>
         <item>3</item>
+        <item>4</item>
         <item>5</item>
     </string-array>
 
     <integer-array name="multi_thread_download_entry_values" translatable="false">
         <item>1</item>
+        <item>2</item>
         <item>3</item>
+        <item>4</item>
         <item>5</item>
     </integer-array>
 
