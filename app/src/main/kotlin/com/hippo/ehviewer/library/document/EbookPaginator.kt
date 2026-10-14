@@ -11,7 +11,7 @@ import kotlin.math.roundToInt
  */
 internal const val EBOOK_FONT_SIZE_DEFAULT = 24
 internal const val EBOOK_FONT_SIZE_MIN = 12
-internal const val EBOOK_FONT_SIZE_MAX = 36
+internal const val EBOOK_FONT_SIZE_MAX = 48
 
 /**
  * Page width where the slider number is the glyph fraction as stored.
