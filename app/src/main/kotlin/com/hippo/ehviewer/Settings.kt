@@ -293,7 +293,20 @@ object Settings : DataStorePreferences(null) {
     val hideBackToFab = boolPref("hide_back_to_fab", false)
     val listThumbSize = intPref("list_tile_size", 40)
     val detailSize = intPref("detail_size_2", 0)
-    val thumbColumns = intPref("thumb_columns", 3)
+
+    /** Slider bounds for [gridCellSize]. Step divides the range so every stop lands on a dp. */
+    const val GRID_CELL_MIN_DP = 50
+    const val GRID_CELL_MAX_DP = 150
+    const val GRID_CELL_STEP_DP = 10
+    const val GRID_CELL_DEFAULT_DP = 100
+
+    /**
+     * Target grid-cell edge in dp. The grid uses this as a minimum, then stretches
+     * cells so each row fills the window. Gutters stay the fixed dimens; column
+     * count follows the window, so a fold and a free-form window share one setting.
+     * Default 100dp is about three columns on a phone.
+     */
+    val gridCellSize = intPref("grid_cell_size", GRID_CELL_DEFAULT_DP)
 
     /**
      * When false, SMB/WebDAV **folder gallery** image covers are not downloaded

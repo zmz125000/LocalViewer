@@ -40,7 +40,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -422,12 +421,7 @@ fun HistoryGridItem(
     val nameHeight = GalleryGridDefaults.nameHeight()
     val namePadH = GalleryGridDefaults.namePaddingH()
     val namePadBottom = GalleryGridDefaults.namePaddingBottom()
-    val gridDecodePx = CoverThumb.gridDecodePx(
-        screenWidthDp = LocalConfiguration.current.screenWidthDp,
-        columns = GalleryGridDefaults.columnCount(),
-        margin = GalleryGridDefaults.margin(),
-        gutter = GalleryGridDefaults.gutter(),
-    )
+    val gridDecodePx = GalleryGridDefaults.gridDecodePx()
     val coverKey = remember(info.gid, info.thumbKey, info.token, info.uploader) {
         historyCoverKey(info)
     }
@@ -563,12 +557,7 @@ fun HistoryDirectoryGridItem(
                 CoverImage(
                     coverPath = coverKey,
                     progressGid = info.gid,
-                    sizePx = CoverThumb.gridDecodePx(
-                        screenWidthDp = LocalConfiguration.current.screenWidthDp,
-                        columns = GalleryGridDefaults.columnCount(),
-                        margin = GalleryGridDefaults.margin(),
-                        gutter = GalleryGridDefaults.gutter(),
-                    ),
+                    sizePx = GalleryGridDefaults.gridDecodePx(),
                     placeholder = Icons.Default.Folder,
                     placeholderSize = BrowseGridPlaceholderIconSize,
                     modifier = Modifier.fillMaxSize(),
@@ -664,12 +653,7 @@ fun LocalGalleryGridItem(
     val nameHeight = GalleryGridDefaults.nameHeight()
     val namePadH = GalleryGridDefaults.namePaddingH()
     val namePadBottom = GalleryGridDefaults.namePaddingBottom()
-    val gridDecodePx = CoverThumb.gridDecodePx(
-        screenWidthDp = LocalConfiguration.current.screenWidthDp,
-        columns = GalleryGridDefaults.columnCount(),
-        margin = GalleryGridDefaults.margin(),
-        gutter = GalleryGridDefaults.gutter(),
-    )
+    val gridDecodePx = GalleryGridDefaults.gridDecodePx()
     ElevatedCard(
         modifier = modifier.fillMaxWidth(),
         onClick = onClick,

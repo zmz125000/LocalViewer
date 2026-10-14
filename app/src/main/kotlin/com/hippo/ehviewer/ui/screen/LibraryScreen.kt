@@ -54,7 +54,6 @@ import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
-import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -927,7 +926,6 @@ internal fun FavoriteSourceGridCell(
     fav: FavoriteBrowseSource,
     onClick: () -> Unit,
     onLongClick: () -> Unit = onClick,
-    columns: Int = GalleryGridDefaults.columnCount(),
     iconSize: Dp = BrowseGridPlaceholderIconSize,
     labelStyle: androidx.compose.ui.text.TextStyle = MaterialTheme.typography.labelMedium,
 ) {
@@ -952,12 +950,7 @@ internal fun FavoriteSourceGridCell(
         if (useGalleryThumbStyle) {
             // Full-bleed thumb; name on a highly transparent bottom bar.
             Box(Modifier.fillMaxSize().clip(ShapeDefaults.Medium)) {
-                val gridDecodePx = CoverThumb.gridDecodePx(
-                    screenWidthDp = LocalConfiguration.current.screenWidthDp,
-                    columns = columns,
-                    margin = GalleryGridDefaults.margin(),
-                    gutter = GalleryGridDefaults.gutter(),
-                )
+                val gridDecodePx = GalleryGridDefaults.gridDecodePx()
                 when (fav) {
                     is FavoriteBrowseSource.Gallery -> {
                         val gallery = fav.gallery
