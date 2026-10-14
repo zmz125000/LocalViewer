@@ -172,6 +172,7 @@ import com.hippo.ehviewer.library.document.PdfTocEntry
 import com.hippo.ehviewer.library.document.TextCharset
 import com.hippo.ehviewer.library.document.ebookDisplayFontSize
 import com.hippo.ehviewer.library.document.ebookDisplayedPageWidthDp
+import com.hippo.ehviewer.library.document.ebookTextPageAspect
 import com.hippo.ehviewer.library.document.pdfTocWithFileName
 import com.hippo.ehviewer.library.document.pdfXrefLoadable
 import com.hippo.ehviewer.library.document.readPdfChapters
@@ -1416,13 +1417,18 @@ private fun ebookAlignJustifies(align: Int): Boolean = align == Settings.EBOOK_A
 
 private fun ebookAlignHyphenates(align: Int): Boolean = align == Settings.EBOOK_ALIGN_START_HYPHEN || align == Settings.EBOOK_ALIGN_JUSTIFY_HYPHEN
 
-/** Viewer width/height for paged text. Webtoon and dual-page keep the A-series sheet. */
+/** Viewer width/height for paged text. Wide windows grow past the A-series sheet. */
 private fun ebookSinglePageAspect(context: Context): Float {
     val mode = ebookReadingMode()
-    if (ReadingModeType.isWebtoon(mode)) return EbookPaginator.ASPECT
-    val landscape = context.resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
-    if (isPagerDual(dualPageActive(Settings.dualPageLandscape.value, landscape), mode)) {
-        return EbookPaginator.ASPECT
+    val cfg = context.resources.configuration
+    val landscape = cfg.orientation == Configuration.ORIENTATION_LANDSCAPE
+    val dual = isPagerDual(dualPageActive(Settings.dualPageLandscape.value, landscape), mode)
+    if (ReadingModeType.isWebtoon(mode) || dual) {
+        return ebookTextPageAspect(
+            cfg.screenWidthDp.toFloat(),
+            cfg.screenHeightDp.toFloat(),
+            halfWidth = dual,
+        )
     }
     val dm = context.resources.displayMetrics
     return (dm.widthPixels.toFloat() / dm.heightPixels.coerceAtLeast(1)).coerceIn(0.3f, 2.5f)
@@ -2007,7 +2013,7 @@ private fun PdfReaderScreen(
     val viewerWidthDp = if (viewerSizeCurrent) measuredViewerWidthDp else screenWidthDp.toFloat()
     val viewerHeightDp = if (viewerSizeCurrent) measuredViewerHeightDp else screenHeightDp.toFloat()
     val ebookPageAspect = if (!singlePageEbook) {
-        EbookPaginator.ASPECT
+        ebookTextPageAspect(viewerWidthDp, viewerHeightDp, halfWidth = pagerDual)
     } else {
         (if (measuredViewerAspect > 0f && viewerSizeCurrent) measuredViewerAspect else screenAspect).coerceIn(0.3f, 2.5f)
     }

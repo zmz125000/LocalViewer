@@ -240,6 +240,17 @@ class EbookEngineTest {
     }
 
     @Test
+    fun wideWindowTextPageFillsTheViewer() {
+        val paper = EbookPaginator.ASPECT
+        assertEquals(paper, ebookTextPageAspect(360f, 800f), 0.001f)
+        val wide = ebookTextPageAspect(1000f, 700f)
+        assertEquals(1000f / 700f, wide, 0.001f)
+        assertEquals(1000f, ebookDisplayedPageWidthDp(1000f, 700f, wide), 1f)
+        val half = ebookTextPageAspect(1000f, 700f, halfWidth = true)
+        assertEquals(500f, ebookDisplayedPageWidthDp(1000f, 700f, half, halfWidth = true), 1f)
+    }
+
+    @Test
     fun fontSizeKeepsTheSameEmWhenTheWindowChanges() {
         // Folded phone, page fills the width. The slider is the fraction.
         assertEquals(18, ebookDisplayFontSize(18, displayedPageWidthDp = 360f))

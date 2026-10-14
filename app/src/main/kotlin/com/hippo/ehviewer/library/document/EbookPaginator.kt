@@ -1,5 +1,6 @@
 package com.hippo.ehviewer.library.document
 
+import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
 
@@ -18,6 +19,23 @@ internal const val EBOOK_FONT_SIZE_MAX = 30
  * window opens, rotates, or becomes a free-form size.
  */
 internal const val EBOOK_FONT_REFERENCE_WIDTH_DP = 360f
+
+/**
+ * Text-page width/height. A tall phone stays the A-series sheet, which already
+ * fills the width. A wider window (open fold, landscape, free-form) grows the
+ * page up to the viewer so it is not a paper column in the center.
+ * [halfWidth] is one side of a dual-page spread.
+ */
+internal fun ebookTextPageAspect(
+    viewerWidthDp: Float,
+    viewerHeightDp: Float,
+    halfWidth: Boolean = false,
+): Float {
+    val width = (if (halfWidth) viewerWidthDp / 2f else viewerWidthDp).coerceAtLeast(1f)
+    val height = viewerHeightDp.coerceAtLeast(1f)
+    val viewer = (width / height).coerceIn(0.3f, 2.5f)
+    return max(EbookPaginator.ASPECT, viewer)
+}
 
 /**
  * Width of the page bitmap on screen. Fit/contain: the page is no wider than
@@ -54,8 +72,8 @@ internal data class EbookStyle(
     val marginPercent: Int = 7,
     val verticalMarginPercent: Int = 2,
     /**
-     * Page width / height. A-series keeps webtoon sheets stable. Single-page mode
-     * uses the viewer so the page fills the screen instead of letterboxing.
+     * Page width / height. Single-page mode uses the viewer. Other text modes
+     * use [ebookTextPageAspect] so a wide window is not letterboxed to A-series.
      */
     val pageAspect: Float = EbookPaginator.ASPECT,
     val justify: Boolean = false,
