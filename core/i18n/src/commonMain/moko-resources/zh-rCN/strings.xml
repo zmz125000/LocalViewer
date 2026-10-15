@@ -836,6 +836,9 @@
     <string name="browse_list">列表</string>
     <string name="browse_selection">选择</string>
     <string name="browse_task">任务</string>
+    <string name="browse_tasks">任务</string>
+    <string name="browse_pending">等待中</string>
+    <string name="browse_finished">已完成</string>
     <string name="browse_remove">移除</string>
     <string name="browse_task_pending">等待</string>
     <string name="browse_task_running">进行中</string>

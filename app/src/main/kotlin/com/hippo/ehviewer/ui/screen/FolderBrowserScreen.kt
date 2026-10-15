@@ -2218,6 +2218,13 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         }
     }
 
+    fun localSaveFileInto(path: okio.Path): suspend (okio.Path) -> Boolean {
+        val name = ZipPaths.memberLeafName(path.toString()) ?: path.name
+        return { dir -> BrowseSaveAs.saveLocalFileInto(dir, path, name) }
+    }
+
+    fun localSaveFolderInto(dirPath: okio.Path, displayName: String, relativeName: String): suspend (okio.Path) -> Boolean = { dest -> BrowseSaveAs.saveLocalFolderInto(dest, dirPath, displayName, relativeName) }
+
     fun dirOverflow(dir: BrowseEntry.Directory) = BrowseOverflowActions(
         kind = BrowseOverflowKind.Common,
         favorited = isDirFavorite(dir),
@@ -2240,7 +2247,9 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
     ).selectable(
         localSelectKey("d:${dir.relativeName}"),
         dir.name,
+        isFolder = true,
         shareHttp = localShareFolderStart(dir.path, dir.name, dir.relativeName),
+        saveInto = localSaveFolderInto(dir.path, dir.name, dir.relativeName),
     )
 
     fun folderGalleryOverflow(entry: BrowseEntry.FolderGallery) = BrowseOverflowActions(
@@ -2267,7 +2276,9 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
     ).selectable(
         localSelectKey("g:${entry.relativeName}"),
         entry.name,
+        isFolder = true,
         shareHttp = localShareFolderStart(entry.path, entry.name, entry.relativeName),
+        saveInto = localSaveFolderInto(entry.path, entry.name, entry.relativeName),
     )
 
     fun archiveOverflow(entry: BrowseEntry.ArchiveGallery) = (
@@ -2318,6 +2329,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         localSelectKey("a:${entry.path}"),
         entry.name,
         shareHttp = localShareFileStart(entry.path),
+        saveInto = localSaveFileInto(entry.path),
     )
 
     fun videoOverflow(
@@ -2348,6 +2360,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         localSelectKey("v:$path"),
         path.name,
         shareHttp = localShareFileStart(path),
+        saveInto = localSaveFileInto(path),
     )
 
     fun fileOverflow(path: okio.Path, relativeName: String = path.name): BrowseOverflowActions {
@@ -2437,6 +2450,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
             leaf,
             shareHttp = localShareFileStart(path),
             convertStill = localConvertStill(path, leaf),
+            saveInto = localSaveFileInto(path),
         )
     }
 

@@ -1826,6 +1826,23 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
         }
     }
 
+    fun smbSaveFileInto(fileName: String): (suspend (okio.Path) -> Boolean)? {
+        val src = source ?: return null
+        val actualName = fileName.substringAfterLast('/').substringAfterLast('\\')
+        val remote = if (relativeDir.isEmpty()) fileName else SmbGateway.joinRelativePath(relativeDir, fileName)
+        return { dir -> BrowseSaveAs.saveSmbFileInto(dir, src.id, remote, actualName) }
+    }
+
+    fun smbSaveFolderInto(
+        relativeName: String,
+        displayName: String = relativeName.substringAfterLast('/'),
+    ): (suspend (okio.Path) -> Boolean)? {
+        val src = source ?: return null
+        val remote = if (relativeDir.isEmpty()) relativeName else SmbGateway.joinRelativePath(relativeDir, relativeName)
+        val name = displayName.ifEmpty { relativeName.substringAfterLast('/') }
+        return { dir -> BrowseSaveAs.saveSmbFolderInto(dir, src.id, remote, name) }
+    }
+
     fun dirOverflow(name: String, coverFileName: String? = null, virtual: Boolean = false) = BrowseOverflowActions(
         kind = BrowseOverflowKind.Common,
         favorited = isDirFavorite(name),
@@ -1842,7 +1859,9 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
     ).selectable(
         smbKey("d:$name"),
         name.substringAfterLast('/'),
+        isFolder = true,
         shareHttp = smbShareFolderStart(name),
+        saveInto = smbSaveFolderInto(name),
     )
 
     fun folderGalleryOverflow(entry: BrowseEntryRemote.FolderGallery) = BrowseOverflowActions(
@@ -1869,7 +1888,9 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
     ).selectable(
         smbKey("g:${entry.relativeName}"),
         entry.name,
+        isFolder = true,
         shareHttp = smbShareFolderStart(entry.relativeName, entry.name),
+        saveInto = smbSaveFolderInto(entry.relativeName, entry.name),
     )
 
     fun archiveOverflow(entry: BrowseEntryRemote.ArchiveGallery): BrowseOverflowActions {
@@ -1964,6 +1985,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
             smbKey("a:$remote"),
             entry.name,
             shareHttp = smbShareFileStart(remote),
+            saveInto = smbSaveFileInto(remote),
         )
     }
 
@@ -1987,6 +2009,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
         smbKey("v:$fileName"),
         fileName.substringAfterLast('/'),
         shareHttp = smbShareFileStart(fileName),
+        saveInto = smbSaveFileInto(fileName),
     )
 
     /** Regular-file MOBI/AZW/AZW3 image reader. Gallery extract, not the text ebook. */
@@ -2115,6 +2138,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
         fileName.substringAfterLast('/'),
         shareHttp = smbShareFileStart(fileName),
         convertStill = smbConvertStill(fileName),
+        saveInto = smbSaveFileInto(fileName),
     )
 
     Scaffold(

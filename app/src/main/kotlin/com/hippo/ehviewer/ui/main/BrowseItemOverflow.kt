@@ -81,6 +81,10 @@ data class BrowseOverflowActions(
     val shareHttp: (suspend () -> Unit)? = null,
     /** Batch convert into one folder. Null means this row is ignored by Convert to…. */
     val convertStill: (suspend (okio.Path, StillExportTarget) -> Boolean)? = null,
+    /** Batch Save to… into one folder. Null means this row is ignored by Save to…. */
+    val saveInto: (suspend (okio.Path) -> Boolean)? = null,
+    /** Folder icon in the Tasks selection list. */
+    val selectFolder: Boolean = false,
 )
 
 @Composable

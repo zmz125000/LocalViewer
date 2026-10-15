@@ -1706,6 +1706,23 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
         }
     }
 
+    fun webDavSaveFileInto(fileName: String): (suspend (okio.Path) -> Boolean)? {
+        val src = source ?: return null
+        val actualName = fileName.substringAfterLast('/').substringAfterLast('\\')
+        val remote = if (relativeDir.isEmpty()) fileName else WebDavGateway.joinRelative(relativeDir, fileName)
+        return { dir -> BrowseSaveAs.saveWebDavFileInto(dir, src.id, remote, actualName) }
+    }
+
+    fun webDavSaveFolderInto(
+        relativeName: String,
+        displayName: String = relativeName.substringAfterLast('/'),
+    ): (suspend (okio.Path) -> Boolean)? {
+        val src = source ?: return null
+        val remote = if (relativeDir.isEmpty()) relativeName else WebDavGateway.joinRelative(relativeDir, relativeName)
+        val name = displayName.ifEmpty { relativeName.substringAfterLast('/') }
+        return { dir -> BrowseSaveAs.saveWebDavFolderInto(dir, src.id, remote, name) }
+    }
+
     fun dirOverflow(name: String, coverFileName: String? = null, virtual: Boolean = false) = BrowseOverflowActions(
         kind = BrowseOverflowKind.Common,
         favorited = isDirFavorite(name),
@@ -1722,7 +1739,9 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
     ).selectable(
         webDavKey("d:$name"),
         name.substringAfterLast('/'),
+        isFolder = true,
         shareHttp = webDavShareFolderStart(name),
+        saveInto = webDavSaveFolderInto(name),
     )
 
     fun folderGalleryOverflow(entry: BrowseEntryRemote.FolderGallery) = BrowseOverflowActions(
@@ -1749,7 +1768,9 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
     ).selectable(
         webDavKey("g:${entry.relativeName}"),
         entry.name,
+        isFolder = true,
         shareHttp = webDavShareFolderStart(entry.relativeName, entry.name),
+        saveInto = webDavSaveFolderInto(entry.relativeName, entry.name),
     )
 
     fun archiveOverflow(entry: BrowseEntryRemote.ArchiveGallery): BrowseOverflowActions {
@@ -1844,6 +1865,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
             webDavKey("a:$remote"),
             entry.name,
             shareHttp = webDavShareFileStart(remote),
+            saveInto = webDavSaveFileInto(remote),
         )
     }
 
@@ -1867,6 +1889,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
         webDavKey("v:$fileName"),
         fileName.substringAfterLast('/'),
         shareHttp = webDavShareFileStart(fileName),
+        saveInto = webDavSaveFileInto(fileName),
     )
 
     /** Regular-file MOBI/AZW/AZW3 image reader. Gallery extract, not the text ebook. */
@@ -1999,6 +2022,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
         fileName.substringAfterLast('/'),
         shareHttp = webDavShareFileStart(fileName),
         convertStill = webDavConvertStill(fileName),
+        saveInto = webDavSaveFileInto(fileName),
     )
 
     Scaffold(

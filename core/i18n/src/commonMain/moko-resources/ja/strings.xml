@@ -1005,6 +1005,9 @@
     <string name="browse_list">リスト</string>
     <string name="browse_selection">選択</string>
     <string name="browse_task">タスク</string>
+    <string name="browse_tasks">タスク</string>
+    <string name="browse_pending">待機中</string>
+    <string name="browse_finished">完了</string>
     <string name="browse_remove">削除</string>
     <string name="browse_task_pending">待機</string>
     <string name="browse_task_running">実行中</string>
