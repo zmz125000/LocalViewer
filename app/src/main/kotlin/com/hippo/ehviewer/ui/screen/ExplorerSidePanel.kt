@@ -1,5 +1,6 @@
 package com.hippo.ehviewer.ui.screen
 
+import android.app.Activity
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.compose.LocalOnBackPressedDispatcherOwner
 import androidx.compose.animation.AnimatedContent
@@ -70,6 +71,7 @@ import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
@@ -88,13 +90,18 @@ import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
+import androidx.window.layout.FoldingFeature
+import androidx.window.layout.WindowInfoTracker
+import androidx.window.layout.WindowLayoutInfo
 import com.ehviewer.core.database.model.LOCAL_GALLERY_KIND_ARCHIVE
 import com.ehviewer.core.i18n.R
 import com.ehviewer.core.ui.component.FastScrollLazyVerticalGrid
@@ -127,6 +134,7 @@ import com.hippo.ehviewer.ui.openLocalBrowseDir
 import com.hippo.ehviewer.ui.openLocalFolderPhotoGrid
 import com.hippo.ehviewer.ui.openSmbBrowseDir
 import com.hippo.ehviewer.ui.openWebDavBrowseDir
+import com.hippo.ehviewer.util.findActivity
 import com.hippo.ehviewer.webdav.WebDavRepository
 import com.ramcosta.composedestinations.navigation.DestinationsNavigator
 import kotlin.math.abs
@@ -149,8 +157,6 @@ private class PanelCloseGuard {
     var snapOnCancel: Boolean = true
 }
 
-private val WindowMaxWidth = 340.dp
-private val WindowMaxHeight = 480.dp
 private val ExplorerListIconSize = 20.dp
 private val ExplorerListIconSizeTablet = 26.dp
 private val ExplorerGridIconSize = 32.dp
@@ -158,6 +164,50 @@ private val ExplorerGridIconSizeTablet = 32.dp
 private val LocalExplorerTablet = compositionLocalOf { false }
 private val LocalExplorerActionColor = compositionLocalOf<Color?> { null }
 private val PanelMargin = 16.dp
+
+/**
+ * Jetpack [FoldingFeature] is only in the current window while the fold is open
+ * (flat or half-open). A closed cover screen has none, so it keeps the phone size.
+ */
+@Composable
+private fun foldableUnfolded(): Boolean {
+    val context = LocalContext.current
+    val activity = remember(context) { with(context) { findActivity<Activity>() } }
+    val layoutInfo by produceState<WindowLayoutInfo?>(null, activity) {
+        WindowInfoTracker.getOrCreate(activity).windowLayoutInfo(activity).collect { value = it }
+    }
+    return layoutInfo?.displayFeatures?.any { it is FoldingFeature } == true
+}
+
+/** Open fold is 2/3 × 2/3. Closed fold and phones/tablets keep the existing sizes. */
+internal fun explorerSidePanelSize(
+    screenWidth: Dp,
+    screenHeight: Dp,
+    foldOpen: Boolean,
+    phonePortrait: Boolean,
+    phoneLandscape: Boolean,
+    listColumns: Int,
+    widthCap: Dp,
+    heightCap: Dp,
+): Pair<Dp, Dp> {
+    val width = when {
+        foldOpen -> screenWidth * 3f / 5f
+        phonePortrait -> screenWidth * 0.85f
+        phoneLandscape -> screenWidth * 0.5f
+        listColumns == 3 -> screenWidth * 2f / 5f
+        else -> screenWidth * 0.5f
+    }.let { value ->
+        if (phoneLandscape && !foldOpen) value else value.coerceIn(0.dp, widthCap)
+    }
+    val height = when {
+        foldOpen -> screenHeight * 3f / 5f
+        listColumns == 3 -> screenHeight * 2f / 3f
+        !phonePortrait && !phoneLandscape -> screenHeight / 2f
+        phonePortrait -> screenHeight * 3f / 5f
+        else -> heightCap
+    }.coerceIn(0.dp, heightCap)
+    return width to height
+}
 
 /**
  * Small floating explorer window (dialog / in-app picture-in-picture).
@@ -275,25 +325,22 @@ fun ExplorerSidePanelHost(
     val tablet = !phonePortrait && !phoneLandscape
     val screenW = configuration.screenWidthDp.dp
     val screenH = configuration.screenHeightDp.dp
+    val foldOpen = foldableUnfolded()
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val endPad = if (phonePortrait) 0.dp else 40.dp
         val topBarClearance = if (tablet || phonePortrait) TopAppBarDefaults.TopAppBarExpandedHeight else 0.dp
         val widthCap = (maxWidth - if (phonePortrait) 0.dp else endPad).coerceAtLeast(0.dp)
         val heightCap = (maxHeight - 16.dp - topBarClearance).coerceAtLeast(0.dp)
-        val windowWidth = when {
-            phonePortrait -> minOf(maxWidth - 16.dp, WindowMaxWidth) * 0.9f
-            phoneLandscape -> screenW * 0.5f
-            layout.columns == 3 -> screenW * 2f / 5f
-            else -> screenW * 0.5f
-        }.let { width ->
-            if (phoneLandscape) width else width.coerceIn(0.dp, widthCap)
-        }
-        val windowHeight = when {
-            layout.columns == 3 -> screenH * 2f / 3f
-            tablet -> screenH / 2f
-            phonePortrait -> minOf(heightCap, WindowMaxHeight)
-            else -> heightCap
-        }.coerceIn(0.dp, heightCap)
+        val (windowWidth, windowHeight) = explorerSidePanelSize(
+            screenWidth = screenW,
+            screenHeight = screenH,
+            foldOpen = foldOpen,
+            phonePortrait = phonePortrait,
+            phoneLandscape = phoneLandscape,
+            listColumns = layout.columns,
+            widthCap = widthCap,
+            heightCap = heightCap,
+        )
         val endInsetPx = WindowInsets.safeDrawing.getRight(density, LocalLayoutDirection.current)
         val slidePx = with(density) {
             if (phonePortrait) {
@@ -366,7 +413,7 @@ fun ExplorerSidePanelHost(
                         end = if (phonePortrait) 0.dp else endPad,
                     )
                     .then(
-                        if (phoneLandscape) {
+                        if (phoneLandscape && !foldOpen) {
                             Modifier.requiredWidth(windowWidth).fillMaxHeight()
                         } else {
                             Modifier.width(windowWidth).height(windowHeight)
@@ -744,13 +791,7 @@ private fun ExplorerFavoritesGrid(
     val iconSize = if (tablet) ExplorerGridIconSizeTablet else ExplorerGridIconSize
     val labelStyle = MaterialTheme.typography.labelMedium
     val gridState = remember { LazyGridState() }
-    // Phone panel is a narrow sheet, so 80dp keeps about three columns.
-    // Tablets use the same scale as the library grid or the cells stay tiny.
-    val panelCell = if (tablet) {
-        80.dp * 1.3f
-    } else {
-        80.dp
-    }
+    val panelCell = GalleryGridDefaults.cellSize() * if (tablet) 0.6f else 0.8f
     FastScrollLazyVerticalGrid(
         columns = GridCells.Adaptive(panelCell),
         state = gridState,

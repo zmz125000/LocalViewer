@@ -77,9 +77,9 @@ android {
         applicationId = "moe.tarsin.localviewer"
         versionCode = 38
         versionName = if (snapshot) {
-            "1.12.46-SNAPSHOT"
+            "1.12.47-SNAPSHOT"
         } else {
-            "1.12.46"
+            "1.12.47"
         }
         buildConfigField("boolean", "SNAPSHOT", "$snapshot")
         buildConfigField("String", "RAW_VERSION_NAME", "\"$versionName\"")
@@ -200,6 +200,7 @@ dependencies {
     implementation(libs.androidx.biometric)
     implementation(libs.androidx.browser)
     implementation(libs.androidx.webkit)
+    implementation(libs.androidx.window)
 
     implementation(libs.compose.destinations.core)
     ksp(libs.compose.destinations.compiler)
