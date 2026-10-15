@@ -68,6 +68,7 @@ import com.hippo.ehviewer.ktor.configureCommon
 import com.hippo.ehviewer.ktor.isCronetAvailable
 import com.hippo.ehviewer.library.LocalFolderListing
 import com.hippo.ehviewer.library.LocalLibrary
+import com.hippo.ehviewer.library.MediaStoreWatch
 import com.hippo.ehviewer.library.OriginDiskCache
 import com.hippo.ehviewer.library.VideoThumbnail
 import com.hippo.ehviewer.provider.ExternalHttpStreamServer
@@ -159,6 +160,9 @@ class EhApplication : Application(), SingletonImageLoader.Factory {
             }
             launch { cleanupDownload() }
             // Library: skip unchanged MediaStore roots; archive sources rescan with known zips.
+            launch {
+                runCatching { MediaStoreWatch.start(this@EhApplication) }.onFailure { logcat(it) }
+            }
             launch {
                 if (!Settings.libraryStartupScan.value) return@launch
                 runCatching { LocalLibrary.startupMaintenance() }.onFailure { logcat(it) }
