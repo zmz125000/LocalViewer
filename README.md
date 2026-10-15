@@ -79,7 +79,11 @@ Similar to Perfect Viewer and Kuro Reader, with Hi-Res images support (no downsc
 Build with Grok 4.5.
 
 The app is now stable and polished.  
-Thank you for your support.
+Thank you for your support.  
+
+<a href="https://github.com/zmz125000/LocalViewer/releases">
+<img alt="Get it on GitHub" src="https://github.com/zmz125000/LocalViewer-art/blob/master/get-it-on-github.svg" width="200px"/>
+</a>
 
 ## Features
 * Webtoon gallery reader.
