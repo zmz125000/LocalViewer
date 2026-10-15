@@ -56,7 +56,7 @@ option(XZ_TOOL_XZDEC OFF)
 FetchContent_Declare(
         liblzma
         GIT_REPOSITORY https://github.com/tukaani-project/xz.git
-        GIT_TAG v5.8.3
+        GIT_TAG v5.8.4
         GIT_SHALLOW 1
 )
 
@@ -127,7 +127,7 @@ set(LIBARCHIVE_PATCH
 FetchContent_Declare(
         libarchive
         GIT_REPOSITORY https://github.com/libarchive/libarchive.git
-        GIT_TAG v3.8.7
+        GIT_TAG v3.8.10
         GIT_SHALLOW 1
         PATCH_COMMAND git apply --check -R ${LIBARCHIVE_PATCH} || git apply ${LIBARCHIVE_PATCH}
 )
@@ -258,12 +258,15 @@ if (EHVIEWER_HDR_CODECS)
     set(UHDR_ENABLE_GLES OFF CACHE BOOL "" FORCE)
     set(UHDR_WRITE_XMP ON CACHE BOOL "" FORCE)
     set(UHDR_WRITE_ISO ON CACHE BOOL "" FORCE)
+    # v2 defaults HEIF/AVIF on and vendors libheif. Encode path is JPEG only
+    # (UHDR_CODEC_JPG); HEIC stays on ImageDecoder, AVIF on libavif.
+    set(UHDR_ENABLE_HEIF OFF CACHE BOOL "" FORCE)
     set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
 
     FetchContent_Declare(
             libultrahdr
             GIT_REPOSITORY https://github.com/google/libultrahdr.git
-            GIT_TAG v1.5.1
+            GIT_TAG v2.0.2
             GIT_SHALLOW 1
     )
     FetchContent_MakeAvailable(libultrahdr)
@@ -308,7 +311,7 @@ if (EHVIEWER_HDR_CODECS)
     FetchContent_Declare(
             libavif
             GIT_REPOSITORY https://github.com/AOMediaCodec/libavif.git
-            GIT_TAG v1.3.0
+            GIT_TAG v1.4.2
             GIT_SHALLOW 1
     )
     FetchContent_MakeAvailable(libavif)
@@ -324,7 +327,6 @@ if (EHVIEWER_HDR_CODECS)
     set(JPEGXL_ENABLE_MANPAGES OFF CACHE BOOL "" FORCE)
     set(JPEGXL_ENABLE_JNI OFF CACHE BOOL "" FORCE)
     set(JPEGXL_ENABLE_OPENEXR OFF CACHE BOOL "" FORCE)
-    set(JPEGXL_ENABLE_JPEGLI OFF CACHE BOOL "" FORCE)
     set(JPEGXL_ENABLE_SJPEG OFF CACHE BOOL "" FORCE)
     set(JPEGXL_ENABLE_TCMALLOC OFF CACHE BOOL "" FORCE)
     set(JPEGXL_ENABLE_FUZZERS OFF CACHE BOOL "" FORCE)
@@ -334,7 +336,7 @@ if (EHVIEWER_HDR_CODECS)
     FetchContent_Declare(
             libjxl
             GIT_REPOSITORY https://github.com/libjxl/libjxl.git
-            GIT_TAG v0.11.1
+            GIT_TAG v0.12.0
             GIT_SHALLOW 1
             GIT_SUBMODULES "third_party/brotli;third_party/highway;third_party/skcms"
     )
@@ -429,7 +431,7 @@ set(BUILD_STATIC_LIBS ON CACHE BOOL "" FORCE)
 FetchContent_Declare(
         openjpeg
         GIT_REPOSITORY https://github.com/uclouvain/openjpeg.git
-        GIT_TAG v2.5.3
+        GIT_TAG v2.5.4
         GIT_SHALLOW 1
 )
 FetchContent_MakeAvailable(openjpeg)

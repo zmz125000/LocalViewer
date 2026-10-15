@@ -475,22 +475,6 @@ fun LibraryViewModeMenu(modifier: Modifier = Modifier) {
                 },
             )
             LibraryMenuToggleItem(
-                label = stringResource(R.string.browse_menu_zip_as_dir),
-                checked = browseZipAsDir,
-                onClick = { browseZipAsDir = !browseZipAsDir },
-            )
-            LibraryMenuToggleItem(
-                label = stringResource(R.string.settings_general_back_to_upper_dir),
-                checked = alwaysExitToDir,
-                onClick = {
-                    alwaysExitToDir = !alwaysExitToDir
-                    if (alwaysExitToDir) {
-                        Settings.historyDirBackToUpper.value = true
-                        Settings.sidePanelDirBackToUpper.value = true
-                    }
-                },
-            )
-            LibraryMenuToggleItem(
                 label = stringResource(R.string.browse_menu_page_count),
                 checked = showGalleryPages,
                 onClick = { showGalleryPages = !showGalleryPages },
