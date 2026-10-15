@@ -132,11 +132,13 @@ class EhApplication : Application(), SingletonImageLoader.Factory {
                         LocalFolderListing.cancelListingJobs()
                         SmbGateway.onAppBackgrounded()
                         WebDavClient.onAppBackgrounded()
+                        MediaStoreWatch.onAppBackgrounded()
                     }
                     Lifecycle.Event.ON_START -> {
                         VideoThumbnail.onAppForegrounded()
                         SmbGateway.onAppForegrounded()
                         WebDavClient.onAppForegrounded()
+                        MediaStoreWatch.onAppForegrounded()
                     }
                     else -> Unit
                 }
@@ -215,8 +217,14 @@ class EhApplication : Application(), SingletonImageLoader.Factory {
         val receiver = object : BroadcastReceiver() {
             override fun onReceive(context: Context, intent: Intent?) {
                 when (intent?.action) {
-                    Intent.ACTION_SCREEN_OFF -> StreamKeepAlivePolicy.onScreenOff()
-                    Intent.ACTION_SCREEN_ON -> StreamKeepAlivePolicy.onScreenOn(context)
+                    Intent.ACTION_SCREEN_OFF -> {
+                        StreamKeepAlivePolicy.onScreenOff()
+                        MediaStoreWatch.onScreenOff()
+                    }
+                    Intent.ACTION_SCREEN_ON -> {
+                        StreamKeepAlivePolicy.onScreenOn(context)
+                        MediaStoreWatch.onScreenOn()
+                    }
                 }
             }
         }

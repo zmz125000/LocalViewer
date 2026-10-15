@@ -4,6 +4,7 @@ import android.content.Context
 import android.os.Process
 import com.ehviewer.core.util.logcat
 import com.hippo.ehviewer.Settings
+import com.hippo.ehviewer.library.MediaStoreWatch
 import com.hippo.ehviewer.smb.SmbGateway
 import com.hippo.ehviewer.ui.main.HttpShare
 import com.hippo.ehviewer.webdav.WebDavClient
@@ -178,6 +179,9 @@ object StreamKeepAlivePolicy {
     fun shutdownAndKillProcess(reason: String) {
         if (!processExiting.compareAndSet(false, true)) return
         logcat("StreamKeepAlive") { "shutdownAndKillProcess ($reason) ${runtimeSnapshot()}" }
+        // Arm the MediaStore content job before the process dies. Recents swipe
+        // drops the in-process observer; JobScheduler is what starts the next update.
+        runCatching { MediaStoreWatch.onTaskRemoved() }
         runCatching { StreamKeepAliveService.stop(appCtx) }
         runCatching { ExternalHttpStreamServer.shutdown(reason) }
         runCatching { StreamDocumentRegistry.clearAll(reason) }

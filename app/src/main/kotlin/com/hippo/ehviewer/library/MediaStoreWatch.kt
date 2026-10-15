@@ -81,6 +81,56 @@ object MediaStoreWatch {
         scheduleJob(app)
     }
 
+    /**
+     * App left the foreground ([androidx.lifecycle.Lifecycle.Event.ON_STOP]).
+     * The observer stays registered. The content job is armed so a later process
+     * kill still wakes a library update.
+     */
+    fun onAppBackgrounded() {
+        if (!Settings.libraryLiveUpdate.value) return
+        scheduleJob()
+    }
+
+    /**
+     * App returned to the foreground. Re-register if the process was frozen, and
+     * apply MediaStore rows the observer did not deliver while cached.
+     */
+    fun onAppForegrounded() {
+        if (!Settings.libraryLiveUpdate.value) return
+        start()
+        catchUp()
+    }
+
+    /**
+     * Screen off. Same as background: keep the observer, arm the job before Doze
+     * can freeze or kill the process.
+     */
+    fun onScreenOff() {
+        if (!Settings.libraryLiveUpdate.value) return
+        scheduleJob()
+    }
+
+    /** Screen on. Re-register and apply rows missed while the process was frozen. */
+    fun onScreenOn() {
+        if (!Settings.libraryLiveUpdate.value) return
+        start()
+        catchUp()
+    }
+
+    /**
+     * Recents swipe is about to kill the process. The in-process observer dies
+     * with it; the content job has to be armed first.
+     */
+    fun onTaskRemoved() {
+        if (!Settings.libraryLiveUpdate.value) return
+        scheduleJob()
+    }
+
+    /** Collection-level pass: recent rows, then the generation check. */
+    private fun catchUp() {
+        enqueue(listOf(imagesUri()), 0)
+    }
+
     /** Drop the observer and the content job. In-flight work checks the pref and exits. */
     fun stop(context: Context = appCtx) {
         val app = context.applicationContext
