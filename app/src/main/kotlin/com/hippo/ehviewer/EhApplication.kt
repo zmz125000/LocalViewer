@@ -161,6 +161,7 @@ class EhApplication : Application(), SingletonImageLoader.Factory {
             launch { cleanupDownload() }
             // Library: skip unchanged MediaStore roots; archive sources rescan with known zips.
             launch {
+                if (!Settings.libraryLiveUpdate.value) return@launch
                 runCatching { MediaStoreWatch.start(this@EhApplication) }.onFailure { logcat(it) }
             }
             launch {

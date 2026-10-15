@@ -13,6 +13,7 @@ import android.os.Looper
 import android.provider.MediaStore
 import com.ehviewer.core.files.mediaStoreParentRelativeDir
 import com.ehviewer.core.util.logcat
+import com.hippo.ehviewer.Settings
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.time.Clock
 import kotlinx.coroutines.CoroutineScope
@@ -65,6 +66,7 @@ object MediaStoreWatch {
     }
 
     fun start(context: Context = appCtx) {
+        if (!Settings.libraryLiveUpdate.value) return
         val app = context.applicationContext
         if (MediaPermissions.hasImagePermission(app) && imagesRegistered.compareAndSet(false, true)) {
             app.contentResolver.registerContentObserver(imagesUri(), true, observer)
@@ -79,8 +81,27 @@ object MediaStoreWatch {
         scheduleJob(app)
     }
 
-    /** Re-arm the content trigger. Safe to call at the start of each job run. */
+    /** Drop the observer and the content job. In-flight work checks the pref and exits. */
+    fun stop(context: Context = appCtx) {
+        val app = context.applicationContext
+        val images = imagesRegistered.getAndSet(false)
+        val videos = videosRegistered.getAndSet(false)
+        if (images || videos) {
+            runCatching { app.contentResolver.unregisterContentObserver(observer) }
+                .onFailure { logcat(it) }
+        }
+        synchronized(gate) {
+            pendingUris.clear()
+            pendingFlags = 0
+            pendingRetries.clear()
+        }
+        runCatching { app.getSystemService(JobScheduler::class.java)?.cancel(JOB_ID) }
+            .onFailure { logcat(it) }
+    }
+
+    /** Re-arm the content trigger. Safe to call at the end of each job run. */
     fun scheduleJob(context: Context = appCtx) {
+        if (!Settings.libraryLiveUpdate.value) return
         if (!MediaPermissions.hasMediaAccess(context)) return
         val scheduler = context.getSystemService(JobScheduler::class.java) ?: return
         val component = ComponentName(context, MediaStoreWatchJobService::class.java)
@@ -105,6 +126,7 @@ object MediaStoreWatch {
     }
 
     fun enqueue(uris: Collection<Uri>, flags: Int) {
+        if (!Settings.libraryLiveUpdate.value) return
         synchronized(gate) {
             pendingUris.addAll(uris)
             pendingFlags = pendingFlags or flags
@@ -118,6 +140,7 @@ object MediaStoreWatch {
      * to the recent-row query. Returns when the library write finishes.
      */
     suspend fun handleTriggered(uris: Collection<Uri>, flags: Int = 0) {
+        if (!Settings.libraryLiveUpdate.value) return
         applyBatch(Batch(LinkedHashSet(uris), flags))
     }
 
@@ -144,6 +167,7 @@ object MediaStoreWatch {
     }
 
     private suspend fun applyBatch(batch: Batch) {
+        if (!Settings.libraryLiveUpdate.value) return
         if (!MediaPermissions.hasMediaAccess()) return
         val deleteFlag = batch.flags and ContentResolver.NOTIFY_DELETE != 0
         val items = batch.uris.filter { MediaStoreLiveUpdate.isMediaStoreItemId(it.lastPathSegment) }

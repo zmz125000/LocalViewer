@@ -386,6 +386,13 @@ object Settings : DataStorePreferences(null) {
     val libraryStartupScan = boolPref("library_startup_scan", true)
 
     /**
+     * When true (default), [com.hippo.ehviewer.library.MediaStoreWatch] applies new
+     * MediaStore images and videos without waiting for the next startup scan.
+     */
+    val libraryLiveUpdate = boolPref("library_live_update", true)
+        .observed(::updateWhenLibraryLiveUpdateChanges)
+
+    /**
      * Per-root MediaStore skip stamps for library startup:
      * `{rootId}:{generation}:{count}:{maxDateModifiedSecs}:{idXor}`.
      */

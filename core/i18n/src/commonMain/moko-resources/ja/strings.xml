@@ -55,6 +55,8 @@
     <string name="settings_library_summary">画像ギャラリーをスキャンするローカルフォルダ</string>
     <string name="settings_library_startup_scan">起動時にライブラリをスキャン</string>
     <string name="settings_library_startup_scan_summary">起動時にアクセスできないギャラリーを整理し、MediaStore ソースは再スキャンします。ファイル／アーカイブモードのソースは欠落項目のみ削除します（フルツリー走査なし）。</string>
+    <string name="settings_library_live_update">ライブラリを即時更新</string>
+    <string name="settings_library_live_update_summary">MediaStore に新しい写真や動画が追加されたら更新します。</string>
     <string name="library_gallery_folder">フォルダ</string>
     <string name="library_gallery_archive">アーカイブ</string>
     <string name="library_sort_name">名前</string>

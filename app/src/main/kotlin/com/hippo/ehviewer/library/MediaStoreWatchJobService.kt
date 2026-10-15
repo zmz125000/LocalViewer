@@ -3,6 +3,7 @@ package com.hippo.ehviewer.library
 import android.app.job.JobParameters
 import android.app.job.JobService
 import com.ehviewer.core.util.logcat
+import com.hippo.ehviewer.Settings
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -30,5 +31,5 @@ class MediaStoreWatchJobService : JobService() {
         return true
     }
 
-    override fun onStopJob(params: JobParameters): Boolean = true
+    override fun onStopJob(params: JobParameters): Boolean = Settings.libraryLiveUpdate.value
 }

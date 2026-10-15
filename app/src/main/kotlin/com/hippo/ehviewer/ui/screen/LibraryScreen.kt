@@ -657,7 +657,7 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
         searchFieldHint = hint,
         searchBarOffsetY = { searchBarOffsetY },
         leadingIcon = {
-            // Standalone library menu: sort / layout / display + startup scan.
+            // Standalone library menu: sort / layout / display + startup scan + live update.
             LibraryViewModeMenu()
         },
         trailingIcon = {
