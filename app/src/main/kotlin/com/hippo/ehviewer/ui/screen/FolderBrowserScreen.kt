@@ -42,6 +42,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
@@ -157,6 +158,8 @@ import com.hippo.ehviewer.ui.main.BrowseSearchSectionHeader
 import com.hippo.ehviewer.ui.main.BrowseSectionHeader
 import com.hippo.ehviewer.ui.main.BrowseVideoGridItem
 import com.hippo.ehviewer.ui.main.BrowseVideoRow
+import com.hippo.ehviewer.ui.main.FolderSelectHost
+import com.hippo.ehviewer.ui.main.FolderSelectState
 import com.hippo.ehviewer.ui.main.GalleryGridDefaults
 import com.hippo.ehviewer.ui.main.HttpShare
 import com.hippo.ehviewer.ui.main.HttpShareItem
@@ -168,11 +171,13 @@ import com.hippo.ehviewer.ui.main.directoryBrowseCover
 import com.hippo.ehviewer.ui.main.onRecentHeaderGesture
 import com.hippo.ehviewer.ui.main.rememberBrowseSectionCollapse
 import com.hippo.ehviewer.ui.main.rememberRecentStripExpanded
+import com.hippo.ehviewer.ui.main.selectable
 import com.hippo.ehviewer.ui.navToLocalFolderReader
 import com.hippo.ehviewer.ui.navToLocalZipFolderReader
 import com.hippo.ehviewer.ui.navToReader
 import com.hippo.ehviewer.ui.reader.ReaderScreenArgs
 import com.hippo.ehviewer.ui.reader.convertLocalStill
+import com.hippo.ehviewer.ui.reader.exportStillToDirectory
 import com.hippo.ehviewer.util.addTextToClipboard
 import com.ramcosta.composedestinations.annotation.Destination
 import com.ramcosta.composedestinations.annotation.RootGraph
@@ -206,6 +211,15 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
     var stack by remember(shortcutEpoch, explorerWindowId) {
         mutableStateOf(BrowseSession.localStack)
     }
+    val folderSelect = remember { FolderSelectState() }
+    DisposableEffect(folderSelect) {
+        FolderSelectHost.attach(folderSelect)
+        onDispose { FolderSelectHost.detach(folderSelect) }
+    }
+    val selectFolderKey = stack.lastOrNull()?.let {
+        "${it.rootId}|${it.path}|${it.relativePath}|${it.zipInnerRel}"
+    }.orEmpty()
+    LaunchedEffect(selectFolderKey) { folderSelect.cancel() }
     fun updateStack(newStack: List<BrowseSession.LocalFrame>) {
         stack = newStack
         BrowseSession.localStack = newStack
@@ -1131,10 +1145,18 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
 
     val hideBackToFab by Settings.hideBackToFab.collectAsState()
     fun onTopBarBack() {
+        if (folderSelect.selecting && !FolderSelectHost.taskRunning) {
+            folderSelect.cancel()
+            return
+        }
         if (hideBackToFab) jumpBackToOrigin() else goUp()
     }
 
     BackHandler {
+        if (folderSelect.selecting && !FolderSelectHost.taskRunning) {
+            folderSelect.cancel()
+            return@BackHandler
+        }
         // Search-section dir enter: first back returns to search, not close-search-in-child.
         if (searchReturnStackSize < 0 && search.handleBack { focusManager.clearFocus() }) {
             return@BackHandler
@@ -2157,6 +2179,45 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         )
     }
 
+    fun localSelectKey(id: String): String {
+        val frame = stack.lastOrNull()
+        return "local:${frame?.rootId}:${frame?.relativePath}:${frame?.zipInnerRel}|$id"
+    }
+
+    fun localEntrySelectKey(entry: BrowseEntry): String = when (entry) {
+        is BrowseEntry.Directory -> localSelectKey("d:${entry.relativeName}")
+        is BrowseEntry.FolderGallery -> localSelectKey("g:${entry.relativeName}")
+        is BrowseEntry.ArchiveGallery -> localSelectKey("a:${entry.path}")
+        is BrowseEntry.VideoFile -> localSelectKey("v:${entry.path}")
+        is BrowseEntry.RegularFile -> localSelectKey("f:${entry.path}")
+    }
+
+    fun localShareFileStart(path: okio.Path): suspend () -> Unit {
+        val pathStr = path.toString()
+        val name = ZipPaths.memberLeafName(pathStr) ?: path.name
+        return {
+            HttpShare.startLocalFile(context, pathStr, name, mimeTypeForFileName(name))
+        }
+    }
+
+    fun localShareFolderStart(dir: okio.Path, displayName: String, relativeName: String): suspend () -> Unit {
+        val leaf = relativeName.substringAfterLast('/').ifEmpty { displayName }
+        if (stack.lastOrNull()?.isZipBrowse == true ||
+            isZipArchiveFileName(leaf) ||
+            isZipArchiveFileName(dir.name)
+        ) {
+            return localShareFileStart(dir)
+        }
+        return { HttpShare.startLocalFolder(context, dir.toString(), displayName) }
+    }
+
+    fun localConvertStill(path: okio.Path, leaf: String): (suspend (okio.Path, com.hippo.ehviewer.image.hdr.StillExportTarget) -> Boolean)? {
+        if (!isStillExportFileName(leaf)) return null
+        return { dir, target ->
+            exportStillToDirectory(leaf, target, dir) { BrowseSaveAs.stageLocalForConvert(path) }
+        }
+    }
+
     fun dirOverflow(dir: BrowseEntry.Directory) = BrowseOverflowActions(
         kind = BrowseOverflowKind.Common,
         favorited = isDirFavorite(dir),
@@ -2176,6 +2237,10 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         onSaveToPaths = { saveLocalFolderToPaths(dir.name, dir.path, dir.relativeName) },
         shortcut = localShortcut(dir.relativeName, true, dir.name),
         onUnsupported = { notSupportedAction() },
+    ).selectable(
+        localSelectKey("d:${dir.relativeName}"),
+        dir.name,
+        shareHttp = localShareFolderStart(dir.path, dir.name, dir.relativeName),
     )
 
     fun folderGalleryOverflow(entry: BrowseEntry.FolderGallery) = BrowseOverflowActions(
@@ -2199,51 +2264,61 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         onSaveToPaths = { saveLocalFolderToPaths(entry.name, entry.path, entry.relativeName) },
         shortcut = localShortcut(entry.relativeName, true, entry.name),
         onUnsupported = { notSupportedAction() },
+    ).selectable(
+        localSelectKey("g:${entry.relativeName}"),
+        entry.name,
+        shareHttp = localShareFolderStart(entry.path, entry.name, entry.relativeName),
     )
 
-    fun archiveOverflow(entry: BrowseEntry.ArchiveGallery) = if (isPdfOrEbookFileName(entry.name)) {
-        BrowseOverflowActions(
-            kind = BrowseOverflowKind.Pdf,
-            onRead = { openArchiveReader(entry, skipPdfPrimary = true) },
-            onPlay = { openPdfReader(entry) },
-            onExternalPlayer = {
-                if (isPdfFileName(entry.name)) {
-                    openPdfInOtherApp(entry)
-                } else {
-                    openArchiveInOtherApp(entry)
-                }
-            },
-            onOpenWith = {
-                if (isPdfFileName(entry.name)) {
-                    openPdfInOtherApp(entry, usePreferredReader = false)
-                } else {
-                    openArchiveInOtherApp(entry)
-                }
-            },
-            onSaveAs = { saveLocalFile(entry.path) },
-            onShare = { shareLocalFile(entry.path) },
-            onShareViaHttp = localHttpShareFile(entry.path),
-            onOpenFolder = {
-                openBrowseFolder(FolderSearch.openFolderTarget(entry.name, isDirectory = false))
-            },
-            shortcut = localShortcut(entry.name, false, entry.name),
-            onUnsupported = { notSupportedAction() },
-        )
-    } else {
-        BrowseOverflowActions(
-            kind = BrowseOverflowKind.Gallery,
-            onRead = { openArchive(entry) },
-            onOpenWith = { openArchiveInOtherApp(entry) },
-            onSaveAs = { saveLocalFile(entry.path) },
-            onShare = { shareLocalFile(entry.path) },
-            onShareViaHttp = localHttpShareFile(entry.path),
-            onOpenFolder = {
-                openBrowseFolder(FolderSearch.openFolderTarget(entry.name, isDirectory = false))
-            },
-            shortcut = localShortcut(entry.name, false, entry.name),
-            onUnsupported = { notSupportedAction() },
-        )
-    }
+    fun archiveOverflow(entry: BrowseEntry.ArchiveGallery) = (
+        if (isPdfOrEbookFileName(entry.name)) {
+            BrowseOverflowActions(
+                kind = BrowseOverflowKind.Pdf,
+                onRead = { openArchiveReader(entry, skipPdfPrimary = true) },
+                onPlay = { openPdfReader(entry) },
+                onExternalPlayer = {
+                    if (isPdfFileName(entry.name)) {
+                        openPdfInOtherApp(entry)
+                    } else {
+                        openArchiveInOtherApp(entry)
+                    }
+                },
+                onOpenWith = {
+                    if (isPdfFileName(entry.name)) {
+                        openPdfInOtherApp(entry, usePreferredReader = false)
+                    } else {
+                        openArchiveInOtherApp(entry)
+                    }
+                },
+                onSaveAs = { saveLocalFile(entry.path) },
+                onShare = { shareLocalFile(entry.path) },
+                onShareViaHttp = localHttpShareFile(entry.path),
+                onOpenFolder = {
+                    openBrowseFolder(FolderSearch.openFolderTarget(entry.name, isDirectory = false))
+                },
+                shortcut = localShortcut(entry.name, false, entry.name),
+                onUnsupported = { notSupportedAction() },
+            )
+        } else {
+            BrowseOverflowActions(
+                kind = BrowseOverflowKind.Gallery,
+                onRead = { openArchive(entry) },
+                onOpenWith = { openArchiveInOtherApp(entry) },
+                onSaveAs = { saveLocalFile(entry.path) },
+                onShare = { shareLocalFile(entry.path) },
+                onShareViaHttp = localHttpShareFile(entry.path),
+                onOpenFolder = {
+                    openBrowseFolder(FolderSearch.openFolderTarget(entry.name, isDirectory = false))
+                },
+                shortcut = localShortcut(entry.name, false, entry.name),
+                onUnsupported = { notSupportedAction() },
+            )
+        }
+        ).selectable(
+        localSelectKey("a:${entry.path}"),
+        entry.name,
+        shareHttp = localShareFileStart(entry.path),
+    )
 
     fun videoOverflow(
         path: okio.Path,
@@ -2269,89 +2344,100 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         },
         shortcut = localShortcut(relativeName, false, path.name),
         onUnsupported = { notSupportedAction() },
+    ).selectable(
+        localSelectKey("v:$path"),
+        path.name,
+        shareHttp = localShareFileStart(path),
     )
 
     fun fileOverflow(path: okio.Path, relativeName: String = path.name): BrowseOverflowActions {
         val leaf = ZipPaths.memberLeafName(path.toString()) ?: path.name
-        return if (isHtmlFileName(leaf)) {
-            BrowseOverflowActions(
-                kind = BrowseOverflowKind.Webpage,
-                onOpenInBrowser = { openLocalHtml(path, incognito = false) },
-                onOpenIncognito = { openLocalHtml(path, incognito = true) },
-                onPlay = { openInternalDocument(path) },
-                onCopyUrl = { copyLocalHtmlUrl(path) },
-                onOpenWith = { openExternalFile(path, asFile = true) },
-                onSaveAs = { saveLocalFile(path) },
-                onShare = { shareLocalFile(path) },
-                onShareViaHttp = localHttpShareFile(path),
-                onOpenFolder = {
-                    openBrowseFolder(FolderSearch.openFolderTarget(relativeName, isDirectory = false))
-                },
-                shortcut = localShortcut(relativeName, false, leaf),
-                onUnsupported = { notSupportedAction() },
-            )
-        } else if (isPdfOrEbookFileName(leaf)) {
-            BrowseOverflowActions(
-                kind = BrowseOverflowKind.Pdf,
-                onRead = if (isMobiContainerFileName(leaf)) {
-                    { openMobiImageReader(path, leaf) }
-                } else {
-                    null
-                },
-                onPlay = { openInternalDocument(path) },
-                onExternalPlayer = {
-                    if (isPdfFileName(leaf)) {
-                        launchIO {
-                            recordCurrentBrowseFolderHistory(leaf)
-                            LocalHistory.recordLocalFile(path.toString(), title = leaf)
-                            try {
-                                OpenPdfExternally.openLocal(
-                                    context,
-                                    path.toString(),
-                                    displayName = leaf,
-                                )
-                            } catch (e: Throwable) {
-                                snackbar(
-                                    context.getString(
-                                        R.string.open_pdf_external_failed,
-                                        e.message ?: e.toString(),
-                                    ),
-                                )
-                            }
-                        }
+        return (
+            if (isHtmlFileName(leaf)) {
+                BrowseOverflowActions(
+                    kind = BrowseOverflowKind.Webpage,
+                    onOpenInBrowser = { openLocalHtml(path, incognito = false) },
+                    onOpenIncognito = { openLocalHtml(path, incognito = true) },
+                    onPlay = { openInternalDocument(path) },
+                    onCopyUrl = { copyLocalHtmlUrl(path) },
+                    onOpenWith = { openExternalFile(path, asFile = true) },
+                    onSaveAs = { saveLocalFile(path) },
+                    onShare = { shareLocalFile(path) },
+                    onShareViaHttp = localHttpShareFile(path),
+                    onOpenFolder = {
+                        openBrowseFolder(FolderSearch.openFolderTarget(relativeName, isDirectory = false))
+                    },
+                    shortcut = localShortcut(relativeName, false, leaf),
+                    onUnsupported = { notSupportedAction() },
+                )
+            } else if (isPdfOrEbookFileName(leaf)) {
+                BrowseOverflowActions(
+                    kind = BrowseOverflowKind.Pdf,
+                    onRead = if (isMobiContainerFileName(leaf)) {
+                        { openMobiImageReader(path, leaf) }
                     } else {
-                        openExternalFile(path)
-                    }
-                },
-                onOpenWith = { openExternalFile(path, asFile = true) },
-                onSaveAs = { saveLocalFile(path) },
-                onShare = { shareLocalFile(path) },
-                onShareViaHttp = localHttpShareFile(path),
-                onOpenFolder = {
-                    openBrowseFolder(FolderSearch.openFolderTarget(relativeName, isDirectory = false))
-                },
-                shortcut = localShortcut(relativeName, false, leaf),
-                onUnsupported = { notSupportedAction() },
-            )
-        } else {
-            BrowseOverflowActions(
-                kind = BrowseOverflowKind.Common,
-                onOpenWith = { openExternalFile(path, asFile = true) },
-                onSaveAs = { saveLocalFile(path) },
-                onShare = { shareLocalFile(path) },
-                onShareViaHttp = localHttpShareFile(path),
-                onConvert = if (isStillExportFileName(leaf)) {
-                    { target -> launchIO { with(context) { convertLocalStill(path, leaf, target) } } }
-                } else {
-                    null
-                },
-                onOpenFolder = {
-                    openBrowseFolder(FolderSearch.openFolderTarget(relativeName, isDirectory = false))
-                },
-                shortcut = localShortcut(relativeName, false, leaf),
-                onUnsupported = { notSupportedAction() },
-            )
-        }
+                        null
+                    },
+                    onPlay = { openInternalDocument(path) },
+                    onExternalPlayer = {
+                        if (isPdfFileName(leaf)) {
+                            launchIO {
+                                recordCurrentBrowseFolderHistory(leaf)
+                                LocalHistory.recordLocalFile(path.toString(), title = leaf)
+                                try {
+                                    OpenPdfExternally.openLocal(
+                                        context,
+                                        path.toString(),
+                                        displayName = leaf,
+                                    )
+                                } catch (e: Throwable) {
+                                    snackbar(
+                                        context.getString(
+                                            R.string.open_pdf_external_failed,
+                                            e.message ?: e.toString(),
+                                        ),
+                                    )
+                                }
+                            }
+                        } else {
+                            openExternalFile(path)
+                        }
+                    },
+                    onOpenWith = { openExternalFile(path, asFile = true) },
+                    onSaveAs = { saveLocalFile(path) },
+                    onShare = { shareLocalFile(path) },
+                    onShareViaHttp = localHttpShareFile(path),
+                    onOpenFolder = {
+                        openBrowseFolder(FolderSearch.openFolderTarget(relativeName, isDirectory = false))
+                    },
+                    shortcut = localShortcut(relativeName, false, leaf),
+                    onUnsupported = { notSupportedAction() },
+                )
+            } else {
+                BrowseOverflowActions(
+                    kind = BrowseOverflowKind.Common,
+                    onOpenWith = { openExternalFile(path, asFile = true) },
+                    onSaveAs = { saveLocalFile(path) },
+                    onShare = { shareLocalFile(path) },
+                    onShareViaHttp = localHttpShareFile(path),
+                    onConvert = if (isStillExportFileName(leaf)) {
+                        { target -> launchIO { with(context) { convertLocalStill(path, leaf, target) } } }
+                    } else {
+                        null
+                    },
+                    onOpenFolder = {
+                        openBrowseFolder(FolderSearch.openFolderTarget(relativeName, isDirectory = false))
+                    },
+                    shortcut = localShortcut(relativeName, false, leaf),
+                    onUnsupported = { notSupportedAction() },
+                )
+            }
+            ).selectable(
+            localSelectKey("f:$path"),
+            leaf,
+            shareHttp = localShareFileStart(path),
+            convertStill = localConvertStill(path, leaf),
+        )
     }
 
     Scaffold(
@@ -2592,6 +2678,17 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                             nameOf = { it.name },
                         )
                     }
+                    SideEffect {
+                        folderSelect.sectionKeys = mapOf(
+                            BrowseFolderSection.Directories to dirs.map { localSelectKey("d:${it.relativeName}") },
+                            BrowseFolderSection.Galleries to galleries.map { localEntrySelectKey(it) },
+                            BrowseFolderSection.Documents to documents.map { localEntrySelectKey(it) },
+                            BrowseFolderSection.Videos to videos.map { localSelectKey("v:${it.path}") },
+                            BrowseFolderSection.Files to files.map { localSelectKey("f:${it.path}") },
+                            BrowseFolderSection.Recent to recentEntries.map { localEntrySelectKey(it) },
+                            BrowseFolderSection.Search to searchHits.map { localEntrySelectKey(it) },
+                        )
+                    }
                     val (collapsedSections, toggleSection, setSectionCollapsed) = rememberBrowseSectionCollapse(pathKey)
                     val recentCollapsedNow = rememberUpdatedState(BrowseFolderSection.Recent in collapsedSections)
                     val setRecentCollapsedNow = rememberUpdatedState(setSectionCollapsed)
@@ -2803,6 +2900,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                         item(key = "hdr-recent", span = { GridItemSpan(maxLineSpan) }) {
                             BrowseSectionHeader(
                                 stringResource(R.string.browse_recent),
+                                section = BrowseFolderSection.Recent,
                                 onClick = {
                                     onRecentHeaderGesture(
                                         collapsed = recentCollapsedNow.value,
@@ -2843,6 +2941,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                         item(key = "hdr-docs", span = { GridItemSpan(maxLineSpan) }) {
                             BrowseSectionHeader(
                                 stringResource(R.string.browse_documents),
+                                section = BrowseFolderSection.Documents,
                                 onClick = { toggleSection(BrowseFolderSection.Documents) },
                             )
                         }
@@ -3032,6 +3131,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                 ) {
                                     BrowseSectionHeader(
                                         stringResource(R.string.browse_directories),
+                                        section = BrowseFolderSection.Directories,
                                         onClick = { toggleSection(BrowseFolderSection.Directories) },
                                     )
                                 }
@@ -3057,6 +3157,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                 ) {
                                     BrowseSectionHeader(
                                         stringResource(R.string.browse_galleries),
+                                        section = BrowseFolderSection.Galleries,
                                         onClick = { toggleSection(BrowseFolderSection.Galleries) },
                                     )
                                 }
@@ -3107,6 +3208,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                 ) {
                                     BrowseSectionHeader(
                                         stringResource(R.string.browse_videos),
+                                        section = BrowseFolderSection.Videos,
                                         onClick = { toggleSection(BrowseFolderSection.Videos) },
                                     )
                                 }
@@ -3133,6 +3235,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                 ) {
                                     BrowseSectionHeader(
                                         stringResource(R.string.browse_files),
+                                        section = BrowseFolderSection.Files,
                                         onClick = { toggleSection(BrowseFolderSection.Files) },
                                     )
                                 }
@@ -3180,6 +3283,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                     ) {
                                         BrowseSectionHeader(
                                             stringResource(R.string.browse_directories),
+                                            section = BrowseFolderSection.Directories,
                                             onClick = { toggleSection(BrowseFolderSection.Directories) },
                                         )
                                     }
@@ -3208,6 +3312,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                     ) {
                                         BrowseSectionHeader(
                                             stringResource(R.string.browse_galleries),
+                                            section = BrowseFolderSection.Galleries,
                                             onClick = { toggleSection(BrowseFolderSection.Galleries) },
                                         )
                                     }
@@ -3264,6 +3369,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                     ) {
                                         BrowseSectionHeader(
                                             stringResource(R.string.browse_videos),
+                                            section = BrowseFolderSection.Videos,
                                             onClick = { toggleSection(BrowseFolderSection.Videos) },
                                         )
                                     }
@@ -3293,6 +3399,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                     ) {
                                         BrowseSectionHeader(
                                             stringResource(R.string.browse_files),
+                                            section = BrowseFolderSection.Files,
                                             onClick = { toggleSection(BrowseFolderSection.Files) },
                                         )
                                     }

@@ -74,6 +74,13 @@ data class BrowseOverflowActions(
     val shortcut: FolderShortcutTarget? = null,
     /** JXL, JXR, and camera RAW. Null hides Convert to…. */
     val onConvert: ((StillExportTarget) -> Unit)? = null,
+    /** Set on folder-view rows so the overflow can enter select mode. */
+    val selectKey: String? = null,
+    val selectTitle: String? = null,
+    /** Batch HTTP share. Null means this row is ignored by Share via HTTP. */
+    val shareHttp: (suspend () -> Unit)? = null,
+    /** Batch convert into one folder. Null means this row is ignored by Convert to…. */
+    val convertStill: (suspend (okio.Path, StillExportTarget) -> Boolean)? = null,
 )
 
 @Composable
@@ -84,6 +91,7 @@ fun BrowseItemOverflowButton(
 ) {
     var expanded by remember { mutableStateOf(false) }
     var convertMenu by remember { mutableStateOf(false) }
+    val selecting = FolderSelectHost.current?.selecting == true
     val context = LocalContext.current
     val shortcutUnsupported = stringResource(R.string.browse_shortcut_unsupported)
     val grid = placement == BrowseOverflowPlacement.GridBottomEnd
@@ -147,6 +155,15 @@ fun BrowseItemOverflowButton(
                     )
                 }
                 return@DropdownMenu
+            }
+            if (actions.selectKey != null && !selecting) {
+                DropdownMenuItem(
+                    text = { Text(stringResource(R.string.browse_select)) },
+                    onClick = {
+                        expanded = false
+                        FolderSelectHost.current?.enter()
+                    },
+                )
             }
             when (actions.kind) {
                 BrowseOverflowKind.Gallery -> {

@@ -1094,6 +1094,16 @@
     <string name="action_save">Save</string>
     <string name="action_save_to">Save to…</string>
     <string name="convert_to">Convert to…</string>
+    <string name="browse_select">Select</string>
+    <string name="browse_selected_count">%1$d selected</string>
+    <string name="browse_list">List</string>
+    <string name="browse_selection">Selection</string>
+    <string name="browse_task">Task</string>
+    <string name="browse_remove">Remove</string>
+    <string name="browse_task_pending">Pending</string>
+    <string name="browse_task_running">Running</string>
+    <string name="browse_task_done">Done</string>
+    <string name="browse_task_failed">Failed</string>
     <string name="convert_back">Back</string>
     <string name="convert_auto_original">Auto (original size)</string>
     <string name="convert_jpeg">JPEG</string>

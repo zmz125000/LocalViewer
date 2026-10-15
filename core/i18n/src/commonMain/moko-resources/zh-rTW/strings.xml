@@ -812,6 +812,16 @@
     <string name="action_save">儲存</string>
     <string name="action_save_to">儲存到&#8230;</string>
     <string name="convert_to">轉換為…</string>
+    <string name="browse_select">選擇</string>
+    <string name="browse_selected_count">已選 %1$d</string>
+    <string name="browse_list">列表</string>
+    <string name="browse_selection">選擇</string>
+    <string name="browse_task">任務</string>
+    <string name="browse_remove">移除</string>
+    <string name="browse_task_pending">等待</string>
+    <string name="browse_task_running">進行中</string>
+    <string name="browse_task_done">完成</string>
+    <string name="browse_task_failed">失敗</string>
     <string name="convert_back">返回</string>
     <string name="convert_auto_original">自動（原始尺寸）</string>
     <string name="convert_jpeg">JPEG</string>

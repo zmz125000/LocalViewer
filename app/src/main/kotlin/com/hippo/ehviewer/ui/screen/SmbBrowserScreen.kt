@@ -40,6 +40,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
@@ -158,6 +159,8 @@ import com.hippo.ehviewer.ui.main.BrowseSearchSectionHeader
 import com.hippo.ehviewer.ui.main.BrowseSectionHeader
 import com.hippo.ehviewer.ui.main.BrowseVideoGridItem
 import com.hippo.ehviewer.ui.main.BrowseVideoRow
+import com.hippo.ehviewer.ui.main.FolderSelectHost
+import com.hippo.ehviewer.ui.main.FolderSelectState
 import com.hippo.ehviewer.ui.main.GalleryGridDefaults
 import com.hippo.ehviewer.ui.main.HttpShare
 import com.hippo.ehviewer.ui.main.HttpShareItem
@@ -168,10 +171,12 @@ import com.hippo.ehviewer.ui.main.browseZipAsDirTypeLabel
 import com.hippo.ehviewer.ui.main.onRecentHeaderGesture
 import com.hippo.ehviewer.ui.main.rememberBrowseSectionCollapse
 import com.hippo.ehviewer.ui.main.rememberRecentStripExpanded
+import com.hippo.ehviewer.ui.main.selectable
 import com.hippo.ehviewer.ui.navToReader
 import com.hippo.ehviewer.ui.navToSmbFolderReader
 import com.hippo.ehviewer.ui.reader.ReaderScreenArgs
 import com.hippo.ehviewer.ui.reader.convertSmbStill
+import com.hippo.ehviewer.ui.reader.exportStillToDirectory
 import com.hippo.ehviewer.ui.tools.awaitConfirmationOrCancel
 import com.hippo.ehviewer.util.LocalNetworkPermission
 import com.hippo.ehviewer.util.addTextToClipboard
@@ -326,6 +331,12 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
     }
 
     val relativeDir = relativeDirForMode
+    val folderSelect = remember { FolderSelectState() }
+    DisposableEffect(folderSelect) {
+        FolderSelectHost.attach(folderSelect)
+        onDispose { FolderSelectHost.detach(folderSelect) }
+    }
+    LaunchedEffect(sourceId, relativeDir) { folderSelect.cancel() }
     val title = segments.lastOrNull() ?: source?.displayName ?: stringResource(R.string.network)
 
     fun dirRelative(name: String): String = if (relativeDir.isEmpty()) name else SmbGateway.joinRelativePath(relativeDir, name)
@@ -991,6 +1002,10 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
 
     val hideBackToFab by Settings.hideBackToFab.collectAsState()
     fun onTopBarBack() {
+        if (folderSelect.selecting && !FolderSelectHost.taskRunning) {
+            folderSelect.cancel()
+            return
+        }
         if (hideBackToFab) jumpBackToOrigin() else goUp()
     }
 
@@ -1000,6 +1015,9 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
             return@BackHandler
         }
         goUp()
+    }
+    BackHandler(enabled = folderSelect.selecting && !FolderSelectHost.taskRunning) {
+        folderSelect.cancel()
     }
 
     /**
@@ -1764,6 +1782,50 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
         )
     }
 
+    fun smbKey(id: String): String = "smb:$sourceId:$relativeDir|$id"
+
+    fun remoteSelectId(entry: BrowseEntryRemote): String = when (entry) {
+        is BrowseEntryRemote.Directory -> smbKey("d:${entry.relativeName}")
+        is BrowseEntryRemote.FolderGallery -> smbKey("g:${entry.relativeName}")
+        is BrowseEntryRemote.ArchiveGallery -> smbKey(
+            "a:${joinRemoteArchivePath("", entry.parentRelativeName, entry.fileName)}",
+        )
+        is BrowseEntryRemote.VideoFile -> smbKey("v:${entry.fileName}")
+        is BrowseEntryRemote.RegularFile -> smbKey("f:${entry.fileName}")
+    }
+
+    fun smbShareFileStart(fileName: String): (suspend () -> Unit)? {
+        val src = source ?: return null
+        val actualName = fileName.substringAfterLast('/').substringAfterLast('\\')
+        val remote = if (relativeDir.isEmpty()) fileName else SmbGateway.joinRelativePath(relativeDir, fileName)
+        return {
+            HttpShare.startSmbFile(context, src.id, remote, actualName, mimeTypeForFileName(actualName))
+        }
+    }
+
+    fun smbShareFolderStart(relativeName: String, displayName: String = relativeName.substringAfterLast('/')): (suspend () -> Unit)? {
+        val src = source ?: return null
+        val remote = if (relativeDir.isEmpty()) relativeName else SmbGateway.joinRelativePath(relativeDir, relativeName)
+        val name = displayName.ifEmpty { relativeName.substringAfterLast('/') }
+        HttpShare.zipFileRelativeForFolderShare(remote)?.let { zipRel ->
+            val zipName = zipRel.substringAfterLast('/').ifEmpty { name }
+            return {
+                HttpShare.startSmbFile(context, src.id, zipRel, zipName, mimeTypeForFileName(zipName))
+            }
+        }
+        return { HttpShare.startSmbFolder(context, src.id, remote, name) }
+    }
+
+    fun smbConvertStill(fileName: String): (suspend (okio.Path, com.hippo.ehviewer.image.hdr.StillExportTarget) -> Boolean)? {
+        if (!isStillExportFileName(fileName)) return null
+        val src = source ?: return null
+        val leaf = fileName.substringAfterLast('/').substringAfterLast('\\')
+        val remote = if (relativeDir.isEmpty()) fileName else SmbGateway.joinRelativePath(relativeDir, fileName)
+        return { dir, target ->
+            exportStillToDirectory(leaf, target, dir) { BrowseSaveAs.stageSmbForConvert(src.id, remote) }
+        }
+    }
+
     fun dirOverflow(name: String, coverFileName: String? = null, virtual: Boolean = false) = BrowseOverflowActions(
         kind = BrowseOverflowKind.Common,
         favorited = isDirFavorite(name),
@@ -1777,6 +1839,10 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
         onSaveToPaths = { saveRemoteFolderToPaths(name) },
         shortcut = smbShortcut(name, true, name),
         onUnsupported = { notSupportedAction() },
+    ).selectable(
+        smbKey("d:$name"),
+        name.substringAfterLast('/'),
+        shareHttp = smbShareFolderStart(name),
     )
 
     fun folderGalleryOverflow(entry: BrowseEntryRemote.FolderGallery) = BrowseOverflowActions(
@@ -1800,91 +1866,104 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
         onSaveToPaths = { saveRemoteFolderToPaths(entry.relativeName) },
         shortcut = smbShortcut(entry.relativeName, true, entry.name),
         onUnsupported = { notSupportedAction() },
+    ).selectable(
+        smbKey("g:${entry.relativeName}"),
+        entry.name,
+        shareHttp = smbShareFolderStart(entry.relativeName, entry.name),
     )
 
-    fun archiveOverflow(entry: BrowseEntryRemote.ArchiveGallery) = if (isPdfOrEbookFileName(entry.fileName)) {
-        BrowseOverflowActions(
-            kind = BrowseOverflowKind.Pdf,
-            onRead = { openArchive(entry, skipPdfPrimary = true) },
-            onPlay = { openPdfReader(entry) },
-            onExternalPlayer = {
-                if (isPdfFileName(entry.fileName)) {
-                    openPdfInOtherApp(entry)
-                } else {
-                    openArchiveInOtherApp(entry)
-                }
-            },
-            onOpenWith = {
-                if (isPdfFileName(entry.fileName)) {
-                    openPdfInOtherApp(entry, usePreferredReader = false)
-                } else {
-                    openArchiveInOtherApp(entry)
-                }
-            },
-            onSaveAs = {
-                saveSmbFile(
-                    joinRemoteArchivePath("", entry.parentRelativeName, entry.fileName),
-                    entry.fileName.substringAfterLast('/'),
-                )
-            },
-            onShare = {
-                shareSmbFile(
-                    joinRemoteArchivePath("", entry.parentRelativeName, entry.fileName),
-                    entry.fileName.substringAfterLast('/'),
-                )
-            },
-            onShareViaHttp = smbHttpShareFile(
-                joinRemoteArchivePath("", entry.parentRelativeName, entry.fileName),
-            ),
-            onOpenFolder = {
-                openBrowseFolder(
-                    FolderSearch.openFolderTarget(
+    fun archiveOverflow(entry: BrowseEntryRemote.ArchiveGallery): BrowseOverflowActions {
+        val remote = joinRemoteArchivePath("", entry.parentRelativeName, entry.fileName)
+        return (
+            if (isPdfOrEbookFileName(entry.fileName)) {
+                BrowseOverflowActions(
+                    kind = BrowseOverflowKind.Pdf,
+                    onRead = { openArchive(entry, skipPdfPrimary = true) },
+                    onPlay = { openPdfReader(entry) },
+                    onExternalPlayer = {
+                        if (isPdfFileName(entry.fileName)) {
+                            openPdfInOtherApp(entry)
+                        } else {
+                            openArchiveInOtherApp(entry)
+                        }
+                    },
+                    onOpenWith = {
+                        if (isPdfFileName(entry.fileName)) {
+                            openPdfInOtherApp(entry, usePreferredReader = false)
+                        } else {
+                            openArchiveInOtherApp(entry)
+                        }
+                    },
+                    onSaveAs = {
+                        saveSmbFile(
+                            joinRemoteArchivePath("", entry.parentRelativeName, entry.fileName),
+                            entry.fileName.substringAfterLast('/'),
+                        )
+                    },
+                    onShare = {
+                        shareSmbFile(
+                            joinRemoteArchivePath("", entry.parentRelativeName, entry.fileName),
+                            entry.fileName.substringAfterLast('/'),
+                        )
+                    },
+                    onShareViaHttp = smbHttpShareFile(
                         joinRemoteArchivePath("", entry.parentRelativeName, entry.fileName),
-                        isDirectory = false,
                     ),
-                )
-            },
-            shortcut = smbShortcut(
-                joinRemoteArchivePath("", entry.parentRelativeName, entry.fileName),
-                false,
-                entry.fileName,
-            ),
-            onUnsupported = { notSupportedAction() },
-        )
-    } else {
-        BrowseOverflowActions(
-            kind = BrowseOverflowKind.Gallery,
-            onRead = { openArchive(entry) },
-            onOpenWith = { openArchiveInOtherApp(entry) },
-            onSaveAs = {
-                saveSmbFile(
-                    joinRemoteArchivePath("", entry.parentRelativeName, entry.fileName),
-                    entry.fileName.substringAfterLast('/'),
-                )
-            },
-            onShare = {
-                shareSmbFile(
-                    joinRemoteArchivePath("", entry.parentRelativeName, entry.fileName),
-                    entry.fileName.substringAfterLast('/'),
-                )
-            },
-            onShareViaHttp = smbHttpShareFile(
-                joinRemoteArchivePath("", entry.parentRelativeName, entry.fileName),
-            ),
-            onOpenFolder = {
-                openBrowseFolder(
-                    FolderSearch.openFolderTarget(
+                    onOpenFolder = {
+                        openBrowseFolder(
+                            FolderSearch.openFolderTarget(
+                                joinRemoteArchivePath("", entry.parentRelativeName, entry.fileName),
+                                isDirectory = false,
+                            ),
+                        )
+                    },
+                    shortcut = smbShortcut(
                         joinRemoteArchivePath("", entry.parentRelativeName, entry.fileName),
-                        isDirectory = false,
+                        false,
+                        entry.fileName,
                     ),
+                    onUnsupported = { notSupportedAction() },
                 )
-            },
-            shortcut = smbShortcut(
-                joinRemoteArchivePath("", entry.parentRelativeName, entry.fileName),
-                false,
-                entry.fileName,
-            ),
-            onUnsupported = { notSupportedAction() },
+            } else {
+                BrowseOverflowActions(
+                    kind = BrowseOverflowKind.Gallery,
+                    onRead = { openArchive(entry) },
+                    onOpenWith = { openArchiveInOtherApp(entry) },
+                    onSaveAs = {
+                        saveSmbFile(
+                            joinRemoteArchivePath("", entry.parentRelativeName, entry.fileName),
+                            entry.fileName.substringAfterLast('/'),
+                        )
+                    },
+                    onShare = {
+                        shareSmbFile(
+                            joinRemoteArchivePath("", entry.parentRelativeName, entry.fileName),
+                            entry.fileName.substringAfterLast('/'),
+                        )
+                    },
+                    onShareViaHttp = smbHttpShareFile(
+                        joinRemoteArchivePath("", entry.parentRelativeName, entry.fileName),
+                    ),
+                    onOpenFolder = {
+                        openBrowseFolder(
+                            FolderSearch.openFolderTarget(
+                                joinRemoteArchivePath("", entry.parentRelativeName, entry.fileName),
+                                isDirectory = false,
+                            ),
+                        )
+                    },
+                    shortcut = smbShortcut(
+                        joinRemoteArchivePath("", entry.parentRelativeName, entry.fileName),
+                        false,
+                        entry.fileName,
+                    ),
+                    onUnsupported = { notSupportedAction() },
+                )
+            }
+            ).selectable(
+            smbKey("a:$remote"),
+            entry.name,
+            shareHttp = smbShareFileStart(remote),
         )
     }
 
@@ -1904,6 +1983,10 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
         },
         shortcut = smbShortcut(fileName, false, fileName),
         onUnsupported = { notSupportedAction() },
+    ).selectable(
+        smbKey("v:$fileName"),
+        fileName.substringAfterLast('/'),
+        shareHttp = smbShareFileStart(fileName),
     )
 
     /** Regular-file MOBI/AZW/AZW3 image reader. Gallery extract, not the text ebook. */
@@ -1943,89 +2026,96 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
         }
     }
 
-    fun fileOverflow(fileName: String) = if (isHtmlFileName(fileName)) {
-        BrowseOverflowActions(
-            kind = BrowseOverflowKind.Webpage,
-            onOpenInBrowser = { openSmbHtml(fileName, incognito = false) },
-            onOpenIncognito = { openSmbHtml(fileName, incognito = true) },
-            onPlay = { openInternalDocument(fileName) },
-            onCopyUrl = { copySmbHtmlUrl(fileName) },
-            onOpenWith = { openExternalFile(fileName, asFile = true) },
-            onSaveAs = { saveSmbFile(fileName) },
-            onShare = { shareSmbFile(fileName) },
-            onShareViaHttp = smbHttpShareFile(fileName),
-            onOpenFolder = {
-                openBrowseFolder(FolderSearch.openFolderTarget(fileName, isDirectory = false))
-            },
-            shortcut = smbShortcut(fileName, false, fileName),
-            onUnsupported = { notSupportedAction() },
-        )
-    } else if (isPdfOrEbookFileName(fileName)) {
-        BrowseOverflowActions(
-            kind = BrowseOverflowKind.Pdf,
-            onRead = if (isMobiContainerFileName(fileName)) {
-                { openMobiImageReader(fileName) }
-            } else {
-                null
-            },
-            onPlay = { openInternalDocument(fileName) },
-            onExternalPlayer = {
-                val src = source
-                if (src != null && isPdfFileName(fileName)) {
-                    val remote = if (relativeDir.isEmpty()) {
-                        fileName
-                    } else {
-                        SmbGateway.joinRelativePath(relativeDir, fileName)
-                    }
-                    launchIO {
-                        recordCurrentBrowseFolderHistory(src.id, fileName)
-                        LocalHistory.recordSmbFile(src.id, remote, title = fileName.substringAfterLast('/'))
-                        try {
-                            OpenPdfExternally.openSmb(
-                                context = context,
-                                sourceId = src.id,
-                                remoteRelativeFile = remote,
-                                displayName = fileName.substringAfterLast('/').substringAfterLast('\\'),
-                            )
-                        } catch (e: Throwable) {
-                            if (e.isZipMemberTooLarge()) return@launchIO
-                            snackbar(
-                                context.getString(
-                                    R.string.open_pdf_external_failed,
-                                    e.message ?: e.toString(),
-                                ),
-                            )
+    fun fileOverflow(fileName: String) = (
+        if (isHtmlFileName(fileName)) {
+            BrowseOverflowActions(
+                kind = BrowseOverflowKind.Webpage,
+                onOpenInBrowser = { openSmbHtml(fileName, incognito = false) },
+                onOpenIncognito = { openSmbHtml(fileName, incognito = true) },
+                onPlay = { openInternalDocument(fileName) },
+                onCopyUrl = { copySmbHtmlUrl(fileName) },
+                onOpenWith = { openExternalFile(fileName, asFile = true) },
+                onSaveAs = { saveSmbFile(fileName) },
+                onShare = { shareSmbFile(fileName) },
+                onShareViaHttp = smbHttpShareFile(fileName),
+                onOpenFolder = {
+                    openBrowseFolder(FolderSearch.openFolderTarget(fileName, isDirectory = false))
+                },
+                shortcut = smbShortcut(fileName, false, fileName),
+                onUnsupported = { notSupportedAction() },
+            )
+        } else if (isPdfOrEbookFileName(fileName)) {
+            BrowseOverflowActions(
+                kind = BrowseOverflowKind.Pdf,
+                onRead = if (isMobiContainerFileName(fileName)) {
+                    { openMobiImageReader(fileName) }
+                } else {
+                    null
+                },
+                onPlay = { openInternalDocument(fileName) },
+                onExternalPlayer = {
+                    val src = source
+                    if (src != null && isPdfFileName(fileName)) {
+                        val remote = if (relativeDir.isEmpty()) {
+                            fileName
+                        } else {
+                            SmbGateway.joinRelativePath(relativeDir, fileName)
                         }
+                        launchIO {
+                            recordCurrentBrowseFolderHistory(src.id, fileName)
+                            LocalHistory.recordSmbFile(src.id, remote, title = fileName.substringAfterLast('/'))
+                            try {
+                                OpenPdfExternally.openSmb(
+                                    context = context,
+                                    sourceId = src.id,
+                                    remoteRelativeFile = remote,
+                                    displayName = fileName.substringAfterLast('/').substringAfterLast('\\'),
+                                )
+                            } catch (e: Throwable) {
+                                if (e.isZipMemberTooLarge()) return@launchIO
+                                snackbar(
+                                    context.getString(
+                                        R.string.open_pdf_external_failed,
+                                        e.message ?: e.toString(),
+                                    ),
+                                )
+                            }
+                        }
+                    } else if (!isPdfFileName(fileName)) {
+                        openExternalFile(fileName)
                     }
-                } else if (!isPdfFileName(fileName)) {
-                    openExternalFile(fileName)
-                }
-            },
-            onOpenWith = { openExternalFile(fileName, asFile = true) },
-            onSaveAs = { saveSmbFile(fileName) },
-            onShare = { shareSmbFile(fileName) },
-            onShareViaHttp = smbHttpShareFile(fileName),
-            onOpenFolder = {
-                openBrowseFolder(FolderSearch.openFolderTarget(fileName, isDirectory = false))
-            },
-            shortcut = smbShortcut(fileName, false, fileName),
-            onUnsupported = { notSupportedAction() },
-        )
-    } else {
-        BrowseOverflowActions(
-            kind = BrowseOverflowKind.Common,
-            onOpenWith = { openExternalFile(fileName, asFile = true) },
-            onSaveAs = { saveSmbFile(fileName) },
-            onShare = { shareSmbFile(fileName) },
-            onShareViaHttp = smbHttpShareFile(fileName),
-            onConvert = smbConvertAction(fileName),
-            onOpenFolder = {
-                openBrowseFolder(FolderSearch.openFolderTarget(fileName, isDirectory = false))
-            },
-            shortcut = smbShortcut(fileName, false, fileName),
-            onUnsupported = { notSupportedAction() },
-        )
-    }
+                },
+                onOpenWith = { openExternalFile(fileName, asFile = true) },
+                onSaveAs = { saveSmbFile(fileName) },
+                onShare = { shareSmbFile(fileName) },
+                onShareViaHttp = smbHttpShareFile(fileName),
+                onOpenFolder = {
+                    openBrowseFolder(FolderSearch.openFolderTarget(fileName, isDirectory = false))
+                },
+                shortcut = smbShortcut(fileName, false, fileName),
+                onUnsupported = { notSupportedAction() },
+            )
+        } else {
+            BrowseOverflowActions(
+                kind = BrowseOverflowKind.Common,
+                onOpenWith = { openExternalFile(fileName, asFile = true) },
+                onSaveAs = { saveSmbFile(fileName) },
+                onShare = { shareSmbFile(fileName) },
+                onShareViaHttp = smbHttpShareFile(fileName),
+                onConvert = smbConvertAction(fileName),
+                onOpenFolder = {
+                    openBrowseFolder(FolderSearch.openFolderTarget(fileName, isDirectory = false))
+                },
+                shortcut = smbShortcut(fileName, false, fileName),
+                onUnsupported = { notSupportedAction() },
+            )
+        }
+        ).selectable(
+        smbKey("f:$fileName"),
+        fileName.substringAfterLast('/'),
+        shareHttp = smbShareFileStart(fileName),
+        convertStill = smbConvertStill(fileName),
+    )
 
     Scaffold(
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
@@ -2230,6 +2320,17 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                                 remoteBrowseHistoryGids(it, sourceId, dirKey, smb = true)
                             },
                             nameOf = { it.name },
+                        )
+                    }
+                    SideEffect {
+                        folderSelect.sectionKeys = mapOf(
+                            BrowseFolderSection.Directories to dirs.map { smbKey("d:${it.relativeName}") },
+                            BrowseFolderSection.Galleries to galleries.map { remoteSelectId(it) },
+                            BrowseFolderSection.Documents to documents.map { remoteSelectId(it) },
+                            BrowseFolderSection.Videos to videos.map { smbKey("v:${it.fileName}") },
+                            BrowseFolderSection.Files to files.map { smbKey("f:${it.fileName}") },
+                            BrowseFolderSection.Recent to recentEntries.map { remoteSelectId(it) },
+                            BrowseFolderSection.Search to searchHits.map { remoteSelectId(it) },
                         )
                     }
                     val (collapsedSections, toggleSection, setSectionCollapsed) = rememberBrowseSectionCollapse(
@@ -2552,6 +2653,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                         item(key = "hdr-recent", span = { GridItemSpan(maxLineSpan) }) {
                             BrowseSectionHeader(
                                 stringResource(R.string.browse_recent),
+                                section = BrowseFolderSection.Recent,
                                 onClick = {
                                     onRecentHeaderGesture(
                                         collapsed = recentCollapsedNow.value,
@@ -2592,6 +2694,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                         item(key = "hdr-docs", span = { GridItemSpan(maxLineSpan) }) {
                             BrowseSectionHeader(
                                 stringResource(R.string.browse_documents),
+                                section = BrowseFolderSection.Documents,
                                 onClick = { toggleSection(BrowseFolderSection.Documents) },
                             )
                         }
@@ -2771,6 +2874,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                                 ) {
                                     BrowseSectionHeader(
                                         stringResource(R.string.browse_directories),
+                                        section = BrowseFolderSection.Directories,
                                         onClick = { toggleSection(BrowseFolderSection.Directories) },
                                     )
                                 }
@@ -2800,6 +2904,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                                 ) {
                                     BrowseSectionHeader(
                                         stringResource(R.string.browse_galleries),
+                                        section = BrowseFolderSection.Galleries,
                                         onClick = { toggleSection(BrowseFolderSection.Galleries) },
                                     )
                                 }
@@ -2847,6 +2952,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                                 ) {
                                     BrowseSectionHeader(
                                         stringResource(R.string.browse_videos),
+                                        section = BrowseFolderSection.Videos,
                                         onClick = { toggleSection(BrowseFolderSection.Videos) },
                                     )
                                 }
@@ -2875,6 +2981,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                                 ) {
                                     BrowseSectionHeader(
                                         stringResource(R.string.browse_files),
+                                        section = BrowseFolderSection.Files,
                                         onClick = { toggleSection(BrowseFolderSection.Files) },
                                     )
                                 }
@@ -2924,6 +3031,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                                     ) {
                                         BrowseSectionHeader(
                                             stringResource(R.string.browse_directories),
+                                            section = BrowseFolderSection.Directories,
                                             onClick = { toggleSection(BrowseFolderSection.Directories) },
                                         )
                                     }
@@ -2956,6 +3064,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                                     ) {
                                         BrowseSectionHeader(
                                             stringResource(R.string.browse_galleries),
+                                            section = BrowseFolderSection.Galleries,
                                             onClick = { toggleSection(BrowseFolderSection.Galleries) },
                                         )
                                     }
@@ -3009,6 +3118,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                                     ) {
                                         BrowseSectionHeader(
                                             stringResource(R.string.browse_videos),
+                                            section = BrowseFolderSection.Videos,
                                             onClick = { toggleSection(BrowseFolderSection.Videos) },
                                         )
                                     }
@@ -3040,6 +3150,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                                     ) {
                                         BrowseSectionHeader(
                                             stringResource(R.string.browse_files),
+                                            section = BrowseFolderSection.Files,
                                             onClick = { toggleSection(BrowseFolderSection.Files) },
                                         )
                                     }
