@@ -501,14 +501,14 @@ fun LibraryViewModeMenu(modifier: Modifier = Modifier) {
                 onClick = { showReadingProgress = !showReadingProgress },
             )
             LibraryMenuToggleItem(
-                label = stringResource(R.string.settings_library_startup_scan),
-                checked = libraryStartupScan,
-                onClick = { libraryStartupScan = !libraryStartupScan },
-            )
-            LibraryMenuToggleItem(
                 label = stringResource(R.string.settings_library_live_update),
                 checked = libraryLiveUpdate,
                 onClick = { libraryLiveUpdate = !libraryLiveUpdate },
+            )
+            LibraryMenuToggleItem(
+                label = stringResource(R.string.settings_library_startup_scan),
+                checked = libraryStartupScan,
+                onClick = { libraryStartupScan = !libraryStartupScan },
             )
         }
     }
