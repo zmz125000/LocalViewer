@@ -332,7 +332,6 @@ fun AnimatedVisibilityScope.EhScreen(navigator: DestinationsNavigator) = Screen(
             )
             SwitchPreference(
                 title = stringResource(id = R.string.settings_library_live_update),
-                summary = stringResource(id = R.string.settings_library_live_update_summary),
                 state = Settings.libraryLiveUpdate.asMutableState(),
             )
             SwitchPreference(
