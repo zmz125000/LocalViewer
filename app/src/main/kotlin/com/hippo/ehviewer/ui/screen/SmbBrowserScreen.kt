@@ -162,6 +162,7 @@ import com.hippo.ehviewer.ui.main.BrowseVideoRow
 import com.hippo.ehviewer.ui.main.FolderSelectHost
 import com.hippo.ehviewer.ui.main.FolderSelectState
 import com.hippo.ehviewer.ui.main.GalleryGridDefaults
+import com.hippo.ehviewer.ui.main.HttpSelectionListing
 import com.hippo.ehviewer.ui.main.HttpShare
 import com.hippo.ehviewer.ui.main.HttpShareItem
 import com.hippo.ehviewer.ui.main.LocalBrowseListHeaderInset
@@ -1794,26 +1795,56 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
         is BrowseEntryRemote.RegularFile -> smbKey("f:${entry.fileName}")
     }
 
-    fun smbShareFileStart(fileName: String): (suspend () -> Unit)? {
+    fun smbShareFileStart(fileName: String): (suspend (HttpSelectionListing) -> Unit)? {
         val src = source ?: return null
         val actualName = fileName.substringAfterLast('/').substringAfterLast('\\')
         val remote = if (relativeDir.isEmpty()) fileName else SmbGateway.joinRelativePath(relativeDir, fileName)
-        return {
-            HttpShare.startSmbFile(context, src.id, remote, actualName, mimeTypeForFileName(actualName))
+        return listing@{ listing ->
+            val source = SmbRepository.load(src.id) ?: return@listing
+            listing.addFile(actualName, network = true) { unique ->
+                OpenFileExternally.smbFileEntry(
+                    source,
+                    SmbPasswordStore.get(src.id),
+                    remote,
+                    unique,
+                    mimeTypeForFileName(actualName),
+                    sizeBytes = -1L,
+                )
+            }
         }
     }
 
-    fun smbShareFolderStart(relativeName: String, displayName: String = relativeName.substringAfterLast('/')): (suspend () -> Unit)? {
+    fun smbShareFolderStart(
+        relativeName: String,
+        displayName: String = relativeName.substringAfterLast('/'),
+    ): (suspend (HttpSelectionListing) -> Unit)? {
         val src = source ?: return null
         val remote = if (relativeDir.isEmpty()) relativeName else SmbGateway.joinRelativePath(relativeDir, relativeName)
         val name = displayName.ifEmpty { relativeName.substringAfterLast('/') }
         HttpShare.zipFileRelativeForFolderShare(remote)?.let { zipRel ->
             val zipName = zipRel.substringAfterLast('/').ifEmpty { name }
-            return {
-                HttpShare.startSmbFile(context, src.id, zipRel, zipName, mimeTypeForFileName(zipName))
+            return listing@{ listing ->
+                val source = SmbRepository.load(src.id) ?: return@listing
+                listing.addFile(zipName, network = true) { unique ->
+                    OpenFileExternally.smbFileEntry(
+                        source,
+                        SmbPasswordStore.get(src.id),
+                        zipRel,
+                        unique,
+                        mimeTypeForFileName(zipName),
+                        sizeBytes = -1L,
+                    )
+                }
             }
         }
-        return { HttpShare.startSmbFolder(context, src.id, remote, name) }
+        return listing@{ listing ->
+            val source = SmbRepository.load(src.id) ?: return@listing
+            listing.addFolder(
+                name,
+                OpenFileExternally.smbHtmlDirSource(source, SmbPasswordStore.get(src.id), remote),
+                network = true,
+            )
+        }
     }
 
     fun smbConvertStill(fileName: String): (suspend (okio.Path, com.hippo.ehviewer.image.hdr.StillExportTarget) -> Boolean)? {

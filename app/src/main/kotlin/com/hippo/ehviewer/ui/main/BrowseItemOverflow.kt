@@ -77,8 +77,8 @@ data class BrowseOverflowActions(
     /** Set on folder-view rows so the overflow can enter select mode. */
     val selectKey: String? = null,
     val selectTitle: String? = null,
-    /** Batch HTTP share. Null means this row is ignored by Share via HTTP. */
-    val shareHttp: (suspend () -> Unit)? = null,
+    /** Adds this row to one selection HTTP listing. Null means Share via HTTP ignores it. */
+    val shareHttp: (suspend (HttpSelectionListing) -> Unit)? = null,
     /** Batch convert into one folder. Null means this row is ignored by Convert to…. */
     val convertStill: (suspend (okio.Path, StillExportTarget) -> Boolean)? = null,
     /** Batch Save to… into one folder. Null means this row is ignored by Save to…. */

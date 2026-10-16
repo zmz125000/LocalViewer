@@ -161,6 +161,7 @@ import com.hippo.ehviewer.ui.main.BrowseVideoRow
 import com.hippo.ehviewer.ui.main.FolderSelectHost
 import com.hippo.ehviewer.ui.main.FolderSelectState
 import com.hippo.ehviewer.ui.main.GalleryGridDefaults
+import com.hippo.ehviewer.ui.main.HttpSelectionListing
 import com.hippo.ehviewer.ui.main.HttpShare
 import com.hippo.ehviewer.ui.main.HttpShareItem
 import com.hippo.ehviewer.ui.main.LocalBrowseListHeaderInset
@@ -2192,15 +2193,21 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         is BrowseEntry.RegularFile -> localSelectKey("f:${entry.path}")
     }
 
-    fun localShareFileStart(path: okio.Path): suspend () -> Unit {
+    fun localShareFileStart(path: okio.Path): suspend (HttpSelectionListing) -> Unit {
         val pathStr = path.toString()
         val name = ZipPaths.memberLeafName(pathStr) ?: path.name
-        return {
-            HttpShare.startLocalFile(context, pathStr, name, mimeTypeForFileName(name))
+        return { listing ->
+            listing.addFile(name, network = false) { unique ->
+                OpenFileExternally.localFileEntry(pathStr, unique, mimeTypeForFileName(name))
+            }
         }
     }
 
-    fun localShareFolderStart(dir: okio.Path, displayName: String, relativeName: String): suspend () -> Unit {
+    fun localShareFolderStart(
+        dir: okio.Path,
+        displayName: String,
+        relativeName: String,
+    ): suspend (HttpSelectionListing) -> Unit {
         val leaf = relativeName.substringAfterLast('/').ifEmpty { displayName }
         if (stack.lastOrNull()?.isZipBrowse == true ||
             isZipArchiveFileName(leaf) ||
@@ -2208,7 +2215,9 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         ) {
             return localShareFileStart(dir)
         }
-        return { HttpShare.startLocalFolder(context, dir.toString(), displayName) }
+        return { listing ->
+            listing.addFolder(displayName, OpenFileExternally.localShareDirSource(dir.toString()), network = false)
+        }
     }
 
     fun localConvertStill(path: okio.Path, leaf: String): (suspend (okio.Path, com.hippo.ehviewer.image.hdr.StillExportTarget) -> Boolean)? {

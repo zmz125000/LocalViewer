@@ -1,5 +1,7 @@
 package com.hippo.ehviewer.ui
 
+import com.hippo.ehviewer.provider.ExternalHttpStreamServer
+import com.hippo.ehviewer.ui.main.HttpSelectionListing
 import com.hippo.ehviewer.ui.main.HttpShare
 import com.hippo.ehviewer.ui.main.LanAddresses
 import java.net.Inet4Address
@@ -16,6 +18,31 @@ class HttpShareTest {
         assertEquals("pack.cbz", HttpShare.zipFileRelativeForFolderShare("pack.cbz"))
         assertNull(HttpShare.zipFileRelativeForFolderShare("share/Album"))
         assertNull(HttpShare.zipFileRelativeForFolderShare("clip.mp4"))
+    }
+
+    @Test
+    fun selectionListingKeepsEveryChosenName() {
+        val listing = HttpSelectionListing()
+        listing.addFile("a.jpg", network = false) { name ->
+            ExternalHttpStreamServer.FileEntry(name, "image/jpeg", 1L) { error("unread") }
+        }
+        listing.addFile("a.jpg", network = false) { name ->
+            ExternalHttpStreamServer.FileEntry(name, "image/jpeg", 2L) { error("unread") }
+        }
+        listing.addFolder(
+            "Pics",
+            object : ExternalHttpStreamServer.HttpDirSource {
+                override fun list(relativeDir: String) = ExternalHttpStreamServer.HttpDirIndex(files = listOf("b.png"))
+                override fun open(relativeFile: String) = null
+            },
+            network = true,
+        )
+        val root = listing.toDirSource().list("")
+        assertEquals(listOf("a.jpg", "a.jpg (2)"), root.files)
+        assertEquals(listOf("Pics"), root.dirs)
+        assertEquals("a.jpg (2)", listing.toDirSource().open("a.jpg (2)")?.displayName)
+        assertEquals(listOf("b.png"), listing.toDirSource().list("Pics").files)
+        assertEquals(true, listing.network)
     }
 
     @Test

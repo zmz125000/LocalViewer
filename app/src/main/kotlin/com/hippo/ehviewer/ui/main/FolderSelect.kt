@@ -11,7 +11,6 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -214,8 +213,8 @@ data class FolderPick(
     val key: String,
     val title: String,
     val isFolder: Boolean = false,
-    /** Starts the existing HTTP-share snackbar. Null when this row cannot be shared. */
-    val shareHttp: (suspend () -> Unit)?,
+    /** Adds this row to one selection HTTP listing. Null when this row cannot be shared. */
+    val shareHttp: (suspend (HttpSelectionListing) -> Unit)?,
     /** Writes this still into a picked folder. Null when convert does not apply. */
     val convertStill: (suspend (Path, StillExportTarget) -> Boolean)?,
     /** Saves into a picked folder. Null when Save to… does not apply. */
@@ -226,7 +225,7 @@ fun BrowseOverflowActions.selectable(
     key: String,
     title: String,
     isFolder: Boolean = false,
-    shareHttp: (suspend () -> Unit)? = null,
+    shareHttp: (suspend (HttpSelectionListing) -> Unit)? = null,
     convertStill: (suspend (Path, StillExportTarget) -> Boolean)? = null,
     saveInto: (suspend (Path) -> Boolean)? = null,
 ): BrowseOverflowActions = copy(
@@ -717,7 +716,7 @@ private fun FolderTasksDialog() {
                 Modifier
                     .fillMaxSize()
                     .padding(16.dp),
-                contentAlignment = if (phonePortrait) Alignment.TopCenter else Alignment.TopEnd,
+                contentAlignment = Alignment.Center,
             ) {
                 val page = MaterialTheme.colorScheme.background
                 val darkPage = page.luminance() < 0.5f
@@ -741,13 +740,8 @@ private fun FolderTasksDialog() {
                 }.coerceAtMost(maxHeight)
                 Surface(
                     modifier = Modifier
-                        .then(
-                            if (phoneLandscape) {
-                                Modifier.width(windowWidth).fillMaxHeight()
-                            } else {
-                                Modifier.width(windowWidth).height(windowHeight)
-                            },
-                        )
+                        .width(windowWidth)
+                        .height(windowHeight)
                         .clickable(
                             interactionSource = panelGuard,
                             indication = null,
@@ -963,7 +957,6 @@ private fun TaskPanelActions(batch: TaskBatch?) {
     ) {
         if (batch == null) {
             PanelAction(R.string.browse_clear) { FolderSelectHost.cancelShownSelection() }
-            PanelAction(R.string.browse_hide) { FolderSelectHost.dialog = false }
         } else if (batch.finishedRun) {
             PanelAction(R.string.browse_continue) { FolderSelectHost.continueSelection() }
             PanelAction(R.string.browse_task_done) { FolderSelectHost.done() }
@@ -971,7 +964,6 @@ private fun TaskPanelActions(batch: TaskBatch?) {
             val pause = if (batch.paused) R.string.browse_resume else R.string.browse_pause
             PanelAction(pause) { FolderSelectHost.togglePause() }
             PanelAction(R.string.browse_http_share_stop) { FolderSelectHost.stopTask() }
-            PanelAction(R.string.browse_background) { FolderSelectHost.dialog = false }
         }
     }
 }
@@ -1083,24 +1075,30 @@ private fun ConvertTargetItems(
 }
 
 private fun shareSelected(scope: CoroutineScope, snackbar: SnackbarHostState, context: Context) {
-    val starters = FolderSelectHost.selectionPicks.mapNotNull { it.shareHttp }
-    if (starters.isEmpty()) {
+    val picks = FolderSelectHost.selectionPicks.filter { it.shareHttp != null }
+    if (picks.isEmpty()) {
         scope.launch { with(snackbar) { snackbar(context.getString(R.string.browse_action_not_supported)) } }
         return
     }
+    val snack = FolderSelectHost.selectionSnack
+    val title = snack?.folderName?.takeIf { it.isNotBlank() }
+        ?: context.getString(R.string.browse_selection)
+    val dirKey = "share-selection:${snack?.folderKey ?: "selection"}"
     scope.launch {
-        for (start in starters) {
-            try {
-                start()
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Throwable) {
-                with(snackbar) {
-                    snackbar(
-                        context.getString(R.string.browse_http_share_failed) + " " +
-                            (e.message ?: e.toString()),
-                    )
+        try {
+            HttpShare.startSelection(context, title, dirKey) { listing ->
+                for (pick in picks) {
+                    pick.shareHttp?.invoke(listing)
                 }
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Throwable) {
+            with(snackbar) {
+                snackbar(
+                    context.getString(R.string.browse_http_share_failed) + " " +
+                        (e.message ?: e.toString()),
+                )
             }
         }
     }
