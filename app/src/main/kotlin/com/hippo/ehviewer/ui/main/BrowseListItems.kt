@@ -23,6 +23,7 @@ import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.Badge
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularWavyProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -44,6 +45,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.layout.ContentScale
@@ -577,6 +579,56 @@ internal fun BrowseFolderListItem(
     }
 }
 
+private class FolderSelectTap(
+    val selected: Boolean,
+    val toggle: () -> Unit,
+)
+
+@Composable
+private fun folderSelectTap(overflow: BrowseOverflowActions?): FolderSelectTap? {
+    val state = FolderSelectHost.current ?: return null
+    if (!state.selecting) return null
+    val key = overflow?.selectKey ?: return null
+    val selected = state.isSelected(key)
+    return FolderSelectTap(selected) {
+        overflow.toPick()?.let { state.toggle(it) }
+    }
+}
+
+@Composable
+private fun folderSelectedCardColors() = CardDefaults.elevatedCardColors(
+    containerColor = MaterialTheme.colorScheme.secondaryContainer,
+    contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+)
+
+/** In select mode the row toggles selection and does not open. */
+@Composable
+private fun Modifier.folderSelectClicks(
+    overflow: BrowseOverflowActions?,
+    onClick: () -> Unit,
+    onLongClick: (() -> Unit)?,
+): Modifier {
+    val tap = folderSelectTap(overflow)
+    val haptic = LocalHapticFeedback.current
+    val click = tap?.toggle ?: onClick
+    val long = tap?.toggle ?: onLongClick
+    return this
+        .background(if (tap?.selected == true) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent)
+        .then(
+            if (long != null) {
+                Modifier.combinedClickable(
+                    onClick = click,
+                    onLongClick = {
+                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                        long()
+                    },
+                )
+            } else {
+                Modifier.clickable(onClick = click)
+            },
+        )
+}
+
 @Composable
 fun BrowseDirectoryRow(
     name: String,
@@ -596,7 +648,6 @@ fun BrowseDirectoryRow(
     showFavoriteStar: Boolean = false,
 ) {
     val name = name.safFolderLabel()
-    val haptic = LocalHapticFeedback.current
     BrowseFolderListItem(
         headlineContent = { BrowseFavoriteTitle(name = name, favorited = showFavoriteStar) },
         supportingContent = {
@@ -652,19 +703,7 @@ fun BrowseDirectoryRow(
         verticalAlignment = Alignment.CenterVertically,
         modifier = modifier
             .fillMaxWidth()
-            .then(
-                if (onLongClick != null) {
-                    Modifier.combinedClickable(
-                        onClick = onClick,
-                        onLongClick = {
-                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                            onLongClick()
-                        },
-                    )
-                } else {
-                    Modifier.clickable(onClick = onClick)
-                },
-            ),
+            .folderSelectClicks(overflow, onClick, onLongClick),
     )
 }
 
@@ -691,7 +730,6 @@ fun BrowseFolderGalleryRow(
     overflow: BrowseOverflowActions? = null,
     progressGid: Long = 0L,
 ) {
-    val haptic = LocalHapticFeedback.current
     val resolvedCover = cover ?: coverPath?.let { BrowseCover.Local(it) }
     val label = name.safFolderLabel()
     val shownPages = if (showPages) pageCount else 0
@@ -727,19 +765,7 @@ fun BrowseFolderGalleryRow(
         verticalAlignment = Alignment.Top,
         modifier = modifier
             .fillMaxWidth()
-            .then(
-                if (onLongClick != null) {
-                    Modifier.combinedClickable(
-                        onClick = onClick,
-                        onLongClick = {
-                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                            onLongClick()
-                        },
-                    )
-                } else {
-                    Modifier.clickable(onClick = onClick)
-                },
-            ),
+            .folderSelectClicks(overflow, onClick, onLongClick),
     )
 }
 
@@ -761,7 +787,6 @@ fun BrowseArchiveGalleryRow(
     showPages: Boolean = true,
     overflow: BrowseOverflowActions? = null,
 ) {
-    val haptic = LocalHapticFeedback.current
     val resolvedPages = rememberFolderPageCount(pageCount, cover, fileName)
     val shownPages = if (showPages) resolvedPages else 0
     val progressGid = rememberArchiveProgressGid(cover)
@@ -797,19 +822,7 @@ fun BrowseArchiveGalleryRow(
         verticalAlignment = Alignment.Top,
         modifier = modifier
             .fillMaxWidth()
-            .then(
-                if (onLongClick != null) {
-                    Modifier.combinedClickable(
-                        onClick = onClick,
-                        onLongClick = {
-                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                            onLongClick()
-                        },
-                    )
-                } else {
-                    Modifier.clickable(onClick = onClick)
-                },
-            ),
+            .folderSelectClicks(overflow, onClick, onLongClick),
     )
 }
 
@@ -831,7 +844,6 @@ fun BrowseVideoRow(
     lastModifiedMs: Long = 0L,
     overflow: BrowseOverflowActions? = null,
 ) {
-    val haptic = LocalHapticFeedback.current
     BrowseFolderListItem(
         headlineContent = { Text(name) },
         supportingContent = {
@@ -860,19 +872,7 @@ fun BrowseVideoRow(
         verticalAlignment = Alignment.Top,
         modifier = modifier
             .fillMaxWidth()
-            .then(
-                if (onLongClick != null) {
-                    Modifier.combinedClickable(
-                        onClick = onClick,
-                        onLongClick = {
-                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                            onLongClick()
-                        },
-                    )
-                } else {
-                    Modifier.clickable(onClick = onClick)
-                },
-            ),
+            .folderSelectClicks(overflow, onClick, onLongClick),
     )
 }
 
@@ -897,7 +897,6 @@ fun BrowseFileRow(
     lastModifiedMs: Long = 0L,
     overflow: BrowseOverflowActions? = null,
 ) {
-    val haptic = LocalHapticFeedback.current
     val longClick = onLongClick ?: onClick
     val usePhotoThumb = showPhotoThumb && cover != null
     BrowseFolderListItem(
@@ -930,13 +929,7 @@ fun BrowseFileRow(
         verticalAlignment = Alignment.Top,
         modifier = modifier
             .fillMaxWidth()
-            .combinedClickable(
-                onClick = onClick,
-                onLongClick = {
-                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                    longClick()
-                },
-            ),
+            .folderSelectClicks(overflow, onClick, longClick),
     )
 }
 
@@ -966,11 +959,16 @@ fun BrowseDirectoryGridItem(
     val namePadBottom = GalleryGridDefaults.namePaddingBottom()
     // Style is per-item: only folders with a real cover use the gallery-thumb layout.
     val useThumbStyle = showFolderThumb && cover != null
+    val tap = folderSelectTap(overflow)
     ElevatedCard(
-        onClick = onClick,
-        onLongClick = onLongClick ?: onClick,
+        onClick = tap?.toggle ?: onClick,
+        onLongClick = tap?.toggle ?: (onLongClick ?: onClick),
         modifier = modifier.fillMaxWidth().aspectRatio(1f),
-        colors = GalleryGridDefaults.cardColors(),
+        colors = if (tap?.selected == true && !useThumbStyle) {
+            folderSelectedCardColors()
+        } else {
+            GalleryGridDefaults.cardColors()
+        },
     ) {
         Box(Modifier.fillMaxSize()) {
             if (useThumbStyle) {
@@ -1011,13 +1009,20 @@ fun BrowseDirectoryGridItem(
                         modifier = Modifier
                             .align(Alignment.BottomCenter)
                             .fillMaxWidth()
-                            .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.55f))
+                            .background(
+                                if (tap?.selected == true) {
+                                    MaterialTheme.colorScheme.secondaryContainer
+                                } else {
+                                    MaterialTheme.colorScheme.surface.copy(alpha = 0.55f)
+                                },
+                            )
                             .padding(horizontal = namePadH)
                             .padding(top = 4.dp, bottom = namePadBottom),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Text(
                             text = name,
+                            color = MaterialTheme.colorScheme.onSurface,
                             style = MaterialTheme.typography.labelMedium,
                             maxLines = 2,
                             overflow = TextOverflow.Ellipsis,
@@ -1367,15 +1372,16 @@ private fun BrowseGridCell(
     overflow: BrowseOverflowActions? = null,
 ) {
     val longClick = onLongClick ?: onClick
+    val tap = folderSelectTap(overflow)
     // Same caption metrics as Library grid (GalleryGridDefaults).
     val nameHeight = GalleryGridDefaults.nameHeight()
     val namePadH = GalleryGridDefaults.namePaddingH()
     val namePadBottom = GalleryGridDefaults.namePaddingBottom()
     ElevatedCard(
         modifier = modifier.fillMaxWidth(),
-        onClick = onClick,
-        onLongClick = longClick,
-        colors = GalleryGridDefaults.cardColors(),
+        onClick = tap?.toggle ?: onClick,
+        onLongClick = tap?.toggle ?: longClick,
+        colors = if (tap?.selected == true) folderSelectedCardColors() else GalleryGridDefaults.cardColors(),
     ) {
         Column(Modifier.fillMaxWidth()) {
             Box(
@@ -2032,11 +2038,14 @@ fun BrowseSectionHeader(
     modifier: Modifier = Modifier,
     onClick: (() -> Unit)? = null,
     onLongClick: (() -> Unit)? = null,
+    section: BrowseFolderSection? = null,
 ) {
     val haptic = LocalHapticFeedback.current
     val listInset = LocalBrowseListHeaderInset.current
+    val count = section?.let { FolderSelectHost.current?.count(it) }
+    val label = if (count != null) "$text (${count.first}/${count.second})" else text
     Text(
-        text = text,
+        text = label,
         style = MaterialTheme.typography.titleSmall,
         color = MaterialTheme.colorScheme.primary,
         modifier = modifier
@@ -2072,6 +2081,9 @@ fun BrowseSearchSectionHeader(
     onClick: () -> Unit,
 ) {
     val listInset = LocalBrowseListHeaderInset.current
+    val count = FolderSelectHost.current?.count(BrowseFolderSection.Search)
+    val title = stringResource(R.string.browse_search)
+    val label = if (count != null) "$title (${count.first}/${count.second})" else title
     Row(
         modifier = Modifier
             .padding(horizontal = listInset)
@@ -2085,7 +2097,7 @@ fun BrowseSearchSectionHeader(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
-            text = stringResource(R.string.browse_search),
+            text = label,
             style = MaterialTheme.typography.titleSmall,
             color = MaterialTheme.colorScheme.primary,
             modifier = Modifier.weight(1f),

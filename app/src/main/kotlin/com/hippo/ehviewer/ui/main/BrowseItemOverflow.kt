@@ -74,6 +74,17 @@ data class BrowseOverflowActions(
     val shortcut: FolderShortcutTarget? = null,
     /** JXL, JXR, and camera RAW. Null hides Convert to…. */
     val onConvert: ((StillExportTarget) -> Unit)? = null,
+    /** Set on folder-view rows so the overflow can enter select mode. */
+    val selectKey: String? = null,
+    val selectTitle: String? = null,
+    /** Adds this row to one selection HTTP listing. Null means Share via HTTP ignores it. */
+    val shareHttp: (suspend (HttpSelectionListing) -> Unit)? = null,
+    /** Batch convert into one folder. Null means this row is ignored by Convert to…. */
+    val convertStill: (suspend (okio.Path, StillExportTarget) -> Boolean)? = null,
+    /** Batch Save to… into one folder. Null means this row is ignored by Save to…. */
+    val saveInto: (suspend (okio.Path) -> Boolean)? = null,
+    /** Folder icon in the Tasks selection list. */
+    val selectFolder: Boolean = false,
 )
 
 @Composable
@@ -84,6 +95,7 @@ fun BrowseItemOverflowButton(
 ) {
     var expanded by remember { mutableStateOf(false) }
     var convertMenu by remember { mutableStateOf(false) }
+    val selecting = FolderSelectHost.current?.selecting == true
     val context = LocalContext.current
     val shortcutUnsupported = stringResource(R.string.browse_shortcut_unsupported)
     val grid = placement == BrowseOverflowPlacement.GridBottomEnd
@@ -147,6 +159,15 @@ fun BrowseItemOverflowButton(
                     )
                 }
                 return@DropdownMenu
+            }
+            if (actions.selectKey != null && !selecting) {
+                DropdownMenuItem(
+                    text = { Text(stringResource(R.string.browse_select)) },
+                    onClick = {
+                        expanded = false
+                        FolderSelectHost.current?.enter(actions.toPick())
+                    },
+                )
             }
             when (actions.kind) {
                 BrowseOverflowKind.Gallery -> {

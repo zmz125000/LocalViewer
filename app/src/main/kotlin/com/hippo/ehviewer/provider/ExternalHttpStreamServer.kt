@@ -14,6 +14,7 @@ import com.hippo.ehviewer.smb.SmbGateway
 import com.hippo.ehviewer.util.PrivacyLog
 import java.io.BufferedInputStream
 import java.io.BufferedOutputStream
+import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.IOException
 import java.io.InputStream
@@ -35,6 +36,8 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
+import java.util.zip.ZipEntry
+import java.util.zip.ZipOutputStream
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -1323,11 +1326,16 @@ object ExternalHttpStreamServer {
         val relSegs = segs.drop(2).filter { it.isNotEmpty() }
         val trailingSlash = rawPath.endsWith('/')
         val rel = relSegs.joinToString("/")
+        val download = queryParam(request.path, "dl")
         // Directory listing: session root, trailing slash, or a nested folder.
         if (segs.size == 2 || trailingSlash || rel.isEmpty()) {
             if (rel.isNotEmpty() && !isSafeRelativePath(rel)) {
                 writeSimple(output, 404, "Not Found", keepAlive = preferKeepAlive)
                 return preferKeepAlive
+            }
+            if (download == "zip") {
+                writeZipDownload(output, session, rel, headOnly)
+                return false
             }
             writeDirectoryListing(output, session, rel, headOnly, preferKeepAlive)
             return preferKeepAlive
@@ -1341,6 +1349,10 @@ object ExternalHttpStreamServer {
         if (entry == null) {
             val index = session.listDir(rel)
             if (!index.isEmpty) {
+                if (download == "zip") {
+                    writeZipDownload(output, session, rel, headOnly)
+                    return false
+                }
                 writeDirectoryListing(output, session, rel, headOnly, preferKeepAlive)
                 return preferKeepAlive
             }
@@ -1403,8 +1415,9 @@ object ExternalHttpStreamServer {
         // (header, moov, resume peek) and must not become the playhead or the
         // post-seek 256 KiB window.
         val streaming = contentLength > VideoDirectLinkByteSource.VIDEO_BLOCK
-        // History: first real playback GET (full file or long Range), not HEAD / probes.
-        if (!headOnly && (range == null || streaming)) {
+        val attachment = download == "1"
+        // History: first real playback GET (full file or long Range), not HEAD / probes / saves.
+        if (!headOnly && !attachment && (range == null || streaming)) {
             entry.notifyPlaybackStart()
         }
         session.prepareRange(
@@ -1426,7 +1439,10 @@ object ExternalHttpStreamServer {
                 append("Content-Range: bytes $start-$end/$total\r\n")
             }
             // Real file name for players that read Content-Disposition.
-            append("Content-Disposition: inline; filename=\"${escapeHeader(entry.displayName)}\"\r\n")
+            // ?dl=1 saves the file. A plain link stays inline so players can stream it.
+            val saveName = entry.displayName.substringAfterLast('/').substringAfterLast('\\')
+            val disposition = if (attachment) "attachment" else "inline"
+            append("Content-Disposition: $disposition; filename=\"${escapeHeader(saveName)}\"\r\n")
             append("Connection: $connHeader\r\n")
             if (preferKeepAlive) {
                 append("Keep-Alive: timeout=${KEEP_ALIVE_TIMEOUT_SEC}\r\n")
@@ -1589,30 +1605,13 @@ object ExternalHttpStreamServer {
     ) {
         val rel = normalizeRelativePath(relativeDir)
         val index = session.listDir(rel)
-        val pathLabel = if (rel.isEmpty()) {
-            "/s/${session.id}/"
-        } else {
-            "/s/${session.id}/$rel/"
-        }
-        val html = buildString {
-            append("<!DOCTYPE html><html><head><meta charset=\"utf-8\"/>")
-            append("<title>Index of ").append(escapeHtml(pathLabel)).append("</title></head><body>")
-            append("<h1>Index of ").append(escapeHtml(pathLabel)).append("</h1><hr/><pre>")
-            if (rel.isNotEmpty()) {
-                append("<a href=\"../\">../</a>\n")
-            }
-            for (name in index.dirs) {
-                val href = Uri.encode(name) + "/"
-                append("<a href=\"").append(href).append("\">")
-                append(escapeHtml(name)).append("/</a>\n")
-            }
-            for (name in index.files) {
-                val href = Uri.encode(name)
-                append("<a href=\"").append(href).append("\">")
-                append(escapeHtml(name)).append("</a>\n")
-            }
-            append("</pre><hr/></body></html>")
-        }
+        val heading = if (rel.isEmpty()) "Files" else rel.substringAfterLast('/')
+        val html = buildShareIndexHtml(
+            heading = heading,
+            showParent = rel.isNotEmpty(),
+            dirs = index.dirs,
+            files = index.files,
+        )
         val body = html.toByteArray(Charsets.UTF_8)
         val headers = buildString {
             append("HTTP/1.1 200 OK\r\n")
@@ -1624,6 +1623,128 @@ object ExternalHttpStreamServer {
         }
         output.write(headers.toByteArray(Charsets.US_ASCII))
         if (!headOnly) output.write(body)
+    }
+
+    /** Zip of this folder and the folders nested under it. */
+    private fun writeZipDownload(
+        output: OutputStream,
+        session: Session,
+        relativeDir: String,
+        headOnly: Boolean,
+    ) {
+        val rel = normalizeRelativePath(relativeDir)
+        val zipName = if (rel.isEmpty()) "files.zip" else rel.substringAfterLast('/') + ".zip"
+        val headers = buildString {
+            append("HTTP/1.1 200 OK\r\n")
+            append("Content-Type: application/zip\r\n")
+            append("Content-Disposition: attachment; filename=\"${escapeHeader(zipName)}\"\r\n")
+            append("Transfer-Encoding: chunked\r\n")
+            append("Connection: close\r\n")
+            append("Cache-Control: no-store\r\n")
+            append("\r\n")
+        }
+        output.write(headers.toByteArray(Charsets.US_ASCII))
+        if (headOnly) return
+        val chunked = ChunkedOutputStream(output)
+        try {
+            ZipOutputStream(chunked).use { zip ->
+                val buf = ByteArray(HTTP_BODY_BUFFER)
+                val seen = HashSet<String>()
+                fun addFile(path: String, zipPath: String) {
+                    if (!isSafeRelativePath(path)) return
+                    val entry = session.get(path) ?: return
+                    val body = try {
+                        session.acquireBody(entry)
+                    } catch (e: Throwable) {
+                        if (e !is IOException && !isBenignNotFound(e)) logcat("ExtHttp", e)
+                        return
+                    }
+                    try {
+                        zip.putNextEntry(ZipEntry(zipPath))
+                        var offset = 0L
+                        while (true) {
+                            val n = body.readAt(offset, buf, 0, buf.size)
+                            if (n <= 0) break
+                            zip.write(buf, 0, n)
+                            offset += n
+                        }
+                        zip.closeEntry()
+                    } catch (e: Throwable) {
+                        runCatching { zip.closeEntry() }
+                        if (e !is IOException && !isBenignNotFound(e)) logcat("ExtHttp", e)
+                    } finally {
+                        runCatching { body.close() }
+                    }
+                }
+                fun walk(dirRel: String, zipPrefix: String) {
+                    if (!seen.add(dirRel)) return
+                    val index = session.listDir(dirRel)
+                    for (name in index.files) {
+                        if (!isSafeFileName(name)) continue
+                        val path = if (dirRel.isEmpty()) name else "$dirRel/$name"
+                        addFile(path, zipPrefix + name)
+                    }
+                    for (name in index.dirs) {
+                        if (!isSafeFileName(name)) continue
+                        val child = if (dirRel.isEmpty()) name else "$dirRel/$name"
+                        if (!isSafeRelativePath(child)) continue
+                        val prefix = zipPrefix + name + "/"
+                        zip.putNextEntry(ZipEntry(prefix))
+                        zip.closeEntry()
+                        walk(child, prefix)
+                    }
+                }
+                walk(rel, "")
+            }
+        } catch (e: Throwable) {
+            if (e !is IOException) logcat("ExtHttp", e)
+        } finally {
+            runCatching { chunked.finish() }
+        }
+    }
+
+    private fun queryParam(path: String, key: String): String? {
+        val query = path.substringAfter('?', "")
+        if (query.isEmpty()) return null
+        for (part in query.split('&')) {
+            val eq = part.indexOf('=')
+            val name = if (eq < 0) part else part.substring(0, eq)
+            if (name != key) continue
+            if (eq < 0) return ""
+            return runCatching {
+                URLDecoder.decode(part.substring(eq + 1), Charsets.UTF_8)
+            }.getOrDefault("")
+        }
+        return null
+    }
+
+    private class ChunkedOutputStream(private val out: OutputStream) : OutputStream() {
+        private val pending = ByteArrayOutputStream(64 * 1024)
+
+        override fun write(b: Int) {
+            pending.write(b)
+            if (pending.size() >= 64 * 1024) flushChunk()
+        }
+
+        override fun write(b: ByteArray, off: Int, len: Int) {
+            if (len <= 0) return
+            pending.write(b, off, len)
+            if (pending.size() >= 64 * 1024) flushChunk()
+        }
+
+        fun finish() {
+            flushChunk()
+            out.write("0\r\n\r\n".toByteArray(Charsets.US_ASCII))
+        }
+
+        private fun flushChunk() {
+            val n = pending.size()
+            if (n == 0) return
+            out.write("${n.toString(16)}\r\n".toByteArray(Charsets.US_ASCII))
+            pending.writeTo(out)
+            out.write("\r\n".toByteArray(Charsets.US_ASCII))
+            pending.reset()
+        }
     }
 
     /** SMB/WebDAV “file does not exist” — expected for players inventing subtitle URLs. */
@@ -1648,6 +1769,69 @@ object ExternalHttpStreamServer {
         .filterNot { it == '\r' || it == '\n' || it == '\u0000' }
         .replace("\\", "\\\\")
         .replace("\"", "\\\"")
+
+    internal fun buildShareIndexHtml(
+        heading: String,
+        showParent: Boolean,
+        dirs: List<String>,
+        files: List<String>,
+    ): String = buildString {
+        append("<!DOCTYPE html><html><head><meta charset=\"utf-8\"/>")
+        append("<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"/>")
+        append("<title>").append(escapeHtml(heading)).append("</title>")
+        append("<style>")
+        append("body{font-family:sans-serif;margin:24px;}")
+        append("ul{list-style:none;padding:0;margin:16px 0;}")
+        append("li{display:flex;gap:12px;align-items:center;padding:8px 0;border-bottom:1px solid #ddd;}")
+        append("li .name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;}")
+        append("a.btn,button.btn{display:inline-block;padding:6px 12px;border:1px solid #888;border-radius:6px;")
+        append("text-decoration:none;color:inherit;white-space:nowrap;background:#fff;font:inherit;cursor:pointer;}")
+        append("</style></head><body>")
+        append("<h1>").append(escapeHtml(heading)).append("</h1>")
+        append("<p>")
+        append("<button type=\"button\" class=\"btn\" id=\"dl-files\">Download</button> ")
+        append("<a class=\"btn\" href=\"?dl=zip\">Download as zip</a>")
+        append("</p>")
+        append("<ul>")
+        if (showParent) {
+            append("<li><a class=\"name\" href=\"../\">..</a></li>")
+        }
+        for (name in dirs) {
+            val href = encodeShareHref(name) + "/"
+            append("<li><a class=\"name\" href=\"").append(href).append("\">")
+            append(escapeHtml(name)).append("/</a></li>")
+        }
+        for (name in files) {
+            val href = encodeShareHref(name)
+            append("<li><a class=\"name\" href=\"").append(href).append("\">")
+            append(escapeHtml(name)).append("</a>")
+            append("<a class=\"file-dl btn\" href=\"").append(href).append("?dl=1\" download=\"")
+            append(escapeHtml(name)).append("\">Download</a></li>")
+        }
+        append("</ul>")
+        append("<script>")
+        append("document.getElementById(\"dl-files\").onclick=function(){")
+        append("var links=document.querySelectorAll(\"a.file-dl\");")
+        append("for(var i=0;i<links.length;i++){(function(el,delay){")
+        append("setTimeout(function(){el.click();},delay);")
+        append("})(links[i],i*300);}")
+        append("};")
+        append("</script></body></html>")
+    }
+
+    internal fun encodeShareHref(name: String): String = buildString {
+        for (b in name.toByteArray(Charsets.UTF_8)) {
+            val c = b.toInt() and 0xff
+            val ch = c.toChar()
+            if (ch in 'A'..'Z' || ch in 'a'..'z' || ch in '0'..'9' || ch == '-' || ch == '_' || ch == '.' || ch == '~') {
+                append(ch)
+            } else {
+                append('%')
+                append("0123456789ABCDEF"[c ushr 4])
+                append("0123456789ABCDEF"[c and 0xf])
+            }
+        }
+    }
 
     private fun escapeHtml(s: String): String = buildString(s.length) {
         for (c in s) {
