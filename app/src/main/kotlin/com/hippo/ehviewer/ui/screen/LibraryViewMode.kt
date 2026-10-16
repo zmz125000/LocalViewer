@@ -354,7 +354,7 @@ fun mergeOpenMtimes(primary: Map<String, Long>, fallback: Map<String, Long>): Ma
  *     All photos stays date-sorted either way.
  * - Mid: List / Grid layout
  * - Bottom: Photo grid, All photos, All videos, zip as folder, back to dir, page count,
- *   reading progress, startup scan
+ *   reading progress, startup scan, live update
  *
  * Tap icon → menu. Long-press → toggle list ↔ grid.
  */
@@ -377,6 +377,7 @@ fun LibraryViewModeMenu(modifier: Modifier = Modifier) {
     var showGalleryPages by Settings.showGalleryPages.asMutableState()
     var showReadingProgress by Settings.showReadingProgress.asMutableState()
     var libraryStartupScan by Settings.libraryStartupScan.asMutableState()
+    var libraryLiveUpdate by Settings.libraryLiveUpdate.asMutableState()
     val haptic = LocalHapticFeedback.current
 
     Box(modifier) {
@@ -474,22 +475,6 @@ fun LibraryViewModeMenu(modifier: Modifier = Modifier) {
                 },
             )
             LibraryMenuToggleItem(
-                label = stringResource(R.string.browse_menu_zip_as_dir),
-                checked = browseZipAsDir,
-                onClick = { browseZipAsDir = !browseZipAsDir },
-            )
-            LibraryMenuToggleItem(
-                label = stringResource(R.string.settings_general_back_to_upper_dir),
-                checked = alwaysExitToDir,
-                onClick = {
-                    alwaysExitToDir = !alwaysExitToDir
-                    if (alwaysExitToDir) {
-                        Settings.historyDirBackToUpper.value = true
-                        Settings.sidePanelDirBackToUpper.value = true
-                    }
-                },
-            )
-            LibraryMenuToggleItem(
                 label = stringResource(R.string.browse_menu_page_count),
                 checked = showGalleryPages,
                 onClick = { showGalleryPages = !showGalleryPages },
@@ -498,6 +483,11 @@ fun LibraryViewModeMenu(modifier: Modifier = Modifier) {
                 label = stringResource(R.string.browse_menu_reading_progress),
                 checked = showReadingProgress,
                 onClick = { showReadingProgress = !showReadingProgress },
+            )
+            LibraryMenuToggleItem(
+                label = stringResource(R.string.settings_library_live_update),
+                checked = libraryLiveUpdate,
+                onClick = { libraryLiveUpdate = !libraryLiveUpdate },
             )
             LibraryMenuToggleItem(
                 label = stringResource(R.string.settings_library_startup_scan),

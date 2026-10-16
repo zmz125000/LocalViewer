@@ -494,6 +494,112 @@ object LocalLibrary {
     }
 
     /**
+     * Apply MediaStore rows that changed since the last scan. One folder row and
+     * one file row per matching library root — no descendant dump. Page lists
+     * already stored for that folder gain the new name; a missing list is left
+     * alone so a one-file write cannot wipe a full gallery.
+     *
+     * @return how many root/file pairs were written
+     */
+    suspend fun applyObservedMedia(files: List<MediaStoreLiveFile>): Int = withIOContext {
+        if (files.isEmpty()) return@withIOContext 0
+        scanMutex.withLock {
+            val includeHidden = Settings.scanHiddenFiles.value
+            val roots = db.libraryRootDao().listByRole(LIBRARY_ROOT_ROLE_LIBRARY)
+            var applied = 0
+            for (root in roots) {
+                if (db.libraryRootDao().load(root.id) == null) continue
+                val path = rootPath(root) ?: continue
+                val msRoot = when {
+                    path.isMediaStorePath() -> path
+                    else -> tryConvertSafPathToMediaStore(path)
+                } ?: continue
+                if (!MediaPermissions.hasMediaAccess()) continue
+                val mediaRelative = msRoot.mediaStoreRelativeDir()
+                val configKey = LocalFolderListing.rootConfigKey(path, root.prefersMediaStore)
+                for (file in files) {
+                    val folderRel = SafMediaStoreListing.relativeUnderRoot(
+                        mediaRelative,
+                        file.parentRelative,
+                    ) ?: continue
+                    val folderKey = folderRel.ifEmpty { "." }
+                    val fileRel = if (folderRel.isEmpty()) file.name else "$folderRel/${file.name}"
+                    val folderId = if (file.video) {
+                        libraryVideoFolderId(root.id, folderKey)
+                    } else {
+                        stableGalleryId(root.id, folderKey)
+                    }
+                    val fileId = if (file.video) {
+                        libraryVideoFileId(root.id, fileRel)
+                    } else {
+                        libraryImageFileId(root.id, fileRel)
+                    }
+                    val existingFolder = db.localGalleryDao().load(folderId)
+                    val existingFile = db.localGalleryDao().load(fileId)
+                    val planned = MediaStoreLiveUpdate.plan(
+                        rootId = root.id,
+                        rootDisplayName = root.displayName,
+                        safRoot = path,
+                        folderRelative = folderRel,
+                        file = file,
+                        existingFolder = existingFolder,
+                        existingFile = existingFile,
+                        includeHidden = includeHidden,
+                    ) ?: continue
+                    db.localGalleryDao().upsertAll(listOf(planned.folder, planned.file))
+                    applied++
+                    if (planned.insertedNewFile) {
+                        appendObservedFolderIndex(
+                            rootId = root.id,
+                            configKey = configKey,
+                            rootAbs = path,
+                            planned = planned,
+                            previousPageCount = existingFolder?.pageCount ?: 0,
+                        )
+                    }
+                }
+            }
+            if (applied > 0) {
+                logcat("LocalLibrary") { "MediaStore live update: $applied" }
+            }
+            applied
+        }
+    }
+
+    private suspend fun appendObservedFolderIndex(
+        rootId: Long,
+        configKey: String,
+        rootAbs: Path,
+        planned: PlannedMediaRow,
+        previousPageCount: Int,
+    ) {
+        val previous = if (planned.video) {
+            FolderGalleryIndex.loadLocalVideos(rootId, configKey, planned.folderDir, rootAbs)
+        } else {
+            FolderGalleryIndex.loadLocal(rootId, configKey, planned.folderDir, rootAbs)
+        }
+        if (!MediaStoreLiveUpdate.indexIsComplete(previous, previousPageCount)) return
+        val next = MediaStoreLiveUpdate.appendSortedName(previous.orEmpty(), planned.file.title)
+        if (next == previous) return
+        if (planned.video) {
+            FolderGalleryIndex.persistLocalFolderPages(
+                rootId = rootId,
+                configKey = configKey,
+                rootAbs = rootAbs,
+                pages = emptyMap(),
+                videos = mapOf(planned.folderDir to next),
+            )
+        } else {
+            FolderGalleryIndex.persistLocalFolderPages(
+                rootId = rootId,
+                configKey = configKey,
+                rootAbs = rootAbs,
+                pages = mapOf(planned.folderDir to next),
+            )
+        }
+    }
+
+    /**
      * Prefer MediaStore for gallery open when the gallery path was stored as SAF and
      * the owning root wants media mode; otherwise keep the stored path (archives stay SAF).
      */

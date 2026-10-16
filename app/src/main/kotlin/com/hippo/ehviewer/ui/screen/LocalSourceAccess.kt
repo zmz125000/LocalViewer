@@ -39,6 +39,7 @@ import androidx.compose.ui.unit.dp
 import com.ehviewer.core.database.model.LIBRARY_ROOT_ROLE_LIBRARY
 import com.ehviewer.core.i18n.R
 import com.hippo.ehviewer.library.MediaPermissions
+import com.hippo.ehviewer.library.MediaStoreWatch
 
 /**
  * Access method when adding a library / folder source:
@@ -204,6 +205,7 @@ fun rememberMediaPermissionLauncher(
             result[Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED] == true ||
             MediaPermissions.hasMediaAccess(context)
         if (granted) {
+            MediaStoreWatch.start(context)
             onGranted(pendingRole)
         } else {
             onDenied()

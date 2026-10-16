@@ -383,7 +383,14 @@ object Settings : DataStorePreferences(null) {
      * (MediaStore roots skip a full dump when generation / DATE_MODIFIED fingerprint match;
      * archive-mode sources walk for new folders/archives and skip known zips).
      */
-    val libraryStartupScan = boolPref("library_startup_scan", true)
+    val libraryStartupScan = boolPref("library_startup_scan", false)
+
+    /**
+     * When true (default), [com.hippo.ehviewer.library.MediaStoreWatch] applies new
+     * MediaStore images and videos without waiting for the next startup scan.
+     */
+    val libraryLiveUpdate = boolPref("library_live_update", true)
+        .observed(::updateWhenLibraryLiveUpdateChanges)
 
     /**
      * Per-root MediaStore skip stamps for library startup:

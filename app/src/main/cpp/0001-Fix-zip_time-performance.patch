@@ -3,6 +3,9 @@ From: Dude so hot <djohn@fbi.gov>
 Date: Thu, 14 Nov 2024 00:28:13 +0800
 Subject: [PATCH] Fix zip_time performance
 
+Skip mktime() in DOS timestamp conversion. Refreshed for libarchive 3.8.10,
+where dos_to_unix was renamed to __archive_dos_to_unix.
+
 Signed-off-by: Dude so hot <djohn@fbi.gov>
 ---
  libarchive/archive_time.c | 1 +
@@ -12,9 +15,9 @@ diff --git a/libarchive/archive_time.c b/libarchive/archive_time.c
 index 3352c809..9289bf1e 100644
 --- a/libarchive/archive_time.c
 +++ b/libarchive/archive_time.c
-@@ -53,6 +53,7 @@ FILETIME_to_ntfs(const FILETIME* filetime)
+@@ -61,6 +61,7 @@ __archive_FILETIME_to_ntfs(const FILETIME* filetime)
  int64_t
- dos_to_unix(uint32_t dos_time)
+ __archive_dos_to_unix(uint32_t dos_time)
  {
 +	return 0;
  	uint16_t msTime, msDate;
@@ -22,4 +25,3 @@ index 3352c809..9289bf1e 100644
  	time_t t;
 -- 
 2.47.0
-

@@ -23,8 +23,8 @@
     <string name="browse_manage_sources">管理源</string>
     <string name="browse_manage_sources_short">源</string>
     <string name="network_duplicate_smb">复制</string>
-    <string name="library_empty">还没有图库。请从浏览页顶部栏添加图库源。</string>
-    <string name="library_empty_videos">还没有视频。请从浏览页顶部栏添加图库源。</string>
+    <string name="library_empty">请从浏览页添加图库源</string>
+    <string name="library_empty_videos">请从浏览页添加图库源</string>
     <string name="library_video_folders">视频文件夹</string>
     <string name="library_video_all">全部视频</string>
     <string name="library_photo_all">全部图片</string>
@@ -50,6 +50,8 @@
     <string name="settings_library_summary">用于扫描图片图库的本地文件夹</string>
     <string name="settings_library_startup_scan">启动时扫描图库</string>
     <string name="settings_library_startup_scan_summary">启动时清理不可访问的图库，并对媒体库来源重新扫描。文件/归档模式来源仅做缺失条目清理（不做完整目录遍历）。</string>
+    <string name="settings_library_live_update">图库实时更新</string>
+    <string name="settings_library_live_update_summary">媒体库出现新照片或视频时更新图库。</string>
     <string name="library_gallery_folder">文件夹</string>
     <string name="library_gallery_archive">压缩包</string>
     <string name="library_sort_name">名称</string>
@@ -533,7 +535,7 @@
     <string name="settings_privacy_save_file_markers_summary">在应用数据中保存按文件的跳过记录（例如视频缩略图失败）。不在缓存中。关闭后会删除已有标记。</string>
     <string name="history_disabled">历史记录已在隐私设置中关闭</string>
     <string name="library_add_library_source">添加图库源</string>
-    <string name="library_add_folder_source">添加浏览文件夹</string>
+    <string name="library_add_folder_source">添加文件夹</string>
     <string name="library_root_already_added">该文件夹已添加</string>
     <string name="folder_no_browse_roots">暂无仅浏览文件夹</string>
     <!-- Filter -->

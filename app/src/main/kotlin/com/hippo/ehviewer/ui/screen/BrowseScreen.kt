@@ -531,12 +531,7 @@ fun AnimatedVisibilityScope.BrowseScreen(navigator: DestinationsNavigator) = Scr
     ) { padding ->
         val empty = roots.isEmpty() && smbSources.isEmpty() && webDavSources.isEmpty()
         val gridInset = 12.dp
-        if (empty) {
-            BrowseEmptyHint(
-                text = stringResource(R.string.browse_empty),
-                modifier = Modifier.padding(padding),
-            )
-        } else if (gridView) {
+        if (gridView) {
             FastScrollLazyVerticalGrid(
                 columns = GridCells.Adaptive(minSize = 140.dp),
                 state = gridState,

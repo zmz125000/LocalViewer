@@ -69,6 +69,7 @@ import com.hippo.ehviewer.ktor.configureCommon
 import com.hippo.ehviewer.ktor.isCronetAvailable
 import com.hippo.ehviewer.library.LocalFolderListing
 import com.hippo.ehviewer.library.LocalLibrary
+import com.hippo.ehviewer.library.MediaStoreWatch
 import com.hippo.ehviewer.library.OriginDiskCache
 import com.hippo.ehviewer.library.VideoThumbnail
 import com.hippo.ehviewer.provider.ExternalHttpStreamServer
@@ -134,11 +135,13 @@ class EhApplication : Application(), SingletonImageLoader.Factory {
                         LocalFolderListing.cancelListingJobs()
                         SmbGateway.onAppBackgrounded()
                         WebDavClient.onAppBackgrounded()
+                        MediaStoreWatch.onAppBackgrounded()
                     }
                     Lifecycle.Event.ON_START -> {
                         VideoThumbnail.onAppForegrounded()
                         SmbGateway.onAppForegrounded()
                         WebDavClient.onAppForegrounded()
+                        MediaStoreWatch.onAppForegrounded()
                     }
                     else -> Unit
                 }
@@ -162,6 +165,10 @@ class EhApplication : Application(), SingletonImageLoader.Factory {
             }
             launch { cleanupDownload() }
             // Library: skip unchanged MediaStore roots; archive sources rescan with known zips.
+            launch {
+                if (!Settings.libraryLiveUpdate.value) return@launch
+                runCatching { MediaStoreWatch.start(this@EhApplication) }.onFailure { logcat(it) }
+            }
             launch {
                 if (!Settings.libraryStartupScan.value) return@launch
                 runCatching { LocalLibrary.startupMaintenance() }.onFailure { logcat(it) }
@@ -213,8 +220,14 @@ class EhApplication : Application(), SingletonImageLoader.Factory {
         val receiver = object : BroadcastReceiver() {
             override fun onReceive(context: Context, intent: Intent?) {
                 when (intent?.action) {
-                    Intent.ACTION_SCREEN_OFF -> StreamKeepAlivePolicy.onScreenOff()
-                    Intent.ACTION_SCREEN_ON -> StreamKeepAlivePolicy.onScreenOn(context)
+                    Intent.ACTION_SCREEN_OFF -> {
+                        StreamKeepAlivePolicy.onScreenOff()
+                        MediaStoreWatch.onScreenOff()
+                    }
+                    Intent.ACTION_SCREEN_ON -> {
+                        StreamKeepAlivePolicy.onScreenOn(context)
+                        MediaStoreWatch.onScreenOn()
+                    }
                 }
             }
         }

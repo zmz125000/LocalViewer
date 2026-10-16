@@ -23,8 +23,8 @@
     <string name="browse_manage_sources">Manage Sources</string>
     <string name="browse_manage_sources_short">Sources</string>
     <string name="network_duplicate_smb">Duplicate</string>
-    <string name="library_empty">No galleries yet. Add a library source from the Browse top bar.</string>
-    <string name="library_empty_videos">No videos yet. Add a library source from the Browse top bar.</string>
+    <string name="library_empty">Add library sources from browse tab</string>
+    <string name="library_empty_videos">Add library sources from browse tab</string>
     <string name="library_video_folders">Video folders</string>
     <string name="library_video_all">All videos</string>
     <string name="library_photo_all">All photos</string>
@@ -54,6 +54,8 @@
     <string name="settings_library_summary">Local folders to scan for picture galleries</string>
     <string name="settings_library_startup_scan">Scan library on startup</string>
     <string name="settings_library_startup_scan_summary">On launch, remove inaccessible galleries and rescan MediaStore sources. File/archive sources only prune missing entries (no full tree walk).</string>
+    <string name="settings_library_live_update">Library live update</string>
+    <string name="settings_library_live_update_summary">Update the library when new photos or videos appear.</string>
     <string name="library_gallery_folder">Folder</string>
     <string name="library_gallery_archive">Archive</string>
     <string name="library_sort_name">Name</string>
