@@ -87,40 +87,37 @@ class HttpSelectionListing {
 
     fun isEmpty(): Boolean = files.isEmpty() && folders.isEmpty()
 
-    internal fun toDirSource(): ExternalHttpStreamServer.HttpDirSource =
-        object : ExternalHttpStreamServer.HttpDirSource {
-            override fun list(relativeDir: String): ExternalHttpStreamServer.HttpDirIndex {
-                val rel = ExternalHttpStreamServer.normalizeRelativePath(relativeDir)
-                if (rel.isNotEmpty() && !ExternalHttpStreamServer.isSafeRelativePath(rel)) {
-                    return ExternalHttpStreamServer.HttpDirIndex()
-                }
-                if (rel.isEmpty()) {
-                    return ExternalHttpStreamServer.HttpDirIndex(
-                        files = files.keys.toList(),
-                        dirs = folders.keys.toList(),
-                    )
-                }
-                val slash = rel.indexOf('/')
-                val head = if (slash < 0) rel else rel.substring(0, slash)
-                val rest = if (slash < 0) "" else rel.substring(slash + 1)
-                return folder(head)?.list(rest) ?: ExternalHttpStreamServer.HttpDirIndex()
+    internal fun toDirSource(): ExternalHttpStreamServer.HttpDirSource = object : ExternalHttpStreamServer.HttpDirSource {
+        override fun list(relativeDir: String): ExternalHttpStreamServer.HttpDirIndex {
+            val rel = ExternalHttpStreamServer.normalizeRelativePath(relativeDir)
+            if (rel.isNotEmpty() && !ExternalHttpStreamServer.isSafeRelativePath(rel)) {
+                return ExternalHttpStreamServer.HttpDirIndex()
             }
-
-            override fun open(relativeFile: String): ExternalHttpStreamServer.FileEntry? {
-                if (!ExternalHttpStreamServer.isSafeRelativePath(relativeFile)) return null
-                val rel = ExternalHttpStreamServer.normalizeRelativePath(relativeFile)
-                file(rel)?.let { return it }
-                val slash = rel.indexOf('/')
-                if (slash < 0) return null
-                return folder(rel.substring(0, slash))?.open(rel.substring(slash + 1))
+            if (rel.isEmpty()) {
+                return ExternalHttpStreamServer.HttpDirIndex(
+                    files = files.keys.toList(),
+                    dirs = folders.keys.toList(),
+                )
             }
-
-            private fun file(name: String): ExternalHttpStreamServer.FileEntry? =
-                files[name] ?: files.entries.firstOrNull { it.key.equals(name, ignoreCase = true) }?.value
-
-            private fun folder(name: String): ExternalHttpStreamServer.HttpDirSource? =
-                folders[name] ?: folders.entries.firstOrNull { it.key.equals(name, ignoreCase = true) }?.value
+            val slash = rel.indexOf('/')
+            val head = if (slash < 0) rel else rel.substring(0, slash)
+            val rest = if (slash < 0) "" else rel.substring(slash + 1)
+            return folder(head)?.list(rest) ?: ExternalHttpStreamServer.HttpDirIndex()
         }
+
+        override fun open(relativeFile: String): ExternalHttpStreamServer.FileEntry? {
+            if (!ExternalHttpStreamServer.isSafeRelativePath(relativeFile)) return null
+            val rel = ExternalHttpStreamServer.normalizeRelativePath(relativeFile)
+            file(rel)?.let { return it }
+            val slash = rel.indexOf('/')
+            if (slash < 0) return null
+            return folder(rel.substring(0, slash))?.open(rel.substring(slash + 1))
+        }
+
+        private fun file(name: String): ExternalHttpStreamServer.FileEntry? = files[name] ?: files.entries.firstOrNull { it.key.equals(name, ignoreCase = true) }?.value
+
+        private fun folder(name: String): ExternalHttpStreamServer.HttpDirSource? = folders[name] ?: folders.entries.firstOrNull { it.key.equals(name, ignoreCase = true) }?.value
+    }
 
     private fun uniqueName(raw: String): String {
         val leaf = raw.substringAfterLast('/').substringAfterLast('\\').trim()
