@@ -155,6 +155,7 @@ import com.hippo.ehviewer.ui.main.awaitHttpShareQr
 import com.hippo.ehviewer.ui.navToReader
 import com.hippo.ehviewer.ui.reader.PendingReaderOpen
 import com.hippo.ehviewer.ui.screen.ExplorerPanelActions
+import com.hippo.ehviewer.ui.screen.openSelectionPlace
 import com.hippo.ehviewer.ui.screen.ExplorerSidePanelHost
 import com.hippo.ehviewer.ui.screen.LocalExplorerPanel
 import com.hippo.ehviewer.ui.screen.toggleHistorySection
@@ -728,7 +729,29 @@ class MainActivity : AppCompatActivity() {
                             },
                         ) {
                             BrowseSaveSnackbars()
-                            FolderSelectBars()
+                            FolderSelectBars(
+                                onOpenFolder = { place ->
+                                    val browserSourceId = when (currentDestination) {
+                                        SmbBrowserScreenDestination ->
+                                            navBackStackEntry?.arguments?.let {
+                                                SmbBrowserScreenDestination.argsFrom(it).sourceId
+                                            }
+                                        WebDavBrowserScreenDestination ->
+                                            navBackStackEntry?.arguments?.let {
+                                                WebDavBrowserScreenDestination.argsFrom(it).sourceId
+                                            }
+                                        else -> null
+                                    }
+                                    openSelectionPlace(
+                                        navigator,
+                                        place,
+                                        currentDestination,
+                                        browserSourceId,
+                                        fromHistoryArg,
+                                        fromLibraryArg,
+                                    )
+                                },
+                            )
                             HttpShareSnackbars(
                                 onShare = { item ->
                                     scope.launch {

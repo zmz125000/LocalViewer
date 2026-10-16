@@ -1102,6 +1102,7 @@
     <string name="browse_list">List</string>
     <string name="browse_selection">Selection</string>
     <string name="browse_task">Task</string>
+    <string name="browse_task_progress_in_folder">%1$s - %2$s</string>
     <string name="browse_tasks">Tasks</string>
     <string name="browse_pending">Pending</string>
     <string name="browse_finished">Finished</string>

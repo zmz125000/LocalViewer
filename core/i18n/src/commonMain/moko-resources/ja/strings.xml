@@ -1008,6 +1008,7 @@
     <string name="browse_list">リスト</string>
     <string name="browse_selection">選択</string>
     <string name="browse_task">タスク</string>
+    <string name="browse_task_progress_in_folder">%1$s - %2$s</string>
     <string name="browse_tasks">タスク</string>
     <string name="browse_pending">待機中</string>
     <string name="browse_finished">完了</string>

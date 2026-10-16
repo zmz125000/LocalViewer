@@ -155,6 +155,7 @@ import com.hippo.ehviewer.ui.main.BrowseSectionHeader
 import com.hippo.ehviewer.ui.main.BrowseVideoGridItem
 import com.hippo.ehviewer.ui.main.BrowseVideoRow
 import com.hippo.ehviewer.ui.main.FolderSelectHost
+import com.hippo.ehviewer.ui.main.FolderPlace
 import com.hippo.ehviewer.ui.main.FolderSelectState
 import com.hippo.ehviewer.ui.main.GalleryGridDefaults
 import com.hippo.ehviewer.ui.main.HttpSelectionListing
@@ -303,7 +304,15 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
         onDispose { FolderSelectHost.detach(folderSelect) }
     }
     val title = segments.lastOrNull() ?: source?.displayName ?: stringResource(R.string.network)
-    folderSelect.bindFolder("dav:$sourceId:$relativeDir", title)
+    folderSelect.bindFolder(
+        "dav:$sourceId:$relativeDir",
+        title,
+        FolderPlace(
+            kind = ExplorerWindows.Kind.WebDav,
+            sourceId = sourceId,
+            relativePath = relativeDir,
+        ),
+    )
 
     fun dirRelative(name: String): String = if (relativeDir.isEmpty()) name else WebDavGateway.joinRelative(relativeDir, name)
 

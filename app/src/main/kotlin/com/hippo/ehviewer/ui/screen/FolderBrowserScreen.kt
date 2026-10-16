@@ -159,6 +159,7 @@ import com.hippo.ehviewer.ui.main.BrowseSectionHeader
 import com.hippo.ehviewer.ui.main.BrowseVideoGridItem
 import com.hippo.ehviewer.ui.main.BrowseVideoRow
 import com.hippo.ehviewer.ui.main.FolderSelectHost
+import com.hippo.ehviewer.ui.main.FolderPlace
 import com.hippo.ehviewer.ui.main.FolderSelectState
 import com.hippo.ehviewer.ui.main.GalleryGridDefaults
 import com.hippo.ehviewer.ui.main.HttpSelectionListing
@@ -381,7 +382,18 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
     val current = stack.lastOrNull()
     val currentPath = current?.path
     val title = current?.title?.safFolderLabel() ?: stringResource(R.string.folder)
-    folderSelect.bindFolder(selectFolderKey, title)
+    val selectPlace = current?.let { frame ->
+        val rootEntity = roots.find { it.id == frame.rootId }
+        FolderPlace(
+            kind = ExplorerWindows.Kind.Local,
+            sourceId = frame.rootId,
+            relativePath = displayRelative(frame),
+            rootPath = rootEntity?.let { LocalLibrary.rootPath(it) }?.toString(),
+            rootDisplayName = rootEntity?.displayName?.safFolderLabel().orEmpty(),
+            preferMediaStore = frame.preferMediaStore,
+        )
+    }
+    folderSelect.bindFolder(selectFolderKey, title, selectPlace)
     val searchHint = stringResource(R.string.search_bar_hint, title)
 
     fun toggleDirFavorite(dir: BrowseEntry.Directory) {
