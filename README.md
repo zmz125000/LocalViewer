@@ -78,9 +78,6 @@ Similar to Perfect Viewer and Kuro Reader, with Hi-Res images support (no downsc
 
 Build with Grok 4.5.
 
-The app is now stable and polished.  
-Thank you for your support.  
-
 <a href="https://github.com/zmz125000/LocalViewer/releases">
 <img alt="Get it on GitHub" src="https://github.com/zmz125000/LocalViewer-art/blob/master/get-it-on-github.svg" width="200px"/>
 </a>
@@ -126,6 +123,7 @@ Thank you for your support.
 * The custom SMBJ and WebDAV clients achieve 1 Gbps network speeds over Wi-Fi 7, so after v1.11.x the image reader defaults to have image caching disabled.
 * Windows 11 JXR HDR screenshots can be displayed directly in fp16 bitmaps without tone mapping, or transcode to Ultra HDR Jpeg. The prefetch and decode ahead is set to 1 for JXR format to avoid OOM crashed.
 * The image loader was tweaked for preloading and decoding 20MB jpg files without any OOM crashes, and smaller files should load instantly.
+* Accurate HDR presentation of RAW and JXR images (compared with DaVinci Resolve).
 
 ### To use WebDAV
 
