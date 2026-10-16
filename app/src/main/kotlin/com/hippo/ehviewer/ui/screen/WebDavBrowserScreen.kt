@@ -301,8 +301,8 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
         FolderSelectHost.attach(folderSelect)
         onDispose { FolderSelectHost.detach(folderSelect) }
     }
-    folderSelect.bindFolder("dav:$sourceId:$relativeDir")
     val title = segments.lastOrNull() ?: source?.displayName ?: stringResource(R.string.network)
+    folderSelect.bindFolder("dav:$sourceId:$relativeDir", title)
 
     fun dirRelative(name: String): String = if (relativeDir.isEmpty()) name else WebDavGateway.joinRelative(relativeDir, name)
 
@@ -889,7 +889,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
     val hideBackToFab by Settings.hideBackToFab.collectAsState()
     fun onTopBarBack() {
         if (folderSelect.selecting && !FolderSelectHost.taskRunning) {
-            folderSelect.cancel()
+            folderSelect.exitSelectMode()
             return
         }
         if (hideBackToFab) jumpBackToOrigin() else goUp()
@@ -903,7 +903,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
         goUp()
     }
     BackHandler(enabled = folderSelect.selecting && !FolderSelectHost.taskRunning) {
-        folderSelect.cancel()
+        folderSelect.exitSelectMode()
     }
 
     /**

@@ -82,50 +82,82 @@ import moe.tarsin.snackbar
 import okio.Path
 
 /**
- * Selection for the folder browser on screen. Each folder keeps its own select mode and picks.
- * Batch progress lives on [FolderSelectHost] so the task snackbar can outlive the listing.
+ * Live selection for the folder browser on screen.
+ * Each folder keeps its own select mode and picks on [FolderSelectHost].
+ * Back leaves select mode. The snackbar stays until Cancel.
  */
 class FolderSelectState {
     var selecting by mutableStateOf(false)
+    var snackbar by mutableStateOf(false)
+    var folderName by mutableStateOf("")
     val picks = mutableStateListOf<FolderPick>()
     var sectionKeys by mutableStateOf<Map<BrowseFolderSection, List<String>>>(emptyMap())
 
-    private var folderKey: String? = null
-    private val byFolder = mutableMapOf<String, FolderSelection>()
+    var folderKey: String? = null
+        private set
 
     /** Show [key]'s selection. Leaving a folder stores it; coming back restores it. */
-    fun bindFolder(key: String) {
-        if (folderKey == key) return
-        folderKey?.let { previous -> store(previous) }
+    fun bindFolder(key: String, name: String = "") {
+        if (folderKey == key) {
+            if (name.isNotEmpty() && name != folderName) {
+                folderName = name
+                sync()
+            }
+            return
+        }
+        if (folderKey != null) sync()
         folderKey = key
-        val saved = byFolder[key]
+        val saved = FolderSelectHost.folderMemory(key)
+        folderName = name.ifEmpty { saved?.folderName.orEmpty() }
         selecting = saved?.selecting == true
+        snackbar = saved?.snackbar == true
         picks.clear()
         if (saved != null) picks.addAll(saved.picks)
         sectionKeys = emptyMap()
+        FolderSelectHost.refreshSelectionSnack()
     }
 
     /** Enter select mode and select [pick] when it came from that row's overflow menu. */
     fun enter(pick: FolderPick? = null) {
         selecting = true
+        snackbar = true
         if (pick != null && picks.none { it.key == pick.key }) {
             picks.add(pick)
         }
+        sync()
+    }
+
+    /** Leave select mode. Picks and the snackbar stay until [cancel]. */
+    fun exitSelectMode() {
+        if (!selecting) return
+        selecting = false
+        sync()
     }
 
     fun cancel() {
+        val key = folderKey
         selecting = false
+        snackbar = false
         picks.clear()
-        folderKey?.let { byFolder.remove(it) }
+        if (key != null) {
+            FolderSelectHost.forgetFolder(key)
+        } else {
+            FolderSelectHost.refreshSelectionSnack()
+        }
         if (!FolderSelectHost.taskRunning) FolderSelectHost.dialog = false
     }
 
-    private fun store(key: String) {
-        if (!selecting && picks.isEmpty()) {
-            byFolder.remove(key)
-        } else {
-            byFolder[key] = FolderSelection(selecting, picks.toList())
-        }
+    internal fun sync() {
+        val key = folderKey ?: return
+        FolderSelectHost.rememberFolder(
+            key,
+            FolderMemory(
+                selecting = selecting,
+                picks = picks.toList(),
+                folderName = folderName,
+                snackbar = snackbar,
+            ),
+        )
     }
 
     fun isSelected(key: String): Boolean = picks.any { it.key == key }
@@ -137,10 +169,12 @@ class FolderSelectState {
         } else {
             picks.add(item)
         }
+        sync()
     }
 
     fun remove(key: String) {
         picks.removeAll { it.key == key }
+        sync()
     }
 
     /** Selected count in [section] to the number of rows in that section. */
@@ -153,9 +187,17 @@ class FolderSelectState {
     }
 }
 
-private class FolderSelection(
+internal data class FolderMemory(
     val selecting: Boolean,
     val picks: List<FolderPick>,
+    val folderName: String,
+    val snackbar: Boolean,
+)
+
+data class SelectionSnack(
+    val folderKey: String,
+    val folderName: String,
+    val count: Int,
 )
 
 data class FolderPick(
@@ -248,18 +290,99 @@ object FolderSelectHost {
         private set
     val taskRunning: Boolean get() = batch != null
     var dialog by mutableStateOf(false)
+    var selectionSnack by mutableStateOf<SelectionSnack?>(null)
+        private set
+    var selectionPicks by mutableStateOf<List<FolderPick>>(emptyList())
+        private set
 
+    private val folders = mutableMapOf<String, FolderMemory>()
+    private val snackbarOrder = ArrayDeque<String>()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val ids = AtomicLong(1)
 
     fun attach(state: FolderSelectState) {
         current = state
+        refreshSelectionSnack()
     }
 
     fun detach(state: FolderSelectState) {
         if (current !== state) return
+        state.sync()
         current = null
-        if (batch == null) dialog = false
+        refreshSelectionSnack()
+        if (batch == null && selectionSnack == null) dialog = false
+    }
+
+    internal fun folderMemory(key: String): FolderMemory? = folders[key]
+
+    internal fun rememberFolder(key: String, memory: FolderMemory) {
+        if (!memory.selecting && memory.picks.isEmpty() && !memory.snackbar) {
+            folders.remove(key)
+            snackbarOrder.remove(key)
+        } else {
+            folders[key] = memory
+            if (memory.snackbar) {
+                snackbarOrder.remove(key)
+                snackbarOrder.addLast(key)
+            }
+        }
+        refreshSelectionSnack()
+    }
+
+    internal fun forgetFolder(key: String) {
+        folders.remove(key)
+        snackbarOrder.remove(key)
+        refreshSelectionSnack()
+    }
+
+    internal fun refreshSelectionSnack() {
+        val live = current
+        val liveKey = live?.folderKey
+        if (live != null && live.snackbar && liveKey != null) {
+            selectionSnack = SelectionSnack(liveKey, live.folderName, live.picks.size)
+            selectionPicks = live.picks.toList()
+            return
+        }
+        val key = snackbarOrder.lastOrNull { folders[it]?.snackbar == true }
+        val saved = key?.let { folders[it] }
+        if (key != null && saved != null) {
+            selectionSnack = SelectionSnack(key, saved.folderName, saved.picks.size)
+            selectionPicks = saved.picks
+        } else {
+            selectionSnack = null
+            selectionPicks = emptyList()
+        }
+    }
+
+    fun cancelShownSelection() {
+        val key = selectionSnack?.folderKey ?: return
+        val live = current
+        if (live != null && live.folderKey == key) {
+            live.cancel()
+            return
+        }
+        forgetFolder(key)
+        if (!taskRunning) dialog = false
+    }
+
+    fun removeShownPick(pickKey: String) {
+        val folderKey = selectionSnack?.folderKey ?: return
+        val live = current
+        if (live != null && live.folderKey == folderKey) {
+            live.remove(pickKey)
+            return
+        }
+        val saved = folders[folderKey] ?: return
+        rememberFolder(folderKey, saved.copy(picks = saved.picks.filterNot { it.key == pickKey }))
+    }
+
+    internal fun resetForTest() {
+        folders.clear()
+        snackbarOrder.clear()
+        selectionSnack = null
+        selectionPicks = emptyList()
+        current = null
+        dialog = false
     }
 
     internal fun startTasks(jobs: List<TaskJob>, dir: Path) {
@@ -311,10 +434,10 @@ object FolderSelectHost {
 
 @Composable
 fun FolderSelectBars(modifier: Modifier = Modifier) {
-    val select = FolderSelectHost.current
+    val snack = FolderSelectHost.selectionSnack
     val batch = FolderSelectHost.batch
-    if (select != null && select.selecting && batch == null) {
-        FolderSelectSnackbar(select, modifier)
+    if (snack != null && batch == null) {
+        FolderSelectSnackbar(snack, modifier)
     }
     if (batch != null) {
         FolderTaskSnackbar(batch, modifier)
@@ -325,8 +448,7 @@ fun FolderSelectBars(modifier: Modifier = Modifier) {
 }
 
 @Composable
-private fun FolderSelectSnackbar(state: FolderSelectState, modifier: Modifier) {
-    val count = state.picks.size
+private fun FolderSelectSnackbar(snack: SelectionSnack, modifier: Modifier) {
     Snackbar(
         modifier = modifier.padding(horizontal = 16.dp, vertical = 8.dp),
         containerColor = snackbarContainerColor(),
@@ -341,14 +463,14 @@ private fun FolderSelectSnackbar(state: FolderSelectState, modifier: Modifier) {
         },
         dismissAction = {
             TextButton(
-                onClick = { state.cancel() },
+                onClick = { FolderSelectHost.cancelShownSelection() },
                 colors = snackbarDismissButtonColors(),
             ) {
                 Text(stringResource(android.R.string.cancel))
             }
         },
     ) {
-        Text(stringResource(R.string.browse_selected_count, count))
+        Text(stringResource(R.string.browse_selected_in_folder, snack.count, snack.folderName))
     }
 }
 
@@ -468,17 +590,16 @@ private fun FolderTasksDialog() {
 @Composable
 private fun TasksPanel(tablet: Boolean) {
     val batch = FolderSelectHost.batch
-    val state = FolderSelectHost.current
     val context = LocalContext.current
     val snackbar = LocalSnackBarHostState.current
     val scope = rememberCoroutineScope()
     var menu by remember { mutableStateOf(false) }
     var convertMenu by remember { mutableStateOf(false) }
-    val picks = state?.picks
+    val picks = FolderSelectHost.selectionPicks
     val showSelection = batch == null
-    val shareable = picks?.count { it.shareHttp != null } ?: 0
-    val convertible = picks?.count { it.convertStill != null } ?: 0
-    val savable = picks?.count { it.saveInto != null } ?: 0
+    val shareable = picks.count { it.shareHttp != null }
+    val convertible = picks.count { it.convertStill != null }
+    val savable = picks.count { it.saveInto != null }
     val headerStyle = if (tablet) {
         MaterialTheme.typography.titleLarge
     } else {
@@ -558,7 +679,7 @@ private fun TasksPanel(tablet: Boolean) {
                         }
                     }
                 }
-            } else if (batch != null) {
+            } else {
                 Text(
                     text = batch.progressLabel,
                     style = MaterialTheme.typography.titleMedium,
@@ -578,7 +699,7 @@ private fun TasksPanel(tablet: Boolean) {
                     item(key = "sel-hdr") {
                         BrowseSectionHeader(stringResource(R.string.browse_selection))
                     }
-                    if (picks.isNullOrEmpty()) {
+                    if (picks.isEmpty()) {
                         item(key = "sel-empty") {
                             Text(
                                 text = stringResource(R.string.browse_selected_count, 0),
@@ -596,7 +717,7 @@ private fun TasksPanel(tablet: Boolean) {
                                 tablet = tablet,
                                 trailing = {
                                     TaskRowAction(
-                                        onClick = { FolderSelectHost.current?.remove(pick.key) },
+                                        onClick = { FolderSelectHost.removeShownPick(pick.key) },
                                         icon = Icons.Default.Close,
                                         contentDescription = stringResource(R.string.browse_remove),
                                         tablet = tablet,
@@ -605,7 +726,7 @@ private fun TasksPanel(tablet: Boolean) {
                             )
                         }
                     }
-                } else if (batch != null) {
+                } else {
                     val pending = batch.pending
                     val completed = batch.completed
                     if (pending.isNotEmpty()) {
@@ -748,7 +869,7 @@ private fun ConvertTargetItems(
 }
 
 private fun shareSelected(scope: CoroutineScope, snackbar: SnackbarHostState, context: Context) {
-    val starters = FolderSelectHost.current?.picks?.mapNotNull { it.shareHttp }.orEmpty()
+    val starters = FolderSelectHost.selectionPicks.mapNotNull { it.shareHttp }
     if (starters.isEmpty()) {
         scope.launch { with(snackbar) { snackbar(context.getString(R.string.browse_action_not_supported)) } }
         return
@@ -777,7 +898,7 @@ private fun beginConvert(
     context: Context,
     target: StillExportTarget,
 ) {
-    val items = FolderSelectHost.current?.picks?.filter { it.convertStill != null }.orEmpty()
+    val items = FolderSelectHost.selectionPicks.filter { it.convertStill != null }
     if (items.isEmpty()) {
         scope.launch { with(snackbar) { snackbar(context.getString(R.string.browse_action_not_supported)) } }
         return
@@ -798,7 +919,7 @@ private fun beginSave(
     snackbar: SnackbarHostState,
     context: Context,
 ) {
-    val items = FolderSelectHost.current?.picks?.filter { it.saveInto != null }.orEmpty()
+    val items = FolderSelectHost.selectionPicks.filter { it.saveInto != null }
     if (items.isEmpty()) {
         scope.launch { with(snackbar) { snackbar(context.getString(R.string.browse_action_not_supported)) } }
         return

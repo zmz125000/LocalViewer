@@ -219,7 +219,6 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
     val selectFolderKey = stack.lastOrNull()?.let {
         "${it.rootId}|${it.path}|${it.relativePath}|${it.zipInnerRel}"
     }.orEmpty()
-    folderSelect.bindFolder(selectFolderKey)
     fun updateStack(newStack: List<BrowseSession.LocalFrame>) {
         stack = newStack
         BrowseSession.localStack = newStack
@@ -381,6 +380,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
     val current = stack.lastOrNull()
     val currentPath = current?.path
     val title = current?.title?.safFolderLabel() ?: stringResource(R.string.folder)
+    folderSelect.bindFolder(selectFolderKey, title)
     val searchHint = stringResource(R.string.search_bar_hint, title)
 
     fun toggleDirFavorite(dir: BrowseEntry.Directory) {
@@ -1146,7 +1146,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
     val hideBackToFab by Settings.hideBackToFab.collectAsState()
     fun onTopBarBack() {
         if (folderSelect.selecting && !FolderSelectHost.taskRunning) {
-            folderSelect.cancel()
+            folderSelect.exitSelectMode()
             return
         }
         if (hideBackToFab) jumpBackToOrigin() else goUp()
@@ -1154,7 +1154,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
 
     BackHandler {
         if (folderSelect.selecting && !FolderSelectHost.taskRunning) {
-            folderSelect.cancel()
+            folderSelect.exitSelectMode()
             return@BackHandler
         }
         // Search-section dir enter: first back returns to search, not close-search-in-child.

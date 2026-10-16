@@ -2,10 +2,17 @@ package com.hippo.ehviewer.ui.main
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.Before
 import org.junit.Test
 
 class FolderSelectStateTest {
+    @Before
+    fun resetHost() {
+        FolderSelectHost.resetForTest()
+    }
+
     @Test
     fun overflowSelectMarksThatItemAndEntersSelectMode() {
         val state = FolderSelectState()
@@ -57,6 +64,34 @@ class FolderSelectStateTest {
         state.bindFolder("b")
         assertFalse(state.selecting)
         assertTrue(state.picks.isEmpty())
+    }
+
+    @Test
+    fun backLeavesSelectModeWithoutClearingTheSnackbar() {
+        val state = FolderSelectState()
+        state.bindFolder("a", "Photos")
+        state.enter(pick("1", "one"))
+        state.toggle(pick("2", "two"))
+        state.exitSelectMode()
+        assertFalse(state.selecting)
+        assertEquals(listOf("1", "2"), state.picks.map { it.key })
+        assertEquals("Photos", FolderSelectHost.selectionSnack?.folderName)
+        assertEquals(2, FolderSelectHost.selectionSnack?.count)
+
+        state.bindFolder("b", "Camera")
+        assertEquals("Photos", FolderSelectHost.selectionSnack?.folderName)
+        assertEquals(2, FolderSelectHost.selectionSnack?.count)
+        assertEquals(listOf("1", "2"), FolderSelectHost.selectionPicks.map { it.key })
+
+        val restored = FolderSelectState()
+        restored.bindFolder("b", "Camera")
+        assertEquals("Photos", FolderSelectHost.selectionSnack?.folderName)
+
+        FolderSelectHost.cancelShownSelection()
+        assertNull(FolderSelectHost.selectionSnack)
+        restored.bindFolder("a", "Photos")
+        assertTrue(restored.picks.isEmpty())
+        assertFalse(restored.selecting)
     }
 
     private fun pick(key: String, title: String) = FolderPick(

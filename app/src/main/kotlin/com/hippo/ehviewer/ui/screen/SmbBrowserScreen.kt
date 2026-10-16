@@ -336,8 +336,8 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
         FolderSelectHost.attach(folderSelect)
         onDispose { FolderSelectHost.detach(folderSelect) }
     }
-    folderSelect.bindFolder("smb:$sourceId:$relativeDir")
     val title = segments.lastOrNull() ?: source?.displayName ?: stringResource(R.string.network)
+    folderSelect.bindFolder("smb:$sourceId:$relativeDir", title)
 
     fun dirRelative(name: String): String = if (relativeDir.isEmpty()) name else SmbGateway.joinRelativePath(relativeDir, name)
 
@@ -1003,7 +1003,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
     val hideBackToFab by Settings.hideBackToFab.collectAsState()
     fun onTopBarBack() {
         if (folderSelect.selecting && !FolderSelectHost.taskRunning) {
-            folderSelect.cancel()
+            folderSelect.exitSelectMode()
             return
         }
         if (hideBackToFab) jumpBackToOrigin() else goUp()
@@ -1017,7 +1017,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
         goUp()
     }
     BackHandler(enabled = folderSelect.selecting && !FolderSelectHost.taskRunning) {
-        folderSelect.cancel()
+        folderSelect.exitSelectMode()
     }
 
     /**

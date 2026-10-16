@@ -814,6 +814,7 @@
     <string name="convert_to">轉換為…</string>
     <string name="browse_select">選擇</string>
     <string name="browse_selected_count">已選 %1$d</string>
+    <string name="browse_selected_in_folder">在 %2$s 中已選 %1$d</string>
     <string name="browse_list">列表</string>
     <string name="browse_selection">選擇</string>
     <string name="browse_task">任務</string>
