@@ -336,7 +336,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
         FolderSelectHost.attach(folderSelect)
         onDispose { FolderSelectHost.detach(folderSelect) }
     }
-    LaunchedEffect(sourceId, relativeDir) { folderSelect.cancel() }
+    folderSelect.bindFolder("smb:$sourceId:$relativeDir")
     val title = segments.lastOrNull() ?: source?.displayName ?: stringResource(R.string.network)
 
     fun dirRelative(name: String): String = if (relativeDir.isEmpty()) name else SmbGateway.joinRelativePath(relativeDir, name)

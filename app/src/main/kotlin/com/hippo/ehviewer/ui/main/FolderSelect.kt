@@ -1,7 +1,9 @@
 package com.hippo.ehviewer.ui.main
 
 import android.content.Context
+import android.view.WindowManager
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
@@ -36,6 +38,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
@@ -52,11 +55,13 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.compose.ui.window.DialogWindowProvider
 import com.ehviewer.core.i18n.R
 import com.hippo.ehviewer.image.hdr.StillExportTarget
 import com.hippo.ehviewer.ui.LocalSnackBarHostState
@@ -77,7 +82,7 @@ import moe.tarsin.snackbar
 import okio.Path
 
 /**
- * Selection for the folder currently on screen. Leaving that folder clears it.
+ * Selection for the folder browser on screen. Each folder keeps its own select mode and picks.
  * Batch progress lives on [FolderSelectHost] so the task snackbar can outlive the listing.
  */
 class FolderSelectState {
@@ -85,14 +90,42 @@ class FolderSelectState {
     val picks = mutableStateListOf<FolderPick>()
     var sectionKeys by mutableStateOf<Map<BrowseFolderSection, List<String>>>(emptyMap())
 
-    fun enter() {
+    private var folderKey: String? = null
+    private val byFolder = mutableMapOf<String, FolderSelection>()
+
+    /** Show [key]'s selection. Leaving a folder stores it; coming back restores it. */
+    fun bindFolder(key: String) {
+        if (folderKey == key) return
+        folderKey?.let { previous -> store(previous) }
+        folderKey = key
+        val saved = byFolder[key]
+        selecting = saved?.selecting == true
+        picks.clear()
+        if (saved != null) picks.addAll(saved.picks)
+        sectionKeys = emptyMap()
+    }
+
+    /** Enter select mode and select [pick] when it came from that row's overflow menu. */
+    fun enter(pick: FolderPick? = null) {
         selecting = true
+        if (pick != null && picks.none { it.key == pick.key }) {
+            picks.add(pick)
+        }
     }
 
     fun cancel() {
         selecting = false
         picks.clear()
+        folderKey?.let { byFolder.remove(it) }
         if (!FolderSelectHost.taskRunning) FolderSelectHost.dialog = false
+    }
+
+    private fun store(key: String) {
+        if (!selecting && picks.isEmpty()) {
+            byFolder.remove(key)
+        } else {
+            byFolder[key] = FolderSelection(selecting, picks.toList())
+        }
     }
 
     fun isSelected(key: String): Boolean = picks.any { it.key == key }
@@ -119,6 +152,11 @@ class FolderSelectState {
         return picks.count { it.key in set } to keys.size
     }
 }
+
+private class FolderSelection(
+    val selecting: Boolean,
+    val picks: List<FolderPick>,
+)
 
 data class FolderPick(
     val key: String,
@@ -352,49 +390,76 @@ private fun FolderTasksDialog() {
     val screenH = configuration.screenHeightDp.dp
     Dialog(
         onDismissRequest = { FolderSelectHost.dialog = false },
-        properties = DialogProperties(usePlatformDefaultWidth = false),
+        properties = DialogProperties(
+            usePlatformDefaultWidth = false,
+            dismissOnClickOutside = true,
+        ),
     ) {
-        BoxWithConstraints(
-            Modifier
-                .fillMaxSize()
-                .padding(16.dp),
-            contentAlignment = if (phonePortrait) Alignment.TopCenter else Alignment.TopEnd,
-        ) {
-            val page = MaterialTheme.colorScheme.background
-            val darkPage = page.luminance() < 0.5f
-            val lifted = MaterialTheme.colorScheme.surfaceContainerHighest
-            val panelColor = when {
-                !darkPage -> MaterialTheme.colorScheme.surfaceContainer
-                lifted.luminance() - page.luminance() < 0.06f -> Color(0xFF424242)
-                else -> lifted
-            }
-            val windowWidth = when {
-                phonePortrait -> minOf(maxWidth, 340.dp) * 0.9f
-                phoneLandscape -> screenW * 0.5f
-                layout.columns == 3 -> screenW * 2f / 5f
-                else -> screenW * 0.5f
-            }.coerceAtMost(maxWidth)
-            val windowHeight = when {
-                layout.columns == 3 -> screenH * 2f / 3f
-                tablet -> screenH / 2f
-                phonePortrait -> minOf(maxHeight, 480.dp)
-                else -> maxHeight
-            }.coerceAtMost(maxHeight)
-            Surface(
-                modifier = Modifier
-                    .then(
-                        if (phoneLandscape) {
-                            Modifier.width(windowWidth).fillMaxHeight()
-                        } else {
-                            Modifier.width(windowWidth).height(windowHeight)
-                        },
+        val view = LocalView.current
+        SideEffect {
+            val window = (view.parent as? DialogWindowProvider)?.window ?: return@SideEffect
+            window.setDimAmount(0f)
+            window.clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
+        }
+        val scrim = remember { MutableInteractionSource() }
+        val panelGuard = remember { MutableInteractionSource() }
+        Box(Modifier.fillMaxSize()) {
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .clickable(
+                        interactionSource = scrim,
+                        indication = null,
+                        onClick = { FolderSelectHost.dialog = false },
                     ),
-                shape = ShapeDefaults.ExtraLarge,
-                color = panelColor,
-                shadowElevation = 3.dp,
-                tonalElevation = 0.dp,
+            )
+            BoxWithConstraints(
+                Modifier
+                    .fillMaxSize()
+                    .padding(16.dp),
+                contentAlignment = if (phonePortrait) Alignment.TopCenter else Alignment.TopEnd,
             ) {
-                TasksPanel(tablet = tablet)
+                val page = MaterialTheme.colorScheme.background
+                val darkPage = page.luminance() < 0.5f
+                val lifted = MaterialTheme.colorScheme.surfaceContainerHighest
+                val panelColor = when {
+                    !darkPage -> MaterialTheme.colorScheme.surfaceContainer
+                    lifted.luminance() - page.luminance() < 0.06f -> Color(0xFF424242)
+                    else -> lifted
+                }
+                val windowWidth = when {
+                    phonePortrait -> minOf(maxWidth, 340.dp) * 0.9f
+                    phoneLandscape -> screenW * 0.5f
+                    layout.columns == 3 -> screenW * 2f / 5f
+                    else -> screenW * 0.5f
+                }.coerceAtMost(maxWidth)
+                val windowHeight = when {
+                    layout.columns == 3 -> screenH * 2f / 3f
+                    tablet -> screenH / 2f
+                    phonePortrait -> minOf(maxHeight, 480.dp)
+                    else -> maxHeight
+                }.coerceAtMost(maxHeight)
+                Surface(
+                    modifier = Modifier
+                        .then(
+                            if (phoneLandscape) {
+                                Modifier.width(windowWidth).fillMaxHeight()
+                            } else {
+                                Modifier.width(windowWidth).height(windowHeight)
+                            },
+                        )
+                        .clickable(
+                            interactionSource = panelGuard,
+                            indication = null,
+                            onClick = {},
+                        ),
+                    shape = ShapeDefaults.ExtraLarge,
+                    color = panelColor,
+                    shadowElevation = 3.dp,
+                    tonalElevation = 0.dp,
+                ) {
+                    TasksPanel(tablet = tablet)
+                }
             }
         }
     }

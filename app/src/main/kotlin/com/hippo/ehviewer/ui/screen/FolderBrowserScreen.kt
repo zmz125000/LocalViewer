@@ -219,7 +219,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
     val selectFolderKey = stack.lastOrNull()?.let {
         "${it.rootId}|${it.path}|${it.relativePath}|${it.zipInnerRel}"
     }.orEmpty()
-    LaunchedEffect(selectFolderKey) { folderSelect.cancel() }
+    folderSelect.bindFolder(selectFolderKey)
     fun updateStack(newStack: List<BrowseSession.LocalFrame>) {
         stack = newStack
         BrowseSession.localStack = newStack

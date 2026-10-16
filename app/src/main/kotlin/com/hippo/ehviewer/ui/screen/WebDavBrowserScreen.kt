@@ -301,7 +301,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
         FolderSelectHost.attach(folderSelect)
         onDispose { FolderSelectHost.detach(folderSelect) }
     }
-    LaunchedEffect(sourceId, relativeDir) { folderSelect.cancel() }
+    folderSelect.bindFolder("dav:$sourceId:$relativeDir")
     val title = segments.lastOrNull() ?: source?.displayName ?: stringResource(R.string.network)
 
     fun dirRelative(name: String): String = if (relativeDir.isEmpty()) name else WebDavGateway.joinRelative(relativeDir, name)

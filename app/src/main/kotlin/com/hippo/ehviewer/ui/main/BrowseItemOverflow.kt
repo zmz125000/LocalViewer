@@ -165,7 +165,7 @@ fun BrowseItemOverflowButton(
                     text = { Text(stringResource(R.string.browse_select)) },
                     onClick = {
                         expanded = false
-                        FolderSelectHost.current?.enter()
+                        FolderSelectHost.current?.enter(actions.toPick())
                     },
                 )
             }
