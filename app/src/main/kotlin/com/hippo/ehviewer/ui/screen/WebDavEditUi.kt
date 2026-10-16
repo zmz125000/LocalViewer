@@ -5,13 +5,11 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -74,7 +72,7 @@ fun WebDavEditDialog(
     state: WebDavEditorState,
     onDismiss: () -> Unit,
     onSave: (WebDavEditorState, password: String) -> Unit,
-    onTest: (WebDavEditorState, password: String) -> Unit,
+    onTest: (WebDavEditorState, password: String, SnackbarHostState) -> Unit,
     onDelete: (() -> Unit)? = null,
 ) {
     var displayName by remember(state.id) { mutableStateOf(state.displayName) }
@@ -89,6 +87,7 @@ fun WebDavEditDialog(
             state.id != 0L && state.username.isBlank() && state.password.isBlank(),
         )
     }
+    val snackbarHostState = remember { SnackbarHostState() }
     val focusManager = LocalFocusManager.current
     val baseFocus = remember { FocusRequester() }
     val easytierHostFocus = remember { FocusRequester() }
@@ -115,115 +114,12 @@ fun WebDavEditDialog(
         onSave(cur, if (anonymous) "" else password)
     }
 
-    AlertDialog(
+    NetworkSourceEditDialog(
+        title = stringResource(
+            if (state.id == 0L) R.string.webdav_add else R.string.webdav_edit,
+        ),
         onDismissRequest = onDismiss,
-        title = {
-            Text(
-                stringResource(
-                    if (state.id == 0L) R.string.webdav_add else R.string.webdav_edit,
-                ),
-            )
-        },
-        text = {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                OutlinedTextField(
-                    value = displayName,
-                    onValueChange = { displayName = it },
-                    label = { Text(stringResource(R.string.network_display_name_optional)) },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
-                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
-                    keyboardActions = KeyboardActions(onNext = { baseFocus.requestFocus() }),
-                )
-                OutlinedTextField(
-                    value = baseUrl,
-                    onValueChange = { baseUrl = it },
-                    label = { Text(stringResource(R.string.webdav_base_url)) },
-                    placeholder = { Text(stringResource(R.string.webdav_base_url_hint)) },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth().focusRequester(baseFocus),
-                    keyboardOptions = KeyboardOptions(
-                        keyboardType = KeyboardType.Uri,
-                        imeAction = ImeAction.Next,
-                    ),
-                    keyboardActions = KeyboardActions(onNext = { easytierHostFocus.requestFocus() }),
-                    supportingText = if (WebDavClient.isExplicitHttp(baseUrl)) {
-                        {
-                            Text(
-                                stringResource(R.string.webdav_http_hint),
-                                color = MaterialTheme.colorScheme.tertiary,
-                            )
-                        }
-                    } else {
-                        null
-                    },
-                )
-                OutlinedTextField(
-                    value = easytierHost,
-                    onValueChange = { easytierHost = it },
-                    label = { Text(stringResource(R.string.network_easytier_host)) },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth().focusRequester(easytierHostFocus),
-                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
-                    keyboardActions = KeyboardActions(onNext = { pathFocus.requestFocus() }),
-                )
-                OutlinedTextField(
-                    value = pathPrefix,
-                    onValueChange = { pathPrefix = it },
-                    label = { Text(stringResource(R.string.webdav_path_prefix)) },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth().focusRequester(pathFocus),
-                    keyboardOptions = KeyboardOptions(
-                        imeAction = if (anonymous) ImeAction.Done else ImeAction.Next,
-                    ),
-                    keyboardActions = KeyboardActions(
-                        onNext = { userFocus.requestFocus() },
-                        onDone = { submit() },
-                    ),
-                )
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                ) {
-                    Text(
-                        stringResource(R.string.webdav_anonymous),
-                        style = MaterialTheme.typography.bodyMedium,
-                        modifier = Modifier.weight(1f).padding(end = 8.dp),
-                    )
-                    Switch(checked = anonymous, onCheckedChange = { anonymous = it })
-                }
-                if (!anonymous) {
-                    OutlinedTextField(
-                        value = username,
-                        onValueChange = { username = it },
-                        label = { Text(stringResource(R.string.network_username)) },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth().focusRequester(userFocus),
-                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
-                        keyboardActions = KeyboardActions(onNext = { passFocus.requestFocus() }),
-                    )
-                    OutlinedTextField(
-                        value = password,
-                        onValueChange = { password = it },
-                        label = { Text(stringResource(R.string.network_password)) },
-                        singleLine = true,
-                        visualTransformation = PasswordVisualTransformation(),
-                        modifier = Modifier.fillMaxWidth().focusRequester(passFocus),
-                        keyboardOptions = KeyboardOptions(
-                            keyboardType = KeyboardType.Password,
-                            imeAction = ImeAction.Done,
-                        ),
-                        keyboardActions = KeyboardActions(onDone = { submit() }),
-                    )
-                }
-            }
-        },
+        snackbarHostState = snackbarHostState,
         confirmButton = {
             TextButton(
                 onClick = { submit() },
@@ -239,12 +135,109 @@ fun WebDavEditDialog(
             TextButton(
                 onClick = {
                     val cur = current()
-                    onTest(cur, if (anonymous) "" else password)
+                    onTest(cur, if (anonymous) "" else password, snackbarHostState)
                 },
                 enabled = canSave,
             ) {
                 Text(stringResource(R.string.network_test))
             }
         },
-    )
+    ) {
+        Column(
+            modifier = Modifier.fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            OutlinedTextField(
+                value = displayName,
+                onValueChange = { displayName = it },
+                label = { Text(stringResource(R.string.network_display_name_optional)) },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
+                keyboardActions = KeyboardActions(onNext = { baseFocus.requestFocus() }),
+            )
+            OutlinedTextField(
+                value = baseUrl,
+                onValueChange = { baseUrl = it },
+                label = { Text(stringResource(R.string.webdav_base_url)) },
+                placeholder = { Text(stringResource(R.string.webdav_base_url_hint)) },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth().focusRequester(baseFocus),
+                keyboardOptions = KeyboardOptions(
+                    keyboardType = KeyboardType.Uri,
+                    imeAction = ImeAction.Next,
+                ),
+                keyboardActions = KeyboardActions(onNext = { easytierHostFocus.requestFocus() }),
+                supportingText = if (WebDavClient.isExplicitHttp(baseUrl)) {
+                    {
+                        Text(
+                            stringResource(R.string.webdav_http_hint),
+                            color = MaterialTheme.colorScheme.tertiary,
+                        )
+                    }
+                } else {
+                    null
+                },
+            )
+            OutlinedTextField(
+                value = easytierHost,
+                onValueChange = { easytierHost = it },
+                label = { Text(stringResource(R.string.network_easytier_host)) },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth().focusRequester(easytierHostFocus),
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
+                keyboardActions = KeyboardActions(onNext = { pathFocus.requestFocus() }),
+            )
+            OutlinedTextField(
+                value = pathPrefix,
+                onValueChange = { pathPrefix = it },
+                label = { Text(stringResource(R.string.webdav_path_prefix)) },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth().focusRequester(pathFocus),
+                keyboardOptions = KeyboardOptions(
+                    imeAction = if (anonymous) ImeAction.Done else ImeAction.Next,
+                ),
+                keyboardActions = KeyboardActions(
+                    onNext = { userFocus.requestFocus() },
+                    onDone = { submit() },
+                ),
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Text(
+                    stringResource(R.string.webdav_anonymous),
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.weight(1f).padding(end = 8.dp),
+                )
+                Switch(checked = anonymous, onCheckedChange = { anonymous = it })
+            }
+            if (!anonymous) {
+                OutlinedTextField(
+                    value = username,
+                    onValueChange = { username = it },
+                    label = { Text(stringResource(R.string.network_username)) },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth().focusRequester(userFocus),
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
+                    keyboardActions = KeyboardActions(onNext = { passFocus.requestFocus() }),
+                )
+                OutlinedTextField(
+                    value = password,
+                    onValueChange = { password = it },
+                    label = { Text(stringResource(R.string.network_password)) },
+                    singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(),
+                    modifier = Modifier.fillMaxWidth().focusRequester(passFocus),
+                    keyboardOptions = KeyboardOptions(
+                        keyboardType = KeyboardType.Password,
+                        imeAction = ImeAction.Done,
+                    ),
+                    keyboardActions = KeyboardActions(onDone = { submit() }),
+                )
+            }
+        }
+    }
 }

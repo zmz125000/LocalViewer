@@ -507,11 +507,11 @@ fun AnimatedVisibilityScope.LibrarySettingsScreen(navigator: DestinationsNavigat
                 }
                 smbEditor = null
             },
-            onTest = { testState, password ->
+            onTest = { testState, password, messages ->
                 val (share, pathPrefix) = testState.resolvedShareAndPath()
                 launch {
                     if (!ensureLocalNetworkPermission()) {
-                        snackbar(string(R.string.network_test_fail, LocalNetworkPermission.deniedMessage()))
+                        messages.showSnackbar(string(R.string.network_test_fail, LocalNetworkPermission.deniedMessage()))
                         return@launch
                     }
                     val entity = SmbSourceEntity(
@@ -529,11 +529,11 @@ fun AnimatedVisibilityScope.LibrarySettingsScreen(navigator: DestinationsNavigat
                     val result = SmbGateway.testConnection(entity, password)
                     if (result.isSuccess) {
                         if (testState.id != 0L) SmbRepository.markOk(testState.id)
-                        snackbar(string(R.string.network_test_ok))
+                        messages.showSnackbar(string(R.string.network_test_ok))
                     } else {
                         val msg = result.exceptionOrNull()?.message ?: "error"
                         if (testState.id != 0L) SmbRepository.markError(testState.id, msg)
-                        snackbar(string(R.string.network_test_fail, msg))
+                        messages.showSnackbar(string(R.string.network_test_fail, msg))
                     }
                 }
             },
@@ -576,10 +576,10 @@ fun AnimatedVisibilityScope.LibrarySettingsScreen(navigator: DestinationsNavigat
                 }
                 webDavEditor = null
             },
-            onTest = { testState, password ->
+            onTest = { testState, password, messages ->
                 launch {
                     if (!ensureLocalNetworkPermission()) {
-                        snackbar(string(R.string.network_test_fail, LocalNetworkPermission.deniedMessage()))
+                        messages.showSnackbar(string(R.string.network_test_fail, LocalNetworkPermission.deniedMessage()))
                         return@launch
                     }
                     val entity = WebDavSourceEntity(
@@ -594,11 +594,11 @@ fun AnimatedVisibilityScope.LibrarySettingsScreen(navigator: DestinationsNavigat
                     val result = WebDavClient.testConnection(entity, password)
                     if (result.isSuccess) {
                         if (testState.id != 0L) WebDavRepository.markOk(testState.id)
-                        snackbar(string(R.string.network_test_ok))
+                        messages.showSnackbar(string(R.string.network_test_ok))
                     } else {
                         val msg = result.exceptionOrNull()?.message ?: "error"
                         if (testState.id != 0L) WebDavRepository.markError(testState.id, msg)
-                        snackbar(string(R.string.network_test_fail, msg))
+                        messages.showSnackbar(string(R.string.network_test_fail, msg))
                     }
                 }
             },
