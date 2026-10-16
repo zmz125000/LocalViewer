@@ -208,6 +208,10 @@ object VideoThumbnail {
     /** Empty string = no visible folder (root picker / screen disposed / library left). */
     private val browseFolderKey = AtomicReference("")
 
+    /** Per browse folder: distinct thumb failures, until one cover succeeds. */
+    private val folderThumbLock = Any()
+    private val folderThumbStats = HashMap<String, FolderThumbStats>()
+
     /** Bumped on every real folder change so a side-panel switch drops the previous extract. */
     private val browseGeneration = AtomicLong(0L)
     private val extractJobs = ConcurrentHashMap<Job, Long>()
@@ -362,6 +366,7 @@ object VideoThumbnail {
      * Does not touch cached thumbs. Safe if the directory is missing.
      */
     fun clearFailureMarkers() {
+        synchronized(folderThumbLock) { folderThumbStats.clear() }
         val directory = File(appCtx.applicationInfo.dataDir, "cache/video_thumb_cache")
         if (!directory.isDirectory) return
         directory.listFiles()?.forEach { file ->
@@ -431,10 +436,18 @@ object VideoThumbnail {
         }
         val directory = cacheDirectory()
         val cacheKey = cacheKey(source)
-        cachedIfPresent(source)?.let { return@withIOContext it }
+        val folderKey = browseFolderKey.get()
+        cachedIfPresent(source)?.let {
+            noteFolderThumbSuccess(folderKey)
+            return@withIOContext it
+        }
         val target = File(directory, "$cacheKey.${OriginDiskCache.THUMB_EXT}")
         val failure = File(directory, "$cacheKey.failed")
-        if (shouldSkipFailed(failure)) return@withIOContext null
+        if (shouldSkipFailed(failure)) {
+            noteFolderThumbFailure(folderKey, source.cacheIdentity)
+            return@withIOContext null
+        }
+        if (skipRestOfFolder(folderKey, failure)) return@withIOContext null
         if (source.isNetwork && !Settings.downloadNetworkVideoThumbs.value) {
             return@withIOContext null
         }
@@ -445,7 +458,11 @@ object VideoThumbnail {
         val mutex = pathLocks.getOrPut(source.cacheIdentity) { Mutex() }
         mutex.withLock {
             cachedIfPresent(source)?.let { return@withLock it }
-            if (shouldSkipFailed(failure)) return@withLock null
+            if (shouldSkipFailed(failure)) {
+                noteFolderThumbFailure(folderKey, source.cacheIdentity)
+                return@withLock null
+            }
+            if (skipRestOfFolder(folderKey, failure)) return@withLock null
             if (source.isNetwork && !Settings.downloadNetworkVideoThumbs.value) {
                 return@withLock null
             }
@@ -459,6 +476,7 @@ object VideoThumbnail {
             ) {
                 failure.delete()
                 rememberPresent(source.cacheIdentity, target)
+                noteFolderThumbSuccess(folderKey)
                 return@withLock target
             }
             val frame = try {
@@ -470,11 +488,13 @@ object VideoThumbnail {
                 return@withLock null
             } catch (_: Throwable) {
                 writeFailureMarker(failure)
+                noteFolderThumbFailure(folderKey, source.cacheIdentity)
                 return@withLock null
             }
             if (frame == null) {
                 if (extractPaused.get()) return@withLock null
                 writeFailureMarker(failure)
+                noteFolderThumbFailure(folderKey, source.cacheIdentity)
                 return@withLock null
             }
             if (!persistThumb(target, frame)) {
@@ -482,8 +502,46 @@ object VideoThumbnail {
             }
             failure.delete()
             rememberPresent(source.cacheIdentity, target)
+            noteFolderThumbSuccess(folderKey)
             target
         }
+    }
+
+    /** Local / SMB / WebDAV folder keys. Library and empty keys are not a folder skip. */
+    private fun isBrowseFolderKey(folderKey: String): Boolean = folderKey.startsWith("local:") ||
+        folderKey.startsWith("smb:") ||
+        folderKey.startsWith("dav:")
+
+    private fun skipRestOfFolder(folderKey: String, failure: File): Boolean {
+        if (!isBrowseFolderKey(folderKey)) return false
+        val skipped = synchronized(folderThumbLock) { folderThumbStats[folderKey]?.skipped == true }
+        if (!skipped) return false
+        writeFailureMarker(failure)
+        return true
+    }
+
+    private fun noteFolderThumbSuccess(folderKey: String) {
+        if (!isBrowseFolderKey(folderKey)) return
+        synchronized(folderThumbLock) {
+            val stats = folderThumbStats.getOrPut(folderKey) { FolderThumbStats() }
+            stats.anySuccess = true
+            stats.skipped = false
+        }
+    }
+
+    private fun noteFolderThumbFailure(folderKey: String, identity: String) {
+        if (!isBrowseFolderKey(folderKey) || identity.isEmpty()) return
+        synchronized(folderThumbLock) {
+            val stats = folderThumbStats.getOrPut(folderKey) { FolderThumbStats() }
+            if (stats.anySuccess || !stats.failed.add(identity)) return
+            stats.skipped = shouldSkipFolderAfterThumbFailures(stats.failed.size, stats.anySuccess)
+        }
+    }
+
+    private class FolderThumbStats {
+        val failed = HashSet<String>()
+        var anySuccess = false
+        var skipped = false
     }
 
     private fun persistThumb(target: File, frame: Bitmap): Boolean {
@@ -1090,6 +1148,11 @@ object VideoThumbnail {
         .digest(value.toByteArray())
         .joinToString("") { "%02x".format(it) }
 }
+
+/** First this many distinct covers fail, and none succeeded: skip the rest of that folder. */
+internal const val FOLDER_THUMB_FAILS_BEFORE_SKIP = 3
+
+internal fun shouldSkipFolderAfterThumbFailures(failures: Int, anySuccess: Boolean): Boolean = !anySuccess && failures >= FOLDER_THUMB_FAILS_BEFORE_SKIP
 
 /** Pool-full / timeout / leave-folder — retry next compose, do not write `.failed`. */
 private class TransientVideoThumbException : Exception()
