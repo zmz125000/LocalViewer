@@ -63,6 +63,49 @@ suspend fun convertWebDavStill(sourceId: Long, relativeFile: String, leaf: Strin
     convertStaged(leaf, target) { BrowseSaveAs.stageWebDavForConvert(sourceId, relativeFile) }
 }
 
+/** Decode [stage] and write one still into [dir]. No per-file picker or snackbar. */
+suspend fun exportStillToDirectory(
+    leaf: String,
+    target: StillExportTarget,
+    dir: Path,
+    stage: suspend () -> File,
+): Boolean {
+    return try {
+        val pixels = withIOContext {
+            val file = stage()
+            try {
+                LibDirectDecode.decodePixels(file.asPathSource(), leaf, maxEdge = 0)
+            } finally {
+                file.delete()
+            }
+        } ?: return false
+        val resolved = if (target == StillExportTarget.AutoOriginal) {
+            target.resolve(pixels.isHdr, pixels.f16)
+        } else {
+            target
+        }
+        val name = stillExportFileName(leaf, resolved)
+        val out = File.createTempFile("still-out", null, appCtx.cacheDir)
+        try {
+            val dest = withIOContext {
+                if (!pixels.writeResolved(resolved, out) || out.length() <= 0L) {
+                    null
+                } else {
+                    BrowseSaveAs.writeConvertFile(dir, name, out)
+                }
+            }
+            dest != null
+        } finally {
+            out.delete()
+        }
+    } catch (e: CancellationException) {
+        throw e
+    } catch (t: Throwable) {
+        t.logcatExport()
+        false
+    }
+}
+
 context(_: SnackbarHostState, _: Context)
 private suspend fun convertStaged(leaf: String, target: StillExportTarget, stage: suspend () -> File) {
     try {

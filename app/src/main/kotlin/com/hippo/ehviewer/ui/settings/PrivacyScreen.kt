@@ -122,6 +122,10 @@ fun AnimatedVisibilityScope.PrivacyScreen(navigator: DestinationsNavigator) = Sc
                     )
                 }
             }
+            SwitchPreference(
+                title = stringResource(id = R.string.settings_privacy_show_ebook_as_gallery),
+                state = Settings.showEbookFilesAsGallery.asMutableState(),
+            )
             // Turning master history off also wipes browse history and device search history.
             LaunchedEffect(saveHistory.value) {
                 if (previousSaveHistory && !saveHistory.value) {

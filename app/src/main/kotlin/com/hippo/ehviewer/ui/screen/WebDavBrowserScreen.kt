@@ -40,6 +40,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
@@ -153,7 +154,10 @@ import com.hippo.ehviewer.ui.main.BrowseSearchSectionHeader
 import com.hippo.ehviewer.ui.main.BrowseSectionHeader
 import com.hippo.ehviewer.ui.main.BrowseVideoGridItem
 import com.hippo.ehviewer.ui.main.BrowseVideoRow
+import com.hippo.ehviewer.ui.main.FolderSelectHost
+import com.hippo.ehviewer.ui.main.FolderSelectState
 import com.hippo.ehviewer.ui.main.GalleryGridDefaults
+import com.hippo.ehviewer.ui.main.HttpSelectionListing
 import com.hippo.ehviewer.ui.main.HttpShare
 import com.hippo.ehviewer.ui.main.HttpShareItem
 import com.hippo.ehviewer.ui.main.LocalBrowseListHeaderInset
@@ -163,10 +167,12 @@ import com.hippo.ehviewer.ui.main.browseZipAsDirTypeLabel
 import com.hippo.ehviewer.ui.main.onRecentHeaderGesture
 import com.hippo.ehviewer.ui.main.rememberBrowseSectionCollapse
 import com.hippo.ehviewer.ui.main.rememberRecentStripExpanded
+import com.hippo.ehviewer.ui.main.selectable
 import com.hippo.ehviewer.ui.navToReader
 import com.hippo.ehviewer.ui.navToWebDavFolderReader
 import com.hippo.ehviewer.ui.reader.ReaderScreenArgs
 import com.hippo.ehviewer.ui.reader.convertWebDavStill
+import com.hippo.ehviewer.ui.reader.exportStillToDirectory
 import com.hippo.ehviewer.ui.tools.awaitConfirmationOrCancel
 import com.hippo.ehviewer.util.LocalNetworkPermission
 import com.hippo.ehviewer.util.addTextToClipboard
@@ -291,7 +297,13 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
     }
 
     val relativeDir = relativeDirForMode
+    val folderSelect = remember { FolderSelectState() }
+    DisposableEffect(folderSelect) {
+        FolderSelectHost.attach(folderSelect)
+        onDispose { FolderSelectHost.detach(folderSelect) }
+    }
     val title = segments.lastOrNull() ?: source?.displayName ?: stringResource(R.string.network)
+    folderSelect.bindFolder("dav:$sourceId:$relativeDir", title)
 
     fun dirRelative(name: String): String = if (relativeDir.isEmpty()) name else WebDavGateway.joinRelative(relativeDir, name)
 
@@ -877,6 +889,10 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
 
     val hideBackToFab by Settings.hideBackToFab.collectAsState()
     fun onTopBarBack() {
+        if (folderSelect.selecting && !FolderSelectHost.taskRunning) {
+            folderSelect.exitSelectMode()
+            return
+        }
         if (hideBackToFab) jumpBackToOrigin() else goUp()
     }
 
@@ -886,6 +902,9 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
             return@BackHandler
         }
         goUp()
+    }
+    BackHandler(enabled = folderSelect.selecting && !FolderSelectHost.taskRunning) {
+        folderSelect.exitSelectMode()
     }
 
     /**
@@ -1641,6 +1660,97 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
         )
     }
 
+    fun webDavKey(id: String): String = "dav:$sourceId:$relativeDir|$id"
+
+    fun remoteSelectId(entry: BrowseEntryRemote): String = when (entry) {
+        is BrowseEntryRemote.Directory -> webDavKey("d:${entry.relativeName}")
+        is BrowseEntryRemote.FolderGallery -> webDavKey("g:${entry.relativeName}")
+        is BrowseEntryRemote.ArchiveGallery -> webDavKey(
+            "a:${joinRemoteArchivePath("", entry.parentRelativeName, entry.fileName)}",
+        )
+        is BrowseEntryRemote.VideoFile -> webDavKey("v:${entry.fileName}")
+        is BrowseEntryRemote.RegularFile -> webDavKey("f:${entry.fileName}")
+    }
+
+    fun webDavShareFileStart(fileName: String): (suspend (HttpSelectionListing) -> Unit)? {
+        val src = source ?: return null
+        val actualName = fileName.substringAfterLast('/').substringAfterLast('\\')
+        val remote = if (relativeDir.isEmpty()) fileName else WebDavGateway.joinRelative(relativeDir, fileName)
+        return listing@{ listing ->
+            val source = WebDavRepository.load(src.id) ?: return@listing
+            listing.addFile(actualName, network = true) { unique ->
+                OpenFileExternally.webDavFileEntry(
+                    source,
+                    WebDavPasswordStore.get(src.id),
+                    remote,
+                    unique,
+                    mimeTypeForFileName(actualName),
+                    sizeBytes = -1L,
+                )
+            }
+        }
+    }
+
+    fun webDavShareFolderStart(
+        relativeName: String,
+        displayName: String = relativeName.substringAfterLast('/'),
+    ): (suspend (HttpSelectionListing) -> Unit)? {
+        val src = source ?: return null
+        val remote = if (relativeDir.isEmpty()) relativeName else WebDavGateway.joinRelative(relativeDir, relativeName)
+        val name = displayName.ifEmpty { relativeName.substringAfterLast('/') }
+        HttpShare.zipFileRelativeForFolderShare(remote)?.let { zipRel ->
+            val zipName = zipRel.substringAfterLast('/').ifEmpty { name }
+            return listing@{ listing ->
+                val source = WebDavRepository.load(src.id) ?: return@listing
+                listing.addFile(zipName, network = true) { unique ->
+                    OpenFileExternally.webDavFileEntry(
+                        source,
+                        WebDavPasswordStore.get(src.id),
+                        zipRel,
+                        unique,
+                        mimeTypeForFileName(zipName),
+                        sizeBytes = -1L,
+                    )
+                }
+            }
+        }
+        return listing@{ listing ->
+            val source = WebDavRepository.load(src.id) ?: return@listing
+            listing.addFolder(
+                name,
+                OpenFileExternally.webDavHtmlDirSource(source, WebDavPasswordStore.get(src.id), remote),
+                network = true,
+            )
+        }
+    }
+
+    fun webDavConvertStill(fileName: String): (suspend (okio.Path, com.hippo.ehviewer.image.hdr.StillExportTarget) -> Boolean)? {
+        if (!isStillExportFileName(fileName)) return null
+        val src = source ?: return null
+        val leaf = fileName.substringAfterLast('/').substringAfterLast('\\')
+        val remote = if (relativeDir.isEmpty()) fileName else WebDavGateway.joinRelative(relativeDir, fileName)
+        return { dir, target ->
+            exportStillToDirectory(leaf, target, dir) { BrowseSaveAs.stageWebDavForConvert(src.id, remote) }
+        }
+    }
+
+    fun webDavSaveFileInto(fileName: String): (suspend (okio.Path) -> Boolean)? {
+        val src = source ?: return null
+        val actualName = fileName.substringAfterLast('/').substringAfterLast('\\')
+        val remote = if (relativeDir.isEmpty()) fileName else WebDavGateway.joinRelative(relativeDir, fileName)
+        return { dir -> BrowseSaveAs.saveWebDavFileInto(dir, src.id, remote, actualName) }
+    }
+
+    fun webDavSaveFolderInto(
+        relativeName: String,
+        displayName: String = relativeName.substringAfterLast('/'),
+    ): (suspend (okio.Path) -> Boolean)? {
+        val src = source ?: return null
+        val remote = if (relativeDir.isEmpty()) relativeName else WebDavGateway.joinRelative(relativeDir, relativeName)
+        val name = displayName.ifEmpty { relativeName.substringAfterLast('/') }
+        return { dir -> BrowseSaveAs.saveWebDavFolderInto(dir, src.id, remote, name) }
+    }
+
     fun dirOverflow(name: String, coverFileName: String? = null, virtual: Boolean = false) = BrowseOverflowActions(
         kind = BrowseOverflowKind.Common,
         favorited = isDirFavorite(name),
@@ -1654,6 +1764,12 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
         onSaveToPaths = { saveRemoteFolderToPaths(name) },
         shortcut = webDavShortcut(name, true, name),
         onUnsupported = { notSupportedAction() },
+    ).selectable(
+        webDavKey("d:$name"),
+        name.substringAfterLast('/'),
+        isFolder = true,
+        shareHttp = webDavShareFolderStart(name),
+        saveInto = webDavSaveFolderInto(name),
     )
 
     fun folderGalleryOverflow(entry: BrowseEntryRemote.FolderGallery) = BrowseOverflowActions(
@@ -1677,91 +1793,107 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
         onSaveToPaths = { saveRemoteFolderToPaths(entry.relativeName) },
         shortcut = webDavShortcut(entry.relativeName, true, entry.name),
         onUnsupported = { notSupportedAction() },
+    ).selectable(
+        webDavKey("g:${entry.relativeName}"),
+        entry.name,
+        isFolder = true,
+        shareHttp = webDavShareFolderStart(entry.relativeName, entry.name),
+        saveInto = webDavSaveFolderInto(entry.relativeName, entry.name),
     )
 
-    fun archiveOverflow(entry: BrowseEntryRemote.ArchiveGallery) = if (isPdfOrEbookFileName(entry.fileName)) {
-        BrowseOverflowActions(
-            kind = BrowseOverflowKind.Pdf,
-            onRead = { openArchive(entry, skipPdfPrimary = true) },
-            onPlay = { openPdfReader(entry) },
-            onExternalPlayer = {
-                if (isPdfFileName(entry.fileName)) {
-                    openPdfInOtherApp(entry)
-                } else {
-                    openArchiveInOtherApp(entry)
-                }
-            },
-            onOpenWith = {
-                if (isPdfFileName(entry.fileName)) {
-                    openPdfInOtherApp(entry, usePreferredReader = false)
-                } else {
-                    openArchiveInOtherApp(entry)
-                }
-            },
-            onSaveAs = {
-                saveWebDavFile(
-                    joinRemoteArchivePath("", entry.parentRelativeName, entry.fileName),
-                    entry.fileName.substringAfterLast('/'),
-                )
-            },
-            onShare = {
-                shareWebDavFile(
-                    joinRemoteArchivePath("", entry.parentRelativeName, entry.fileName),
-                    entry.fileName.substringAfterLast('/'),
-                )
-            },
-            onShareViaHttp = webDavHttpShareFile(
-                joinRemoteArchivePath("", entry.parentRelativeName, entry.fileName),
-            ),
-            onOpenFolder = {
-                openBrowseFolder(
-                    FolderSearch.openFolderTarget(
+    fun archiveOverflow(entry: BrowseEntryRemote.ArchiveGallery): BrowseOverflowActions {
+        val remote = joinRemoteArchivePath("", entry.parentRelativeName, entry.fileName)
+        return (
+            if (isPdfOrEbookFileName(entry.fileName)) {
+                BrowseOverflowActions(
+                    kind = BrowseOverflowKind.Pdf,
+                    onRead = { openArchive(entry, skipPdfPrimary = true) },
+                    onPlay = { openPdfReader(entry) },
+                    onExternalPlayer = {
+                        if (isPdfFileName(entry.fileName)) {
+                            openPdfInOtherApp(entry)
+                        } else {
+                            openArchiveInOtherApp(entry)
+                        }
+                    },
+                    onOpenWith = {
+                        if (isPdfFileName(entry.fileName)) {
+                            openPdfInOtherApp(entry, usePreferredReader = false)
+                        } else {
+                            openArchiveInOtherApp(entry)
+                        }
+                    },
+                    onSaveAs = {
+                        saveWebDavFile(
+                            joinRemoteArchivePath("", entry.parentRelativeName, entry.fileName),
+                            entry.fileName.substringAfterLast('/'),
+                        )
+                    },
+                    onShare = {
+                        shareWebDavFile(
+                            joinRemoteArchivePath("", entry.parentRelativeName, entry.fileName),
+                            entry.fileName.substringAfterLast('/'),
+                        )
+                    },
+                    onShareViaHttp = webDavHttpShareFile(
                         joinRemoteArchivePath("", entry.parentRelativeName, entry.fileName),
-                        isDirectory = false,
                     ),
-                )
-            },
-            shortcut = webDavShortcut(
-                joinRemoteArchivePath("", entry.parentRelativeName, entry.fileName),
-                false,
-                entry.fileName,
-            ),
-            onUnsupported = { notSupportedAction() },
-        )
-    } else {
-        BrowseOverflowActions(
-            kind = BrowseOverflowKind.Gallery,
-            onRead = { openArchive(entry) },
-            onOpenWith = { openArchiveInOtherApp(entry) },
-            onSaveAs = {
-                saveWebDavFile(
-                    joinRemoteArchivePath("", entry.parentRelativeName, entry.fileName),
-                    entry.fileName.substringAfterLast('/'),
-                )
-            },
-            onShare = {
-                shareWebDavFile(
-                    joinRemoteArchivePath("", entry.parentRelativeName, entry.fileName),
-                    entry.fileName.substringAfterLast('/'),
-                )
-            },
-            onShareViaHttp = webDavHttpShareFile(
-                joinRemoteArchivePath("", entry.parentRelativeName, entry.fileName),
-            ),
-            onOpenFolder = {
-                openBrowseFolder(
-                    FolderSearch.openFolderTarget(
+                    onOpenFolder = {
+                        openBrowseFolder(
+                            FolderSearch.openFolderTarget(
+                                joinRemoteArchivePath("", entry.parentRelativeName, entry.fileName),
+                                isDirectory = false,
+                            ),
+                        )
+                    },
+                    shortcut = webDavShortcut(
                         joinRemoteArchivePath("", entry.parentRelativeName, entry.fileName),
-                        isDirectory = false,
+                        false,
+                        entry.fileName,
                     ),
+                    onUnsupported = { notSupportedAction() },
                 )
-            },
-            shortcut = webDavShortcut(
-                joinRemoteArchivePath("", entry.parentRelativeName, entry.fileName),
-                false,
-                entry.fileName,
-            ),
-            onUnsupported = { notSupportedAction() },
+            } else {
+                BrowseOverflowActions(
+                    kind = BrowseOverflowKind.Gallery,
+                    onRead = { openArchive(entry) },
+                    onOpenWith = { openArchiveInOtherApp(entry) },
+                    onSaveAs = {
+                        saveWebDavFile(
+                            joinRemoteArchivePath("", entry.parentRelativeName, entry.fileName),
+                            entry.fileName.substringAfterLast('/'),
+                        )
+                    },
+                    onShare = {
+                        shareWebDavFile(
+                            joinRemoteArchivePath("", entry.parentRelativeName, entry.fileName),
+                            entry.fileName.substringAfterLast('/'),
+                        )
+                    },
+                    onShareViaHttp = webDavHttpShareFile(
+                        joinRemoteArchivePath("", entry.parentRelativeName, entry.fileName),
+                    ),
+                    onOpenFolder = {
+                        openBrowseFolder(
+                            FolderSearch.openFolderTarget(
+                                joinRemoteArchivePath("", entry.parentRelativeName, entry.fileName),
+                                isDirectory = false,
+                            ),
+                        )
+                    },
+                    shortcut = webDavShortcut(
+                        joinRemoteArchivePath("", entry.parentRelativeName, entry.fileName),
+                        false,
+                        entry.fileName,
+                    ),
+                    onUnsupported = { notSupportedAction() },
+                )
+            }
+            ).selectable(
+            webDavKey("a:$remote"),
+            entry.name,
+            shareHttp = webDavShareFileStart(remote),
+            saveInto = webDavSaveFileInto(remote),
         )
     }
 
@@ -1781,6 +1913,11 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
         },
         shortcut = webDavShortcut(fileName, false, fileName),
         onUnsupported = { notSupportedAction() },
+    ).selectable(
+        webDavKey("v:$fileName"),
+        fileName.substringAfterLast('/'),
+        shareHttp = webDavShareFileStart(fileName),
+        saveInto = webDavSaveFileInto(fileName),
     )
 
     /** Regular-file MOBI/AZW/AZW3 image reader. Gallery extract, not the text ebook. */
@@ -1820,93 +1957,101 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
         }
     }
 
-    fun fileOverflow(fileName: String) = if (isHtmlFileName(fileName)) {
-        BrowseOverflowActions(
-            kind = BrowseOverflowKind.Webpage,
-            onOpenInBrowser = { openWebDavHtml(fileName, incognito = false) },
-            onOpenIncognito = { openWebDavHtml(fileName, incognito = true) },
-            onPlay = { openInternalDocument(fileName) },
-            onCopyUrl = { copyWebDavHtmlUrl(fileName) },
-            onOpenWith = { openExternalFile(fileName, asFile = true) },
-            onSaveAs = { saveWebDavFile(fileName) },
-            onShare = { shareWebDavFile(fileName) },
-            onShareViaHttp = webDavHttpShareFile(fileName),
-            onOpenFolder = {
-                openBrowseFolder(FolderSearch.openFolderTarget(fileName, isDirectory = false))
-            },
-            shortcut = webDavShortcut(fileName, false, fileName),
-            onUnsupported = { notSupportedAction() },
-        )
-    } else if (isPdfOrEbookFileName(fileName)) {
-        BrowseOverflowActions(
-            kind = BrowseOverflowKind.Pdf,
-            onRead = if (isMobiContainerFileName(fileName)) {
-                { openMobiImageReader(fileName) }
-            } else {
-                null
-            },
-            onPlay = { openInternalDocument(fileName) },
-            onExternalPlayer = {
-                val src = source
-                if (src != null && isPdfFileName(fileName)) {
-                    val remote = if (relativeDir.isEmpty()) {
-                        fileName
-                    } else {
-                        WebDavGateway.joinRelative(relativeDir, fileName)
-                    }
-                    launchIO {
-                        recordCurrentBrowseFolderHistory(src.id, fileName)
-                        LocalHistory.recordWebDavFile(
-                            src.id,
-                            remote,
-                            title = fileName.substringAfterLast('/'),
-                        )
-                        try {
-                            OpenPdfExternally.openWebDav(
-                                context = context,
-                                sourceId = src.id,
-                                remoteRelativeFile = remote,
-                                displayName = fileName.substringAfterLast('/').substringAfterLast('\\'),
-                            )
-                        } catch (e: Throwable) {
-                            if (e.isZipMemberTooLarge()) return@launchIO
-                            snackbar(
-                                context.getString(
-                                    R.string.open_pdf_external_failed,
-                                    e.message ?: e.toString(),
-                                ),
-                            )
+    fun fileOverflow(fileName: String) = (
+        if (isHtmlFileName(fileName)) {
+            BrowseOverflowActions(
+                kind = BrowseOverflowKind.Webpage,
+                onOpenInBrowser = { openWebDavHtml(fileName, incognito = false) },
+                onOpenIncognito = { openWebDavHtml(fileName, incognito = true) },
+                onPlay = { openInternalDocument(fileName) },
+                onCopyUrl = { copyWebDavHtmlUrl(fileName) },
+                onOpenWith = { openExternalFile(fileName, asFile = true) },
+                onSaveAs = { saveWebDavFile(fileName) },
+                onShare = { shareWebDavFile(fileName) },
+                onShareViaHttp = webDavHttpShareFile(fileName),
+                onOpenFolder = {
+                    openBrowseFolder(FolderSearch.openFolderTarget(fileName, isDirectory = false))
+                },
+                shortcut = webDavShortcut(fileName, false, fileName),
+                onUnsupported = { notSupportedAction() },
+            )
+        } else if (isPdfOrEbookFileName(fileName)) {
+            BrowseOverflowActions(
+                kind = BrowseOverflowKind.Pdf,
+                onRead = if (isMobiContainerFileName(fileName)) {
+                    { openMobiImageReader(fileName) }
+                } else {
+                    null
+                },
+                onPlay = { openInternalDocument(fileName) },
+                onExternalPlayer = {
+                    val src = source
+                    if (src != null && isPdfFileName(fileName)) {
+                        val remote = if (relativeDir.isEmpty()) {
+                            fileName
+                        } else {
+                            WebDavGateway.joinRelative(relativeDir, fileName)
                         }
+                        launchIO {
+                            recordCurrentBrowseFolderHistory(src.id, fileName)
+                            LocalHistory.recordWebDavFile(
+                                src.id,
+                                remote,
+                                title = fileName.substringAfterLast('/'),
+                            )
+                            try {
+                                OpenPdfExternally.openWebDav(
+                                    context = context,
+                                    sourceId = src.id,
+                                    remoteRelativeFile = remote,
+                                    displayName = fileName.substringAfterLast('/').substringAfterLast('\\'),
+                                )
+                            } catch (e: Throwable) {
+                                if (e.isZipMemberTooLarge()) return@launchIO
+                                snackbar(
+                                    context.getString(
+                                        R.string.open_pdf_external_failed,
+                                        e.message ?: e.toString(),
+                                    ),
+                                )
+                            }
+                        }
+                    } else if (!isPdfFileName(fileName)) {
+                        openExternalFile(fileName)
                     }
-                } else if (!isPdfFileName(fileName)) {
-                    openExternalFile(fileName)
-                }
-            },
-            onOpenWith = { openExternalFile(fileName, asFile = true) },
-            onSaveAs = { saveWebDavFile(fileName) },
-            onShare = { shareWebDavFile(fileName) },
-            onShareViaHttp = webDavHttpShareFile(fileName),
-            onOpenFolder = {
-                openBrowseFolder(FolderSearch.openFolderTarget(fileName, isDirectory = false))
-            },
-            shortcut = webDavShortcut(fileName, false, fileName),
-            onUnsupported = { notSupportedAction() },
-        )
-    } else {
-        BrowseOverflowActions(
-            kind = BrowseOverflowKind.Common,
-            onOpenWith = { openExternalFile(fileName, asFile = true) },
-            onSaveAs = { saveWebDavFile(fileName) },
-            onShare = { shareWebDavFile(fileName) },
-            onShareViaHttp = webDavHttpShareFile(fileName),
-            onConvert = webDavConvertAction(fileName),
-            onOpenFolder = {
-                openBrowseFolder(FolderSearch.openFolderTarget(fileName, isDirectory = false))
-            },
-            shortcut = webDavShortcut(fileName, false, fileName),
-            onUnsupported = { notSupportedAction() },
-        )
-    }
+                },
+                onOpenWith = { openExternalFile(fileName, asFile = true) },
+                onSaveAs = { saveWebDavFile(fileName) },
+                onShare = { shareWebDavFile(fileName) },
+                onShareViaHttp = webDavHttpShareFile(fileName),
+                onOpenFolder = {
+                    openBrowseFolder(FolderSearch.openFolderTarget(fileName, isDirectory = false))
+                },
+                shortcut = webDavShortcut(fileName, false, fileName),
+                onUnsupported = { notSupportedAction() },
+            )
+        } else {
+            BrowseOverflowActions(
+                kind = BrowseOverflowKind.Common,
+                onOpenWith = { openExternalFile(fileName, asFile = true) },
+                onSaveAs = { saveWebDavFile(fileName) },
+                onShare = { shareWebDavFile(fileName) },
+                onShareViaHttp = webDavHttpShareFile(fileName),
+                onConvert = webDavConvertAction(fileName),
+                onOpenFolder = {
+                    openBrowseFolder(FolderSearch.openFolderTarget(fileName, isDirectory = false))
+                },
+                shortcut = webDavShortcut(fileName, false, fileName),
+                onUnsupported = { notSupportedAction() },
+            )
+        }
+        ).selectable(
+        webDavKey("f:$fileName"),
+        fileName.substringAfterLast('/'),
+        shareHttp = webDavShareFileStart(fileName),
+        convertStill = webDavConvertStill(fileName),
+        saveInto = webDavSaveFileInto(fileName),
+    )
 
     Scaffold(
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
@@ -2105,6 +2250,17 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                                 remoteBrowseHistoryGids(it, sourceId, dirKey, smb = false)
                             },
                             nameOf = { it.name },
+                        )
+                    }
+                    SideEffect {
+                        folderSelect.sectionKeys = mapOf(
+                            BrowseFolderSection.Directories to dirs.map { webDavKey("d:${it.relativeName}") },
+                            BrowseFolderSection.Galleries to galleries.map { remoteSelectId(it) },
+                            BrowseFolderSection.Documents to documents.map { remoteSelectId(it) },
+                            BrowseFolderSection.Videos to videos.map { webDavKey("v:${it.fileName}") },
+                            BrowseFolderSection.Files to files.map { webDavKey("f:${it.fileName}") },
+                            BrowseFolderSection.Recent to recentEntries.map { remoteSelectId(it) },
+                            BrowseFolderSection.Search to searchHits.map { remoteSelectId(it) },
                         )
                     }
                     val (collapsedSections, toggleSection, setSectionCollapsed) = rememberBrowseSectionCollapse(
@@ -2426,6 +2582,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                         item(key = "hdr-recent", span = { GridItemSpan(maxLineSpan) }) {
                             BrowseSectionHeader(
                                 stringResource(R.string.browse_recent),
+                                section = BrowseFolderSection.Recent,
                                 onClick = {
                                     onRecentHeaderGesture(
                                         collapsed = recentCollapsedNow.value,
@@ -2466,6 +2623,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                         item(key = "hdr-docs", span = { GridItemSpan(maxLineSpan) }) {
                             BrowseSectionHeader(
                                 stringResource(R.string.browse_documents),
+                                section = BrowseFolderSection.Documents,
                                 onClick = { toggleSection(BrowseFolderSection.Documents) },
                             )
                         }
@@ -2644,6 +2802,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                                 ) {
                                     BrowseSectionHeader(
                                         stringResource(R.string.browse_directories),
+                                        section = BrowseFolderSection.Directories,
                                         onClick = { toggleSection(BrowseFolderSection.Directories) },
                                     )
                                 }
@@ -2673,6 +2832,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                                 ) {
                                     BrowseSectionHeader(
                                         stringResource(R.string.browse_galleries),
+                                        section = BrowseFolderSection.Galleries,
                                         onClick = { toggleSection(BrowseFolderSection.Galleries) },
                                     )
                                 }
@@ -2720,6 +2880,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                                 ) {
                                     BrowseSectionHeader(
                                         stringResource(R.string.browse_videos),
+                                        section = BrowseFolderSection.Videos,
                                         onClick = { toggleSection(BrowseFolderSection.Videos) },
                                     )
                                 }
@@ -2748,6 +2909,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                                 ) {
                                     BrowseSectionHeader(
                                         stringResource(R.string.browse_files),
+                                        section = BrowseFolderSection.Files,
                                         onClick = { toggleSection(BrowseFolderSection.Files) },
                                     )
                                 }
@@ -2796,6 +2958,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                                     ) {
                                         BrowseSectionHeader(
                                             stringResource(R.string.browse_directories),
+                                            section = BrowseFolderSection.Directories,
                                             onClick = { toggleSection(BrowseFolderSection.Directories) },
                                         )
                                     }
@@ -2828,6 +2991,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                                     ) {
                                         BrowseSectionHeader(
                                             stringResource(R.string.browse_galleries),
+                                            section = BrowseFolderSection.Galleries,
                                             onClick = { toggleSection(BrowseFolderSection.Galleries) },
                                         )
                                     }
@@ -2881,6 +3045,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                                     ) {
                                         BrowseSectionHeader(
                                             stringResource(R.string.browse_videos),
+                                            section = BrowseFolderSection.Videos,
                                             onClick = { toggleSection(BrowseFolderSection.Videos) },
                                         )
                                     }
@@ -2912,6 +3077,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                                     ) {
                                         BrowseSectionHeader(
                                             stringResource(R.string.browse_files),
+                                            section = BrowseFolderSection.Files,
                                             onClick = { toggleSection(BrowseFolderSection.Files) },
                                         )
                                     }

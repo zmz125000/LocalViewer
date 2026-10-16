@@ -294,6 +294,108 @@ object BrowseSaveAs {
     context(_: SnackbarHostState, _: Context)
     internal suspend fun pickConvertDirectory(): Path? = pickTreeDir()
 
+    /** Same tree picker as Save to… for a folder destination. */
+    context(_: SnackbarHostState, _: Context)
+    internal suspend fun pickSaveDirectory(): Path? = pickTreeDir()
+
+    /** Batch Save to…: write one local file under [dir]. */
+    internal suspend fun saveLocalFileInto(dir: Path, path: Path, displayName: String): Boolean = saveIntoCatching {
+        withIOContext {
+            dir.createChildFile(uniqueConvertName(dir, displayName)).use { out ->
+                writeLocalBytes(path, out)
+            }
+        }
+    }
+
+    /** Batch Save to…: copy one local folder under [dir]. */
+    internal suspend fun saveLocalFolderInto(
+        dir: Path,
+        src: Path,
+        displayName: String,
+        relativeName: String,
+    ): Boolean = saveIntoCatching {
+        withIOContext {
+            val dest = uniqueChildDir(dir, displayName.ifEmpty { "folder" })
+            val zipSeg = ZipAsDirListing.zipFileSegment(relativeName, displayName)
+            if (zipSeg != null) {
+                val inner = ZipAsDirListing.zipInnerPrefix(relativeName)
+                val active = coroutineContext
+                withLocalZipCentralDirectory(src) { cd ->
+                    copyZipFolder(cd, inner, dest, ByteCounter(), active)
+                } ?: error("Cannot read ZIP")
+            } else {
+                copyLocalDir(src, dest, ByteCounter())
+            }
+        }
+    }
+
+    /** Batch Save to…: write one SMB file under [dir]. */
+    internal suspend fun saveSmbFileInto(
+        dir: Path,
+        sourceId: Long,
+        relativeFile: String,
+        displayName: String,
+    ): Boolean = saveIntoCatching {
+        val (source, password) = smbCreds(sourceId)
+        withIOContext {
+            dir.createChildFile(uniqueConvertName(dir, displayName)).use { out ->
+                writeSmbFile(source, password, relativeFile, out)
+            }
+        }
+    }
+
+    /** Batch Save to…: copy one SMB folder under [dir]. */
+    internal suspend fun saveSmbFolderInto(
+        dir: Path,
+        sourceId: Long,
+        relativeDir: String,
+        displayName: String,
+    ): Boolean = saveIntoCatching {
+        val (source, password) = smbCreds(sourceId)
+        withIOContext {
+            val dest = uniqueChildDir(dir, displayName.ifEmpty { "folder" })
+            copySmbDir(source, password, relativeDir, dest, ByteCounter())
+        }
+    }
+
+    /** Batch Save to…: write one WebDAV file under [dir]. */
+    internal suspend fun saveWebDavFileInto(
+        dir: Path,
+        sourceId: Long,
+        relativeFile: String,
+        displayName: String,
+    ): Boolean = saveIntoCatching {
+        val (source, password) = webDavCreds(sourceId)
+        withIOContext {
+            dir.createChildFile(uniqueConvertName(dir, displayName)).use { out ->
+                writeWebDavFile(source, password, relativeFile, out)
+            }
+        }
+    }
+
+    /** Batch Save to…: copy one WebDAV folder under [dir]. */
+    internal suspend fun saveWebDavFolderInto(
+        dir: Path,
+        sourceId: Long,
+        relativeDir: String,
+        displayName: String,
+    ): Boolean = saveIntoCatching {
+        val (source, password) = webDavCreds(sourceId)
+        withIOContext {
+            val dest = uniqueChildDir(dir, displayName.ifEmpty { "folder" })
+            copyWebDavDir(source, password, relativeDir, dest, ByteCounter())
+        }
+    }
+
+    private suspend fun saveIntoCatching(block: suspend () -> Unit): Boolean = try {
+        block()
+        true
+    } catch (e: CancellationException) {
+        throw e
+    } catch (_: Throwable) {
+        false
+    }
+
     /** Writes [source] into [dir] as [displayName]. A local name that already exists gets a suffix. */
     internal fun writeConvertFile(dir: Path, displayName: String, source: File): Path {
         val name = uniqueConvertName(dir, FileUtils.sanitizeFilename(displayName))

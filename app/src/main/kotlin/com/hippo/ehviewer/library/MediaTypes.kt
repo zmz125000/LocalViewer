@@ -214,6 +214,13 @@ val PHOTO_GALLERY_EBOOK_EXTENSIONS = setOf(
     "fb2",
 )
 
+/** EPUB, PDF, and [PHOTO_GALLERY_EBOOK_EXTENSIONS]. Not loose text. */
+fun isHistoryGalleryEbookFileName(name: String): Boolean {
+    if (name.startsWith('.')) return false
+    val ext = FileUtils.getExtensionFromFilename(name)?.lowercase() ?: return false
+    return ext == "epub" || ext == "pdf" || ext in PHOTO_GALLERY_EBOOK_EXTENSIONS
+}
+
 fun isPhotoGalleryEbookFileName(name: String): Boolean {
     if (name.startsWith('.')) return false
     val ext = FileUtils.getExtensionFromFilename(name)?.lowercase() ?: return false

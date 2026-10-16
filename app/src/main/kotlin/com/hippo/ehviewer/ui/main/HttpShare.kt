@@ -57,6 +57,79 @@ data class HttpShareItem(
 )
 
 /**
+ * Files and folders for one selection share. The LAN session root lists them.
+ * Duplicate names get a numeric suffix so every link stays distinct.
+ */
+class HttpSelectionListing {
+    internal var network: Boolean = false
+        private set
+    private val files = LinkedHashMap<String, ExternalHttpStreamServer.FileEntry>()
+    private val folders = LinkedHashMap<String, ExternalHttpStreamServer.HttpDirSource>()
+
+    fun addFile(
+        name: String,
+        network: Boolean,
+        entry: (uniqueName: String) -> ExternalHttpStreamServer.FileEntry,
+    ) {
+        this.network = this.network || network
+        val key = uniqueName(name)
+        files[key] = entry(key)
+    }
+
+    fun addFolder(
+        name: String,
+        source: ExternalHttpStreamServer.HttpDirSource,
+        network: Boolean,
+    ) {
+        this.network = this.network || network
+        folders[uniqueName(name)] = source
+    }
+
+    fun isEmpty(): Boolean = files.isEmpty() && folders.isEmpty()
+
+    internal fun toDirSource(): ExternalHttpStreamServer.HttpDirSource = object : ExternalHttpStreamServer.HttpDirSource {
+        override fun list(relativeDir: String): ExternalHttpStreamServer.HttpDirIndex {
+            val rel = ExternalHttpStreamServer.normalizeRelativePath(relativeDir)
+            if (rel.isNotEmpty() && !ExternalHttpStreamServer.isSafeRelativePath(rel)) {
+                return ExternalHttpStreamServer.HttpDirIndex()
+            }
+            if (rel.isEmpty()) {
+                return ExternalHttpStreamServer.HttpDirIndex(
+                    files = files.keys.toList(),
+                    dirs = folders.keys.toList(),
+                )
+            }
+            val slash = rel.indexOf('/')
+            val head = if (slash < 0) rel else rel.substring(0, slash)
+            val rest = if (slash < 0) "" else rel.substring(slash + 1)
+            return folder(head)?.list(rest) ?: ExternalHttpStreamServer.HttpDirIndex()
+        }
+
+        override fun open(relativeFile: String): ExternalHttpStreamServer.FileEntry? {
+            if (!ExternalHttpStreamServer.isSafeRelativePath(relativeFile)) return null
+            val rel = ExternalHttpStreamServer.normalizeRelativePath(relativeFile)
+            file(rel)?.let { return it }
+            val slash = rel.indexOf('/')
+            if (slash < 0) return null
+            return folder(rel.substring(0, slash))?.open(rel.substring(slash + 1))
+        }
+
+        private fun file(name: String): ExternalHttpStreamServer.FileEntry? = files[name] ?: files.entries.firstOrNull { it.key.equals(name, ignoreCase = true) }?.value
+
+        private fun folder(name: String): ExternalHttpStreamServer.HttpDirSource? = folders[name] ?: folders.entries.firstOrNull { it.key.equals(name, ignoreCase = true) }?.value
+    }
+
+    private fun uniqueName(raw: String): String {
+        val leaf = raw.substringAfterLast('/').substringAfterLast('\\').trim()
+        val base = leaf.takeIf { ExternalHttpStreamServer.isSafeFileName(it) } ?: "item"
+        if (base !in files && base !in folders) return base
+        var i = 2
+        while ("$base ($i)" in files || "$base ($i)" in folders) i++
+        return "$base ($i)"
+    }
+}
+
+/**
  * LAN HTTP shares started from folder-view overflow. Each share is a session on
  * the dedicated 0.0.0.0 listener (not the loopback player server).
  */
@@ -205,6 +278,33 @@ object HttpShare {
             val source = WebDavRepository.load(sourceId) ?: throw IOException("WebDAV source missing")
             val password = WebDavPasswordStore.get(sourceId)
             session.dirSource = OpenFileExternally.webDavHtmlDirSource(source, password, remoteRelativeDir)
+        }
+    }
+
+    /**
+     * One LAN session whose index lists every file and folder [contribute] adds.
+     * Sharing the same [dirKey] again replaces the previous list.
+     */
+    suspend fun startSelection(
+        context: Context,
+        title: String,
+        dirKey: String,
+        contribute: suspend (HttpSelectionListing) -> Unit,
+    ): HttpShareItem {
+        val listing = HttpSelectionListing()
+        withIOContext { contribute(listing) }
+        if (listing.isEmpty()) {
+            throw IOException(context.getString(R.string.browse_action_not_supported))
+        }
+        find(dirKey)?.let { stop(it.id) }
+        return startShare(
+            context = context,
+            dirKey = dirKey,
+            title = title,
+            network = listing.network,
+            fileName = "",
+        ) { session ->
+            session.dirSource = listing.toDirSource()
         }
     }
 

@@ -30,10 +30,15 @@ fun <T : GalleryInfo> filterHistoryFileItems(
     items: List<T>,
     section: HistorySection,
     allTypes: Boolean = false,
+    ebookAsGallery: Boolean = true,
 ): List<T> = if (allTypes) {
     items
 } else {
     items.filter { info ->
-        LocalHistory.matchesHistorySection(info, section == HistorySection.Documents)
+        LocalHistory.matchesHistorySection(
+            info,
+            documents = section == HistorySection.Documents,
+            ebookAsGallery = ebookAsGallery,
+        )
     }
 }

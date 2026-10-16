@@ -231,7 +231,7 @@ object LocalHistory {
         return isEbookFileName(title) || isEbookFileName(name)
     }
 
-    /** PDF / MOBI file/gallery rows appear on both Media and Documents. */
+    /** PDF / MOBI file/gallery rows. Kept for callers that only care about those two. */
     fun isHistoryPdfOrMobi(info: GalleryInfo): Boolean {
         val title = info.title.orEmpty()
         val name = fileNameOfHistory(info)
@@ -242,12 +242,29 @@ object LocalHistory {
     }
 
     /**
-     * History file/gallery filter. Directories are excluded by the caller.
-     * Documents → Documents; everything else → Media; PDF and MOBI → both.
+     * Packaged ebook that can sit in the History media list (EPUB, PDF, MOBI, AZW, FB2).
+     * Loose text stays documents-only.
      */
-    fun matchesHistorySection(info: GalleryInfo, documents: Boolean): Boolean {
+    fun isHistoryGalleryEbook(info: GalleryInfo): Boolean {
+        val title = info.title.orEmpty()
+        val name = fileNameOfHistory(info)
+        return isHistoryGalleryEbookFileName(title) || isHistoryGalleryEbookFileName(name)
+    }
+
+    /**
+     * History file/gallery filter. Directories are excluded by the caller.
+     * Documents → the document list. Other files → the media list.
+     * When [ebookAsGallery] is on, packaged ebooks appear in both.
+     */
+    fun matchesHistorySection(
+        info: GalleryInfo,
+        documents: Boolean,
+        ebookAsGallery: Boolean = true,
+    ): Boolean {
         val doc = isHistoryDocument(info)
-        return if (documents) doc else !doc || isHistoryPdfOrMobi(info)
+        if (documents) return doc
+        if (!doc) return true
+        return ebookAsGallery && isHistoryGalleryEbook(info)
     }
 
     /**

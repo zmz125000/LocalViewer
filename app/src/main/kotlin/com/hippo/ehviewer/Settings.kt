@@ -621,10 +621,18 @@ object Settings : DataStorePreferences(null) {
 
     /**
      * History file/gallery filter: 0 = media (default), 1 = documents.
-     * Browse-directory pins are not filtered. PDF and MOBI appear in both.
-     * Toggled by re-tapping History on the bottom nav, or the section header.
+     * Browse-directory pins are not filtered. Re-tapping History on the bottom
+     * nav swaps the two lists. Gallery ebooks (EPUB, PDF, MOBI, …) also appear
+     * in the media list when [showEbookFilesAsGallery] is on.
      */
     val historySection = intPref("history_section", 0)
+
+    /**
+     * When on, packaged ebooks (EPUB, PDF, MOBI, AZW, FB2) stay in the History
+     * media list as well as the document list. Off keeps them in the document
+     * list only. Loose text (TXT, HTML, Markdown) is always documents-only.
+     */
+    val showEbookFilesAsGallery = boolPref("show_ebook_files_as_gallery", true)
 
     /**
      * Library Videos listing via the All videos toggle: 0 = folders that contain
