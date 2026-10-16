@@ -4,11 +4,13 @@ import android.content.Context
 import android.view.WindowManager
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -26,6 +28,7 @@ import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
@@ -40,12 +43,12 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -75,8 +78,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
 import moe.tarsin.snackbar
 import okio.Path
@@ -177,6 +179,14 @@ class FolderSelectState {
         sync()
     }
 
+    /** Replace this folder's picks. An empty list drops the snackbar. */
+    internal fun replacePicks(next: List<FolderPick>) {
+        picks.clear()
+        picks.addAll(next)
+        snackbar = next.isNotEmpty()
+        sync()
+    }
+
     /** Selected count in [section] to the number of rows in that section. */
     fun count(section: BrowseFolderSection): Pair<Int, Int>? {
         if (!selecting) return null
@@ -242,10 +252,13 @@ fun BrowseOverflowActions.toPick(): FolderPick? {
 
 internal enum class TaskStatus { Pending, Running, Done, Failed }
 
+internal enum class BatchEnd { Stop, Continue, Done }
+
 internal class TaskJob(
     val id: Long,
     val title: String,
     val isFolder: Boolean,
+    val pick: FolderPick?,
     val run: suspend (Path) -> Boolean,
     status: TaskStatus,
 ) {
@@ -253,10 +266,16 @@ internal class TaskJob(
 }
 
 internal class TaskBatch(
+    val folderKey: String?,
     val jobs: androidx.compose.runtime.snapshots.SnapshotStateList<TaskJob>,
-    val runner: Job,
+    runner: Job,
 ) {
+    var runner: Job = runner
     var finished by mutableStateOf(0)
+    var paused by mutableStateOf(false)
+    var finishedRun by mutableStateOf(false)
+    var end by mutableStateOf<BatchEnd?>(null)
+    private val wake = Channel<Unit>(Channel.CONFLATED)
 
     val progressLabel: String
         get() {
@@ -276,11 +295,53 @@ internal class TaskBatch(
         val job = jobs.find { it.id == id } ?: return
         if (job.status != TaskStatus.Pending) return
         jobs.remove(job)
+        wake.trySend(Unit)
     }
 
-    fun stop() {
-        runner.cancel()
+    fun wake() {
+        wake.trySend(Unit)
     }
+
+    suspend fun awaitSignal() {
+        wake.receive()
+    }
+}
+
+/**
+ * Runs [batch] jobs one at a time.
+ * While [TaskBatch.paused] is set, the running job finishes and later jobs stay pending.
+ */
+internal suspend fun executeJobs(batch: TaskBatch, dir: Path) {
+    while (batch.end == null) {
+        if (batch.paused) {
+            val busy = batch.jobs.any { it.status == TaskStatus.Pending || it.status == TaskStatus.Running }
+            if (!busy) break
+            batch.awaitSignal()
+            continue
+        }
+        val next = batch.jobs.firstOrNull { it.status == TaskStatus.Pending } ?: break
+        next.status = TaskStatus.Running
+        val ok = try {
+            next.run(dir)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Throwable) {
+            false
+        }
+        if (next.status == TaskStatus.Running) {
+            next.status = if (ok) TaskStatus.Done else TaskStatus.Failed
+            batch.finished++
+        }
+    }
+}
+
+/** Pending work, failures, and the interrupted running job. Done jobs are left out. */
+internal fun takeUnfinishedPicks(jobs: List<TaskJob>): List<FolderPick> {
+    jobs.filter { it.status == TaskStatus.Running }.forEach { it.status = TaskStatus.Pending }
+    return jobs
+        .filter { it.status == TaskStatus.Pending || it.status == TaskStatus.Failed }
+        .mapNotNull { it.pick }
+        .distinctBy { it.key }
 }
 
 object FolderSelectHost {
@@ -290,6 +351,8 @@ object FolderSelectHost {
         private set
     val taskRunning: Boolean get() = batch != null
     var dialog by mutableStateOf(false)
+    var selectionSnacks by mutableStateOf<List<SelectionSnack>>(emptyList())
+        private set
     var selectionSnack by mutableStateOf<SelectionSnack?>(null)
         private set
     var selectionPicks by mutableStateOf<List<FolderPick>>(emptyList())
@@ -297,6 +360,7 @@ object FolderSelectHost {
 
     private val folders = mutableMapOf<String, FolderMemory>()
     private val snackbarOrder = ArrayDeque<String>()
+    private var shownFolderKey: String? = null
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val ids = AtomicLong(1)
 
@@ -338,35 +402,56 @@ object FolderSelectHost {
     internal fun refreshSelectionSnack() {
         val live = current
         val liveKey = live?.folderKey
-        if (live != null && live.snackbar && liveKey != null) {
-            selectionSnack = SelectionSnack(liveKey, live.folderName, live.picks.size)
-            selectionPicks = live.picks.toList()
-            return
+        val snacks = ArrayList<SelectionSnack>(snackbarOrder.size)
+        for (key in snackbarOrder) {
+            val saved = folders[key] ?: continue
+            if (live != null && key == liveKey) {
+                if (!live.snackbar) continue
+                val name = live.folderName.ifEmpty { saved.folderName }
+                snacks.add(SelectionSnack(key, name, live.picks.size))
+            } else if (saved.snackbar) {
+                snacks.add(SelectionSnack(key, saved.folderName, saved.picks.size))
+            }
         }
-        val key = snackbarOrder.lastOrNull { folders[it]?.snackbar == true }
-        val saved = key?.let { folders[it] }
-        if (key != null && saved != null) {
-            selectionSnack = SelectionSnack(key, saved.folderName, saved.picks.size)
-            selectionPicks = saved.picks
+        if (live != null && liveKey != null && live.snackbar && snacks.none { it.folderKey == liveKey }) {
+            snacks.add(SelectionSnack(liveKey, live.folderName, live.picks.size))
+        }
+        selectionSnacks = snacks
+        if (shownFolderKey != null && snacks.none { it.folderKey == shownFolderKey }) {
+            shownFolderKey = null
+        }
+        val picksKey = shownFolderKey ?: snacks.lastOrNull()?.folderKey
+        selectionSnack = snacks.find { it.folderKey == picksKey }
+        selectionPicks = picksFor(picksKey)
+    }
+
+    fun showList(folderKey: String) {
+        shownFolderKey = folderKey
+        refreshSelectionSnack()
+        dialog = true
+    }
+
+    fun cancelSelection(folderKey: String) {
+        val closeList = shownFolderKey == folderKey
+        val live = current
+        if (live != null && live.folderKey == folderKey) {
+            live.cancel()
         } else {
-            selectionSnack = null
-            selectionPicks = emptyList()
+            forgetFolder(folderKey)
+        }
+        if (closeList) {
+            shownFolderKey = null
+            if (!taskRunning) dialog = false
         }
     }
 
     fun cancelShownSelection() {
-        val key = selectionSnack?.folderKey ?: return
-        val live = current
-        if (live != null && live.folderKey == key) {
-            live.cancel()
-            return
-        }
-        forgetFolder(key)
-        if (!taskRunning) dialog = false
+        val key = shownFolderKey ?: selectionSnack?.folderKey ?: return
+        cancelSelection(key)
     }
 
     fun removeShownPick(pickKey: String) {
-        val folderKey = selectionSnack?.folderKey ?: return
+        val folderKey = shownFolderKey ?: selectionSnack?.folderKey ?: return
         val live = current
         if (live != null && live.folderKey == folderKey) {
             live.remove(pickKey)
@@ -376,68 +461,152 @@ object FolderSelectHost {
         rememberFolder(folderKey, saved.copy(picks = saved.picks.filterNot { it.key == pickKey }))
     }
 
+    private fun picksFor(key: String?): List<FolderPick> {
+        if (key == null) return emptyList()
+        val live = current
+        if (live != null && live.folderKey == key) return live.picks.toList()
+        return folders[key]?.picks.orEmpty()
+    }
+
     internal fun resetForTest() {
+        val running = batch
+        batch = null
+        running?.runner?.cancel()
         folders.clear()
         snackbarOrder.clear()
+        shownFolderKey = null
+        selectionSnacks = emptyList()
         selectionSnack = null
         selectionPicks = emptyList()
         current = null
         dialog = false
     }
 
+    fun togglePause() {
+        val running = batch ?: return
+        if (running.finishedRun || running.end != null) return
+        running.paused = !running.paused
+        running.wake()
+    }
+
+    /** Stop the queue and show the unfinished items under the selection overflow menu. */
+    fun stopTask() {
+        val running = batch ?: return
+        if (running.finishedRun || running.end != null) return
+        running.end = BatchEnd.Stop
+        running.paused = false
+        running.wake()
+        running.runner.cancel()
+    }
+
+    /** Leave the finished queue and show the selection that is still stored. */
+    fun continueSelection() {
+        val running = batch ?: return
+        if (!running.finishedRun || running.end != null) return
+        running.end = BatchEnd.Continue
+        running.wake()
+    }
+
+    /** Clear the folder selection and close the panel. */
+    fun done() {
+        val running = batch ?: return
+        if (!running.finishedRun || running.end != null) return
+        running.end = BatchEnd.Done
+        running.wake()
+    }
+
     internal fun startTasks(jobs: List<TaskJob>, dir: Path) {
         if (batch != null || jobs.isEmpty()) return
         val list = mutableStateListOf<TaskJob>().also { it.addAll(jobs) }
-        lateinit var running: TaskBatch
-        val runner = scope.launch {
-            try {
-                while (true) {
-                    val next = list.firstOrNull { it.status == TaskStatus.Pending } ?: break
-                    next.status = TaskStatus.Running
-                    val ok = try {
-                        next.run(dir)
-                    } catch (e: CancellationException) {
-                        throw e
-                    } catch (_: Throwable) {
-                        false
-                    }
-                    if (next.status == TaskStatus.Running) {
-                        next.status = if (ok) TaskStatus.Done else TaskStatus.Failed
-                        running.finished++
-                    }
-                }
-                if (dialog) {
-                    snapshotFlow { dialog }.first { !it }
-                } else {
-                    delay(1600)
-                }
-            } catch (_: CancellationException) {
-                // Stop dismisses the task immediately.
-            } finally {
-                if (batch === running) {
-                    batch = null
-                    if (current?.selecting != true) dialog = false
-                }
-            }
-        }
-        running = TaskBatch(list, runner)
+        val folderKey = shownFolderKey ?: selectionSnack?.folderKey ?: current?.folderKey
+        val running = TaskBatch(folderKey, list, Job())
         batch = running
         dialog = true
+        running.runner = scope.launch {
+            try {
+                executeJobs(running, dir)
+                if (running.end == null) {
+                    running.finishedRun = true
+                    while (running.end == null) running.awaitSignal()
+                }
+            } catch (_: CancellationException) {
+                if (running.end == null) running.end = BatchEnd.Stop
+            } finally {
+                if (batch === running) finishBatch(running)
+            }
+        }
+    }
+
+    internal fun endBatchForTest(running: TaskBatch) {
+        batch = running
+        finishBatch(running)
+    }
+
+    private fun finishBatch(running: TaskBatch) {
+        if (batch !== running) return
+        when (running.end ?: BatchEnd.Stop) {
+            BatchEnd.Continue -> {
+                batch = null
+                dialog = true
+            }
+            BatchEnd.Done -> {
+                val key = running.folderKey
+                batch = null
+                if (key != null) cancelSelection(key)
+                dialog = false
+            }
+            BatchEnd.Stop -> {
+                restorePendingSelection(running)
+                batch = null
+            }
+        }
+    }
+
+    private fun restorePendingSelection(running: TaskBatch) {
+        val key = running.folderKey ?: return
+        val picks = takeUnfinishedPicks(running.jobs)
+        val live = current
+        if (live != null && live.folderKey == key) {
+            live.replacePicks(picks)
+            return
+        }
+        val saved = folders[key]
+        rememberFolder(
+            key,
+            FolderMemory(
+                selecting = saved?.selecting == true,
+                picks = picks,
+                folderName = saved?.folderName.orEmpty(),
+                snackbar = picks.isNotEmpty(),
+            ),
+        )
     }
 
     internal fun newJob(
         title: String,
         isFolder: Boolean,
+        pick: FolderPick?,
         run: suspend (Path) -> Boolean,
-    ): TaskJob = TaskJob(ids.getAndIncrement(), title, isFolder, run, TaskStatus.Pending)
+    ): TaskJob = TaskJob(ids.getAndIncrement(), title, isFolder, pick, run, TaskStatus.Pending)
 }
 
 @Composable
 fun FolderSelectBars(modifier: Modifier = Modifier) {
-    val snack = FolderSelectHost.selectionSnack
+    val snacks = FolderSelectHost.selectionSnacks
     val batch = FolderSelectHost.batch
-    if (snack != null && batch == null) {
-        FolderSelectSnackbar(snack, modifier)
+    if (snacks.isNotEmpty() && batch == null) {
+        Column(
+            modifier = modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            snacks.forEach { snack ->
+                key(snack.folderKey) {
+                    FolderSelectSnackbar(snack)
+                }
+            }
+        }
     }
     if (batch != null) {
         FolderTaskSnackbar(batch, modifier)
@@ -448,14 +617,14 @@ fun FolderSelectBars(modifier: Modifier = Modifier) {
 }
 
 @Composable
-private fun FolderSelectSnackbar(snack: SelectionSnack, modifier: Modifier) {
+private fun FolderSelectSnackbar(snack: SelectionSnack) {
     Snackbar(
-        modifier = modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+        modifier = Modifier.padding(bottom = 8.dp),
         containerColor = snackbarContainerColor(),
         contentColor = snackbarDismissContentColor(),
         action = {
             TextButton(
-                onClick = { FolderSelectHost.dialog = true },
+                onClick = { FolderSelectHost.showList(snack.folderKey) },
                 colors = snackbarActionButtonColors(),
             ) {
                 Text(stringResource(R.string.browse_list))
@@ -463,14 +632,18 @@ private fun FolderSelectSnackbar(snack: SelectionSnack, modifier: Modifier) {
         },
         dismissAction = {
             TextButton(
-                onClick = { FolderSelectHost.cancelShownSelection() },
+                onClick = { FolderSelectHost.cancelSelection(snack.folderKey) },
                 colors = snackbarDismissButtonColors(),
             ) {
                 Text(stringResource(android.R.string.cancel))
             }
         },
     ) {
-        Text(stringResource(R.string.browse_selected_in_folder, snack.count, snack.folderName))
+        Text(
+            text = stringResource(R.string.browse_selected_in_folder, snack.count, snack.folderName),
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+        )
     }
 }
 
@@ -489,11 +662,16 @@ private fun FolderTaskSnackbar(batch: TaskBatch, modifier: Modifier) {
             }
         },
         dismissAction = {
+            val finished = batch.finishedRun
             TextButton(
-                onClick = { batch.stop() },
+                onClick = { if (finished) FolderSelectHost.done() else FolderSelectHost.stopTask() },
                 colors = snackbarDismissButtonColors(),
             ) {
-                Text(stringResource(R.string.browse_http_share_stop))
+                Text(
+                    stringResource(
+                        if (finished) R.string.browse_task_done else R.string.browse_http_share_stop,
+                    ),
+                )
             }
         },
     ) {
@@ -770,6 +948,42 @@ private fun TasksPanel(tablet: Boolean) {
                 }
             }
         }
+        HorizontalDivider()
+        TaskPanelActions(batch)
+    }
+}
+
+@Composable
+private fun TaskPanelActions(batch: TaskBatch?) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 8.dp, vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        if (batch == null) {
+            PanelAction(R.string.browse_clear) { FolderSelectHost.cancelShownSelection() }
+            PanelAction(R.string.browse_hide) { FolderSelectHost.dialog = false }
+        } else if (batch.finishedRun) {
+            PanelAction(R.string.browse_continue) { FolderSelectHost.continueSelection() }
+            PanelAction(R.string.browse_task_done) { FolderSelectHost.done() }
+        } else {
+            val pause = if (batch.paused) R.string.browse_resume else R.string.browse_pause
+            PanelAction(pause) { FolderSelectHost.togglePause() }
+            PanelAction(R.string.browse_http_share_stop) { FolderSelectHost.stopTask() }
+            PanelAction(R.string.browse_background) { FolderSelectHost.dialog = false }
+        }
+    }
+}
+
+@Composable
+private fun RowScope.PanelAction(label: Int, onClick: () -> Unit) {
+    TextButton(onClick = onClick, modifier = Modifier.weight(1f)) {
+        Text(
+            text = stringResource(label),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
     }
 }
 
@@ -908,7 +1122,7 @@ private fun beginConvert(
         val dir = with(snackbar) { with(context) { BrowseSaveAs.pickConvertDirectory() } } ?: return@launch
         val jobs = items.map { pick ->
             val convert = pick.convertStill!!
-            FolderSelectHost.newJob(pick.title, pick.isFolder) { dest -> convert(dest, target) }
+            FolderSelectHost.newJob(pick.title, pick.isFolder, pick) { dest -> convert(dest, target) }
         }
         FolderSelectHost.startTasks(jobs, dir)
     }
@@ -929,7 +1143,7 @@ private fun beginSave(
         val dir = with(snackbar) { with(context) { BrowseSaveAs.pickSaveDirectory() } } ?: return@launch
         val jobs = items.map { pick ->
             val save = pick.saveInto!!
-            FolderSelectHost.newJob(pick.title, pick.isFolder) { dest -> save(dest) }
+            FolderSelectHost.newJob(pick.title, pick.isFolder, pick) { dest -> save(dest) }
         }
         FolderSelectHost.startTasks(jobs, dir)
     }

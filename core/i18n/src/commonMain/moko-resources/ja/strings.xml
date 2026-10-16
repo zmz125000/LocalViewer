@@ -1014,6 +1014,12 @@
     <string name="browse_task_running">実行中</string>
     <string name="browse_task_done">完了</string>
     <string name="browse_task_failed">失敗</string>
+    <string name="browse_clear">クリア</string>
+    <string name="browse_hide">隠す</string>
+    <string name="browse_pause">一時停止</string>
+    <string name="browse_resume">再開</string>
+    <string name="browse_background">バックグラウンド</string>
+    <string name="browse_continue">続行</string>
     <string name="convert_back">戻る</string>
     <string name="convert_auto_original">自動（元のサイズ）</string>
     <string name="convert_jpeg">JPEG</string>

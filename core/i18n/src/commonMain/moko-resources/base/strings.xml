@@ -1108,6 +1108,12 @@
     <string name="browse_task_running">Running</string>
     <string name="browse_task_done">Done</string>
     <string name="browse_task_failed">Failed</string>
+    <string name="browse_clear">Clear</string>
+    <string name="browse_hide">Hide</string>
+    <string name="browse_pause">Pause</string>
+    <string name="browse_resume">Resume</string>
+    <string name="browse_background">Background</string>
+    <string name="browse_continue">Continue</string>
     <string name="convert_back">Back</string>
     <string name="convert_auto_original">Auto (original size)</string>
     <string name="convert_jpeg">JPEG</string>

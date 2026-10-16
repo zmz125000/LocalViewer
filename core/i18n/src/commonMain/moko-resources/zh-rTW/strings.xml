@@ -826,6 +826,12 @@
     <string name="browse_task_running">進行中</string>
     <string name="browse_task_done">完成</string>
     <string name="browse_task_failed">失敗</string>
+    <string name="browse_clear">清除</string>
+    <string name="browse_hide">隱藏</string>
+    <string name="browse_pause">暫停</string>
+    <string name="browse_resume">恢復</string>
+    <string name="browse_background">背景</string>
+    <string name="browse_continue">繼續</string>
     <string name="convert_back">返回</string>
     <string name="convert_auto_original">自動（原始尺寸）</string>
     <string name="convert_jpeg">JPEG</string>
