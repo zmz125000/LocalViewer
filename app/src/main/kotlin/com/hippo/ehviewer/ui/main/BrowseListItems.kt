@@ -964,7 +964,11 @@ fun BrowseDirectoryGridItem(
         onClick = tap?.toggle ?: onClick,
         onLongClick = tap?.toggle ?: (onLongClick ?: onClick),
         modifier = modifier.fillMaxWidth().aspectRatio(1f),
-        colors = if (tap?.selected == true) folderSelectedCardColors() else GalleryGridDefaults.cardColors(),
+        colors = if (tap?.selected == true && !useThumbStyle) {
+            folderSelectedCardColors()
+        } else {
+            GalleryGridDefaults.cardColors()
+        },
     ) {
         Box(Modifier.fillMaxSize()) {
             if (useThumbStyle) {
@@ -1005,13 +1009,20 @@ fun BrowseDirectoryGridItem(
                         modifier = Modifier
                             .align(Alignment.BottomCenter)
                             .fillMaxWidth()
-                            .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.55f))
+                            .background(
+                                if (tap?.selected == true) {
+                                    MaterialTheme.colorScheme.secondaryContainer
+                                } else {
+                                    MaterialTheme.colorScheme.surface.copy(alpha = 0.55f)
+                                },
+                            )
                             .padding(horizontal = namePadH)
                             .padding(top = 4.dp, bottom = namePadBottom),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Text(
                             text = name,
+                            color = MaterialTheme.colorScheme.onSurface,
                             style = MaterialTheme.typography.labelMedium,
                             maxLines = 2,
                             overflow = TextOverflow.Ellipsis,
