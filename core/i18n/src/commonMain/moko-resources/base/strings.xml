@@ -754,6 +754,8 @@
     <string name="settings_privacy_save_ebook_history_summary">Record opened text ebooks (TXT, EPUB, HTML, FB2, Markdown). The parent folder is not recorded when this is off.</string>
     <string name="settings_privacy_save_gallery_history">Save gallery history</string>
     <string name="settings_privacy_save_gallery_history_summary">Record opened library and folder galleries. The parent folder is not recorded when this is off.</string>
+    <string name="settings_privacy_show_ebook_as_gallery">History list ebook as gallery</string>
+    <string name="settings_privacy_show_ebook_as_gallery_summary">Also list EPUB, PDF, MOBI, and similar ebooks in the History gallery filter. Off keeps them in the ebook filter only.</string>
     <string name="settings_general_back_to_upper_dir">Back to upper dir</string>
     <string name="settings_general_back_to_upper_dir_summary">When opening a folder or gallery from History, Library, or Favourites, system back walks to the parent directory. Turn off (default) to return to that list instead.</string>
     <string name="settings_general_history_dir_back_to_upper">History dir back to upper</string>

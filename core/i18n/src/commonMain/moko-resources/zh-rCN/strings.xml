@@ -521,6 +521,8 @@
     <string name="settings_privacy_save_video_history_summary">记录打开的视频。关闭后不记录父文件夹。</string>
     <string name="settings_privacy_save_ebook_history">保存电子书历史</string>
     <string name="settings_privacy_save_ebook_history_summary">记录打开的文本电子书（TXT、EPUB、HTML、FB2、Markdown）。关闭后不记录父文件夹。</string>
+    <string name="settings_privacy_show_ebook_as_gallery">历史列表将电子书显示为图库</string>
+    <string name="settings_privacy_show_ebook_as_gallery_summary">在历史的图库列表中同时显示 EPUB、PDF、MOBI 等电子书。关闭后它们只出现在电子书列表。</string>
     <string name="settings_privacy_save_gallery_history">保存图库历史</string>
     <string name="settings_privacy_save_gallery_history_summary">记录打开的库图库与文件夹图库。关闭后不记录父文件夹。</string>
     <string name="settings_general_back_to_upper_dir">返回上级目录</string>

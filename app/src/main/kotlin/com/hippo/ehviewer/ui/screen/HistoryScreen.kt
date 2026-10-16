@@ -172,6 +172,7 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
     }
     val historySectionPref by Settings.historySection.collectAsState()
     val historySection = HistorySection.fromPref(historySectionPref)
+    val ebookAsGallery by Settings.showEbookFilesAsGallery.collectAsState()
     val favoriteKeys by Settings.favoriteBrowseSources.collectAsState()
     // Browse-dir pins live in a capped top section and ignore Media/Documents.
     val allDirectoryItems = remember(filteredHistory) {
@@ -181,11 +182,12 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
         filteredHistory.filterNot { LocalHistory.isBrowseDirectory(it) }
     }
     // Live search lists every matching type, same as folder-view allTypes.
-    val historyItems = remember(allFileItems, historySection, filterQuery) {
+    val historyItems = remember(allFileItems, historySection, filterQuery, ebookAsGallery) {
         filterHistoryFileItems(
             allFileItems,
             historySection,
             allTypes = filterQuery.isNotEmpty(),
+            ebookAsGallery = ebookAsGallery,
         )
     }
     val hasFileItems = allFileItems.isNotEmpty()

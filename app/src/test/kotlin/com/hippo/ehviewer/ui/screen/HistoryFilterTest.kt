@@ -54,16 +54,33 @@ class HistoryFilterTest {
         val items = listOf(pdf, mobi)
         assertEquals(items, filterHistoryFileItems(items, HistorySection.Media))
         assertEquals(items, filterHistoryFileItems(items, HistorySection.Documents))
+        assertTrue(filterHistoryFileItems(items, HistorySection.Media, ebookAsGallery = false).isEmpty())
+        assertEquals(items, filterHistoryFileItems(items, HistorySection.Documents, ebookAsGallery = false))
         assertTrue(LocalHistory.isHistoryPdfOrMobi(pdf))
         assertTrue(LocalHistory.isHistoryPdfOrMobi(mobi))
     }
 
     @Test
-    fun epubIsDocumentsOnly() {
+    fun epubFollowsShowAsGalleryToggle() {
         val epub = item(LOCAL_ARCHIVE_TOKEN, "book.epub", "/books/book.epub")
-        assertTrue(filterHistoryFileItems(listOf(epub), HistorySection.Media).isEmpty())
+        assertEquals(listOf(epub), filterHistoryFileItems(listOf(epub), HistorySection.Media))
         assertEquals(listOf(epub), filterHistoryFileItems(listOf(epub), HistorySection.Documents))
+        assertTrue(
+            filterHistoryFileItems(listOf(epub), HistorySection.Media, ebookAsGallery = false).isEmpty(),
+        )
+        assertEquals(
+            listOf(epub),
+            filterHistoryFileItems(listOf(epub), HistorySection.Documents, ebookAsGallery = false),
+        )
         assertFalse(LocalHistory.isHistoryPdfOrMobi(epub))
+        assertTrue(LocalHistory.isHistoryGalleryEbook(epub))
+    }
+
+    @Test
+    fun looseTextStaysDocumentsWhenEbooksShowAsGallery() {
+        val txt = item(LOCAL_FILE_TOKEN, "notes.txt", "/books/notes.txt")
+        assertTrue(filterHistoryFileItems(listOf(txt), HistorySection.Media, ebookAsGallery = true).isEmpty())
+        assertEquals(listOf(txt), filterHistoryFileItems(listOf(txt), HistorySection.Documents, ebookAsGallery = true))
     }
 
     @Test

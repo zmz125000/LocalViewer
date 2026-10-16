@@ -281,6 +281,8 @@
     <string name="settings_privacy_save_video_history_summary">記錄開啟的影片。關閉後不記錄父資料夾。</string>
     <string name="settings_privacy_save_ebook_history">儲存電子書歷史</string>
     <string name="settings_privacy_save_ebook_history_summary">記錄開啟的文字電子書（TXT、EPUB、HTML、FB2、Markdown）。關閉後不記錄父資料夾。</string>
+    <string name="settings_privacy_show_ebook_as_gallery">歷史列表將電子書顯示為圖庫</string>
+    <string name="settings_privacy_show_ebook_as_gallery_summary">在歷史的圖庫列表中同時顯示 EPUB、PDF、MOBI 等電子書。關閉後它們只出現在電子書列表。</string>
     <string name="settings_privacy_save_gallery_history">儲存圖庫歷史</string>
     <string name="settings_privacy_save_gallery_history_summary">記錄開啟的庫圖庫與資料夾圖庫。關閉後不記錄父資料夾。</string>
     <string name="settings_general_back_to_upper_dir">返回上層目錄</string>
