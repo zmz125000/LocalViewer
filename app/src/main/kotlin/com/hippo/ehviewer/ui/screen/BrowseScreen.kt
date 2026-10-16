@@ -37,6 +37,7 @@ import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
@@ -329,10 +330,10 @@ fun AnimatedVisibilityScope.BrowseScreen(navigator: DestinationsNavigator) = Scr
         webDavEditor = null
     }
 
-    fun testWebDav(testState: WebDavEditorState, password: String) {
+    fun testWebDav(testState: WebDavEditorState, password: String, messages: SnackbarHostState) {
         launch {
             if (!ensureLocalNetworkPermission()) {
-                snackbar(string(R.string.network_test_fail, LocalNetworkPermission.deniedMessage()))
+                messages.showSnackbar(string(R.string.network_test_fail, LocalNetworkPermission.deniedMessage()))
                 return@launch
             }
             val entity = com.ehviewer.core.database.model.WebDavSourceEntity(
@@ -346,11 +347,11 @@ fun AnimatedVisibilityScope.BrowseScreen(navigator: DestinationsNavigator) = Scr
             val result = WebDavClient.testConnection(entity, password)
             if (result.isSuccess) {
                 if (testState.id != 0L) WebDavRepository.markOk(testState.id)
-                snackbar(string(R.string.network_test_ok))
+                messages.showSnackbar(string(R.string.network_test_ok))
             } else {
                 val msg = result.exceptionOrNull()?.message ?: "error"
                 if (testState.id != 0L) WebDavRepository.markError(testState.id, msg)
-                snackbar(string(R.string.network_test_fail, msg))
+                messages.showSnackbar(string(R.string.network_test_fail, msg))
             }
         }
     }
@@ -393,11 +394,11 @@ fun AnimatedVisibilityScope.BrowseScreen(navigator: DestinationsNavigator) = Scr
         smbEditor = null
     }
 
-    fun testSmb(testState: SmbEditorState, password: String) {
+    fun testSmb(testState: SmbEditorState, password: String, messages: SnackbarHostState) {
         val (share, pathPrefix) = testState.resolvedShareAndPath()
         launch {
             if (!ensureLocalNetworkPermission()) {
-                snackbar(string(R.string.network_test_fail, LocalNetworkPermission.deniedMessage()))
+                messages.showSnackbar(string(R.string.network_test_fail, LocalNetworkPermission.deniedMessage()))
                 return@launch
             }
             val entity = SmbSourceEntity(
@@ -414,11 +415,11 @@ fun AnimatedVisibilityScope.BrowseScreen(navigator: DestinationsNavigator) = Scr
             val result = SmbGateway.testConnection(entity, password)
             if (result.isSuccess) {
                 if (testState.id != 0L) SmbRepository.markOk(testState.id)
-                snackbar(string(R.string.network_test_ok))
+                messages.showSnackbar(string(R.string.network_test_ok))
             } else {
                 val msg = result.exceptionOrNull()?.message ?: "error"
                 if (testState.id != 0L) SmbRepository.markError(testState.id, msg)
-                snackbar(string(R.string.network_test_fail, msg))
+                messages.showSnackbar(string(R.string.network_test_fail, msg))
             }
         }
     }
@@ -691,7 +692,7 @@ fun AnimatedVisibilityScope.BrowseScreen(navigator: DestinationsNavigator) = Scr
                 }
                 smbEditor = null
             },
-            onTest = { testState, password -> testSmb(testState, password) },
+            onTest = { testState, password, messages -> testSmb(testState, password, messages) },
         )
     }
 
@@ -700,7 +701,7 @@ fun AnimatedVisibilityScope.BrowseScreen(navigator: DestinationsNavigator) = Scr
             state = state,
             onDismiss = { webDavEditor = null },
             onSave = { saved, password -> saveWebDav(saved, password) },
-            onTest = { testState, password -> testWebDav(testState, password) },
+            onTest = { testState, password, messages -> testWebDav(testState, password, messages) },
             onDelete = {
                 launchIO {
                     WebDavRepository.load(state.id)?.let { WebDavRepository.delete(it) }

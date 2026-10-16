@@ -5,13 +5,10 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -106,7 +103,7 @@ fun SmbEditDialog(
     onDismiss: () -> Unit,
     onSave: (SmbEditorState, String) -> Unit,
     onDelete: (Long) -> Unit,
-    onTest: (SmbEditorState, String) -> Unit,
+    onTest: (SmbEditorState, String, SnackbarHostState) -> Unit,
 ) {
     var displayName by remember { mutableStateOf(state.displayName) }
     var host by remember { mutableStateOf(state.host) }
@@ -123,6 +120,7 @@ fun SmbEditDialog(
         )
     }
 
+    val snackbarHostState = remember { SnackbarHostState() }
     val focusManager = LocalFocusManager.current
     val hostFocus = remember { FocusRequester() }
     val portFocus = remember { FocusRequester() }
@@ -157,136 +155,12 @@ fun SmbEditDialog(
         onSave(current(), currentPassword())
     }
 
-    AlertDialog(
+    NetworkSourceEditDialog(
+        title = stringResource(
+            if (state.id == 0L) R.string.network_add_smb else R.string.network_edit_smb,
+        ),
         onDismissRequest = onDismiss,
-        title = {
-            Text(
-                stringResource(
-                    if (state.id == 0L) R.string.network_add_smb else R.string.network_edit_smb,
-                ),
-            )
-        },
-        text = {
-            Column(Modifier.verticalScroll(rememberScrollState())) {
-                OutlinedTextField(
-                    value = displayName,
-                    onValueChange = { displayName = it },
-                    label = { Text(stringResource(R.string.network_display_name_optional)) },
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
-                    keyboardActions = KeyboardActions(onNext = { hostFocus.requestFocus() }),
-                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-                )
-                OutlinedTextField(
-                    value = host,
-                    onValueChange = { host = it },
-                    label = { Text(stringResource(R.string.network_host)) },
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
-                    keyboardActions = KeyboardActions(onNext = { portFocus.requestFocus() }),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 4.dp)
-                        .focusRequester(hostFocus),
-                )
-                OutlinedTextField(
-                    value = port,
-                    onValueChange = { port = it },
-                    label = { Text(stringResource(R.string.network_port)) },
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(
-                        keyboardType = KeyboardType.Number,
-                        imeAction = ImeAction.Next,
-                    ),
-                    keyboardActions = KeyboardActions(onNext = { shareFocus.requestFocus() }),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 4.dp)
-                        .focusRequester(portFocus),
-                )
-                OutlinedTextField(
-                    value = sharePath,
-                    onValueChange = { sharePath = it },
-                    label = { Text(stringResource(R.string.network_share_path_optional)) },
-                    supportingText = { Text(stringResource(R.string.network_share_path_hint)) },
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(
-                        imeAction = if (anonymous) ImeAction.Done else ImeAction.Next,
-                    ),
-                    keyboardActions = KeyboardActions(
-                        onNext = { userFocus.requestFocus() },
-                        onDone = { submit() },
-                    ),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 4.dp)
-                        .focusRequester(shareFocus),
-                )
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 8.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Column(Modifier.weight(1f).padding(end = 12.dp)) {
-                        Text(stringResource(R.string.network_anonymous_login))
-                    }
-                    Switch(
-                        checked = anonymous,
-                        onCheckedChange = { checked ->
-                            anonymous = checked
-                            if (checked) {
-                                // Keep previous values in state only while toggled off; clear focus.
-                                clearFocus()
-                            }
-                        },
-                    )
-                }
-                if (!anonymous) {
-                    OutlinedTextField(
-                        value = username,
-                        onValueChange = { username = it },
-                        label = { Text(stringResource(R.string.network_username)) },
-                        singleLine = true,
-                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
-                        keyboardActions = KeyboardActions(onNext = { passFocus.requestFocus() }),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 4.dp)
-                            .focusRequester(userFocus),
-                    )
-                    OutlinedTextField(
-                        value = password,
-                        onValueChange = { password = it },
-                        label = { Text(stringResource(R.string.network_password)) },
-                        singleLine = true,
-                        visualTransformation = PasswordVisualTransformation(),
-                        keyboardOptions = KeyboardOptions(
-                            keyboardType = KeyboardType.Password,
-                            imeAction = ImeAction.Next,
-                        ),
-                        keyboardActions = KeyboardActions(onNext = { domainFocus.requestFocus() }),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 4.dp)
-                            .focusRequester(passFocus),
-                    )
-                    OutlinedTextField(
-                        value = domain,
-                        onValueChange = { domain = it },
-                        label = { Text(stringResource(R.string.network_domain)) },
-                        singleLine = true,
-                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                        keyboardActions = KeyboardActions(onDone = { submit() }),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 4.dp)
-                            .focusRequester(domainFocus),
-                    )
-                }
-            }
-        },
+        snackbarHostState = snackbarHostState,
         confirmButton = {
             TextButton(
                 onClick = { submit() },
@@ -302,12 +176,132 @@ fun SmbEditDialog(
             TextButton(
                 onClick = {
                     clearFocus()
-                    onTest(current(), currentPassword())
+                    onTest(current(), currentPassword(), snackbarHostState)
                 },
                 enabled = canSave,
             ) {
                 Text(stringResource(R.string.network_test))
             }
         },
-    )
+    ) {
+        Column {
+            OutlinedTextField(
+                value = displayName,
+                onValueChange = { displayName = it },
+                label = { Text(stringResource(R.string.network_display_name_optional)) },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
+                keyboardActions = KeyboardActions(onNext = { hostFocus.requestFocus() }),
+                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+            )
+            OutlinedTextField(
+                value = host,
+                onValueChange = { host = it },
+                label = { Text(stringResource(R.string.network_host)) },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
+                keyboardActions = KeyboardActions(onNext = { portFocus.requestFocus() }),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 4.dp)
+                    .focusRequester(hostFocus),
+            )
+            OutlinedTextField(
+                value = port,
+                onValueChange = { port = it },
+                label = { Text(stringResource(R.string.network_port)) },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(
+                    keyboardType = KeyboardType.Number,
+                    imeAction = ImeAction.Next,
+                ),
+                keyboardActions = KeyboardActions(onNext = { shareFocus.requestFocus() }),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 4.dp)
+                    .focusRequester(portFocus),
+            )
+            OutlinedTextField(
+                value = sharePath,
+                onValueChange = { sharePath = it },
+                label = { Text(stringResource(R.string.network_share_path_optional)) },
+                supportingText = { Text(stringResource(R.string.network_share_path_hint)) },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(
+                    imeAction = if (anonymous) ImeAction.Done else ImeAction.Next,
+                ),
+                keyboardActions = KeyboardActions(
+                    onNext = { userFocus.requestFocus() },
+                    onDone = { submit() },
+                ),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 4.dp)
+                    .focusRequester(shareFocus),
+            )
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 8.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(Modifier.weight(1f).padding(end = 12.dp)) {
+                    Text(stringResource(R.string.network_anonymous_login))
+                }
+                Switch(
+                    checked = anonymous,
+                    onCheckedChange = { checked ->
+                        anonymous = checked
+                        if (checked) {
+                            // Keep previous values in state only while toggled off; clear focus.
+                            clearFocus()
+                        }
+                    },
+                )
+            }
+            if (!anonymous) {
+                OutlinedTextField(
+                    value = username,
+                    onValueChange = { username = it },
+                    label = { Text(stringResource(R.string.network_username)) },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
+                    keyboardActions = KeyboardActions(onNext = { passFocus.requestFocus() }),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 4.dp)
+                        .focusRequester(userFocus),
+                )
+                OutlinedTextField(
+                    value = password,
+                    onValueChange = { password = it },
+                    label = { Text(stringResource(R.string.network_password)) },
+                    singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(),
+                    keyboardOptions = KeyboardOptions(
+                        keyboardType = KeyboardType.Password,
+                        imeAction = ImeAction.Next,
+                    ),
+                    keyboardActions = KeyboardActions(onNext = { domainFocus.requestFocus() }),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 4.dp)
+                        .focusRequester(passFocus),
+                )
+                OutlinedTextField(
+                    value = domain,
+                    onValueChange = { domain = it },
+                    label = { Text(stringResource(R.string.network_domain)) },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                    keyboardActions = KeyboardActions(onDone = { submit() }),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 4.dp)
+                        .focusRequester(domainFocus),
+                )
+            }
+        }
+    }
 }
