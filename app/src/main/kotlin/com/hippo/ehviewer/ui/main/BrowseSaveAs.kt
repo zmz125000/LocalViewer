@@ -278,13 +278,16 @@ object BrowseSaveAs {
             snackbar(string(R.string.error_cant_find_activity))
         }.getOrNull() ?: return null
         val path = runCatching {
-            ctx.contentResolver.takePersistableUriPermission(treeUri, URI_FLAGS)
-            val doc = DocumentsContract.buildDocumentUriUsingTree(
-                treeUri,
-                DocumentsContract.getTreeDocumentId(treeUri),
-            )
-            doc.toOkioPath().also { check(it.isDirectory) { "$it is not a directory" } }
+            withIOContext {
+                ctx.contentResolver.takePersistableUriPermission(treeUri, URI_FLAGS)
+                val doc = DocumentsContract.buildDocumentUriUsingTree(
+                    treeUri,
+                    DocumentsContract.getTreeDocumentId(treeUri),
+                )
+                doc.toOkioPath().also { check(it.isDirectory) { "$it is not a directory" } }
+            }
         }.getOrElse {
+            if (it is CancellationException) throw it
             snackbar(string(R.string.browse_save_failed))
             return null
         }
