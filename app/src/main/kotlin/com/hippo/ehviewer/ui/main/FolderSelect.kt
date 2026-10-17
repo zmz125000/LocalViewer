@@ -200,11 +200,21 @@ class FolderSelectState {
         } else {
             picks.add(item)
         }
-        sync()
+        syncPicks()
     }
 
     fun remove(key: String) {
         picks.removeAll { it.key == key }
+        syncPicks()
+    }
+
+    /** An empty pick list hides the selection snackbar. Selecting again shows it. */
+    private fun syncPicks() {
+        if (picks.isEmpty()) {
+            snackbar = false
+        } else if (selecting) {
+            snackbar = true
+        }
         sync()
     }
 
@@ -230,22 +240,28 @@ class FolderSelectState {
                 changed = true
             }
         }
-        if (changed) sync()
+        if (changed) syncPicks()
     }
 
     /**
      * Select every row currently shown in [section].
-     * A later long press clears that section when every row is already selected.
+     * Outside select mode this enters it and selects those rows.
+     * A later long press, while already selecting, clears that section when every row is already selected.
      * Recent is unchanged.
      */
     fun selectSection(section: BrowseFolderSection) {
-        if (!selecting || section == BrowseFolderSection.Recent) return
+        if (section == BrowseFolderSection.Recent) return
         val items = sectionSelect[section]?.invoke().orEmpty()
         if (items.isEmpty()) return
+        if (!selecting) {
+            enter()
+            selectThese(items)
+            return
+        }
         val keys = items.mapTo(HashSet()) { it.key }
         if (keys.all { key -> picks.any { it.key == key } }) {
             picks.removeAll { it.key in keys }
-            sync()
+            syncPicks()
         } else {
             selectThese(items)
         }
@@ -489,14 +505,16 @@ object FolderSelectHost {
         for (key in snackbarOrder) {
             val saved = folders[key] ?: continue
             if (live != null && key == liveKey) {
-                if (!live.snackbar) continue
+                if (!live.snackbar || live.picks.isEmpty()) continue
                 val name = live.folderName.ifEmpty { saved.folderName }
                 snacks.add(SelectionSnack(key, name, live.picks.size))
-            } else if (saved.snackbar) {
+            } else if (saved.snackbar && saved.picks.isNotEmpty()) {
                 snacks.add(SelectionSnack(key, saved.folderName, saved.picks.size))
             }
         }
-        if (live != null && liveKey != null && live.snackbar && snacks.none { it.folderKey == liveKey }) {
+        if (live != null && liveKey != null && live.snackbar && live.picks.isNotEmpty() &&
+            snacks.none { it.folderKey == liveKey }
+        ) {
             snacks.add(SelectionSnack(liveKey, live.folderName, live.picks.size))
         }
         selectionSnacks = snacks
@@ -554,7 +572,11 @@ object FolderSelectHost {
             return
         }
         val saved = folders[folderKey] ?: return
-        rememberFolder(folderKey, saved.copy(picks = saved.picks.filterNot { it.key == pickKey }))
+        val next = saved.picks.filterNot { it.key == pickKey }
+        rememberFolder(
+            folderKey,
+            saved.copy(picks = next, snackbar = next.isNotEmpty() && saved.snackbar),
+        )
     }
 
     private fun picksFor(key: String?): List<FolderPick> {

@@ -79,6 +79,24 @@ class FolderSelectStateTest {
     }
 
     @Test
+    fun longPressOutsideSelectModeEntersAndSelectsTheSection() {
+        val state = FolderSelectState()
+        state.bindFolder("a")
+        val files = listOf(pick("1", "one"), pick("2", "two"))
+        state.sectionSelect = mapOf(BrowseFolderSection.Files to { files })
+        state.selectSection(BrowseFolderSection.Files)
+        assertTrue(state.selecting)
+        assertEquals(1, state.selectionEpoch)
+        assertEquals(listOf("1", "2"), state.picks.map { it.key })
+        state.exitSelectMode()
+        assertFalse(state.selecting)
+        state.selectSection(BrowseFolderSection.Files)
+        assertTrue(state.selecting)
+        assertEquals(2, state.selectionEpoch)
+        assertEquals(listOf("1", "2"), state.picks.map { it.key })
+    }
+
+    @Test
     fun selectableCopiesTheListLine() {
         val line = BrowseListLine(typeLabel = "PNG", sizeBytes = 4096, pageCount = 3)
         val pick = BrowseOverflowActions(onUnsupported = {})
@@ -158,6 +176,35 @@ class FolderSelectStateTest {
         restored.bindFolder("a", "Photos")
         assertTrue(restored.picks.isEmpty())
         assertFalse(restored.selecting)
+    }
+
+    @Test
+    fun lastRemovedPickClearsTheSnackbar() {
+        val state = FolderSelectState()
+        state.bindFolder("a", "Photos")
+        state.enter(pick("1", "one"))
+        state.toggle(pick("2", "two"))
+        state.toggle(pick("2", "two"))
+        assertEquals(1, FolderSelectHost.selectionSnack?.count)
+        state.toggle(pick("1", "one"))
+        assertTrue(state.selecting)
+        assertTrue(state.picks.isEmpty())
+        assertNull(FolderSelectHost.selectionSnack)
+
+        state.toggle(pick("1", "one"))
+        assertEquals(1, FolderSelectHost.selectionSnack?.count)
+        state.sectionSelect = mapOf(
+            BrowseFolderSection.Files to { listOf(pick("1", "one")) },
+        )
+        state.selectSection(BrowseFolderSection.Files)
+        assertTrue(state.picks.isEmpty())
+        assertNull(FolderSelectHost.selectionSnack)
+
+        state.enter(pick("9", "nine"))
+        state.exitSelectMode()
+        FolderSelectHost.removeShownPick("9")
+        assertNull(FolderSelectHost.selectionSnack)
+        assertFalse(state.selecting)
     }
 
     @Test

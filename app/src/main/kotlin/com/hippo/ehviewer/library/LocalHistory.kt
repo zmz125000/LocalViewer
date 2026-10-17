@@ -10,6 +10,7 @@ import com.hippo.ehviewer.EhDB
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.smb.SmbRepository
 import com.hippo.ehviewer.webdav.WebDavRepository
+import kotlinx.coroutines.flow.first
 // LocalLibrary used for archive path → library row history
 
 /** Library gallery (scanned). Click → reader. */
@@ -1099,6 +1100,36 @@ object LocalHistory {
         return frame.rootId to ZipAsDirListing.historyGalleryRelative(zipRel, innerRel)
     }
 
+    /**
+     * Drop history opened from a local source that is being deleted.
+     * Browse and folder-gallery rows match [rootId]. Library rows match [galleryRootByGid].
+     * File and archive paths match when this root is the longest containing root.
+     */
+    suspend fun deleteHistoryForLocalRoot(
+        rootId: Long,
+        rootPath: String?,
+        galleryRootByGid: Map<Long, Long>,
+        otherRoots: List<Pair<Long, String>>,
+    ) {
+        deleteMatchingHistory {
+            historyOwnedByLocalRoot(it, rootId, rootPath, galleryRootByGid, otherRoots)
+        }
+    }
+
+    /** Drop history opened from an SMB source that is being deleted. */
+    suspend fun deleteHistoryForSmbSource(sourceId: Long) {
+        deleteMatchingHistory { historyOwnedBySmbSource(it, sourceId) }
+    }
+
+    /** Drop history opened from a WebDAV source that is being deleted. */
+    suspend fun deleteHistoryForWebDavSource(sourceId: Long) {
+        deleteMatchingHistory { historyOwnedByWebDavSource(it, sourceId) }
+    }
+
+    private suspend fun deleteMatchingHistory(owned: (GalleryInfo) -> Boolean) {
+        EhDB.historyListFlow.first().filter(owned).forEach { EhDB.deleteHistoryInfo(it) }
+    }
+
     private fun encodeLocalBrowse(rootId: Long, relativePath: String): String = "$rootId$PATH_SEP$relativePath"
 
     private fun encodeSmbBrowse(sourceId: Long, relativePath: String): String = "$sourceId$PATH_SEP$relativePath"
@@ -1131,6 +1162,57 @@ object LocalHistory {
         val rel = encoded.substring(sep + 1)
         return LocalHistoryTarget.WebDavBrowseFolder(sourceId, rel)
     }
+}
+
+/**
+ * History that belongs to local source [rootId].
+ * A file or archive path stays when a longer remaining root still contains it.
+ */
+fun historyOwnedByLocalRoot(
+    info: GalleryInfo,
+    rootId: Long,
+    rootPath: String?,
+    galleryRootByGid: Map<Long, Long>,
+    otherRoots: List<Pair<Long, String>> = emptyList(),
+): Boolean = when (val target = LocalHistory.parse(info)) {
+    is LocalHistoryTarget.LocalBrowseFolder -> target.rootId == rootId
+    is LocalHistoryTarget.LocalFolderGallery -> target.rootId == rootId
+    is LocalHistoryTarget.LibraryGallery -> galleryRootByGid[target.galleryId] == rootId
+    is LocalHistoryTarget.Orphan -> galleryRootByGid[target.gid] == rootId
+    is LocalHistoryTarget.LocalArchive ->
+        absolutePathOwnedByRoot(target.path, rootId, rootPath, otherRoots)
+    is LocalHistoryTarget.LocalFile ->
+        absolutePathOwnedByRoot(target.path, rootId, rootPath, otherRoots)
+    else -> false
+}
+
+/** History opened from SMB source [sourceId]. */
+fun historyOwnedBySmbSource(info: GalleryInfo, sourceId: Long): Boolean = when (val target = LocalHistory.parse(info)) {
+    is LocalHistoryTarget.SmbBrowseFolder -> target.sourceId == sourceId
+    is LocalHistoryTarget.SmbFolderGallery -> target.sourceId == sourceId
+    is LocalHistoryTarget.SmbStreamArchive -> target.sourceId == sourceId
+    is LocalHistoryTarget.SmbFile -> target.sourceId == sourceId
+    else -> false
+}
+
+/** History opened from WebDAV source [sourceId]. */
+fun historyOwnedByWebDavSource(info: GalleryInfo, sourceId: Long): Boolean = when (val target = LocalHistory.parse(info)) {
+    is LocalHistoryTarget.WebDavBrowseFolder -> target.sourceId == sourceId
+    is LocalHistoryTarget.WebDavFolderGallery -> target.sourceId == sourceId
+    is LocalHistoryTarget.WebDavStreamArchive -> target.sourceId == sourceId
+    is LocalHistoryTarget.WebDavFile -> target.sourceId == sourceId
+    else -> false
+}
+
+private fun absolutePathOwnedByRoot(
+    path: String,
+    rootId: Long,
+    rootPath: String?,
+    otherRoots: List<Pair<Long, String>>,
+): Boolean {
+    val mine = rootPath?.takeIf { it.isNotBlank() } ?: return false
+    val place = folderForAbsolutePath(path, otherRoots + (rootId to mine)) ?: return false
+    return place.kind == BrowseFolderId.Kind.Local && place.sourceId == rootId
 }
 
 /**

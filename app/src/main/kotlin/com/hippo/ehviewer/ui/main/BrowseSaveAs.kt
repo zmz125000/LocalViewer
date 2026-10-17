@@ -26,6 +26,7 @@ import com.ehviewer.core.util.withIOContext
 import com.ehviewer.core.util.withUIContext
 import com.hippo.ehviewer.BuildConfig.APPLICATION_ID
 import com.hippo.ehviewer.library.GENERIC_FILE_MIME
+import com.hippo.ehviewer.library.MediaStorePublish
 import com.hippo.ehviewer.library.OriginDiskCache
 import com.hippo.ehviewer.library.ZipAsDirListing
 import com.hippo.ehviewer.library.ZipCentralDirectory
@@ -402,12 +403,20 @@ object BrowseSaveAs {
         if (dir.toString().startsWith('/')) {
             val dest = dir / name
             source.inputStream().use { input -> dest.sink().use { input.copyTo(it) } }
+            MediaStorePublish.indexConvertedFile(dest)
             return dest
         }
         val child = dir.createSafChild(name, createDocumentMime(name))
-        child.toUri().openOutputStream().use { out ->
-            source.inputStream().use { it.copyTo(out) }
+        MediaStorePublish.holdConvertedDocument(child)
+        try {
+            child.toUri().openOutputStream().use { out ->
+                source.inputStream().use { it.copyTo(out) }
+            }
+        } catch (t: Throwable) {
+            MediaStorePublish.discardConvertedDocument(child)
+            throw t
         }
+        MediaStorePublish.indexConvertedFile(child)
         return child
     }
 
