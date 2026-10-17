@@ -48,6 +48,20 @@ object ExplorerWindows {
 
     fun active(): Window? = activeId?.let { id -> windows.find { it.id == id } }
 
+    /**
+     * Window already showing [relativePath].
+     * A duplicated path has two windows; the one in front is the one to restore.
+     */
+    fun windowOnPath(kind: Kind, sourceId: Long, relativePath: String): Window? {
+        val rel = BrowseFavorites.normalizeRel(relativePath)
+        val matches = windows.filter {
+            it.kind == kind &&
+                it.sourceId == sourceId &&
+                BrowseFavorites.normalizeRel(it.relativePath) == rel
+        }
+        return matches.firstOrNull { it.id == activeId } ?: matches.firstOrNull()
+    }
+
     /** Snapshot the active window from [BrowseSession] before that session is replaced. */
     fun prepareSpawn() {
         captureActiveFromSession()

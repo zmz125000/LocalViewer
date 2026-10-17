@@ -133,6 +133,7 @@ import com.hippo.ehviewer.ui.destinations.WebDavBrowserScreenDestination
 import com.hippo.ehviewer.ui.easytier.EasyTierDialog
 import com.hippo.ehviewer.ui.easytier.rememberEasyTierStartButtonAction
 import com.hippo.ehviewer.ui.main.BrowseSectionHeader
+import com.hippo.ehviewer.ui.main.FolderPlace
 import com.hippo.ehviewer.ui.main.GalleryGridDefaults
 import com.hippo.ehviewer.ui.main.LocalBrowseListHeaderInset
 import com.hippo.ehviewer.ui.navToLocalFolderReader
@@ -150,6 +151,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import okio.Path.Companion.toPath
 
 /** Open and close the explorer panel from the main navigation bar. */
 class ExplorerPanelActions {
@@ -997,6 +999,50 @@ private fun ExplorerPathRow(
             }
         }
     }
+}
+
+/**
+ * Open [place]. A window already on that path is restored; otherwise a new window is opened.
+ * Returns false when a local folder cannot be opened because its root path is missing.
+ */
+internal fun openSelectionPlace(
+    navigator: DestinationsNavigator,
+    place: FolderPlace,
+    currentDestination: Any?,
+    browserSourceId: Long?,
+    activeFromHistory: Boolean,
+    activeFromLibrary: Boolean,
+): Boolean {
+    val existing = ExplorerWindows.windowOnPath(place.kind, place.sourceId, place.relativePath)
+    if (existing != null) {
+        val shown = ExplorerWindows.activate(existing.id) ?: return false
+        showWindow(
+            navigator,
+            ExplorerWindows.active() ?: shown,
+            currentDestination,
+            browserSourceId,
+            activeFromHistory,
+            activeFromLibrary,
+        )
+        return true
+    }
+    with(navigator) {
+        when (place.kind) {
+            ExplorerWindows.Kind.Local -> {
+                val root = place.rootPath ?: return false
+                openLocalBrowseDir(
+                    rootId = place.sourceId,
+                    rootDisplayName = place.rootDisplayName,
+                    rootPath = root.toPath(),
+                    relativePath = place.relativePath,
+                    preferMediaStore = place.preferMediaStore,
+                )
+            }
+            ExplorerWindows.Kind.Smb -> openSmbBrowseDir(place.sourceId, place.relativePath)
+            ExplorerWindows.Kind.WebDav -> openWebDavBrowseDir(place.sourceId, place.relativePath)
+        }
+    }
+    return true
 }
 
 private fun showWindow(

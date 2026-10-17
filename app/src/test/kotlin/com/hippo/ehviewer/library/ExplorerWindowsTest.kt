@@ -80,6 +80,17 @@ class ExplorerWindowsTest {
     }
 
     @Test
+    fun windowOnPathPrefersTheWindowInFront() {
+        openLocal("photos")
+        val first = ExplorerWindows.activeId
+        ExplorerWindows.duplicateActive()
+        val front = ExplorerWindows.windowOnPath(ExplorerWindows.Kind.Local, 1L, "photos")
+        assertEquals(ExplorerWindows.activeId, front?.id)
+        assertNotEquals(first, front?.id)
+        assertEquals(null, ExplorerWindows.windowOnPath(ExplorerWindows.Kind.Local, 1L, "missing"))
+    }
+
+    @Test
     fun duplicateIsTheOnlyWayToRepeatAPath() {
         openLocal("photos")
         val first = ExplorerWindows.activeId
