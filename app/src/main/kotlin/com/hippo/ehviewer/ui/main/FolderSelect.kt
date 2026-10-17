@@ -21,11 +21,11 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.MoreVert
-import androidx.compose.material3.Checkbox
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
@@ -1253,7 +1253,14 @@ private fun SelectionOverflowControl(
                 DropdownMenuItem(
                     text = { Text(stringResource(R.string.browse_run_in_background)) },
                     trailingIcon = {
-                        Checkbox(checked = runInBackground.value, onCheckedChange = null)
+                        Box(
+                            modifier = Modifier.size(24.dp),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            if (runInBackground.value) {
+                                Icon(Icons.Default.Check, contentDescription = null)
+                            }
+                        }
                     },
                     onClick = { runInBackground.value = !runInBackground.value },
                 )
