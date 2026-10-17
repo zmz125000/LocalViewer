@@ -43,6 +43,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -92,6 +93,10 @@ import okio.Path
  */
 class FolderSelectState {
     var selecting by mutableStateOf(false)
+
+    /** Increases only when [enter] turns select mode on. Restoring a folder does not. */
+    var selectionEpoch by mutableIntStateOf(0)
+        private set
     var snackbar by mutableStateOf(false)
     var folderName by mutableStateOf("")
     val picks = mutableStateListOf<FolderPick>()
@@ -133,6 +138,7 @@ class FolderSelectState {
 
     /** Enter select mode and select [pick] when it came from that row's overflow menu. */
     fun enter(pick: FolderPick? = null) {
+        if (!selecting) selectionEpoch++
         selecting = true
         snackbar = true
         if (pick != null && picks.none { it.key == pick.key }) {

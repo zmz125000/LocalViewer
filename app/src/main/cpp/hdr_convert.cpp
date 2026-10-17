@@ -957,6 +957,11 @@ int encode_baseline_sdr_jpeg(unsigned w, unsigned h, const uint16_t* rgba, const
  *
  * Pure SDR ([force_hdr] false and peak ≤ 1.0): baseline JPEG only — no gain map.
  *
+ * HDR base is that same clamp-at-1.0 sRGB image, passed as [UHDR_SDR_IMG].
+ * API-0 would Reinhard-tone-map LINEAR input against a 10000-nit headroom and
+ * darken the base (linear 1.0 lands near 0.5). The gain map then only restores
+ * samples above 1. HDR mode stays the original linear picture.
+ *
  * [fixed_peak_nits] > 0: skip full-frame peak scan (thumbs: 203 SDR / 1000 HDR).
  * [fixed_peak_nits] ≤ 0: p99.99 scan of max(R,G,B) (full pages).
  *
@@ -1072,6 +1077,35 @@ int encode_linear_rgba_f16_to_uhdr(unsigned w, unsigned h, const uint16_t* rgba,
               err.has_detail ? err.detail : "error");
         uhdr_release_encoder(enc);
         return -7;
+    }
+
+    // Same pixels as encode_baseline_sdr_jpeg. Keeps the base from API-0's
+    // 10000-nit Reinhard map, which darkened midtones that were already ≤ 1.
+    const size_t sdr_pixels = static_cast<size_t>(w) * static_cast<size_t>(h);
+    std::vector<uint8_t> sdr_rgba(sdr_pixels * 4);
+    for (size_t i = 0; i < sdr_pixels; i++) {
+        const float r = half_to_float(rgba[i * 4 + 0]);
+        const float g = half_to_float(rgba[i * 4 + 1]);
+        const float b = half_to_float(rgba[i * 4 + 2]);
+        sdr_rgba[i * 4 + 0] = linear_to_srgb_u8(r);
+        sdr_rgba[i * 4 + 1] = linear_to_srgb_u8(g);
+        sdr_rgba[i * 4 + 2] = linear_to_srgb_u8(b);
+        sdr_rgba[i * 4 + 3] = 255;
+    }
+    uhdr_raw_image_t sdr_img{};
+    sdr_img.fmt = UHDR_IMG_FMT_32bppRGBA8888;
+    sdr_img.cg = cg;
+    sdr_img.ct = UHDR_CT_SRGB;
+    sdr_img.range = UHDR_CR_FULL_RANGE;
+    sdr_img.w = w;
+    sdr_img.h = h;
+    sdr_img.planes[UHDR_PLANE_PACKED] = sdr_rgba.data();
+    sdr_img.stride[UHDR_PLANE_PACKED] = w;
+    err = uhdr_enc_set_raw_image(enc, &sdr_img, UHDR_SDR_IMG);
+    if (err.error_code != UHDR_CODEC_OK) {
+        ALOGE("uhdr_enc_set_raw_image sdr: %s", err.has_detail ? err.detail : "error");
+        uhdr_release_encoder(enc);
+        return -8;
     }
 
     ALOGI("Ultra HDR encode content_peak=%.3f peak_nits=%.1f fixed=%d force_hdr=%d cg=%d %ux%u",
