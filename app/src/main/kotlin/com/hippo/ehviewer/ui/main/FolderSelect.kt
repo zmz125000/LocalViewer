@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Folder
@@ -67,6 +68,8 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.window.DialogWindowProvider
 import com.ehviewer.core.i18n.R
+import com.hippo.ehviewer.Settings
+import com.hippo.ehviewer.asMutableState
 import com.hippo.ehviewer.image.hdr.StillExportTarget
 import com.hippo.ehviewer.library.ExplorerWindows
 import com.hippo.ehviewer.provider.StreamKeepAlivePolicy
@@ -1158,6 +1161,7 @@ private fun SelectionOverflowControl(
     var menu by remember { mutableStateOf(false) }
     var convertMenu by remember { mutableStateOf(false) }
     val picks = FolderSelectHost.selectionPicks
+    val runInBackground = Settings.browseTaskForegroundService.asMutableState()
     val shareable = picks.count { it.shareHttp != null }
     val convertible = picks.count { it.convertStill != null }
     val savable = picks.count { it.saveInto != null }
@@ -1245,6 +1249,21 @@ private fun SelectionOverflowControl(
                         onClick = { menu = false },
                     )
                 }
+                HorizontalDivider()
+                DropdownMenuItem(
+                    text = { Text(stringResource(R.string.browse_run_in_background)) },
+                    trailingIcon = {
+                        Box(
+                            modifier = Modifier.size(24.dp),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            if (runInBackground.value) {
+                                Icon(Icons.Default.Check, contentDescription = null)
+                            }
+                        }
+                    },
+                    onClick = { runInBackground.value = !runInBackground.value },
+                )
             }
         }
     }

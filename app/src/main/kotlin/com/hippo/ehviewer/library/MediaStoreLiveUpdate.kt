@@ -40,6 +40,17 @@ object MediaStoreLiveUpdate {
     }
 
     /**
+     * A CreateDocument file is empty until the encode finishes, and it may stay
+     * [android.provider.MediaStore.MediaColumns.IS_PENDING]. Neither is a library row.
+     * The notify after the finished bytes are published is the one to apply.
+     */
+    fun isReadyMediaRow(pending: Boolean, sizeBytes: Long?): Boolean {
+        if (pending) return false
+        // A missing SIZE column is not an empty file. SIZE 0 is the CreateDocument placeholder.
+        return sizeBytes == null || sizeBytes > 0L
+    }
+
+    /**
      * Skip dot files (unless [includeHidden]), sample clips, and non-media names.
      * A hidden parent folder is skipped too — the startup scan does not descend into it.
      */

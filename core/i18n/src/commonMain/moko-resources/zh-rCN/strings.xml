@@ -124,6 +124,7 @@
     <string name="browse_action_not_supported">不支持此操作</string>
     <string name="browse_item_info">信息</string>
     <string name="browse_open_folder">打开文件夹</string>
+    <string name="browse_run_in_background">后台运行</string>
     <string name="browse_create_shortcut">创建快捷方式</string>
     <string name="browse_shortcut_unsupported">此启动器无法固定主屏幕快捷方式</string>
     <string name="browse_play">播放</string>

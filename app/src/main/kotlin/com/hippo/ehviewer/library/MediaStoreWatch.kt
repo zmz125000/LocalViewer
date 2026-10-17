@@ -295,7 +295,7 @@ object MediaStoreWatch {
                 return ItemQuery.Unreadable
             }
             ?: return ItemQuery.Gone
-        if (row.pending) return ItemQuery.Pending
+        if (!MediaStoreLiveUpdate.isReadyMediaRow(row.pending, row.sizeBytes)) return ItemQuery.Pending
         val parent = if (row.parentRelative.isNotEmpty()) {
             row.parentRelative
         } else {
@@ -319,6 +319,7 @@ object MediaStoreWatch {
     private fun queryAddedSince(sinceSec: Long): List<MediaStoreLiveFile> {
         val out = ArrayList<MediaStoreLiveFile>()
         val selection = "(${MediaStore.MediaColumns.IS_PENDING} = 0 OR ${MediaStore.MediaColumns.IS_PENDING} IS NULL)" +
+            " AND ${MediaStore.MediaColumns.SIZE} > 0" +
             " AND ${MediaStore.MediaColumns.DATE_ADDED} >= ?"
         val args = arrayOf(sinceSec.coerceAtLeast(0L).toString())
         if (MediaPermissions.hasImagePermission()) {
@@ -350,7 +351,9 @@ object MediaStoreWatch {
             appCtx.contentResolver.query(collection, rowProjection(includeData = false), extras, null)?.use { c ->
                 while (c.moveToNext()) {
                     readRow(c, includeData = false)?.let { row ->
-                        if (row.pending || row.name.isEmpty()) return@let
+                        if (!MediaStoreLiveUpdate.isReadyMediaRow(row.pending, row.sizeBytes) || row.name.isEmpty()) {
+                            return@let
+                        }
                         out += MediaStoreLiveFile(
                             parentRelative = row.parentRelative,
                             name = row.name,
@@ -379,6 +382,7 @@ object MediaStoreWatch {
         val modIdx = c.getColumnIndex(MediaStore.MediaColumns.DATE_MODIFIED)
         val addIdx = c.getColumnIndex(MediaStore.MediaColumns.DATE_ADDED)
         val pendingIdx = c.getColumnIndex(MediaStore.MediaColumns.IS_PENDING)
+        val sizeIdx = c.getColumnIndex(MediaStore.MediaColumns.SIZE)
         if (nameIdx < 0) return null
         val name = c.getString(nameIdx) ?: return null
         val rel = if (relIdx < 0) null else c.getString(relIdx)
@@ -386,12 +390,18 @@ object MediaStoreWatch {
         val modifiedMs = if (modIdx < 0 || c.isNull(modIdx)) 0L else c.getLong(modIdx).coerceAtLeast(0L) * 1000L
         val addedSec = if (addIdx < 0 || c.isNull(addIdx)) 0L else c.getLong(addIdx).coerceAtLeast(0L)
         val pending = pendingIdx >= 0 && !c.isNull(pendingIdx) && c.getInt(pendingIdx) != 0
+        val sizeBytes = when {
+            sizeIdx < 0 -> null
+            c.isNull(sizeIdx) -> 0L
+            else -> c.getLong(sizeIdx)
+        }
         return Row(
             name = name,
             parentRelative = mediaStoreParentRelativeDir(rel, data),
             modifiedMs = modifiedMs,
             addedSec = addedSec,
             pending = pending,
+            sizeBytes = sizeBytes,
         )
     }
 
@@ -403,6 +413,7 @@ object MediaStoreWatch {
             MediaStore.MediaColumns.DATE_MODIFIED,
             MediaStore.MediaColumns.DATE_ADDED,
             MediaStore.MediaColumns.IS_PENDING,
+            MediaStore.MediaColumns.SIZE,
         )
     } else {
         arrayOf(
@@ -411,6 +422,7 @@ object MediaStoreWatch {
             MediaStore.MediaColumns.DATE_MODIFIED,
             MediaStore.MediaColumns.DATE_ADDED,
             MediaStore.MediaColumns.IS_PENDING,
+            MediaStore.MediaColumns.SIZE,
         )
     }
 
@@ -428,6 +440,7 @@ object MediaStoreWatch {
         val modifiedMs: Long,
         val addedSec: Long,
         val pending: Boolean,
+        val sizeBytes: Long?,
     )
 
     private sealed interface ItemQuery {
