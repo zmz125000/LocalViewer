@@ -230,10 +230,22 @@ class FolderSelectState {
         if (changed) sync()
     }
 
-    /** Select every row currently shown in [section]. Recent is unchanged. */
+    /**
+     * Select every row currently shown in [section].
+     * A later long press clears that section when every row is already selected.
+     * Recent is unchanged.
+     */
     fun selectSection(section: BrowseFolderSection) {
         if (!selecting || section == BrowseFolderSection.Recent) return
-        selectThese(sectionSelect[section]?.invoke().orEmpty())
+        val items = sectionSelect[section]?.invoke().orEmpty()
+        if (items.isEmpty()) return
+        val keys = items.mapTo(HashSet()) { it.key }
+        if (keys.all { key -> picks.any { it.key == key } }) {
+            picks.removeAll { it.key in keys }
+            sync()
+        } else {
+            selectThese(items)
+        }
     }
 
     /** Selected count in [section] to the number of rows in that section. */
