@@ -33,6 +33,7 @@ import splitties.init.appCtx
  *
  * Limited (default): idle grants age out after 20 minutes, then FGS stops.
  * Unlimited (Advanced): grants stay; FGS stays until Recents swipe.
+ * Folder tasks hold the same FGS only when Advanced "Keep tasks in background" is on.
  *
  * **Recents swipe:** [shutdownAndKillProcess] — user kill means die.
  */
@@ -47,7 +48,12 @@ object StreamKeepAlivePolicy {
     private val reconcileLock = Any()
     private var stopJob: Job? = null
 
+    /** Unfinished folder batch. The setting decides whether this holds the FGS. */
+    private var taskWantsFgs = false
+
     fun unlimited(): Boolean = Settings.streamKeepAliveUnlimited.value
+
+    fun taskHoldsFgs(): Boolean = Settings.browseTaskForegroundService.value && taskWantsFgs
 
     /**
      * Idle grant lifetime. Null = never age out (unlimited).
@@ -62,12 +68,25 @@ object StreamKeepAlivePolicy {
         ExternalHttpStreamServer.networkSessionCount() > 0 ||
         ExternalHttpStreamServer.shareSessionCount() > 0
 
-    fun shouldHoldFgs(): Boolean = isPlaying() || hasIdleGrant()
+    fun shouldHoldFgs(): Boolean = isPlaying() || hasIdleGrant() || taskHoldsFgs()
 
     fun onUnlimitedChanged() {
         StreamDocumentRegistry.pruneStale()
         ExternalHttpStreamServer.pruneStale()
         reconcileFgs(appCtx)
+    }
+
+    /** Folder batch started, finished, or the Advanced toggle changed. */
+    fun setBrowseTaskActive(active: Boolean) {
+        synchronized(reconcileLock) {
+            if (taskWantsFgs == active) return
+            taskWantsFgs = active
+        }
+        runCatching { reconcileFgs() }
+    }
+
+    fun onBrowseTaskSettingChanged() {
+        runCatching { reconcileFgs() }
     }
 
     /** Start FGS while a grant or transfer exists; stop shortly after the last one is gone. */
@@ -101,6 +120,7 @@ object StreamKeepAlivePolicy {
         val stickyInUse = SmbGateway.httpStickyPoolSize() - SmbGateway.httpStickyPoolAvailable()
         return buildString {
             append("unlimited=").append(unlimited())
+            append(" taskFgs=").append(taskHoldsFgs())
             append(" fgs=").append(StreamKeepAliveService.isRunning())
             append(" playing=").append(isPlaying())
             append(" streamdocFds=").append(StreamDocumentRegistry.networkOpenCount())
@@ -133,16 +153,19 @@ object StreamKeepAlivePolicy {
 
     fun onScreenOff() {
         logcat("StreamKeepAlive") { "screen_off before: ${runtimeSnapshot()}" }
-        if (isPlaying()) {
-            // Background playback: leave the live sticky SMB/WebDAV handle alone.
-            logcat("StreamKeepAlive") { "screen_off: playing — sticky kept" }
+        if (isPlaying() || taskHoldsFgs()) {
+            // Background playback or a folder task: leave the live SMB/WebDAV handle alone.
+            logcat("StreamKeepAlive") { "screen_off: transfer — sticky kept" }
         } else {
             dropStickyNetwork("screen_off")
         }
         // Browse keep-alive is for interactive listing/reader only. Drop it on screen-off
         // even while playing so idle host pools do not ping through EasyTier/VPN.
-        runCatching { SmbGateway.dropBrowseSessions("screen_off") }
-        runCatching { WebDavClient.dropBrowseClient("screen_off") }
+        // A folder task still reads through those pools, so leave them until it finishes.
+        if (!taskHoldsFgs()) {
+            runCatching { SmbGateway.dropBrowseSessions("screen_off") }
+            runCatching { WebDavClient.dropBrowseClient("screen_off") }
+        }
         logcat("StreamKeepAlive") { "screen_off after: ${runtimeSnapshot()}" }
     }
 
@@ -168,7 +191,11 @@ object StreamKeepAlivePolicy {
             stopJob?.cancel()
             stopJob = null
         }
-        runCatching { StreamKeepAliveService.stop(appCtx) }
+        if (shouldHoldFgs()) {
+            runCatching { StreamKeepAliveService.start(appCtx) }
+        } else {
+            runCatching { StreamKeepAliveService.stop(appCtx) }
+        }
     }
 
     /**

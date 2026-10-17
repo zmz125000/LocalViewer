@@ -71,6 +71,11 @@ fun updateWhenStreamKeepAliveUnlimitedChanges(enabled: Boolean) {
     com.hippo.ehviewer.provider.StreamKeepAlivePolicy.onUnlimitedChanged()
 }
 
+@Suppress("UNUSED_PARAMETER")
+fun updateWhenBrowseTaskForegroundServiceChanges(enabled: Boolean) {
+    com.hippo.ehviewer.provider.StreamKeepAlivePolicy.onBrowseTaskSettingChanged()
+}
+
 /** Folder vs single-file HTTP tokens are incompatible — drop every loopback session. */
 @Suppress("UNUSED_PARAMETER")
 fun updateWhenExternalVideoAccessDirChanges(enabled: Boolean) {

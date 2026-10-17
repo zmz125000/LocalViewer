@@ -68,6 +68,7 @@ import androidx.compose.ui.window.DialogWindowProvider
 import com.ehviewer.core.i18n.R
 import com.hippo.ehviewer.image.hdr.StillExportTarget
 import com.hippo.ehviewer.library.ExplorerWindows
+import com.hippo.ehviewer.provider.StreamKeepAlivePolicy
 import com.hippo.ehviewer.ui.LocalSnackBarHostState
 import com.hippo.ehviewer.ui.theme.snackbarActionButtonColors
 import com.hippo.ehviewer.ui.theme.snackbarContainerColor
@@ -339,6 +340,7 @@ internal class TaskBatch(
 internal suspend fun executeJobs(batch: TaskBatch, dir: Path) {
     while (batch.end == null) {
         if (batch.paused) {
+            FolderSelectHost.syncTaskFgs()
             val busy = batch.jobs.any { it.status == TaskStatus.Pending || it.status == TaskStatus.Running }
             if (!busy) break
             batch.awaitSignal()
@@ -531,12 +533,26 @@ object FolderSelectHost {
         selectionPicks = emptyList()
         current = null
         dialog = false
+        syncTaskFgs()
+    }
+
+    /**
+     * Hold the stream FGS while work can still run and the setting is on.
+     * Pause keeps it only until the current job finishes.
+     */
+    internal fun syncTaskFgs() {
+        val running = batch
+        val jobRunning = running?.jobs?.any { it.status == TaskStatus.Running } == true
+        val active = running != null && !running.finishedRun && running.end == null &&
+            (!running.paused || jobRunning)
+        runCatching { StreamKeepAlivePolicy.setBrowseTaskActive(active) }
     }
 
     fun togglePause() {
         val running = batch ?: return
         if (running.finishedRun || running.end != null) return
         running.paused = !running.paused
+        syncTaskFgs()
         running.wake()
     }
 
@@ -579,11 +595,13 @@ object FolderSelectHost {
         )
         batch = running
         dialog = true
+        syncTaskFgs()
         running.runner = scope.launch {
             try {
                 executeJobs(running, dir)
                 if (running.end == null) {
                     running.finishedRun = true
+                    syncTaskFgs()
                     while (running.end == null) running.awaitSignal()
                 }
             } catch (_: CancellationException) {
@@ -617,6 +635,7 @@ object FolderSelectHost {
                 batch = null
             }
         }
+        syncTaskFgs()
     }
 
     private fun restorePendingSelection(running: TaskBatch) {
@@ -685,7 +704,7 @@ private fun FolderSelectSnackbar(snack: SelectionSnack) {
         contentColor = snackbarDismissContentColor(),
         action = {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                SelectionOverflowControl(snack.folderKey)
+                SelectionOverflowControl(snack.folderKey, asText = true)
                 TextButton(
                     onClick = { FolderSelectHost.showList(snack.folderKey) },
                     colors = snackbarActionButtonColors(),
@@ -857,12 +876,7 @@ private fun TasksPanel(tablet: Boolean, onOpenFolder: (FolderPlace) -> Boolean) 
                 style = headerStyle,
                 modifier = Modifier.weight(1f),
             )
-            if (showSelection) {
-                SelectionOverflowControl(
-                    folderKey = FolderSelectHost.selectionSnack?.folderKey,
-                    iconSize = headerIconSize,
-                )
-            } else {
+            if (!showSelection) {
                 Text(
                     text = batch.progressLabel,
                     style = MaterialTheme.typography.titleMedium,
@@ -886,6 +900,12 @@ private fun TasksPanel(tablet: Boolean, onOpenFolder: (FolderPlace) -> Boolean) 
                         modifier = Modifier.size(headerIconSize),
                     )
                 }
+            }
+            if (showSelection) {
+                SelectionOverflowControl(
+                    folderKey = FolderSelectHost.selectionSnack?.folderKey,
+                    iconSize = headerIconSize,
+                )
             }
         }
         CompositionLocalProvider(LocalBrowseListHeaderInset provides GalleryGridDefaults.margin()) {
@@ -1080,7 +1100,11 @@ private val TaskStatus.label: Int
     }
 
 @Composable
-private fun SelectionOverflowControl(folderKey: String?, iconSize: Dp = 20.dp) {
+private fun SelectionOverflowControl(
+    folderKey: String?,
+    iconSize: Dp = 20.dp,
+    asText: Boolean = false,
+) {
     val context = LocalContext.current
     val snackbar = LocalSnackBarHostState.current
     val scope = rememberCoroutineScope()
@@ -1090,19 +1114,29 @@ private fun SelectionOverflowControl(folderKey: String?, iconSize: Dp = 20.dp) {
     val shareable = picks.count { it.shareHttp != null }
     val convertible = picks.count { it.convertStill != null }
     val savable = picks.count { it.saveInto != null }
+    val openMenu = {
+        if (folderKey != null) FolderSelectHost.focusFolder(folderKey)
+        menu = true
+    }
     Box {
-        Icon(
-            Icons.Default.MoreVert,
-            contentDescription = stringResource(R.string.browse_item_more),
-            modifier = Modifier
-                .padding(8.dp)
-                .size(iconSize)
-                .clickable {
-                    if (folderKey != null) FolderSelectHost.focusFolder(folderKey)
-                    menu = true
-                },
-            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
+        if (asText) {
+            TextButton(
+                onClick = openMenu,
+                colors = snackbarActionButtonColors(),
+            ) {
+                Text(stringResource(R.string.browse_action))
+            }
+        } else {
+            Icon(
+                Icons.Default.MoreVert,
+                contentDescription = stringResource(R.string.browse_item_more),
+                modifier = Modifier
+                    .padding(8.dp)
+                    .size(iconSize)
+                    .clickable(onClick = openMenu),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
         DropdownMenu(
             expanded = menu,
             onDismissRequest = {

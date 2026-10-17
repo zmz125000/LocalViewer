@@ -207,6 +207,8 @@
     <string name="settings_advanced_webdav_insecure_tls_summary">信任任意证书（自签名 HTTPS）。</string>
     <string name="settings_advanced_unlimit_foreground_service">不限制前台服务</string>
     <string name="settings_advanced_unlimit_foreground_service_summary">关闭：空闲 20 分钟后结束 HTTP 会话与前台服务。</string>
+    <string name="settings_advanced_task_foreground_service">后台保持任务</string>
+    <string name="settings_advanced_task_foreground_service_summary">开启：文件夹任务运行时保持前台服务。</string>
     <string name="history_unavailable">此项目已不可用</string>
     <string name="settings_ebook_check_file_change">检查电子书文件变更</string>
     <string name="settings_ebook_check_file_change_summary">打开网络电子书前，检查文件是否已更改。</string>
@@ -837,6 +839,7 @@
     <string name="browse_selected_count">已选 %1$d</string>
     <string name="browse_selected_in_folder">在 %2$s 中已选 %1$d</string>
     <string name="browse_list">列表</string>
+    <string name="browse_action">操作</string>
     <string name="browse_selection">选择</string>
     <string name="browse_task">任务</string>
     <string name="browse_task_progress_in_folder">%1$s - %2$s</string>

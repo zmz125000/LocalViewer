@@ -705,6 +705,13 @@ object Settings : DataStorePreferences(null) {
     val streamKeepAliveUnlimited = boolPref("stream_keep_alive_unlimited", false)
         .observed(::updateWhenStreamKeepAliveUnlimitedChanges)
 
+    /**
+     * While a folder batch is not finished, hold [com.hippo.ehviewer.provider.StreamKeepAliveService]
+     * so the work can continue in the background. Default off.
+     */
+    val browseTaskForegroundService = boolPref("browse_task_foreground_service", false)
+        .observed(::updateWhenBrowseTaskForegroundServiceChanges)
+
     val hardwareBitmapThreshold = intPref("hardware_bitmap_threshold", 16384)
     val preloadThumbAggressively = boolPref("preload_thumb_aggressively", false)
     val animateItems = boolPref("animate_items", true)

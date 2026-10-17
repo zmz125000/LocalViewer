@@ -225,6 +225,8 @@
     <string name="settings_advanced_webdav_insecure_tls_summary">Trust any certificate (self-signed HTTPS).</string>
     <string name="settings_advanced_unlimit_foreground_service">Unlimit foreground service</string>
     <string name="settings_advanced_unlimit_foreground_service_summary">Off: HTTP session and FGS stop after 20 minutes idle.</string>
+    <string name="settings_advanced_task_foreground_service">Keep tasks in background</string>
+    <string name="settings_advanced_task_foreground_service_summary">On: the foreground service stays up while a folder task is running.</string>
     <string name="site_e" translatable="false">e-hentai</string>
     <string name="site_ex" translatable="false">exhentai</string>
     <!-- Theme -->
@@ -1100,6 +1102,7 @@
     <string name="browse_selected_count">%1$d selected</string>
     <string name="browse_selected_in_folder">%1$d selected in %2$s</string>
     <string name="browse_list">List</string>
+    <string name="browse_action">Action</string>
     <string name="browse_selection">Selection</string>
     <string name="browse_task">Task</string>
     <string name="browse_task_progress_in_folder">%1$s - %2$s</string>

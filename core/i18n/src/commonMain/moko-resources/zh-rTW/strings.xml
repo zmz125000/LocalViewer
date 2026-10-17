@@ -209,6 +209,8 @@
     <string name="settings_advanced_webdav_insecure_tls_summary">信任任意憑證（自簽 HTTPS）。</string>
     <string name="settings_advanced_unlimit_foreground_service">不限制前景服務</string>
     <string name="settings_advanced_unlimit_foreground_service_summary">關閉：閒置 20 分鐘後結束 HTTP 工作階段與前景服務。</string>
+    <string name="settings_advanced_task_foreground_service">背景下保持任務</string>
+    <string name="settings_advanced_task_foreground_service_summary">開啟：資料夾任務執行時保持前景服務。</string>
     <string name="error_ip_banned">IP 被封鎖</string>
     <string name="history_unavailable">此項目已不可用</string>
     <string name="back_to_history">返回歷史</string>
@@ -818,6 +820,7 @@
     <string name="browse_selected_count">已選 %1$d</string>
     <string name="browse_selected_in_folder">在 %2$s 中已選 %1$d</string>
     <string name="browse_list">列表</string>
+    <string name="browse_action">操作</string>
     <string name="browse_selection">選擇</string>
     <string name="browse_task">任務</string>
     <string name="browse_task_progress_in_folder">%1$s - %2$s</string>
