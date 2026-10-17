@@ -864,6 +864,11 @@ private fun TasksPanel(tablet: Boolean, onOpenFolder: (FolderPlace) -> Boolean) 
         MaterialTheme.typography.titleMedium
     }
     val headerIconSize = with(LocalDensity.current) { headerStyle.fontSize.toDp() }
+    val openPlace = place?.let { target ->
+        {
+            if (onOpenFolder(target)) FolderSelectHost.dialog = false
+        }
+    }
     Column(Modifier.fillMaxSize()) {
         Row(
             modifier = Modifier
@@ -884,27 +889,12 @@ private fun TasksPanel(tablet: Boolean, onOpenFolder: (FolderPlace) -> Boolean) 
                     modifier = Modifier.padding(end = 8.dp),
                 )
             }
-            if (place != null) {
-                IconButton(
-                    onClick = {
-                        if (onOpenFolder(place)) FolderSelectHost.dialog = false
-                    },
-                    modifier = Modifier.size(if (tablet) 40.dp else 32.dp),
-                    colors = IconButtonDefaults.iconButtonColors(
-                        contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                    ),
-                ) {
-                    Icon(
-                        Icons.Default.Folder,
-                        contentDescription = stringResource(R.string.browse_open_folder),
-                        modifier = Modifier.size(headerIconSize),
-                    )
-                }
-            }
-            if (showSelection) {
+            if (showSelection || openPlace != null) {
                 SelectionOverflowControl(
-                    folderKey = FolderSelectHost.selectionSnack?.folderKey,
+                    folderKey = if (showSelection) FolderSelectHost.selectionSnack?.folderKey else null,
                     iconSize = headerIconSize,
+                    selectionActions = showSelection,
+                    onOpenFolder = openPlace,
                 )
             }
         }
@@ -1104,6 +1094,8 @@ private fun SelectionOverflowControl(
     folderKey: String?,
     iconSize: Dp = 20.dp,
     asText: Boolean = false,
+    selectionActions: Boolean = true,
+    onOpenFolder: (() -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val snackbar = LocalSnackBarHostState.current
@@ -1159,7 +1151,7 @@ private fun SelectionOverflowControl(
                     },
                 )
             } else {
-                if (savable > 0) {
+                if (selectionActions && savable > 0) {
                     DropdownMenuItem(
                         text = { Text(stringResource(R.string.action_save_to)) },
                         onClick = {
@@ -1168,7 +1160,7 @@ private fun SelectionOverflowControl(
                         },
                     )
                 }
-                if (shareable > 0) {
+                if (selectionActions && shareable > 0) {
                     DropdownMenuItem(
                         text = { Text(stringResource(R.string.browse_share_via_http)) },
                         onClick = {
@@ -1177,13 +1169,22 @@ private fun SelectionOverflowControl(
                         },
                     )
                 }
-                if (convertible > 0) {
+                if (selectionActions && convertible > 0) {
                     DropdownMenuItem(
                         text = { Text(stringResource(R.string.convert_to)) },
                         onClick = { convertMenu = true },
                     )
                 }
-                if (savable == 0 && shareable == 0 && convertible == 0) {
+                if (onOpenFolder != null) {
+                    DropdownMenuItem(
+                        text = { Text(stringResource(R.string.browse_open_folder)) },
+                        onClick = {
+                            menu = false
+                            onOpenFolder()
+                        },
+                    )
+                }
+                if (selectionActions && savable == 0 && shareable == 0 && convertible == 0 && onOpenFolder == null) {
                     DropdownMenuItem(
                         text = { Text(stringResource(R.string.browse_action_not_supported)) },
                         onClick = { menu = false },
