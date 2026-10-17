@@ -179,6 +179,35 @@ class FolderSelectStateTest {
     }
 
     @Test
+    fun lastRemovedPickClearsTheSnackbar() {
+        val state = FolderSelectState()
+        state.bindFolder("a", "Photos")
+        state.enter(pick("1", "one"))
+        state.toggle(pick("2", "two"))
+        state.toggle(pick("2", "two"))
+        assertEquals(1, FolderSelectHost.selectionSnack?.count)
+        state.toggle(pick("1", "one"))
+        assertTrue(state.selecting)
+        assertTrue(state.picks.isEmpty())
+        assertNull(FolderSelectHost.selectionSnack)
+
+        state.toggle(pick("1", "one"))
+        assertEquals(1, FolderSelectHost.selectionSnack?.count)
+        state.sectionSelect = mapOf(
+            BrowseFolderSection.Files to { listOf(pick("1", "one")) },
+        )
+        state.selectSection(BrowseFolderSection.Files)
+        assertTrue(state.picks.isEmpty())
+        assertNull(FolderSelectHost.selectionSnack)
+
+        state.enter(pick("9", "nine"))
+        state.exitSelectMode()
+        FolderSelectHost.removeShownPick("9")
+        assertNull(FolderSelectHost.selectionSnack)
+        assertFalse(state.selecting)
+    }
+
+    @Test
     fun eachFolderKeepsItsOwnSnackbar() {
         val state = FolderSelectState()
         state.bindFolder("a", "Photos")
