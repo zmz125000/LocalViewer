@@ -243,6 +243,21 @@ object LocalLibrary {
             // Serialize with scanRoot: otherwise a long MediaStore scan can finish after
             // delete and replaceForRoot() → SQLITE_CONSTRAINT_FOREIGNKEY (orphan ROOT_ID).
             scanMutex.withLock {
+                // Resolve paths before the tree permission is released.
+                val deletedPath = rootPath(root)?.toString()
+                val otherRoots = db.libraryRootDao().list()
+                    .filter { it.id != root.id }
+                    .mapNotNull { other -> rootPath(other)?.toString()?.let { other.id to it } }
+                val galleryRootByGid = db.localGalleryDao().listByRootId(root.id)
+                    .associate { it.id to root.id }
+                runCatching {
+                    LocalHistory.deleteHistoryForLocalRoot(
+                        rootId = root.id,
+                        rootPath = deletedPath,
+                        galleryRootByGid = galleryRootByGid,
+                        otherRoots = otherRoots,
+                    )
+                }.onFailure { logcat(it) }
                 if (!isMediaStoreRootUri(root.treeUri)) {
                     runCatching {
                         appCtx.contentResolver.releasePersistableUriPermission(root.treeUri.toUri(), URI_FLAGS)

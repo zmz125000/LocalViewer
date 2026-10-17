@@ -1,8 +1,10 @@
 package com.hippo.ehviewer.webdav
 
 import com.ehviewer.core.database.model.WebDavSourceEntity
+import com.ehviewer.core.util.logcat
 import com.ehviewer.core.util.withIOContext
 import com.hippo.ehviewer.library.BrowseSession
+import com.hippo.ehviewer.library.LocalHistory
 import com.hippo.ehviewer.library.NetworkFolderIndexCache
 import com.hippo.ehviewer.library.localLibraryDb
 import kotlin.time.Clock
@@ -52,6 +54,7 @@ object WebDavRepository {
     }
 
     suspend fun delete(source: WebDavSourceEntity) = withIOContext {
+        runCatching { LocalHistory.deleteHistoryForWebDavSource(source.id) }.onFailure { logcat(it) }
         BrowseSession.invalidateWebDavListing(source.id)
         BrowseSession.clearWebDavSegments(source.id)
         WebDavPasswordStore.remove(source.id)
