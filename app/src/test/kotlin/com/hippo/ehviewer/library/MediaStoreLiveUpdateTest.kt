@@ -21,6 +21,15 @@ class MediaStoreLiveUpdateTest {
     }
 
     @Test
+    fun `empty or pending media is not a library row`() {
+        assertFalse(MediaStoreLiveUpdate.isReadyMediaRow(pending = true, sizeBytes = 100))
+        assertFalse(MediaStoreLiveUpdate.isReadyMediaRow(pending = false, sizeBytes = 0))
+        assertFalse(MediaStoreLiveUpdate.isReadyMediaRow(pending = false, sizeBytes = -1))
+        assertTrue(MediaStoreLiveUpdate.isReadyMediaRow(pending = false, sizeBytes = 12))
+        assertTrue(MediaStoreLiveUpdate.isReadyMediaRow(pending = false, sizeBytes = null))
+    }
+
+    @Test
     fun `new image creates a folder row and a file row`() {
         val planned = plan(file = image("Pictures/Comics", "002.jpg", 2_000L), folder = null, existing = null)
         assertEquals(LOCAL_GALLERY_KIND_FOLDER, planned!!.folder.kind)

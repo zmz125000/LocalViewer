@@ -1,6 +1,10 @@
 package com.hippo.ehviewer.ui.reader
 
+import android.content.ContentValues
 import android.content.Context
+import android.net.Uri
+import android.provider.DocumentsContract
+import android.provider.MediaStore
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.material3.SnackbarHostState
 import com.ehviewer.core.files.sendTo
@@ -149,7 +153,7 @@ private suspend fun convertStagedUnchecked(leaf: String, target: StillExportTarg
     if (!saved) snackbar(string(R.string.error_cant_save_image))
 }
 
-context(_: SnackbarHostState, _: Context)
+context(_: SnackbarHostState, ctx: Context)
 private suspend fun pickAndWrite(
     leaf: String,
     resolved: StillExportTarget,
@@ -163,7 +167,18 @@ private suspend fun pickAndWrite(
         )
         if (uri == null) return@runSuspendCatching true
         picked = true
-        val wrote = withIOContext { write(uri.toOkioPath()) }
+        // The picker creates an empty file before encode. Hold it pending so MediaStore
+        // does not publish that row, then publish only after the finished bytes land.
+        withIOContext { ctx.holdUnpublished(uri) }
+        val wrote = try {
+            withIOContext { write(uri.toOkioPath()) }
+        } catch (t: Throwable) {
+            withIOContext { ctx.discardUnpublished(uri) }
+            throw t
+        }
+        withIOContext {
+            if (wrote) ctx.publishMedia(uri) else ctx.discardUnpublished(uri)
+        }
         if (wrote) snackbar(string(R.string.image_saved, uri.displayPath ?: uri.toString()))
         wrote
     }.onFailure {
@@ -172,6 +187,33 @@ private suspend fun pickAndWrite(
         snackbar(string(R.string.error_cant_find_activity))
     }.getOrDefault(true)
     return !picked || ok
+}
+
+private fun Context.holdUnpublished(uri: Uri) {
+    runCatching {
+        contentResolver.update(
+            uri,
+            ContentValues().apply { put(MediaStore.MediaColumns.IS_PENDING, 1) },
+            null,
+            null,
+        )
+    }
+}
+
+private fun Context.publishMedia(uri: Uri) {
+    runCatching {
+        contentResolver.update(
+            uri,
+            ContentValues().apply { put(MediaStore.MediaColumns.IS_PENDING, 0) },
+            null,
+            null,
+        )
+    }
+}
+
+private fun Context.discardUnpublished(uri: Uri) {
+    runCatching { contentResolver.delete(uri, null, null) }
+    runCatching { DocumentsContract.deleteDocument(contentResolver, uri) }
 }
 
 /**
