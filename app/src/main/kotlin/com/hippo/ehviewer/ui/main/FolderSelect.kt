@@ -25,6 +25,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
@@ -67,6 +68,8 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.window.DialogWindowProvider
 import com.ehviewer.core.i18n.R
+import com.hippo.ehviewer.Settings
+import com.hippo.ehviewer.asMutableState
 import com.hippo.ehviewer.image.hdr.StillExportTarget
 import com.hippo.ehviewer.library.ExplorerWindows
 import com.hippo.ehviewer.provider.StreamKeepAlivePolicy
@@ -1158,6 +1161,7 @@ private fun SelectionOverflowControl(
     var menu by remember { mutableStateOf(false) }
     var convertMenu by remember { mutableStateOf(false) }
     val picks = FolderSelectHost.selectionPicks
+    val runInBackground = Settings.browseTaskForegroundService.asMutableState()
     val shareable = picks.count { it.shareHttp != null }
     val convertible = picks.count { it.convertStill != null }
     val savable = picks.count { it.saveInto != null }
@@ -1245,6 +1249,14 @@ private fun SelectionOverflowControl(
                         onClick = { menu = false },
                     )
                 }
+                HorizontalDivider()
+                DropdownMenuItem(
+                    text = { Text(stringResource(R.string.browse_run_in_background)) },
+                    trailingIcon = {
+                        Checkbox(checked = runInBackground.value, onCheckedChange = null)
+                    },
+                    onClick = { runInBackground.value = !runInBackground.value },
+                )
             }
         }
     }
