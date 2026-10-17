@@ -27,9 +27,18 @@ class FolderSelectStateTest {
         state.bindFolder("a")
         state.enter(pick("1", "one"))
         assertTrue(state.selecting)
+        assertEquals(1, state.selectionEpoch)
         assertEquals(listOf("1"), state.picks.map { it.key })
         state.enter(pick("1", "one"))
         assertEquals(1, state.picks.size)
+        assertEquals(1, state.selectionEpoch)
+        state.exitSelectMode()
+        state.enter(pick("1", "one"))
+        assertEquals(2, state.selectionEpoch)
+        state.bindFolder("b")
+        state.bindFolder("a")
+        assertTrue(state.selecting)
+        assertEquals(2, state.selectionEpoch)
     }
 
     @Test

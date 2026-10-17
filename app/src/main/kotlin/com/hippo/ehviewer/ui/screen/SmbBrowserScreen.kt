@@ -1030,16 +1030,8 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
         folderSelect.exitSelectMode()
     }
 
-    /**
-     * History path link for the folder currently listed (parent of the opened item).
-     * Skipped when that item's file / ebook / gallery history toggle is off.
-     */
-    suspend fun recordCurrentBrowseFolderHistory(
-        sourceId: Long,
-        openedName: String,
-        asGallery: Boolean = false,
-    ) {
-        if (!LocalHistory.parentBrowseHistoryAllowed(openedName, asGallery)) return
+    /** Browse-dir history for the folder on screen. Select mode uses this directly. */
+    suspend fun recordListedFolderHistory(sourceId: Long) {
         val folderThumb = LocalHistory.smbBrowseFolderThumbKey(
             sourceId = sourceId,
             relativeDir = relativeDir,
@@ -1051,6 +1043,25 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
             title = title,
             thumbKey = folderThumb,
         )
+    }
+
+    /**
+     * History path link for the folder currently listed (parent of the opened item).
+     * Skipped when that item's file / ebook / gallery history toggle is off.
+     */
+    suspend fun recordCurrentBrowseFolderHistory(
+        sourceId: Long,
+        openedName: String,
+        asGallery: Boolean = false,
+    ) {
+        if (!LocalHistory.parentBrowseHistoryAllowed(openedName, asGallery)) return
+        recordListedFolderHistory(sourceId)
+    }
+
+    LaunchedEffect(folderSelect.selectionEpoch) {
+        val sourceId = source?.id ?: return@LaunchedEffect
+        if (folderSelect.selectionEpoch == 0) return@LaunchedEffect
+        withIOContext { recordListedFolderHistory(sourceId) }
     }
 
     fun folderEntryProgressGid(entry: BrowseEntryRemote.FolderGallery): Long {
