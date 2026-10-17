@@ -1282,23 +1282,24 @@ internal fun BrowseVideoThumbnail(
     // Disk first (same as gallery covers). Extract only while the app is foreground
     // and (for network) when video thumbs are enabled. extractEnabled is the ON_STOP
     // cancel: leaving Recents must not keep starting local library MMR.
+    // A fast fling composes each row only briefly. Wait 300ms so those rows leave
+    // and cancel this effect before MediaCodec starts. A slow scroll still extracts.
     LaunchedEffect(source, downloadNetworkVideoThumbs, allowRemoteFetch, extractEnabled) {
         val src = source ?: run {
             thumbnail = null
             return@LaunchedEffect
         }
-        suspend fun load(): String? = withIOContext {
-            VideoThumbnail.cachedJpegIfPresent(src)?.absolutePath
-                ?: if (allowRemoteFetch && extractEnabled) {
-                    VideoThumbnail.getOrCreate(context, src)?.absolutePath
-                } else {
-                    null
-                }
+        val cached = withIOContext { VideoThumbnail.cachedJpegIfPresent(src)?.absolutePath }
+        if (cached != null) {
+            thumbnail = cached
+            return@LaunchedEffect
         }
-        thumbnail = load()
-        if (thumbnail == null && allowRemoteFetch && extractEnabled) {
+        if (!allowRemoteFetch || !extractEnabled) return@LaunchedEffect
+        kotlinx.coroutines.delay(400)
+        thumbnail = withIOContext { VideoThumbnail.getOrCreate(context, src)?.absolutePath }
+        if (thumbnail == null) {
             kotlinx.coroutines.delay(400)
-            thumbnail = load()
+            thumbnail = withIOContext { VideoThumbnail.getOrCreate(context, src)?.absolutePath }
         }
     }
     val request = remember(source, thumbnail, sizePx) {
