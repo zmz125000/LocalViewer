@@ -102,6 +102,12 @@ class FolderSelectState {
     val picks = mutableStateListOf<FolderPick>()
     var sectionKeys by mutableStateOf<Map<BrowseFolderSection, List<String>>>(emptyMap())
 
+    /**
+     * Long-press select for the listing on screen. Not snapshot state: the browser
+     * replaces it after each composition, and the header reads it when the press fires.
+     */
+    var sectionSelect: Map<BrowseFolderSection, () -> List<FolderPick>> = emptyMap()
+
     var folderKey: String? = null
         private set
 
@@ -133,6 +139,7 @@ class FolderSelectState {
         picks.clear()
         if (saved != null) picks.addAll(saved.picks)
         sectionKeys = emptyMap()
+        sectionSelect = emptyMap()
         FolderSelectHost.refreshSelectionSnack()
     }
 
@@ -206,6 +213,29 @@ class FolderSelectState {
         sync()
     }
 
+    /** Add [items] that are not already selected. Fills a missing list line on an existing pick. */
+    fun selectThese(items: List<FolderPick>) {
+        if (!selecting || items.isEmpty()) return
+        var changed = false
+        for (item in items) {
+            val index = picks.indexOfFirst { it.key == item.key }
+            if (index < 0) {
+                picks.add(item)
+                changed = true
+            } else if (picks[index].listLine == null && item.listLine != null) {
+                picks[index] = item
+                changed = true
+            }
+        }
+        if (changed) sync()
+    }
+
+    /** Select every row currently shown in [section]. Recent is unchanged. */
+    fun selectSection(section: BrowseFolderSection) {
+        if (!selecting || section == BrowseFolderSection.Recent) return
+        selectThese(sectionSelect[section]?.invoke().orEmpty())
+    }
+
     /** Selected count in [section] to the number of rows in that section. */
     fun count(section: BrowseFolderSection): Pair<Int, Int>? {
         if (!selecting) return null
@@ -250,6 +280,8 @@ data class FolderPick(
     val convertStill: (suspend (Path, StillExportTarget) -> Boolean)?,
     /** Saves into a picked folder. Null when Save to… does not apply. */
     val saveInto: (suspend (Path) -> Boolean)?,
+    /** Extension, size, and the rest of the folder-list second line. */
+    val listLine: BrowseListLine? = null,
 )
 
 fun BrowseOverflowActions.selectable(
@@ -259,6 +291,7 @@ fun BrowseOverflowActions.selectable(
     shareHttp: (suspend (HttpSelectionListing) -> Unit)? = null,
     convertStill: (suspend (Path, StillExportTarget) -> Boolean)? = null,
     saveInto: (suspend (Path) -> Boolean)? = null,
+    listLine: BrowseListLine? = null,
 ): BrowseOverflowActions = copy(
     selectKey = key,
     selectTitle = title,
@@ -266,6 +299,7 @@ fun BrowseOverflowActions.selectable(
     convertStill = convertStill,
     saveInto = saveInto,
     selectFolder = isFolder,
+    listLine = listLine,
 )
 
 fun BrowseOverflowActions.toPick(): FolderPick? {
@@ -277,6 +311,7 @@ fun BrowseOverflowActions.toPick(): FolderPick? {
         shareHttp = shareHttp,
         convertStill = convertStill,
         saveInto = saveInto,
+        listLine = listLine,
     )
 }
 
@@ -928,7 +963,7 @@ private fun TasksPanel(tablet: Boolean, onOpenFolder: (FolderPlace) -> Boolean) 
                         items(picks, key = { "s-${it.key}" }) { pick ->
                             TaskPathRow(
                                 title = pick.title,
-                                subtitle = stringResource(R.string.browse_selection),
+                                subtitle = pick.listLine?.let { browseListSupportingLine(it) }.orEmpty(),
                                 icon = if (pick.isFolder) Icons.Default.Folder else Icons.Default.Description,
                                 tablet = tablet,
                                 trailing = {
@@ -1055,13 +1090,15 @@ private fun TaskPathRow(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
-            Text(
-                subtitle,
-                style = if (tablet) MaterialTheme.typography.bodyMedium else MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
+            if (subtitle.isNotEmpty()) {
+                Text(
+                    subtitle,
+                    style = if (tablet) MaterialTheme.typography.bodyMedium else MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
         }
         Row(verticalAlignment = Alignment.CenterVertically) {
             trailing()

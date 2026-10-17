@@ -234,6 +234,19 @@ fun browseListDateLabel(lastModifiedMs: Long): String {
 }
 
 /**
+ * Folder-list second line stored on a selection row: extension / Dir / Folder,
+ * page count, size, and modified time.
+ */
+data class BrowseListLine(
+    val typeLabel: String,
+    val sizeBytes: Long = 0L,
+    val pageCount: Int = 0,
+    val pageCountCapped: Boolean = false,
+    val lastModifiedMs: Long = 0L,
+    val progressGid: Long = 0L,
+)
+
+/**
  * Folder list second line: `ext|Dir|Folder|SMB|WebDAV` · xxP · size · date
  * (segments with empty values are omitted). Pages and size both show when known
  * so archive/PDF galleries keep file size next to page count.
@@ -270,6 +283,22 @@ fun browseListSupportingLine(
     dateLabel = browseListDateLabel(lastModifiedMs),
     readProgress = readProgress,
 )
+
+/** Same second line as a folder list row, including reading progress when known. */
+@Composable
+fun browseListSupportingLine(line: BrowseListLine): String {
+    val readProgress = rememberGalleryReadProgress(
+        if (line.pageCount > 0 && !line.pageCountCapped) line.progressGid else 0L,
+    )
+    return browseListSupportingLine(
+        typeLabel = line.typeLabel,
+        sizeBytes = line.sizeBytes,
+        pageCount = line.pageCount,
+        pageCountCapped = line.pageCountCapped,
+        lastModifiedMs = line.lastModifiedMs,
+        readProgress = readProgress,
+    )
+}
 
 /** Saved reader page, or 0 when reading progress is hidden. */
 @Composable
@@ -2043,8 +2072,16 @@ fun BrowseSectionHeader(
 ) {
     val haptic = LocalHapticFeedback.current
     val listInset = LocalBrowseListHeaderInset.current
-    val count = section?.let { FolderSelectHost.current?.count(it) }
+    val host = FolderSelectHost.current
+    val count = section?.let { host?.count(it) }
     val label = if (count != null) "$text (${count.first}/${count.second})" else text
+    // Recent keeps its collapse gesture. Other folder sections select their rows.
+    val selectTarget = section?.takeIf {
+        it != BrowseFolderSection.Recent && host?.selecting == true
+    }
+    val longClick = onLongClick ?: selectTarget?.let { target ->
+        { host?.selectSection(target) }
+    }
     Text(
         text = label,
         style = MaterialTheme.typography.titleSmall,
@@ -2052,7 +2089,7 @@ fun BrowseSectionHeader(
         modifier = modifier
             .padding(horizontal = listInset)
             .then(
-                if (onClick != null || onLongClick != null) {
+                if (onClick != null || longClick != null) {
                     // fillMaxWidth so list matches grid: tap anywhere on the header band.
                     Modifier
                         .fillMaxWidth()
@@ -2060,7 +2097,7 @@ fun BrowseSectionHeader(
                             interactionSource = null,
                             indication = null,
                             onClick = { onClick?.invoke() },
-                            onLongClick = onLongClick?.let { action ->
+                            onLongClick = longClick?.let { action ->
                                 {
                                     haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                                     action()
@@ -2081,18 +2118,35 @@ fun BrowseSearchSectionHeader(
     searching: Boolean,
     onClick: () -> Unit,
 ) {
+    val haptic = LocalHapticFeedback.current
     val listInset = LocalBrowseListHeaderInset.current
-    val count = FolderSelectHost.current?.count(BrowseFolderSection.Search)
+    val host = FolderSelectHost.current
+    val count = host?.count(BrowseFolderSection.Search)
     val title = stringResource(R.string.browse_search)
     val label = if (count != null) "$title (${count.first}/${count.second})" else title
+    val selectAll = host?.selecting == true
     Row(
         modifier = Modifier
             .padding(horizontal = listInset)
             .fillMaxWidth()
-            .clickable(
-                interactionSource = null,
-                indication = null,
-                onClick = onClick,
+            .then(
+                if (selectAll) {
+                    Modifier.combinedClickable(
+                        interactionSource = null,
+                        indication = null,
+                        onClick = onClick,
+                        onLongClick = {
+                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                            host.selectSection(BrowseFolderSection.Search)
+                        },
+                    )
+                } else {
+                    Modifier.clickable(
+                        interactionSource = null,
+                        indication = null,
+                        onClick = onClick,
+                    )
+                },
             )
             .padding(horizontal = 16.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,

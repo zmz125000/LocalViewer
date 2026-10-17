@@ -150,6 +150,7 @@ import com.hippo.ehviewer.ui.main.BrowseFileRow
 import com.hippo.ehviewer.ui.main.BrowseFolderGalleryGridItem
 import com.hippo.ehviewer.ui.main.BrowseFolderGalleryRow
 import com.hippo.ehviewer.ui.main.BrowseFolderSection
+import com.hippo.ehviewer.ui.main.BrowseListLine
 import com.hippo.ehviewer.ui.main.BrowseOverflowActions
 import com.hippo.ehviewer.ui.main.BrowseOverflowKind
 import com.hippo.ehviewer.ui.main.BrowsePhotoGridImageItem
@@ -158,6 +159,7 @@ import com.hippo.ehviewer.ui.main.BrowseSearchSectionHeader
 import com.hippo.ehviewer.ui.main.BrowseSectionHeader
 import com.hippo.ehviewer.ui.main.BrowseVideoGridItem
 import com.hippo.ehviewer.ui.main.BrowseVideoRow
+import com.hippo.ehviewer.ui.main.FolderPick
 import com.hippo.ehviewer.ui.main.FolderPlace
 import com.hippo.ehviewer.ui.main.FolderSelectHost
 import com.hippo.ehviewer.ui.main.FolderSelectState
@@ -167,6 +169,7 @@ import com.hippo.ehviewer.ui.main.HttpShare
 import com.hippo.ehviewer.ui.main.HttpShareItem
 import com.hippo.ehviewer.ui.main.LocalBrowseListHeaderInset
 import com.hippo.ehviewer.ui.main.awaitHttpShareQr
+import com.hippo.ehviewer.ui.main.browseFileExtensionLabel
 import com.hippo.ehviewer.ui.main.browseRecentPreviewLimit
 import com.hippo.ehviewer.ui.main.browseZipAsDirTypeLabel
 import com.hippo.ehviewer.ui.main.directoryBrowseCover
@@ -174,6 +177,7 @@ import com.hippo.ehviewer.ui.main.onRecentHeaderGesture
 import com.hippo.ehviewer.ui.main.rememberBrowseSectionCollapse
 import com.hippo.ehviewer.ui.main.rememberRecentStripExpanded
 import com.hippo.ehviewer.ui.main.selectable
+import com.hippo.ehviewer.ui.main.toPick
 import com.hippo.ehviewer.ui.navToLocalFolderReader
 import com.hippo.ehviewer.ui.navToLocalZipFolderReader
 import com.hippo.ehviewer.ui.navToReader
@@ -2281,6 +2285,11 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         isFolder = true,
         shareHttp = localShareFolderStart(dir.path, dir.name, dir.relativeName),
         saveInto = localSaveFolderInto(dir.path, dir.name, dir.relativeName),
+        listLine = BrowseListLine(
+            typeLabel = browseZipAsDirTypeLabel(dir.relativeName, dir.name) ?: "Dir",
+            sizeBytes = dir.size,
+            lastModifiedMs = dir.lastModifiedMs,
+        ),
     )
 
     fun folderGalleryOverflow(entry: BrowseEntry.FolderGallery) = BrowseOverflowActions(
@@ -2310,6 +2319,14 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         isFolder = true,
         shareHttp = localShareFolderStart(entry.path, entry.name, entry.relativeName),
         saveInto = localSaveFolderInto(entry.path, entry.name, entry.relativeName),
+        listLine = BrowseListLine(
+            typeLabel = browseZipAsDirTypeLabel(entry.relativeName, entry.name) ?: "Folder",
+            sizeBytes = entry.size,
+            pageCount = if (showGalleryPages) entry.pageCount else 0,
+            pageCountCapped = showGalleryPages && entry.pageCountCapped,
+            lastModifiedMs = entry.lastModifiedMs,
+            progressGid = folderEntryProgressGid(entry),
+        ),
     )
 
     fun archiveOverflow(entry: BrowseEntry.ArchiveGallery) = (
@@ -2361,12 +2378,20 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         entry.name,
         shareHttp = localShareFileStart(entry.path),
         saveInto = localSaveFileInto(entry.path),
+        listLine = BrowseListLine(
+            typeLabel = browseFileExtensionLabel(entry.name),
+            sizeBytes = entry.size,
+            pageCount = if (showGalleryPages) entry.pageCount else 0,
+            lastModifiedMs = entry.lastModifiedMs,
+        ),
     )
 
     fun videoOverflow(
         path: okio.Path,
         relativeName: String = localOpenFolderRelative(path),
         virtual: Boolean = false,
+        sizeBytes: Long = 0L,
+        lastModifiedMs: Long = 0L,
     ) = BrowseOverflowActions(
         kind = BrowseOverflowKind.Video,
         onPlay = { playVideo(path) },
@@ -2392,9 +2417,19 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         path.name,
         shareHttp = localShareFileStart(path),
         saveInto = localSaveFileInto(path),
+        listLine = BrowseListLine(
+            typeLabel = browseFileExtensionLabel(path.name),
+            sizeBytes = sizeBytes,
+            lastModifiedMs = lastModifiedMs,
+        ),
     )
 
-    fun fileOverflow(path: okio.Path, relativeName: String = path.name): BrowseOverflowActions {
+    fun fileOverflow(
+        path: okio.Path,
+        relativeName: String = path.name,
+        sizeBytes: Long = 0L,
+        lastModifiedMs: Long = 0L,
+    ): BrowseOverflowActions {
         val leaf = ZipPaths.memberLeafName(path.toString()) ?: path.name
         return (
             if (isHtmlFileName(leaf)) {
@@ -2482,6 +2517,11 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
             shareHttp = localShareFileStart(path),
             convertStill = localConvertStill(path, leaf),
             saveInto = localSaveFileInto(path),
+            listLine = BrowseListLine(
+                typeLabel = browseFileExtensionLabel(leaf),
+                sizeBytes = sizeBytes,
+                lastModifiedMs = lastModifiedMs,
+            ),
         )
     }
 
@@ -2723,6 +2763,25 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                             nameOf = { it.name },
                         )
                     }
+                    fun picksFor(entries: List<BrowseEntry>): List<FolderPick> = entries.mapNotNull { entry ->
+                        when (entry) {
+                            is BrowseEntry.Directory -> dirOverflow(entry).toPick()
+                            is BrowseEntry.FolderGallery -> folderGalleryOverflow(entry).toPick()
+                            is BrowseEntry.ArchiveGallery -> archiveOverflow(entry).toPick()
+                            is BrowseEntry.VideoFile -> videoOverflow(
+                                entry.path,
+                                virtual = entry.virtual,
+                                sizeBytes = entry.size,
+                                lastModifiedMs = entry.lastModifiedMs,
+                            ).toPick()
+                            is BrowseEntry.RegularFile -> fileOverflow(
+                                entry.path,
+                                entry.name,
+                                sizeBytes = entry.size,
+                                lastModifiedMs = entry.lastModifiedMs,
+                            ).toPick()
+                        }
+                    }
                     SideEffect {
                         folderSelect.sectionKeys = mapOf(
                             BrowseFolderSection.Directories to dirs.map { localSelectKey("d:${it.relativeName}") },
@@ -2732,6 +2791,14 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                             BrowseFolderSection.Files to files.map { localSelectKey("f:${it.path}") },
                             BrowseFolderSection.Recent to recentEntries.map { localEntrySelectKey(it) },
                             BrowseFolderSection.Search to searchHits.map { localEntrySelectKey(it) },
+                        )
+                        folderSelect.sectionSelect = mapOf(
+                            BrowseFolderSection.Directories to { picksFor(dirs) },
+                            BrowseFolderSection.Galleries to { picksFor(galleries) },
+                            BrowseFolderSection.Documents to { picksFor(documents) },
+                            BrowseFolderSection.Videos to { picksFor(videos) },
+                            BrowseFolderSection.Files to { picksFor(files) },
+                            BrowseFolderSection.Search to { picksFor(searchHits) },
                         )
                     }
                     val (collapsedSections, toggleSection, setSectionCollapsed) = rememberBrowseSectionCollapse(pathKey)
@@ -2846,7 +2913,12 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                     ),
                                     onClick = { openVideoPrimary(entry.path) },
                                     onLongClick = { openVideoSecondary(entry.path) },
-                                    overflow = videoOverflow(entry.path, virtual = entry.virtual),
+                                    overflow = videoOverflow(
+                                        entry.path,
+                                        virtual = entry.virtual,
+                                        sizeBytes = entry.size,
+                                        lastModifiedMs = entry.lastModifiedMs,
+                                    ),
                                 )
                             } else {
                                 BrowseVideoRow(
@@ -2861,7 +2933,12 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                     fileName = entry.name,
                                     sizeBytes = entry.size,
                                     lastModifiedMs = entry.lastModifiedMs,
-                                    overflow = videoOverflow(entry.path, virtual = entry.virtual),
+                                    overflow = videoOverflow(
+                                        entry.path,
+                                        virtual = entry.virtual,
+                                        sizeBytes = entry.size,
+                                        lastModifiedMs = entry.lastModifiedMs,
+                                    ),
                                 )
                             }
                             is BrowseEntry.RegularFile -> {
@@ -2875,7 +2952,12 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                             showPhotoThumb = true,
                                             onClick = { openFolderImage(entry) },
                                             onLongClick = { openExternalFile(entry.path) },
-                                            overflow = fileOverflow(entry.path, entry.name),
+                                            overflow = fileOverflow(
+                                                entry.path,
+                                                entry.name,
+                                                sizeBytes = entry.size,
+                                                lastModifiedMs = entry.lastModifiedMs,
+                                            ),
                                         )
                                     } else {
                                         BrowseFileGridItem(
@@ -2883,7 +2965,12 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                             name = entry.name,
                                             onClick = { openListedFile(entry.path) },
                                             onLongClick = { openExternalFile(entry.path) },
-                                            overflow = fileOverflow(entry.path, entry.name),
+                                            overflow = fileOverflow(
+                                                entry.path,
+                                                entry.name,
+                                                sizeBytes = entry.size,
+                                                lastModifiedMs = entry.lastModifiedMs,
+                                            ),
                                         )
                                     }
                                 } else {
@@ -2903,7 +2990,12 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                         fileName = entry.name,
                                         sizeBytes = entry.size,
                                         lastModifiedMs = entry.lastModifiedMs,
-                                        overflow = fileOverflow(entry.path, entry.name),
+                                        overflow = fileOverflow(
+                                            entry.path,
+                                            entry.name,
+                                            sizeBytes = entry.size,
+                                            lastModifiedMs = entry.lastModifiedMs,
+                                        ),
                                     )
                                 }
                             }
@@ -3035,7 +3127,12 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                         name = entry.name,
                                         onClick = { openListedFile(entry.path) },
                                         onLongClick = { openExternalFile(entry.path) },
-                                        overflow = fileOverflow(entry.path, entry.name),
+                                        overflow = fileOverflow(
+                                            entry.path,
+                                            entry.name,
+                                            sizeBytes = entry.size,
+                                            lastModifiedMs = entry.lastModifiedMs,
+                                        ),
                                     )
                                 } else {
                                     BrowseFileRow(
@@ -3046,7 +3143,12 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                         fileName = entry.name,
                                         sizeBytes = entry.size,
                                         lastModifiedMs = entry.lastModifiedMs,
-                                        overflow = fileOverflow(entry.path, entry.name),
+                                        overflow = fileOverflow(
+                                            entry.path,
+                                            entry.name,
+                                            sizeBytes = entry.size,
+                                            lastModifiedMs = entry.lastModifiedMs,
+                                        ),
                                     )
                                 }
                                 else -> Unit
@@ -3100,7 +3202,11 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                         fileName = file.path.name,
                                         sizeBytes = file.size,
                                         lastModifiedMs = file.lastModifiedMs,
-                                        overflow = fileOverflow(file.path),
+                                        overflow = fileOverflow(
+                                            file.path,
+                                            sizeBytes = file.size,
+                                            lastModifiedMs = file.lastModifiedMs,
+                                        ),
                                     )
                                 }
                             }
@@ -3150,7 +3256,11 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                     showPhotoThumb = true,
                                     onClick = { openFolderImage(file) },
                                     onLongClick = { openExternalFile(file.path) },
-                                    overflow = fileOverflow(file.path),
+                                    overflow = fileOverflow(
+                                        file.path,
+                                        sizeBytes = file.size,
+                                        lastModifiedMs = file.lastModifiedMs,
+                                    ),
                                 )
                             }
                         }
@@ -3268,7 +3378,12 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                             ),
                                             onClick = { openVideoPrimary(video.path) },
                                             onLongClick = { openVideoSecondary(video.path) },
-                                            overflow = videoOverflow(video.path, virtual = video.virtual),
+                                            overflow = videoOverflow(
+                                                video.path,
+                                                virtual = video.virtual,
+                                                sizeBytes = video.size,
+                                                lastModifiedMs = video.lastModifiedMs,
+                                            ),
                                         )
                                     }
                                 }
@@ -3295,7 +3410,11 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                                 showPhotoThumb = true,
                                                 onClick = { openFolderImage(file) },
                                                 onLongClick = { openExternalFile(file.path) },
-                                                overflow = fileOverflow(file.path),
+                                                overflow = fileOverflow(
+                                                    file.path,
+                                                    sizeBytes = file.size,
+                                                    lastModifiedMs = file.lastModifiedMs,
+                                                ),
                                             )
                                         } else {
                                             BrowseFileGridItem(
@@ -3303,7 +3422,11 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                                 name = file.name,
                                                 onClick = { openExternalFile(file.path) },
                                                 onLongClick = { openExternalFile(file.path) },
-                                                overflow = fileOverflow(file.path),
+                                                overflow = fileOverflow(
+                                                    file.path,
+                                                    sizeBytes = file.size,
+                                                    lastModifiedMs = file.lastModifiedMs,
+                                                ),
                                             )
                                         }
                                     }
@@ -3432,7 +3555,12 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                                 fileName = video.path.name,
                                                 sizeBytes = video.size,
                                                 lastModifiedMs = video.lastModifiedMs,
-                                                overflow = videoOverflow(video.path, virtual = video.virtual),
+                                                overflow = videoOverflow(
+                                                    video.path,
+                                                    virtual = video.virtual,
+                                                    sizeBytes = video.size,
+                                                    lastModifiedMs = video.lastModifiedMs,
+                                                ),
                                             )
                                         }
                                     }
@@ -3467,7 +3595,11 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                                 fileName = file.path.name,
                                                 sizeBytes = file.size,
                                                 lastModifiedMs = file.lastModifiedMs,
-                                                overflow = fileOverflow(file.path),
+                                                overflow = fileOverflow(
+                                                    file.path,
+                                                    sizeBytes = file.size,
+                                                    lastModifiedMs = file.lastModifiedMs,
+                                                ),
                                             )
                                         }
                                     }
