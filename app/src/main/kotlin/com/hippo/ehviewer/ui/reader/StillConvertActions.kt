@@ -89,19 +89,19 @@ suspend fun exportStillToDirectory(
             target
         }
         val name = stillExportFileName(leaf, resolved)
-        val out = File.createTempFile("still-out", null, appCtx.cacheDir)
-        try {
-            val dest = withIOContext {
+        val dest = withIOContext {
+            val out = File.createTempFile("still-out", null, appCtx.cacheDir)
+            try {
                 if (!pixels.writeResolved(resolved, out) || out.length() <= 0L) {
                     null
                 } else {
                     BrowseSaveAs.writeConvertFile(dir, name, out)
                 }
+            } finally {
+                out.delete()
             }
-            dest != null
-        } finally {
-            out.delete()
         }
+        dest != null
     } catch (e: CancellationException) {
         throw e
     } catch (t: Throwable) {
@@ -125,11 +125,13 @@ context(_: SnackbarHostState, _: Context)
 private suspend fun convertStagedUnchecked(leaf: String, target: StillExportTarget, stage: suspend () -> File) {
     if (target == StillExportTarget.AutoOriginal) {
         val saved = saveOriginalSize(leaf) {
-            val file = withIOContext { stage() }
-            try {
-                withIOContext { LibDirectDecode.decodePixels(file.asPathSource(), leaf, maxEdge = 0) }
-            } finally {
-                file.delete()
+            withIOContext {
+                val file = stage()
+                try {
+                    LibDirectDecode.decodePixels(file.asPathSource(), leaf, maxEdge = 0)
+                } finally {
+                    file.delete()
+                }
             }
         }
         if (!saved) snackbar(string(R.string.error_cant_save_image))
@@ -227,25 +229,27 @@ private suspend fun saveOriginalSize(leaf: String, decode: suspend () -> DirectP
     val pixels = decode() ?: return false
     val resolved = StillExportTarget.AutoOriginal.resolve(pixels.isHdr, pixels.f16)
     val name = stillExportFileName(leaf, resolved)
-    val out = File.createTempFile("still-out", null, appCtx.cacheDir)
-    return try {
-        val dest = withIOContext {
-            if (!pixels.writeResolved(resolved, out) || out.length() <= 0L) {
-                null
-            } else {
-                BrowseSaveAs.writeConvertFile(dir, name, out)
+    val dest = try {
+        withIOContext {
+            val out = File.createTempFile("still-out", null, appCtx.cacheDir)
+            try {
+                if (!pixels.writeResolved(resolved, out) || out.length() <= 0L) {
+                    null
+                } else {
+                    BrowseSaveAs.writeConvertFile(dir, name, out)
+                }
+            } finally {
+                out.delete()
             }
-        } ?: return false
-        snackbar(string(R.string.image_saved, dest.toUri().displayPath ?: dest.toString()))
-        true
+        }
     } catch (e: CancellationException) {
         throw e
     } catch (t: Throwable) {
         t.logcatExport()
-        false
-    } finally {
-        out.delete()
-    }
+        return false
+    } ?: return false
+    snackbar(string(R.string.image_saved, dest.toUri().displayPath ?: dest.toString()))
+    return true
 }
 
 /** Full-resolution file decode. HDR pixels are later encoded as Ultra HDR JPEG. */
