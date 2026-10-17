@@ -85,6 +85,8 @@ data class BrowseOverflowActions(
     val saveInto: (suspend (okio.Path) -> Boolean)? = null,
     /** Folder icon in the Tasks selection list. */
     val selectFolder: Boolean = false,
+    /** Extension, size, and the rest of the folder-list second line. */
+    val listLine: BrowseListLine? = null,
 )
 
 @Composable

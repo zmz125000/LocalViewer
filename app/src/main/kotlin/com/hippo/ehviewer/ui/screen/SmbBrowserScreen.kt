@@ -151,6 +151,7 @@ import com.hippo.ehviewer.ui.main.BrowseFileRow
 import com.hippo.ehviewer.ui.main.BrowseFolderGalleryGridItem
 import com.hippo.ehviewer.ui.main.BrowseFolderGalleryRow
 import com.hippo.ehviewer.ui.main.BrowseFolderSection
+import com.hippo.ehviewer.ui.main.BrowseListLine
 import com.hippo.ehviewer.ui.main.BrowseOverflowActions
 import com.hippo.ehviewer.ui.main.BrowseOverflowKind
 import com.hippo.ehviewer.ui.main.BrowsePhotoGridImageItem
@@ -159,6 +160,7 @@ import com.hippo.ehviewer.ui.main.BrowseSearchSectionHeader
 import com.hippo.ehviewer.ui.main.BrowseSectionHeader
 import com.hippo.ehviewer.ui.main.BrowseVideoGridItem
 import com.hippo.ehviewer.ui.main.BrowseVideoRow
+import com.hippo.ehviewer.ui.main.FolderPick
 import com.hippo.ehviewer.ui.main.FolderPlace
 import com.hippo.ehviewer.ui.main.FolderSelectHost
 import com.hippo.ehviewer.ui.main.FolderSelectState
@@ -168,12 +170,14 @@ import com.hippo.ehviewer.ui.main.HttpShare
 import com.hippo.ehviewer.ui.main.HttpShareItem
 import com.hippo.ehviewer.ui.main.LocalBrowseListHeaderInset
 import com.hippo.ehviewer.ui.main.awaitHttpShareQr
+import com.hippo.ehviewer.ui.main.browseFileExtensionLabel
 import com.hippo.ehviewer.ui.main.browseRecentPreviewLimit
 import com.hippo.ehviewer.ui.main.browseZipAsDirTypeLabel
 import com.hippo.ehviewer.ui.main.onRecentHeaderGesture
 import com.hippo.ehviewer.ui.main.rememberBrowseSectionCollapse
 import com.hippo.ehviewer.ui.main.rememberRecentStripExpanded
 import com.hippo.ehviewer.ui.main.selectable
+import com.hippo.ehviewer.ui.main.toPick
 import com.hippo.ehviewer.ui.navToReader
 import com.hippo.ehviewer.ui.navToSmbFolderReader
 import com.hippo.ehviewer.ui.reader.ReaderScreenArgs
@@ -1894,7 +1898,13 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
         return { dir -> BrowseSaveAs.saveSmbFolderInto(dir, src.id, remote, name) }
     }
 
-    fun dirOverflow(name: String, coverFileName: String? = null, virtual: Boolean = false) = BrowseOverflowActions(
+    fun dirOverflow(
+        name: String,
+        coverFileName: String? = null,
+        virtual: Boolean = false,
+        sizeBytes: Long = 0L,
+        lastModifiedMs: Long = 0L,
+    ) = BrowseOverflowActions(
         kind = BrowseOverflowKind.Common,
         favorited = isDirFavorite(name),
         onFavorite = { toggleDirFavorite(name, coverFileName) },
@@ -1913,6 +1923,11 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
         isFolder = true,
         shareHttp = smbShareFolderStart(name),
         saveInto = smbSaveFolderInto(name),
+        listLine = BrowseListLine(
+            typeLabel = browseZipAsDirTypeLabel(name, name.substringAfterLast('/')) ?: "Dir",
+            sizeBytes = sizeBytes,
+            lastModifiedMs = lastModifiedMs,
+        ),
     )
 
     fun folderGalleryOverflow(entry: BrowseEntryRemote.FolderGallery) = BrowseOverflowActions(
@@ -1942,6 +1957,14 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
         isFolder = true,
         shareHttp = smbShareFolderStart(entry.relativeName, entry.name),
         saveInto = smbSaveFolderInto(entry.relativeName, entry.name),
+        listLine = BrowseListLine(
+            typeLabel = browseZipAsDirTypeLabel(entry.relativeName, entry.name) ?: "Folder",
+            sizeBytes = entry.size,
+            pageCount = if (showGalleryPages) entry.pageCount else 0,
+            pageCountCapped = showGalleryPages && entry.pageCountCapped,
+            lastModifiedMs = entry.lastModifiedMs,
+            progressGid = folderEntryProgressGid(entry),
+        ),
     )
 
     fun archiveOverflow(entry: BrowseEntryRemote.ArchiveGallery): BrowseOverflowActions {
@@ -2037,10 +2060,21 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
             entry.name,
             shareHttp = smbShareFileStart(remote),
             saveInto = smbSaveFileInto(remote),
+            listLine = BrowseListLine(
+                typeLabel = browseFileExtensionLabel(entry.fileName),
+                sizeBytes = entry.size,
+                pageCount = if (showGalleryPages) entry.pageCount else 0,
+                lastModifiedMs = entry.lastModifiedMs,
+            ),
         )
     }
 
-    fun videoOverflow(fileName: String, virtual: Boolean = false) = BrowseOverflowActions(
+    fun videoOverflow(
+        fileName: String,
+        virtual: Boolean = false,
+        sizeBytes: Long = 0L,
+        lastModifiedMs: Long = 0L,
+    ) = BrowseOverflowActions(
         kind = BrowseOverflowKind.Video,
         onPlay = { playVideo(fileName) },
         onExternalPlayer = { openExternalFile(fileName) },
@@ -2061,6 +2095,11 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
         fileName.substringAfterLast('/'),
         shareHttp = smbShareFileStart(fileName),
         saveInto = smbSaveFileInto(fileName),
+        listLine = BrowseListLine(
+            typeLabel = browseFileExtensionLabel(fileName),
+            sizeBytes = sizeBytes,
+            lastModifiedMs = lastModifiedMs,
+        ),
     )
 
     /** Regular-file MOBI/AZW/AZW3 image reader. Gallery extract, not the text ebook. */
@@ -2100,7 +2139,11 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
         }
     }
 
-    fun fileOverflow(fileName: String) = (
+    fun fileOverflow(
+        fileName: String,
+        sizeBytes: Long = 0L,
+        lastModifiedMs: Long = 0L,
+    ) = (
         if (isHtmlFileName(fileName)) {
             BrowseOverflowActions(
                 kind = BrowseOverflowKind.Webpage,
@@ -2190,6 +2233,11 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
         shareHttp = smbShareFileStart(fileName),
         convertStill = smbConvertStill(fileName),
         saveInto = smbSaveFileInto(fileName),
+        listLine = BrowseListLine(
+            typeLabel = browseFileExtensionLabel(fileName),
+            sizeBytes = sizeBytes,
+            lastModifiedMs = lastModifiedMs,
+        ),
     )
 
     Scaffold(
@@ -2397,6 +2445,30 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                             nameOf = { it.name },
                         )
                     }
+                    fun picksFor(entries: List<BrowseEntryRemote>): List<FolderPick> = entries.mapNotNull { entry ->
+                        when (entry) {
+                            is BrowseEntryRemote.Directory -> dirOverflow(
+                                entry.relativeName,
+                                entry.coverFileName,
+                                entry.virtual,
+                                entry.size,
+                                entry.lastModifiedMs,
+                            ).toPick()
+                            is BrowseEntryRemote.FolderGallery -> folderGalleryOverflow(entry).toPick()
+                            is BrowseEntryRemote.ArchiveGallery -> archiveOverflow(entry).toPick()
+                            is BrowseEntryRemote.VideoFile -> videoOverflow(
+                                entry.fileName,
+                                entry.virtual,
+                                entry.size,
+                                entry.lastModifiedMs,
+                            ).toPick()
+                            is BrowseEntryRemote.RegularFile -> fileOverflow(
+                                entry.fileName,
+                                entry.size,
+                                entry.lastModifiedMs,
+                            ).toPick()
+                        }
+                    }
                     SideEffect {
                         folderSelect.sectionKeys = mapOf(
                             BrowseFolderSection.Directories to dirs.map { smbKey("d:${it.relativeName}") },
@@ -2406,6 +2478,14 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                             BrowseFolderSection.Files to files.map { smbKey("f:${it.fileName}") },
                             BrowseFolderSection.Recent to recentEntries.map { remoteSelectId(it) },
                             BrowseFolderSection.Search to searchHits.map { remoteSelectId(it) },
+                        )
+                        folderSelect.sectionSelect = mapOf(
+                            BrowseFolderSection.Directories to { picksFor(dirs) },
+                            BrowseFolderSection.Galleries to { picksFor(galleries) },
+                            BrowseFolderSection.Documents to { picksFor(documents) },
+                            BrowseFolderSection.Videos to { picksFor(videos) },
+                            BrowseFolderSection.Files to { picksFor(files) },
+                            BrowseFolderSection.Search to { picksFor(searchHits) },
                         )
                     }
                     val (collapsedSections, toggleSection, setSectionCollapsed) = rememberBrowseSectionCollapse(
@@ -2510,7 +2590,13 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                                     showFolderThumb = browseFolderThumbs,
                                     thumbRetryKey = refreshToken,
                                     allowRemoteFetch = allowRemoteThumbs,
-                                    overflow = dirOverflow(entry.relativeName, entry.coverFileName, entry.virtual),
+                                    overflow = dirOverflow(
+                                        entry.relativeName,
+                                        entry.coverFileName,
+                                        entry.virtual,
+                                        entry.size,
+                                        entry.lastModifiedMs,
+                                    ),
                                 )
                             } else {
                                 BrowseDirectoryRow(
@@ -2530,7 +2616,13 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                                         entry.relativeName,
                                         entry.name,
                                     ) ?: "Dir",
-                                    overflow = dirOverflow(entry.relativeName, entry.coverFileName, entry.virtual),
+                                    overflow = dirOverflow(
+                                        entry.relativeName,
+                                        entry.coverFileName,
+                                        entry.virtual,
+                                        entry.size,
+                                        entry.lastModifiedMs,
+                                    ),
                                     showFavoriteStar = isDirFavorite(entry.relativeName),
                                 )
                             }
@@ -2617,7 +2709,12 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                                     allowRemoteFetch = allowRemoteThumbs,
                                     onClick = { openVideoPrimary(entry.fileName) },
                                     onLongClick = { openVideoSecondary(entry.fileName) },
-                                    overflow = videoOverflow(entry.fileName, entry.virtual),
+                                    overflow = videoOverflow(
+                                        entry.fileName,
+                                        entry.virtual,
+                                        entry.size,
+                                        entry.lastModifiedMs,
+                                    ),
                                 )
                             } else {
                                 BrowseVideoRow(
@@ -2638,7 +2735,12 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                                     fileName = entry.fileName,
                                     sizeBytes = entry.size,
                                     lastModifiedMs = entry.lastModifiedMs,
-                                    overflow = videoOverflow(entry.fileName, entry.virtual),
+                                    overflow = videoOverflow(
+                                        entry.fileName,
+                                        entry.virtual,
+                                        entry.size,
+                                        entry.lastModifiedMs,
+                                    ),
                                 )
                             }
                             is BrowseEntryRemote.RegularFile -> {
@@ -2656,7 +2758,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                                             allowRemoteFetch = allowRemoteThumbs,
                                             onClick = { openFolderImage(entry) },
                                             onLongClick = { openExternalFile(entry.fileName) },
-                                            overflow = fileOverflow(entry.fileName),
+                                            overflow = fileOverflow(entry.fileName, entry.size, entry.lastModifiedMs),
                                         )
                                     } else {
                                         BrowseFileGridItem(
@@ -2664,7 +2766,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                                             name = entry.name,
                                             onClick = { openListedFile(entry.fileName) },
                                             onLongClick = { openExternalFile(entry.fileName) },
-                                            overflow = fileOverflow(entry.fileName),
+                                            overflow = fileOverflow(entry.fileName, entry.size, entry.lastModifiedMs),
                                         )
                                     }
                                 } else {
@@ -2686,7 +2788,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                                         fileName = entry.fileName,
                                         sizeBytes = entry.size,
                                         lastModifiedMs = entry.lastModifiedMs,
-                                        overflow = fileOverflow(entry.fileName),
+                                        overflow = fileOverflow(entry.fileName, entry.size, entry.lastModifiedMs),
                                     )
                                 }
                             }
@@ -2823,7 +2925,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                                         name = entry.name,
                                         onClick = { openListedFile(entry.fileName) },
                                         onLongClick = { openExternalFile(entry.fileName) },
-                                        overflow = fileOverflow(entry.fileName),
+                                        overflow = fileOverflow(entry.fileName, entry.size, entry.lastModifiedMs),
                                     )
                                 } else {
                                     BrowseFileRow(
@@ -2836,7 +2938,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                                         fileName = entry.fileName,
                                         sizeBytes = entry.size,
                                         lastModifiedMs = entry.lastModifiedMs,
-                                        overflow = fileOverflow(entry.fileName),
+                                        overflow = fileOverflow(entry.fileName, entry.size, entry.lastModifiedMs),
                                     )
                                 }
                                 else -> Unit
@@ -2882,7 +2984,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                                         fileName = file.fileName,
                                         sizeBytes = file.size,
                                         lastModifiedMs = file.lastModifiedMs,
-                                        overflow = fileOverflow(file.fileName),
+                                        overflow = fileOverflow(file.fileName, file.size, file.lastModifiedMs),
                                     )
                                 }
                             }
@@ -2923,7 +3025,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                                     allowRemoteFetch = allowRemoteThumbs,
                                     onClick = { openFolderImage(file) },
                                     onLongClick = { openExternalFile(file.fileName) },
-                                    overflow = fileOverflow(file.fileName),
+                                    overflow = fileOverflow(file.fileName, file.size, file.lastModifiedMs),
                                 )
                             }
                         }
@@ -2967,7 +3069,13 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                                             showFolderThumb = browseFolderThumbs,
                                             thumbRetryKey = refreshToken,
                                             allowRemoteFetch = allowRemoteThumbs,
-                                            overflow = dirOverflow(dir.relativeName, dir.coverFileName, dir.virtual),
+                                            overflow = dirOverflow(
+                                                dir.relativeName,
+                                                dir.coverFileName,
+                                                dir.virtual,
+                                                dir.size,
+                                                dir.lastModifiedMs,
+                                            ),
                                         )
                                     }
                                 }
@@ -3044,7 +3152,12 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                                             allowRemoteFetch = allowRemoteThumbs,
                                             onClick = { openVideoPrimary(video.fileName) },
                                             onLongClick = { openVideoSecondary(video.fileName) },
-                                            overflow = videoOverflow(video.fileName, video.virtual),
+                                            overflow = videoOverflow(
+                                                video.fileName,
+                                                video.virtual,
+                                                video.size,
+                                                video.lastModifiedMs,
+                                            ),
                                         )
                                     }
                                 }
@@ -3073,7 +3186,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                                                 allowRemoteFetch = allowRemoteThumbs,
                                                 onClick = { openFolderImage(file) },
                                                 onLongClick = { openExternalFile(file.fileName) },
-                                                overflow = fileOverflow(file.fileName),
+                                                overflow = fileOverflow(file.fileName, file.size, file.lastModifiedMs),
                                             )
                                         } else {
                                             BrowseFileGridItem(
@@ -3081,7 +3194,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                                                 name = file.name,
                                                 onClick = { openExternalFile(file.fileName) },
                                                 onLongClick = { openExternalFile(file.fileName) },
-                                                overflow = fileOverflow(file.fileName),
+                                                overflow = fileOverflow(file.fileName, file.size, file.lastModifiedMs),
                                             )
                                         }
                                     }
@@ -3126,7 +3239,13 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                                                 lastModifiedMs = dir.lastModifiedMs,
                                                 sizeBytes = dir.size,
                                                 typeLabel = browseZipAsDirTypeLabel(dir.relativeName, dir.name) ?: "Dir",
-                                                overflow = dirOverflow(dir.relativeName, dir.coverFileName, dir.virtual),
+                                                overflow = dirOverflow(
+                                                    dir.relativeName,
+                                                    dir.coverFileName,
+                                                    dir.virtual,
+                                                    dir.size,
+                                                    dir.lastModifiedMs,
+                                                ),
                                                 showFavoriteStar = isDirFavorite(dir.relativeName),
                                             )
                                         }
@@ -3213,7 +3332,12 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                                                 fileName = video.fileName,
                                                 sizeBytes = video.size,
                                                 lastModifiedMs = video.lastModifiedMs,
-                                                overflow = videoOverflow(video.fileName, video.virtual),
+                                                overflow = videoOverflow(
+                                                    video.fileName,
+                                                    video.virtual,
+                                                    video.size,
+                                                    video.lastModifiedMs,
+                                                ),
                                             )
                                         }
                                     }
@@ -3250,7 +3374,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                                                 fileName = file.fileName,
                                                 sizeBytes = file.size,
                                                 lastModifiedMs = file.lastModifiedMs,
-                                                overflow = fileOverflow(file.fileName),
+                                                overflow = fileOverflow(file.fileName, file.size, file.lastModifiedMs),
                                             )
                                         }
                                     }

@@ -42,6 +42,54 @@ class FolderSelectStateTest {
     }
 
     @Test
+    fun selectTheseAddsOnlyMissingRows() {
+        val state = FolderSelectState()
+        state.bindFolder("a")
+        val line = BrowseListLine(typeLabel = "JPG", sizeBytes = 2048)
+        state.selectThese(listOf(pick("1", "one").copy(listLine = line)))
+        assertTrue(state.picks.isEmpty())
+        state.enter(pick("1", "one"))
+        state.selectThese(
+            listOf(
+                pick("1", "one").copy(listLine = line),
+                pick("2", "two").copy(listLine = line),
+            ),
+        )
+        assertEquals(listOf("1", "2"), state.picks.map { it.key })
+        assertEquals("JPG", state.picks[0].listLine?.typeLabel)
+        assertEquals(2048L, state.picks[1].listLine?.sizeBytes)
+        state.selectSection(BrowseFolderSection.Recent)
+        assertEquals(2, state.picks.size)
+    }
+
+    @Test
+    fun longPressSelectsTheSectionAndPressingAgainClearsIt() {
+        val state = FolderSelectState()
+        state.bindFolder("a")
+        state.enter(pick("9", "other"))
+        val files = listOf(pick("1", "one"), pick("2", "two"))
+        state.sectionSelect = mapOf(BrowseFolderSection.Files to { files })
+        state.selectSection(BrowseFolderSection.Files)
+        assertEquals(listOf("9", "1", "2"), state.picks.map { it.key })
+        state.selectSection(BrowseFolderSection.Files)
+        assertEquals(listOf("9"), state.picks.map { it.key })
+        state.toggle(pick("1", "one"))
+        state.selectSection(BrowseFolderSection.Files)
+        assertEquals(listOf("9", "1", "2"), state.picks.map { it.key })
+    }
+
+    @Test
+    fun selectableCopiesTheListLine() {
+        val line = BrowseListLine(typeLabel = "PNG", sizeBytes = 4096, pageCount = 3)
+        val pick = BrowseOverflowActions(onUnsupported = {})
+            .selectable(key = "f", title = "a.png", listLine = line)
+            .toPick()
+        assertEquals("PNG", pick?.listLine?.typeLabel)
+        assertEquals(4096L, pick?.listLine?.sizeBytes)
+        assertEquals(3, pick?.listLine?.pageCount)
+    }
+
+    @Test
     fun eachFolderKeepsItsOwnSelection() {
         val state = FolderSelectState()
         state.bindFolder("a")
