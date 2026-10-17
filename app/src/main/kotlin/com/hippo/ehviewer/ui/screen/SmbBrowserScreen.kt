@@ -159,8 +159,8 @@ import com.hippo.ehviewer.ui.main.BrowseSearchSectionHeader
 import com.hippo.ehviewer.ui.main.BrowseSectionHeader
 import com.hippo.ehviewer.ui.main.BrowseVideoGridItem
 import com.hippo.ehviewer.ui.main.BrowseVideoRow
-import com.hippo.ehviewer.ui.main.FolderSelectHost
 import com.hippo.ehviewer.ui.main.FolderPlace
+import com.hippo.ehviewer.ui.main.FolderSelectHost
 import com.hippo.ehviewer.ui.main.FolderSelectState
 import com.hippo.ehviewer.ui.main.GalleryGridDefaults
 import com.hippo.ehviewer.ui.main.HttpSelectionListing

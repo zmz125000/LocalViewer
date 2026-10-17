@@ -1118,6 +1118,7 @@ private fun SelectionOverflowControl(
         if (folderKey != null) FolderSelectHost.focusFolder(folderKey)
         menu = true
     }
+    val overflowPress = remember { MutableInteractionSource() }
     Box {
         if (asText) {
             TextButton(
@@ -1133,7 +1134,11 @@ private fun SelectionOverflowControl(
                 modifier = Modifier
                     .padding(8.dp)
                     .size(iconSize)
-                    .clickable(onClick = openMenu),
+                    .clickable(
+                        interactionSource = overflowPress,
+                        indication = null,
+                        onClick = openMenu,
+                    ),
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }

@@ -155,9 +155,9 @@ import com.hippo.ehviewer.ui.main.awaitHttpShareQr
 import com.hippo.ehviewer.ui.navToReader
 import com.hippo.ehviewer.ui.reader.PendingReaderOpen
 import com.hippo.ehviewer.ui.screen.ExplorerPanelActions
-import com.hippo.ehviewer.ui.screen.openSelectionPlace
 import com.hippo.ehviewer.ui.screen.ExplorerSidePanelHost
 import com.hippo.ehviewer.ui.screen.LocalExplorerPanel
+import com.hippo.ehviewer.ui.screen.openSelectionPlace
 import com.hippo.ehviewer.ui.screen.toggleHistorySection
 import com.hippo.ehviewer.ui.screen.toggleLibraryFlattenMode
 import com.hippo.ehviewer.ui.screen.toggleLibrarySection

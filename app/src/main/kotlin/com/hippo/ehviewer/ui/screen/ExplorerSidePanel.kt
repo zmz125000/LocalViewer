@@ -140,11 +140,11 @@ import com.hippo.ehviewer.webdav.WebDavRepository
 import com.ramcosta.composedestinations.navigation.DestinationsNavigator
 import kotlin.math.abs
 import kotlin.math.roundToInt
-import okio.Path.Companion.toPath
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import okio.Path.Companion.toPath
 
 /** Open and close the explorer panel from the main navigation bar. */
 class ExplorerPanelActions {

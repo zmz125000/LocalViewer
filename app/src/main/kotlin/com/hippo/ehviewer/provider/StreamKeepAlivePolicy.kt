@@ -33,7 +33,7 @@ import splitties.init.appCtx
  *
  * Limited (default): idle grants age out after 20 minutes, then FGS stops.
  * Unlimited (Advanced): grants stay; FGS stays until Recents swipe.
- * Folder tasks hold the same FGS only when Advanced "Keep tasks in background" is on.
+ * Folder tasks hold the same FGS only when Advanced "Keep tasks running in background" is on.
  *
  * **Recents swipe:** [shutdownAndKillProcess] — user kill means die.
  */
