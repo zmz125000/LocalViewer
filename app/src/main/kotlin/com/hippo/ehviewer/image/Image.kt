@@ -668,7 +668,9 @@ class Image private constructor(
             val hdrSafe = looksHdr
             // APNG must not take the still PNG F16 BitmapFactory path.
             val platformHbd = !looksAnimated && resolvePlatformHbd(gainMap = looksHdr)
-            val longEdgeCap = if (forceOriginal || looksHdr || looksAnimated || platformHbd) {
+            // Gain-map JPEG/HEIC/AVIF stay on Coil. hdrSafe skips the software kernel,
+            // and the 4096 FIT below is the same cap as other Coil stills.
+            val longEdgeCap = if (forceOriginal || looksAnimated || platformHbd) {
                 0
             } else {
                 hiResPreviewCapEdge(false)
@@ -713,7 +715,9 @@ class Image private constructor(
         /**
          * @param forceOriginal if true (page menu "View original"), decode at file resolution;
          *   otherwise use [Settings.readerDecodeSize]. Gain-map Ultra HDR and animated
-         *   GIF/WebP/APNG always ORIGIN (stills still honor decode size; thumbs size via Coil).
+         *   GIF/WebP/APNG ignore that size. Hi-res optimize still asks Coil for a 4096 px
+         *   long edge on gain-map JPEG, HEIC, and AVIF. Animated pages and platform
+         *   high-bit-depth PNG stay uncapped.
          *
          * Prefer Coil-ready [PathSource] from [com.hippo.ehviewer.image.hdr.DisplaySource];
          * [ByteBufferSource] still supported (GIF rewrite / callers that skip prepare).
