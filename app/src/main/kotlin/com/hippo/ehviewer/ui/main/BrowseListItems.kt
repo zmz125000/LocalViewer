@@ -2075,9 +2075,10 @@ fun BrowseSectionHeader(
     val host = FolderSelectHost.current
     val count = section?.let { host?.count(it) }
     val label = if (count != null) "$text (${count.first}/${count.second})" else text
-    // Recent keeps its collapse gesture. Other folder sections select their rows.
+    // Recent keeps its collapse gesture. Other folder sections select their rows,
+    // including when select mode is still off.
     val selectTarget = section?.takeIf {
-        it != BrowseFolderSection.Recent && host?.selecting == true
+        it != BrowseFolderSection.Recent && host != null
     }
     val longClick = onLongClick ?: selectTarget?.let { target ->
         { host?.selectSection(target) }
@@ -2124,7 +2125,7 @@ fun BrowseSearchSectionHeader(
     val count = host?.count(BrowseFolderSection.Search)
     val title = stringResource(R.string.browse_search)
     val label = if (count != null) "$title (${count.first}/${count.second})" else title
-    val selectAll = host?.selecting == true
+    val selectAll = host != null
     Row(
         modifier = Modifier
             .padding(horizontal = listInset)

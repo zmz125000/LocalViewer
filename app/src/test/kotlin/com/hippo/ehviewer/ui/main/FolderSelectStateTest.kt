@@ -79,6 +79,24 @@ class FolderSelectStateTest {
     }
 
     @Test
+    fun longPressOutsideSelectModeEntersAndSelectsTheSection() {
+        val state = FolderSelectState()
+        state.bindFolder("a")
+        val files = listOf(pick("1", "one"), pick("2", "two"))
+        state.sectionSelect = mapOf(BrowseFolderSection.Files to { files })
+        state.selectSection(BrowseFolderSection.Files)
+        assertTrue(state.selecting)
+        assertEquals(1, state.selectionEpoch)
+        assertEquals(listOf("1", "2"), state.picks.map { it.key })
+        state.exitSelectMode()
+        assertFalse(state.selecting)
+        state.selectSection(BrowseFolderSection.Files)
+        assertTrue(state.selecting)
+        assertEquals(2, state.selectionEpoch)
+        assertEquals(listOf("1", "2"), state.picks.map { it.key })
+    }
+
+    @Test
     fun selectableCopiesTheListLine() {
         val line = BrowseListLine(typeLabel = "PNG", sizeBytes = 4096, pageCount = 3)
         val pick = BrowseOverflowActions(onUnsupported = {})

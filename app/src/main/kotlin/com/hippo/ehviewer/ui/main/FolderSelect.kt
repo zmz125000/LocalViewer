@@ -235,13 +235,19 @@ class FolderSelectState {
 
     /**
      * Select every row currently shown in [section].
-     * A later long press clears that section when every row is already selected.
+     * Outside select mode this enters it and selects those rows.
+     * A later long press, while already selecting, clears that section when every row is already selected.
      * Recent is unchanged.
      */
     fun selectSection(section: BrowseFolderSection) {
-        if (!selecting || section == BrowseFolderSection.Recent) return
+        if (section == BrowseFolderSection.Recent) return
         val items = sectionSelect[section]?.invoke().orEmpty()
         if (items.isEmpty()) return
+        if (!selecting) {
+            enter()
+            selectThese(items)
+            return
+        }
         val keys = items.mapTo(HashSet()) { it.key }
         if (keys.all { key -> picks.any { it.key == key } }) {
             picks.removeAll { it.key in keys }
