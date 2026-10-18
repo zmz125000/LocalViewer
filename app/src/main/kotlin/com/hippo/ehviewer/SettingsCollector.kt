@@ -56,7 +56,9 @@ suspend fun updateWhenThemeChanges(theme: Int) {
 
 suspend fun updateWhenLibraryLiveUpdateChanges(enabled: Boolean) {
     withIOContext {
-        if (enabled) MediaStoreWatch.start() else MediaStoreWatch.stop()
+        // Arms only if the library screen is already resumed; otherwise the next
+        // onLibraryVisible() registers the observer.
+        if (enabled) MediaStoreWatch.onPrefEnabled() else MediaStoreWatch.stop()
     }
 }
 
