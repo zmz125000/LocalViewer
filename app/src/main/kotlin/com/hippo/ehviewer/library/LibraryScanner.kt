@@ -330,9 +330,10 @@ object LibraryScanner {
 
         for (child in visible) {
             when {
-                // Dot folders are never descended into (browse lazy-scan parity).
-                child.isDirectory && !isDotHiddenName(child.name) -> subdirs += child
-                child.isDirectory -> Unit
+                // Hidden dirs (dot / `.nomedia`) are already dropped from [visible]
+                // when scan-hidden is off; with the toggle on, descend so nested
+                // galleries under `.secret/…` are indexed too.
+                child.isDirectory -> subdirs += child
                 isImageFileName(child.name) -> images += child
                 isVideoFileName(child.name) && !isSampleVideoFileName(child.name) -> videos += child
                 includeArchives && isArchiveFileName(child.name) -> archives += child
