@@ -118,6 +118,7 @@ import com.hippo.ehviewer.library.FavoriteBrowseSource
 import com.hippo.ehviewer.library.LocalLibrary
 import com.hippo.ehviewer.library.NavTabWindows
 import com.hippo.ehviewer.library.SavedExplorerPaths
+import com.hippo.ehviewer.library.UsbVolumes
 import com.hippo.ehviewer.library.hideDuplicateGalleriesPreferMediaStore
 import com.hippo.ehviewer.library.resolveFavoriteBrowseSources
 import com.hippo.ehviewer.library.safFolderLabel
@@ -1287,6 +1288,7 @@ private fun openFavorite(
                 bindOpenedWindow(navTab)
             }
             is FavoriteBrowseSource.Gallery -> openGalleryFavorite(fav, roots, navTab)
+            is FavoriteBrowseSource.Usb -> UsbVolumes.requestOpen(fav.volume)
         }
     }
 }
@@ -1421,6 +1423,7 @@ private fun toggleFavorite(fav: FavoriteBrowseSource) {
             BrowseFavorites.toggleSmbFolder(fav.source.id, fav.relativePath)
         is FavoriteBrowseSource.WebDavFolder ->
             BrowseFavorites.toggleWebDavFolder(fav.source.id, fav.relativePath)
+        is FavoriteBrowseSource.Usb -> Unit
     }
 }
 

@@ -431,6 +431,7 @@ object LocalFolderListing {
         if (isUntrustedLocalSlimLiveListing(cached, children)) {
             return SlimRefresh(cached, emptySet(), persist = false)
         }
+        val (nomediaProbed, nomediaHit) = probeLocalNomedia(dir, preferMediaStore, cached, children)
         val plan = planRemoteDirectorySlimRefresh(cached, children)
         val zipFileNames = if (Settings.browseZipAsDir.value) {
             ZipAsDirListing.zipFileNames(children)
@@ -464,9 +465,14 @@ object LocalFolderListing {
             // Dirs same — still patch surviving file size/mtime; add/drop direct files.
             // Cached zip-as-dir dirs consume the live zip file (size/mtime + stale mark).
             return SlimRefresh(
-                entries = withLocalArchivePageCounts(
-                    dir,
-                    replaceSlimDirectFilesFromLive(cached, children, dirName),
+                entries = applySlimDirectoryHidden(
+                    withLocalArchivePageCounts(
+                        dir,
+                        replaceSlimDirectFilesFromLive(cached, children, dirName),
+                    ),
+                    children,
+                    nomediaProbed,
+                    nomediaHit,
                 ),
                 removedDirectoryNames = emptySet(),
             )
@@ -492,10 +498,43 @@ object LocalFolderListing {
             dirName,
         )
         return SlimRefresh(
-            entries = withLocalArchivePageCounts(dir, merged),
+            entries = applySlimDirectoryHidden(
+                withLocalArchivePageCounts(dir, merged),
+                children,
+                nomediaProbed,
+                nomediaHit,
+            ),
             removedDirectoryNames = emptySet(),
             zipInteriors = zipInteriors,
         )
+    }
+
+    /**
+     * SAF often has no directory mtime, so every not-yet-hidden folder is checked.
+     * A readable filesystem path is one stat; otherwise the child listing is the signal.
+     */
+    private suspend fun probeLocalNomedia(
+        dir: Path,
+        preferMediaStore: Boolean,
+        cached: List<BrowseEntryRemote>,
+        children: List<RemoteChild>,
+    ): Pair<Set<String>, Set<String>> {
+        val candidates = directoriesNeedingNomediaRecheck(
+            cached,
+            children,
+            recheckUnknownMtime = true,
+        )
+        if (candidates.isEmpty()) return emptySet<String>() to emptySet()
+        val hits = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+        runParallel(candidates) { child ->
+            val childPath = dir / child.name
+            val hit = childPath.directoryContainsNomediaFile()
+                ?: listChildrenRemote(childPath, preferMediaStore).any {
+                    !it.isDirectory && it.name == NOMEDIA_NAME
+                }
+            if (hit) hits += child.name
+        }
+        return candidates.mapTo(HashSet()) { it.name } to hits
     }
 
     private suspend fun classifyDirectoryChildren(
@@ -505,11 +544,12 @@ object LocalFolderListing {
         zipInteriors: MutableMap<String, List<BrowseEntryRemote>>? = null,
     ): List<BrowseEntryRemote> {
         val deepScanHidden = Settings.browseShowHiddenFiles.value
-        // Dot folders: always tag-only (never peek). `.nomedia` dirs peek only when Hidden on.
+        // Dot folders stay tag-only while Hidden files is off. The toggle peeks them
+        // so a SAF `.folder` is a real directory, not a shell the content mode drops.
         val dirsToPeek = children.filter { c ->
             c.isDirectory &&
                 !isProtectedSystemName(c.name) &&
-                !isDotHiddenName(c.name) &&
+                (deepScanHidden || !isDotHiddenName(c.name)) &&
                 (deepScanHidden || !c.hidden)
         }
         val peeks = ConcurrentHashMap<String, List<RemoteChild>>()

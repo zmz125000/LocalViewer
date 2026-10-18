@@ -170,6 +170,19 @@ sealed class FavoriteBrowseSource {
         override val displayName: String
             get() = BrowseFavorites.folderDisplayName(relativePath, source.displayName)
     }
+
+    /**
+     * Mounted removable volume. [root] is the saved SAF tree for [UsbVolume.uuid]
+     * when one exists; its id is the folder-index source id.
+     */
+    data class Usb(
+        val volume: UsbVolume,
+        val root: LibraryRootEntity?,
+    ) : FavoriteBrowseSource() {
+        override val key: String get() = "usb:${volume.uuid}"
+        override val displayName: String
+            get() = volume.label.ifBlank { root?.displayName?.safFolderLabel() ?: volume.uuid }
+    }
 }
 
 /**
@@ -250,6 +263,7 @@ fun resolveFavoriteBrowseSources(
  */
 private val FavoriteBrowseSource.sortGroup: Int
     get() = when (this) {
+        is FavoriteBrowseSource.Usb -> -1
         is FavoriteBrowseSource.Smb -> 0
         is FavoriteBrowseSource.WebDav -> 1
         is FavoriteBrowseSource.Local -> 2

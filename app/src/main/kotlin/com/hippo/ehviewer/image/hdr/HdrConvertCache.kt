@@ -431,7 +431,10 @@ object HdrConvertCache {
         if (route is StillRoute.Lib && route.codec == LibCodec.Raw) {
             val preview = File.createTempFile("rawprev", ".jpg", appCtx.cacheDir)
             val rawOk = try {
-                extractRawPreviewBytes(bytes, preview.absolutePath, false) == 0 &&
+                (
+                    writeLocatedRawJpeg(bytes, preview) ||
+                        extractRawPreviewBytes(bytes, preview.absolutePath, false) == 0
+                    ) &&
                     writePlatformThumb(preview.toOkioPath(), destJpeg, edge, quality)
             } finally {
                 preview.delete()

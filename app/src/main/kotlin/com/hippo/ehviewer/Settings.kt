@@ -600,6 +600,19 @@ object Settings : DataStorePreferences(null) {
     val libraryRecentOpen = boolPref("library_recent_open", true)
 
     /**
+     * Library Recent section. On (default): show non-folder history at the top of Library.
+     * Off: hide that section. Privacy “Library shows recents” and the Library menu Recent item.
+     */
+    val libraryShowRecent = boolPref("library_show_recent", false)
+
+    /**
+     * Long-press of the Library Recent menu item. On (lock): the strip starts fully expanded.
+     * Off (default, tick): one grid row or two list rows until the header is tapped.
+     * Does not change [browseRecentExpanded].
+     */
+    val libraryRecentExpanded = boolPref("library_recent_expanded", false)
+
+    /**
      * Library gallery secondary sort: 0 = name, 1 = date (latest image / archive file
      * mtime from scan). Combined with [libraryRecentOpen] pin. Default name.
      * (Legacy pref value 2 = old exclusive Last-open sort → treated as name.)

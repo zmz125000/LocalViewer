@@ -86,6 +86,7 @@ import com.hippo.ehviewer.library.BrowseVirtualKind
 import com.hippo.ehviewer.library.DirPresence
 import com.hippo.ehviewer.library.EmptyArchiveRegistry
 import com.hippo.ehviewer.library.ExplorerWindows
+import com.hippo.ehviewer.library.FolderBackHistory
 import com.hippo.ehviewer.library.FolderGalleryIndex
 import com.hippo.ehviewer.library.FolderSearch
 import com.hippo.ehviewer.library.HistoryThumbKey
@@ -217,6 +218,10 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
     var stack by remember(shortcutEpoch, explorerWindowId) {
         mutableStateOf(BrowseSession.localStack)
     }
+    // Deepest folder of the current descent. Each enter, including a sibling, replaces it.
+    var deepestDepth by remember(shortcutEpoch, explorerWindowId) {
+        mutableIntStateOf(stack.size)
+    }
     val folderSelect = remember { FolderSelectState() }
     DisposableEffect(folderSelect) {
         FolderSelectHost.attach(folderSelect)
@@ -226,6 +231,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         "${it.rootId}|${it.path}|${it.relativePath}|${it.zipInnerRel}"
     }.orEmpty()
     fun updateStack(newStack: List<BrowseSession.LocalFrame>) {
+        deepestDepth = FolderBackHistory.afterNavigate(stack.size, newStack.size, deepestDepth)
         stack = newStack
         BrowseSession.localStack = newStack
     }
@@ -1117,9 +1123,45 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         )
     }
 
+    /** Browse-dir history for the deepest folder just left. */
+    suspend fun recordLeftFolderHistory(frame: BrowseSession.LocalFrame, parentPath: String?) {
+        val cached = if (listedPath == frameListKey(frame)) {
+            entries
+        } else {
+            BrowseSession.getLocalListing(frame.path)
+                ?: BrowseSession.getLocalListing(
+                    BrowseSession.localFolderListingKey(frame.rootId, frame.relativePath),
+                )
+                ?: emptyList()
+        }
+        val folderThumb = LocalHistory.localBrowseFolderThumbKey(
+            rootId = frame.rootId,
+            relativePath = frame.relativePath,
+            currentPath = frame.path,
+            entries = cached,
+            parentPath = parentPath,
+        )
+        val histRel = if (frame.isZipBrowse) {
+            ZipAsDirListing.virtualRelativeDir(frame.relativePath, frame.zipInnerRel.orEmpty())
+        } else {
+            frame.relativePath
+        }
+        LocalHistory.recordLocalBrowseFolder(
+            rootId = frame.rootId,
+            relativePath = histRel,
+            title = frame.title,
+            thumbKey = folderThumb,
+        )
+    }
+
     fun goUp() {
         val originSize = searchReturnStackSize
         if (originSize >= 0 && stack.size > originSize) {
+            val depthBefore = stack.size
+            // One-frame return is the parent. A jump that skips folders is not.
+            val oneStep = originSize == depthBefore - 1 && originSize > 0
+            val leaving = if (oneStep) stack.last() else null
+            val parentPath = if (oneStep) stack[originSize - 1].path else null
             searchReturnStackSize = -1
             if (originSize <= 0) {
                 updateStack(emptyList())
@@ -1127,11 +1169,30 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
             } else {
                 updateStack(stack.take(originSize))
             }
+            if (leaving != null && FolderBackHistory.shouldWriteDeepest(
+                    depthBefore,
+                    deepestDepth,
+                    landsOnFolder = true,
+                )
+            ) {
+                launchIO { recordLeftFolderHistory(leaving, parentPath) }
+            }
             return
         }
         searchReturnStackSize = -1
         if (stack.size > 1) {
+            val depthBefore = stack.size
+            val leaving = stack.last()
+            val parentPath = stack[stack.lastIndex - 1].path
+            val writeDeepest = FolderBackHistory.shouldWriteDeepest(
+                depthBefore,
+                deepestDepth,
+                landsOnFolder = true,
+            )
             updateStack(stack.dropLast(1))
+            if (writeDeepest) {
+                launchIO { recordLeftFolderHistory(leaving, parentPath) }
+            }
         } else {
             // Leave folder browser back to Browse hub
             updateStack(emptyList())

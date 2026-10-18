@@ -96,6 +96,7 @@ object WebDavClient {
         "<d:getcontentlength/>" +
         "<d:getcontenttype/>" +
         "<d:getlastmodified/>" +
+        "<d:ishidden/>" +
         "</d:prop>" +
         "</d:propfind>"
 
@@ -1047,6 +1048,7 @@ object WebDavClient {
         var isCollection = false
         var contentLength: Long = 0L
         var lastModifiedMs: Long = 0L
+        var hiddenFlag = false
         var inResponse = false
         var inResourceType = false
 
@@ -1056,6 +1058,7 @@ object WebDavClient {
             isCollection = false
             contentLength = 0L
             lastModifiedMs = 0L
+            hiddenFlag = false
         }
 
         fun finishResponse() {
@@ -1098,8 +1101,7 @@ object WebDavClient {
                 path = remainder,
                 size = if (isCollection) 0L else contentLength.coerceAtLeast(0L),
                 lastModifiedMs = lastModifiedMs.coerceAtLeast(0L),
-                // WebDAV has no portable hidden prop; dot names are the signal.
-                hidden = remainder.startsWith('.'),
+                hidden = hiddenFlag || remainder.startsWith('.'),
                 readOnly = false,
             )
             resetResponse()
@@ -1125,6 +1127,10 @@ object WebDavClient {
                         }
                         inResponse && local.equals("getlastmodified", ignoreCase = true) -> {
                             lastModifiedMs = parseHttpDateMs(parser.nextText().trim())
+                        }
+                        inResponse && local.equals("ishidden", ignoreCase = true) -> {
+                            val text = parser.nextText().trim()
+                            hiddenFlag = text == "1" || text.equals("true", ignoreCase = true)
                         }
                         inResponse && local.equals("resourcetype", ignoreCase = true) -> {
                             inResourceType = true

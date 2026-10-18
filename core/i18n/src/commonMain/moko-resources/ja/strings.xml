@@ -18,6 +18,9 @@
     <!-- LocalViewer / missing UI strings -->
     <string name="library">ライブラリ</string>
     <string name="network">ネットワーク</string>
+    <string name="storage">ストレージ</string>
+    <string name="storage_sd_card">SDカード</string>
+    <string name="storage_usb_drive">USBドライブ</string>
     <string name="folder">フォルダ</string>
     <string name="browse">ブラウズ</string>
     <string name="browse_empty">閲覧ソースがありません。上部バーからライブラリ、フォルダ、または SMB 共有を追加してください。</string>
@@ -73,6 +76,8 @@
     <string name="browse_folder_gallery_pages_many">∞ ページ</string>
     <string name="browse_directories">ディレクトリ</string>
     <string name="browse_recent">最近</string>
+    <string name="usb_drive_connected">%1$s を接続しました</string>
+    <string name="usb_drive_open">開く</string>
     <string name="browse_menu_hide_from_history">履歴に表示しない</string>
     <string name="browse_galleries">ギャラリー</string>
     <string name="browse_photos">写真</string>
@@ -262,6 +267,8 @@
     <string name="settings_general_side_panel_dir_back_to_upper_summary">「上位ディレクトリに戻る」がオフのとき: サイドパネルから開いたフォルダは戻るで親フォルダへ進みます（既定オン）。履歴やライブラリの設定には従いません。親をオンにすると本項目もオンになります。</string>
     <string name="settings_privacy_library_recent_open">ライブラリの最近開いた順</string>
     <string name="settings_privacy_library_recent_open_summary">ライブラリ一覧を最近開いた順に並べます。オフにするとタイトル順のみになります。</string>
+    <string name="settings_privacy_library_show_recent">ライブラリに最近を表示</string>
+    <string name="settings_privacy_library_show_recent_summary">ライブラリ画面に最近セクションを表示します。オフで隠します。</string>
     <string name="settings_privacy_save_file_markers">ファイルマーカーを保存</string>
     <string name="settings_privacy_save_file_markers_summary">ファイルごとのスキップ記録（動画サムネイル失敗など）をアプリデータに残します。キャッシュには保存されません。オフにすると既存マーカーを削除します。</string>
     <string name="history_disabled">プライバシー設定で履歴がオフになっています</string>

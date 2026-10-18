@@ -152,6 +152,7 @@ import com.hippo.ehviewer.ui.destinations.WebDavBrowserScreenDestination
 import com.hippo.ehviewer.ui.main.BrowseSaveSnackbars
 import com.hippo.ehviewer.ui.main.FolderSelectBars
 import com.hippo.ehviewer.ui.main.HttpShareSnackbars
+import com.hippo.ehviewer.ui.main.UsbDriveHost
 import com.hippo.ehviewer.ui.main.awaitHttpShareQr
 import com.hippo.ehviewer.ui.navToReader
 import com.hippo.ehviewer.ui.reader.PendingReaderOpen
@@ -707,6 +708,7 @@ class MainActivity : AppCompatActivity() {
                 }
                 showTabRoot(navigator, item.direction)
             }
+            UsbDriveHost(navigator, snackbarState)
             CompositionLocalProvider(
                 LocalExplorerPanel provides explorerPanel,
                 LocalNavDrawerState provides navDrawerState,

@@ -17,6 +17,9 @@
     <string name="app_name" translatable="false">LocalViewer</string>
     <string name="library">Library</string>
     <string name="network">Network</string>
+    <string name="storage">Storage</string>
+    <string name="storage_sd_card">SD card</string>
+    <string name="storage_usb_drive">USB drive</string>
     <string name="folder">Folder</string>
     <string name="browse">Browse</string>
     <string name="browse_empty">No browse sources. Use the top bar to add a library folder, browse folder, or SMB share.</string>
@@ -67,7 +70,9 @@
     <string name="browse_folder_gallery_pages">%d pages</string>
     <string name="browse_folder_gallery_pages_many">∞ pages</string>
     <string name="browse_directories">Directories</string>
-    <string name="browse_recent">Recent</string>
+    <string name="browse_recent">Recents</string>
+    <string name="usb_drive_connected">%1$s connected</string>
+    <string name="usb_drive_open">Open</string>
     <string name="browse_menu_hide_from_history">Hide from history</string>
     <string name="browse_galleries">Galleries</string>
     <string name="browse_photos">Photos</string>
@@ -769,6 +774,8 @@
     <string name="settings_general_side_panel_dir_back_to_upper_summary">When Back to upper dir is off: folders opened from the side panel walk parent directories on back (default on), instead of following the History or Library tab. Turning Back to upper dir on also turns this on.</string>
     <string name="settings_privacy_library_recent_open">Library recent open</string>
     <string name="settings_privacy_library_recent_open_summary">Sort the Library list so recently opened galleries appear at the top. Turn off to keep title order only.</string>
+    <string name="settings_privacy_library_show_recent">Library shows recents</string>
+    <string name="settings_privacy_library_show_recent_summary">Show the Recents section on the Library screen. Turn off to hide it.</string>
     <string name="settings_privacy_save_file_markers">Save file markers</string>
     <string name="settings_privacy_save_file_markers_summary">Keep per-file skip notes in app data (for example video thumb failures). These are not stored in the cache. Turning this off deletes them.</string>
     <string name="history_disabled">History is turned off in Privacy settings</string>

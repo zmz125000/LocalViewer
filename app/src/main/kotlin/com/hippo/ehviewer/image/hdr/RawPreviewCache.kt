@@ -30,7 +30,13 @@ object RawPreviewCache {
             val tmp = File(dest.absolutePath + ".tmp")
             val rc = try {
                 source.withLocalRawFile { file ->
-                    extractRawPreviewFile(file.absolutePath, tmp.absolutePath, demosaicFallback)
+                    // Range-read the embedded JPEG. LibRaw's thumb unpack crashes
+                    // in release libjpeg on some arm64 devices.
+                    if (writeLocatedRawJpeg(file, tmp)) {
+                        0
+                    } else {
+                        extractRawPreviewFile(file.absolutePath, tmp.absolutePath, demosaicFallback)
+                    }
                 }
             } catch (e: CancellationException) {
                 tmp.delete()

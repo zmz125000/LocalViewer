@@ -122,6 +122,7 @@ class EhApplication : Application(), SingletonImageLoader.Factory {
         super.onCreate()
         // onCreate body is `with(lifecycleScope)` — use Application receiver explicitly.
         EasyTierRuntime.init(this@EhApplication)
+        runCatching { com.hippo.ehviewer.library.UsbVolumes.start(this@EhApplication) }.onFailure { logcat(it) }
         System.loadLibrary("ehviewer")
         // SMB + WebDAV: pause keep-alive on activity stop (external player); do not drop
         // the browse pool. Screen-off / Recents still tear sockets down.
