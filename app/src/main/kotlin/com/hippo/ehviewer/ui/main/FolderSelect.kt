@@ -707,6 +707,7 @@ object FolderSelectHost {
     fun continueSelection() {
         val running = batch ?: return
         if (!running.finishedRun || running.end != null) return
+        dialog = true
         running.end = BatchEnd.Continue
         running.wake()
     }
@@ -729,7 +730,7 @@ object FolderSelectHost {
             taskQueue.addLast(QueuedBatch(jobs.toList(), dir, key))
             syncQueuedCounts()
             if (running.finishedRun && running.end == null) {
-                // Current batch already finished; hand off without waiting for Done/Continue.
+                // Current batch already finished; release it so the queue can start.
                 advanceFinishedBatch(running)
             }
             return
@@ -748,8 +749,7 @@ object FolderSelectHost {
             key?.let { placeFor(it) },
         )
         batch = running
-        showingTask = true
-        dialog = true
+        // Do not open the task panel — user opens it from the task snackbar.
         syncTaskFgs()
         if (!execute) return
         running.runner = scope.launch {
@@ -759,12 +759,13 @@ object FolderSelectHost {
                     running.finishedRun = true
                     syncTaskFgs()
                     when {
-                        taskQueue.isNotEmpty() -> {
-                            // Next snackbar is waiting — leave this selection and start it now.
-                            running.end = BatchEnd.Continue
-                        }
                         autoFinishEnabled() -> {
+                            // Clear this selection; finishBatch starts any queued batch next.
                             running.end = BatchEnd.Done
+                        }
+                        taskQueue.isNotEmpty() -> {
+                            // Keep this selection and start the next snackbar's batch.
+                            running.end = BatchEnd.Continue
                         }
                         else -> {
                             while (running.end == null) running.awaitSignal()
@@ -787,13 +788,13 @@ object FolderSelectHost {
     }
 
     /**
-     * Mark [running] finished and Continue into the next queued batch.
-     * Used when a queue arrives after the current jobs already finished, and in tests.
+     * End [running] so a queued batch can start.
+     * Auto-finish uses Done; otherwise Continue keeps the finished folder's selection.
      */
     private fun advanceFinishedBatch(running: TaskBatch, executeQueued: Boolean = true) {
         if (batch !== running || running.end != null) return
         running.finishedRun = true
-        running.end = BatchEnd.Continue
+        running.end = if (autoFinishEnabled()) BatchEnd.Done else BatchEnd.Continue
         running.wake()
         // Finish here: the runner may be waiting on awaitSignal, or be a test Job() with
         // no collector. finishBatch is idempotent once [batch] moves on.
@@ -826,7 +827,6 @@ object FolderSelectHost {
                 batch = null
                 showingTask = false
                 running.folderKey?.let { shownFolderKey = it }
-                dialog = true
                 refreshSelectionSnack()
             }
             BatchEnd.Done -> {

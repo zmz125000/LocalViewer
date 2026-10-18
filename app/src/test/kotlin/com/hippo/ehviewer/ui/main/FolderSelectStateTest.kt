@@ -265,11 +265,12 @@ class FolderSelectStateTest {
         assertEquals(setOf("b"), FolderSelectHost.queuedFolderKeys())
         assertEquals(1, FolderSelectHost.queuedCounts["b"])
 
-        // Done must not be required — finishing the run hands off to the queue.
+        // Finishing the run hands off (Continue) without waiting for Done.
+        FolderSelectHost.dialog = false
         FolderSelectHost.completeRunForTest(first)
         assertEquals("b", FolderSelectHost.batch?.folderKey)
         assertTrue(FolderSelectHost.queuedFolderKeys().isEmpty())
-        assertTrue(FolderSelectHost.showingTask)
+        assertFalse(FolderSelectHost.dialog)
         // Previous folder keeps its selection (Continue), not cleared as Done would.
         assertEquals(listOf("Photos"), FolderSelectHost.selectionSnacksBesideTask().map { it.folderName })
     }
@@ -292,6 +293,7 @@ class FolderSelectStateTest {
         )
         first.finishedRun = true
         FolderSelectHost.installBatchForTest(first)
+        FolderSelectHost.dialog = false
 
         FolderSelectHost.startTasks(
             listOf(TaskJob(2, "nine", false, pick("9", "nine"), { true }, TaskStatus.Pending)),
@@ -300,6 +302,7 @@ class FolderSelectStateTest {
         )
         assertEquals("b", FolderSelectHost.batch?.folderKey)
         assertTrue(FolderSelectHost.queuedFolderKeys().isEmpty())
+        assertFalse(FolderSelectHost.dialog)
     }
 
     @Test
@@ -318,6 +321,61 @@ class FolderSelectStateTest {
         assertFalse(FolderSelectHost.dialog)
         assertTrue(state.picks.isEmpty())
         assertNull(FolderSelectHost.selectionSnack)
+    }
+
+    @Test
+    fun autoFinishDonesThenStartsTheQueuedBatch() {
+        val state = FolderSelectState()
+        FolderSelectHost.attach(state)
+        state.bindFolder("a", "Photos")
+        state.enter(pick("1", "one"))
+        state.bindFolder("b", "Camera")
+        state.enter(pick("9", "nine"))
+        FolderSelectHost.autoFinishForTest = true
+        val first = TaskBatch(
+            "a",
+            mutableStateListOf(
+                TaskJob(1, "one", false, pick("1", "one"), { true }, TaskStatus.Pending),
+            ),
+            kotlinx.coroutines.Job(),
+            "Photos",
+        )
+        FolderSelectHost.installBatchForTest(first)
+        FolderSelectHost.dialog = false
+        FolderSelectHost.startTasks(
+            listOf(TaskJob(2, "nine", false, pick("9", "nine"), { true }, TaskStatus.Pending)),
+            "/tmp".toPath(),
+            "b",
+        )
+        FolderSelectHost.completeRunForTest(first)
+        // A is cleared (Done); B is installed next; panel stays closed.
+        assertEquals("b", FolderSelectHost.batch?.folderKey)
+        assertFalse(FolderSelectHost.dialog)
+        state.bindFolder("a", "Photos")
+        assertTrue(state.picks.isEmpty())
+    }
+
+    @Test
+    fun startingATaskDoesNotOpenThePanel() {
+        val state = FolderSelectState()
+        FolderSelectHost.attach(state)
+        state.bindFolder("a", "Photos")
+        state.enter(pick("1", "one"))
+        FolderSelectHost.dialog = false
+        FolderSelectHost.startTasks(
+            listOf(
+                TaskJob(1, "one", false, pick("1", "one"), {
+                    // Keep the batch alive so we can assert before auto-finish.
+                    kotlinx.coroutines.CompletableDeferred<Unit>().await()
+                    true
+                }, TaskStatus.Pending),
+            ),
+            "/tmp".toPath(),
+            "a",
+        )
+        assertEquals("a", FolderSelectHost.batch?.folderKey)
+        assertFalse(FolderSelectHost.dialog)
+        assertFalse(FolderSelectHost.showingTask)
     }
 
     @Test
@@ -444,7 +502,8 @@ class FolderSelectStateTest {
         staying.end = BatchEnd.Continue
         FolderSelectHost.dialog = false
         FolderSelectHost.endBatchForTest(staying)
-        assertTrue(FolderSelectHost.dialog)
+        // Continue keeps the selection; the panel opens only via continueSelection().
+        assertFalse(FolderSelectHost.dialog)
         assertEquals(listOf("1"), state.picks.map { it.key })
         assertEquals(1, FolderSelectHost.selectionSnack?.count)
 
