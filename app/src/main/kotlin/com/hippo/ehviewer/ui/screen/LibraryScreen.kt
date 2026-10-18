@@ -430,7 +430,12 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
             } else {
                 emptyList()
             }
-            navToLocalFolderReader(gallery.contentPath, info, imageNames = dated)
+            navToLocalFolderReader(
+                gallery.contentPath,
+                info,
+                imageNames = dated,
+                dateOrdered = dated.isNotEmpty(),
+            )
         }
     }
 
@@ -524,12 +529,14 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
                 it.kind == LOCAL_GALLERY_KIND_FOLDER &&
                 it.relativePath == folderKey
         }
-        val names = libraryFolderImageNames(
+        val dateOrdered = libraryOpenUsesDateSort(Settings.libraryPhotoSortByDate.value)
+        val datedNames = libraryFolderImageNames(
             allVisibleGalleries,
             item.rootId,
             parentRel,
-            dateSort = libraryOpenUsesDateSort(Settings.libraryPhotoSortByDate.value),
-        ) ?: allVisibleGalleries
+            dateSort = dateOrdered,
+        )
+        val names = datedNames ?: allVisibleGalleries
             .asSequence()
             .filter {
                 it.rootId == item.rootId &&
@@ -561,13 +568,14 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
                     parent.toBaseGalleryInfo(),
                     page,
                     names,
+                    dateOrdered = datedNames != null,
                 )
             }
             return
         }
         val dir = item.contentPath.toPath().parent?.toString() ?: return
         launchIO { LocalHistory.recordLocalFile(item.contentPath, title = item.title) }
-        navToLocalFolderReader(dir, item.toBaseGalleryInfo(), page, names)
+        navToLocalFolderReader(dir, item.toBaseGalleryInfo(), page, names, dateOrdered = datedNames != null)
     }
 
     /** All-videos list only. Long-press is the other player. A video folder keeps the main switch. */

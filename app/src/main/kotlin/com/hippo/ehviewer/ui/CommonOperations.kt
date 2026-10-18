@@ -64,7 +64,8 @@ fun navToLocalFolderReader(
     info: BaseGalleryInfo? = null,
     page: Int = -1,
     imageNames: List<String> = emptyList(),
-) = navToReader(ReaderScreenArgs.LocalFolder(path, page, info, imageNames))
+    dateOrdered: Boolean = false,
+) = navToReader(ReaderScreenArgs.LocalFolder(path, page, info, imageNames, dateOrdered))
 
 context(_: DestinationsNavigator)
 fun navToLocalImageListReader(
