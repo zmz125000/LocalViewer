@@ -134,6 +134,7 @@
     <string name="browse_item_info">資訊</string>
     <string name="browse_open_folder">開啟資料夾</string>
     <string name="browse_run_in_background">後台運行</string>
+    <string name="browse_auto_finish">自動完成</string>
     <string name="browse_play">播放</string>
     <string name="browse_external_player">外部播放器</string>
     <string name="browse_image_reader">圖片閱讀器</string>

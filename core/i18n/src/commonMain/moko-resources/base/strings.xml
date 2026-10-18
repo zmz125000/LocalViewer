@@ -144,6 +144,7 @@
     <string name="browse_item_info">Info</string>
     <string name="browse_open_folder">Open folder</string>
     <string name="browse_run_in_background">Run in background</string>
+    <string name="browse_auto_finish">Auto finish</string>
     <string name="browse_create_shortcut">Create shortcut</string>
     <string name="browse_shortcut_unsupported">This launcher can't pin a home screen shortcut</string>
     <string name="browse_play">Play</string>

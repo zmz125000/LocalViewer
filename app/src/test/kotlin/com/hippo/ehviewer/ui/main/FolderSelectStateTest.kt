@@ -303,6 +303,24 @@ class FolderSelectStateTest {
     }
 
     @Test
+    fun autoFinishDonesWhenTheRunCompletesWithNoQueue() {
+        val state = FolderSelectState()
+        FolderSelectHost.attach(state)
+        state.bindFolder("a", "Photos")
+        state.enter(pick("1", "one"))
+        FolderSelectHost.autoFinishForTest = true
+        FolderSelectHost.startTasks(
+            listOf(TaskJob(1, "one", false, pick("1", "one"), { true }, TaskStatus.Pending)),
+            "/tmp".toPath(),
+            "a",
+        )
+        assertNull(FolderSelectHost.batch)
+        assertFalse(FolderSelectHost.dialog)
+        assertTrue(state.picks.isEmpty())
+        assertNull(FolderSelectHost.selectionSnack)
+    }
+
+    @Test
     fun clearingAQueuedSelectionDropsItsBatch() {
         val state = FolderSelectState()
         FolderSelectHost.attach(state)

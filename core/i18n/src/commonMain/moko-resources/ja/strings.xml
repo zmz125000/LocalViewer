@@ -107,6 +107,7 @@
     <string name="browse_item_info">情報</string>
     <string name="browse_open_folder">フォルダを開く</string>
     <string name="browse_run_in_background">バックグラウンドで実行</string>
+    <string name="browse_auto_finish">自動完了</string>
     <string name="browse_play">再生</string>
     <string name="browse_external_player">外部プレーヤー</string>
     <string name="browse_copy_url">URL をコピー</string>

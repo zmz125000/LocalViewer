@@ -481,6 +481,12 @@ object FolderSelectHost {
     private var scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val ids = AtomicLong(1)
 
+    /** Unit-test override for [Settings.browseTaskAutoFinish]; null reads the pref. */
+    internal var autoFinishForTest: Boolean? = null
+
+    private fun autoFinishEnabled(): Boolean = autoFinishForTest
+        ?: runCatching { Settings.browseTaskAutoFinish.value }.getOrDefault(false)
+
     /** Folder keys with a queued batch behind the running task. */
     internal fun queuedFolderKeys(): Set<String> = queuedCounts.keys
 
@@ -661,6 +667,7 @@ object FolderSelectHost {
         showingTask = false
         current = null
         dialog = false
+        autoFinishForTest = null
         // Unit tests have no Android Main dispatcher.
         scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
         syncTaskFgs()
@@ -751,11 +758,17 @@ object FolderSelectHost {
                 if (running.end == null) {
                     running.finishedRun = true
                     syncTaskFgs()
-                    if (taskQueue.isNotEmpty()) {
-                        // Next snackbar is waiting — leave this selection and start it now.
-                        running.end = BatchEnd.Continue
-                    } else {
-                        while (running.end == null) running.awaitSignal()
+                    when {
+                        taskQueue.isNotEmpty() -> {
+                            // Next snackbar is waiting — leave this selection and start it now.
+                            running.end = BatchEnd.Continue
+                        }
+                        autoFinishEnabled() -> {
+                            running.end = BatchEnd.Done
+                        }
+                        else -> {
+                            while (running.end == null) running.awaitSignal()
+                        }
                     }
                 }
             } catch (_: CancellationException) {
@@ -1310,6 +1323,7 @@ private fun SelectionOverflowControl(
     var convertMenu by remember { mutableStateOf(false) }
     val picks = FolderSelectHost.selectionPicks
     val runInBackground = Settings.browseTaskForegroundService.asMutableState()
+    val autoFinish = Settings.browseTaskAutoFinish.asMutableState()
     val shareable = picks.count { it.shareHttp != null }
     val convertible = picks.count { it.convertStill != null }
     val savable = picks.count { it.saveInto != null }
@@ -1411,6 +1425,20 @@ private fun SelectionOverflowControl(
                         }
                     },
                     onClick = { runInBackground.value = !runInBackground.value },
+                )
+                DropdownMenuItem(
+                    text = { Text(stringResource(R.string.browse_auto_finish)) },
+                    trailingIcon = {
+                        Box(
+                            modifier = Modifier.size(24.dp),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            if (autoFinish.value) {
+                                Icon(Icons.Default.Check, contentDescription = null)
+                            }
+                        }
+                    },
+                    onClick = { autoFinish.value = !autoFinish.value },
                 )
             }
         }
