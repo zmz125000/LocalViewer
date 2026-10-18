@@ -119,6 +119,7 @@ class EhApplication : Application(), SingletonImageLoader.Factory {
         }
         CrashHandler.install()
         super.onCreate()
+        runCatching { com.hippo.ehviewer.library.UsbVolumes.start(this@EhApplication) }.onFailure { logcat(it) }
         System.loadLibrary("ehviewer")
         // SMB + WebDAV: pause keep-alive on activity stop (external player); do not drop
         // the browse pool. Screen-off / Recents still tear sockets down.

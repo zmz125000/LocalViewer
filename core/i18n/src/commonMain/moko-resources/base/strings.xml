@@ -68,6 +68,8 @@
     <string name="browse_folder_gallery_pages_many">∞ pages</string>
     <string name="browse_directories">Directories</string>
     <string name="browse_recent">Recents</string>
+    <string name="usb_drive_connected">%1$s connected</string>
+    <string name="usb_drive_open">Open</string>
     <string name="browse_menu_hide_from_history">Hide from history</string>
     <string name="browse_galleries">Galleries</string>
     <string name="browse_photos">Photos</string>

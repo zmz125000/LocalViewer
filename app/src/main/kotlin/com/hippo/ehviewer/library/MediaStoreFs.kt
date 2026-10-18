@@ -112,8 +112,11 @@ fun tryConvertSafPathToMediaStore(path: Path): Path? {
         }.getOrNull() ?: runCatching {
             DocumentsContract.getTreeDocumentId(uri)
         }.getOrNull() ?: return null
+        // Only the emulated primary volume shares MediaStore RELATIVE_PATH.
+        // A USB tree (`ABCD-1234:Album`) would otherwise become `mediastore:/Album`
+        // and the folder walk would see internal files, not the stick's subfolders.
+        if (!isPrimaryExternalDocument(docId)) return null
         val colon = docId.indexOf(':')
-        if (colon <= 0) return null
         val relative = docId.substring(colon + 1).replace('\\', '/').trim('/')
         mediaStoreDirPath(relative)
     }.getOrNull()

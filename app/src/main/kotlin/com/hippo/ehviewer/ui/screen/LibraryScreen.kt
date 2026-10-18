@@ -26,6 +26,7 @@ import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Inventory2
 import androidx.compose.material.icons.filled.Lan
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Usb
 import androidx.compose.material3.CircularWavyProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -101,11 +102,13 @@ import com.hippo.ehviewer.library.LocalHistory
 import com.hippo.ehviewer.library.LocalLibrary
 import com.hippo.ehviewer.library.ReaderGalleryPlaylist
 import com.hippo.ehviewer.library.ReaderImageList
+import com.hippo.ehviewer.library.UsbVolumes
 import com.hippo.ehviewer.library.VideoThumbnail
 import com.hippo.ehviewer.library.ZipAsDirListing
 import com.hippo.ehviewer.library.ZipPaths
 import com.hippo.ehviewer.library.hideDuplicateGalleriesPreferMediaStore
 import com.hippo.ehviewer.library.libraryBrowseRelative
+import com.hippo.ehviewer.library.libraryFavoritesWithUsb
 import com.hippo.ehviewer.library.mimeTypeForFileName
 import com.hippo.ehviewer.library.naturalCompare
 import com.hippo.ehviewer.library.parentRelativeOfFile
@@ -297,8 +300,13 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
     }
 
     val favoriteKeys by Settings.favoriteBrowseSources.collectAsState()
-    val favorites = remember(roots, smbSources, webDavSources, allGalleries, favoriteKeys) {
-        resolveFavoriteBrowseSources(roots, smbSources, webDavSources, allGalleries, favoriteKeys)
+    val usbVolumes by UsbVolumes.mounted.collectAsState()
+    val favorites = remember(roots, smbSources, webDavSources, allGalleries, favoriteKeys, usbVolumes) {
+        libraryFavoritesWithUsb(
+            resolveFavoriteBrowseSources(roots, smbSources, webDavSources, allGalleries, favoriteKeys),
+            roots,
+            usbVolumes,
+        )
     }
     // Hide favourites section while filtering.
     val showFavorites = keyword.isBlank() && favorites.isNotEmpty()
@@ -590,6 +598,7 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
 
     /** Favourites strip: long-press always unfavourites (toggle on a pin removes it). */
     fun toggleFavorite(fav: FavoriteBrowseSource) {
+        if (fav is FavoriteBrowseSource.Usb) return
         notifyFavoriteToggle(
             when (fav) {
                 is FavoriteBrowseSource.Local -> BrowseFavorites.toggleLocal(fav.root.id)
@@ -652,6 +661,7 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
                     fromLibrary = true,
                 )
             }
+            is FavoriteBrowseSource.Usb -> UsbVolumes.requestOpen(fav.volume)
             is FavoriteBrowseSource.WebDavFolder -> {
                 openWebDavBrowseDir(
                     sourceId = fav.source.id,
@@ -1176,6 +1186,7 @@ private fun favoriteMetaLine(fav: FavoriteBrowseSource): String {
                 "Folder"
             }
         }
+        is FavoriteBrowseSource.Usb -> "USB"
     }
     return when (fav) {
         is FavoriteBrowseSource.Gallery -> {
@@ -1211,6 +1222,7 @@ internal fun favoriteIcon(fav: FavoriteBrowseSource): ImageVector = when (fav) {
     // Network folders: Folder main glyph; grid cell adds Lan/Cloud badge.
     is FavoriteBrowseSource.SmbFolder -> Icons.Default.Folder
     is FavoriteBrowseSource.WebDavFolder -> Icons.Default.Folder
+    is FavoriteBrowseSource.Usb -> Icons.Default.Usb
 }
 
 /**
@@ -1223,6 +1235,7 @@ private fun favoriteListTypeIcon(fav: FavoriteBrowseSource): ImageVector = when 
     is FavoriteBrowseSource.Smb, is FavoriteBrowseSource.SmbFolder -> Icons.Default.Lan
     is FavoriteBrowseSource.WebDav, is FavoriteBrowseSource.WebDavFolder -> Icons.Default.Cloud
     is FavoriteBrowseSource.LocalFolder -> Icons.Default.Folder
+    is FavoriteBrowseSource.Usb -> Icons.Default.Usb
     is FavoriteBrowseSource.Gallery ->
         if (fav.gallery.kind == LOCAL_GALLERY_KIND_ARCHIVE) {
             Icons.Default.Inventory2

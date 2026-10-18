@@ -64,6 +64,8 @@
     <string name="browse_folder_gallery_pages_many">∞ 页</string>
     <string name="browse_directories">目录</string>
     <string name="browse_recent">最近打开</string>
+    <string name="usb_drive_connected">已连接 %1$s</string>
+    <string name="usb_drive_open">打开</string>
     <string name="browse_menu_hide_from_history">从历史中隐藏</string>
     <string name="browse_galleries">图库</string>
     <string name="browse_photos">照片</string>
