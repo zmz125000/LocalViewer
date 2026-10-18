@@ -27,11 +27,12 @@ import splitties.init.appCtx
 /**
  * Live library updates for MediaStore images and videos.
  *
- * While this process is alive, a [android.database.ContentObserver] on the
- * external Images and Video collections debounces a burst and writes only the
- * changed rows. [MediaStoreWatchJobService] uses the same path when the
- * process is not running. Deletes and bulk dumps fall back to
- * [LocalLibrary.startupMaintenance] (generation / fingerprint), not a poll.
+ * The in-process [android.database.ContentObserver] is armed only while the
+ * library screen is resumed. Leaving the library (another tab, reader, or app
+ * background) drops the observer and arms [MediaStoreWatchJobService]; returning
+ * re-registers and catch-up applies rows missed while idle. Deletes and bulk
+ * dumps fall back to [LocalLibrary.startupMaintenance] (generation /
+ * fingerprint), not a poll.
  */
 object MediaStoreWatch {
     private const val JOB_ID = 71021
@@ -51,6 +52,10 @@ object MediaStoreWatch {
     private var pendingFlags = 0
     private val gate = Any()
 
+    /** True while [com.hippo.ehviewer.ui.screen.LibraryScreen] is resumed. */
+    @Volatile
+    private var libraryResumed = false
+
     @Volatile
     private var addedSinceSec: Long = Clock.System.now().epochSeconds - RECENT_LOOKBACK_SEC
 
@@ -67,6 +72,9 @@ object MediaStoreWatch {
 
     fun start(context: Context = appCtx) {
         if (!Settings.libraryLiveUpdate.value) return
+        // Permission grant / pref toggle may call start off the library screen;
+        // only register while the list is resumed.
+        if (!libraryResumed) return
         val app = context.applicationContext
         if (MediaPermissions.hasImagePermission(app) && imagesRegistered.compareAndSet(false, true)) {
             app.contentResolver.registerContentObserver(imagesUri(), true, observer)
@@ -82,9 +90,43 @@ object MediaStoreWatch {
     }
 
     /**
-     * App left the foreground ([androidx.lifecycle.Lifecycle.Event.ON_STOP]).
-     * The observer stays registered. The content job is armed so a later process
-     * kill still wakes a library update.
+     * Library screen resumed. Register the observer and apply rows missed while
+     * the list was hidden or the process was frozen.
+     */
+    fun onLibraryVisible() {
+        libraryResumed = true
+        if (!Settings.libraryLiveUpdate.value) return
+        start()
+        catchUp()
+    }
+
+    /** Pref toggled on. No-op unless the library screen is already resumed. */
+    fun onPrefEnabled() {
+        if (!libraryResumed || !Settings.libraryLiveUpdate.value) return
+        start()
+        catchUp()
+    }
+
+    /**
+     * Library screen paused or left composition (other destination, tab, or app
+     * background). Drop the observer so MediaStore callbacks do not run while
+     * the user is elsewhere; arm the content job for a later process kill.
+     */
+    fun onLibraryHidden() {
+        libraryResumed = false
+        unregisterObservers()
+        synchronized(gate) {
+            pendingUris.clear()
+            pendingFlags = 0
+            pendingRetries.clear()
+        }
+        if (!Settings.libraryLiveUpdate.value) return
+        scheduleJob()
+    }
+
+    /**
+     * App left the foreground. No-op when the library screen already hid itself;
+     * otherwise arm the content job.
      */
     fun onAppBackgrounded() {
         if (!Settings.libraryLiveUpdate.value) return
@@ -92,27 +134,26 @@ object MediaStoreWatch {
     }
 
     /**
-     * App returned to the foreground. Re-register if the process was frozen, and
-     * apply MediaStore rows the observer did not deliver while cached.
+     * App returned to the foreground. Live updates stay library-scoped; the
+     * library screen calls [onLibraryVisible] on its own resume.
      */
     fun onAppForegrounded() {
-        if (!Settings.libraryLiveUpdate.value) return
+        if (!Settings.libraryLiveUpdate.value || !libraryResumed) return
         start()
         catchUp()
     }
 
     /**
-     * Screen off. Same as background: keep the observer, arm the job before Doze
-     * can freeze or kill the process.
+     * Screen off. Arm the job before Doze can freeze or kill the process.
      */
     fun onScreenOff() {
         if (!Settings.libraryLiveUpdate.value) return
         scheduleJob()
     }
 
-    /** Screen on. Re-register and apply rows missed while the process was frozen. */
+    /** Screen on. Catch up only while the library list is the active screen. */
     fun onScreenOn() {
-        if (!Settings.libraryLiveUpdate.value) return
+        if (!Settings.libraryLiveUpdate.value || !libraryResumed) return
         start()
         catchUp()
     }
@@ -131,8 +172,7 @@ object MediaStoreWatch {
         enqueue(listOf(imagesUri()), 0)
     }
 
-    /** Drop the observer and the content job. In-flight work checks the pref and exits. */
-    fun stop(context: Context = appCtx) {
+    private fun unregisterObservers(context: Context = appCtx) {
         val app = context.applicationContext
         val images = imagesRegistered.getAndSet(false)
         val videos = videosRegistered.getAndSet(false)
@@ -140,12 +180,17 @@ object MediaStoreWatch {
             runCatching { app.contentResolver.unregisterContentObserver(observer) }
                 .onFailure { logcat(it) }
         }
+    }
+
+    /** Drop the observer and the content job. In-flight work checks the pref and exits. */
+    fun stop(context: Context = appCtx) {
+        unregisterObservers(context)
         synchronized(gate) {
             pendingUris.clear()
             pendingFlags = 0
             pendingRetries.clear()
         }
-        runCatching { app.getSystemService(JobScheduler::class.java)?.cancel(JOB_ID) }
+        runCatching { context.applicationContext.getSystemService(JobScheduler::class.java)?.cancel(JOB_ID) }
             .onFailure { logcat(it) }
     }
 

@@ -65,6 +65,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.viewModelScope
 import com.ehviewer.core.database.model.GalleryEntity
 import com.ehviewer.core.database.model.LOCAL_GALLERY_KIND_ARCHIVE
@@ -101,6 +102,7 @@ import com.hippo.ehviewer.library.HistoryThumbKey
 import com.hippo.ehviewer.library.LocalFolderListing
 import com.hippo.ehviewer.library.LocalHistory
 import com.hippo.ehviewer.library.LocalLibrary
+import com.hippo.ehviewer.library.MediaStoreWatch
 import com.hippo.ehviewer.library.ReaderGalleryPlaylist
 import com.hippo.ehviewer.library.ReaderImageList
 import com.hippo.ehviewer.library.UsbVolumes
@@ -171,6 +173,14 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
     val hint = stringResource(R.string.search_bar_hint, title)
     val addedToFavourites = stringResource(id = R.string.add_to_favourites)
     val removedFromFavourites = stringResource(id = R.string.remove_from_favourites)
+
+    // Live MediaStore updates only while this screen is resumed; leaving the
+    // library (other tab/reader/background) drops the observer and catch-up
+    // runs on the next resume — same idea as app background/foreground.
+    LifecycleResumeEffect(Unit) {
+        MediaStoreWatch.onLibraryVisible()
+        onPauseOrDispose { MediaStoreWatch.onLibraryHidden() }
+    }
 
     var keyword by rememberSaveable { mutableStateOf("") }
     var searchFocused by rememberSaveable { mutableStateOf(false) }
