@@ -699,7 +699,7 @@ fun applySlimDirectoryHidden(
         }
         val directDir = entry is BrowseEntryRemote.Directory &&
             entry.relativeName.replace('\\', '/').trim('/').let { it.isNotEmpty() && '/' !in it && it == root }
-        if (directDir && entry is BrowseEntryRemote.Directory) {
+        if (directDir) {
             val hidden = folderHidden ?: entry.hidden
             val mtime = live.lastModifiedMs.takeIf { it > 0L } ?: entry.lastModifiedMs
             if (hidden == entry.hidden && mtime == entry.lastModifiedMs) {

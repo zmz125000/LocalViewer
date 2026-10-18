@@ -11,6 +11,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ViewList
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.GridView
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
@@ -347,7 +348,9 @@ fun mergeOpenMtimes(primary: Map<String, Long>, fallback: Map<String, Long>): Ma
 
 /**
  * Library search-bar view menu (standalone from folder [BrowseViewModeMenu]):
- * - Top: Name / Date list sort + Last opened + Photo sort by date
+ * - Top: Name / Date list sort + Last opened + Recent + Photo sort by date
+ *   - Recent: tap shows or hides the Recent strip. Long-press sets the start:
+ *     lock = full list, tick = one grid row or two list rows.
  *   - Name + Last open: HISTORY pin, then title
  *   - Date + Last open: blend max(last-open, scan mtime), then title
  *   - Photo sort by date: gallery reader and photo-grid open order only.
@@ -365,6 +368,8 @@ fun LibraryViewModeMenu(modifier: Modifier = Modifier) {
     var sortModePref by Settings.librarySortMode.asMutableState()
     val sortMode = LibrarySortMode.fromPref(sortModePref)
     var libraryRecentOpen by Settings.libraryRecentOpen.asMutableState()
+    var libraryShowRecent by Settings.libraryShowRecent.asMutableState()
+    var libraryRecentExpanded by Settings.libraryRecentExpanded.asMutableState()
     var photoSortByDate by Settings.libraryPhotoSortByDate.asMutableState()
     var videoModePref by Settings.libraryVideoMode.asMutableState()
     val videoMode = LibraryVideoMode.fromPref(videoModePref)
@@ -423,6 +428,25 @@ fun LibraryViewModeMenu(modifier: Modifier = Modifier) {
                 label = stringResource(R.string.library_sort_last_open),
                 checked = libraryRecentOpen,
                 onClick = { libraryRecentOpen = !libraryRecentOpen },
+            )
+            // Tap shows or hides the Recent strip and does not change the lock.
+            // Long-press: lock = start expanded, tick = preview rows.
+            LibraryMenuMarkItem(
+                label = stringResource(R.string.browse_recent),
+                mark = when {
+                    !libraryShowRecent -> LibraryMenuMark.None
+                    libraryRecentExpanded -> LibraryMenuMark.Lock
+                    else -> LibraryMenuMark.Tick
+                },
+                onClick = { libraryShowRecent = !libraryShowRecent },
+                onLongClick = {
+                    if (!libraryShowRecent || !libraryRecentExpanded) {
+                        libraryShowRecent = true
+                        libraryRecentExpanded = true
+                    } else {
+                        libraryRecentExpanded = false
+                    }
+                },
             )
             LibraryMenuToggleItem(
                 label = stringResource(R.string.library_photo_sort_by_date),
@@ -522,6 +546,48 @@ private fun LibraryMenuSelectItem(
             contentAlignment = Alignment.Center,
         ) {
             if (selected) Icon(Icons.Default.Check, contentDescription = null)
+        }
+    }
+}
+
+private enum class LibraryMenuMark { None, Tick, Lock }
+
+@Composable
+private fun LibraryMenuMarkItem(
+    label: String,
+    mark: LibraryMenuMark,
+    onClick: () -> Unit,
+    onLongClick: () -> Unit,
+) {
+    val haptic = LocalHapticFeedback.current
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .sizeIn(minWidth = 112.dp, minHeight = 48.dp)
+            .combinedClickable(
+                onClick = onClick,
+                onLongClick = {
+                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    onLongClick()
+                },
+            )
+            .padding(MenuDefaults.DropdownMenuItemContentPadding),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = label,
+            modifier = Modifier.weight(1f),
+            style = MaterialTheme.typography.labelLarge,
+        )
+        Box(
+            modifier = Modifier.size(24.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            when (mark) {
+                LibraryMenuMark.None -> Unit
+                LibraryMenuMark.Tick -> Icon(Icons.Default.Check, contentDescription = null)
+                LibraryMenuMark.Lock -> Icon(Icons.Default.Lock, contentDescription = null)
+            }
         }
     }
 }

@@ -26,6 +26,20 @@ fun toggleHistorySection() {
     }
 }
 
+/**
+ * Library Recent strip. Browse-directory pins stay out (those are folder records).
+ * [rows] is already newest-first. A non-blank [query] matches title or Japanese title.
+ */
+fun <T : GalleryInfo> libraryRecentHistory(rows: List<T>, query: String = ""): List<T> {
+    val files = rows.filterNot { LocalHistory.isBrowseDirectory(it) }
+    val q = query.trim()
+    if (q.isEmpty()) return files
+    return files.filter { info ->
+        info.title?.contains(q, ignoreCase = true) == true ||
+            info.titleJpn?.contains(q, ignoreCase = true) == true
+    }
+}
+
 fun <T : GalleryInfo> filterHistoryFileItems(
     items: List<T>,
     section: HistorySection,

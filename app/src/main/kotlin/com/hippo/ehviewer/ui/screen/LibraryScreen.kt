@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.plus
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.grid.GridItemSpan
+import androidx.compose.foundation.lazy.grid.LazyGridScope
 import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.material.icons.Icons
@@ -64,6 +65,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewModelScope
+import com.ehviewer.core.database.model.GalleryEntity
 import com.ehviewer.core.database.model.LOCAL_GALLERY_KIND_ARCHIVE
 import com.ehviewer.core.database.model.LOCAL_GALLERY_KIND_FOLDER
 import com.ehviewer.core.database.model.LOCAL_GALLERY_KIND_IMAGE_FILE
@@ -114,17 +116,24 @@ import com.hippo.ehviewer.smb.SmbRepository
 import com.hippo.ehviewer.ui.ExplorerGestureEnabled
 import com.hippo.ehviewer.ui.OpenFileExternally
 import com.hippo.ehviewer.ui.Screen
+import com.hippo.ehviewer.ui.main.BrowseFolderSection
 import com.hippo.ehviewer.ui.main.BrowseGridPlaceholderIconSize
 import com.hippo.ehviewer.ui.main.BrowseListLeadingIconSize
 import com.hippo.ehviewer.ui.main.BrowseListSupportingContent
 import com.hippo.ehviewer.ui.main.BrowseSectionHeader
 import com.hippo.ehviewer.ui.main.CoverImage
 import com.hippo.ehviewer.ui.main.GalleryGridDefaults
+import com.hippo.ehviewer.ui.main.HistoryGridItem
+import com.hippo.ehviewer.ui.main.HistoryListItem
 import com.hippo.ehviewer.ui.main.LocalBrowseListHeaderInset
 import com.hippo.ehviewer.ui.main.LocalGalleryGridItem
 import com.hippo.ehviewer.ui.main.LocalGalleryListItem
 import com.hippo.ehviewer.ui.main.browseFileExtensionLabel
 import com.hippo.ehviewer.ui.main.browseListSupportingLine
+import com.hippo.ehviewer.ui.main.browseRecentPreviewLimit
+import com.hippo.ehviewer.ui.main.onRecentHeaderGesture
+import com.hippo.ehviewer.ui.main.rememberBrowseSectionCollapse
+import com.hippo.ehviewer.ui.main.rememberRecentStripExpanded
 import com.hippo.ehviewer.ui.navToLocalFolderReader
 import com.hippo.ehviewer.ui.navToLocalImageListReader
 import com.hippo.ehviewer.ui.navToLocalZipFolderReader
@@ -235,6 +244,17 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
                 }
             }
         }
+    }
+    // Full history rows for the Recent strip. Directory pins are excluded below.
+    val historyRows by rememberInVM {
+        mutableStateOf(emptyList<GalleryEntity>()).also { state ->
+            viewModelScope.launch {
+                EhDB.historyListFlow.collect { state.value = it }
+            }
+        }
+    }
+    val recentHistory = remember(historyRows, keyword) {
+        libraryRecentHistory(historyRows, keyword)
     }
     val hasGalleries = remember(allVisibleGalleries) {
         allVisibleGalleries.any { isLibraryGalleryKind(it.kind) }
@@ -681,7 +701,86 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
             }
         }
 
-        val isEmpty = galleries.isEmpty() && !showFavorites && !hasGalleries && !hasVideos
+        val libraryShowRecent by Settings.libraryShowRecent.collectAsState()
+        val libraryRecentExpanded by Settings.libraryRecentExpanded.collectAsState()
+        val (recentPreviewExpanded, setRecentPreviewExpanded) = rememberRecentStripExpanded(
+            "library-screen",
+            libraryRecentExpanded,
+        )
+        val recentGridColumns = GalleryGridDefaults.columnCount()
+        val recentListColumns = GalleryGridDefaults.listColumnCount()
+        val (collapsedSections, _, setSectionCollapsed) = rememberBrowseSectionCollapse("library-screen")
+        val recentCollapsedNow = rememberUpdatedState(BrowseFolderSection.Recent in collapsedSections)
+        val setRecentCollapsedNow = rememberUpdatedState(setSectionCollapsed)
+        val recentExpandedNow = rememberUpdatedState(recentPreviewExpanded)
+        val setRecentExpandedNow = rememberUpdatedState(setRecentPreviewExpanded)
+        val recentQuery = keyword.trim()
+
+        val showRecent = libraryShowRecent && recentHistory.isNotEmpty()
+
+        fun LazyGridScope.recentSection(grid: Boolean) {
+            if (!showRecent) return
+            val sectionCollapsed = BrowseFolderSection.Recent in collapsedSections
+            val previewLimit = browseRecentPreviewLimit(grid, recentGridColumns, recentListColumns)
+            item(key = "hdr-recent", span = { GridItemSpan(maxLineSpan) }) {
+                BrowseSectionHeader(
+                    stringResource(R.string.browse_recent),
+                    section = BrowseFolderSection.Recent,
+                    onClick = {
+                        onRecentHeaderGesture(
+                            collapsed = recentCollapsedNow.value,
+                            longPress = false,
+                            setCollapsed = { setRecentCollapsedNow.value(BrowseFolderSection.Recent, it) },
+                            expanded = recentExpandedNow.value,
+                            setExpanded = setRecentExpandedNow.value,
+                            entryCount = recentHistory.size,
+                            previewLimit = previewLimit,
+                        )
+                    },
+                    onLongClick = {
+                        onRecentHeaderGesture(
+                            collapsed = recentCollapsedNow.value,
+                            longPress = true,
+                            setCollapsed = { setRecentCollapsedNow.value(BrowseFolderSection.Recent, it) },
+                            expanded = recentExpandedNow.value,
+                            setExpanded = setRecentExpandedNow.value,
+                            entryCount = recentHistory.size,
+                            previewLimit = previewLimit,
+                        )
+                    },
+                )
+            }
+            if (sectionCollapsed) return
+            val shown = if (recentPreviewExpanded) {
+                recentHistory
+            } else {
+                recentHistory.take(previewLimit)
+            }
+            items(shown, key = { "recent-${it.gid}" }) { info ->
+                if (grid) {
+                    HistoryGridItem(
+                        info = info,
+                        onClick = { openHistoryRecord(context, info, recentQuery) },
+                        showPages = showPages,
+                        showProgress = showProgress,
+                    )
+                } else {
+                    HistoryListItem(
+                        info = info,
+                        onClick = { openHistoryRecord(context, info, recentQuery) },
+                        showPages = showPages,
+                        showProgress = showProgress,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+            }
+        }
+
+        val isEmpty = galleries.isEmpty() &&
+            !showFavorites &&
+            !showRecent &&
+            !hasGalleries &&
+            !hasVideos
         Box(Modifier.fillMaxSize()) {
             // Always keep the Lazy list/grid mounted so scroll state is not recreated when
             // empty ↔ non-empty briefly flips (e.g. re-subscribe after pop back).
@@ -699,6 +798,7 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
                         state = listState,
                         contentPadding = listPadding,
                     ) {
+                        recentSection(grid = false)
                         if (showFavorites) {
                             item(
                                 key = "fav-hdr",
@@ -760,6 +860,7 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
                     verticalArrangement = gridSpacing,
                     horizontalArrangement = gridSpacing,
                 ) {
+                    recentSection(grid = true)
                     if (showFavorites) {
                         item(
                             key = "fav-hdr",
