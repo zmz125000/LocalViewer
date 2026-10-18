@@ -55,12 +55,20 @@ object UsbVolumes {
     }
 
     private fun StorageVolume.toUsbVolume(context: Context): UsbVolume? {
-        if (!isRemovable || isEmulated || isPrimary) return null
+        // Physical SD and USB are removable and not emulated. Internal storage
+        // is emulated, so it stays out. Do not require !isPrimary: a few devices
+        // mark the SD slot primary, and that card should still appear.
+        if (!isRemovable || isEmulated) return null
         if (state != Environment.MEDIA_MOUNTED && state != Environment.MEDIA_MOUNTED_READ_ONLY) {
             return null
         }
         val id = uuid?.takeIf { it.isNotBlank() } ?: return null
         val label = getDescription(context)?.takeIf { it.isNotBlank() } ?: id
-        return UsbVolume(uuid = id, label = label)
+        return UsbVolume(uuid = id, label = label, kind = externalStorageKind(platformVolumeId()))
     }
+
+    /** `public:179,1` (SD) or `public:8,1` (USB). Hidden on the SDK, so reflected. */
+    private fun StorageVolume.platformVolumeId(): String? = runCatching {
+        javaClass.getMethod("getId").invoke(this) as? String
+    }.getOrNull()
 }

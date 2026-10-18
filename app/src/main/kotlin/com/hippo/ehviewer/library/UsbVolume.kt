@@ -10,10 +10,33 @@ import java.nio.charset.StandardCharsets
  * The same stick keeps this id across plugs, so the library root id and folder
  * index cache stay on that source.
  */
+enum class ExternalStorageKind {
+    /** Built-in SD slot (MMC block, Linux major 179). */
+    SdCard,
+
+    /** USB stick or USB disk (SCSI, Linux major 8, or unknown). */
+    UsbDrive,
+}
+
 data class UsbVolume(
     val uuid: String,
     val label: String,
+    val kind: ExternalStorageKind = ExternalStorageKind.UsbDrive,
 )
+
+/**
+ * [storageVolumeId] is [android.os.storage.StorageVolume]'s hidden id,
+ * `public:179,1` for the SD slot and `public:8,1` for USB mass storage.
+ * A USB card reader stays USB. Unknown ids stay USB so a stick is not labeled SD.
+ */
+fun externalStorageKind(storageVolumeId: String?): ExternalStorageKind {
+    val major = storageVolumeId
+        ?.substringAfter(':', "")
+        ?.substringBefore(',')
+        ?.trim()
+        ?.toIntOrNull()
+    return if (major == 179) ExternalStorageKind.SdCard else ExternalStorageKind.UsbDrive
+}
 
 /** `primary` / `home` are internal shared storage. Anything else is a public volume id. */
 fun externalStorageVolumeId(documentId: String): String? {

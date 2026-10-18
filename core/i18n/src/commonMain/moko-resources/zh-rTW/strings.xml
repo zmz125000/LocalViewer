@@ -17,6 +17,9 @@
     <!-- LocalViewer / missing UI strings -->
     <string name="library">圖庫</string>
     <string name="network">網路</string>
+    <string name="storage">儲存</string>
+    <string name="storage_sd_card">SD卡</string>
+    <string name="storage_usb_drive">USB 隨身碟</string>
     <string name="folder">資料夾</string>
     <string name="browse">瀏覽</string>
     <string name="browse_empty">尚無瀏覽來源。請用頂部列新增圖庫來源、瀏覽資料夾或 SMB 共享。</string>

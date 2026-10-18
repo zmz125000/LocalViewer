@@ -17,6 +17,9 @@
     <string name="app_name" translatable="false">LocalViewer</string>
     <string name="library">Library</string>
     <string name="network">Network</string>
+    <string name="storage">Storage</string>
+    <string name="storage_sd_card">SD card</string>
+    <string name="storage_usb_drive">USB drive</string>
     <string name="folder">Folder</string>
     <string name="browse">Browse</string>
     <string name="browse_empty">No browse sources. Use the top bar to add a library folder, browse folder, or SMB share.</string>

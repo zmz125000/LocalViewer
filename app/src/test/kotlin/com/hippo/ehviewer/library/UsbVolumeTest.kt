@@ -7,6 +7,14 @@ import org.junit.Test
 
 class UsbVolumeTest {
     @Test
+    fun sdSlotIsMmcAndUsbIsScsi() {
+        assertEquals(ExternalStorageKind.SdCard, externalStorageKind("public:179,1"))
+        assertEquals(ExternalStorageKind.UsbDrive, externalStorageKind("public:8,1"))
+        assertEquals(ExternalStorageKind.UsbDrive, externalStorageKind(null))
+        assertEquals(ExternalStorageKind.UsbDrive, externalStorageKind("public:259,4"))
+    }
+
+    @Test
     fun volumeIdIgnoresPrimaryAndHome() {
         assertNull(externalStorageVolumeId("primary:Download"))
         assertNull(externalStorageVolumeId("home:"))

@@ -18,6 +18,9 @@
     <!-- LocalViewer / missing UI strings -->
     <string name="library">ライブラリ</string>
     <string name="network">ネットワーク</string>
+    <string name="storage">ストレージ</string>
+    <string name="storage_sd_card">SDカード</string>
+    <string name="storage_usb_drive">USBドライブ</string>
     <string name="folder">フォルダ</string>
     <string name="browse">ブラウズ</string>
     <string name="browse_empty">閲覧ソースがありません。上部バーからライブラリ、フォルダ、または SMB 共有を追加してください。</string>

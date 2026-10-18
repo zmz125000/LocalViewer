@@ -26,7 +26,6 @@ import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Inventory2
 import androidx.compose.material.icons.filled.Lan
 import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Usb
 import androidx.compose.material3.CircularWavyProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -94,6 +93,7 @@ import com.hippo.ehviewer.coil.CoverThumb
 import com.hippo.ehviewer.collectAsState
 import com.hippo.ehviewer.library.ArchiveCoverCache
 import com.hippo.ehviewer.library.BrowseFavorites
+import com.hippo.ehviewer.library.ExternalStorageKind
 import com.hippo.ehviewer.library.FavoriteBrowseSource
 import com.hippo.ehviewer.library.FolderGalleryIndex
 import com.hippo.ehviewer.library.HistoryThumbKey
@@ -1186,7 +1186,8 @@ private fun favoriteMetaLine(fav: FavoriteBrowseSource): String {
                 "Folder"
             }
         }
-        is FavoriteBrowseSource.Usb -> "USB"
+        is FavoriteBrowseSource.Usb ->
+            if (fav.volume.kind == ExternalStorageKind.SdCard) "SD" else "USB"
     }
     return when (fav) {
         is FavoriteBrowseSource.Gallery -> {
@@ -1222,7 +1223,7 @@ internal fun favoriteIcon(fav: FavoriteBrowseSource): ImageVector = when (fav) {
     // Network folders: Folder main glyph; grid cell adds Lan/Cloud badge.
     is FavoriteBrowseSource.SmbFolder -> Icons.Default.Folder
     is FavoriteBrowseSource.WebDavFolder -> Icons.Default.Folder
-    is FavoriteBrowseSource.Usb -> Icons.Default.Usb
+    is FavoriteBrowseSource.Usb -> storageKindIcon(fav.volume)
 }
 
 /**
@@ -1235,7 +1236,7 @@ private fun favoriteListTypeIcon(fav: FavoriteBrowseSource): ImageVector = when 
     is FavoriteBrowseSource.Smb, is FavoriteBrowseSource.SmbFolder -> Icons.Default.Lan
     is FavoriteBrowseSource.WebDav, is FavoriteBrowseSource.WebDavFolder -> Icons.Default.Cloud
     is FavoriteBrowseSource.LocalFolder -> Icons.Default.Folder
-    is FavoriteBrowseSource.Usb -> Icons.Default.Usb
+    is FavoriteBrowseSource.Usb -> storageKindIcon(fav.volume)
     is FavoriteBrowseSource.Gallery ->
         if (fav.gallery.kind == LOCAL_GALLERY_KIND_ARCHIVE) {
             Icons.Default.Inventory2

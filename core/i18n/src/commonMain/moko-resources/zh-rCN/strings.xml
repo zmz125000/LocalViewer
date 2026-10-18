@@ -17,6 +17,9 @@
     <!-- LocalViewer / missing UI strings -->
     <string name="library">图库</string>
     <string name="network">网络</string>
+    <string name="storage">存储</string>
+    <string name="storage_sd_card">SD卡</string>
+    <string name="storage_usb_drive">U盘</string>
     <string name="folder">文件夹</string>
     <string name="browse">浏览</string>
     <string name="browse_empty">暂无浏览源。请用顶部栏添加图库源、浏览文件夹或 SMB 共享。</string>

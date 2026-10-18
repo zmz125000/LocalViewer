@@ -29,7 +29,9 @@ import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.CreateNewFolder
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Lan
+import androidx.compose.material.icons.filled.SdCard
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Usb
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -76,10 +78,14 @@ import com.hippo.ehviewer.library.AddRootResult
 import com.hippo.ehviewer.library.BrowseFavorites
 import com.hippo.ehviewer.library.BrowseSession
 import com.hippo.ehviewer.library.ExplorerWindows
+import com.hippo.ehviewer.library.ExternalStorageKind
 import com.hippo.ehviewer.library.LocalLibrary
 import com.hippo.ehviewer.library.MediaPermissions
 import com.hippo.ehviewer.library.NavTabWindows
+import com.hippo.ehviewer.library.UsbVolume
+import com.hippo.ehviewer.library.UsbVolumes
 import com.hippo.ehviewer.library.displayNameForTreeUri
+import com.hippo.ehviewer.library.matchUsbRoot
 import com.hippo.ehviewer.library.safFolderLabel
 import com.hippo.ehviewer.smb.SmbGateway
 import com.hippo.ehviewer.smb.SmbRepository
@@ -145,6 +151,13 @@ fun AnimatedVisibilityScope.BrowseScreen(navigator: DestinationsNavigator) = Scr
         }
     }
     val favoriteKeys by Settings.favoriteBrowseSources.collectAsState()
+    val mountedStorage by UsbVolumes.mounted.collectAsState()
+    val storageVolumes = remember(mountedStorage) {
+        mountedStorage.sortedWith(
+            compareBy<UsbVolume> { it.kind != ExternalStorageKind.SdCard }
+                .thenBy(String.CASE_INSENSITIVE_ORDER) { it.label },
+        )
+    }
     val gridView by Settings.gridView.collectAsState()
     val scrollBehavior = TopAppBarDefaults.pinnedScrollBehavior()
     val context = LocalContext.current
@@ -510,6 +523,27 @@ fun AnimatedVisibilityScope.BrowseScreen(navigator: DestinationsNavigator) = Scr
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
+                if (storageVolumes.isNotEmpty()) {
+                    item(span = { androidx.compose.foundation.lazy.grid.GridItemSpan(maxLineSpan) }, key = "hdr-storage") {
+                        BrowseSectionHeader(stringResource(R.string.storage))
+                    }
+                    items(storageVolumes, key = { "vol-${it.uuid}" }) { volume ->
+                        val matched = matchUsbRoot(roots, volume.uuid)
+                        val favorited = matched != null && BrowseFavorites.localKey(matched.id) in favoriteKeys
+                        BrowseRootCard(
+                            title = volume.label,
+                            subtitle = storageKindLabel(volume),
+                            favorited = favorited,
+                            icon = { Icon(storageKindIcon(volume), contentDescription = null) },
+                            onClick = { UsbVolumes.requestOpen(volume) },
+                            onLongClick = {
+                                if (matched != null) {
+                                    notifyFavoriteToggle(BrowseFavorites.toggleLocal(matched.id))
+                                }
+                            },
+                        )
+                    }
+                }
                 if (smbSources.isNotEmpty() || webDavSources.isNotEmpty()) {
                     item(span = { androidx.compose.foundation.lazy.grid.GridItemSpan(maxLineSpan) }, key = "hdr-net") {
                         BrowseSectionHeader(stringResource(R.string.network))
@@ -586,6 +620,41 @@ fun AnimatedVisibilityScope.BrowseScreen(navigator: DestinationsNavigator) = Scr
                         .fillMaxSize(),
                     contentPadding = PaddingValues(top = gridInset, bottom = gridInset),
                 ) {
+                    if (storageVolumes.isNotEmpty()) {
+                        item(
+                            key = "hdr-storage",
+                            span = { GridItemSpan(maxLineSpan) },
+                        ) {
+                            BrowseSectionHeader(stringResource(R.string.storage))
+                        }
+                        items(storageVolumes, key = { "vol-${it.uuid}" }) { volume ->
+                            val matched = matchUsbRoot(roots, volume.uuid)
+                            val favorited = matched != null && BrowseFavorites.localKey(matched.id) in favoriteKeys
+                            ListItem(
+                                headlineContent = {
+                                    BrowseFavoriteTitle(name = volume.label, favorited = favorited)
+                                },
+                                supportingContent = { Text(storageKindLabel(volume)) },
+                                leadingContent = {
+                                    Icon(
+                                        storageKindIcon(volume),
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary,
+                                    )
+                                },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .combinedClickable(
+                                        onClick = { UsbVolumes.requestOpen(volume) },
+                                        onLongClick = {
+                                            if (matched != null) {
+                                                notifyFavoriteToggle(BrowseFavorites.toggleLocal(matched.id))
+                                            }
+                                        },
+                                    ),
+                            )
+                        }
+                    }
                     if (smbSources.isNotEmpty() || webDavSources.isNotEmpty()) {
                         item(
                             key = "hdr-net",
@@ -710,6 +779,20 @@ fun AnimatedVisibilityScope.BrowseScreen(navigator: DestinationsNavigator) = Scr
             }.takeIf { state.id != 0L },
         )
     }
+}
+
+@Composable
+private fun storageKindLabel(volume: UsbVolume): String = stringResource(
+    if (volume.kind == ExternalStorageKind.SdCard) {
+        R.string.storage_sd_card
+    } else {
+        R.string.storage_usb_drive
+    },
+)
+
+internal fun storageKindIcon(volume: UsbVolume) = when (volume.kind) {
+    ExternalStorageKind.SdCard -> Icons.Default.SdCard
+    ExternalStorageKind.UsbDrive -> Icons.Default.Usb
 }
 
 internal fun webDavSubtitle(source: com.ehviewer.core.database.model.WebDavSourceEntity): String = buildString {
