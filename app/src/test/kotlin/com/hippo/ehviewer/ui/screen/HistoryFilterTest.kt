@@ -9,6 +9,8 @@ import com.hippo.ehviewer.library.LocalHistory
 import com.hippo.ehviewer.ui.main.BrowseOverflowKind
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -163,6 +165,27 @@ class HistoryFilterTest {
         assertEquals(listOf(txt), filterHistoryFileItems(files, HistorySection.Documents))
         assertEquals(files, filterHistoryFileItems(files, HistorySection.Media, allTypes = true))
         assertEquals(files, filterHistoryFileItems(files, HistorySection.Documents, allTypes = true))
+    }
+
+    @Test
+    fun historyTabReusesTheRamListUntilTheViewChanges() {
+        HistoryListMemory.resetForTest()
+        val dir = item(LOCAL_BROWSE_TOKEN, "Notes", "/root/Notes")
+        val zip = item(LOCAL_ARCHIVE_TOKEN, "pack.cbz", "/comics/pack.cbz")
+        val txt = item(LOCAL_FILE_TOKEN, "notes.txt", "/books/notes.txt")
+        val rows = listOf(dir, zip, txt)
+        val key = HistoryListKey("", HistorySection.Media, ebookAsGallery = true)
+        HistoryListMemory.store(rows)
+        val first = HistoryListMemory.prepare(rows, key)
+        assertEquals(listOf(dir), first.directories)
+        assertEquals(listOf(zip), first.shownFiles)
+        assertSame(first, HistoryListMemory.peek(rows, key))
+        assertSame(first, HistoryListMemory.prepare(rows, key))
+        val newer = listOf(dir, zip, txt, item(LOCAL_ARCHIVE_TOKEN, "more.cbz", "/comics/more.cbz"))
+        assertSame(first, HistoryListMemory.display(newer, key))
+        assertNull(HistoryListMemory.peek(newer, key))
+        assertNull(HistoryListMemory.display(rows, key.copy(section = HistorySection.Documents)))
+        assertNull(HistoryListMemory.display(emptyList(), key))
     }
 
     private fun item(token: String, title: String, uploader: String) = BaseGalleryInfo(

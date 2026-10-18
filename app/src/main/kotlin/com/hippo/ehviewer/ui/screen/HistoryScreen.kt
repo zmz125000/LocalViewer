@@ -87,8 +87,10 @@ import com.ramcosta.composedestinations.annotation.Destination
 import com.ramcosta.composedestinations.annotation.RootGraph
 import com.ramcosta.composedestinations.navigation.DestinationsNavigator
 import kotlin.math.roundToInt
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import moe.tarsin.snackbar
 import moe.tarsin.string
 
@@ -109,7 +111,9 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
 
     val density = LocalDensity.current
     // Hide-from-history is applied before this list is published, so the grid never composes those rows.
-    // Keyword filtering stays here so typing does not rebuild a PagingSource.
+    // The tab reads the RAM snapshot first. Keyword and Media/Documents filtering run
+    // off the main thread when that snapshot is stale.
+    var historyLoaded by rememberInVM { mutableStateOf(false) }
     val visibleHistory by rememberInVM {
         mutableStateOf(emptyList<GalleryEntity>()).also { state ->
             viewModelScope.launch {
@@ -118,19 +122,11 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
                     Settings.historyHideFolders.valueFlow(),
                 ) { rows, stored -> rows to stored }
                     .collect { (rows, stored) ->
-                        state.value = HistoryHidePersist.withoutHiddenFolders(rows, stored)
+                        val shown = HistoryHidePersist.withoutHiddenFolders(rows, stored)
+                        HistoryListMemory.store(shown)
+                        state.value = shown
+                        historyLoaded = true
                     }
-            }
-        }
-    }
-    val filterQuery = keyword.trim()
-    val filteredHistory = remember(visibleHistory, filterQuery) {
-        if (filterQuery.isEmpty()) {
-            visibleHistory
-        } else {
-            visibleHistory.filter { info ->
-                info.title?.contains(filterQuery, ignoreCase = true) == true ||
-                    info.titleJpn?.contains(filterQuery, ignoreCase = true) == true
             }
         }
     }
@@ -138,21 +134,40 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
     val historySection = HistorySection.fromPref(historySectionPref)
     val ebookAsGallery by Settings.showEbookFilesAsGallery.collectAsState()
     val favoriteKeys by Settings.favoriteBrowseSources.collectAsState()
-    // Browse-dir pins live in a capped top section and ignore Media/Documents.
-    val allDirectoryItems = remember(filteredHistory) {
-        filteredHistory.filter { LocalHistory.isBrowseDirectory(it) }
+    val filterQuery = keyword.trim()
+    val historySource = if (historyLoaded || visibleHistory.isNotEmpty()) {
+        visibleHistory
+    } else {
+        HistoryListMemory.source()
     }
-    val allFileItems = remember(filteredHistory) {
-        filteredHistory.filterNot { LocalHistory.isBrowseDirectory(it) }
-    }
-    // Live search lists every matching type, same as folder-view allTypes.
-    val historyItems = remember(allFileItems, historySection, filterQuery, ebookAsGallery) {
-        filterHistoryFileItems(
-            allFileItems,
-            historySection,
-            allTypes = filterQuery.isNotEmpty(),
-            ebookAsGallery = ebookAsGallery,
-        )
+    val historyKey = HistoryListKey(
+        keyword = filterQuery,
+        section = historySection,
+        ebookAsGallery = ebookAsGallery,
+    )
+    val immediateHistory = HistoryListMemory.display(historySource, historyKey)
+    var allDirectoryItems by remember { mutableStateOf(immediateHistory?.directories ?: emptyList()) }
+    var allFileItems by remember { mutableStateOf(immediateHistory?.files ?: emptyList()) }
+    var historyItems by remember { mutableStateOf(immediateHistory?.shownFiles ?: emptyList()) }
+    var preparingHistory by remember { mutableStateOf(immediateHistory == null && historySource.isNotEmpty()) }
+    LaunchedEffect(historySource, historyKey) {
+        if (historySource.isEmpty() && !historyLoaded && !HistoryListMemory.loaded) return@LaunchedEffect
+        val ready = HistoryListMemory.peek(historySource, historyKey)
+        if (ready != null) {
+            allDirectoryItems = ready.directories
+            allFileItems = ready.files
+            historyItems = ready.shownFiles
+            preparingHistory = false
+            return@LaunchedEffect
+        }
+        val source = historySource
+        val built = withContext(Dispatchers.Default) {
+            HistoryListMemory.prepare(source, historyKey)
+        }
+        allDirectoryItems = built.directories
+        allFileItems = built.files
+        historyItems = built.shownFiles
+        preparingHistory = false
     }
     val hasFileItems = allFileItems.isNotEmpty()
 
@@ -648,7 +663,7 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
             }
         }
 
-        if (directoryItems.isEmpty() && historyItems.isEmpty() && allFileItems.isEmpty()) {
+        if (!preparingHistory && directoryItems.isEmpty() && historyItems.isEmpty() && allFileItems.isEmpty()) {
             Column(
                 modifier = Modifier.padding(paddingValues).padding(horizontal = marginH).fillMaxSize(),
                 verticalArrangement = Arrangement.Center,
