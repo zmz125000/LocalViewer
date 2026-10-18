@@ -1108,6 +1108,7 @@
     <string name="action_save_to">Save to…</string>
     <string name="convert_to">Convert to…</string>
     <string name="browse_select">Select</string>
+    <string name="browse_select_all">Select all</string>
     <string name="browse_selected_count">%1$d selected</string>
     <string name="browse_selected_in_folder">%1$d selected in %2$s</string>
     <string name="browse_queued_in_folder">%1$d queued in %2$s</string>

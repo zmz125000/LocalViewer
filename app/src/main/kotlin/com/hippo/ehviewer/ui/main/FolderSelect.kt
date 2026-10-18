@@ -267,6 +267,33 @@ class FolderSelectState {
         }
     }
 
+    /**
+     * Select every listed/filtered row in this folder (all sections except Recent).
+     * Outside select mode this enters it and selects those rows.
+     * While already selecting, clears them when every listed row is already selected.
+     */
+    fun selectAllListed() {
+        val items = sectionSelect
+            .asSequence()
+            .filter { it.key != BrowseFolderSection.Recent }
+            .flatMap { it.value().asSequence() }
+            .distinctBy { it.key }
+            .toList()
+        if (items.isEmpty()) return
+        if (!selecting) {
+            enter()
+            selectThese(items)
+            return
+        }
+        val keys = items.mapTo(HashSet()) { it.key }
+        if (keys.all { key -> picks.any { it.key == key } }) {
+            picks.removeAll { it.key in keys }
+            syncPicks()
+        } else {
+            selectThese(items)
+        }
+    }
+
     /** Selected count in [section] to the number of rows in that section. */
     fun count(section: BrowseFolderSection): Pair<Int, Int>? {
         if (!selecting) return null
@@ -589,6 +616,16 @@ object FolderSelectHost {
     fun focusFolder(folderKey: String) {
         shownFolderKey = folderKey
         refreshSelectionSnack()
+    }
+
+    /**
+     * Select all listed/filtered rows for [folderKey] when that folder is on screen.
+     * No-op when another folder is bound (its [FolderSelectState.sectionSelect] is not this one).
+     */
+    fun selectAllListed(folderKey: String? = null) {
+        val live = current ?: return
+        if (folderKey != null && live.folderKey != folderKey) return
+        live.selectAllListed()
     }
 
     internal fun panelPlace(): FolderPlace? {
@@ -1327,6 +1364,9 @@ private fun SelectionOverflowControl(
     val shareable = picks.count { it.shareHttp != null }
     val convertible = picks.count { it.convertStill != null }
     val savable = picks.count { it.saveInto != null }
+    val canSelectAll = selectionActions &&
+        folderKey != null &&
+        FolderSelectHost.current?.folderKey == folderKey
     val openMenu = {
         if (folderKey != null) FolderSelectHost.focusFolder(folderKey)
         menu = true
@@ -1372,6 +1412,15 @@ private fun SelectionOverflowControl(
                     },
                 )
             } else {
+                if (canSelectAll) {
+                    DropdownMenuItem(
+                        text = { Text(stringResource(R.string.browse_select_all)) },
+                        onClick = {
+                            menu = false
+                            FolderSelectHost.selectAllListed(folderKey)
+                        },
+                    )
+                }
                 if (selectionActions && savable > 0) {
                     DropdownMenuItem(
                         text = { Text(stringResource(R.string.action_save_to)) },
@@ -1405,7 +1454,9 @@ private fun SelectionOverflowControl(
                         },
                     )
                 }
-                if (selectionActions && savable == 0 && shareable == 0 && convertible == 0 && onOpenFolder == null) {
+                if (selectionActions && !canSelectAll && savable == 0 && shareable == 0 &&
+                    convertible == 0 && onOpenFolder == null
+                ) {
                     DropdownMenuItem(
                         text = { Text(stringResource(R.string.browse_action_not_supported)) },
                         onClick = { menu = false },
