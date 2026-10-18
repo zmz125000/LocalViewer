@@ -1,7 +1,9 @@
 package com.hippo.ehviewer.ui.screen
 
+import com.ehviewer.core.database.model.GalleryEntity
 import com.ehviewer.core.model.GalleryInfo
 import com.hippo.ehviewer.Settings
+import com.hippo.ehviewer.library.HistoryHidePersist
 import com.hippo.ehviewer.library.LocalHistory
 
 /** History file/gallery filter ([Settings.historySection]). Directory pins are not filtered. */
@@ -26,19 +28,67 @@ fun toggleHistorySection() {
     }
 }
 
+/** Library Recent strip cap. The lazy list only needs the newest page of rows. */
+const val LIBRARY_RECENT_LIMIT = 50
+
 /**
  * Library Recent strip. Browse-directory pins stay out (those are folder records).
  * [rows] is already newest-first. A non-blank [query] matches title or Japanese title.
+ * [hidden] drops the same rows the History screen hides. Stops at [limit] so a long
+ * history does not build the rest of the list.
  */
-fun <T : GalleryInfo> libraryRecentHistory(rows: List<T>, query: String = ""): List<T> {
-    val files = rows.filterNot { LocalHistory.isBrowseDirectory(it) }
+fun <T : GalleryInfo> libraryRecentHistory(
+    rows: List<T>,
+    query: String = "",
+    limit: Int = LIBRARY_RECENT_LIMIT,
+    hidden: (T) -> Boolean = { false },
+): List<T> {
+    if (rows.isEmpty() || limit <= 0) return emptyList()
     val q = query.trim()
-    if (q.isEmpty()) return files
-    return files.filter { info ->
-        info.title?.contains(q, ignoreCase = true) == true ||
-            info.titleJpn?.contains(q, ignoreCase = true) == true
+    val out = ArrayList<T>(minOf(limit, rows.size))
+    for (info in rows) {
+        if (LocalHistory.isBrowseDirectory(info) || hidden(info)) continue
+        if (q.isNotEmpty() &&
+            info.title?.contains(q, ignoreCase = true) != true &&
+            info.titleJpn?.contains(q, ignoreCase = true) != true
+        ) {
+            continue
+        }
+        out += info
+        if (out.size == limit) break
     }
+    return out
 }
+
+/**
+ * Newest library recents after the History hide-folder filter, capped at [limit].
+ * An empty [stored] set skips the place lookup. Otherwise hide checks run in
+ * small chunks and stop once [limit] visible rows are collected.
+ */
+suspend fun visibleLibraryRecents(
+    rows: List<GalleryEntity>,
+    query: String,
+    stored: Set<String>,
+    limit: Int = LIBRARY_RECENT_LIMIT,
+): List<GalleryEntity> {
+    if (stored.isEmpty()) return libraryRecentHistory(rows, query, limit)
+    val matched = libraryRecentHistory(rows, query, limit = Int.MAX_VALUE)
+    if (matched.isEmpty() || limit <= 0) return emptyList()
+    val out = ArrayList<GalleryEntity>(minOf(limit, matched.size))
+    var start = 0
+    while (start < matched.size && out.size < limit) {
+        val end = minOf(start + LIBRARY_RECENT_HIDE_CHUNK, matched.size)
+        val shown = HistoryHidePersist.withoutHiddenFolders(matched.subList(start, end), stored)
+        for (row in shown) {
+            out += row
+            if (out.size == limit) break
+        }
+        start = end
+    }
+    return out
+}
+
+private const val LIBRARY_RECENT_HIDE_CHUNK = 64
 
 fun <T : GalleryInfo> filterHistoryFileItems(
     items: List<T>,

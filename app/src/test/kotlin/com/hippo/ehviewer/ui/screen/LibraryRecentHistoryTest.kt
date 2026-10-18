@@ -10,6 +10,7 @@ import com.hippo.ehviewer.ui.main.BROWSE_RECENT_PREVIEW_GRID_ROWS
 import com.hippo.ehviewer.ui.main.BROWSE_RECENT_PREVIEW_LIST_ROWS
 import com.hippo.ehviewer.ui.main.browseRecentPreviewLimit
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class LibraryRecentHistoryTest {
@@ -33,6 +34,18 @@ class LibraryRecentHistoryTest {
         assertEquals(listOf(jp), libraryRecentHistory(rows, "夏"))
         assertEquals(listOf(en), libraryRecentHistory(rows, "sum"))
         assertEquals(rows, libraryRecentHistory(rows, "  "))
+    }
+
+    @Test
+    fun capsAtFiftyAndSkipsHiddenRows() {
+        val rows = (1L..60L).map { item(it, LOCAL_FILE_TOKEN, "file-$it") }
+        assertEquals(LIBRARY_RECENT_LIMIT, libraryRecentHistory(rows).size)
+        assertEquals(1L, libraryRecentHistory(rows).first().gid)
+        val hidden = setOf(1L, 2L, 3L)
+        val shown = libraryRecentHistory(rows, hidden = { it.gid in hidden })
+        assertEquals(LIBRARY_RECENT_LIMIT, shown.size)
+        assertEquals(4L, shown.first().gid)
+        assertTrue(shown.none { it.gid in hidden })
     }
 
     @Test

@@ -27,6 +27,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.waitForUpOrCancellation
@@ -201,6 +202,7 @@ import com.hippo.ehviewer.ui.reader.fromPreferences
 import com.hippo.ehviewer.ui.reader.insideSpreadSize
 import com.hippo.ehviewer.ui.reader.isPagerDual
 import com.hippo.ehviewer.ui.reader.isWebtoonHorizontal
+import com.hippo.ehviewer.ui.reader.keyEventHandler
 import com.hippo.ehviewer.ui.reader.readerDrawScaleProvider
 import com.hippo.ehviewer.ui.reader.readerMouseWheelList
 import com.hippo.ehviewer.ui.reader.readerMouseWheelPages
@@ -1925,6 +1927,8 @@ private fun PdfReaderScreen(
     }
     val fullscreen by Settings.fullscreen.collectAsState()
     val keepScreenOn by Settings.keepScreenOn.collectAsState()
+    val volumeKeysEnabled by Settings.readWithVolumeKeys.collectAsState()
+    val volumeKeysInverted by Settings.readWithVolumeKeysInverted.collectAsState()
     val uiController = rememberSystemUiController()
     val appDarkTheme = isSystemInDarkTheme()
     val isEbook = (doc as? PdfDocumentModel.Vector)?.isEbook == true
@@ -2175,6 +2179,7 @@ private fun PdfReaderScreen(
         if (isWebtoon) showNavigationOverlay = true
     }
     var appbarVisible by remember { mutableStateOf(false) }
+    val focusRequester = remember { FocusRequester() }
     val chromeVisible by rememberUpdatedState(appbarVisible)
     LaunchedEffect(fullscreen) {
         snapshotFlow { appbarVisible }.collect { visible ->
@@ -2336,10 +2341,21 @@ private fun PdfReaderScreen(
     val scaleType by Settings.imageScaleType.collectAsState()
     Box(
         modifier = Modifier
+            .keyEventHandler(
+                volumeKeysEnabled = { volumeKeysEnabled && !appbarVisible },
+                volumeKeysInverted = { volumeKeysInverted },
+                movePrevious = { scope.launch { stepPdfPage(forward = false) } },
+                moveNext = { scope.launch { stepPdfPage(forward = true) } },
+            )
+            .focusRequester(focusRequester)
+            .focusable()
             .fillMaxSize()
             .background(if (isEbook) Color(ebookPaint.bg.toLong() and 0xFFFFFFFFL) else PageBackdrop)
             .thenIf(keepScreenOn) { keepScreenOn() },
     ) {
+        LaunchedEffect(Unit) {
+            focusRequester.requestFocus()
+        }
         when {
             error != null -> {
                 Box(
