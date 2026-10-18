@@ -544,11 +544,12 @@ object LocalFolderListing {
         zipInteriors: MutableMap<String, List<BrowseEntryRemote>>? = null,
     ): List<BrowseEntryRemote> {
         val deepScanHidden = Settings.browseShowHiddenFiles.value
-        // Dot folders: always tag-only (never peek). `.nomedia` dirs peek only when Hidden on.
+        // Dot folders stay tag-only while Hidden files is off. The toggle peeks them
+        // so a SAF `.folder` is a real directory, not a shell the content mode drops.
         val dirsToPeek = children.filter { c ->
             c.isDirectory &&
                 !isProtectedSystemName(c.name) &&
-                !isDotHiddenName(c.name) &&
+                (deepScanHidden || !isDotHiddenName(c.name)) &&
                 (deepScanHidden || !c.hidden)
         }
         val peeks = ConcurrentHashMap<String, List<RemoteChild>>()

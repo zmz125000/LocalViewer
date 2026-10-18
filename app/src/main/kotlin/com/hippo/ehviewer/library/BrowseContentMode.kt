@@ -48,7 +48,17 @@ enum class BrowseContentMode(val prefValue: Int) {
  * Directory visibility is based on independent content tags, not merely on whether
  * the directory is structurally enterable. This keeps video-only navigation out of
  * Galleries and unrelated navigation out of Video.
+ *
+ * The hidden-files toggle asked to show this directory. Content mode still
+ * drops an ordinary empty folder; a hidden one (dot name, `.nomedia`) stays.
+ * Promoted video leaves are virtual rows, not the real folder.
  */
+fun hiddenDirectoryRevealed(
+    showHiddenFiles: Boolean,
+    hidden: Boolean,
+    presence: DirPresence,
+): Boolean = showHiddenFiles && hidden && presence != DirPresence.PromotedVideoLeaf
+
 fun DirPresence.visibleIn(
     mode: BrowseContentMode,
     hasGallery: Boolean,
@@ -143,6 +153,7 @@ fun List<BrowseEntry>.filterByContentMode(
     when (mode) {
         BrowseContentMode.Galleries -> when (e) {
             is BrowseEntry.Directory -> {
+                if (hiddenDirectoryRevealed(showHiddenFiles, e.hidden, e.presence)) return@filter true
                 // When virtuals off, PromotedShell is the enterable real folder.
                 if (!showVirtualGalleries && e.presence == DirPresence.PromotedShell) return@filter true
                 e.presence.visibleIn(mode, e.hasGallery, e.hasVideo, e.hasDocument)
@@ -152,6 +163,7 @@ fun List<BrowseEntry>.filterByContentMode(
         }
         BrowseContentMode.Media -> when (e) {
             is BrowseEntry.Directory -> {
+                if (hiddenDirectoryRevealed(showHiddenFiles, e.hidden, e.presence)) return@filter true
                 if (!showVirtualGalleries && e.presence == DirPresence.PromotedShell) return@filter true
                 e.presence.visibleIn(mode, e.hasGallery, e.hasVideo, e.hasDocument)
             }
@@ -161,6 +173,7 @@ fun List<BrowseEntry>.filterByContentMode(
         }
         BrowseContentMode.Video -> when (e) {
             is BrowseEntry.Directory -> {
+                if (hiddenDirectoryRevealed(showHiddenFiles, e.hidden, e.presence)) return@filter true
                 if (!showVirtualGalleries && e.presence == DirPresence.PromotedShell) return@filter true
                 e.presence.visibleIn(mode, e.hasGallery, e.hasVideo, e.hasDocument)
             }
@@ -169,6 +182,7 @@ fun List<BrowseEntry>.filterByContentMode(
         }
         BrowseContentMode.Document -> when (e) {
             is BrowseEntry.Directory -> {
+                if (hiddenDirectoryRevealed(showHiddenFiles, e.hidden, e.presence)) return@filter true
                 if (!showVirtualGalleries && e.presence == DirPresence.PromotedShell) return@filter true
                 e.presence.visibleIn(mode, e.hasGallery, e.hasVideo, e.hasDocument)
             }
@@ -179,7 +193,9 @@ fun List<BrowseEntry>.filterByContentMode(
             is BrowseEntry.FolderGallery, is BrowseEntry.VideoFile -> false
         }
         BrowseContentMode.Folder -> when (e) {
-            is BrowseEntry.Directory -> e.presence.visibleIn(mode, e.hasGallery, e.hasVideo, e.hasDocument)
+            is BrowseEntry.Directory ->
+                hiddenDirectoryRevealed(showHiddenFiles, e.hidden, e.presence) ||
+                    e.presence.visibleIn(mode, e.hasGallery, e.hasVideo, e.hasDocument)
             is BrowseEntry.ArchiveGallery, is BrowseEntry.RegularFile -> true
             // Real videos only — hide promoted rows (enter real dir instead).
             is BrowseEntry.VideoFile -> !e.virtual
@@ -249,6 +265,7 @@ fun List<BrowseEntryRemote>.filterRemoteByContentMode(
         when (mode) {
             BrowseContentMode.Galleries -> when (e) {
                 is BrowseEntryRemote.Directory -> {
+                    if (hiddenDirectoryRevealed(showHiddenFiles, e.hidden, e.presence)) return@filter true
                     if (!showVirtualGalleries && e.presence == DirPresence.PromotedShell) return@filter true
                     e.presence.visibleIn(mode, e.hasGallery, e.hasVideo, e.hasDocument)
                 }
@@ -257,6 +274,7 @@ fun List<BrowseEntryRemote>.filterRemoteByContentMode(
             }
             BrowseContentMode.Media -> when (e) {
                 is BrowseEntryRemote.Directory -> {
+                    if (hiddenDirectoryRevealed(showHiddenFiles, e.hidden, e.presence)) return@filter true
                     if (!showVirtualGalleries && e.presence == DirPresence.PromotedShell) return@filter true
                     e.presence.visibleIn(mode, e.hasGallery, e.hasVideo, e.hasDocument)
                 }
@@ -266,6 +284,7 @@ fun List<BrowseEntryRemote>.filterRemoteByContentMode(
             }
             BrowseContentMode.Video -> when (e) {
                 is BrowseEntryRemote.Directory -> {
+                    if (hiddenDirectoryRevealed(showHiddenFiles, e.hidden, e.presence)) return@filter true
                     if (!showVirtualGalleries && e.presence == DirPresence.PromotedShell) return@filter true
                     e.presence.visibleIn(mode, e.hasGallery, e.hasVideo, e.hasDocument)
                 }
@@ -277,6 +296,7 @@ fun List<BrowseEntryRemote>.filterRemoteByContentMode(
             }
             BrowseContentMode.Document -> when (e) {
                 is BrowseEntryRemote.Directory -> {
+                    if (hiddenDirectoryRevealed(showHiddenFiles, e.hidden, e.presence)) return@filter true
                     if (!showVirtualGalleries && e.presence == DirPresence.PromotedShell) return@filter true
                     e.presence.visibleIn(mode, e.hasGallery, e.hasVideo, e.hasDocument)
                 }
@@ -290,7 +310,8 @@ fun List<BrowseEntryRemote>.filterRemoteByContentMode(
             }
             BrowseContentMode.Folder -> when (e) {
                 is BrowseEntryRemote.Directory ->
-                    e.presence.visibleIn(mode, e.hasGallery, e.hasVideo, e.hasDocument)
+                    hiddenDirectoryRevealed(showHiddenFiles, e.hidden, e.presence) ||
+                        e.presence.visibleIn(mode, e.hasGallery, e.hasVideo, e.hasDocument)
                 is BrowseEntryRemote.ArchiveGallery,
                 is BrowseEntryRemote.RegularFile,
                 -> true

@@ -747,8 +747,7 @@ fun slimDirectFilesUnchanged(
 /**
  * Hidden directories that were only shallow-tagged ([DirPresence.Empty] + [BrowseEntryRemote.hidden])
  * need a full classify pass when the user turns **Hidden files** on.
- *
- * Dot-named folders (`.Trash`, …) are never deep-scanned — tag only — so they are excluded.
+ * Includes dot-named folders (`.Trash`) so the hidden-files toggle can show them.
  */
 fun hiddenDirectoriesNeedingDeepScan(
     cachedEntries: List<BrowseEntryRemote>,
@@ -759,7 +758,6 @@ fun hiddenDirectoriesNeedingDeepScan(
         .filter {
             it.hidden &&
                 it.presence == DirPresence.Empty &&
-                !isDotHiddenName(it.name) &&
                 '/' !in it.relativeName.replace('\\', '/')
         }
         .map { it.relativeName.substringAfterLast('/').ifEmpty { it.name } }
@@ -768,7 +766,6 @@ fun hiddenDirectoriesNeedingDeepScan(
     return liveChildren.filter {
         it.isDirectory &&
             !isProtectedSystemName(it.name) &&
-            !isDotHiddenName(it.name) &&
             it.name in shallowHidden
     }
 }

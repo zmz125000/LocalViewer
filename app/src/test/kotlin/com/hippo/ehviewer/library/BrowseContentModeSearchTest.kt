@@ -95,4 +95,48 @@ class BrowseContentModeSearchTest {
         assertTrue(searching.any { it is BrowseEntryRemote.RegularFile && it.name == "notes.txt" })
         assertFalse(searching.any { it.name == ".secret.txt" })
     }
+
+    @Test
+    fun hiddenToggleShowsDotFolderInEveryContentMode() {
+        val dot = BrowseEntryRemote.Directory(
+            name = ".trash",
+            hasVideo = false,
+            hasGallery = false,
+            presence = DirPresence.Empty,
+            hidden = true,
+        )
+        val plainEmpty = BrowseEntryRemote.Directory(
+            name = "empty",
+            hasVideo = false,
+            hasGallery = false,
+            presence = DirPresence.Empty,
+        )
+        val rows = listOf(dot, plainEmpty)
+        for (mode in BrowseContentMode.entries) {
+            val shown = rows.filterRemoteByContentMode(mode, showHiddenFiles = true)
+            assertTrue(mode.name, shown.any { it.name == ".trash" })
+            val hiddenOff = rows.filterRemoteByContentMode(mode, showHiddenFiles = false)
+            assertFalse(mode.name, hiddenOff.any { it.name == ".trash" })
+        }
+        val galleries = rows.filterRemoteByContentMode(BrowseContentMode.Galleries, showHiddenFiles = true)
+        assertFalse(galleries.any { it.name == "empty" })
+        val folder = rows.filterRemoteByContentMode(BrowseContentMode.Folder, showHiddenFiles = false)
+        assertTrue(folder.any { it.name == "empty" })
+    }
+
+    @Test
+    fun turningHiddenOnRescansADotFolderShell() {
+        val cached = listOf(
+            BrowseEntryRemote.Directory(
+                name = ".stash",
+                relativeName = ".stash",
+                hasVideo = false,
+                hasGallery = false,
+                presence = DirPresence.Empty,
+                hidden = true,
+            ),
+        )
+        val live = listOf(RemoteChild(name = ".stash", isDirectory = true, hidden = true))
+        assertEquals(listOf(".stash"), hiddenDirectoriesNeedingDeepScan(cached, live).map { it.name })
+    }
 }
