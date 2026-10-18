@@ -846,6 +846,7 @@
     <string name="browse_select">选择</string>
     <string name="browse_selected_count">已选 %1$d</string>
     <string name="browse_selected_in_folder">在 %2$s 中已选 %1$d</string>
+    <string name="browse_queued_in_folder">在 %2$s 中已排队 %1$d</string>
     <string name="browse_list">列表</string>
     <string name="browse_action">操作</string>
     <string name="browse_selection">选择</string>

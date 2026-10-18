@@ -471,14 +471,27 @@ object FolderSelectHost {
     private val folders = mutableMapOf<String, FolderMemory>()
     private val snackbarOrder = ArrayDeque<String>()
 
-    /** Save/convert batches waiting until [batch] finishes (Done / Stop / Continue). */
+    /** Save/convert batches waiting until the running task's jobs finish. */
     private val taskQueue = ArrayDeque<QueuedBatch>()
+
+    /** folderKey → queued job count; drives snackbar "x queued in …" text. */
+    var queuedCounts by mutableStateOf<Map<String, Int>>(emptyMap())
+        private set
     private var shownFolderKey: String? = null
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private var scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val ids = AtomicLong(1)
 
     /** Folder keys with a queued batch behind the running task. */
-    internal fun queuedFolderKeys(): Set<String> = taskQueue.mapNotNullTo(LinkedHashSet()) { it.folderKey }
+    internal fun queuedFolderKeys(): Set<String> = queuedCounts.keys
+
+    private fun syncQueuedCounts() {
+        val next = LinkedHashMap<String, Int>()
+        for (queued in taskQueue) {
+            val key = queued.folderKey ?: continue
+            next[key] = queued.jobs.size
+        }
+        queuedCounts = next
+    }
 
     fun attach(state: FolderSelectState) {
         current = state
@@ -579,7 +592,7 @@ object FolderSelectHost {
     }
 
     fun cancelSelection(folderKey: String) {
-        taskQueue.removeAll { it.folderKey == folderKey }
+        if (taskQueue.removeAll { it.folderKey == folderKey }) syncQueuedCounts()
         val closeList = shownFolderKey == folderKey && !showingTask
         val live = current
         if (live != null && live.folderKey == folderKey) {
@@ -640,6 +653,7 @@ object FolderSelectHost {
         folders.clear()
         snackbarOrder.clear()
         taskQueue.clear()
+        queuedCounts = emptyMap()
         shownFolderKey = null
         selectionSnacks = emptyList()
         selectionSnack = null
@@ -647,6 +661,8 @@ object FolderSelectHost {
         showingTask = false
         current = null
         dialog = false
+        // Unit tests have no Android Main dispatcher.
+        scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
         syncTaskFgs()
     }
 
@@ -699,10 +715,16 @@ object FolderSelectHost {
     internal fun startTasks(jobs: List<TaskJob>, dir: Path, folderKey: String? = null) {
         if (jobs.isEmpty()) return
         val key = folderKey ?: shownFolderKey ?: selectionSnack?.folderKey ?: current?.folderKey
-        if (batch != null) {
-            // Another snackbar started work while a batch is still up — run after it ends.
+        val running = batch
+        if (running != null) {
+            // Another snackbar started work — run after the current jobs finish (not Done/Continue).
             if (key != null) taskQueue.removeAll { it.folderKey == key }
             taskQueue.addLast(QueuedBatch(jobs.toList(), dir, key))
+            syncQueuedCounts()
+            if (running.finishedRun && running.end == null) {
+                // Current batch already finished; hand off without waiting for Done/Continue.
+                advanceFinishedBatch(running)
+            }
             return
         }
         launchBatch(jobs, dir, key)
@@ -729,7 +751,12 @@ object FolderSelectHost {
                 if (running.end == null) {
                     running.finishedRun = true
                     syncTaskFgs()
-                    while (running.end == null) running.awaitSignal()
+                    if (taskQueue.isNotEmpty()) {
+                        // Next snackbar is waiting — leave this selection and start it now.
+                        running.end = BatchEnd.Continue
+                    } else {
+                        while (running.end == null) running.awaitSignal()
+                    }
                 }
             } catch (_: CancellationException) {
                 if (running.end == null) running.end = BatchEnd.Stop
@@ -742,13 +769,34 @@ object FolderSelectHost {
     private fun startNextQueued(execute: Boolean = true) {
         if (batch != null) return
         val next = taskQueue.removeFirstOrNull() ?: return
+        syncQueuedCounts()
         launchBatch(next.jobs, next.dir, next.folderKey, execute = execute)
+    }
+
+    /**
+     * Mark [running] finished and Continue into the next queued batch.
+     * Used when a queue arrives after the current jobs already finished, and in tests.
+     */
+    private fun advanceFinishedBatch(running: TaskBatch, executeQueued: Boolean = true) {
+        if (batch !== running || running.end != null) return
+        running.finishedRun = true
+        running.end = BatchEnd.Continue
+        running.wake()
+        // Finish here: the runner may be waiting on awaitSignal, or be a test Job() with
+        // no collector. finishBatch is idempotent once [batch] moves on.
+        finishBatch(running, executeQueued = executeQueued)
     }
 
     internal fun endBatchForTest(running: TaskBatch) {
         batch = running
         // Unit tests have no Main dispatcher; install the next queued batch without running it.
         finishBatch(running, executeQueued = false)
+    }
+
+    /** Simulate the running jobs finishing so a queued batch can start (no Main dispatcher). */
+    internal fun completeRunForTest(running: TaskBatch) {
+        batch = running
+        advanceFinishedBatch(running, executeQueued = false)
     }
 
     /** Leave [running] on screen without executing it. */
@@ -784,6 +832,8 @@ object FolderSelectHost {
             }
         }
         syncTaskFgs()
+        // Queue advances when the previous run finished (Continue from completeRun / auto-hand-off).
+        // Done/Stop also clear the batch slot — start the next only if one is waiting.
         startNextQueued(execute = executeQueued)
     }
 
@@ -871,8 +921,13 @@ private fun FolderSelectSnackbar(snack: SelectionSnack) {
             }
         },
     ) {
+        val queued = FolderSelectHost.queuedCounts[snack.folderKey] ?: 0
         Text(
-            text = stringResource(R.string.browse_selected_in_folder, snack.count, snack.folderName),
+            text = if (queued > 0) {
+                stringResource(R.string.browse_queued_in_folder, queued, snack.folderName)
+            } else {
+                stringResource(R.string.browse_selected_in_folder, snack.count, snack.folderName)
+            },
             maxLines = 2,
             overflow = TextOverflow.Ellipsis,
         )

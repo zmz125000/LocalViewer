@@ -1109,6 +1109,7 @@
     <string name="browse_select">Select</string>
     <string name="browse_selected_count">%1$d selected</string>
     <string name="browse_selected_in_folder">%1$d selected in %2$s</string>
+    <string name="browse_queued_in_folder">%1$d queued in %2$s</string>
     <string name="browse_list">List</string>
     <string name="browse_action">Action</string>
     <string name="browse_selection">Selection</string>

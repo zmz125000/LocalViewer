@@ -241,7 +241,7 @@ class FolderSelectStateTest {
     }
 
     @Test
-    fun secondFolderTaskQueuesUntilTheFirstEnds() {
+    fun secondFolderTaskStartsWhenPreviousRunFinishesNotOnDone() {
         val state = FolderSelectState()
         FolderSelectHost.attach(state)
         state.bindFolder("a", "Photos")
@@ -263,12 +263,43 @@ class FolderSelectStateTest {
         )
         assertEquals("a", FolderSelectHost.batch?.folderKey)
         assertEquals(setOf("b"), FolderSelectHost.queuedFolderKeys())
+        assertEquals(1, FolderSelectHost.queuedCounts["b"])
 
-        first.end = BatchEnd.Done
-        FolderSelectHost.endBatchForTest(first)
+        // Done must not be required — finishing the run hands off to the queue.
+        FolderSelectHost.completeRunForTest(first)
         assertEquals("b", FolderSelectHost.batch?.folderKey)
         assertTrue(FolderSelectHost.queuedFolderKeys().isEmpty())
         assertTrue(FolderSelectHost.showingTask)
+        // Previous folder keeps its selection (Continue), not cleared as Done would.
+        assertEquals(listOf("Photos"), FolderSelectHost.selectionSnacksBesideTask().map { it.folderName })
+    }
+
+    @Test
+    fun queueStartsImmediatelyIfPreviousAlreadyFinished() {
+        val state = FolderSelectState()
+        FolderSelectHost.attach(state)
+        state.bindFolder("a", "Photos")
+        state.enter(pick("1", "one"))
+        state.bindFolder("b", "Camera")
+        state.enter(pick("9", "nine"))
+        val first = TaskBatch(
+            "a",
+            mutableStateListOf(
+                TaskJob(1, "one", false, pick("1", "one"), { true }, TaskStatus.Done),
+            ),
+            kotlinx.coroutines.Job(),
+            "Photos",
+        )
+        first.finishedRun = true
+        FolderSelectHost.installBatchForTest(first)
+
+        FolderSelectHost.startTasks(
+            listOf(TaskJob(2, "nine", false, pick("9", "nine"), { true }, TaskStatus.Pending)),
+            "/tmp".toPath(),
+            "b",
+        )
+        assertEquals("b", FolderSelectHost.batch?.folderKey)
+        assertTrue(FolderSelectHost.queuedFolderKeys().isEmpty())
     }
 
     @Test
