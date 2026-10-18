@@ -15,6 +15,7 @@ import com.hippo.ehviewer.library.SMB_PROMOTE_MAX_LEAVES
 import com.hippo.ehviewer.library.ZipAsDirListing
 import com.hippo.ehviewer.library.ZipCdParse
 import com.hippo.ehviewer.library.ZipCentralDirectory
+import com.hippo.ehviewer.library.applySlimDirectoryHidden
 import com.hippo.ehviewer.library.classifyRemoteListing
 import com.hippo.ehviewer.library.classifyRemoteListingWithPeeks
 import com.hippo.ehviewer.library.hiddenDirectoriesNeedingDeepScan
@@ -28,6 +29,7 @@ import com.hippo.ehviewer.library.mergeRemoteDirectorySlimRefresh
 import com.hippo.ehviewer.library.peekIndicatesHiddenDir
 import com.hippo.ehviewer.library.planRemoteDirectorySlimRefresh
 import com.hippo.ehviewer.library.preferCompleteFolderGalleries
+import com.hippo.ehviewer.library.probeNomediaDirectories
 import com.hippo.ehviewer.library.replaceSlimDirectFilesFromLive
 import com.hippo.ehviewer.library.selectCachedFolderListing
 import com.hippo.ehviewer.library.withHiddenFlags
@@ -470,6 +472,9 @@ object WebDavGateway {
         if (isUntrustedSlimLiveListing(cached, children)) {
             return SlimDirectoryRefresh(cached, emptySet(), persist = false)
         }
+        val (nomediaProbed, nomediaHit) = probeNomediaDirectories(cached, children) { name ->
+            listChildrenForRelativeDir(source, password, joinRelative(relativeDir, name))
+        }
         val plan = planRemoteDirectorySlimRefresh(cached, children)
         val zipFileNames = if (Settings.browseZipAsDir.value) {
             ZipAsDirListing.zipFileNames(children)
@@ -501,7 +506,12 @@ object WebDavGateway {
             recovered.isEmpty()
         if (dirsUnchanged && deepHidden.isEmpty() && newZips.isEmpty()) {
             return SlimDirectoryRefresh(
-                entries = replaceSlimDirectFilesFromLive(cached, children, dirName),
+                entries = applySlimDirectoryHidden(
+                    replaceSlimDirectFilesFromLive(cached, children, dirName),
+                    children,
+                    nomediaProbed,
+                    nomediaHit,
+                ),
                 removedDirectoryNames = emptySet(),
             )
         }
@@ -523,7 +533,7 @@ object WebDavGateway {
             dirName,
         )
         return SlimDirectoryRefresh(
-            entries = merged,
+            entries = applySlimDirectoryHidden(merged, children, nomediaProbed, nomediaHit),
             removedDirectoryNames = emptySet(),
             zipInteriors = zipInteriors,
         )

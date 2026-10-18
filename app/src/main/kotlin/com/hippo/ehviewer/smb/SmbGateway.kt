@@ -36,6 +36,7 @@ import com.hippo.ehviewer.library.ZipCentralDirectory
 import com.hippo.ehviewer.library.ZipMemberByteSource
 import com.hippo.ehviewer.library.ZipMemberCover
 import com.hippo.ehviewer.library.ZipMemberTooLargeException
+import com.hippo.ehviewer.library.applySlimDirectoryHidden
 import com.hippo.ehviewer.library.classifyRemoteListing
 import com.hippo.ehviewer.library.classifyRemoteListingWithPeeks
 import com.hippo.ehviewer.library.hiddenDirectoriesNeedingDeepScan
@@ -51,6 +52,7 @@ import com.hippo.ehviewer.library.naturalCompare
 import com.hippo.ehviewer.library.peekIndicatesHiddenDir
 import com.hippo.ehviewer.library.planRemoteDirectorySlimRefresh
 import com.hippo.ehviewer.library.preferCompleteFolderGalleries
+import com.hippo.ehviewer.library.probeNomediaDirectories
 import com.hippo.ehviewer.library.replaceSlimDirectFilesFromLive
 import com.hippo.ehviewer.library.selectCachedFolderListing
 import com.hippo.ehviewer.library.withHiddenFlags
@@ -2293,6 +2295,12 @@ object SmbGateway {
         if (isUntrustedSlimLiveListing(cached, children)) {
             return SlimDirectoryRefresh(cached, emptySet(), persist = false)
         }
+        val (nomediaProbed, nomediaHit) = probeNomediaDirectories(
+            cached,
+            children,
+        ) { name ->
+            listChildrenForRelativeDir(source, password, joinRelative(relativeDir, name))
+        }
         val plan = planRemoteDirectorySlimRefresh(cached, children)
         val zipFileNames = if (Settings.browseZipAsDir.value) {
             ZipAsDirListing.zipFileNames(children)
@@ -2324,9 +2332,14 @@ object SmbGateway {
             zipAdjustedUnreachable.isEmpty() &&
             recovered.isEmpty()
         if (dirsUnchanged && deepHidden.isEmpty() && newZips.isEmpty()) {
-            // Dirs same — still patch surviving file size/mtime; add/drop direct files.
+            // Dirs same — still patch surviving file size/mtime/hidden; add/drop direct files.
             return SlimDirectoryRefresh(
-                entries = replaceSlimDirectFilesFromLive(cached, children, dirName),
+                entries = applySlimDirectoryHidden(
+                    replaceSlimDirectFilesFromLive(cached, children, dirName),
+                    children,
+                    nomediaProbed,
+                    nomediaHit,
+                ),
                 removedDirectoryNames = emptySet(),
             )
         }
@@ -2348,7 +2361,7 @@ object SmbGateway {
             dirName,
         )
         return SlimDirectoryRefresh(
-            entries = merged,
+            entries = applySlimDirectoryHidden(merged, children, nomediaProbed, nomediaHit),
             removedDirectoryNames = emptySet(),
             zipInteriors = zipInteriors,
         )

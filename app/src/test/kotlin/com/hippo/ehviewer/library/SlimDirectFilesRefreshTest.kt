@@ -246,6 +246,81 @@ class SlimDirectFilesRefreshTest {
     }
 
     @Test
+    fun slimRetagsFolderHiddenAfterCache() {
+        val cached = listOf(
+            BrowseEntryRemote.Directory(
+                name = "Album",
+                hasVideo = false,
+                hasGallery = true,
+                presence = DirPresence.Navigable,
+                lastModifiedMs = 10L,
+                hidden = false,
+            ),
+            BrowseEntryRemote.FolderGallery(
+                name = "@Album",
+                relativeName = "Album/leaf",
+                pageCount = 1,
+                coverFileName = "a.jpg",
+                imageFileNames = listOf("a.jpg"),
+            ),
+            BrowseEntryRemote.RegularFile(name = "note.txt", fileName = "note.txt", hidden = false),
+        )
+        val live = listOf(
+            RemoteChild(name = "Album", isDirectory = true, hidden = true, lastModifiedMs = 10L),
+            RemoteChild(name = "note.txt", isDirectory = false, hidden = true),
+            RemoteChild(name = ".secret.jpg", isDirectory = false, hidden = true),
+        )
+        val updated = applySlimDirectoryHidden(
+            replaceSlimDirectFilesFromLive(cached, live, "Parent"),
+            live,
+        )
+        assertTrue(updated.filterIsInstance<BrowseEntryRemote.Directory>().single().hidden)
+        assertTrue(updated.filterIsInstance<BrowseEntryRemote.FolderGallery>().single().hidden)
+        assertTrue(updated.filterIsInstance<BrowseEntryRemote.RegularFile>().single { it.name == "note.txt" }.hidden)
+        assertTrue(updated.any { it is BrowseEntryRemote.RegularFile && it.name == ".secret.jpg" && it.hidden })
+    }
+
+    @Test
+    fun slimNomediaProbeMarksAndClearsFolder() {
+        val cached = listOf(
+            BrowseEntryRemote.Directory(
+                name = "Album",
+                hasVideo = false,
+                hasGallery = true,
+                presence = DirPresence.Navigable,
+                lastModifiedMs = 10L,
+            ),
+            BrowseEntryRemote.Directory(
+                name = "OldHidden",
+                hasVideo = false,
+                hasGallery = false,
+                presence = DirPresence.Navigable,
+                lastModifiedMs = 10L,
+                hidden = true,
+            ),
+        )
+        val live = listOf(
+            RemoteChild(name = "Album", isDirectory = true, lastModifiedMs = 20L),
+            RemoteChild(name = "OldHidden", isDirectory = true, lastModifiedMs = 20L),
+        )
+        val need = directoriesNeedingNomediaRecheck(cached, live)
+        assertEquals(setOf("Album", "OldHidden"), need.map { it.name }.toSet())
+
+        val marked = applySlimDirectoryHidden(
+            cached,
+            live,
+            nomediaProbed = setOf("Album", "OldHidden"),
+            nomediaHit = setOf("Album"),
+        )
+        assertTrue(marked.filterIsInstance<BrowseEntryRemote.Directory>().single { it.name == "Album" }.hidden)
+        assertFalse(marked.filterIsInstance<BrowseEntryRemote.Directory>().single { it.name == "OldHidden" }.hidden)
+
+        val unchanged = applySlimDirectoryHidden(cached, live)
+        assertFalse(unchanged.filterIsInstance<BrowseEntryRemote.Directory>().single { it.name == "Album" }.hidden)
+        assertTrue(unchanged.filterIsInstance<BrowseEntryRemote.Directory>().single { it.name == "OldHidden" }.hidden)
+    }
+
+    @Test
     fun restoresLooseImagesWhenCacheOnlyHasCurrentDirGallery() {
         val cached = listOf(
             BrowseEntryRemote.FolderGallery(

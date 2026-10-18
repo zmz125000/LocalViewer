@@ -557,13 +557,13 @@ fun selectCachedFolderListing(
     return null
 }
 
-/** Basename set of live non-directory children (skips protected / dot names). */
+/**
+ * Basename set of live non-directory children (skips protected names).
+ * Dot / protocol-hidden files stay in the set so slim refresh can retag them
+ * instead of treating them as absent.
+ */
 fun liveDirectFileNames(liveChildren: List<RemoteChild>): Set<String> = liveChildren.asSequence()
-    .filter {
-        !it.isDirectory &&
-            !isProtectedSystemName(it.name) &&
-            !it.name.startsWith('.')
-    }
+    .filter { !it.isDirectory && !isProtectedSystemName(it.name) }
     .map { it.name }
     .toSet()
 
@@ -597,6 +597,145 @@ fun cachedDirectFileNames(cachedEntries: List<BrowseEntryRemote>): Set<String> {
         }
     }
     return names
+}
+
+/**
+ * Direct folders that need a `.nomedia` peek before [applySlimDirectoryHidden].
+ *
+ * Protocol / dot hidden is already on the live row, so those folders are not
+ * returned. A cached hidden folder whose live row is not protocol-hidden still
+ * needs a peek before the tag is cleared (it may be `.nomedia`). A known mtime
+ * change means a child was added or removed. [recheckUnknownMtime] covers SAF
+ * listings that never supply a directory mtime.
+ */
+fun directoriesNeedingNomediaRecheck(
+    cachedEntries: List<BrowseEntryRemote>,
+    liveChildren: List<RemoteChild>,
+    recheckUnknownMtime: Boolean = false,
+): List<RemoteChild> {
+    val cachedDirs = HashMap<String, BrowseEntryRemote.Directory>()
+    for (entry in cachedEntries) {
+        if (entry !is BrowseEntryRemote.Directory) continue
+        val path = entry.relativeName.replace('\\', '/').trim('/')
+        if (path.isEmpty() || '/' in path) continue
+        if (isZipArchiveFileName(path)) continue
+        cachedDirs[path] = entry
+    }
+    if (cachedDirs.isEmpty()) return emptyList()
+    val out = ArrayList<RemoteChild>()
+    for (child in liveChildren) {
+        if (!child.isDirectory || isProtectedSystemName(child.name) || isDotHiddenName(child.name)) continue
+        if (isZipArchiveFileName(child.name) || child.hidden) continue
+        val cached = cachedDirs[child.name] ?: continue
+        val cachedMtime = cached.lastModifiedMs
+        val liveMtime = child.lastModifiedMs
+        val mtimeChanged = cachedMtime > 0L && liveMtime > 0L && cachedMtime != liveMtime
+        // Cached mtime was never stored (older SAF index). One probe learns `.nomedia`.
+        val learnedMtime = cachedMtime == 0L && liveMtime > 0L && !cached.hidden
+        val unknownMtime = recheckUnknownMtime &&
+            cachedMtime == 0L &&
+            liveMtime == 0L &&
+            !cached.hidden
+        if (cached.hidden || mtimeChanged || learnedMtime || unknownMtime) out += child
+    }
+    return out
+}
+
+/**
+ * Peek [directoriesNeedingNomediaRecheck] and return (probed names, names that
+ * contain `.nomedia`). Listing is the caller's (SMB / WebDAV child list).
+ */
+suspend fun probeNomediaDirectories(
+    cachedEntries: List<BrowseEntryRemote>,
+    liveChildren: List<RemoteChild>,
+    recheckUnknownMtime: Boolean = false,
+    listChildren: suspend (String) -> List<RemoteChild>,
+): Pair<Set<String>, Set<String>> {
+    val candidates = directoriesNeedingNomediaRecheck(
+        cachedEntries,
+        liveChildren,
+        recheckUnknownMtime,
+    )
+    if (candidates.isEmpty()) return emptySet<String>() to emptySet()
+    val probed = HashSet<String>(candidates.size)
+    val hits = HashSet<String>()
+    for (child in candidates) {
+        probed += child.name
+        val listed = listChildren(child.name)
+        if (listed.any { !it.isDirectory && it.name == NOMEDIA_NAME }) hits += child.name
+    }
+    return probed to hits
+}
+
+/**
+ * Copy live hidden tags onto an existing slim listing.
+ *
+ * [nomediaProbed] are folders just checked for `.nomedia`. Names in
+ * [nomediaHit] contain that file. Folders outside the probe keep a cached
+ * `.nomedia` tag when the live row is not itself protocol-hidden.
+ * Promoted rows under a retagged folder follow the folder. Dot names stay hidden.
+ */
+fun applySlimDirectoryHidden(
+    entries: List<BrowseEntryRemote>,
+    liveChildren: List<RemoteChild>,
+    nomediaProbed: Set<String> = emptySet(),
+    nomediaHit: Set<String> = emptySet(),
+): List<BrowseEntryRemote> {
+    val liveDirs = HashMap<String, RemoteChild>()
+    for (child in liveChildren) {
+        if (!child.isDirectory || isProtectedSystemName(child.name)) continue
+        if (isZipArchiveFileName(child.name)) continue
+        liveDirs[child.name] = child
+    }
+    if (liveDirs.isEmpty()) return entries
+    return entries.map { entry ->
+        val root = browseEntryFolderRoot(entry) ?: return@map entry
+        val live = liveDirs[root] ?: return@map entry
+        val protocol = live.hidden || isDotHiddenName(root)
+        val folderHidden = when {
+            protocol -> true
+            root in nomediaProbed -> root in nomediaHit
+            else -> null
+        }
+        val directDir = entry is BrowseEntryRemote.Directory &&
+            entry.relativeName.replace('\\', '/').trim('/').let { it.isNotEmpty() && '/' !in it && it == root }
+        if (directDir && entry is BrowseEntryRemote.Directory) {
+            val hidden = folderHidden ?: entry.hidden
+            val mtime = live.lastModifiedMs.takeIf { it > 0L } ?: entry.lastModifiedMs
+            if (hidden == entry.hidden && mtime == entry.lastModifiedMs) {
+                entry
+            } else {
+                entry.copy(hidden = hidden, lastModifiedMs = mtime)
+            }
+        } else if (folderHidden == null) {
+            entry
+        } else {
+            val hidden = folderHidden || rowKeepsOwnHidden(entry)
+            if (hidden == entry.hidden) entry else entry.withHidden(hidden)
+        }
+    }
+}
+
+/** Dot-named rows stay hidden when their parent folder is unhidden. */
+private fun rowKeepsOwnHidden(entry: BrowseEntryRemote): Boolean {
+    if (isDotHiddenName(entry.name)) return true
+    val path = when (entry) {
+        is BrowseEntryRemote.Directory -> entry.relativeName
+        is BrowseEntryRemote.FolderGallery -> entry.relativeName
+        is BrowseEntryRemote.ArchiveGallery -> entry.fileName
+        is BrowseEntryRemote.VideoFile -> entry.fileName
+        is BrowseEntryRemote.RegularFile -> entry.fileName
+    }
+    val base = path.replace('\\', '/').substringAfterLast('/')
+    return isDotHiddenName(base)
+}
+
+private fun BrowseEntryRemote.withHidden(hidden: Boolean): BrowseEntryRemote = when (this) {
+    is BrowseEntryRemote.Directory -> copy(hidden = hidden)
+    is BrowseEntryRemote.FolderGallery -> copy(hidden = hidden)
+    is BrowseEntryRemote.ArchiveGallery -> copy(hidden = hidden)
+    is BrowseEntryRemote.VideoFile -> copy(hidden = hidden)
+    is BrowseEntryRemote.RegularFile -> copy(hidden = hidden)
 }
 
 /** True when direct file basenames match (no add/remove). Metadata is patched separately. */
@@ -788,7 +927,7 @@ fun BrowseEntryRemote.isUnderUnreachableFolder(unreachableRoots: Set<String>): B
 /**
  * Reconcile **direct** files against the live parent listing while keeping the composed
  * cache shape:
- * - surviving archive/video/regular rows (including loose images): **patch size/mtime only**
+ * - surviving archive/video/regular rows (including loose images and dot files): **patch size/mtime/hidden**
  * - zip-as-dir Directory rows: patch live zip size/mtime and set [BrowseEntryRemote.Directory.zipStale]
  * - missing direct files: drop
  * - new non-image files: classify only the delta
@@ -804,9 +943,7 @@ fun replaceSlimDirectFilesFromLive(
     fun norm(path: String) = path.replace('\\', '/').trim('/')
 
     val liveFiles = liveChildren.filter {
-        !it.isDirectory &&
-            !isProtectedSystemName(it.name) &&
-            !it.name.startsWith('.')
+        !it.isDirectory && !isProtectedSystemName(it.name)
     }
     val liveByName = liveFiles.associateBy { it.name }
 
@@ -874,6 +1011,7 @@ fun replaceSlimDirectFilesFromLive(
                         archives += entry.copy(
                             size = live.size,
                             lastModifiedMs = live.lastModifiedMs,
+                            hidden = live.hidden || isDotHiddenName(entry.fileName),
                             pageCount = if (live.size == entry.size) {
                                 entry.pageCount
                             } else {
@@ -894,6 +1032,7 @@ fun replaceSlimDirectFilesFromLive(
                         videos += entry.copy(
                             size = live.size,
                             lastModifiedMs = live.lastModifiedMs,
+                            hidden = live.hidden || isDotHiddenName(path),
                         )
                     }
                 }
