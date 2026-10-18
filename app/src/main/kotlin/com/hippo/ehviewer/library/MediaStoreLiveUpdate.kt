@@ -52,7 +52,8 @@ object MediaStoreLiveUpdate {
 
     /**
      * Skip dot files (unless [includeHidden]), sample clips, and non-media names.
-     * A hidden parent folder is skipped too — the startup scan does not descend into it.
+     * A hidden parent folder is skipped too when [includeHidden] is off — matching
+     * [LibraryScanner] which only descends into those trees when scan-hidden is on.
      */
     fun accept(
         file: MediaStoreLiveFile,

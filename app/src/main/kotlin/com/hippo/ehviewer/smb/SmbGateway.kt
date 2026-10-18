@@ -2376,11 +2376,12 @@ object SmbGateway {
         onPartial: (suspend (List<BrowseEntryRemote>) -> Unit)? = null,
     ): List<BrowseEntryRemote> {
         val deepScanHidden = com.hippo.ehviewer.Settings.browseShowHiddenFiles.value
-        // Dot folders: always tag-only (never peek). `.nomedia` dirs peek only when Hidden on.
+        // Dot folders stay tag-only while Hidden files is off. The toggle peeks them
+        // so a `.folder` (and its subdirs) get a real classify, not an Empty shell.
         val dirsToPeek = children.filter { c ->
             c.isDirectory &&
                 !isProtectedSystemName(c.name) &&
-                !isDotHiddenName(c.name) &&
+                (deepScanHidden || !isDotHiddenName(c.name)) &&
                 (deepScanHidden || !c.hidden)
         }
         val peeks = ConcurrentHashMap<String, List<RemoteChild>>()
