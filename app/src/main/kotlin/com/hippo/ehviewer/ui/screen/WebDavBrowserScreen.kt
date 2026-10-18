@@ -44,6 +44,7 @@ import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
@@ -84,6 +85,7 @@ import com.hippo.ehviewer.library.BrowseSession
 import com.hippo.ehviewer.library.BrowseVirtualKind
 import com.hippo.ehviewer.library.EmptyArchiveRegistry
 import com.hippo.ehviewer.library.ExplorerWindows
+import com.hippo.ehviewer.library.FolderBackHistory
 import com.hippo.ehviewer.library.FolderGalleryIndex
 import com.hippo.ehviewer.library.FolderSearch
 import com.hippo.ehviewer.library.HistoryThumbKey
@@ -221,6 +223,10 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
         }
         mutableStateOf(initial)
     }
+    // Deepest folder of the current descent. Each enter, including a sibling, replaces it.
+    var deepestDepth by remember(sourceId, shortcutEpoch, explorerWindowId) {
+        mutableIntStateOf(segments.size)
+    }
 
     /**
      * How many path segments each [enterDir] appended. Promoted video leaves append
@@ -237,6 +243,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
     var searchReturnRel by remember(explorerWindowId) { mutableStateOf<String?>(null) }
 
     fun updateSegments(new: List<String>) {
+        deepestDepth = FolderBackHistory.afterNavigate(segments.size, new.size, deepestDepth)
         segments = new
         BrowseSession.setWebDavSegments(sourceId, new)
         if (new.isEmpty()) enterHopStack = emptyList()
@@ -872,8 +879,38 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
             val target = FolderSearch.searchReturnDir(searchOrigin, relativeDir)
             if (target != null) {
                 val originSegs = target.split('/').filter { it.isNotEmpty() }
+                val depthBefore = segments.size
+                val hop = if (segments.isEmpty()) {
+                    0
+                } else {
+                    (enterHopStack.lastOrNull() ?: 1).coerceIn(1, segments.size)
+                }
+                val immediateParent = if (hop == 0) null else segments.dropLast(hop).joinToString("/")
+                val writeDeepest = immediateParent != null && target == immediateParent &&
+                    FolderBackHistory.shouldWriteDeepest(
+                        depthBefore,
+                        deepestDepth,
+                        landsOnFolder = true,
+                    )
+                val leavingRel = relativeDir
+                val leavingTitle = segments.lastOrNull() ?: source?.displayName ?: "WebDAV"
+                val cached = if (listedDir == leavingRel) {
+                    entries
+                } else {
+                    BrowseSession.getWebDavListing(sourceId, leavingRel).orEmpty()
+                }
                 enterHopStack = emptyList()
                 updateSegments(originSegs)
+                if (writeDeepest) {
+                    launchIO {
+                        LocalHistory.recordWebDavBrowseFolder(
+                            sourceId = sourceId,
+                            relativePath = leavingRel,
+                            title = leavingTitle,
+                            thumbKey = LocalHistory.webDavBrowseFolderThumbKey(sourceId, leavingRel, cached),
+                        )
+                    }
+                }
                 if (!applyCachedListing(target)) {
                     entries = emptyList()
                     listedDir = null
@@ -883,11 +920,34 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
             }
         }
         if (segments.isNotEmpty()) {
+            val depthBefore = segments.size
             val hop = (enterHopStack.lastOrNull() ?: 1).coerceIn(1, segments.size)
             enterHopStack = if (enterHopStack.isNotEmpty()) enterHopStack.dropLast(1) else enterHopStack
             val next = segments.dropLast(hop)
             val nextDir = next.joinToString("/")
+            val writeDeepest = FolderBackHistory.shouldWriteDeepest(
+                depthBefore,
+                deepestDepth,
+                landsOnFolder = true,
+            )
+            val leavingRel = relativeDir
+            val leavingTitle = segments.lastOrNull() ?: source?.displayName ?: "WebDAV"
+            val cached = if (listedDir == leavingRel) {
+                entries
+            } else {
+                BrowseSession.getWebDavListing(sourceId, leavingRel).orEmpty()
+            }
             updateSegments(next)
+            if (writeDeepest) {
+                launchIO {
+                    LocalHistory.recordWebDavBrowseFolder(
+                        sourceId = sourceId,
+                        relativePath = leavingRel,
+                        title = leavingTitle,
+                        thumbKey = LocalHistory.webDavBrowseFolderThumbKey(sourceId, leavingRel, cached),
+                    )
+                }
+            }
             // History deep-link parents are often already in session cache — paint now so
             // the second/third go-up never flashes empty+infinite refresh while effect starts.
             if (!applyCachedListing(nextDir)) {
