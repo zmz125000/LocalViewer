@@ -82,7 +82,6 @@ import com.ehviewer.core.model.BaseGalleryInfo
 import com.ehviewer.core.ui.component.ElevatedCard
 import com.ehviewer.core.ui.component.FastScrollLazyVerticalGrid
 import com.ehviewer.core.ui.util.rememberInVM
-import com.ehviewer.core.ui.util.thenIf
 import com.ehviewer.core.util.launch
 import com.ehviewer.core.util.launchIO
 import com.ehviewer.core.util.withIOContext
@@ -194,24 +193,36 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
         }
     }
     val allGalleries = rawGalleries
+    var rootsLoaded by rememberInVM { mutableStateOf(false) }
     val roots by rememberInVM {
         mutableStateOf(emptyList<LibraryRootEntity>()).also { state ->
             viewModelScope.launch {
-                LocalLibrary.rootsFlow().collect { state.value = it }
+                LocalLibrary.rootsFlow().collect {
+                    state.value = it
+                    rootsLoaded = true
+                }
             }
         }
     }
+    var smbLoaded by rememberInVM { mutableStateOf(false) }
     val smbSources by rememberInVM {
         mutableStateOf(emptyList<SmbSourceEntity>()).also { state ->
             viewModelScope.launch {
-                SmbRepository.sourcesFlow().collect { state.value = it }
+                SmbRepository.sourcesFlow().collect {
+                    state.value = it
+                    smbLoaded = true
+                }
             }
         }
     }
+    var webDavLoaded by rememberInVM { mutableStateOf(false) }
     val webDavSources by rememberInVM {
         mutableStateOf(emptyList<WebDavSourceEntity>()).also { state ->
             viewModelScope.launch {
-                WebDavRepository.sourcesFlow().collect { state.value = it }
+                WebDavRepository.sourcesFlow().collect {
+                    state.value = it
+                    webDavLoaded = true
+                }
             }
         }
     }
@@ -258,10 +269,14 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
         }
     }
     // Full history rows for the Recent strip. Directory pins are excluded below.
+    var historyLoaded by rememberInVM { mutableStateOf(false) }
     val historyRows by rememberInVM {
         mutableStateOf(emptyList<GalleryEntity>()).also { state ->
             viewModelScope.launch {
-                EhDB.historyListFlow.collect { state.value = it }
+                EhDB.historyListFlow.collect {
+                    state.value = it
+                    historyLoaded = true
+                }
             }
         }
     }
@@ -269,20 +284,35 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
     val quickRecent = remember(historyRows, keyword) {
         libraryRecentHistory(historyRows, keyword)
     }
-    var filteredRecent by remember { mutableStateOf<List<GalleryEntity>?>(null) }
-    LaunchedEffect(historyRows, keyword, historyHideFolders) {
+    // Survive tab dispose; seed from process RAM so the strip does not insert after photos.
+    var filteredRecent by rememberInVM {
+        mutableStateOf<List<GalleryEntity>?>(null)
+    }
+    val historyReady = historyLoaded || historyRows.isNotEmpty()
+    LaunchedEffect(historyRows, keyword, historyHideFolders, historyReady) {
         if (historyHideFolders.isEmpty()) {
             filteredRecent = null
+            if (historyReady) LibraryStripMemory.storeRecents(quickRecent)
             return@LaunchedEffect
         }
+        // Keep the painted strip while HISTORY has not emitted yet.
+        if (!historyReady) return@LaunchedEffect
         val rows = historyRows
         val query = keyword
         val stored = historyHideFolders
-        filteredRecent = withContext(Dispatchers.IO) {
+        val next = withContext(Dispatchers.IO) {
             visibleLibraryRecents(rows, query, stored)
         }
+        filteredRecent = next
+        LibraryStripMemory.storeRecents(next)
     }
-    val recentHistory = if (historyHideFolders.isEmpty()) quickRecent else filteredRecent.orEmpty()
+    val hiddenRecent = filteredRecent
+    val recentHistory = when {
+        historyHideFolders.isEmpty() ->
+            if (historyReady) quickRecent else LibraryStripMemory.recents()
+        hiddenRecent != null -> hiddenRecent
+        else -> LibraryStripMemory.recents()
+    }
     val rawForList = if (galleriesLoaded || rawGalleries.isNotEmpty()) {
         rawGalleries
     } else {
@@ -328,21 +358,55 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
 
     val favoriteKeys by Settings.favoriteBrowseSources.collectAsState()
     val usbVolumes by UsbVolumes.mounted.collectAsState()
-    var favorites by remember { mutableStateOf(emptyList<FavoriteBrowseSource>()) }
-    LaunchedEffect(roots, smbSources, webDavSources, allGalleries, favoriteKeys, usbVolumes) {
+    // Survive tab dispose; seed from process RAM so Favourites do not insert after photos.
+    var favorites by rememberInVM {
+        mutableStateOf(LibraryStripMemory.favorites())
+    }
+    LaunchedEffect(
+        roots,
+        smbSources,
+        webDavSources,
+        allGalleries,
+        favoriteKeys,
+        usbVolumes,
+        galleriesLoaded,
+        rootsLoaded,
+        smbLoaded,
+        webDavLoaded,
+    ) {
+        val keysNow = favoriteKeys
+        if (keysNow.isEmpty()) {
+            favorites = emptyList()
+            LibraryStripMemory.storeFavorites(emptyList())
+            return@LaunchedEffect
+        }
+        // Ready once every catalog flow has emitted, or rememberInVM already restored rows.
+        val catalogReady = (rootsLoaded && smbLoaded && webDavLoaded) ||
+            roots.isNotEmpty() ||
+            smbSources.isNotEmpty() ||
+            webDavSources.isNotEmpty()
+        // Source flows start empty. Keep the painted strip until catalog inputs are real.
+        if (!catalogReady && favorites.isNotEmpty()) return@LaunchedEffect
         val rootsNow = roots
         val smbNow = smbSources
         val webNow = webDavSources
-        val galleriesNow = allGalleries
-        val keysNow = favoriteKeys
+        val galleriesNow = if (galleriesLoaded || allGalleries.isNotEmpty()) {
+            allGalleries
+        } else {
+            LibraryListMemory.raw()
+        }
         val usbNow = usbVolumes
-        favorites = withContext(Dispatchers.Default) {
+        val next = withContext(Dispatchers.Default) {
             libraryFavoritesWithUsb(
                 resolveFavoriteBrowseSources(rootsNow, smbNow, webNow, galleriesNow, keysNow),
                 rootsNow,
                 usbNow,
             )
         }
+        // Galleries can emit before roots. Ignore an empty resolve that still looks cold.
+        if (next.isEmpty() && favorites.isNotEmpty() && !catalogReady) return@LaunchedEffect
+        favorites = next
+        LibraryStripMemory.storeFavorites(next)
     }
     // Hide favourites section while filtering.
     val showFavorites = keyword.isBlank() && favorites.isNotEmpty()
@@ -789,8 +853,6 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
             }
         }
 
-        val animateItems by Settings.animateItems.collectAsState()
-
         fun LazyGridScope.recentSection(grid: Boolean) {
             if (!showRecent) return
             val sectionCollapsed = BrowseFolderSection.Recent in collapsedSections
@@ -830,14 +892,12 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
                 recentHistory.take(previewLimit)
             }
             items(shown, key = { "recent-${it.gid}" }) { info ->
-                val itemMod = Modifier.thenIf(animateItems) { animateItem() }
                 if (grid) {
                     HistorySquareGridItem(
                         info = info,
                         onClick = { openHistoryRecord(context, info, recentQuery) },
                         showPages = showPages,
                         showProgress = showProgress,
-                        modifier = itemMod,
                     )
                 } else {
                     HistoryListItem(
@@ -845,7 +905,7 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
                         onClick = { openHistoryRecord(context, info, recentQuery) },
                         showPages = showPages,
                         showProgress = showProgress,
-                        modifier = itemMod.fillMaxWidth(),
+                        modifier = Modifier.fillMaxWidth(),
                     )
                 }
             }
