@@ -475,7 +475,7 @@ abstract class PageLoader(
         obsolete.forEach { (_, job) -> job.cancel() }
     }
 
-    private fun cancelDecodeJobs() {
+    protected fun cancelDecodeJobs() {
         val active = synchronized(jobs) {
             inflight.clear()
             forcedDecode.clear()

@@ -203,6 +203,8 @@ sealed interface ReaderScreenArgs {
         val info: BaseGalleryInfo? = null,
         /** Basenames from the browse listing; empty → resolve from folder index, else list. */
         val imageNames: List<String> = emptyList(),
+        /** Library photo-sort-by-date. Live updates keep modified-time order. */
+        val dateOrdered: Boolean = false,
     ) : ReaderScreenArgs
 
     /**

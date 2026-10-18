@@ -211,7 +211,12 @@ fun resolveFavoriteBrowseSources(
     val rootById = roots.associateBy { it.id }
     val smbById = smb.associateBy { it.id }
     val webDavById = webDav.associateBy { it.id }
-    val galleryById = galleries.associateBy { it.id }
+    // Gallery favourites are rare. Do not index every library row unless one is pinned.
+    val galleryById = if (favoriteKeys.any { it.startsWith("gallery:") }) {
+        galleries.associateBy { it.id }
+    } else {
+        emptyMap()
+    }
 
     for (root in roots) {
         if (BrowseFavorites.localKey(root.id) in favoriteKeys) {

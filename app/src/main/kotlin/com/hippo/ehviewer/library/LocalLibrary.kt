@@ -299,17 +299,18 @@ object LocalLibrary {
      * - **Archive / SAF mode**: no tree walk. Refresh folder galleries from MediaStore
      *   when that index changed; otherwise keep last folders and prune missing archives.
      */
-    suspend fun startupMaintenance() = withIOContext {
+    suspend fun startupMaintenance(forceMediaDump: Boolean = false) = withIOContext {
         scanMutex.withLock {
             _scanning.value = true
             try {
                 val roots = db.libraryRootDao().listByRole(LIBRARY_ROOT_ROLE_LIBRARY)
                 for (root in roots) {
                     if (db.libraryRootDao().load(root.id) == null) continue
+                    val skip = !forceMediaDump
                     if (root.includesArchives) {
-                        scanRootLocked(root, reuseKnownArchives = true, skipIfUnchanged = true)
+                        scanRootLocked(root, reuseKnownArchives = true, skipIfUnchanged = skip)
                     } else {
-                        scanRootLocked(root, skipIfUnchanged = true)
+                        scanRootLocked(root, skipIfUnchanged = skip)
                     }
                 }
             } finally {
@@ -510,9 +511,9 @@ object LocalLibrary {
 
     /**
      * Apply MediaStore rows that changed since the last scan. One folder row and
-     * one file row per matching library root — no descendant dump. Page lists
-     * already stored for that folder gain the new name; a missing list is left
-     * alone so a one-file write cannot wipe a full gallery.
+     * one file row per matching library root — no descendant dump. A new file
+     * appends its name to the folder index only when that index is already a
+     * complete page list. An open reader keeps the page list it opened with.
      *
      * @return how many root/file pairs were written
      */

@@ -76,7 +76,6 @@ import com.ehviewer.core.database.model.LocalGalleryEntity
 import com.ehviewer.core.database.model.SmbSourceEntity
 import com.ehviewer.core.database.model.WebDavSourceEntity
 import com.ehviewer.core.database.model.isLibraryGalleryKind
-import com.ehviewer.core.database.model.isLibraryVideoKind
 import com.ehviewer.core.i18n.R
 import com.ehviewer.core.model.BaseGalleryInfo
 import com.ehviewer.core.ui.component.ElevatedCard
@@ -106,7 +105,6 @@ import com.hippo.ehviewer.library.UsbVolumes
 import com.hippo.ehviewer.library.VideoThumbnail
 import com.hippo.ehviewer.library.ZipAsDirListing
 import com.hippo.ehviewer.library.ZipPaths
-import com.hippo.ehviewer.library.hideDuplicateGalleriesPreferMediaStore
 import com.hippo.ehviewer.library.libraryBrowseRelative
 import com.hippo.ehviewer.library.libraryFavoritesWithUsb
 import com.hippo.ehviewer.library.mimeTypeForFileName
@@ -129,8 +127,8 @@ import com.hippo.ehviewer.ui.main.BrowseListSupportingContent
 import com.hippo.ehviewer.ui.main.BrowseSectionHeader
 import com.hippo.ehviewer.ui.main.CoverImage
 import com.hippo.ehviewer.ui.main.GalleryGridDefaults
-import com.hippo.ehviewer.ui.main.HistoryGridItem
 import com.hippo.ehviewer.ui.main.HistoryListItem
+import com.hippo.ehviewer.ui.main.HistorySquareGridItem
 import com.hippo.ehviewer.ui.main.LocalBrowseListHeaderInset
 import com.hippo.ehviewer.ui.main.LocalGalleryGridItem
 import com.hippo.ehviewer.ui.main.LocalGalleryListItem
@@ -154,7 +152,9 @@ import com.ramcosta.composedestinations.annotation.Destination
 import com.ramcosta.composedestinations.annotation.RootGraph
 import com.ramcosta.composedestinations.navigation.DestinationsNavigator
 import kotlin.math.roundToInt
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import moe.tarsin.navigate
 import moe.tarsin.snackbar
 import moe.tarsin.string
@@ -182,11 +182,17 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
     val listState = rememberInVM { LazyGridState() }
     val gridState = rememberInVM { LazyGridState() }
     var searchBarOffsetY by rememberInVM { mutableIntStateOf(0) }
-    // Always keep the full library stream; filter client-side as the user types.
+    // The stream keeps running in the nav ViewModel. The tab reads the RAM snapshot
+    // first and rebuilds off the main thread only when that snapshot is stale.
+    var galleriesLoaded by rememberInVM { mutableStateOf(false) }
     val rawGalleries by rememberInVM {
         mutableStateOf(emptyList<LocalGalleryEntity>()).also { state ->
             viewModelScope.launch {
-                LocalLibrary.galleriesFlow().collect { state.value = it }
+                LocalLibrary.galleriesFlow().collect { rows ->
+                    LibraryListMemory.storeRaw(rows)
+                    state.value = rows
+                    galleriesLoaded = true
+                }
             }
         }
     }
@@ -217,10 +223,6 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
 
     val density = LocalDensity.current
     val scanning by LocalLibrary.scanning.collectAsState()
-    // Hide cross-source duplicates in UI (prefer MediaStore); DB rows stay intact.
-    val allVisibleGalleries = remember(rawGalleries) {
-        rawGalleries.hideDuplicateGalleriesPreferMediaStore()
-    }
     val libraryRecentOpen by Settings.libraryRecentOpen.collectAsState()
     val librarySortModePref by Settings.librarySortMode.collectAsState()
     val librarySortMode = LibrarySortMode.fromPref(librarySortModePref)
@@ -244,11 +246,16 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
         }
     }
     // HISTORY.TIME by gallery gid — Last open pin floats recently opened above Name/Date.
+    var historyEpoch by rememberInVM { mutableIntStateOf(0) }
     val historyTimeByGid by rememberInVM {
         mutableStateOf(emptyMap<Long, Long>()).also { state ->
             viewModelScope.launch {
                 EhDB.historyTimeListFlow.collect { rows ->
-                    state.value = rows.associate { it.gid to it.time }
+                    val next = rows.associate { it.gid to it.time }
+                    if (next != state.value) {
+                        state.value = next
+                        historyEpoch++
+                    }
                 }
             }
         }
@@ -264,54 +271,66 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
     val recentHistory = remember(historyRows, keyword) {
         libraryRecentHistory(historyRows, keyword)
     }
-    val hasGalleries = remember(allVisibleGalleries) {
-        allVisibleGalleries.any { isLibraryGalleryKind(it.kind) }
+    val rawForList = if (galleriesLoaded || rawGalleries.isNotEmpty()) {
+        rawGalleries
+    } else {
+        LibraryListMemory.raw()
     }
-    val hasVideos = remember(allVisibleGalleries) {
-        allVisibleGalleries.any { isLibraryVideoKind(it.kind) }
-    }
-    // Live in-list filter.
-    // Name + Last open: HISTORY pin then title (old recent-open toggle).
-    // Date + Last open: blend max(last-open time, scan mtime), then title.
-    val galleries = remember(
-        allVisibleGalleries,
-        keyword,
-        historyTimeByGid,
-        libraryRecentOpen,
-        librarySortMode,
-        librarySection,
-        libraryVideoMode,
-        libraryPhotoMode,
-    ) {
-        val q = keyword.trim()
-        val kindFiltered = filterLibraryItems(
-            allVisibleGalleries,
-            librarySection,
-            libraryVideoMode,
-            libraryPhotoMode,
-        )
-        val filtered = if (q.isEmpty()) {
-            kindFiltered
-        } else {
-            kindFiltered.filter { it.title.contains(q, ignoreCase = true) }
+    val listKey = LibraryListKey(
+        keyword = keyword.trim(),
+        recentOpen = libraryRecentOpen,
+        sortMode = librarySortMode,
+        section = librarySection,
+        videoMode = libraryVideoMode,
+        photoMode = libraryPhotoMode,
+        historyEpoch = if (libraryRecentOpen) historyEpoch else 0,
+    )
+    val immediate = LibraryListMemory.display(rawForList, listKey)
+    var galleries by remember { mutableStateOf(immediate?.items ?: emptyList()) }
+    var visibleGalleries by remember { mutableStateOf(immediate?.visible ?: emptyList()) }
+    var hasGalleries by remember { mutableStateOf(immediate?.hasGalleries == true) }
+    var hasVideos by remember { mutableStateOf(immediate?.hasVideos == true) }
+    var preparingList by remember { mutableStateOf(immediate == null) }
+    LaunchedEffect(rawForList, listKey, historyTimeByGid) {
+        if (rawForList.isEmpty() && !galleriesLoaded && !LibraryListMemory.loaded) return@LaunchedEffect
+        val ready = LibraryListMemory.peek(rawForList, listKey)
+        if (ready != null) {
+            galleries = ready.items
+            visibleGalleries = ready.visible
+            hasGalleries = ready.hasGalleries
+            hasVideos = ready.hasVideos
+            preparingList = false
+            return@LaunchedEffect
         }
-        val flattenPhotos = libraryFlattenPhotos(kindFiltered, librarySection, libraryPhotoMode)
-        sortLibraryItems(
-            filtered,
-            if (flattenPhotos) LibrarySortMode.Date else librarySortMode,
-            recentOpen = if (flattenPhotos) false else libraryRecentOpen,
-            historyTimeByGid,
-        )
+        val raw = rawForList
+        val history = historyTimeByGid
+        val built = withContext(Dispatchers.Default) {
+            LibraryListMemory.prepare(raw, listKey, history)
+        }
+        galleries = built.items
+        visibleGalleries = built.visible
+        hasGalleries = built.hasGalleries
+        hasVideos = built.hasVideos
+        preparingList = false
     }
 
     val favoriteKeys by Settings.favoriteBrowseSources.collectAsState()
     val usbVolumes by UsbVolumes.mounted.collectAsState()
-    val favorites = remember(roots, smbSources, webDavSources, allGalleries, favoriteKeys, usbVolumes) {
-        libraryFavoritesWithUsb(
-            resolveFavoriteBrowseSources(roots, smbSources, webDavSources, allGalleries, favoriteKeys),
-            roots,
-            usbVolumes,
-        )
+    var favorites by remember { mutableStateOf(emptyList<FavoriteBrowseSource>()) }
+    LaunchedEffect(roots, smbSources, webDavSources, allGalleries, favoriteKeys, usbVolumes) {
+        val rootsNow = roots
+        val smbNow = smbSources
+        val webNow = webDavSources
+        val galleriesNow = allGalleries
+        val keysNow = favoriteKeys
+        val usbNow = usbVolumes
+        favorites = withContext(Dispatchers.Default) {
+            libraryFavoritesWithUsb(
+                resolveFavoriteBrowseSources(rootsNow, smbNow, webNow, galleriesNow, keysNow),
+                rootsNow,
+                usbNow,
+            )
+        }
     }
     // Hide favourites section while filtering.
     val showFavorites = keyword.isBlank() && favorites.isNotEmpty()
@@ -365,7 +384,7 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
         if (keyword.isNotBlank()) launchIO { recordDeviceSearchHistory(keyword) }
         ReaderGalleryPlaylist.setFromLibrary(
             sortLibraryItems(
-                allVisibleGalleries.filter { isLibraryGalleryKind(it.kind) },
+                visibleGalleries.filter { isLibraryGalleryKind(it.kind) },
                 librarySortMode,
                 libraryRecentOpen,
                 historyTimeByGid,
@@ -427,7 +446,7 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
         } else {
             val dated = if (libraryOpenUsesDateSort(Settings.libraryPhotoSortByDate.value)) {
                 libraryFolderImageNames(
-                    allVisibleGalleries,
+                    visibleGalleries,
                     gallery.rootId,
                     gallery.relativePath,
                     dateSort = true,
@@ -435,7 +454,12 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
             } else {
                 emptyList()
             }
-            navToLocalFolderReader(gallery.contentPath, info, imageNames = dated)
+            navToLocalFolderReader(
+                gallery.contentPath,
+                info,
+                imageNames = dated,
+                dateOrdered = dated.isNotEmpty(),
+            )
         }
     }
 
@@ -524,17 +548,19 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
     fun openImageFile(item: LocalGalleryEntity, photoGrid: Boolean) {
         val parentRel = libraryBrowseRelative(parentRelativeOfFile(item.relativePath))
         val folderKey = parentRel.ifEmpty { "." }
-        val parent = allVisibleGalleries.firstOrNull {
+        val parent = visibleGalleries.firstOrNull {
             it.rootId == item.rootId &&
                 it.kind == LOCAL_GALLERY_KIND_FOLDER &&
                 it.relativePath == folderKey
         }
-        val names = libraryFolderImageNames(
-            allVisibleGalleries,
+        val dateOrdered = libraryOpenUsesDateSort(Settings.libraryPhotoSortByDate.value)
+        val datedNames = libraryFolderImageNames(
+            visibleGalleries,
             item.rootId,
             parentRel,
-            dateSort = libraryOpenUsesDateSort(Settings.libraryPhotoSortByDate.value),
-        ) ?: allVisibleGalleries
+            dateSort = dateOrdered,
+        )
+        val names = datedNames ?: visibleGalleries
             .asSequence()
             .filter {
                 it.rootId == item.rootId &&
@@ -554,7 +580,7 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
             } else {
                 ReaderGalleryPlaylist.setFromLibrary(
                     sortLibraryItems(
-                        allVisibleGalleries.filter { isLibraryGalleryKind(it.kind) },
+                        visibleGalleries.filter { isLibraryGalleryKind(it.kind) },
                         librarySortMode,
                         libraryRecentOpen,
                         historyTimeByGid,
@@ -566,13 +592,14 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
                     parent.toBaseGalleryInfo(),
                     page,
                     names,
+                    dateOrdered = datedNames != null,
                 )
             }
             return
         }
         val dir = item.contentPath.toPath().parent?.toString() ?: return
         launchIO { LocalHistory.recordLocalFile(item.contentPath, title = item.title) }
-        navToLocalFolderReader(dir, item.toBaseGalleryInfo(), page, names)
+        navToLocalFolderReader(dir, item.toBaseGalleryInfo(), page, names, dateOrdered = datedNames != null)
     }
 
     /** All-videos list only. Long-press is the other player. A video folder keeps the main switch. */
@@ -773,7 +800,7 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
             }
             items(shown, key = { "recent-${it.gid}" }) { info ->
                 if (grid) {
-                    HistoryGridItem(
+                    HistorySquareGridItem(
                         info = info,
                         onClick = { openHistoryRecord(context, info, recentQuery) },
                         showPages = showPages,
@@ -921,7 +948,7 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
                 }
             }
 
-            if (isEmpty && !scanning && !refreshing) {
+            if (isEmpty && !scanning && !refreshing && !preparingList) {
                 Column(
                     modifier = Modifier
                         .padding(paddingValues)
@@ -944,7 +971,7 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
                 }
             }
 
-            if (scanning && isEmpty) {
+            if ((scanning || preparingList) && galleries.isEmpty()) {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     CircularWavyProgressIndicator()
                 }

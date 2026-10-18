@@ -57,12 +57,16 @@ suspend inline fun <T> useFolderPageLoader(
             object : PageLoader(this, info, startPage.coerceIn(0, size - 1), size) {
                 override val title get() = loaderTitle
 
-                override fun getImageExtension(index: Int) = FileUtils.getExtensionFromFilename(files[index].name)
+                override fun getImageExtension(index: Int): String? {
+                    val name = files.getOrNull(index)?.name ?: return null
+                    return FileUtils.getExtensionFromFilename(name)
+                }
 
-                override fun getOriginalImageFileName(index: Int) = files[index].name
+                override fun getOriginalImageFileName(index: Int) = files.getOrNull(index)?.name
 
                 override fun savePage(index: Int, file: Path): Boolean = runCatching {
-                    files[index] sendTo file
+                    val src = files.getOrNull(index) ?: return false
+                    src sendTo file
                     true
                 }.getOrDefault(false)
 

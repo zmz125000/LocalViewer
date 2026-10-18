@@ -515,6 +515,88 @@ fun HistoryGridItem(
 }
 
 /**
+ * Library Recents grid cell — same square card as folder [BrowseDirectoryGridItem]
+ * and library favourite galleries: the cover fills the cell and the name sits on a
+ * bottom scrim. History keeps [HistoryGridItem] (square cover plus a name band).
+ */
+@Composable
+fun HistorySquareGridItem(
+    info: GalleryInfo,
+    onClick: () -> Unit,
+    onLongClick: () -> Unit = onClick,
+    showPages: Boolean,
+    showProgress: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    val kind = LocalHistory.kindLabelKey(info)
+    val placeholderIcon: ImageVector = when (kind) {
+        LocalHistory.KindLabel.Archive -> Icons.Default.Inventory2
+        LocalHistory.KindLabel.Smb -> Icons.Default.Lan
+        LocalHistory.KindLabel.WebDav -> Icons.Default.Cloud
+        LocalHistory.KindLabel.Library, LocalHistory.KindLabel.File ->
+            Icons.AutoMirrored.Filled.InsertDriveFile
+        LocalHistory.KindLabel.Video -> Icons.Default.Movie
+        else -> Icons.Default.Folder
+    }
+    val namePadH = GalleryGridDefaults.namePaddingH()
+    val namePadBottom = GalleryGridDefaults.namePaddingBottom()
+    val coverKey = remember(info.gid, info.thumbKey, info.token, info.uploader) {
+        historyCoverKey(info)
+    }
+    ElevatedCard(
+        onClick = onClick,
+        onLongClick = onLongClick,
+        modifier = modifier.fillMaxWidth().aspectRatio(1f),
+        colors = GalleryGridDefaults.cardColors(),
+    ) {
+        Box(Modifier.fillMaxSize().clip(ShapeDefaults.Medium)) {
+            CoverImage(
+                coverPath = coverKey,
+                progressGid = info.gid,
+                sizePx = GalleryGridDefaults.gridDecodePx(),
+                placeholder = placeholderIcon,
+                placeholderSize = BrowseGridPlaceholderIconSize,
+                modifier = Modifier.fillMaxSize(),
+            )
+            if (showPages && LocalHistory.showsPageProgress(info)) {
+                Badge(
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .widthIn(min = 32.dp)
+                        .height(24.dp),
+                ) {
+                    val readProgress = if (showProgress) {
+                        remember(info.gid) { EhDB.getReadProgressFlow(info.gid) }.collectAsState(0).value
+                    } else {
+                        0
+                    }
+                    Text(
+                        text = if (readProgress > 0) {
+                            "${readProgress + 1}/${info.pages}"
+                        } else {
+                            "${info.pages}"
+                        },
+                    )
+                }
+            }
+            Text(
+                text = info.title.orEmpty(),
+                style = MaterialTheme.typography.labelMedium,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                textAlign = TextAlign.Start,
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth()
+                    .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.55f))
+                    .padding(horizontal = namePadH)
+                    .padding(top = 4.dp, bottom = namePadBottom),
+            )
+        }
+    }
+}
+
+/**
  * History **Directories** section grid cell — same square layout as Library
  * [FavoriteSourceGridCell]: full-bleed cover + bottom scrim when folder thumbs are on
  * and a thumb is cached. Off ([Settings.browseFolderThumbs]) keeps the folder icon

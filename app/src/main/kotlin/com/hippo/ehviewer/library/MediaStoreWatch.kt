@@ -263,7 +263,7 @@ object MediaStoreWatch {
 
     private suspend fun reconcile(reason: String) {
         logcat("MediaStoreWatch") { "Reconcile library ($reason)" }
-        LocalLibrary.startupMaintenance()
+        LocalLibrary.startupMaintenance(forceMediaDump = true)
         generationAtArm = MediaStoreFs.volumeGeneration()
     }
 
