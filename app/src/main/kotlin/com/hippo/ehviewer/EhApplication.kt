@@ -79,6 +79,7 @@ import com.hippo.ehviewer.ui.main.BrowseSaveTransfers
 import com.hippo.ehviewer.ui.tools.dataStateFlow
 import com.hippo.ehviewer.util.AppConfig
 import com.hippo.ehviewer.util.CrashHandler
+import com.hippo.ehviewer.util.ExternalStorageRoots
 import com.hippo.ehviewer.util.FileUtils
 import com.hippo.ehviewer.util.OSUtils
 import com.hippo.ehviewer.webdav.WebDavClient
@@ -180,6 +181,8 @@ class EhApplication : Application(), SingletonImageLoader.Factory {
                 }
             }
         }
+        // Before StrictMode: cache storage roots used by Uri.displayPath in Compose.
+        ExternalStorageRoots.warm()
         if (BuildConfig.DEBUG) {
             StrictMode.enableDefaults()
             Composer.setDiagnosticStackTraceMode(ComposeStackTraceMode.SourceInformation)

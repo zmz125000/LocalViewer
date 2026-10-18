@@ -14,36 +14,72 @@ import kotlinx.io.readString
 import okio.Path
 import splitties.init.appCtx
 
+/**
+ * Cached primary / volume roots for [Uri.displayPath].
+ *
+ * Call [warm] once from [com.hippo.ehviewer.EhApplication] **before** enabling StrictMode.
+ * After that, [resolve] is memory-only and safe during Compose.
+ */
+object ExternalStorageRoots {
+    @Volatile
+    private var primaryPath: String = "/storage/emulated/0"
+
+    @Volatile
+    private var cachePaths: List<String> = emptyList()
+
+    fun warm() {
+        primaryPath = Environment.getExternalStorageDirectory().path
+        cachePaths = appCtx.externalCacheDirs.mapNotNull { it?.path }
+    }
+
+    fun resolve(type: String, relative: String): String {
+        if (type == "primary") {
+            return if (relative.isEmpty()) primaryPath else "$primaryPath/$relative"
+        }
+        for (cachePath in cachePaths) {
+            val index = cachePath.indexOf(type)
+            if (index != -1) {
+                val root = cachePath.substring(0, index + type.length)
+                return if (relative.isEmpty()) root else "$root/$relative"
+            }
+        }
+        val root = "/storage/$type"
+        return if (relative.isEmpty()) root else "$root/$relative"
+    }
+}
+
+/**
+ * Human-readable path for UI (and FS probes that only need a conventional path).
+ *
+ * StrictMode-safe on the main thread after [ExternalStorageRoots.warm]:
+ * avoids [DocumentsContract.isDocumentUri] (PackageManager) and per-call
+ * [Environment.getExternalStorageDirectory] / [android.content.Context.getExternalCacheDirs].
+ */
 val Uri.displayPath: String?
     get() {
         if (scheme == ContentResolver.SCHEME_FILE) {
             return path
         }
 
-        val context = appCtx
-        val docId = when {
-            DocumentsContract.isDocumentUri(context, this) ->
-                runCatching { DocumentsContract.getDocumentId(this) }.getOrNull()
-            DocumentsContractCompat.isTreeUri(this) ->
-                runCatching { DocumentsContract.getTreeDocumentId(this) }.getOrNull()
-            else -> null
-        } ?: return toString()
+        val docId = documentIdForDisplay() ?: return toString()
         val parts = docId.split(":", limit = 2)
         if (parts.size < 2) return toString()
         val type = parts[0]
         val relative = parts[1]
-        if (authority == "com.android.externalstorage.documents" && type == "primary") {
-            return Environment.getExternalStorageDirectory().path + "/" + relative
-        }
-        context.externalCacheDirs.forEach {
-            val cachePath = it.path
-            val index = cachePath.indexOf(type)
-            if (index != -1) {
-                return cachePath.substring(0, index + type.length) + "/" + relative
-            }
+        if (authority == "com.android.externalstorage.documents") {
+            return ExternalStorageRoots.resolve(type, relative)
         }
         return toString()
     }
+
+/** Path-segment parse only — no PackageManager / disk. */
+private fun Uri.documentIdForDisplay(): String? = when {
+    DocumentsContractCompat.isTreeUri(this) ->
+        runCatching { DocumentsContract.getTreeDocumentId(this) }.getOrNull()
+    pathSegments.getOrNull(0) == "document" && pathSegments.size >= 2 ->
+        runCatching { DocumentsContract.getDocumentId(this) }.getOrNull()
+    else -> null
+}
 
 val Path.displayName: String
     get() {
