@@ -14,6 +14,7 @@ fun isDotHiddenName(name: String): Boolean = name.startsWith('.')
  * Physical paths use [File.exists]; SAF/MediaStore stream children until found.
  */
 fun Path.hasNomediaMarker(): Boolean {
+    directoryContainsNomediaFile()?.let { return it }
     val str = toString()
     if (str.startsWith('/')) {
         return File(str, NOMEDIA_NAME).isFile
@@ -45,7 +46,8 @@ fun List<BrowseChild>.withHiddenFlags(): List<BrowseChild> {
         if (!child.isDirectory) {
             if (dot == child.hidden) child else child.copy(hidden = dot || child.hidden)
         } else {
-            val nomedia = !dot && !child.fromMediaStore && child.path.hasNomediaMarker()
+            // MediaStore overlay rows still need a `.nomedia` stat. The index omits that file.
+            val nomedia = !dot && !child.hidden && child.path.hasNomediaMarker()
             val hidden = child.hidden || dot || nomedia
             if (hidden == child.hidden) child else child.copy(hidden = hidden)
         }
