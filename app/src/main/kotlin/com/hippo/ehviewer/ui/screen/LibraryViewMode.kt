@@ -233,25 +233,29 @@ fun sortLibraryItems(
     sortMode: LibrarySortMode,
     recentOpen: Boolean,
     historyTimeByGid: Map<Long, Long>,
-): List<LocalGalleryEntity> = when {
-    sortMode == LibrarySortMode.Date && recentOpen ->
-        items.sortedWith(
-            compareByDescending<LocalGalleryEntity> {
-                maxOf(libraryItemLastOpenTime(it, historyTimeByGid), it.mtime)
-            }.thenBy(String.CASE_INSENSITIVE_ORDER) { it.title },
-        )
-    sortMode == LibrarySortMode.Date ->
-        items.sortedWith(
-            compareByDescending<LocalGalleryEntity> { it.mtime }
-                .thenBy(String.CASE_INSENSITIVE_ORDER) { it.title },
-        )
-    recentOpen ->
-        items.sortedWith(
-            compareByDescending<LocalGalleryEntity> { libraryItemLastOpenTime(it, historyTimeByGid) }
-                .thenBy(String.CASE_INSENSITIVE_ORDER) { it.title },
-        )
-    else ->
-        items.sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it.title })
+): List<LocalGalleryEntity> {
+    if (items.size <= 1) return items
+    val byDate = sortMode == LibrarySortMode.Date
+    val byRecent = recentOpen
+    if (!byDate && !byRecent) {
+        return items.sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it.title })
+    }
+    // One pass for the history hash. The comparator then only reads that key.
+    val keys = LongArray(items.size)
+    for (i in items.indices) {
+        val item = items[i]
+        keys[i] = when {
+            byDate && byRecent -> maxOf(libraryItemLastOpenTime(item, historyTimeByGid), item.mtime)
+            byDate -> item.mtime
+            else -> libraryItemLastOpenTime(item, historyTimeByGid)
+        }
+    }
+    val order = items.indices.toMutableList()
+    order.sortWith(
+        compareByDescending<Int> { keys[it] }
+            .thenBy(String.CASE_INSENSITIVE_ORDER) { items[it].title },
+    )
+    return order.map { items[it] }
 }
 
 /**

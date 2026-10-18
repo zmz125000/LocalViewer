@@ -13,6 +13,7 @@ import com.hippo.ehviewer.library.stableGalleryId
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -273,11 +274,52 @@ class LibrarySortTest {
         mtime = mtime,
     )
 
+    @Test
+    fun ramListOpensWithoutRebuildingUntilTheViewChanges() {
+        LibraryListMemory.resetForTest()
+        val raw = listOf(
+            item(1, "Beta", mtime = 1, contentPath = "mediastore:/Beta"),
+            item(2, "alpha", mtime = 2, contentPath = "mediastore:/alpha"),
+        )
+        val key = LibraryListKey(
+            keyword = "",
+            recentOpen = false,
+            sortMode = LibrarySortMode.Name,
+            section = LibrarySection.Galleries,
+            videoMode = LibraryVideoMode.Folders,
+            photoMode = LibraryPhotoMode.Folders,
+            historyEpoch = 0,
+        )
+        LibraryListMemory.storeRaw(raw)
+        val first = LibraryListMemory.prepare(raw, key, emptyMap())
+        assertEquals(listOf("alpha", "Beta"), first.items.map { it.title })
+        assertSame(first, LibraryListMemory.peek(raw, key))
+        assertSame(first, LibraryListMemory.prepare(raw, key, emptyMap()))
+        assertSame(first.items, LibraryListMemory.display(raw, key.copy(historyEpoch = 4))?.items)
+        assertEquals(null, LibraryListMemory.peek(raw, key.copy(historyEpoch = 4)))
+        assertEquals(null, LibraryListMemory.display(raw, key.copy(section = LibrarySection.Videos)))
+    }
+
+    @Test
+    fun recentSortOfALargeListStaysInOrder() {
+        val count = 20_000
+        val items = List(count) { index -> item(index.toLong(), "t$index", mtime = index.toLong()) }
+        val history = HashMap<Long, Long>(count)
+        for (index in 0 until count) history[index.toLong()] = (count - index).toLong()
+        val started = System.nanoTime()
+        val sorted = sortLibraryItems(items, LibrarySortMode.Name, recentOpen = true, history)
+        val elapsedMs = (System.nanoTime() - started) / 1_000_000
+        assertEquals("t0", sorted.first().title)
+        assertEquals("t${count - 1}", sorted.last().title)
+        assertTrue("recent sort of $count took ${elapsedMs}ms", elapsedMs < 2_000)
+    }
+
     private fun item(
         id: Long,
         title: String,
         mtime: Long = 0L,
         kind: Int = LOCAL_GALLERY_KIND_FOLDER,
+        contentPath: String = "/sdcard/$title",
     ) = LocalGalleryEntity(
         id = id,
         rootId = 1L,
@@ -286,7 +328,7 @@ class LibrarySortTest {
         kind = kind,
         pageCount = 1,
         coverPath = null,
-        contentPath = "/sdcard/$title",
+        contentPath = contentPath,
         mtime = mtime,
     )
 }
