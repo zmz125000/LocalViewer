@@ -350,6 +350,13 @@ internal enum class TaskStatus { Pending, Running, Done, Failed }
 
 internal enum class BatchEnd { Stop, Continue, Done }
 
+/** A save/convert batch waiting behind the running [FolderSelectHost] task. */
+private data class QueuedBatch(
+    val jobs: List<TaskJob>,
+    val dir: Path,
+    val folderKey: String?,
+)
+
 internal class TaskJob(
     val id: Long,
     val title: String,
@@ -463,9 +470,34 @@ object FolderSelectHost {
 
     private val folders = mutableMapOf<String, FolderMemory>()
     private val snackbarOrder = ArrayDeque<String>()
+
+    /** Save/convert batches waiting until the running task's jobs finish. */
+    private val taskQueue = ArrayDeque<QueuedBatch>()
+
+    /** folderKey → queued job count; drives snackbar "x queued in …" text. */
+    var queuedCounts by mutableStateOf<Map<String, Int>>(emptyMap())
+        private set
     private var shownFolderKey: String? = null
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private var scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val ids = AtomicLong(1)
+
+    /** Unit-test override for [Settings.browseTaskAutoFinish]; null reads the pref. */
+    internal var autoFinishForTest: Boolean? = null
+
+    private fun autoFinishEnabled(): Boolean = autoFinishForTest
+        ?: runCatching { Settings.browseTaskAutoFinish.value }.getOrDefault(false)
+
+    /** Folder keys with a queued batch behind the running task. */
+    internal fun queuedFolderKeys(): Set<String> = queuedCounts.keys
+
+    private fun syncQueuedCounts() {
+        val next = LinkedHashMap<String, Int>()
+        for (queued in taskQueue) {
+            val key = queued.folderKey ?: continue
+            next[key] = queued.jobs.size
+        }
+        queuedCounts = next
+    }
 
     fun attach(state: FolderSelectState) {
         current = state
@@ -566,6 +598,7 @@ object FolderSelectHost {
     }
 
     fun cancelSelection(folderKey: String) {
+        if (taskQueue.removeAll { it.folderKey == folderKey }) syncQueuedCounts()
         val closeList = shownFolderKey == folderKey && !showingTask
         val live = current
         if (live != null && live.folderKey == folderKey) {
@@ -625,6 +658,8 @@ object FolderSelectHost {
         running?.runner?.cancel()
         folders.clear()
         snackbarOrder.clear()
+        taskQueue.clear()
+        queuedCounts = emptyMap()
         shownFolderKey = null
         selectionSnacks = emptyList()
         selectionSnack = null
@@ -632,6 +667,9 @@ object FolderSelectHost {
         showingTask = false
         current = null
         dialog = false
+        autoFinishForTest = null
+        // Unit tests have no Android Main dispatcher.
+        scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
         syncTaskFgs()
     }
 
@@ -669,6 +707,7 @@ object FolderSelectHost {
     fun continueSelection() {
         val running = batch ?: return
         if (!running.finishedRun || running.end != null) return
+        dialog = true
         running.end = BatchEnd.Continue
         running.wake()
     }
@@ -682,9 +721,25 @@ object FolderSelectHost {
     }
 
     internal fun startTasks(jobs: List<TaskJob>, dir: Path, folderKey: String? = null) {
-        if (batch != null || jobs.isEmpty()) return
-        val list = mutableStateListOf<TaskJob>().also { it.addAll(jobs) }
+        if (jobs.isEmpty()) return
         val key = folderKey ?: shownFolderKey ?: selectionSnack?.folderKey ?: current?.folderKey
+        val running = batch
+        if (running != null) {
+            // Another snackbar started work — run after the current jobs finish (not Done/Continue).
+            if (key != null) taskQueue.removeAll { it.folderKey == key }
+            taskQueue.addLast(QueuedBatch(jobs.toList(), dir, key))
+            syncQueuedCounts()
+            if (running.finishedRun && running.end == null) {
+                // Current batch already finished; release it so the queue can start.
+                advanceFinishedBatch(running)
+            }
+            return
+        }
+        launchBatch(jobs, dir, key)
+    }
+
+    private fun launchBatch(jobs: List<TaskJob>, dir: Path, key: String?, execute: Boolean = true) {
+        val list = mutableStateListOf<TaskJob>().also { it.addAll(jobs) }
         if (key != null) shownFolderKey = key
         val running = TaskBatch(
             key,
@@ -694,16 +749,28 @@ object FolderSelectHost {
             key?.let { placeFor(it) },
         )
         batch = running
-        showingTask = true
-        dialog = true
+        // Do not open the task panel — user opens it from the task snackbar.
         syncTaskFgs()
+        if (!execute) return
         running.runner = scope.launch {
             try {
                 executeJobs(running, dir)
                 if (running.end == null) {
                     running.finishedRun = true
                     syncTaskFgs()
-                    while (running.end == null) running.awaitSignal()
+                    when {
+                        autoFinishEnabled() -> {
+                            // Clear this selection; finishBatch starts any queued batch next.
+                            running.end = BatchEnd.Done
+                        }
+                        taskQueue.isNotEmpty() -> {
+                            // Keep this selection and start the next snackbar's batch.
+                            running.end = BatchEnd.Continue
+                        }
+                        else -> {
+                            while (running.end == null) running.awaitSignal()
+                        }
+                    }
                 }
             } catch (_: CancellationException) {
                 if (running.end == null) running.end = BatchEnd.Stop
@@ -713,9 +780,37 @@ object FolderSelectHost {
         }
     }
 
+    private fun startNextQueued(execute: Boolean = true) {
+        if (batch != null) return
+        val next = taskQueue.removeFirstOrNull() ?: return
+        syncQueuedCounts()
+        launchBatch(next.jobs, next.dir, next.folderKey, execute = execute)
+    }
+
+    /**
+     * End [running] so a queued batch can start.
+     * Auto-finish uses Done; otherwise Continue keeps the finished folder's selection.
+     */
+    private fun advanceFinishedBatch(running: TaskBatch, executeQueued: Boolean = true) {
+        if (batch !== running || running.end != null) return
+        running.finishedRun = true
+        running.end = if (autoFinishEnabled()) BatchEnd.Done else BatchEnd.Continue
+        running.wake()
+        // Finish here: the runner may be waiting on awaitSignal, or be a test Job() with
+        // no collector. finishBatch is idempotent once [batch] moves on.
+        finishBatch(running, executeQueued = executeQueued)
+    }
+
     internal fun endBatchForTest(running: TaskBatch) {
         batch = running
-        finishBatch(running)
+        // Unit tests have no Main dispatcher; install the next queued batch without running it.
+        finishBatch(running, executeQueued = false)
+    }
+
+    /** Simulate the running jobs finishing so a queued batch can start (no Main dispatcher). */
+    internal fun completeRunForTest(running: TaskBatch) {
+        batch = running
+        advanceFinishedBatch(running, executeQueued = false)
     }
 
     /** Leave [running] on screen without executing it. */
@@ -725,14 +820,13 @@ object FolderSelectHost {
         dialog = true
     }
 
-    private fun finishBatch(running: TaskBatch) {
+    private fun finishBatch(running: TaskBatch, executeQueued: Boolean = true) {
         if (batch !== running) return
         when (running.end ?: BatchEnd.Stop) {
             BatchEnd.Continue -> {
                 batch = null
                 showingTask = false
                 running.folderKey?.let { shownFolderKey = it }
-                dialog = true
                 refreshSelectionSnack()
             }
             BatchEnd.Done -> {
@@ -751,6 +845,9 @@ object FolderSelectHost {
             }
         }
         syncTaskFgs()
+        // Queue advances when the previous run finished (Continue from completeRun / auto-hand-off).
+        // Done/Stop also clear the batch slot — start the next only if one is waiting.
+        startNextQueued(execute = executeQueued)
     }
 
     private fun restorePendingSelection(running: TaskBatch) {
@@ -837,8 +934,13 @@ private fun FolderSelectSnackbar(snack: SelectionSnack) {
             }
         },
     ) {
+        val queued = FolderSelectHost.queuedCounts[snack.folderKey] ?: 0
         Text(
-            text = stringResource(R.string.browse_selected_in_folder, snack.count, snack.folderName),
+            text = if (queued > 0) {
+                stringResource(R.string.browse_queued_in_folder, queued, snack.folderName)
+            } else {
+                stringResource(R.string.browse_selected_in_folder, snack.count, snack.folderName)
+            },
             maxLines = 2,
             overflow = TextOverflow.Ellipsis,
         )
@@ -1221,6 +1323,7 @@ private fun SelectionOverflowControl(
     var convertMenu by remember { mutableStateOf(false) }
     val picks = FolderSelectHost.selectionPicks
     val runInBackground = Settings.browseTaskForegroundService.asMutableState()
+    val autoFinish = Settings.browseTaskAutoFinish.asMutableState()
     val shareable = picks.count { it.shareHttp != null }
     val convertible = picks.count { it.convertStill != null }
     val savable = picks.count { it.saveInto != null }
@@ -1323,6 +1426,20 @@ private fun SelectionOverflowControl(
                     },
                     onClick = { runInBackground.value = !runInBackground.value },
                 )
+                DropdownMenuItem(
+                    text = { Text(stringResource(R.string.browse_auto_finish)) },
+                    trailingIcon = {
+                        Box(
+                            modifier = Modifier.size(24.dp),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            if (autoFinish.value) {
+                                Icon(Icons.Default.Check, contentDescription = null)
+                            }
+                        }
+                    },
+                    onClick = { autoFinish.value = !autoFinish.value },
+                )
             }
         }
     }
@@ -1393,7 +1510,6 @@ private fun beginConvert(
         scope.launch { with(snackbar) { snackbar(context.getString(R.string.browse_action_not_supported)) } }
         return
     }
-    if (FolderSelectHost.batch != null) return
     scope.launch {
         val dir = with(snackbar) { with(context) { BrowseSaveAs.pickConvertDirectory() } } ?: return@launch
         val jobs = items.map { pick ->
@@ -1415,7 +1531,6 @@ private fun beginSave(
         scope.launch { with(snackbar) { snackbar(context.getString(R.string.browse_action_not_supported)) } }
         return
     }
-    if (FolderSelectHost.batch != null) return
     scope.launch {
         val dir = with(snackbar) { with(context) { BrowseSaveAs.pickSaveDirectory() } } ?: return@launch
         val jobs = items.map { pick ->

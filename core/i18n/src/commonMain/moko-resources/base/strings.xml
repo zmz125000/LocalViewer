@@ -144,6 +144,7 @@
     <string name="browse_item_info">Info</string>
     <string name="browse_open_folder">Open folder</string>
     <string name="browse_run_in_background">Run in background</string>
+    <string name="browse_auto_finish">Auto finish</string>
     <string name="browse_create_shortcut">Create shortcut</string>
     <string name="browse_shortcut_unsupported">This launcher can't pin a home screen shortcut</string>
     <string name="browse_play">Play</string>
@@ -1111,6 +1112,7 @@
     <string name="browse_select">Select</string>
     <string name="browse_selected_count">%1$d selected</string>
     <string name="browse_selected_in_folder">%1$d selected in %2$s</string>
+    <string name="browse_queued_in_folder">%1$d queued in %2$s</string>
     <string name="browse_list">List</string>
     <string name="browse_action">Action</string>
     <string name="browse_selection">Selection</string>

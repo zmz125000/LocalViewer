@@ -134,6 +134,7 @@
     <string name="browse_item_info">資訊</string>
     <string name="browse_open_folder">開啟資料夾</string>
     <string name="browse_run_in_background">後台運行</string>
+    <string name="browse_auto_finish">自動完成</string>
     <string name="browse_play">播放</string>
     <string name="browse_external_player">外部播放器</string>
     <string name="browse_image_reader">圖片閱讀器</string>
@@ -827,6 +828,7 @@
     <string name="browse_select">選擇</string>
     <string name="browse_selected_count">已選 %1$d</string>
     <string name="browse_selected_in_folder">在 %2$s 中已選 %1$d</string>
+    <string name="browse_queued_in_folder">在 %2$s 中已排隊 %1$d</string>
     <string name="browse_list">列表</string>
     <string name="browse_action">操作</string>
     <string name="browse_selection">選擇</string>

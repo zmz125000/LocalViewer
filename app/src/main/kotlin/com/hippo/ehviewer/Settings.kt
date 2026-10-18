@@ -725,6 +725,12 @@ object Settings : DataStorePreferences(null) {
     val browseTaskForegroundService = boolPref("browse_task_foreground_service", false)
         .observed(::updateWhenBrowseTaskForegroundServiceChanges)
 
+    /**
+     * When a folder batch finishes with nothing queued, dismiss it as Done (clear selection)
+     * instead of waiting for the user to tap Done. Default off.
+     */
+    val browseTaskAutoFinish = boolPref("browse_task_auto_finish", false)
+
     val hardwareBitmapThreshold = intPref("hardware_bitmap_threshold", 16384)
     val preloadThumbAggressively = boolPref("preload_thumb_aggressively", false)
     val animateItems = boolPref("animate_items", true)
