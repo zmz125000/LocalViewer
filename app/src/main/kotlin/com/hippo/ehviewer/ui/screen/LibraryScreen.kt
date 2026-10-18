@@ -126,8 +126,8 @@ import com.hippo.ehviewer.ui.main.BrowseListSupportingContent
 import com.hippo.ehviewer.ui.main.BrowseSectionHeader
 import com.hippo.ehviewer.ui.main.CoverImage
 import com.hippo.ehviewer.ui.main.GalleryGridDefaults
-import com.hippo.ehviewer.ui.main.HistoryGridItem
 import com.hippo.ehviewer.ui.main.HistoryListItem
+import com.hippo.ehviewer.ui.main.HistorySquareGridItem
 import com.hippo.ehviewer.ui.main.LocalBrowseListHeaderInset
 import com.hippo.ehviewer.ui.main.LocalGalleryGridItem
 import com.hippo.ehviewer.ui.main.LocalGalleryListItem
@@ -768,7 +768,7 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
             }
             items(shown, key = { "recent-${it.gid}" }) { info ->
                 if (grid) {
-                    HistoryGridItem(
+                    HistorySquareGridItem(
                         info = info,
                         onClick = { openHistoryRecord(context, info, recentQuery) },
                         showPages = showPages,
