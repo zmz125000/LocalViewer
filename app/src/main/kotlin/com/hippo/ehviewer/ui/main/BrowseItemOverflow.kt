@@ -97,7 +97,6 @@ fun BrowseItemOverflowButton(
 ) {
     var expanded by remember { mutableStateOf(false) }
     var convertMenu by remember { mutableStateOf(false) }
-    val selecting = FolderSelectHost.current?.selecting == true
     val context = LocalContext.current
     val shortcutUnsupported = stringResource(R.string.browse_shortcut_unsupported)
     val grid = placement == BrowseOverflowPlacement.GridBottomEnd
@@ -162,12 +161,19 @@ fun BrowseItemOverflowButton(
                 }
                 return@DropdownMenu
             }
-            if (actions.selectKey != null && !selecting) {
+            if (actions.selectKey != null) {
                 DropdownMenuItem(
                     text = { Text(stringResource(R.string.browse_select)) },
                     onClick = {
                         expanded = false
                         FolderSelectHost.current?.enter(actions.toPick())
+                    },
+                )
+                DropdownMenuItem(
+                    text = { Text(stringResource(R.string.browse_select_all)) },
+                    onClick = {
+                        expanded = false
+                        FolderSelectHost.current?.selectAllListed()
                     },
                 )
             }

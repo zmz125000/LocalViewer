@@ -826,6 +826,7 @@
     <string name="action_save_to">儲存到&#8230;</string>
     <string name="convert_to">轉換為…</string>
     <string name="browse_select">選擇</string>
+    <string name="browse_select_all">全選</string>
     <string name="browse_selected_count">已選 %1$d</string>
     <string name="browse_selected_in_folder">在 %2$s 中已選 %1$d</string>
     <string name="browse_queued_in_folder">在 %2$s 中已排隊 %1$d</string>
