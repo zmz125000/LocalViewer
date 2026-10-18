@@ -603,7 +603,7 @@ object Settings : DataStorePreferences(null) {
      * Library Recent section. On (default): show non-folder history at the top of Library.
      * Off: hide that section. Privacy “Library shows recents” and the Library menu Recent item.
      */
-    val libraryShowRecent = boolPref("library_show_recent", false)
+    val libraryShowRecent = boolPref("library_show_recent", true)
 
     /**
      * Long-press of the Library Recent menu item. On (lock): the strip starts fully expanded.
