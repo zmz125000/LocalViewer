@@ -82,6 +82,7 @@ import com.ehviewer.core.model.BaseGalleryInfo
 import com.ehviewer.core.ui.component.ElevatedCard
 import com.ehviewer.core.ui.component.FastScrollLazyVerticalGrid
 import com.ehviewer.core.ui.util.rememberInVM
+import com.ehviewer.core.ui.util.thenIf
 import com.ehviewer.core.util.launch
 import com.ehviewer.core.util.launchIO
 import com.ehviewer.core.util.withIOContext
@@ -853,6 +854,8 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
             }
         }
 
+        val animateItems by Settings.animateItems.collectAsState()
+
         fun LazyGridScope.recentSection(grid: Boolean) {
             if (!showRecent) return
             val sectionCollapsed = BrowseFolderSection.Recent in collapsedSections
@@ -892,12 +895,14 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
                 recentHistory.take(previewLimit)
             }
             items(shown, key = { "recent-${it.gid}" }) { info ->
+                val itemMod = Modifier.thenIf(animateItems) { animateItem() }
                 if (grid) {
                     HistorySquareGridItem(
                         info = info,
                         onClick = { openHistoryRecord(context, info, recentQuery) },
                         showPages = showPages,
                         showProgress = showProgress,
+                        modifier = itemMod,
                     )
                 } else {
                     HistoryListItem(
@@ -905,7 +910,7 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
                         onClick = { openHistoryRecord(context, info, recentQuery) },
                         showPages = showPages,
                         showProgress = showProgress,
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = itemMod.fillMaxWidth(),
                     )
                 }
             }
@@ -944,6 +949,7 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
                                 )
                             }
                             items(favorites, key = { "fav-${it.key}" }) { fav ->
+                                val itemMod = Modifier.thenIf(animateItems) { animateItem() }
                                 when (fav) {
                                     is FavoriteBrowseSource.Gallery -> LocalGalleryListItem(
                                         gallery = fav.gallery,
@@ -951,12 +957,13 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
                                         onLongClick = { toggleFavorite(fav) },
                                         showPages = showPages,
                                         showProgress = showProgress,
-                                        modifier = Modifier.fillMaxWidth(),
+                                        modifier = itemMod.fillMaxWidth(),
                                     )
                                     else -> FavoriteSourceListRow(
                                         fav = fav,
                                         onClick = { openFavorite(fav) },
                                         onLongClick = { toggleFavorite(fav) },
+                                        modifier = itemMod,
                                     )
                                 }
                             }
@@ -980,7 +987,9 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
                                 onLongClick = { openLibraryItemSecondary(gallery) },
                                 showPages = showPages,
                                 showProgress = showProgress,
-                                modifier = Modifier.fillMaxWidth(),
+                                modifier = Modifier
+                                    .thenIf(animateItems) { animateItem() }
+                                    .fillMaxWidth(),
                             )
                         }
                     }
@@ -1008,6 +1017,7 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
                                 fav = fav,
                                 onClick = { openFavorite(fav) },
                                 onLongClick = { toggleFavorite(fav) },
+                                modifier = Modifier.thenIf(animateItems) { animateItem() },
                             )
                         }
                     }
@@ -1030,6 +1040,7 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
                             onLongClick = { openLibraryItemSecondary(gallery) },
                             showPages = showPages,
                             showProgress = showProgress,
+                            modifier = Modifier.thenIf(animateItems) { animateItem() },
                         )
                     }
                 }
@@ -1072,6 +1083,7 @@ private fun FavoriteSourceListRow(
     fav: FavoriteBrowseSource,
     onClick: () -> Unit,
     onLongClick: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     val haptic = LocalHapticFeedback.current
     val browseFolderThumbs by Settings.browseFolderThumbs.collectAsState()
@@ -1137,7 +1149,7 @@ private fun FavoriteSourceListRow(
                 }
             }
         },
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .combinedClickable(
                 onClick = onClick,
@@ -1164,6 +1176,7 @@ internal fun FavoriteSourceGridCell(
     onLongClick: () -> Unit = onClick,
     iconSize: Dp = BrowseGridPlaceholderIconSize,
     labelStyle: androidx.compose.ui.text.TextStyle = MaterialTheme.typography.labelMedium,
+    modifier: Modifier = Modifier,
 ) {
     val namePadH = GalleryGridDefaults.namePaddingH()
     val namePadBottom = GalleryGridDefaults.namePaddingBottom()
@@ -1180,7 +1193,7 @@ internal fun FavoriteSourceGridCell(
     ElevatedCard(
         onClick = onClick,
         onLongClick = onLongClick,
-        modifier = Modifier.fillMaxWidth().aspectRatio(1f),
+        modifier = modifier.fillMaxWidth().aspectRatio(1f),
         colors = GalleryGridDefaults.cardColors(),
     ) {
         if (useGalleryThumbStyle) {
