@@ -1,5 +1,6 @@
 package com.hippo.ehviewer.ui.screen
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibilityScope
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
@@ -81,6 +82,7 @@ import com.ehviewer.core.model.BaseGalleryInfo
 import com.ehviewer.core.ui.component.ElevatedCard
 import com.ehviewer.core.ui.component.FastScrollLazyVerticalGrid
 import com.ehviewer.core.ui.util.rememberInVM
+import com.ehviewer.core.ui.util.thenIf
 import com.ehviewer.core.util.launch
 import com.ehviewer.core.util.launchIO
 import com.ehviewer.core.util.withIOContext
@@ -263,9 +265,24 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
             }
         }
     }
-    val recentHistory = remember(historyRows, keyword) {
+    val historyHideFolders by Settings.historyHideFolders.collectAsState()
+    val quickRecent = remember(historyRows, keyword) {
         libraryRecentHistory(historyRows, keyword)
     }
+    var filteredRecent by remember { mutableStateOf<List<GalleryEntity>?>(null) }
+    LaunchedEffect(historyRows, keyword, historyHideFolders) {
+        if (historyHideFolders.isEmpty()) {
+            filteredRecent = null
+            return@LaunchedEffect
+        }
+        val rows = historyRows
+        val query = keyword
+        val stored = historyHideFolders
+        filteredRecent = withContext(Dispatchers.IO) {
+            visibleLibraryRecents(rows, query, stored)
+        }
+    }
+    val recentHistory = if (historyHideFolders.isEmpty()) quickRecent else filteredRecent.orEmpty()
     val rawForList = if (galleriesLoaded || rawGalleries.isNotEmpty()) {
         rawGalleries
     } else {
@@ -707,6 +724,40 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
         }
     }
 
+    val libraryShowRecent by Settings.libraryShowRecent.collectAsState()
+    val libraryRecentExpanded by Settings.libraryRecentExpanded.collectAsState()
+    val (recentPreviewExpanded, setRecentPreviewExpanded) = rememberRecentStripExpanded(
+        "library-screen",
+        libraryRecentExpanded,
+    )
+    val recentGridColumns = GalleryGridDefaults.columnCount()
+    val recentListColumns = GalleryGridDefaults.listColumnCount()
+    val (collapsedSections, _, setSectionCollapsed) = rememberBrowseSectionCollapse("library-screen")
+    val recentCollapsedNow = rememberUpdatedState(BrowseFolderSection.Recent in collapsedSections)
+    val setRecentCollapsedNow = rememberUpdatedState(setSectionCollapsed)
+    val recentExpandedNow = rememberUpdatedState(recentPreviewExpanded)
+    val setRecentExpandedNow = rememberUpdatedState(setRecentPreviewExpanded)
+    val recentQuery = keyword.trim()
+    val showRecent = libraryShowRecent && recentHistory.isNotEmpty()
+    val recentCanExpand = recentHistory.size > browseRecentPreviewLimit(
+        grid = listMode != 0,
+        gridColumnCount = recentGridColumns,
+        listColumnCount = recentListColumns,
+    )
+    LaunchedEffect(recentCanExpand) {
+        if (!recentCanExpand && recentPreviewExpanded) setRecentPreviewExpanded(false)
+    }
+    // Back collapses the expanded strip before leaving Library. SearchBarScreen
+    // registers its own handler later, so a focused search still clears first.
+    BackHandler(
+        enabled = showRecent &&
+            recentPreviewExpanded &&
+            recentCanExpand &&
+            BrowseFolderSection.Recent !in collapsedSections,
+    ) {
+        setRecentPreviewExpanded(false)
+    }
+
     SearchBarScreen(
         onFilterChange = { keyword = it },
         onFocusChange = { searchFocused = it },
@@ -738,22 +789,7 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
             }
         }
 
-        val libraryShowRecent by Settings.libraryShowRecent.collectAsState()
-        val libraryRecentExpanded by Settings.libraryRecentExpanded.collectAsState()
-        val (recentPreviewExpanded, setRecentPreviewExpanded) = rememberRecentStripExpanded(
-            "library-screen",
-            libraryRecentExpanded,
-        )
-        val recentGridColumns = GalleryGridDefaults.columnCount()
-        val recentListColumns = GalleryGridDefaults.listColumnCount()
-        val (collapsedSections, _, setSectionCollapsed) = rememberBrowseSectionCollapse("library-screen")
-        val recentCollapsedNow = rememberUpdatedState(BrowseFolderSection.Recent in collapsedSections)
-        val setRecentCollapsedNow = rememberUpdatedState(setSectionCollapsed)
-        val recentExpandedNow = rememberUpdatedState(recentPreviewExpanded)
-        val setRecentExpandedNow = rememberUpdatedState(setRecentPreviewExpanded)
-        val recentQuery = keyword.trim()
-
-        val showRecent = libraryShowRecent && recentHistory.isNotEmpty()
+        val animateItems by Settings.animateItems.collectAsState()
 
         fun LazyGridScope.recentSection(grid: Boolean) {
             if (!showRecent) return
@@ -794,12 +830,14 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
                 recentHistory.take(previewLimit)
             }
             items(shown, key = { "recent-${it.gid}" }) { info ->
+                val itemMod = Modifier.thenIf(animateItems) { animateItem() }
                 if (grid) {
                     HistorySquareGridItem(
                         info = info,
                         onClick = { openHistoryRecord(context, info, recentQuery) },
                         showPages = showPages,
                         showProgress = showProgress,
+                        modifier = itemMod,
                     )
                 } else {
                     HistoryListItem(
@@ -807,7 +845,7 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
                         onClick = { openHistoryRecord(context, info, recentQuery) },
                         showPages = showPages,
                         showProgress = showProgress,
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = itemMod.fillMaxWidth(),
                     )
                 }
             }
