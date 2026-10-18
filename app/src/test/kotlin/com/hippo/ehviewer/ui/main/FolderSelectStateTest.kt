@@ -208,6 +208,39 @@ class FolderSelectStateTest {
     }
 
     @Test
+    fun taskBarLeavesTheOtherSelectionAndThePanelFollowsTheBar() {
+        val state = FolderSelectState()
+        FolderSelectHost.attach(state)
+        state.bindFolder("a", "Photos")
+        state.enter(pick("1", "one"))
+        state.bindFolder("b", "Camera")
+        state.enter(pick("9", "nine"))
+        val jobs = mutableStateListOf(
+            TaskJob(1, "one", false, pick("1", "one"), { true }, TaskStatus.Pending),
+        )
+        FolderSelectHost.installBatchForTest(
+            TaskBatch("a", jobs, kotlinx.coroutines.Job(), "Photos"),
+        )
+        assertEquals(listOf("Photos", "Camera"), FolderSelectHost.selectionSnacks.map { it.folderName })
+        assertEquals(listOf("Camera"), FolderSelectHost.selectionSnacksBesideTask().map { it.folderName })
+        assertTrue(FolderSelectHost.showingTask)
+
+        FolderSelectHost.showList("b")
+        assertFalse(FolderSelectHost.showingTask)
+        assertEquals(listOf("9"), FolderSelectHost.selectionPicks.map { it.key })
+
+        FolderSelectHost.showTaskList()
+        assertTrue(FolderSelectHost.showingTask)
+        assertEquals("a", FolderSelectHost.batch?.folderKey)
+
+        FolderSelectHost.showList("b")
+        FolderSelectHost.cancelSelection("b")
+        assertEquals(listOf("Photos"), FolderSelectHost.selectionSnacks.map { it.folderName })
+        assertTrue(FolderSelectHost.taskRunning)
+        assertFalse(FolderSelectHost.dialog)
+    }
+
+    @Test
     fun eachFolderKeepsItsOwnSnackbar() {
         val state = FolderSelectState()
         state.bindFolder("a", "Photos")
