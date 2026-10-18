@@ -1,6 +1,12 @@
 package com.hippo.ehviewer.image.hdr
 
 import com.hippo.ehviewer.util.FileUtils
+import java.io.File
+import java.io.FileDescriptor
+import java.io.FileInputStream
+import java.io.RandomAccessFile
+import java.nio.ByteBuffer
+import kotlinx.coroutines.runBlocking
 
 /**
  * Offset and length of an embedded camera JPEG.
@@ -33,6 +39,94 @@ internal suspend fun browseEmbeddedRawJpeg(
     if (pageAlreadyCached || read == null) return null
     if (!isRawStillExtension(FileUtils.getExtensionFromFilename(fileName))) return null
     return read()
+}
+
+/**
+ * Write the embedded preview JPEG with range reads. False when none is found,
+ * so the caller can still open the RAW.
+ */
+internal fun writeLocatedRawJpeg(file: File, dest: File): Boolean {
+    if (!file.isFile) return false
+    val jpeg = RandomAccessFile(file, "r").use { raf ->
+        readLocatedRawJpeg(raf.length()) { off, len -> raf.readAt(off, len) }
+    } ?: return false
+    return writeJpegFile(dest, jpeg)
+}
+
+/** [writeLocatedRawJpeg] for a file descriptor the caller still owns. */
+internal fun writeLocatedRawJpeg(descriptor: FileDescriptor, dest: File): Boolean {
+    val stream = FileInputStream(descriptor)
+    val channel = stream.channel
+    val size = runCatching { channel.size() }.getOrDefault(-1L)
+    val jpeg = readLocatedRawJpeg(size) { off, len ->
+        if (off < 0L || len <= 0 || off >= size) return@readLocatedRawJpeg null
+        val n = minOf(len.toLong(), size - off).toInt()
+        val buf = ByteBuffer.allocate(n)
+        channel.position(off)
+        var got = 0
+        while (got < n) {
+            val r = channel.read(buf)
+            if (r <= 0) break
+            got += r
+        }
+        if (got <= 0) {
+            null
+        } else {
+            val out = ByteArray(got)
+            buf.flip()
+            buf.get(out)
+            out
+        }
+    } ?: return false
+    return writeJpegFile(dest, jpeg)
+}
+
+/** [writeLocatedRawJpeg] for a RAW container that is already in memory. */
+internal fun writeLocatedRawJpeg(bytes: ByteArray, dest: File): Boolean {
+    val jpeg = readLocatedRawJpeg(bytes.size.toLong()) { off, len ->
+        if (off < 0L || len <= 0 || off > bytes.size) return@readLocatedRawJpeg null
+        val start = off.toInt()
+        val n = minOf(len, bytes.size - start)
+        if (n <= 0) null else bytes.copyOfRange(start, start + n)
+    } ?: return false
+    return writeJpegFile(dest, jpeg)
+}
+
+private fun readLocatedRawJpeg(
+    fileSize: Long,
+    readAt: suspend (offset: Long, length: Int) -> ByteArray?,
+): ByteArray? {
+    if (fileSize < 512L) return null
+    return runBlocking { readEmbeddedRawJpeg(fileSize, readAt) }
+}
+
+private fun RandomAccessFile.readAt(off: Long, len: Int): ByteArray? {
+    if (off < 0L || len <= 0 || off >= length()) return null
+    val n = minOf(len.toLong(), length() - off).toInt()
+    if (n <= 0) return null
+    val buf = ByteArray(n)
+    seek(off)
+    var got = 0
+    while (got < n) {
+        val r = read(buf, got, n - got)
+        if (r <= 0) break
+        got += r
+    }
+    return when {
+        got <= 0 -> null
+        got == n -> buf
+        else -> buf.copyOf(got)
+    }
+}
+
+private fun writeJpegFile(dest: File, jpeg: ByteArray): Boolean {
+    if (jpeg.size < 4) return false
+    return try {
+        dest.writeBytes(jpeg)
+        dest.isFile && dest.length() == jpeg.size.toLong()
+    } catch (_: Exception) {
+        false
+    }
 }
 
 /**

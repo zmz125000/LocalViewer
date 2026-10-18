@@ -76,6 +76,35 @@ class RawEmbeddedJpegTest {
     }
 
     @Test
+    fun localFileRangeWritesTheEmbeddedJpeg() {
+        val body = jpegWithPrecision(precision = 8, width = 1600, height = 1200, pad = 40 * 1024)
+        val raw = ByteArray(148 + body.size)
+        "FUJIFILMCCD-RAW ".toByteArray().copyInto(raw)
+        writeBe32(raw, 84, 148)
+        writeBe32(raw, 88, body.size)
+        body.copyInto(raw, 148)
+        val dir = File(System.getProperty("java.io.tmpdir"), "raw-jpeg-${System.nanoTime()}")
+        dir.mkdirs()
+        val src = File(dir, "sample.raf")
+        val dest = File(dir, "preview.jpg")
+        try {
+            src.writeBytes(raw)
+            assertTrue(writeLocatedRawJpeg(src, dest))
+            val jpeg = dest.readBytes()
+            assertEquals(body.size, jpeg.size)
+            assertEquals(0xff.toByte(), jpeg[0])
+            assertEquals(0xd8.toByte(), jpeg[1])
+            assertEquals(0xff.toByte(), jpeg[jpeg.size - 2])
+            assertEquals(0xd9.toByte(), jpeg[jpeg.size - 1])
+            assertTrue(dest.length() < src.length())
+        } finally {
+            dest.delete()
+            src.delete()
+            dir.delete()
+        }
+    }
+
+    @Test
     fun sampleRawsYieldAJpegPrefix() {
         val root = File("/home/zlx22/LocalViewer/samples")
         assumeTrue(root.isDirectory)

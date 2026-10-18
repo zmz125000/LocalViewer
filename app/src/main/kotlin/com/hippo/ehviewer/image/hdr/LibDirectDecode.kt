@@ -31,6 +31,7 @@ import com.hippo.ehviewer.jni.extractRawPreviewFile
 import com.hippo.ehviewer.util.FileUtils
 import com.hippo.ehviewer.util.HdrDisplayInfo
 import java.io.File
+import java.io.FileDescriptor
 import java.nio.ByteBuffer
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Semaphore
@@ -280,7 +281,9 @@ object LibDirectDecode {
     /** SAF and MediaStore files are mapped in place. Pipes and unmappable files are copied. */
     private fun decodeRawContent(path: Path, maxEdge: Int): PackedPixels? {
         path.openFileDescriptor("r").use { pfd ->
-            if (pfd.isRegularFile()) decodeRawLocal(RawInput.Fd(pfd.fd), maxEdge)?.let { return it }
+            if (pfd.isRegularFile()) {
+                decodeRawLocal(RawInput.Fd(pfd.fd, pfd.fileDescriptor), maxEdge)?.let { return it }
+            }
         }
         return path.withLocalRawFile { decodeRawFromFile(it, maxEdge) }
     }
@@ -302,7 +305,7 @@ object LibDirectDecode {
         data class Source(val src: ImageSource) : RawInput
 
         /** Open regular file. Native code maps it; the caller closes it. */
-        data class Fd(val fd: Int) : RawInput
+        data class Fd(val fd: Int, val descriptor: FileDescriptor) : RawInput
     }
 
     private fun decodeRawLocal(input: RawInput, maxEdge: Int): PackedPixels? {
@@ -399,12 +402,18 @@ object LibDirectDecode {
         return try {
             val wrote = try {
                 when (input) {
-                    is RawInput.Fd -> extractRawPreviewFd(input.fd, jpeg.absolutePath, false) == 0
+                    is RawInput.Fd -> writeLocatedRawJpeg(input.descriptor, jpeg) ||
+                        extractRawPreviewFd(input.fd, jpeg.absolutePath, false) == 0
                     is RawInput.Source -> when (val src = input.src) {
-                        is PathSource -> extractRawPreviewFile(src.source.toString(), jpeg.absolutePath, false) == 0
+                        is PathSource -> {
+                            val file = File(src.source.toString())
+                            (file.isFile && writeLocatedRawJpeg(file, jpeg)) ||
+                                extractRawPreviewFile(src.source.toString(), jpeg.absolutePath, false) == 0
+                        }
                         is ByteBufferSource -> {
                             val bytes = readBytes(src) ?: return null
-                            extractRawPreviewBytes(bytes, jpeg.absolutePath, false) == 0
+                            writeLocatedRawJpeg(bytes, jpeg) ||
+                                extractRawPreviewBytes(bytes, jpeg.absolutePath, false) == 0
                         }
                     }
                 }
