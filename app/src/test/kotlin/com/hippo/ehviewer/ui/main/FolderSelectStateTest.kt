@@ -241,6 +241,66 @@ class FolderSelectStateTest {
     }
 
     @Test
+    fun secondFolderTaskQueuesUntilTheFirstEnds() {
+        val state = FolderSelectState()
+        FolderSelectHost.attach(state)
+        state.bindFolder("a", "Photos")
+        state.enter(pick("1", "one"))
+        state.bindFolder("b", "Camera")
+        state.enter(pick("9", "nine"))
+        val firstJobs = mutableStateListOf(
+            TaskJob(1, "one", false, pick("1", "one"), { true }, TaskStatus.Pending),
+        )
+        val first = TaskBatch("a", firstJobs, kotlinx.coroutines.Job(), "Photos")
+        FolderSelectHost.installBatchForTest(first)
+
+        FolderSelectHost.startTasks(
+            listOf(
+                TaskJob(2, "nine", false, pick("9", "nine"), { true }, TaskStatus.Pending),
+            ),
+            "/tmp".toPath(),
+            "b",
+        )
+        assertEquals("a", FolderSelectHost.batch?.folderKey)
+        assertEquals(setOf("b"), FolderSelectHost.queuedFolderKeys())
+
+        first.end = BatchEnd.Done
+        FolderSelectHost.endBatchForTest(first)
+        assertEquals("b", FolderSelectHost.batch?.folderKey)
+        assertTrue(FolderSelectHost.queuedFolderKeys().isEmpty())
+        assertTrue(FolderSelectHost.showingTask)
+    }
+
+    @Test
+    fun clearingAQueuedSelectionDropsItsBatch() {
+        val state = FolderSelectState()
+        FolderSelectHost.attach(state)
+        state.bindFolder("a", "Photos")
+        state.enter(pick("1", "one"))
+        state.bindFolder("b", "Camera")
+        state.enter(pick("9", "nine"))
+        FolderSelectHost.installBatchForTest(
+            TaskBatch(
+                "a",
+                mutableStateListOf(
+                    TaskJob(1, "one", false, pick("1", "one"), { true }, TaskStatus.Pending),
+                ),
+                kotlinx.coroutines.Job(),
+                "Photos",
+            ),
+        )
+        FolderSelectHost.startTasks(
+            listOf(TaskJob(2, "nine", false, pick("9", "nine"), { true }, TaskStatus.Pending)),
+            "/tmp".toPath(),
+            "b",
+        )
+        assertEquals(setOf("b"), FolderSelectHost.queuedFolderKeys())
+        FolderSelectHost.cancelSelection("b")
+        assertTrue(FolderSelectHost.queuedFolderKeys().isEmpty())
+        assertEquals("a", FolderSelectHost.batch?.folderKey)
+    }
+
+    @Test
     fun eachFolderKeepsItsOwnSnackbar() {
         val state = FolderSelectState()
         state.bindFolder("a", "Photos")
