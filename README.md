@@ -103,6 +103,7 @@ Build with Grok 4.5.
 * JXL/JXR/JPG/AVIF/HEIC HDR support.
 * 14-Bit RAW formats decoding with true HDR output.
 * RAW formats support dng/cr2/cr3/nef/nrw/arw/raf/orf/rw2/pef/srw/raw.
+* Convert JXR and RAW to Ultra HDR JPEG.
 * Compatible with Oppo/OnePlus ProXDR HEIC format.
 * Nearest, Bilinear, B-Spline, Catmull-Rom, Mitchell-Netravali, Lanczos3 image scalers using GPU shader.
 * Open offline html website archive in your browser with built-in HTTP server.
