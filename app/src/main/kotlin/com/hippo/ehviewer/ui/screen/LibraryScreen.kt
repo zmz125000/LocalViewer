@@ -99,6 +99,7 @@ import com.hippo.ehviewer.library.LocalHistory
 import com.hippo.ehviewer.library.LocalLibrary
 import com.hippo.ehviewer.library.ReaderGalleryPlaylist
 import com.hippo.ehviewer.library.ReaderImageList
+import com.hippo.ehviewer.library.UsbVolumes
 import com.hippo.ehviewer.library.VideoThumbnail
 import com.hippo.ehviewer.library.ZipAsDirListing
 import com.hippo.ehviewer.library.ZipPaths
@@ -133,6 +134,7 @@ import com.hippo.ehviewer.ui.openLocalBrowseDir
 import com.hippo.ehviewer.ui.openLocalFolderPhotoGrid
 import com.hippo.ehviewer.ui.openLocalVideoFolder
 import com.hippo.ehviewer.ui.openSmbBrowseDir
+import com.hippo.ehviewer.ui.openUsbVolume
 import com.hippo.ehviewer.ui.openWebDavBrowseDir
 import com.hippo.ehviewer.webdav.WebDavRepository
 import com.ramcosta.composedestinations.annotation.Destination
@@ -280,8 +282,9 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
     val favorites = remember(roots, smbSources, webDavSources, allGalleries, favoriteKeys) {
         resolveFavoriteBrowseSources(roots, smbSources, webDavSources, allGalleries, favoriteKeys)
     }
-    // Hide favourites section while filtering.
-    val showFavorites = keyword.isBlank() && favorites.isNotEmpty()
+    val usbVolumes by UsbVolumes.volumes.collectAsState()
+    // Hide favourites section while filtering. A mounted USB stick is the first folder.
+    val showFavorites = keyword.isBlank() && (favorites.isNotEmpty() || usbVolumes.isNotEmpty())
     val showSectionHeader = showFavorites || hasGalleries || hasVideos
     val sectionHeaderText = if (librarySection == LibrarySection.Videos) {
         stringResource(R.string.browse_videos)
@@ -708,6 +711,9 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
                                     stringResource(R.string.browse_favorites),
                                 )
                             }
+                            items(usbVolumes, key = { "usb-${it.cacheSourceId}" }) { volume ->
+                                UsbFavoriteListRow(volume, onClick = { openUsbVolume(volume) })
+                            }
                             items(favorites, key = { "fav-${it.key}" }) { fav ->
                                 when (fav) {
                                     is FavoriteBrowseSource.Gallery -> LocalGalleryListItem(
@@ -766,6 +772,9 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
                             span = { GridItemSpan(maxLineSpan) },
                         ) {
                             BrowseSectionHeader(stringResource(R.string.browse_favorites))
+                        }
+                        items(usbVolumes, key = { "usb-${it.cacheSourceId}" }) { volume ->
+                            UsbFavoriteGridCell(volume, onClick = { openUsbVolume(volume) })
                         }
                         items(favorites, key = { "fav-${it.key}" }) { fav ->
                             FavoriteSourceGridCell(

@@ -72,6 +72,11 @@
     <string name="browse_galleries">Galleries</string>
     <string name="browse_photos">Photos</string>
     <string name="browse_favorites">Favorites</string>
+    <string name="usb_connected">USB drive connected: %1$s</string>
+    <string name="usb_open">Open</string>
+    <string name="usb_eject">Eject</string>
+    <string name="usb_ejected">USB drive ejected</string>
+    <string name="usb_eject_failed">Could not eject USB drive</string>
     <string name="explorer">Explorer</string>
     <string name="explorer_quick_access">Quick access</string>
     <string name="explorer_windows">Windows</string>

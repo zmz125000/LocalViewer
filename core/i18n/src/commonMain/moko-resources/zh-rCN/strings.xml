@@ -68,6 +68,11 @@
     <string name="browse_galleries">图库</string>
     <string name="browse_photos">照片</string>
     <string name="browse_favorites">收藏</string>
+    <string name="usb_connected">已连接 USB 设备：%1$s</string>
+    <string name="usb_open">打开</string>
+    <string name="usb_eject">弹出</string>
+    <string name="usb_ejected">已弹出 USB 设备</string>
+    <string name="usb_eject_failed">无法弹出 USB 设备</string>
     <string name="browse_videos">视频</string>
     <string name="browse_files">文件</string>
     <string name="browse_documents">文档</string>

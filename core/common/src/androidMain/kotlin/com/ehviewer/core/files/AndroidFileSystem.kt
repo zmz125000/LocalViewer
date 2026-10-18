@@ -209,10 +209,8 @@ class AndroidFileSystem(context: Context) : FileSystem() {
      * Files use `mediastore:/…/name.jpg` so natural sort keeps real filenames.
      */
     private fun listMediaStoreVirtualChildren(dir: Path): List<Path> {
-        val relativeDir = dir.toString()
-            .removePrefix("mediastore:")
-            .trimStart('/')
-            .trimEnd('/')
+        val loc = parseMediaStoreVirtual(dir.toString()) ?: return emptyList()
+        val relativeDir = loc.relative
         val dirs = linkedMapOf<String, Path>()
         val files = linkedMapOf<String, Path>()
         val prefix = if (relativeDir.isEmpty()) "" else "$relativeDir/"
@@ -221,9 +219,9 @@ class AndroidFileSystem(context: Context) : FileSystem() {
             MediaStore.MediaColumns.RELATIVE_PATH,
             MediaStore.MediaColumns.DATA,
         )
-        val collections = listOf(
-            MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL),
-            MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL),
+        val collections = mediaStoreCollections(
+            loc.volumeName,
+            includeFiles = !loc.volumeName.isNullOrEmpty(),
         )
         for (collection in collections) {
             runCatching {
@@ -246,11 +244,17 @@ class AndroidFileSystem(context: Context) : FileSystem() {
                         )
                         if (relativeDir.isEmpty()) {
                             if (relPath.isEmpty()) {
-                                files.putIfAbsent(displayName, "mediastore:/$displayName".toPath())
+                                files.putIfAbsent(
+                                    displayName,
+                                    mediaStoreVirtualPath(loc.volumeName, displayName).toPath(),
+                                )
                             } else {
                                 val top = relPath.substringBefore('/')
                                 if (top.isNotEmpty()) {
-                                    dirs.putIfAbsent(top, "mediastore:/$top".toPath())
+                                    dirs.putIfAbsent(
+                                        top,
+                                        mediaStoreVirtualPath(loc.volumeName, top).toPath(),
+                                    )
                                 }
                             }
                             continue
@@ -258,7 +262,7 @@ class AndroidFileSystem(context: Context) : FileSystem() {
                         if (relPath == relativeDir) {
                             files.putIfAbsent(
                                 displayName,
-                                "mediastore:/$relativeDir/$displayName".toPath(),
+                                mediaStoreVirtualPath(loc.volumeName, "$relativeDir/$displayName").toPath(),
                             )
                             continue
                         }
@@ -269,7 +273,7 @@ class AndroidFileSystem(context: Context) : FileSystem() {
                             if (childName.isNotEmpty()) {
                                 dirs.putIfAbsent(
                                     childName,
-                                    "mediastore:/$relativeDir/$childName".toPath(),
+                                    mediaStoreVirtualPath(loc.volumeName, "$relativeDir/$childName").toPath(),
                                 )
                             }
                         }
@@ -308,7 +312,7 @@ class AndroidFileSystem(context: Context) : FileSystem() {
         return runCatching {
             // Resolve virtual MediaStore file path → content:// then open.
             if (path.isMediaStoreVirtualDir()) {
-                val contentUri = resolveMediaStoreFileUri(path)
+                val contentUri = queryMediaStoreContentUri(contentResolver, path.toString())
                     ?: throw FileNotFoundException("MediaStore file not found: $path")
                 return@runCatching contentResolver.openFileDescriptor(contentUri, mode)
             }
@@ -321,49 +325,6 @@ class AndroidFileSystem(context: Context) : FileSystem() {
             }
             contentResolver.openFileDescriptor(path.toUri(), mode)
         }.getOrNull() ?: throw FileNotFoundException("Failed to open file: $path")
-    }
-
-    private fun resolveMediaStoreFileUri(path: Path): Uri? {
-        val s = path.toString().removePrefix("mediastore:").trimStart('/')
-        if (s.isEmpty()) return null
-        val fileName = s.substringAfterLast('/')
-        val relativeDir = s.substringBeforeLast('/', missingDelimiterValue = "").trimEnd('/')
-        if (fileName.isEmpty()) return null
-        val projection = arrayOf(MediaStore.MediaColumns._ID)
-        val relWithSlash = if (relativeDir.isEmpty()) "" else "$relativeDir/"
-        val selection: String
-        val args: Array<String>
-        if (relativeDir.isEmpty()) {
-            selection = "(${MediaStore.MediaColumns.RELATIVE_PATH} IS NULL OR " +
-                "${MediaStore.MediaColumns.RELATIVE_PATH} = '' OR " +
-                "${MediaStore.MediaColumns.RELATIVE_PATH} = '/') AND " +
-                "${MediaStore.MediaColumns.DISPLAY_NAME} = ?"
-            args = arrayOf(fileName)
-        } else {
-            selection = "(${MediaStore.MediaColumns.RELATIVE_PATH} = ? OR " +
-                "${MediaStore.MediaColumns.RELATIVE_PATH} = ? OR " +
-                "${MediaStore.MediaColumns.DATA} LIKE ?) AND " +
-                "${MediaStore.MediaColumns.DISPLAY_NAME} = ?"
-            args = arrayOf(relWithSlash, relativeDir, "%/$relativeDir/$fileName", fileName)
-        }
-        val collections = listOf(
-            MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL),
-            MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL),
-            MediaStore.Files.getContentUri(MediaStore.VOLUME_EXTERNAL),
-        )
-        for (collection in collections) {
-            val found = runCatching {
-                contentResolver.query(collection, projection, selection, args, null)?.use { c ->
-                    if (c.moveToFirst()) {
-                        collection.buildUpon().appendPath(c.getLong(0).toString()).build()
-                    } else {
-                        null
-                    }
-                }
-            }.getOrNull()
-            if (found != null) return found
-        }
-        return null
     }
 
     private fun Path.inputStream() = ParcelFileDescriptor.AutoCloseInputStream(openFileDescriptor(this, "r"))

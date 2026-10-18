@@ -39,7 +39,10 @@ import splitties.init.appCtx
  *
  * Local folder roots use protocol `local` with [LibraryRootEntity.id] as [sourceId]
  * (`local_{id}/` on disk). Each SAF-picked folder is its own root id — listings
- * never share a directory across local sources. [BrowseSession.localFolderListingKey]
+ * never share a directory across local sources. A USB volume root is the exception:
+ * [localSourceIdAlias] stores that filesystem under a negative id from
+ * [UsbFolderIndex.cacheSourceId] so replug does not depend on the Room row.
+ * [BrowseSession.localFolderListingKey]
  * uses the same `rootId` + relativeDir identity so SAF document URIs and
  * `mediastore:/…` paths cannot miss or overwrite each other.
  * Lives under [appCtx.noBackupFilesDir] so Android cache GC / [OriginDiskCache] trim
@@ -49,6 +52,15 @@ import splitties.init.appCtx
 object NetworkFolderIndexCache {
     private val lock = Mutex()
     private val memory = HashMap<String, MemoryIndex>()
+
+    /**
+     * Maps a local root id onto the USB filesystem id when [configKey] is that
+     * volume's root. Default keeps [rootId]. Set from [UsbVolumes.start].
+     */
+    internal var localSourceIdAlias: (rootId: Long, configKey: String) -> Long = { rootId, _ -> rootId }
+
+    /** Room id → USB cache id, so a later subtree delete still hits the moved directory. */
+    private val localAliasByRoot = HashMap<Long, Long>()
     private val cacheDir: File
         get() = File(appCtx.noBackupFilesDir, "network_folder_index")
     private val legacyCacheDir: File
@@ -180,6 +192,7 @@ object NetworkFolderIndexCache {
     ): List<BrowseEntryRemote>? = withContext(Dispatchers.IO) {
         if (!Settings.networkFolderIndexCache.value) return@withContext null
         lock.withLock {
+            val sourceId = localIdLocked(protocol, sourceId, configKey)
             val idx = existingMemory(protocol, sourceId, configKey) ?: return@withLock null
             val key = FolderIndexDisk.normalizeDir(relativeDir)
             idx.decoded[key]?.let { return@withLock it }
@@ -196,6 +209,7 @@ object NetworkFolderIndexCache {
     ): Map<String, List<BrowseEntryRemote>> = withContext(Dispatchers.IO) {
         if (!Settings.networkFolderIndexCache.value) return@withContext emptyMap()
         lock.withLock {
+            val sourceId = localIdLocked(protocol, sourceId, configKey)
             val idx = existingMemory(protocol, sourceId, configKey) ?: return@withLock emptyMap()
             val disk = idx.disk.loadAllListings()
             idx.decoded.putAll(disk)
@@ -213,6 +227,7 @@ object NetworkFolderIndexCache {
     ): List<BrowseEntryRemote> = withContext(Dispatchers.IO) {
         if (!Settings.networkFolderIndexCache.value) return@withContext entries
         lock.withLock {
+            val sourceId = localIdLocked(protocol, sourceId, configKey)
             val idx = writableMemory(protocol, sourceId, configKey)
             persistFolder(
                 idx,
@@ -235,6 +250,7 @@ object NetworkFolderIndexCache {
         if (updates.isEmpty()) return@withContext emptyMap()
         if (!Settings.networkFolderIndexCache.value) return@withContext updates
         lock.withLock {
+            val sourceId = localIdLocked(protocol, sourceId, configKey)
             val idx = writableMemory(protocol, sourceId, configKey)
             val zipAsDir = Settings.browseZipAsDir.value
             val stored = LinkedHashMap<String, List<BrowseEntryRemote>>(updates.size)
@@ -251,6 +267,28 @@ object NetworkFolderIndexCache {
             }
             stored
         }
+    }
+
+    /**
+     * USB volume roots share one directory keyed by filesystem id. Must run
+     * inside [lock]. Other protocols and non-USB roots keep [sourceId].
+     */
+    private fun localIdLocked(protocol: String, sourceId: Long, configKey: String): Long {
+        if (protocol != "local") return sourceId
+        val alias = if (configKey.isNotEmpty()) {
+            runCatching { localSourceIdAlias(sourceId, configKey) }.getOrDefault(sourceId)
+        } else {
+            localAliasByRoot[sourceId] ?: sourceId
+        }
+        if (alias == sourceId) return sourceId
+        localAliasByRoot[sourceId] = alias
+        val fromKey = memoryKey(protocol, sourceId)
+        val toKey = memoryKey(protocol, alias)
+        if (memory[toKey] == null) {
+            memory.remove(fromKey)?.let { memory[toKey] = it }
+        }
+        UsbFolderIndex.moveIndexDirIfAbsent(sourceDir(protocol, sourceId), sourceDir(protocol, alias))
+        return alias
     }
 
     private fun memoryKey(protocol: String, sourceId: Long) = "$protocol:$sourceId"
@@ -436,6 +474,7 @@ object NetworkFolderIndexCache {
         if (prefix.isEmpty()) return@withContext
         if (!Settings.networkFolderIndexCache.value) return@withContext
         lock.withLock {
+            val sourceId = localIdLocked(protocol, sourceId, configKey = "")
             val idx = existingMemory(protocol, sourceId, configKey = "") ?: return@withLock
             idx.disk.removeUnder(prefix)
             idx.dropDecodedUnder(prefix)

@@ -157,6 +157,7 @@ import com.hippo.ehviewer.ui.reader.PendingReaderOpen
 import com.hippo.ehviewer.ui.screen.ExplorerPanelActions
 import com.hippo.ehviewer.ui.screen.ExplorerSidePanelHost
 import com.hippo.ehviewer.ui.screen.LocalExplorerPanel
+import com.hippo.ehviewer.ui.screen.UsbInsertSnackbar
 import com.hippo.ehviewer.ui.screen.openSelectionPlace
 import com.hippo.ehviewer.ui.screen.toggleHistorySection
 import com.hippo.ehviewer.ui.screen.toggleLibraryFlattenMode
@@ -752,6 +753,7 @@ class MainActivity : AppCompatActivity() {
                                     )
                                 },
                             )
+                            UsbInsertSnackbar(navigator)
                             HttpShareSnackbars(
                                 onShare = { item ->
                                     scope.launch {

@@ -70,6 +70,7 @@ import com.hippo.ehviewer.library.LocalFolderListing
 import com.hippo.ehviewer.library.LocalLibrary
 import com.hippo.ehviewer.library.MediaStoreWatch
 import com.hippo.ehviewer.library.OriginDiskCache
+import com.hippo.ehviewer.library.UsbVolumes
 import com.hippo.ehviewer.library.VideoThumbnail
 import com.hippo.ehviewer.provider.ExternalHttpStreamServer
 import com.hippo.ehviewer.provider.StreamKeepAlivePolicy
@@ -119,6 +120,7 @@ class EhApplication : Application(), SingletonImageLoader.Factory {
         }
         CrashHandler.install()
         super.onCreate()
+        UsbVolumes.start(this@EhApplication)
         System.loadLibrary("ehviewer")
         // SMB + WebDAV: pause keep-alive on activity stop (external player); do not drop
         // the browse pool. Screen-off / Recents still tear sockets down.

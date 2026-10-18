@@ -54,10 +54,29 @@ private val mediaStoreContentUriCache = java.util.concurrent.ConcurrentHashMap<S
 
 private fun resolveMediaStorePathToContentUri(pathStr: String): Uri? {
     mediaStoreContentUriCache[pathStr]?.let { return it }
-    val s = pathStr.removePrefix("mediastore:").trimStart('/')
-    if (s.isEmpty()) return null
-    val fileName = s.substringAfterLast('/')
-    val relativeDir = s.substringBeforeLast('/', missingDelimiterValue = "").trimEnd('/')
+    val resolved = queryMediaStoreContentUri(appCtx.contentResolver, pathStr) ?: return null
+    if (mediaStoreContentUriCache.size > 4000) {
+        mediaStoreContentUriCache.clear()
+    }
+    mediaStoreContentUriCache[pathStr] = resolved
+    return resolved
+}
+
+internal fun mediaStoreCollections(volumeName: String?, includeFiles: Boolean): List<Uri> {
+    val volume = volumeName?.takeIf { it.isNotEmpty() } ?: MediaStore.VOLUME_EXTERNAL
+    val list = ArrayList<Uri>(3)
+    list += MediaStore.Images.Media.getContentUri(volume)
+    list += MediaStore.Video.Media.getContentUri(volume)
+    if (includeFiles) list += MediaStore.Files.getContentUri(volume)
+    return list
+}
+
+/** Resolve a `mediastore:` file path. A `@v/{volume}` path queries only that volume. */
+internal fun queryMediaStoreContentUri(resolver: ContentResolver, pathStr: String): Uri? {
+    val loc = parseMediaStoreVirtual(pathStr) ?: return null
+    if (loc.relative.isEmpty()) return null
+    val fileName = loc.relative.substringAfterLast('/')
+    val relativeDir = loc.relative.substringBeforeLast('/', missingDelimiterValue = "").trimEnd('/')
     if (fileName.isEmpty()) return null
     val projection = arrayOf(MediaStore.MediaColumns._ID)
     val relWithSlash = if (relativeDir.isEmpty()) "" else "$relativeDir/"
@@ -76,15 +95,9 @@ private fun resolveMediaStorePathToContentUri(pathStr: String): Uri? {
             "${MediaStore.MediaColumns.DISPLAY_NAME} = ?"
         args = arrayOf(relWithSlash, relativeDir, "%/$relativeDir/$fileName", fileName)
     }
-    val collections = listOf(
-        MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL),
-        MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL),
-        MediaStore.Files.getContentUri(MediaStore.VOLUME_EXTERNAL),
-    )
-    var resolved: Uri? = null
-    for (collection in collections) {
-        resolved = runCatching {
-            appCtx.contentResolver.query(collection, projection, selection, args, null)?.use { c ->
+    for (collection in mediaStoreCollections(loc.volumeName, includeFiles = true)) {
+        val found = runCatching {
+            resolver.query(collection, projection, selection, args, null)?.use { c ->
                 if (c.moveToFirst()) {
                     collection.buildUpon().appendPath(c.getLong(0).toString()).build()
                 } else {
@@ -92,16 +105,9 @@ private fun resolveMediaStorePathToContentUri(pathStr: String): Uri? {
                 }
             }
         }.getOrNull()
-        if (resolved != null) break
+        if (found != null) return found
     }
-    if (resolved != null) {
-        // Bound growth: drop oldest-ish entries if huge (simple size cap).
-        if (mediaStoreContentUriCache.size > 4000) {
-            mediaStoreContentUriCache.clear()
-        }
-        mediaStoreContentUriCache[pathStr] = resolved
-    }
-    return resolved
+    return null
 }
 
 fun Uri.toOkioPath() = if (scheme == ContentResolver.SCHEME_FILE) {

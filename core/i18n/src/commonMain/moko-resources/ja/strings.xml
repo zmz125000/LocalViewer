@@ -77,6 +77,11 @@
     <string name="browse_galleries">ギャラリー</string>
     <string name="browse_photos">写真</string>
     <string name="browse_favorites">お気に入り</string>
+    <string name="usb_connected">USB ドライブを接続しました: %1$s</string>
+    <string name="usb_open">開く</string>
+    <string name="usb_eject">取り出す</string>
+    <string name="usb_ejected">USB ドライブを取り出しました</string>
+    <string name="usb_eject_failed">USB ドライブを取り出せませんでした</string>
     <string name="browse_videos">動画</string>
     <string name="browse_files">ファイル</string>
     <string name="browse_documents">ドキュメント</string>

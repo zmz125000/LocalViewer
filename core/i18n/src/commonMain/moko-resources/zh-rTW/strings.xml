@@ -72,6 +72,11 @@
     <string name="browse_galleries">圖庫</string>
     <string name="browse_photos">相片</string>
     <string name="browse_favorites">收藏</string>
+    <string name="usb_connected">已連接 USB 裝置：%1$s</string>
+    <string name="usb_open">開啟</string>
+    <string name="usb_eject">退出</string>
+    <string name="usb_ejected">已退出 USB 裝置</string>
+    <string name="usb_eject_failed">無法退出 USB 裝置</string>
     <string name="browse_videos">影片</string>
     <string name="browse_files">檔案</string>
     <string name="browse_documents">文件</string>

@@ -98,6 +98,7 @@ import com.hippo.ehviewer.library.LocalListingJobs
 import com.hippo.ehviewer.library.MediaStoreFs
 import com.hippo.ehviewer.library.ReaderGalleryPlaylist
 import com.hippo.ehviewer.library.SavedExplorerPaths
+import com.hippo.ehviewer.library.UsbVolumes
 import com.hippo.ehviewer.library.VideoThumbnail
 import com.hippo.ehviewer.library.VideoThumbnailSource
 import com.hippo.ehviewer.library.ZipAsDirListing
@@ -216,6 +217,19 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
     val fromSidePanel = ExplorerWindows.active()?.fromSidePanel == true
     var stack by remember(shortcutEpoch, explorerWindowId) {
         mutableStateOf(BrowseSession.localStack)
+    }
+    val usbVolumes by UsbVolumes.volumes.collectAsState()
+    val ejectUsbVolume = stack.lastOrNull()?.let { frame ->
+        if (frame.relativePath.isNotEmpty() || frame.isZipBrowse || frame.photoGrid || frame.videoFolder) {
+            null
+        } else {
+            usbVolumes.firstOrNull { it.ejectSupported && it.matchesBrowseFrame(frame.rootId, frame.path) }
+        }
+    }
+    fun ejectMountedUsb() {
+        // No public eject API for a normal app. The row stays hidden.
+        if (ejectUsbVolume == null) return
+        launchIO { snackbar(context.getString(R.string.usb_eject_failed)) }
     }
     val folderSelect = remember { FolderSelectState() }
     DisposableEffect(folderSelect) {
@@ -3277,6 +3291,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                             horizontalArrangement = gridSpacing,
                             verticalArrangement = gridSpacing,
                         ) {
+                            usbEjectBrowseItem(ejectUsbVolume, ::ejectMountedUsb)
                             searchSection(grid = true)
                             recentSection(grid = true)
                             if (dirs.isNotEmpty()) {
@@ -3442,6 +3457,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                 modifier = Modifier.nestedScroll(scrollBehavior.nestedScrollConnection).fillMaxSize(),
                                 contentPadding = GalleryGridDefaults.listVerticalContentPadding(),
                             ) {
+                                usbEjectBrowseItem(ejectUsbVolume, ::ejectMountedUsb)
                                 searchSection(grid = false)
                                 recentSection(grid = false)
                                 if (dirs.isNotEmpty()) {

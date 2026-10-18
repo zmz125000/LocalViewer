@@ -14,6 +14,8 @@ import com.hippo.ehviewer.download.downloadLocation
 import com.hippo.ehviewer.library.BrowseSession
 import com.hippo.ehviewer.library.ExplorerWindows
 import com.hippo.ehviewer.library.NavTabWindows
+import com.hippo.ehviewer.library.UsbVolume
+import com.hippo.ehviewer.library.browseTarget
 import com.hippo.ehviewer.library.buildLocalBrowseStack
 import com.hippo.ehviewer.library.parentRelativeOfFile
 import com.hippo.ehviewer.ui.destinations.FolderBrowserScreenDestination
@@ -183,6 +185,19 @@ inline fun openFromHistoryWithBackStack(
  * Open a local browse directory (History / Library / Favourites pin).
  * Full root→dir stack when [walkUpperDirsForBrowseOpen]; else leaf only.
  */
+context(nav: DestinationsNavigator)
+fun openUsbVolume(volume: UsbVolume) {
+    val target = volume.browseTarget()
+    openLocalBrowseDir(
+        rootId = volume.cacheSourceId,
+        rootDisplayName = volume.label,
+        rootPath = target.path,
+        relativePath = "",
+        preferMediaStore = target.preferMediaStore,
+        fromLibrary = true,
+    )
+}
+
 context(nav: DestinationsNavigator)
 fun openLocalBrowseDir(
     rootId: Long,
