@@ -1327,8 +1327,9 @@ internal fun BrowseVideoThumbnail(
     // Disk first (same as gallery covers). Extract only while the app is foreground
     // and (for network) when video thumbs are enabled. extractEnabled is the ON_STOP
     // cancel: leaving Recents must not keep starting local library MMR.
-    // A fast fling composes each row only briefly. Wait 400ms so those rows leave
-    // and cancel this effect before MediaCodec starts. A slow scroll still extracts.
+    // A tablet / small-grid screen can compose ~50 video cells at once. Cache hits
+    // stay unbounded; settle-delay + getOrCreate share [VideoThumbnail.withComposeExtractJob]
+    // so only a few cells hold an extract job (scroll-away cancels waiters).
     LaunchedEffect(source, downloadNetworkVideoThumbs, allowRemoteFetch, extractEnabled) {
         val src = source ?: run {
             thumbnail = null
@@ -1340,11 +1341,15 @@ internal fun BrowseVideoThumbnail(
             return@LaunchedEffect
         }
         if (!allowRemoteFetch || !extractEnabled) return@LaunchedEffect
-        kotlinx.coroutines.delay(400)
-        thumbnail = withIOContext { VideoThumbnail.getOrCreate(context, src)?.absolutePath }
-        if (thumbnail == null) {
-            kotlinx.coroutines.delay(400)
+        VideoThumbnail.withComposeExtractJob {
+            // Fling filter: short-lived cells cancel here before MediaCodec starts.
+            delay(400)
+            if (!VideoThumbnail.extractEnabled.value) return@withComposeExtractJob
             thumbnail = withIOContext { VideoThumbnail.getOrCreate(context, src)?.absolutePath }
+            if (thumbnail == null && VideoThumbnail.extractEnabled.value) {
+                delay(400)
+                thumbnail = withIOContext { VideoThumbnail.getOrCreate(context, src)?.absolutePath }
+            }
         }
     }
     val request = remember(source, thumbnail, sizePx) {
