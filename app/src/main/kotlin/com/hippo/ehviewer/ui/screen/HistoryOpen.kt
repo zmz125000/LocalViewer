@@ -87,7 +87,12 @@ fun openHistoryRecord(context: Context, info: GalleryEntity, filterQuery: String
                     val path = local.contentPath
                     val name = local.title
                     val mime = mimeTypeForFileName(name)
-                    if (Settings.useMedia3Player.value) {
+                    val inApp = libraryVideoFileUsesMedia3(
+                        media3 = Settings.useMedia3Player.value,
+                        media3ForLibrary = Settings.useMedia3PlayerForLibrary.value,
+                        videoMode = LibraryVideoMode.Files,
+                    )
+                    if (inApp) {
                         OpenFileExternally.playLocal(context, path, displayName = name, mimeType = mime)
                     } else {
                         OpenFileExternally.openLocal(context, path, displayName = name, mimeType = mime)
@@ -642,7 +647,11 @@ fun openHistoryRecord(context: Context, info: GalleryEntity, filterQuery: String
                 withIOContext {
                     LocalHistory.recordLocalFile(path, title = name, thumbKey = info.thumbKey)
                     try {
-                        if (isVideo && Settings.useMedia3Player.value) {
+                        val inApp = isVideo && localFolderVideoUsesMedia3(
+                            media3 = Settings.useMedia3Player.value,
+                            media3ForLocalFiles = Settings.useMedia3PlayerForLocalFiles.value,
+                        )
+                        if (inApp) {
                             OpenFileExternally.playLocal(context, path, displayName = name, mimeType = mime)
                         } else {
                             OpenFileExternally.openLocal(context, path, displayName = name, mimeType = mime)

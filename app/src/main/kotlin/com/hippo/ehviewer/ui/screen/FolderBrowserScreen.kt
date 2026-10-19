@@ -2142,16 +2142,24 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
     }
 
     /**
-     * Main Media3 switch, plus the library toggle while this frame is a library video folder.
-     * Long-press uses the other player.
+     * Library video folder → library Media3 toggle. Other local folders → local-files
+     * toggle. Main Media3 switch covers both. Long-press uses the other player.
      */
-    fun videoOpensInApp(longPress: Boolean): Boolean = libraryVideoFileUsesMedia3(
-        media3 = Settings.useMedia3Player.value,
-        media3ForLibrary = Settings.useMedia3PlayerForLibrary.value,
-        videoMode = LibraryVideoMode.Folders,
-        libraryVideoFolder = videoFolder,
-        longPress = longPress,
-    )
+    fun videoOpensInApp(longPress: Boolean): Boolean = if (videoFolder) {
+        libraryVideoFileUsesMedia3(
+            media3 = Settings.useMedia3Player.value,
+            media3ForLibrary = Settings.useMedia3PlayerForLibrary.value,
+            videoMode = LibraryVideoMode.Folders,
+            libraryVideoFolder = true,
+            longPress = longPress,
+        )
+    } else {
+        localFolderVideoUsesMedia3(
+            media3 = Settings.useMedia3Player.value,
+            media3ForLocalFiles = Settings.useMedia3PlayerForLocalFiles.value,
+            longPress = longPress,
+        )
+    }
 
     /** Primary action: in-app when [videoOpensInApp] is on, else external. */
     fun openVideoPrimary(path: okio.Path) {

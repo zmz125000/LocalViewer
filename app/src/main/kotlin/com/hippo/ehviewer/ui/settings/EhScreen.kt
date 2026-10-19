@@ -248,10 +248,16 @@ fun AnimatedVisibilityScope.EhScreen(navigator: DestinationsNavigator) = Screen(
                 )
             }
             AnimatedVisibility(visible = !useMedia3Player.value) {
-                SwitchPreference(
-                    title = stringResource(id = R.string.settings_use_media3_player_for_library),
-                    state = Settings.useMedia3PlayerForLibrary.asMutableState(),
-                )
+                Column {
+                    SwitchPreference(
+                        title = stringResource(id = R.string.settings_use_media3_player_for_library),
+                        state = Settings.useMedia3PlayerForLibrary.asMutableState(),
+                    )
+                    SwitchPreference(
+                        title = stringResource(id = R.string.settings_use_media3_player_for_local_files),
+                        state = Settings.useMedia3PlayerForLocalFiles.asMutableState(),
+                    )
+                }
             }
             SwitchPreference(
                 title = stringResource(id = R.string.settings_video_scroll_to_next),

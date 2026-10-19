@@ -121,6 +121,19 @@ fun libraryVideoFileUsesMedia3(
     return if (longPress) !primary else primary
 }
 
+/**
+ * Local folder-browse videos use Media3 when the main switch is on, or when that
+ * switch is off and [media3ForLocalFiles] is on. [longPress] takes the other player.
+ */
+fun localFolderVideoUsesMedia3(
+    media3: Boolean,
+    media3ForLocalFiles: Boolean,
+    longPress: Boolean = false,
+): Boolean {
+    val primary = media3 || media3ForLocalFiles
+    return if (longPress) !primary else primary
+}
+
 fun toggleLibraryVideoMode() {
     Settings.libraryVideoMode.value = when (LibraryVideoMode.fromPref(Settings.libraryVideoMode.value)) {
         LibraryVideoMode.Folders -> LibraryVideoMode.Files.prefValue

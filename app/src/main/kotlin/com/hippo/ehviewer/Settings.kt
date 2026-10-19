@@ -167,6 +167,12 @@ object Settings : DataStorePreferences(null) {
     val useMedia3PlayerForLibrary = boolPref("use_media3_player_for_library", true)
 
     /**
+     * Shown when [useMedia3Player] is off. On: a video opened from local folder
+     * browsing (Browse → folder) uses Media3.
+     */
+    val useMedia3PlayerForLocalFiles = boolPref("use_media3_player_for_local_files", true)
+
+    /**
      * In-app player: swipe up/down moves to the next/previous video.
      * Independent of [videoRotateWithVideo]. Default on.
      */
