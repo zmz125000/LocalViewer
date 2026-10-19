@@ -267,7 +267,7 @@
     <string name="settings_heavy_decode">重度解码</string>
     <string name="settings_heavy_decode_summary">同时进行的全尺寸解码数：%s</string>
     <string name="settings_browse_thumb_compose_jobs">缩略图任务上限</string>
-    <string name="settings_browse_thumb_compose_jobs_summary">同时进行的文件夹/视频缩略图任务数：%s</string>
+    <string name="settings_browse_thumb_compose_jobs_summary">同时进行的图片/文件夹/视频缩略图任务数：%s</string>
     <string name="settings_advanced_read_cache_size_summary">SMB 页面缓存（及旧版在线图片缓存）的最大容量</string>
     <!-- Theme -->
     <string name="homepage">主页</string>

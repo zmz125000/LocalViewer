@@ -638,7 +638,7 @@
     <string name="settings_heavy_decode">Heavy decode</string>
     <string name="settings_heavy_decode_summary">Up to %s full-size decodes at once</string>
     <string name="settings_browse_thumb_compose_jobs">Thumb job limit</string>
-    <string name="settings_browse_thumb_compose_jobs_summary">Up to %s folder or video thumb jobs at once</string>
+    <string name="settings_browse_thumb_compose_jobs_summary">Up to %s image, folder, or video thumb jobs at once</string>
     <string name="settings_download_download_delay">Download delay</string>
     <string name="settings_download_download_delay_summary">Delay %s ms per download</string>
     <string name="settings_download_timeout_speed">Minimum download speed (in KB/s)</string>

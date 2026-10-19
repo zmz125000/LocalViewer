@@ -17,6 +17,7 @@ import com.hippo.ehviewer.image.hdr.HdrConvertCache
 import com.hippo.ehviewer.image.hdr.RawPreviewCache
 import com.hippo.ehviewer.image.hdr.isHdrConvertCandidateExtension
 import com.hippo.ehviewer.image.hdr.isRawStillExtension
+import com.hippo.ehviewer.library.BrowseThumbComposeJobs
 import com.hippo.ehviewer.library.LandscapeCoverMarks
 import com.hippo.ehviewer.library.ZipMemberCover
 import com.hippo.ehviewer.library.ZipPaths
@@ -41,12 +42,16 @@ data class CoverPath(val path: String)
  * Lib formats → [HdrConvertCache.ensureCoilReady] (Ultra HDR JPEG); platform → original.
  * Zip-as-dir members extract first, then the **same** convert — ImageDecoder cannot open
  * JXL/JXR (`Failed to create image decoder` / `unimplemented`).
+ *
+ * Memory/disk cache hits skip this fetcher. Cache misses share
+ * [BrowseThumbComposeJobs] with browse video/archive thumbs so a ~50-cell
+ * library/history/folder grid cannot stampede MediaStore / RAW / decode.
  */
 class CoverPathFetcher(
     private val data: CoverPath,
     private val options: Options,
 ) : Fetcher {
-    override suspend fun fetch(): FetchResult {
+    override suspend fun fetch(): FetchResult = BrowseThumbComposeJobs.withJob {
         val resolved = resolveFile()
         val hint = coverConvertHint(data.path, resolved.name)
         val ext = FileUtils.getExtensionFromFilename(hint)?.lowercase()
@@ -59,7 +64,7 @@ class CoverPathFetcher(
         }
         // Coil called fetch, so this cover is actually being decoded (not a memory hit).
         noteCoverBounds(data.path, openPath)
-        return openAsSource(openPath)
+        openAsSource(openPath)
     }
 
     private fun resolveFile(): Path {

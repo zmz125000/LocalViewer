@@ -6,12 +6,13 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
 /**
- * Caps how many Compose [androidx.compose.runtime.LaunchedEffect] cells may run
- * heavy thumb work at once (browse video/image/archive covers, library/history
- * archive page-0 extract).
+ * Caps how many heavy thumb jobs may run at once:
+ * - Browse [androidx.compose.runtime.LaunchedEffect] video / remote-image / archive work
+ * - Library/history archive page-0 extract
+ * - Coil [com.hippo.ehviewer.coil.CoverPathFetcher] cache misses (local image thumbs)
  *
- * Disk / memory cache probes stay outside [withJob] so a full grid of hits does not
- * serialize. Scroll-away cancels waiters and frees a permit.
+ * Disk / memory cache probes and Coil memory hits stay outside [withJob].
+ * Scroll-away / request cancel frees a permit.
  *
  * Limit is [Settings.browseThumbComposeJobs] (default 8). Raising it wakes waiters.
  */

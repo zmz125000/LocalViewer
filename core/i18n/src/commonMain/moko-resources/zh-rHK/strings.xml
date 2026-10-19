@@ -523,5 +523,5 @@
     <string name="settings_heavy_decode">重度解碼</string>
     <string name="settings_heavy_decode_summary">同時進行的全尺寸解碼數：%s</string>
     <string name="settings_browse_thumb_compose_jobs">縮圖任務上限</string>
-    <string name="settings_browse_thumb_compose_jobs_summary">同時進行的資料夾/影片縮圖任務數：%s</string>
+    <string name="settings_browse_thumb_compose_jobs_summary">同時進行的圖片/資料夾/影片縮圖任務數：%s</string>
 </resources>
