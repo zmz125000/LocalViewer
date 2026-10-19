@@ -12,8 +12,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.grid.GridItemSpan
+import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.lazy.grid.items
-import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ViewList
 import androidx.compose.material.icons.filled.ClearAll
@@ -26,6 +26,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.fork.SwipeToDismissBox
 import androidx.compose.material3.fork.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -33,6 +34,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -89,6 +91,7 @@ import com.ramcosta.composedestinations.navigation.DestinationsNavigator
 import kotlin.math.roundToInt
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import moe.tarsin.snackbar
@@ -548,7 +551,7 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
         }
 
         if (listMode == 0) {
-            val listState = rememberLazyGridState()
+            val listState = rememberHistoryGridState(listMode, historySection)
             // Match browse folder list: no extra horizontal marginH (ListItem inset only).
             val listPadding = PaddingValues(
                 top = paddingValues.calculateTopPadding() + marginV,
@@ -616,7 +619,7 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
                 }
             }
         } else {
-            val gridState = rememberLazyGridState()
+            val gridState = rememberHistoryGridState(listMode, historySection)
             val gridSpacing = GalleryGridDefaults.spacedBy()
             FastScrollLazyVerticalGrid(
                 columns = GalleryGridDefaults.columns(),
@@ -678,6 +681,37 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
             }
         }
     }
+}
+
+/**
+ * History tab scroll across nav-tab switches. The History destination is popped
+ * (not saveState'd), so [LazyGridState] cannot live on the NavBackStackEntry —
+ * persist index/offset in [HistoryListMemory] like folder browse does.
+ */
+@Composable
+private fun rememberHistoryGridState(listMode: Int, section: HistorySection): LazyGridState {
+    val state = remember(listMode, section) {
+        val saved = HistoryListMemory.scroll(listMode, section)
+        LazyGridState(saved?.index ?: 0, saved?.offset ?: 0)
+    }
+    DisposableEffect(listMode, section, state) {
+        onDispose {
+            HistoryListMemory.saveScroll(
+                listMode,
+                section,
+                state.firstVisibleItemIndex,
+                state.firstVisibleItemScrollOffset,
+            )
+        }
+    }
+    // Constructor index can be clamped to 0 before items layout; re-apply once ready.
+    LaunchedEffect(listMode, section, state) {
+        val saved = HistoryListMemory.scroll(listMode, section) ?: return@LaunchedEffect
+        snapshotFlow { state.layoutInfo.totalItemsCount }.first { it > 0 }
+        val max = (state.layoutInfo.totalItemsCount - 1).coerceAtLeast(0)
+        state.scrollToItem(saved.index.coerceIn(0, max), saved.offset)
+    }
+    return state
 }
 
 /** Max browse-dir pins shown per column in History list mode (collapsed). */

@@ -17,6 +17,9 @@ internal object HistoryListMemory {
     private var loadedFlag = false
     private var prepared: HistoryListBuild<*>? = null
 
+    /** List/grid scroll across tab switches (History nav entry is destroyed on leave). */
+    private val scroll = mutableMapOf<String, HistoryScrollPosition>()
+
     val loaded: Boolean get() = synchronized(gate) { loadedFlag }
 
     fun store(list: List<*>) {
@@ -58,14 +61,30 @@ internal object HistoryListMemory {
         return built
     }
 
+    fun saveScroll(listMode: Int, section: HistorySection, index: Int, offset: Int) {
+        synchronized(gate) {
+            scroll[scrollKey(listMode, section)] =
+                HistoryScrollPosition(index, offset.coerceAtLeast(0))
+        }
+    }
+
+    fun scroll(listMode: Int, section: HistorySection): HistoryScrollPosition? = synchronized(gate) {
+        scroll[scrollKey(listMode, section)]
+    }
+
     fun resetForTest() {
         synchronized(gate) {
             sourceRef = emptyList<GalleryInfo>()
             loadedFlag = false
             prepared = null
+            scroll.clear()
         }
     }
+
+    private fun scrollKey(listMode: Int, section: HistorySection) = "$listMode#${section.name}"
 }
+
+internal data class HistoryScrollPosition(val index: Int, val offset: Int = 0)
 
 internal data class HistoryListKey(
     val keyword: String,
