@@ -425,7 +425,7 @@ object VideoThumbnail {
     }
 
     /**
-     * Admit a browse/library Compose cell into settle-delay + [getOrCreate].
+     * Admit a browse/library Compose cell into [getOrCreate].
      * Shares [BrowseThumbComposeJobs] with image/archive cover cells.
      */
     suspend fun <T> withComposeExtractJob(block: suspend () -> T): T = BrowseThumbComposeJobs.withJob(block)

@@ -64,6 +64,7 @@ import com.hippo.ehviewer.coil.CoverThumb
 import com.hippo.ehviewer.coil.coverThumbRequest
 import com.hippo.ehviewer.collectAsState
 import com.hippo.ehviewer.library.ArchiveCoverCache
+import com.hippo.ehviewer.library.BrowseThumbComposeJobs
 import com.hippo.ehviewer.library.CoverEnsureResult
 import com.hippo.ehviewer.library.HistoryThumbKey
 import com.hippo.ehviewer.library.LocalHistory
@@ -152,6 +153,8 @@ internal fun CoverImage(
     var resolvedCover by remember(coverPath, archiveContentPath) {
         mutableStateOf<String?>(null)
     }
+    // Resolve/cache probes stay unbounded. Archive page-0 extract shares
+    // [BrowseThumbComposeJobs] with browse thumbs (library/history grids).
     LaunchedEffect(coverPath, archiveContentPath) {
         val stored = coverPath?.takeIf { it.isNotBlank() }
         if (stored != null) {
@@ -169,23 +172,25 @@ internal fun CoverImage(
         }
         val arch = archiveContentPath ?: return@LaunchedEffect
         if (ZipPaths.isZipPath(arch)) return@LaunchedEffect
-        when (val result = withIOContext { ArchiveCoverCache.ensureCover(arch.toPath()) }) {
-            is CoverEnsureResult.Hit -> {
-                val pathStr = result.path.toString()
-                resolvedCover = pathStr
-                withIOContext {
-                    LocalLibrary.updateGalleryPageAndCoverByContentPath(
-                        arch,
-                        0,
-                        pathStr,
-                    )
+        BrowseThumbComposeJobs.withJob {
+            when (val result = withIOContext { ArchiveCoverCache.ensureCover(arch.toPath()) }) {
+                is CoverEnsureResult.Hit -> {
+                    val pathStr = result.path.toString()
+                    resolvedCover = pathStr
+                    withIOContext {
+                        LocalLibrary.updateGalleryPageAndCoverByContentPath(
+                            arch,
+                            0,
+                            pathStr,
+                        )
+                    }
                 }
+                CoverEnsureResult.NoImages -> {
+                    // Confirmed empty (native "Found 0 images") — drop from library listing.
+                    withIOContext { LocalLibrary.hideEmptyArchive(arch) }
+                }
+                CoverEnsureResult.Skip -> Unit
             }
-            CoverEnsureResult.NoImages -> {
-                // Confirmed empty (native "Found 0 images") — drop from library listing.
-                withIOContext { LocalLibrary.hideEmptyArchive(arch) }
-            }
-            CoverEnsureResult.Skip -> Unit
         }
     }
     Box(modifier = modifier, contentAlignment = Alignment.Center) {

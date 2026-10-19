@@ -1328,9 +1328,9 @@ internal fun BrowseVideoThumbnail(
     // Disk first (same as gallery covers). Extract only while the app is foreground
     // and (for network) when video thumbs are enabled. extractEnabled is the ON_STOP
     // cancel: leaving Recents must not keep starting local library MMR.
-    // A tablet / small-grid screen can compose ~50 video cells at once. Cache hits
-    // stay unbounded; settle-delay + getOrCreate share [BrowseThumbComposeJobs]
-    // with image/archive covers (scroll-away cancels waiters).
+    // Cache hits stay unbounded; getOrCreate shares [BrowseThumbComposeJobs] with
+    // image/archive covers so a ~50-cell grid cannot stampede MediaCodec (scroll-away
+    // cancels waiters). No settle delay — admission already serializes extract work.
     LaunchedEffect(source, downloadNetworkVideoThumbs, allowRemoteFetch, extractEnabled) {
         val src = source ?: run {
             thumbnail = null
@@ -1343,12 +1343,9 @@ internal fun BrowseVideoThumbnail(
         }
         if (!allowRemoteFetch || !extractEnabled) return@LaunchedEffect
         VideoThumbnail.withComposeExtractJob {
-            // Fling filter: short-lived cells cancel here before MediaCodec starts.
-            delay(400)
             if (!VideoThumbnail.extractEnabled.value) return@withComposeExtractJob
             thumbnail = withIOContext { VideoThumbnail.getOrCreate(context, src)?.absolutePath }
             if (thumbnail == null && VideoThumbnail.extractEnabled.value) {
-                delay(400)
                 thumbnail = withIOContext { VideoThumbnail.getOrCreate(context, src)?.absolutePath }
             }
         }

@@ -5,7 +5,8 @@ import kotlinx.coroutines.sync.withPermit
 
 /**
  * Caps how many Compose [androidx.compose.runtime.LaunchedEffect] cells may run
- * heavy browse-thumb work at once (video extract, archive page-0, remote image cover).
+ * heavy thumb work at once (browse video/image/archive covers, library/history
+ * archive page-0 extract).
  *
  * Disk / memory cache probes stay outside [withJob] so a full grid of hits does not
  * serialize. Scroll-away cancels waiters and frees a permit.
