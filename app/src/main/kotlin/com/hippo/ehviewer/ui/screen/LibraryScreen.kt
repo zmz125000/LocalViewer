@@ -805,6 +805,11 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
         "library-screen",
         libraryRecentExpanded,
     )
+    // Favorites strip: same preview rows as Recent; no lock setting (always starts collapsed).
+    val (favoritesPreviewExpanded, setFavoritesPreviewExpanded) = rememberRecentStripExpanded(
+        "library-screen-favorites",
+        defaultExpanded = false,
+    )
     val recentGridColumns = GalleryGridDefaults.columnCount()
     val recentListColumns = GalleryGridDefaults.listColumnCount()
     val (collapsedSections, _, setSectionCollapsed) = rememberBrowseSectionCollapse("library-screen")
@@ -812,18 +817,28 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
     val setRecentCollapsedNow = rememberUpdatedState(setSectionCollapsed)
     val recentExpandedNow = rememberUpdatedState(recentPreviewExpanded)
     val setRecentExpandedNow = rememberUpdatedState(setRecentPreviewExpanded)
+    val favoritesCollapsedNow = rememberUpdatedState(BrowseFolderSection.Favorites in collapsedSections)
+    val setFavoritesCollapsedNow = rememberUpdatedState(setSectionCollapsed)
+    val favoritesExpandedNow = rememberUpdatedState(favoritesPreviewExpanded)
+    val setFavoritesExpandedNow = rememberUpdatedState(setFavoritesPreviewExpanded)
     val recentQuery = keyword.trim()
     val showRecent = libraryShowRecent && recentHistory.isNotEmpty()
-    val recentCanExpand = recentHistory.size > browseRecentPreviewLimit(
+    val stripPreviewLimit = browseRecentPreviewLimit(
         grid = listMode != 0,
         gridColumnCount = recentGridColumns,
         listColumnCount = recentListColumns,
     )
+    val recentCanExpand = recentHistory.size > stripPreviewLimit
+    val favoritesCanExpand = favorites.size > stripPreviewLimit
     LaunchedEffect(recentCanExpand) {
         if (!recentCanExpand && recentPreviewExpanded) setRecentPreviewExpanded(false)
     }
+    LaunchedEffect(favoritesCanExpand) {
+        if (!favoritesCanExpand && favoritesPreviewExpanded) setFavoritesPreviewExpanded(false)
+    }
     // Back collapses the expanded strip before leaving Library. SearchBarScreen
     // registers its own handler later, so a focused search still clears first.
+    // Favorites is registered after Recent so it collapses first when both are open.
     BackHandler(
         enabled = showRecent &&
             recentPreviewExpanded &&
@@ -831,6 +846,14 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
             BrowseFolderSection.Recent !in collapsedSections,
     ) {
         setRecentPreviewExpanded(false)
+    }
+    BackHandler(
+        enabled = showFavorites &&
+            favoritesPreviewExpanded &&
+            favoritesCanExpand &&
+            BrowseFolderSection.Favorites !in collapsedSections,
+    ) {
+        setFavoritesPreviewExpanded(false)
     }
 
     SearchBarScreen(
@@ -926,6 +949,74 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
             }
         }
 
+        fun LazyGridScope.favoritesSection(grid: Boolean) {
+            if (!showFavorites) return
+            val sectionCollapsed = BrowseFolderSection.Favorites in collapsedSections
+            val previewLimit = browseRecentPreviewLimit(grid, recentGridColumns, recentListColumns)
+            item(key = "fav-hdr", span = { GridItemSpan(maxLineSpan) }) {
+                BrowseSectionHeader(
+                    stringResource(R.string.browse_favorites),
+                    section = BrowseFolderSection.Favorites,
+                    onClick = {
+                        onRecentHeaderGesture(
+                            collapsed = favoritesCollapsedNow.value,
+                            longPress = false,
+                            setCollapsed = { setFavoritesCollapsedNow.value(BrowseFolderSection.Favorites, it) },
+                            expanded = favoritesExpandedNow.value,
+                            setExpanded = setFavoritesExpandedNow.value,
+                            entryCount = favorites.size,
+                            previewLimit = previewLimit,
+                        )
+                    },
+                    onLongClick = {
+                        onRecentHeaderGesture(
+                            collapsed = favoritesCollapsedNow.value,
+                            longPress = true,
+                            setCollapsed = { setFavoritesCollapsedNow.value(BrowseFolderSection.Favorites, it) },
+                            expanded = favoritesExpandedNow.value,
+                            setExpanded = setFavoritesExpandedNow.value,
+                            entryCount = favorites.size,
+                            previewLimit = previewLimit,
+                        )
+                    },
+                )
+            }
+            if (sectionCollapsed) return
+            val shown = if (favoritesPreviewExpanded) {
+                favorites
+            } else {
+                favorites.take(previewLimit)
+            }
+            items(shown, key = { "fav-${it.key}" }) { fav ->
+                val itemMod = Modifier.thenIf(animateItems) { animateItem() }
+                if (grid) {
+                    FavoriteSourceGridCell(
+                        fav = fav,
+                        onClick = { openFavorite(fav) },
+                        onLongClick = { toggleFavorite(fav) },
+                        modifier = itemMod,
+                    )
+                } else {
+                    when (fav) {
+                        is FavoriteBrowseSource.Gallery -> LocalGalleryListItem(
+                            gallery = fav.gallery,
+                            onClick = { openGalleryPrimary(fav.gallery) },
+                            onLongClick = { toggleFavorite(fav) },
+                            showPages = showPages,
+                            showProgress = showProgress,
+                            modifier = itemMod.fillMaxWidth(),
+                        )
+                        else -> FavoriteSourceListRow(
+                            fav = fav,
+                            onClick = { openFavorite(fav) },
+                            onLongClick = { toggleFavorite(fav) },
+                            modifier = itemMod,
+                        )
+                    }
+                }
+            }
+        }
+
         val isEmpty = galleries.isEmpty() &&
             !showFavorites &&
             !showRecent &&
@@ -949,35 +1040,7 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
                         contentPadding = listPadding,
                     ) {
                         recentSection(grid = false)
-                        if (showFavorites) {
-                            item(
-                                key = "fav-hdr",
-                                span = { GridItemSpan(maxLineSpan) },
-                            ) {
-                                BrowseSectionHeader(
-                                    stringResource(R.string.browse_favorites),
-                                )
-                            }
-                            items(favorites, key = { "fav-${it.key}" }) { fav ->
-                                val itemMod = Modifier.thenIf(animateItems) { animateItem() }
-                                when (fav) {
-                                    is FavoriteBrowseSource.Gallery -> LocalGalleryListItem(
-                                        gallery = fav.gallery,
-                                        onClick = { openGalleryPrimary(fav.gallery) },
-                                        onLongClick = { toggleFavorite(fav) },
-                                        showPages = showPages,
-                                        showProgress = showProgress,
-                                        modifier = itemMod.fillMaxWidth(),
-                                    )
-                                    else -> FavoriteSourceListRow(
-                                        fav = fav,
-                                        onClick = { openFavorite(fav) },
-                                        onLongClick = { toggleFavorite(fav) },
-                                        modifier = itemMod,
-                                    )
-                                }
-                            }
-                        }
+                        favoritesSection(grid = false)
                         if (showSectionHeader) {
                             item(
                                 key = "gal-hdr",
@@ -1015,22 +1078,7 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
                     horizontalArrangement = gridSpacing,
                 ) {
                     recentSection(grid = true)
-                    if (showFavorites) {
-                        item(
-                            key = "fav-hdr",
-                            span = { GridItemSpan(maxLineSpan) },
-                        ) {
-                            BrowseSectionHeader(stringResource(R.string.browse_favorites))
-                        }
-                        items(favorites, key = { "fav-${it.key}" }) { fav ->
-                            FavoriteSourceGridCell(
-                                fav = fav,
-                                onClick = { openFavorite(fav) },
-                                onLongClick = { toggleFavorite(fav) },
-                                modifier = Modifier.thenIf(animateItems) { animateItem() },
-                            )
-                        }
-                    }
+                    favoritesSection(grid = true)
                     if (showSectionHeader) {
                         item(
                             key = "gal-hdr",
