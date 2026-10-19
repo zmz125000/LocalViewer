@@ -349,9 +349,11 @@ private fun clearNavTabOnReturn(previous: DestinationSpec?, current: Destination
 
 private fun showTabRoot(navigator: DestinationsNavigator, direction: Direction) {
     if (navigator.popBackStack(direction, inclusive = false)) return
+    // Tabs are peers (no back relationship). saveState=true + restoreState=false leaves
+    // DESTROYED entries in NavHost's AnimatedContent transition → ViewModelStore crash.
     navigator.navigate(direction) {
         popUpTo(LibraryScreenDestination) {
-            saveState = true
+            saveState = false
         }
         launchSingleTop = true
         restoreState = false
@@ -383,8 +385,9 @@ private fun recallNavWindow(
     with(navigator) {
         // Replace whatever is above Library. Pushing the folder on top of Settings
         // makes the next Settings tap restore that folder.
+        // saveState must stay false — same DESTROYED-entry crash as showTabRoot.
         val options: com.ramcosta.composedestinations.navigation.DestinationsNavOptionsBuilder.() -> Unit = {
-            popUpTo(LibraryScreenDestination) { saveState = true }
+            popUpTo(LibraryScreenDestination) { saveState = false }
             launchSingleTop = true
             restoreState = false
         }
