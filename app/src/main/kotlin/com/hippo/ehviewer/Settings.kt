@@ -514,6 +514,18 @@ object Settings : DataStorePreferences(null) {
      * 1 keeps them serial. 2 allows one extra decode. Other values count as 1.
      */
     val heavyDecode = intPref("heavy_decode", 2)
+
+    /**
+     * How many Compose cells may run heavy browse/library/history thumb work at once
+     * (video extract, archive page-0, remote folder covers). Default 8.
+     * Settings → Advanced.
+     */
+    val browseThumbComposeJobs = intPref(
+        "browse_thumb_compose_jobs",
+        com.hippo.ehviewer.library.BrowseThumbComposeJobs.DEFAULT_JOBS,
+    ).observed {
+        com.hippo.ehviewer.library.BrowseThumbComposeJobs.onLimitChanged()
+    }
     val downloadOriginImage = boolPref("download_origin_image", false)
     val saveAsCbz = boolPref("save_as_cbz", false)
     val archiveMetadata = boolPref("archive_metadata", true)

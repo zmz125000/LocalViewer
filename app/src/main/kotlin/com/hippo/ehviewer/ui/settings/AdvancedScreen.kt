@@ -211,6 +211,24 @@ fun AnimatedVisibilityScope.AdvancedScreen(navigator: DestinationsNavigator) = S
                 entryValueRes = com.hippo.ehviewer.R.array.heavy_decode_entry_values,
                 state = heavyDecode,
             )
+            val thumbComposeJobs = Settings.browseThumbComposeJobs.asMutableState()
+            LaunchedEffect(thumbComposeJobs.value) {
+                val clamped = thumbComposeJobs.value.coerceIn(
+                    com.hippo.ehviewer.library.BrowseThumbComposeJobs.MIN_JOBS,
+                    com.hippo.ehviewer.library.BrowseThumbComposeJobs.MAX_JOBS,
+                )
+                if (clamped != thumbComposeJobs.value) thumbComposeJobs.value = clamped
+            }
+            SimpleMenuPreferenceInt(
+                title = stringResource(id = R.string.settings_browse_thumb_compose_jobs),
+                summary = stringResource(
+                    id = R.string.settings_browse_thumb_compose_jobs_summary,
+                    thumbComposeJobs.value,
+                ),
+                entry = com.hippo.ehviewer.R.array.browse_thumb_compose_jobs_entries,
+                entryValueRes = com.hippo.ehviewer.R.array.browse_thumb_compose_jobs_entry_values,
+                state = thumbComposeJobs,
+            )
             val smbConnections = Settings.multiThreadDownload.asMutableState()
             SimpleMenuPreferenceInt(
                 title = stringResource(id = R.string.settings_smb_concurrency),

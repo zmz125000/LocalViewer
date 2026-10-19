@@ -196,6 +196,22 @@
         <item>2</item>
     </integer-array>
 
+    <string-array name="browse_thumb_compose_jobs_entries" translatable="false">
+        <item>4</item>
+        <item>6</item>
+        <item>8</item>
+        <item>10</item>
+        <item>12</item>
+    </string-array>
+
+    <integer-array name="browse_thumb_compose_jobs_entry_values" translatable="false">
+        <item>4</item>
+        <item>6</item>
+        <item>8</item>
+        <item>10</item>
+        <item>12</item>
+    </integer-array>
+
     <string-array name="read_cache_size_entries" translatable="false">
         <item>320 MB</item>
         <item>640 MB</item>

@@ -108,28 +108,32 @@ class VideoThumbnailFolderCancelTest {
 
     @Test
     fun composeExtractJobCapsConcurrentHolders() = runBlocking {
-        val inFlight = AtomicInteger(0)
-        val maxInFlight = AtomicInteger(0)
-        val release = CompletableDeferred<Unit>()
-        val jobs = List(12) {
-            async(Dispatchers.Default) {
-                BrowseThumbComposeJobs.withJob {
-                    val n = inFlight.incrementAndGet()
-                    maxInFlight.updateAndGet { maxOf(it, n) }
-                    release.await()
-                    inFlight.decrementAndGet()
+        val composeCap = 6
+        BrowseThumbComposeJobs.limitOverrideForTest = composeCap
+        try {
+            val inFlight = AtomicInteger(0)
+            val maxInFlight = AtomicInteger(0)
+            val release = CompletableDeferred<Unit>()
+            val jobs = List(12) {
+                async(Dispatchers.Default) {
+                    BrowseThumbComposeJobs.withJob {
+                        val n = inFlight.incrementAndGet()
+                        maxInFlight.updateAndGet { maxOf(it, n) }
+                        release.await()
+                        inFlight.decrementAndGet()
+                    }
                 }
             }
+            withTimeout(5_000) {
+                while (maxInFlight.get() < composeCap) delay(10)
+            }
+            delay(50)
+            assertEquals(composeCap, maxInFlight.get())
+            release.complete(Unit)
+            jobs.forEach { it.await() }
+            assertEquals(0, inFlight.get())
+        } finally {
+            BrowseThumbComposeJobs.limitOverrideForTest = null
         }
-        // Fetch slots × 2 (see BrowseThumbComposeJobs).
-        val composeCap = 6
-        withTimeout(5_000) {
-            while (maxInFlight.get() < composeCap) delay(10)
-        }
-        delay(50)
-        assertEquals(composeCap, maxInFlight.get())
-        release.complete(Unit)
-        jobs.forEach { it.await() }
-        assertEquals(0, inFlight.get())
     }
 }
