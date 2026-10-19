@@ -144,13 +144,6 @@ object VideoThumbnail {
     /** Parallel native MMR decodes (and abandoned-worker budget). */
     private const val MAX_CONCURRENT_EXTRACTIONS = 3
 
-    /**
-     * How many Compose [LaunchedEffect] cells may run settle-delay + [getOrCreate] at once.
-     * Decode/MMR is already capped at [MAX_CONCURRENT_EXTRACTIONS]; allow a small queue
-     * ahead of it (×2) so a tablet grid does not stampede ~50 effects into IO/Binder.
-     */
-    private const val MAX_COMPOSE_EXTRACT_JOBS = MAX_CONCURRENT_EXTRACTIONS * 2
-
     /** Parallel local-archive (ZIP member) fetches and snapshot probes. */
     private const val MAX_CONCURRENT_PROBES = 3
 
@@ -204,7 +197,6 @@ object VideoThumbnail {
     private const val MIN_VISIBLE_SAMPLES = SAMPLE_GRID * SAMPLE_GRID * 15 / 100
 
     private val extractSemaphore = Semaphore(MAX_CONCURRENT_EXTRACTIONS)
-    private val composeExtractSemaphore = Semaphore(MAX_COMPOSE_EXTRACT_JOBS)
     private val probeSemaphore = Semaphore(MAX_CONCURRENT_PROBES)
     private val pathLocks = ConcurrentHashMap<String, Mutex>()
     private val leftoverMarkersCleared = AtomicBoolean(false)
@@ -434,10 +426,9 @@ object VideoThumbnail {
 
     /**
      * Admit a browse/library Compose cell into settle-delay + [getOrCreate].
-     * Disk cache hits should run outside this so a full grid of cached thumbs
-     * does not serialize. Scroll-away cancels the waiter and frees the permit.
+     * Shares [BrowseThumbComposeJobs] with image/archive cover cells.
      */
-    suspend fun <T> withComposeExtractJob(block: suspend () -> T): T = composeExtractSemaphore.withPermit { block() }
+    suspend fun <T> withComposeExtractJob(block: suspend () -> T): T = BrowseThumbComposeJobs.withJob(block)
 
     @Suppress("UNUSED_PARAMETER")
     private suspend fun getOrCreateLocked(

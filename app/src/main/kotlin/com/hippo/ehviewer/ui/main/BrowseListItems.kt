@@ -78,6 +78,7 @@ import com.hippo.ehviewer.image.hdr.isRawStillExtension
 import com.hippo.ehviewer.image.hdr.readEmbeddedRawJpeg
 import com.hippo.ehviewer.library.ArchiveCoverCache
 import com.hippo.ehviewer.library.BrowseSession
+import com.hippo.ehviewer.library.BrowseThumbComposeJobs
 import com.hippo.ehviewer.library.CoverEnsureResult
 import com.hippo.ehviewer.library.DocumentExtractCache
 import com.hippo.ehviewer.library.EmptyArchiveRegistry
@@ -1328,8 +1329,8 @@ internal fun BrowseVideoThumbnail(
     // and (for network) when video thumbs are enabled. extractEnabled is the ON_STOP
     // cancel: leaving Recents must not keep starting local library MMR.
     // A tablet / small-grid screen can compose ~50 video cells at once. Cache hits
-    // stay unbounded; settle-delay + getOrCreate share [VideoThumbnail.withComposeExtractJob]
-    // so only a few cells hold an extract job (scroll-away cancels waiters).
+    // stay unbounded; settle-delay + getOrCreate share [BrowseThumbComposeJobs]
+    // with image/archive covers (scroll-away cancels waiters).
     LaunchedEffect(source, downloadNetworkVideoThumbs, allowRemoteFetch, extractEnabled) {
         val src = source ?: run {
             thumbnail = null
@@ -1580,6 +1581,8 @@ fun BrowseCoverThumb(
     // original page-cache write uses [saveThumbOriginalCache] for gallery covers too
     // (zip-as-dir members write `zip_folder_pages` only when that toggle is on);
     // archive first-page uses [downloadNetworkArchiveThumbs].
+    // Cache hits stay unbounded; extract/download shares [BrowseThumbComposeJobs]
+    // with video thumbs so a ~50-cell grid cannot stampede IO.
     LaunchedEffect(
         remoteKey,
         retryKey,
@@ -1631,21 +1634,31 @@ fun BrowseCoverThumb(
                 }
             }
             is BrowseCover.LocalArchive -> {
+                val diskOnly = withIOContext {
+                    ArchiveCoverCache.tryDiskCover(cover.archivePath.toString())
+                }
+                if (diskOnly != null) {
+                    localPath = diskOnly
+                    fetchFailed = false
+                    return@LaunchedEffect
+                }
                 // ZIP/TAR mmap page 0; RAR/CBR/7z first-page (same open as local reader).
-                when (val result = withIOContext { ArchiveCoverCache.ensureCover(cover.archivePath) }) {
-                    is CoverEnsureResult.Hit -> {
-                        localPath = result.path
-                        fetchFailed = false
-                    }
-                    CoverEnsureResult.NoImages -> {
-                        // Native "Found 0 images" — library row removed; browse demotes to file.
-                        withIOContext {
-                            LocalLibrary.hideEmptyArchive(cover.archivePath.toString())
+                BrowseThumbComposeJobs.withJob {
+                    when (val result = withIOContext { ArchiveCoverCache.ensureCover(cover.archivePath) }) {
+                        is CoverEnsureResult.Hit -> {
+                            localPath = result.path
+                            fetchFailed = false
                         }
-                    }
-                    CoverEnsureResult.Skip -> {
-                        // Leave placeholder; ON_RESUME retries (ArchiveAccess busy while reader open).
-                        fetchFailed = localPath == null
+                        CoverEnsureResult.NoImages -> {
+                            // Native "Found 0 images" — library row removed; browse demotes to file.
+                            withIOContext {
+                                LocalLibrary.hideEmptyArchive(cover.archivePath.toString())
+                            }
+                        }
+                        CoverEnsureResult.Skip -> {
+                            // Leave placeholder; ON_RESUME retries (ArchiveAccess busy while reader open).
+                            fetchFailed = localPath == null
+                        }
                     }
                 }
             }
@@ -1662,45 +1675,47 @@ fun BrowseCoverThumb(
                     return@LaunchedEffect
                 }
                 if (!allowRemoteFetch || !downloadNetworkArchiveThumbs) return@LaunchedEffect
-                val result = withIOContext {
-                    if (solid) {
-                        ArchiveCoverCache.ensureSolidStreamCover(key) {
-                            val source = SmbRepository.load(cover.sourceId)
-                                ?: error("SMB source missing")
-                            val password = SmbPasswordStore.get(cover.sourceId)
-                            SmbArchiveByteSource(
-                                source,
-                                password,
-                                cover.remoteRelativeFile,
-                                preferSequential = true,
-                                pipeline = false,
-                                sequentialWindow =
-                                com.hippo.ehviewer.library.ReadAheadArchiveByteSource.COVER_WINDOW,
-                                yieldable = true,
-                            )
-                        }
-                    } else {
-                        ArchiveCoverCache.ensureStreamCover(key) {
-                            val source = SmbRepository.load(cover.sourceId)
-                                ?: error("SMB source missing")
-                            val password = SmbPasswordStore.get(cover.sourceId)
-                            SmbArchiveByteSource(
-                                source,
-                                password,
-                                cover.remoteRelativeFile,
-                                pipeline = !isDocumentFileName(name) && !isMobiContainerFileName(name),
-                                yieldable = true,
-                            )
+                BrowseThumbComposeJobs.withJob {
+                    val result = withIOContext {
+                        if (solid) {
+                            ArchiveCoverCache.ensureSolidStreamCover(key) {
+                                val source = SmbRepository.load(cover.sourceId)
+                                    ?: error("SMB source missing")
+                                val password = SmbPasswordStore.get(cover.sourceId)
+                                SmbArchiveByteSource(
+                                    source,
+                                    password,
+                                    cover.remoteRelativeFile,
+                                    preferSequential = true,
+                                    pipeline = false,
+                                    sequentialWindow =
+                                    com.hippo.ehviewer.library.ReadAheadArchiveByteSource.COVER_WINDOW,
+                                    yieldable = true,
+                                )
+                            }
+                        } else {
+                            ArchiveCoverCache.ensureStreamCover(key) {
+                                val source = SmbRepository.load(cover.sourceId)
+                                    ?: error("SMB source missing")
+                                val password = SmbPasswordStore.get(cover.sourceId)
+                                SmbArchiveByteSource(
+                                    source,
+                                    password,
+                                    cover.remoteRelativeFile,
+                                    pipeline = !isDocumentFileName(name) && !isMobiContainerFileName(name),
+                                    yieldable = true,
+                                )
+                            }
                         }
                     }
-                }
-                when (result) {
-                    is CoverEnsureResult.Hit -> {
-                        localPath = result.path
-                        fetchFailed = false
+                    when (result) {
+                        is CoverEnsureResult.Hit -> {
+                            localPath = result.path
+                            fetchFailed = false
+                        }
+                        CoverEnsureResult.NoImages -> EmptyArchiveRegistry.mark(key)
+                        CoverEnsureResult.Skip -> Unit
                     }
-                    CoverEnsureResult.NoImages -> EmptyArchiveRegistry.mark(key)
-                    CoverEnsureResult.Skip -> Unit
                 }
             }
             is BrowseCover.WebDavArchive -> {
@@ -1715,43 +1730,45 @@ fun BrowseCoverThumb(
                     return@LaunchedEffect
                 }
                 if (!allowRemoteFetch || !downloadNetworkArchiveThumbs) return@LaunchedEffect
-                val result = withIOContext {
-                    if (solid) {
-                        ArchiveCoverCache.ensureSolidStreamCover(key) {
-                            val source = WebDavRepository.load(cover.sourceId)
-                                ?: error("WebDAV source missing")
-                            val password = WebDavPasswordStore.get(cover.sourceId)
-                            WebDavArchiveByteSource(
-                                source,
-                                password,
-                                cover.remoteRelativeFile,
-                                preferSequential = true,
-                                pipeline = false,
-                                sequentialWindow =
-                                com.hippo.ehviewer.library.ReadAheadArchiveByteSource.COVER_WINDOW,
-                            )
-                        }
-                    } else {
-                        ArchiveCoverCache.ensureStreamCover(key) {
-                            val source = WebDavRepository.load(cover.sourceId)
-                                ?: error("WebDAV source missing")
-                            val password = WebDavPasswordStore.get(cover.sourceId)
-                            WebDavArchiveByteSource(
-                                source,
-                                password,
-                                cover.remoteRelativeFile,
-                                pipeline = !isDocumentFileName(name) && !isMobiContainerFileName(name),
-                            )
+                BrowseThumbComposeJobs.withJob {
+                    val result = withIOContext {
+                        if (solid) {
+                            ArchiveCoverCache.ensureSolidStreamCover(key) {
+                                val source = WebDavRepository.load(cover.sourceId)
+                                    ?: error("WebDAV source missing")
+                                val password = WebDavPasswordStore.get(cover.sourceId)
+                                WebDavArchiveByteSource(
+                                    source,
+                                    password,
+                                    cover.remoteRelativeFile,
+                                    preferSequential = true,
+                                    pipeline = false,
+                                    sequentialWindow =
+                                    com.hippo.ehviewer.library.ReadAheadArchiveByteSource.COVER_WINDOW,
+                                )
+                            }
+                        } else {
+                            ArchiveCoverCache.ensureStreamCover(key) {
+                                val source = WebDavRepository.load(cover.sourceId)
+                                    ?: error("WebDAV source missing")
+                                val password = WebDavPasswordStore.get(cover.sourceId)
+                                WebDavArchiveByteSource(
+                                    source,
+                                    password,
+                                    cover.remoteRelativeFile,
+                                    pipeline = !isDocumentFileName(name) && !isMobiContainerFileName(name),
+                                )
+                            }
                         }
                     }
-                }
-                when (result) {
-                    is CoverEnsureResult.Hit -> {
-                        localPath = result.path
-                        fetchFailed = false
+                    when (result) {
+                        is CoverEnsureResult.Hit -> {
+                            localPath = result.path
+                            fetchFailed = false
+                        }
+                        CoverEnsureResult.NoImages -> EmptyArchiveRegistry.mark(key)
+                        CoverEnsureResult.Skip -> Unit
                     }
-                    CoverEnsureResult.NoImages -> EmptyArchiveRegistry.mark(key)
-                    CoverEnsureResult.Skip -> Unit
                 }
             }
             is BrowseCover.Smb -> {
@@ -1769,50 +1786,52 @@ fun BrowseCoverThumb(
                     return@LaunchedEffect
                 }
                 fetchFailed = false
-                var lastError: Throwable? = null
-                repeat(3) { attempt ->
-                    try {
-                        // Password decrypt runBlocks if called on Main. Keep the whole
-                        // fetch on IO so scrolling is not stalled per image row.
-                        localPath = withIOContext {
-                            val source = SmbRepository.load(cover.sourceId) ?: error("SMB source missing")
-                            val password = SmbPasswordStore.get(cover.sourceId)
-                            SmbCache.ensureBrowseThumb(
-                                cover.sourceId,
-                                cover.remoteRelativeFile,
-                                cacheOriginal = cacheThumbOriginal,
-                                readEmbeddedJpeg = {
-                                    embeddedRawJpegOrNull(cover.remoteRelativeFile) {
-                                        SmbGateway.withFileRangeRead(
-                                            source,
-                                            password,
-                                            cover.remoteRelativeFile,
-                                        ) { size, readAt ->
-                                            readEmbeddedRawJpeg(size, readAt)
-                                        }
-                                    }
-                                },
-                            ) { out ->
-                                SmbGateway.downloadFile(
-                                    source,
-                                    password,
+                BrowseThumbComposeJobs.withJob {
+                    var lastError: Throwable? = null
+                    repeat(3) { attempt ->
+                        try {
+                            // Password decrypt runBlocks if called on Main. Keep the whole
+                            // fetch on IO so scrolling is not stalled per image row.
+                            localPath = withIOContext {
+                                val source = SmbRepository.load(cover.sourceId) ?: error("SMB source missing")
+                                val password = SmbPasswordStore.get(cover.sourceId)
+                                SmbCache.ensureBrowseThumb(
+                                    cover.sourceId,
                                     cover.remoteRelativeFile,
-                                    out,
-                                    yieldable = true,
-                                )
+                                    cacheOriginal = cacheThumbOriginal,
+                                    readEmbeddedJpeg = {
+                                        embeddedRawJpegOrNull(cover.remoteRelativeFile) {
+                                            SmbGateway.withFileRangeRead(
+                                                source,
+                                                password,
+                                                cover.remoteRelativeFile,
+                                            ) { size, readAt ->
+                                                readEmbeddedRawJpeg(size, readAt)
+                                            }
+                                        }
+                                    },
+                                ) { out ->
+                                    SmbGateway.downloadFile(
+                                        source,
+                                        password,
+                                        cover.remoteRelativeFile,
+                                        out,
+                                        yieldable = true,
+                                    )
+                                }
                             }
+                            fetchFailed = false
+                            return@withJob
+                        } catch (e: CancellationException) {
+                            throw e
+                        } catch (e: Throwable) {
+                            lastError = e
+                            if (attempt < 2) delay(150L * (attempt + 1))
                         }
-                        fetchFailed = false
-                        return@LaunchedEffect
-                    } catch (e: CancellationException) {
-                        throw e
-                    } catch (e: Throwable) {
-                        lastError = e
-                        if (attempt < 2) kotlinx.coroutines.delay(150L * (attempt + 1))
                     }
+                    lastError?.let { logcat(it) }
+                    fetchFailed = true
                 }
-                lastError?.let { logcat(it) }
-                fetchFailed = true
             }
             is BrowseCover.WebDav -> {
                 val cached = withIOContext {
@@ -1828,57 +1847,59 @@ fun BrowseCoverThumb(
                     return@LaunchedEffect
                 }
                 fetchFailed = false
-                var lastError: Throwable? = null
-                repeat(3) { attempt ->
-                    try {
-                        localPath = withIOContext {
-                            val source = WebDavRepository.load(cover.sourceId) ?: error("WebDAV source missing")
-                            val password = WebDavPasswordStore.get(cover.sourceId)
-                            WebDavCache.ensureBrowseThumb(
-                                cover.sourceId,
-                                cover.remoteRelativeFile,
-                                cacheOriginal = cacheThumbOriginal,
-                                readEmbeddedJpeg = {
-                                    embeddedRawJpegOrNull(cover.remoteRelativeFile) {
-                                        val size = WebDavClient.fileSizeOrNull(
-                                            source,
-                                            password,
-                                            cover.remoteRelativeFile,
-                                        ) ?: return@embeddedRawJpegOrNull null
-                                        readEmbeddedRawJpeg(size) { off, len ->
-                                            val buf = ByteArray(len)
-                                            val n = WebDavClient.readRange(
+                BrowseThumbComposeJobs.withJob {
+                    var lastError: Throwable? = null
+                    repeat(3) { attempt ->
+                        try {
+                            localPath = withIOContext {
+                                val source = WebDavRepository.load(cover.sourceId) ?: error("WebDAV source missing")
+                                val password = WebDavPasswordStore.get(cover.sourceId)
+                                WebDavCache.ensureBrowseThumb(
+                                    cover.sourceId,
+                                    cover.remoteRelativeFile,
+                                    cacheOriginal = cacheThumbOriginal,
+                                    readEmbeddedJpeg = {
+                                        embeddedRawJpegOrNull(cover.remoteRelativeFile) {
+                                            val size = WebDavClient.fileSizeOrNull(
                                                 source,
                                                 password,
                                                 cover.remoteRelativeFile,
-                                                off,
-                                                buf,
-                                                0,
-                                                len,
-                                            )
-                                            when {
-                                                n <= 0 -> null
-                                                n == len -> buf
-                                                else -> buf.copyOf(n)
+                                            ) ?: return@embeddedRawJpegOrNull null
+                                            readEmbeddedRawJpeg(size) { off, len ->
+                                                val buf = ByteArray(len)
+                                                val n = WebDavClient.readRange(
+                                                    source,
+                                                    password,
+                                                    cover.remoteRelativeFile,
+                                                    off,
+                                                    buf,
+                                                    0,
+                                                    len,
+                                                )
+                                                when {
+                                                    n <= 0 -> null
+                                                    n == len -> buf
+                                                    else -> buf.copyOf(n)
+                                                }
                                             }
                                         }
-                                    }
-                                },
-                            ) { out ->
-                                WebDavClient.downloadFile(source, password, cover.remoteRelativeFile, out)
+                                    },
+                                ) { out ->
+                                    WebDavClient.downloadFile(source, password, cover.remoteRelativeFile, out)
+                                }
                             }
+                            fetchFailed = false
+                            return@withJob
+                        } catch (e: CancellationException) {
+                            throw e
+                        } catch (e: Throwable) {
+                            lastError = e
+                            if (attempt < 2) delay(150L * (attempt + 1))
                         }
-                        fetchFailed = false
-                        return@LaunchedEffect
-                    } catch (e: CancellationException) {
-                        throw e
-                    } catch (e: Throwable) {
-                        lastError = e
-                        if (attempt < 2) kotlinx.coroutines.delay(150L * (attempt + 1))
                     }
+                    lastError?.let { logcat(it) }
+                    fetchFailed = true
                 }
-                lastError?.let { logcat(it) }
-                fetchFailed = true
             }
             is BrowseCover.SmbZipMember -> {
                 val key = "smb:${cover.sourceId}:${cover.zipRelativeFile}"
@@ -1905,38 +1926,40 @@ fun BrowseCoverThumb(
                 if (!originOnDisk && (!allowRemoteFetch || !allowNetworkImageDownload)) {
                     return@LaunchedEffect
                 }
-                val extracted = withIOContext {
-                    SmbCache.withBrowseThumbFetchSlot {
-                        val source = SmbRepository.load(cover.sourceId)
-                        val password = source?.let { SmbPasswordStore.get(it.id) }
-                        ZipMemberCover.ensureBrowseThumb(
-                            zipKey = key,
-                            memberRel = cover.memberRel,
-                            destJpeg = java.io.File(thumbPath.toString()),
-                            cacheOriginal = cacheThumbOriginal,
-                            notifyTooLarge = false,
-                            openSource = {
-                                if (source == null || password == null) {
-                                    null
-                                } else {
-                                    SmbArchiveByteSource(
-                                        source,
-                                        password,
-                                        cover.zipRelativeFile,
-                                        pipeline = false,
-                                        yieldable = true,
-                                    )
-                                }
-                            },
-                        )
+                BrowseThumbComposeJobs.withJob {
+                    val extracted = withIOContext {
+                        SmbCache.withBrowseThumbFetchSlot {
+                            val source = SmbRepository.load(cover.sourceId)
+                            val password = source?.let { SmbPasswordStore.get(it.id) }
+                            ZipMemberCover.ensureBrowseThumb(
+                                zipKey = key,
+                                memberRel = cover.memberRel,
+                                destJpeg = java.io.File(thumbPath.toString()),
+                                cacheOriginal = cacheThumbOriginal,
+                                notifyTooLarge = false,
+                                openSource = {
+                                    if (source == null || password == null) {
+                                        null
+                                    } else {
+                                        SmbArchiveByteSource(
+                                            source,
+                                            password,
+                                            cover.zipRelativeFile,
+                                            pipeline = false,
+                                            yieldable = true,
+                                        )
+                                    }
+                                },
+                            )
+                        }
                     }
-                }
-                if (extracted != null) {
-                    SmbCache.markPresent(extracted)
-                    localPath = extracted
-                    fetchFailed = false
-                } else {
-                    fetchFailed = localPath == null
+                    if (extracted != null) {
+                        SmbCache.markPresent(extracted)
+                        localPath = extracted
+                        fetchFailed = false
+                    } else {
+                        fetchFailed = localPath == null
+                    }
                 }
             }
             is BrowseCover.WebDavZipMember -> {
@@ -1964,37 +1987,39 @@ fun BrowseCoverThumb(
                 if (!originOnDisk && (!allowRemoteFetch || !allowNetworkImageDownload)) {
                     return@LaunchedEffect
                 }
-                val extracted = withIOContext {
-                    WebDavCache.withBrowseThumbFetchSlot {
-                        val source = WebDavRepository.load(cover.sourceId)
-                        val password = source?.let { WebDavPasswordStore.get(it.id) }
-                        ZipMemberCover.ensureBrowseThumb(
-                            zipKey = key,
-                            memberRel = cover.memberRel,
-                            destJpeg = java.io.File(thumbPath.toString()),
-                            cacheOriginal = cacheThumbOriginal,
-                            notifyTooLarge = false,
-                            openSource = {
-                                if (source == null || password == null) {
-                                    null
-                                } else {
-                                    WebDavArchiveByteSource(
-                                        source,
-                                        password,
-                                        cover.zipRelativeFile,
-                                        pipeline = false,
-                                    )
-                                }
-                            },
-                        )
+                BrowseThumbComposeJobs.withJob {
+                    val extracted = withIOContext {
+                        WebDavCache.withBrowseThumbFetchSlot {
+                            val source = WebDavRepository.load(cover.sourceId)
+                            val password = source?.let { WebDavPasswordStore.get(it.id) }
+                            ZipMemberCover.ensureBrowseThumb(
+                                zipKey = key,
+                                memberRel = cover.memberRel,
+                                destJpeg = java.io.File(thumbPath.toString()),
+                                cacheOriginal = cacheThumbOriginal,
+                                notifyTooLarge = false,
+                                openSource = {
+                                    if (source == null || password == null) {
+                                        null
+                                    } else {
+                                        WebDavArchiveByteSource(
+                                            source,
+                                            password,
+                                            cover.zipRelativeFile,
+                                            pipeline = false,
+                                        )
+                                    }
+                                },
+                            )
+                        }
                     }
-                }
-                if (extracted != null) {
-                    WebDavCache.markPresent(extracted)
-                    localPath = extracted
-                    fetchFailed = false
-                } else {
-                    fetchFailed = localPath == null
+                    if (extracted != null) {
+                        WebDavCache.markPresent(extracted)
+                        localPath = extracted
+                        fetchFailed = false
+                    } else {
+                        fetchFailed = localPath == null
+                    }
                 }
             }
             else -> return@LaunchedEffect

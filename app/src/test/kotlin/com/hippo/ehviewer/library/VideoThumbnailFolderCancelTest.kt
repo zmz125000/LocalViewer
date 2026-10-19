@@ -113,7 +113,7 @@ class VideoThumbnailFolderCancelTest {
         val release = CompletableDeferred<Unit>()
         val jobs = List(12) {
             async(Dispatchers.Default) {
-                VideoThumbnail.withComposeExtractJob {
+                BrowseThumbComposeJobs.withJob {
                     val n = inFlight.incrementAndGet()
                     maxInFlight.updateAndGet { maxOf(it, n) }
                     release.await()
@@ -121,7 +121,7 @@ class VideoThumbnailFolderCancelTest {
                 }
             }
         }
-        // Decode slots × 2 (see VideoThumbnail.MAX_COMPOSE_EXTRACT_JOBS).
+        // Fetch slots × 2 (see BrowseThumbComposeJobs).
         val composeCap = 6
         withTimeout(5_000) {
             while (maxInFlight.get() < composeCap) delay(10)
