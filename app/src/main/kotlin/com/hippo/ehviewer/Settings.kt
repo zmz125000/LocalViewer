@@ -671,7 +671,7 @@ object Settings : DataStorePreferences(null) {
      * media list as well as the document list. Off keeps them in the document
      * list only. Loose text (TXT, HTML, Markdown) is always documents-only.
      */
-    val showEbookFilesAsGallery = boolPref("show_ebook_files_as_gallery", true)
+    val showEbookFilesAsGallery = boolPref("show_ebook_files_as_gallery", false)
 
     /**
      * Library Videos listing via the All videos toggle: 0 = folders that contain
