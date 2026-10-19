@@ -105,7 +105,7 @@
     <string name="browse_folder_thumbs">Folder cover</string>
     <string name="settings_browse_folder_thumbs_summary">Show cover thumbs for folders.</string>
     <string name="settings_video_folder_cover">Video folder cover</string>
-    <string name="settings_video_folder_cover_summary">When on, a folder with no image can use a video as its cover. Off skips that while listing the directory.</string>
+    <string name="settings_video_folder_cover_summary">When on, a folder with no image can show a video as its cover. Off hides that thumb; the cover path is still stored.</string>
     <string name="settings_use_media3_player">Use Media3 player</string>
     <string name="settings_use_media3_player_summary">On: tap opens in-app player, long-press opens external app. Off: tap external, long-press in-app.</string>
     <string name="settings_use_media3_player_for_library">Use Media3 player for library</string>

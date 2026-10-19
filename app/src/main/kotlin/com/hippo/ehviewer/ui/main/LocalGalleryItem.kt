@@ -97,6 +97,22 @@ private fun historyCoverKey(info: GalleryInfo): String? {
     }
 }
 
+/**
+ * Browse-directory cover for paint. Stored video keys stay in history; when
+ * [videoFolderCoverEnabled] is off they are not passed to [CoverImage] / resolve.
+ */
+private fun directoryFolderDisplayCoverKey(
+    info: GalleryInfo,
+    coverKey: String?,
+    videoFolderCoverEnabled: Boolean,
+): String? {
+    if (!LocalHistory.isBrowseDirectory(info)) return coverKey
+    if (!videoFolderCoverEnabled && coverKey != null && HistoryThumbKey.isVideoThumbKey(coverKey)) {
+        return null
+    }
+    return coverKey
+}
+
 @Composable
 private fun coverRequest(coverPath: String?, sizePx: Int): ImageRequest? {
     val context = LocalContext.current
@@ -339,10 +355,15 @@ fun HistoryListItem(
     )
     val listDecodePx = CoverThumb.listDecodePx()
     val browseFolderThumbs by Settings.browseFolderThumbs.collectAsState()
-    val directoryWithoutThumb = LocalHistory.isBrowseDirectory(info) && !browseFolderThumbs
+    val videoFolderCover by Settings.videoFolderCover.collectAsState()
     val coverKey = remember(info.gid, info.thumbKey, info.token, info.uploader) {
         historyCoverKey(info)
     }
+    // Browse dir may store a video cover key; pref off skips paint / resolve effect.
+    val displayCoverKey = remember(coverKey, videoFolderCover, info.token) {
+        directoryFolderDisplayCoverKey(info, coverKey, videoFolderCover)
+    }
+    val directoryWithoutThumb = LocalHistory.isBrowseDirectory(info) && !browseFolderThumbs
     ListItem(
         headlineContent = {
             Text(
@@ -370,7 +391,7 @@ fun HistoryListItem(
                 }
             } else {
                 CoverImage(
-                    coverPath = coverKey,
+                    coverPath = displayCoverKey,
                     progressGid = info.gid,
                     sizePx = listDecodePx,
                     placeholder = placeholderIcon,
@@ -613,13 +634,17 @@ fun HistoryDirectoryGridItem(
     val namePadH = GalleryGridDefaults.namePaddingH()
     val namePadBottom = GalleryGridDefaults.namePaddingBottom()
     val browseFolderThumbs by Settings.browseFolderThumbs.collectAsState()
+    val videoFolderCover by Settings.videoFolderCover.collectAsState()
     val coverKey = remember(info.gid, info.thumbKey, info.token, info.uploader) {
         historyCoverKey(info)
     }
-    var resolvedThumb by remember(coverKey, browseFolderThumbs) { mutableStateOf<String?>(null) }
-    if (browseFolderThumbs) {
-        LaunchedEffect(coverKey) {
-            resolvedThumb = withIOContext { HistoryThumbKey.resolveReadablePath(coverKey) }
+    val displayCoverKey = remember(coverKey, videoFolderCover, info.token) {
+        directoryFolderDisplayCoverKey(info, coverKey, videoFolderCover)
+    }
+    var resolvedThumb by remember(displayCoverKey, browseFolderThumbs) { mutableStateOf<String?>(null) }
+    if (browseFolderThumbs && displayCoverKey != null) {
+        LaunchedEffect(displayCoverKey) {
+            resolvedThumb = withIOContext { HistoryThumbKey.resolveReadablePath(displayCoverKey) }
         }
     }
     val useThumbStyle = browseFolderThumbs && resolvedThumb != null
@@ -637,7 +662,7 @@ fun HistoryDirectoryGridItem(
         if (useThumbStyle) {
             Box(Modifier.fillMaxSize().clip(ShapeDefaults.Medium)) {
                 CoverImage(
-                    coverPath = coverKey,
+                    coverPath = displayCoverKey,
                     progressGid = info.gid,
                     sizePx = GalleryGridDefaults.gridDecodePx(),
                     placeholder = Icons.Default.Folder,

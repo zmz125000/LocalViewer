@@ -129,6 +129,11 @@ object HistoryThumbKey {
         key.startsWith(VID_DAV_PREFIX) ||
         ZipPaths.isZipPath(key)
 
+    /** True for [videoLocal] / [videoSmb] / [videoWebdav] folder or file thumb keys. */
+    fun isVideoThumbKey(key: String): Boolean = key.startsWith(VID_LOCAL_PREFIX) ||
+        key.startsWith(VID_SMB_PREFIX) ||
+        key.startsWith(VID_DAV_PREFIX)
+
     /**
      * Path Coil can open, or null if missing / not cached.
      * Call from IO (disk probe). Touches mtime on remote folder-thumb hits.

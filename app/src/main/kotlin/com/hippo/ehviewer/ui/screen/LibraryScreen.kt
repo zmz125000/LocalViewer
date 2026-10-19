@@ -1097,7 +1097,8 @@ private fun FavoriteSourceListRow(
 ) {
     val haptic = LocalHapticFeedback.current
     val browseFolderThumbs by Settings.browseFolderThumbs.collectAsState()
-    val folderThumbKey = folderFavoriteThumbKey(fav)
+    val videoFolderCover by Settings.videoFolderCover.collectAsState()
+    val folderThumbKey = folderFavoriteDisplayThumbKey(fav, videoFolderCover)
     var resolvedThumb by remember(folderThumbKey, browseFolderThumbs) { mutableStateOf<String?>(null) }
     if (browseFolderThumbs && folderThumbKey != null) {
         LaunchedEffect(folderThumbKey) {
@@ -1191,7 +1192,8 @@ internal fun FavoriteSourceGridCell(
     val namePadH = GalleryGridDefaults.namePaddingH()
     val namePadBottom = GalleryGridDefaults.namePaddingBottom()
     val browseFolderThumbs by Settings.browseFolderThumbs.collectAsState()
-    val folderThumbKey = folderFavoriteThumbKey(fav)
+    val videoFolderCover by Settings.videoFolderCover.collectAsState()
+    val folderThumbKey = folderFavoriteDisplayThumbKey(fav, videoFolderCover)
     var resolvedFolderThumb by remember(folderThumbKey, browseFolderThumbs) { mutableStateOf<String?>(null) }
     if (browseFolderThumbs && folderThumbKey != null) {
         LaunchedEffect(folderThumbKey) {
@@ -1313,6 +1315,19 @@ internal fun folderFavoriteThumbKey(fav: FavoriteBrowseSource): String? = when (
     is FavoriteBrowseSource.SmbFolder -> fav.thumbKey
     is FavoriteBrowseSource.WebDavFolder -> fav.thumbKey
     else -> null
+}
+
+/**
+ * Folder-favourite thumb for paint. Stored video keys remain on the favourite;
+ * [videoFolderCoverEnabled] off skips resolve / display.
+ */
+internal fun folderFavoriteDisplayThumbKey(
+    fav: FavoriteBrowseSource,
+    videoFolderCoverEnabled: Boolean,
+): String? {
+    val key = folderFavoriteThumbKey(fav) ?: return null
+    if (!videoFolderCoverEnabled && HistoryThumbKey.isVideoThumbKey(key)) return null
+    return key
 }
 
 /** Same meta tokens as library / folder list (`Dir` / `SMB` / `WebDAV` / `Folder` / `ZIP` · …). */

@@ -491,6 +491,20 @@ fun BrowseCover.folderVideoThumbSource(knownSizeBytes: Long = 0L): VideoThumbnai
     else -> null
 }
 
+/**
+ * Folder-thumb paint cover. Listing may still store a video path; when
+ * [Settings.videoFolderCover] is off, treat that cover as absent so
+ * [BrowseVideoThumbnail] / [BrowseCoverThumb] effects do not start.
+ */
+@Composable
+fun BrowseCover?.folderThumbDisplayCover(): BrowseCover? {
+    val videoFolderCover by Settings.videoFolderCover.collectAsState()
+    val cover = this ?: return null
+    return remember(cover, videoFolderCover) {
+        if (!videoFolderCover && cover.folderVideoThumbSource() != null) null else cover
+    }
+}
+
 /** Stable identity for [ReaderPageThumb] (reader photo-grid thumbs written after decode). */
 fun browseCoverThumbIdentity(cover: BrowseCover?): String? = when (cover) {
     is BrowseCover.Local -> "local:${cover.path}"
@@ -691,7 +705,8 @@ fun BrowseDirectoryRow(
         // Same 56dp leading slot as [BrowseFolderGalleryRow]. Thumbs off: folder icon only,
         // so [BrowseCoverThumb]'s fetch effect is not started.
         leadingContent = {
-            val videoSource = if (showFolderThumb) cover?.folderVideoThumbSource() else null
+            val displayCover = cover.folderThumbDisplayCover()
+            val videoSource = if (showFolderThumb) displayCover?.folderVideoThumbSource() else null
             if (videoSource != null) {
                 BrowseVideoThumbnail(
                     source = videoSource,
@@ -702,9 +717,9 @@ fun BrowseDirectoryRow(
                     allowRemoteFetch = allowRemoteFetch,
                     decodeSizePx = CoverThumb.listDecodePx(),
                 )
-            } else if (showFolderThumb && cover != null) {
+            } else if (showFolderThumb && displayCover != null) {
                 BrowseCoverThumb(
-                    cover = cover,
+                    cover = displayCover,
                     decodeSizePx = CoverThumb.listDecodePx(),
                     retryKey = thumbRetryKey,
                     allowRemoteFetch = allowRemoteFetch,
@@ -986,8 +1001,9 @@ fun BrowseDirectoryGridItem(
     val name = name.safFolderLabel()
     val namePadH = GalleryGridDefaults.namePaddingH()
     val namePadBottom = GalleryGridDefaults.namePaddingBottom()
+    val displayCover = cover.folderThumbDisplayCover()
     // Style is per-item: only folders with a real cover use the gallery-thumb layout.
-    val useThumbStyle = showFolderThumb && cover != null
+    val useThumbStyle = showFolderThumb && displayCover != null
     val tap = folderSelectTap(overflow)
     ElevatedCard(
         onClick = tap?.toggle ?: onClick,
@@ -1003,7 +1019,7 @@ fun BrowseDirectoryGridItem(
             if (useThumbStyle) {
                 // Same as Library [FavoriteSourceGridCell] gallery: cover fills cell; label on scrim.
                 Box(Modifier.fillMaxSize().clip(ShapeDefaults.Medium)) {
-                    val videoSource = cover.folderVideoThumbSource()
+                    val videoSource = displayCover.folderVideoThumbSource()
                     if (videoSource != null) {
                         BrowseVideoThumbnail(
                             source = videoSource,
@@ -1014,7 +1030,7 @@ fun BrowseDirectoryGridItem(
                         )
                     } else {
                         BrowseCoverThumb(
-                            cover = cover,
+                            cover = displayCover,
                             modifier = Modifier.fillMaxSize(),
                             placeholderSize = BrowseGridPlaceholderIconSize,
                             decodeSizePx = GalleryGridDefaults.gridDecodePx(),
@@ -1311,7 +1327,7 @@ internal fun BrowseVideoThumbnail(
     // Disk first (same as gallery covers). Extract only while the app is foreground
     // and (for network) when video thumbs are enabled. extractEnabled is the ON_STOP
     // cancel: leaving Recents must not keep starting local library MMR.
-    // A fast fling composes each row only briefly. Wait 300ms so those rows leave
+    // A fast fling composes each row only briefly. Wait 400ms so those rows leave
     // and cancel this effect before MediaCodec starts. A slow scroll still extracts.
     LaunchedEffect(source, downloadNetworkVideoThumbs, allowRemoteFetch, extractEnabled) {
         val src = source ?: run {

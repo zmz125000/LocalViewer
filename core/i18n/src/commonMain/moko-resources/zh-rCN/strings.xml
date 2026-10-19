@@ -91,7 +91,7 @@
     <string name="browse_folder_thumbs">文件夹缩略图</string>
     <string name="settings_browse_folder_thumbs_summary">在浏览中为文件夹显示封面缩略图（复用画廊封面的缩略图缓存）。</string>
     <string name="settings_video_folder_cover">视频文件夹封面</string>
-    <string name="settings_video_folder_cover_summary">开启时，没有图片的文件夹可以用视频作为封面。关闭则目录列表不再把视频标为封面。</string>
+    <string name="settings_video_folder_cover_summary">开启时，没有图片的文件夹可以用视频作为封面。关闭则不显示该缩略图，但仍会记录封面路径。</string>
     <string name="settings_use_media3_player">使用 Media3 播放器</string>
     <string name="settings_use_media3_player_summary">开启：单击应用内播放，长按外部应用。关闭：单击外部应用，长按应用内播放。</string>
     <string name="settings_use_media3_player_for_library">图库使用 Media3 播放器</string>
