@@ -242,6 +242,8 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
 
     val density = LocalDensity.current
     val scanning by LocalLibrary.scanning.collectAsState()
+    // Folder-only browse roots do not count — spinner/empty wait on scan-enabled sources.
+    val hasLibrarySources = roots.any { it.isLibraryRole }
     val libraryRecentOpen by Settings.libraryRecentOpen.collectAsState()
     val librarySortModePref by Settings.librarySortMode.collectAsState()
     val librarySortMode = LibrarySortMode.fromPref(librarySortModePref)
@@ -344,7 +346,16 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
     var hasGalleries by remember { mutableStateOf(immediate?.hasGalleries == true) }
     var hasVideos by remember { mutableStateOf(immediate?.hasVideos == true) }
     var preparingList by remember { mutableStateOf(immediate == null) }
-    LaunchedEffect(rawForList, listKey, historyTimeByGid) {
+    LaunchedEffect(rawForList, listKey, historyTimeByGid, rootsLoaded, hasLibrarySources) {
+        // No scan-enabled library source: skip the loading wait and show empty.
+        if (rootsLoaded && !hasLibrarySources) {
+            galleries = emptyList()
+            visibleGalleries = emptyList()
+            hasGalleries = false
+            hasVideos = false
+            preparingList = false
+            return@LaunchedEffect
+        }
         if (rawForList.isEmpty() && !galleriesLoaded && !LibraryListMemory.loaded) return@LaunchedEffect
         val ready = LibraryListMemory.peek(rawForList, listKey)
         if (ready != null) {
@@ -1101,7 +1112,9 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
                 }
             }
 
-            if (isEmpty && !scanning && !refreshing && !preparingList) {
+            // With no library sources, never wait on scan/prepare — show empty immediately.
+            val awaitingLibrary = hasLibrarySources || !rootsLoaded
+            if (isEmpty && !(awaitingLibrary && (scanning || preparingList)) && !refreshing) {
                 Column(
                     modifier = Modifier
                         .padding(paddingValues)
@@ -1124,7 +1137,7 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
                 }
             }
 
-            if ((scanning || preparingList) && galleries.isEmpty()) {
+            if (awaitingLibrary && (scanning || preparingList) && galleries.isEmpty()) {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     CircularWavyProgressIndicator()
                 }

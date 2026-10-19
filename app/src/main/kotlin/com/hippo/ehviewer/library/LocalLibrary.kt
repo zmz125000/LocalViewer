@@ -52,6 +52,9 @@ object LocalLibrary {
 
     fun libraryRootsFlow(): Flow<List<LibraryRootEntity>> = db.libraryRootDao().listByRoleFlow(LIBRARY_ROOT_ROLE_LIBRARY)
 
+    /** True when at least one scan-enabled library source exists. */
+    suspend fun hasLibraryRoots(): Boolean = db.libraryRootDao().listByRole(LIBRARY_ROOT_ROLE_LIBRARY).isNotEmpty()
+
     fun folderOnlyRootsFlow(): Flow<List<LibraryRootEntity>> = db.libraryRootDao().listByRoleFlow(LIBRARY_ROOT_ROLE_FOLDER)
 
     fun galleriesFlow(): Flow<List<LocalGalleryEntity>> = db.localGalleryDao().listFlow()
@@ -165,6 +168,7 @@ object LocalLibrary {
                         ),
                     )
                     scanRoot(existing.id)
+                    MediaStoreWatch.onLibrarySourcesChanged()
                     return@withIOContext AddRootResult.UpgradedToLibrary(existing.id)
                 }
                 return@withIOContext AddRootResult.AlreadyExists(existing.id, existing.role)
@@ -188,6 +192,7 @@ object LocalLibrary {
             )
             if (role == LIBRARY_ROOT_ROLE_LIBRARY) {
                 scanRoot(id)
+                MediaStoreWatch.onLibrarySourcesChanged()
             }
             AddRootResult.Created(id)
         }
@@ -270,6 +275,9 @@ object LocalLibrary {
                 BrowseSession.invalidateLocalListing()
                 NetworkFolderIndexCache.deleteLocal(root.id)
                 MediaStoreIndexStamp.clear(root.id)
+                if (root.role == LIBRARY_ROOT_ROLE_LIBRARY) {
+                    MediaStoreWatch.onLibrarySourcesChanged()
+                }
             }
         }
     }

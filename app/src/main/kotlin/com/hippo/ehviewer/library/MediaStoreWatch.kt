@@ -76,6 +76,52 @@ object MediaStoreWatch {
         // only register while the list is resumed.
         if (!libraryResumed) return
         val app = context.applicationContext
+        scope.launch {
+            if (!LocalLibrary.hasLibraryRoots()) return@launch
+            armObservers(app)
+        }
+    }
+
+    /**
+     * Library screen resumed. Register the observer and apply rows missed while
+     * the list was hidden or the process was frozen.
+     */
+    fun onLibraryVisible() {
+        libraryResumed = true
+        if (!Settings.libraryLiveUpdate.value) return
+        scope.launch {
+            if (!LocalLibrary.hasLibraryRoots()) return@launch
+            armObservers()
+            catchUp()
+        }
+    }
+
+    /** Pref toggled on. No-op unless the library screen is already resumed. */
+    fun onPrefEnabled() {
+        if (!libraryResumed || !Settings.libraryLiveUpdate.value) return
+        scope.launch {
+            if (!LocalLibrary.hasLibraryRoots()) return@launch
+            armObservers()
+            catchUp()
+        }
+    }
+
+    /** First library source added / last one removed. Arm or tear down live updates. */
+    fun onLibrarySourcesChanged() {
+        scope.launch {
+            if (!LocalLibrary.hasLibraryRoots()) {
+                stop()
+                return@launch
+            }
+            if (!libraryResumed || !Settings.libraryLiveUpdate.value) return@launch
+            armObservers()
+            catchUp()
+        }
+    }
+
+    private fun armObservers(context: Context = appCtx) {
+        if (!Settings.libraryLiveUpdate.value || !libraryResumed) return
+        val app = context.applicationContext
         if (MediaPermissions.hasImagePermission(app) && imagesRegistered.compareAndSet(false, true)) {
             app.contentResolver.registerContentObserver(imagesUri(), true, observer)
         }
@@ -87,24 +133,6 @@ object MediaStoreWatch {
         }
         ensureLoop()
         scheduleJob(app)
-    }
-
-    /**
-     * Library screen resumed. Register the observer and apply rows missed while
-     * the list was hidden or the process was frozen.
-     */
-    fun onLibraryVisible() {
-        libraryResumed = true
-        if (!Settings.libraryLiveUpdate.value) return
-        start()
-        catchUp()
-    }
-
-    /** Pref toggled on. No-op unless the library screen is already resumed. */
-    fun onPrefEnabled() {
-        if (!libraryResumed || !Settings.libraryLiveUpdate.value) return
-        start()
-        catchUp()
     }
 
     /**
@@ -121,7 +149,11 @@ object MediaStoreWatch {
             pendingRetries.clear()
         }
         if (!Settings.libraryLiveUpdate.value) return
-        scheduleJob()
+        // No library sources: do not arm the content job.
+        scope.launch {
+            if (!LocalLibrary.hasLibraryRoots()) return@launch
+            scheduleJob()
+        }
     }
 
     /**
@@ -198,26 +230,30 @@ object MediaStoreWatch {
     fun scheduleJob(context: Context = appCtx) {
         if (!Settings.libraryLiveUpdate.value) return
         if (!MediaPermissions.hasMediaAccess(context)) return
-        val scheduler = context.getSystemService(JobScheduler::class.java) ?: return
-        val component = ComponentName(context, MediaStoreWatchJobService::class.java)
-        val info = JobInfo.Builder(JOB_ID, component)
-            .addTriggerContentUri(
-                JobInfo.TriggerContentUri(
-                    imagesUri(),
-                    JobInfo.TriggerContentUri.FLAG_NOTIFY_FOR_DESCENDANTS,
-                ),
-            )
-            .addTriggerContentUri(
-                JobInfo.TriggerContentUri(
-                    videosUri(),
-                    JobInfo.TriggerContentUri.FLAG_NOTIFY_FOR_DESCENDANTS,
-                ),
-            )
-            .setTriggerContentUpdateDelay(1_000L)
-            .setTriggerContentMaxDelay(5_000L)
-            .build()
-        runCatching { scheduler.schedule(info) }
-            .onFailure { logcat(it) }
+        val app = context.applicationContext
+        scope.launch {
+            if (!LocalLibrary.hasLibraryRoots()) return@launch
+            val scheduler = app.getSystemService(JobScheduler::class.java) ?: return@launch
+            val component = ComponentName(app, MediaStoreWatchJobService::class.java)
+            val info = JobInfo.Builder(JOB_ID, component)
+                .addTriggerContentUri(
+                    JobInfo.TriggerContentUri(
+                        imagesUri(),
+                        JobInfo.TriggerContentUri.FLAG_NOTIFY_FOR_DESCENDANTS,
+                    ),
+                )
+                .addTriggerContentUri(
+                    JobInfo.TriggerContentUri(
+                        videosUri(),
+                        JobInfo.TriggerContentUri.FLAG_NOTIFY_FOR_DESCENDANTS,
+                    ),
+                )
+                .setTriggerContentUpdateDelay(1_000L)
+                .setTriggerContentMaxDelay(5_000L)
+                .build()
+            runCatching { scheduler.schedule(info) }
+                .onFailure { logcat(it) }
+        }
     }
 
     fun enqueue(uris: Collection<Uri>, flags: Int) {
@@ -236,6 +272,7 @@ object MediaStoreWatch {
      */
     suspend fun handleTriggered(uris: Collection<Uri>, flags: Int = 0) {
         if (!Settings.libraryLiveUpdate.value) return
+        if (!LocalLibrary.hasLibraryRoots()) return
         applyBatch(Batch(LinkedHashSet(uris), flags))
     }
 
@@ -263,6 +300,7 @@ object MediaStoreWatch {
 
     private suspend fun applyBatch(batch: Batch) {
         if (!Settings.libraryLiveUpdate.value) return
+        if (!LocalLibrary.hasLibraryRoots()) return
         if (!MediaPermissions.hasMediaAccess()) return
         val deleteFlag = batch.flags and ContentResolver.NOTIFY_DELETE != 0
         val items = batch.uris.filter { MediaStoreLiveUpdate.isMediaStoreItemId(it.lastPathSegment) }
