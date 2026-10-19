@@ -1126,6 +1126,19 @@ object LocalHistory {
         deleteMatchingHistory { historyOwnedByWebDavSource(it, sourceId) }
     }
 
+    /**
+     * Drop history for library gallery / video rows removed by startup scan or
+     * live-update reconcile. Matches scanned library ids and file/archive paths.
+     */
+    suspend fun deleteHistoryForRemovedGalleries(removed: Collection<LocalGalleryEntity>) {
+        if (removed.isEmpty()) return
+        val ids = removed.mapTo(HashSet(removed.size)) { it.id }
+        val paths = removed.mapNotNullTo(HashSet()) { row ->
+            row.contentPath.takeIf { it.isNotEmpty() }
+        }
+        deleteMatchingHistory { historyMatchesRemovedLibraryGallery(it, ids, paths) }
+    }
+
     private suspend fun deleteMatchingHistory(owned: (GalleryInfo) -> Boolean) {
         EhDB.historyListFlow.first().filter(owned).forEach { EhDB.deleteHistoryInfo(it) }
     }
@@ -1201,6 +1214,22 @@ fun historyOwnedByWebDavSource(info: GalleryInfo, sourceId: Long): Boolean = whe
     is LocalHistoryTarget.WebDavFolderGallery -> target.sourceId == sourceId
     is LocalHistoryTarget.WebDavStreamArchive -> target.sourceId == sourceId
     is LocalHistoryTarget.WebDavFile -> target.sourceId == sourceId
+    else -> false
+}
+
+/**
+ * History that pointed at a removed library gallery or video/image file row.
+ * Library opens use [LOCAL_GALLERY_TOKEN] (id). Video/image files use path tokens.
+ */
+fun historyMatchesRemovedLibraryGallery(
+    info: GalleryInfo,
+    removedIds: Set<Long>,
+    removedContentPaths: Set<String>,
+): Boolean = when (val target = LocalHistory.parse(info)) {
+    is LocalHistoryTarget.LibraryGallery -> target.galleryId in removedIds
+    is LocalHistoryTarget.Orphan -> target.gid in removedIds
+    is LocalHistoryTarget.LocalFile -> target.path in removedContentPaths
+    is LocalHistoryTarget.LocalArchive -> target.path in removedContentPaths
     else -> false
 }
 

@@ -330,7 +330,7 @@ object LocalLibrary {
                     val root = db.libraryRootDao().load(rootId) ?: return@withLock
                     if (root.role != LIBRARY_ROOT_ROLE_LIBRARY) {
                         // Folder-only roots must never contribute library galleries.
-                        db.localGalleryDao().deleteByRootId(root.id)
+                        clearRootGalleries(root.id)
                         return@withLock
                     }
                     scanRootLocked(root)
@@ -347,13 +347,13 @@ object LocalLibrary {
         skipIfUnchanged: Boolean = false,
     ) {
         if (root.role != LIBRARY_ROOT_ROLE_LIBRARY) {
-            db.localGalleryDao().deleteByRootId(root.id)
+            clearRootGalleries(root.id)
             return
         }
         val path = rootPath(root) ?: run {
             logcat("LocalLibrary") { "Library root not accessible: ${root.treeUri}" }
             if (db.libraryRootDao().load(root.id) != null) {
-                db.localGalleryDao().deleteByRootId(root.id)
+                clearRootGalleries(root.id)
             }
             return
         }
@@ -362,14 +362,14 @@ object LocalLibrary {
         if (!isMediaStoreRootUri(root.treeUri) && !path.isDirectory) {
             logcat("LocalLibrary") { "Library root is not a directory: $path" }
             if (db.libraryRootDao().load(root.id) != null) {
-                db.localGalleryDao().deleteByRootId(root.id)
+                clearRootGalleries(root.id)
             }
             return
         }
         if (isMediaStoreRootUri(root.treeUri) && !MediaPermissions.hasMediaAccess()) {
             logcat("LocalLibrary") { "Device media library root without media permission" }
             if (db.libraryRootDao().load(root.id) != null) {
-                db.localGalleryDao().deleteByRootId(root.id)
+                clearRootGalleries(root.id)
             }
             return
         }
@@ -437,11 +437,7 @@ object LocalLibrary {
             }
         }
         logcat("LocalLibrary") { "Scanned root ${root.id} (${root.displayName}): ${toWrite.size} galleries" }
-        val wrote = runCatching {
-            db.localGalleryDao().replaceForRoot(root.id, toWrite)
-        }.onFailure {
-            logcat(it)
-        }.isSuccess
+        val wrote = writeRootGalleries(root.id, previous, toWrite)
         runCatching {
             FolderGalleryIndex.persistLocalFolderPages(
                 rootId = root.id,
@@ -480,8 +476,40 @@ object LocalLibrary {
         logcat("LocalLibrary") {
             "Pruned missing archives for root ${root.id}: ${previous.size} → ${toWrite.size}"
         }
+        writeRootGalleries(root.id, previous, toWrite)
+    }
+
+    /**
+     * Replace one root's gallery rows and drop history for ids / paths that disappeared
+     * (startup scan and live-update reconcile).
+     */
+    private suspend fun writeRootGalleries(
+        rootId: Long,
+        previous: List<LocalGalleryEntity>,
+        toWrite: List<LocalGalleryEntity>,
+    ): Boolean {
+        val keptIds = toWrite.mapTo(HashSet(toWrite.size)) { it.id }
+        val removed = previous.filter { it.id !in keptIds }
+        val wrote = runCatching {
+            db.localGalleryDao().replaceForRoot(rootId, toWrite)
+        }.onFailure {
+            logcat(it)
+        }.isSuccess
+        if (wrote) purgeHistoryForRemovedGalleries(removed)
+        return wrote
+    }
+
+    /** Wipe every gallery for [rootId] and matching history (inaccessible / demoted root). */
+    private suspend fun clearRootGalleries(rootId: Long) {
+        val previous = db.localGalleryDao().listByRootId(rootId)
+        db.localGalleryDao().deleteByRootId(rootId)
+        purgeHistoryForRemovedGalleries(previous)
+    }
+
+    private suspend fun purgeHistoryForRemovedGalleries(removed: List<LocalGalleryEntity>) {
+        if (removed.isEmpty()) return
         runCatching {
-            db.localGalleryDao().replaceForRoot(root.id, toWrite)
+            LocalHistory.deleteHistoryForRemovedGalleries(removed)
         }.onFailure { logcat(it) }
     }
 
