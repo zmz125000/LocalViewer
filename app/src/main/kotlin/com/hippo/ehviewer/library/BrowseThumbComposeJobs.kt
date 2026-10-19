@@ -7,7 +7,8 @@ import kotlinx.coroutines.sync.withLock
 
 /**
  * Caps how many Compose [androidx.compose.runtime.LaunchedEffect] cells may run
- * heavy extract/download at once (video frame, remote image cover, archive page-0).
+ * heavy extract/download/render at once (video frame, remote image cover, archive
+ * page-0, PDF reader / image-reader PDF photo-grid page thumbs).
  *
  * Disk / memory cache probes stay outside [withJob]. Coil paint
  * ([com.hippo.ehviewer.coil.CoverPathFetcher]) is **not** admitted here — sharing
