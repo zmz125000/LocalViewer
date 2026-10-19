@@ -419,8 +419,9 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
         favorites = next
         LibraryStripMemory.storeFavorites(next)
     }
-    // Hide favourites section while filtering.
-    val showFavorites = keyword.isBlank() && favorites.isNotEmpty()
+    val libraryShowFavorites by Settings.libraryShowFavorites.collectAsState()
+    // Hide favourites section while filtering, or when the menu toggle is off.
+    val showFavorites = libraryShowFavorites && keyword.isBlank() && favorites.isNotEmpty()
     val showSectionHeader = showFavorites || hasGalleries || hasVideos
     val sectionHeaderText = if (librarySection == LibrarySection.Videos) {
         stringResource(R.string.browse_videos)
@@ -801,14 +802,14 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
 
     val libraryShowRecent by Settings.libraryShowRecent.collectAsState()
     val libraryRecentExpanded by Settings.libraryRecentExpanded.collectAsState()
+    val libraryFavoritesExpanded by Settings.libraryFavoritesExpanded.collectAsState()
     val (recentPreviewExpanded, setRecentPreviewExpanded) = rememberRecentStripExpanded(
         "library-screen",
         libraryRecentExpanded,
     )
-    // Favorites strip: same preview rows as Recent; no lock setting (always starts collapsed).
     val (favoritesPreviewExpanded, setFavoritesPreviewExpanded) = rememberRecentStripExpanded(
         "library-screen-favorites",
-        defaultExpanded = false,
+        libraryFavoritesExpanded,
     )
     val recentGridColumns = GalleryGridDefaults.columnCount()
     val recentListColumns = GalleryGridDefaults.listColumnCount()
@@ -830,15 +831,11 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
     )
     val recentCanExpand = recentHistory.size > stripPreviewLimit
     val favoritesCanExpand = favorites.size > stripPreviewLimit
-    LaunchedEffect(recentCanExpand) {
-        if (!recentCanExpand && recentPreviewExpanded) setRecentPreviewExpanded(false)
-    }
-    LaunchedEffect(favoritesCanExpand) {
-        if (!favoritesCanExpand && favoritesPreviewExpanded) setFavoritesPreviewExpanded(false)
-    }
     // Back collapses the expanded strip before leaving Library. SearchBarScreen
     // registers its own handler later, so a focused search still clears first.
     // Favorites is registered after Recent so it collapses first when both are open.
+    // Do not auto-clear expand when the strip fits in one preview: writing false into
+    // BrowseSession would override the persisted lock for the rest of the process.
     BackHandler(
         enabled = showRecent &&
             recentPreviewExpanded &&

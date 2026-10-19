@@ -609,6 +609,18 @@ object Settings : DataStorePreferences(null) {
     val libraryRecentExpanded = boolPref("library_recent_expanded", false)
 
     /**
+     * Library Favorites section. On (default): show the favorites strip on Library.
+     * Off: hide that section. Library menu Favorites item.
+     */
+    val libraryShowFavorites = boolPref("library_show_favorites", true)
+
+    /**
+     * Long-press of the Library Favorites menu item. On (lock): the strip starts fully
+     * expanded. Off (default, tick): one grid row or two list rows until the header is tapped.
+     */
+    val libraryFavoritesExpanded = boolPref("library_favorites_expanded", false)
+
+    /**
      * Library gallery secondary sort: 0 = name, 1 = date (latest image / archive file
      * mtime from scan). Combined with [libraryRecentOpen] pin. Default name.
      * (Legacy pref value 2 = old exclusive Last-open sort → treated as name.)

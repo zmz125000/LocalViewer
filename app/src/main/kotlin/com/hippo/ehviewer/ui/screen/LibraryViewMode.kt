@@ -352,8 +352,8 @@ fun mergeOpenMtimes(primary: Map<String, Long>, fallback: Map<String, Long>): Ma
 
 /**
  * Library search-bar view menu (standalone from folder [BrowseViewModeMenu]):
- * - Top: Name / Date list sort + Last opened + Recent + Photo sort by date
- *   - Recent: tap shows or hides the Recent strip. Long-press sets the start:
+ * - Top: Name / Date list sort + Last opened + Recent + Favorites + Photo sort by date
+ *   - Recent / Favorites: tap shows or hides the strip. Long-press sets the start:
  *     lock = full list, tick = one grid row or two list rows.
  *   - Name + Last open: HISTORY pin, then title
  *   - Date + Last open: blend max(last-open, scan mtime), then title
@@ -374,6 +374,8 @@ fun LibraryViewModeMenu(modifier: Modifier = Modifier) {
     var libraryRecentOpen by Settings.libraryRecentOpen.asMutableState()
     var libraryShowRecent by Settings.libraryShowRecent.asMutableState()
     var libraryRecentExpanded by Settings.libraryRecentExpanded.asMutableState()
+    var libraryShowFavorites by Settings.libraryShowFavorites.asMutableState()
+    var libraryFavoritesExpanded by Settings.libraryFavoritesExpanded.asMutableState()
     var photoSortByDate by Settings.libraryPhotoSortByDate.asMutableState()
     var videoModePref by Settings.libraryVideoMode.asMutableState()
     val videoMode = LibraryVideoMode.fromPref(videoModePref)
@@ -433,7 +435,7 @@ fun LibraryViewModeMenu(modifier: Modifier = Modifier) {
                 checked = libraryRecentOpen,
                 onClick = { libraryRecentOpen = !libraryRecentOpen },
             )
-            // Tap shows or hides the Recent strip and does not change the lock.
+            // Tap shows or hides the strip and does not change the lock.
             // Long-press: lock = start expanded, tick = preview rows.
             LibraryMenuMarkItem(
                 label = stringResource(R.string.browse_recent),
@@ -449,6 +451,23 @@ fun LibraryViewModeMenu(modifier: Modifier = Modifier) {
                         libraryRecentExpanded = true
                     } else {
                         libraryRecentExpanded = false
+                    }
+                },
+            )
+            LibraryMenuMarkItem(
+                label = stringResource(R.string.browse_favorites),
+                mark = when {
+                    !libraryShowFavorites -> LibraryMenuMark.None
+                    libraryFavoritesExpanded -> LibraryMenuMark.Lock
+                    else -> LibraryMenuMark.Tick
+                },
+                onClick = { libraryShowFavorites = !libraryShowFavorites },
+                onLongClick = {
+                    if (!libraryShowFavorites || !libraryFavoritesExpanded) {
+                        libraryShowFavorites = true
+                        libraryFavoritesExpanded = true
+                    } else {
+                        libraryFavoritesExpanded = false
                     }
                 },
             )

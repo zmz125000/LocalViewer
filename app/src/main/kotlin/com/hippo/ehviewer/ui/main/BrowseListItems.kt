@@ -2206,8 +2206,10 @@ fun browseRecentPreviewLimit(grid: Boolean, gridColumnCount: Int, listColumnCoun
 }
 
 /**
- * Two rows vs full Recent list for one folder. [defaultExpanded] (the lock) applies
- * only until the header is tapped here. Process memory, same as section collapse.
+ * Preview rows vs full strip for one folder (Recent/Favorites).
+ * [defaultExpanded] is the persisted lock: used until the header is tapped
+ * (in-session override in [BrowseSession]). Changing the lock updates the
+ * strip only while there is no override yet — it does not rewrite session state.
  */
 @Composable
 fun rememberRecentStripExpanded(
