@@ -112,6 +112,25 @@ Grok 4.5 でビルド。
 * 電子インクモード対応（[venera-next](https://github.com/cyrilpeng/venera-next) から移植）。
 * EasyTier 対応（[moonlight-vplus](https://github.com/qiin2333/moonlight-vplus) から移植）。
 
+# ダウンロード
+
+| Flavor      | Minimum Android Version | Features                       |
+|-------------|-------------------------|--------------------------------|
+| Default     | 12                      | Basic                          |
+| Default     | 14 (arm64-v8a, x86-64)  | HDR, GPU Shaders, RAW          |
+| EasyTier    | 12 (arm64-v8a)          | Basic, EasyTier                |
+| EasyTier    | 14 (arm64-v8a)          | HDR, GPU Shaders, RAW, EasyTier|
+
+<a href="https://github.com/zmz125000/LocalViewer/releases">
+<img alt="Get it on GitHub" src="https://github.com/zmz125000/LocalViewer-art/blob/master/get-it-on-github.svg" width="200px"/>
+</a>
+
+# スクリーンショット
+
+![LocalViewer screenshot main page](https://github.com/zmz125000/LocalViewer-art/blob/master/screenshots-01.webp)
+![LocalViewer screenshot gallery reader](https://github.com/zmz125000/LocalViewer-art/blob/master/screenshots-02.webp)
+![LocalViewer screenshot window manager](https://github.com/zmz125000/LocalViewer-art/blob/master/screenshots-03.webp)
+
 ### WebDAV の使い方
 
 ``openssl req -x509 -newkey rsa:4096 -keyout server.key -out server.crt -days 365 -nodes``  
@@ -142,25 +161,6 @@ while ($true) {
     Start-Sleep -Seconds 1
 }
 ```
-
-# ダウンロード
-
-| Flavor      | Minimum Android Version | Features                       |
-|-------------|-------------------------|--------------------------------|
-| Default     | 12                      | Basic                          |
-| Default     | 14 (arm64-v8a, x86-64)  | HDR, GPU Shaders, RAW          |
-| EasyTier    | 12 (arm64-v8a)          | Basic, EasyTier                |
-| EasyTier    | 14 (arm64-v8a)          | HDR, GPU Shaders, RAW, EasyTier|
-
-<a href="https://github.com/zmz125000/LocalViewer/releases">
-<img alt="Get it on GitHub" src="https://github.com/zmz125000/LocalViewer-art/blob/master/get-it-on-github.svg" width="200px"/>
-</a>
-
-# スクリーンショット
-
-![LocalViewer screenshot main page](https://github.com/zmz125000/LocalViewer-art/blob/master/screenshots-01.webp)
-![LocalViewer screenshot gallery reader](https://github.com/zmz125000/LocalViewer-art/blob/master/screenshots-02.webp)
-![LocalViewer screenshot window manager](https://github.com/zmz125000/LocalViewer-art/blob/master/screenshots-03.webp)
 
 # 感謝
 
