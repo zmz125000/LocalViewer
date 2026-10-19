@@ -172,25 +172,26 @@ internal fun CoverImage(
         }
         val arch = archiveContentPath ?: return@LaunchedEffect
         if (ZipPaths.isZipPath(arch)) return@LaunchedEffect
-        BrowseThumbComposeJobs.withJob {
-            when (val result = withIOContext { ArchiveCoverCache.ensureCover(arch.toPath()) }) {
-                is CoverEnsureResult.Hit -> {
-                    val pathStr = result.path.toString()
-                    resolvedCover = pathStr
-                    withIOContext {
-                        LocalLibrary.updateGalleryPageAndCoverByContentPath(
-                            arch,
-                            0,
-                            pathStr,
-                        )
-                    }
+        val result = BrowseThumbComposeJobs.withJob {
+            withIOContext { ArchiveCoverCache.ensureCover(arch.toPath()) }
+        }
+        when (result) {
+            is CoverEnsureResult.Hit -> {
+                val pathStr = result.path.toString()
+                resolvedCover = pathStr
+                withIOContext {
+                    LocalLibrary.updateGalleryPageAndCoverByContentPath(
+                        arch,
+                        0,
+                        pathStr,
+                    )
                 }
-                CoverEnsureResult.NoImages -> {
-                    // Confirmed empty (native "Found 0 images") — drop from library listing.
-                    withIOContext { LocalLibrary.hideEmptyArchive(arch) }
-                }
-                CoverEnsureResult.Skip -> Unit
             }
+            CoverEnsureResult.NoImages -> {
+                // Confirmed empty (native "Found 0 images") — drop from library listing.
+                withIOContext { LocalLibrary.hideEmptyArchive(arch) }
+            }
+            CoverEnsureResult.Skip -> Unit
         }
     }
     Box(modifier = modifier, contentAlignment = Alignment.Center) {

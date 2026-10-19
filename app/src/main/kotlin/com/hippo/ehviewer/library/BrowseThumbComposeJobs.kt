@@ -6,14 +6,14 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
 /**
- * Caps how many heavy thumb jobs may run at once:
- * - Browse [androidx.compose.runtime.LaunchedEffect] video / remote-image / archive work
- * - Library/history archive page-0 extract
- * - Coil [com.hippo.ehviewer.coil.CoverPathFetcher] cache misses (local image thumbs)
+ * Caps how many Compose [androidx.compose.runtime.LaunchedEffect] cells may run
+ * heavy extract/download at once (video frame, remote image cover, archive page-0).
  *
- * Disk / memory cache probes and Coil memory hits stay outside [withJob].
- * Scroll-away / request cancel frees a permit.
+ * Disk / memory cache probes stay outside [withJob]. Coil paint
+ * ([com.hippo.ehviewer.coil.CoverPathFetcher]) is **not** admitted here — sharing
+ * the pool let extract waiters starve display so many thumbs appeared in one batch.
  *
+ * Publish thumb paths **after** [withJob] returns so the slot is free before Coil starts.
  * Limit is [Settings.browseThumbComposeJobs] (default 8). Raising it wakes waiters.
  */
 object BrowseThumbComposeJobs {
@@ -23,7 +23,13 @@ object BrowseThumbComposeJobs {
 
     private val mutex = Mutex()
     private var running = 0
-    private val spaceAvailable = Channel<Unit>(Channel.CONFLATED)
+
+    /**
+     * One token per freed slot. Must not be conflated: when several jobs finish
+     * together, each completion must wake a waiter or concurrency collapses to 1
+     * and UI looks like it waits for a whole wave before showing the next.
+     */
+    private val spaceAvailable = Channel<Unit>(Channel.UNLIMITED)
 
     /** Unit tests pin the cap without DataStore. */
     @Volatile
@@ -34,7 +40,7 @@ object BrowseThumbComposeJobs {
 
     /** Pref changed — wake waiters so a higher limit can admit more cells. */
     fun onLimitChanged() {
-        spaceAvailable.trySend(Unit)
+        repeat(currentLimit()) { spaceAvailable.trySend(Unit) }
     }
 
     suspend fun <T> withJob(block: suspend () -> T): T {

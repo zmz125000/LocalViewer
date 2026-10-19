@@ -1342,13 +1342,17 @@ internal fun BrowseVideoThumbnail(
             return@LaunchedEffect
         }
         if (!allowRemoteFetch || !extractEnabled) return@LaunchedEffect
-        VideoThumbnail.withComposeExtractJob {
-            if (!VideoThumbnail.extractEnabled.value) return@withComposeExtractJob
-            thumbnail = withIOContext { VideoThumbnail.getOrCreate(context, src)?.absolutePath }
-            if (thumbnail == null && VideoThumbnail.extractEnabled.value) {
-                thumbnail = withIOContext { VideoThumbnail.getOrCreate(context, src)?.absolutePath }
+        // Extract under the admit slot; assign path after release so Coil can paint
+        // while other cells extract (same pool must not gate CoverPathFetcher).
+        val path = VideoThumbnail.withComposeExtractJob {
+            if (!VideoThumbnail.extractEnabled.value) return@withComposeExtractJob null
+            var ready = withIOContext { VideoThumbnail.getOrCreate(context, src)?.absolutePath }
+            if (ready == null && VideoThumbnail.extractEnabled.value) {
+                ready = withIOContext { VideoThumbnail.getOrCreate(context, src)?.absolutePath }
             }
+            ready
         }
+        thumbnail = path
     }
     val request = remember(source, thumbnail, sizePx) {
         val path = thumbnail ?: return@remember null
@@ -1640,22 +1644,23 @@ fun BrowseCoverThumb(
                     return@LaunchedEffect
                 }
                 // ZIP/TAR mmap page 0; RAR/CBR/7z first-page (same open as local reader).
-                BrowseThumbComposeJobs.withJob {
-                    when (val result = withIOContext { ArchiveCoverCache.ensureCover(cover.archivePath) }) {
-                        is CoverEnsureResult.Hit -> {
-                            localPath = result.path
-                            fetchFailed = false
+                val result = BrowseThumbComposeJobs.withJob {
+                    withIOContext { ArchiveCoverCache.ensureCover(cover.archivePath) }
+                }
+                when (result) {
+                    is CoverEnsureResult.Hit -> {
+                        localPath = result.path
+                        fetchFailed = false
+                    }
+                    CoverEnsureResult.NoImages -> {
+                        // Native "Found 0 images" — library row removed; browse demotes to file.
+                        withIOContext {
+                            LocalLibrary.hideEmptyArchive(cover.archivePath.toString())
                         }
-                        CoverEnsureResult.NoImages -> {
-                            // Native "Found 0 images" — library row removed; browse demotes to file.
-                            withIOContext {
-                                LocalLibrary.hideEmptyArchive(cover.archivePath.toString())
-                            }
-                        }
-                        CoverEnsureResult.Skip -> {
-                            // Leave placeholder; ON_RESUME retries (ArchiveAccess busy while reader open).
-                            fetchFailed = localPath == null
-                        }
+                    }
+                    CoverEnsureResult.Skip -> {
+                        // Leave placeholder; ON_RESUME retries (ArchiveAccess busy while reader open).
+                        fetchFailed = localPath == null
                     }
                 }
             }
@@ -1672,8 +1677,8 @@ fun BrowseCoverThumb(
                     return@LaunchedEffect
                 }
                 if (!allowRemoteFetch || !downloadNetworkArchiveThumbs) return@LaunchedEffect
-                BrowseThumbComposeJobs.withJob {
-                    val result = withIOContext {
+                val result = BrowseThumbComposeJobs.withJob {
+                    withIOContext {
                         if (solid) {
                             ArchiveCoverCache.ensureSolidStreamCover(key) {
                                 val source = SmbRepository.load(cover.sourceId)
@@ -1705,14 +1710,14 @@ fun BrowseCoverThumb(
                             }
                         }
                     }
-                    when (result) {
-                        is CoverEnsureResult.Hit -> {
-                            localPath = result.path
-                            fetchFailed = false
-                        }
-                        CoverEnsureResult.NoImages -> EmptyArchiveRegistry.mark(key)
-                        CoverEnsureResult.Skip -> Unit
+                }
+                when (result) {
+                    is CoverEnsureResult.Hit -> {
+                        localPath = result.path
+                        fetchFailed = false
                     }
+                    CoverEnsureResult.NoImages -> EmptyArchiveRegistry.mark(key)
+                    CoverEnsureResult.Skip -> Unit
                 }
             }
             is BrowseCover.WebDavArchive -> {
@@ -1727,8 +1732,8 @@ fun BrowseCoverThumb(
                     return@LaunchedEffect
                 }
                 if (!allowRemoteFetch || !downloadNetworkArchiveThumbs) return@LaunchedEffect
-                BrowseThumbComposeJobs.withJob {
-                    val result = withIOContext {
+                val result = BrowseThumbComposeJobs.withJob {
+                    withIOContext {
                         if (solid) {
                             ArchiveCoverCache.ensureSolidStreamCover(key) {
                                 val source = WebDavRepository.load(cover.sourceId)
@@ -1758,14 +1763,14 @@ fun BrowseCoverThumb(
                             }
                         }
                     }
-                    when (result) {
-                        is CoverEnsureResult.Hit -> {
-                            localPath = result.path
-                            fetchFailed = false
-                        }
-                        CoverEnsureResult.NoImages -> EmptyArchiveRegistry.mark(key)
-                        CoverEnsureResult.Skip -> Unit
+                }
+                when (result) {
+                    is CoverEnsureResult.Hit -> {
+                        localPath = result.path
+                        fetchFailed = false
                     }
+                    CoverEnsureResult.NoImages -> EmptyArchiveRegistry.mark(key)
+                    CoverEnsureResult.Skip -> Unit
                 }
             }
             is BrowseCover.Smb -> {
@@ -1783,13 +1788,13 @@ fun BrowseCoverThumb(
                     return@LaunchedEffect
                 }
                 fetchFailed = false
-                BrowseThumbComposeJobs.withJob {
+                val downloaded = BrowseThumbComposeJobs.withJob {
                     var lastError: Throwable? = null
                     repeat(3) { attempt ->
                         try {
                             // Password decrypt runBlocks if called on Main. Keep the whole
                             // fetch on IO so scrolling is not stalled per image row.
-                            localPath = withIOContext {
+                            return@withJob withIOContext {
                                 val source = SmbRepository.load(cover.sourceId) ?: error("SMB source missing")
                                 val password = SmbPasswordStore.get(cover.sourceId)
                                 SmbCache.ensureBrowseThumb(
@@ -1817,8 +1822,6 @@ fun BrowseCoverThumb(
                                     )
                                 }
                             }
-                            fetchFailed = false
-                            return@withJob
                         } catch (e: CancellationException) {
                             throw e
                         } catch (e: Throwable) {
@@ -1827,6 +1830,12 @@ fun BrowseCoverThumb(
                         }
                     }
                     lastError?.let { logcat(it) }
+                    null
+                }
+                if (downloaded != null) {
+                    localPath = downloaded
+                    fetchFailed = false
+                } else {
                     fetchFailed = true
                 }
             }
@@ -1844,11 +1853,11 @@ fun BrowseCoverThumb(
                     return@LaunchedEffect
                 }
                 fetchFailed = false
-                BrowseThumbComposeJobs.withJob {
+                val downloaded = BrowseThumbComposeJobs.withJob {
                     var lastError: Throwable? = null
                     repeat(3) { attempt ->
                         try {
-                            localPath = withIOContext {
+                            return@withJob withIOContext {
                                 val source = WebDavRepository.load(cover.sourceId) ?: error("WebDAV source missing")
                                 val password = WebDavPasswordStore.get(cover.sourceId)
                                 WebDavCache.ensureBrowseThumb(
@@ -1885,8 +1894,6 @@ fun BrowseCoverThumb(
                                     WebDavClient.downloadFile(source, password, cover.remoteRelativeFile, out)
                                 }
                             }
-                            fetchFailed = false
-                            return@withJob
                         } catch (e: CancellationException) {
                             throw e
                         } catch (e: Throwable) {
@@ -1895,6 +1902,12 @@ fun BrowseCoverThumb(
                         }
                     }
                     lastError?.let { logcat(it) }
+                    null
+                }
+                if (downloaded != null) {
+                    localPath = downloaded
+                    fetchFailed = false
+                } else {
                     fetchFailed = true
                 }
             }
@@ -1923,8 +1936,8 @@ fun BrowseCoverThumb(
                 if (!originOnDisk && (!allowRemoteFetch || !allowNetworkImageDownload)) {
                     return@LaunchedEffect
                 }
-                BrowseThumbComposeJobs.withJob {
-                    val extracted = withIOContext {
+                val extracted = BrowseThumbComposeJobs.withJob {
+                    withIOContext {
                         SmbCache.withBrowseThumbFetchSlot {
                             val source = SmbRepository.load(cover.sourceId)
                             val password = source?.let { SmbPasswordStore.get(it.id) }
@@ -1950,13 +1963,13 @@ fun BrowseCoverThumb(
                             )
                         }
                     }
-                    if (extracted != null) {
-                        SmbCache.markPresent(extracted)
-                        localPath = extracted
-                        fetchFailed = false
-                    } else {
-                        fetchFailed = localPath == null
-                    }
+                }
+                if (extracted != null) {
+                    SmbCache.markPresent(extracted)
+                    localPath = extracted
+                    fetchFailed = false
+                } else {
+                    fetchFailed = localPath == null
                 }
             }
             is BrowseCover.WebDavZipMember -> {
@@ -1984,8 +1997,8 @@ fun BrowseCoverThumb(
                 if (!originOnDisk && (!allowRemoteFetch || !allowNetworkImageDownload)) {
                     return@LaunchedEffect
                 }
-                BrowseThumbComposeJobs.withJob {
-                    val extracted = withIOContext {
+                val extracted = BrowseThumbComposeJobs.withJob {
+                    withIOContext {
                         WebDavCache.withBrowseThumbFetchSlot {
                             val source = WebDavRepository.load(cover.sourceId)
                             val password = source?.let { WebDavPasswordStore.get(it.id) }
@@ -2010,13 +2023,13 @@ fun BrowseCoverThumb(
                             )
                         }
                     }
-                    if (extracted != null) {
-                        WebDavCache.markPresent(extracted)
-                        localPath = extracted
-                        fetchFailed = false
-                    } else {
-                        fetchFailed = localPath == null
-                    }
+                }
+                if (extracted != null) {
+                    WebDavCache.markPresent(extracted)
+                    localPath = extracted
+                    fetchFailed = false
+                } else {
+                    fetchFailed = localPath == null
                 }
             }
             else -> return@LaunchedEffect

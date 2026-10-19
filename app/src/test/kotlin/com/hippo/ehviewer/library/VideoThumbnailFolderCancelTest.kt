@@ -136,4 +136,41 @@ class VideoThumbnailFolderCancelTest {
             BrowseThumbComposeJobs.limitOverrideForTest = null
         }
     }
+
+    @Test
+    fun composeExtractJobRefillsAfterWave() = runBlocking {
+        // Conflated wake tokens used to collapse N completions into 1 admit.
+        val composeCap = 4
+        BrowseThumbComposeJobs.limitOverrideForTest = composeCap
+        try {
+            val wave1 = CompletableDeferred<Unit>()
+            val wave1Done = AtomicInteger(0)
+            val wave2Started = AtomicInteger(0)
+            val releaseWave2 = CompletableDeferred<Unit>()
+            val jobs = List(composeCap * 2) { index ->
+                async(Dispatchers.Default) {
+                    BrowseThumbComposeJobs.withJob {
+                        if (index < composeCap) {
+                            wave1.await()
+                            wave1Done.incrementAndGet()
+                        } else {
+                            wave2Started.incrementAndGet()
+                            releaseWave2.await()
+                        }
+                    }
+                }
+            }
+            delay(50)
+            wave1.complete(Unit)
+            withTimeout(5_000) {
+                while (wave2Started.get() < composeCap) delay(10)
+            }
+            assertEquals(composeCap, wave1Done.get())
+            assertEquals(composeCap, wave2Started.get())
+            releaseWave2.complete(Unit)
+            jobs.forEach { it.await() }
+        } finally {
+            BrowseThumbComposeJobs.limitOverrideForTest = null
+        }
+    }
 }

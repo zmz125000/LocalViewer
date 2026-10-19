@@ -522,8 +522,8 @@ object Settings : DataStorePreferences(null) {
     val heavyDecode = intPref("heavy_decode", 2)
 
     /**
-     * How many heavy browse/library/history thumb jobs at once (video extract,
-     * archive page-0, remote folder covers, Coil local image cover fetch). Default 8.
+     * How many Compose cells may extract/download thumbs at once (video frame,
+     * archive page-0, remote folder covers). Coil paint is not counted. Default 8.
      * Settings → Advanced.
      */
     val browseThumbComposeJobs = intPref(
