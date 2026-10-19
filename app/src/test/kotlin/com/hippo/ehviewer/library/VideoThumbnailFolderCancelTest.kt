@@ -1,5 +1,6 @@
 package com.hippo.ehviewer.library
 
+import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
@@ -96,5 +97,32 @@ class VideoThumbnailFolderCancelTest {
         job.await()
         assertTrue(finished.isCompleted)
         assertEquals(key, VideoThumbnail.browseFolderKeyForTest())
+    }
+
+    @Test
+    fun composeExtractJobCapsConcurrentHolders() = runBlocking {
+        val inFlight = AtomicInteger(0)
+        val maxInFlight = AtomicInteger(0)
+        val release = CompletableDeferred<Unit>()
+        val jobs = List(12) {
+            async(Dispatchers.Default) {
+                VideoThumbnail.withComposeExtractJob {
+                    val n = inFlight.incrementAndGet()
+                    maxInFlight.updateAndGet { maxOf(it, n) }
+                    release.await()
+                    inFlight.decrementAndGet()
+                }
+            }
+        }
+        // Decode slots × 2 (see VideoThumbnail.MAX_COMPOSE_EXTRACT_JOBS).
+        val composeCap = 6
+        withTimeout(5_000) {
+            while (maxInFlight.get() < composeCap) delay(10)
+        }
+        delay(50)
+        assertEquals(composeCap, maxInFlight.get())
+        release.complete(Unit)
+        jobs.forEach { it.await() }
+        assertEquals(0, inFlight.get())
     }
 }
