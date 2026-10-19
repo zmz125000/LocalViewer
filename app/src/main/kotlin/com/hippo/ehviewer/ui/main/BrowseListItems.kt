@@ -2091,10 +2091,12 @@ fun BrowseSectionHeader(
     val host = FolderSelectHost.current
     val count = section?.let { host?.count(it) }
     val label = if (count != null) "$text (${count.first}/${count.second})" else text
-    // Recent keeps its collapse gesture. Other folder sections select their rows,
-    // including when select mode is still off.
+    // Recent/Favorites keep their collapse gesture. Other folder sections select
+    // their rows, including when select mode is still off.
     val selectTarget = section?.takeIf {
-        it != BrowseFolderSection.Recent && host != null
+        it != BrowseFolderSection.Recent &&
+            it != BrowseFolderSection.Favorites &&
+            host != null
     }
     val longClick = onLongClick ?: selectTarget?.let { target ->
         { host?.selectSection(target) }
@@ -2183,6 +2185,7 @@ fun BrowseSearchSectionHeader(
 /** In-memory collapse keys for folder-view section headers (not disk-persisted). */
 enum class BrowseFolderSection {
     Recent,
+    Favorites,
     Search,
     Directories,
     Galleries,
@@ -2226,8 +2229,9 @@ fun rememberRecentStripExpanded(
 }
 
 /**
- * Header gestures for Recent. A fully collapsed section opens on tap or long-press.
- * Otherwise tap switches the preview rows / full list, and long-press collapses the section.
+ * Header gestures for Recent/Favorites strips. A fully collapsed section opens on
+ * tap or long-press. Otherwise tap switches the preview rows / full list, and
+ * long-press collapses the section.
  */
 fun onRecentHeaderGesture(
     collapsed: Boolean,
