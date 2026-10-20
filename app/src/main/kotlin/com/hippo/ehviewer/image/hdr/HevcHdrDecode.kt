@@ -6,8 +6,8 @@ import kotlin.math.roundToInt
 
 /**
  * Absolute PQ/HLG HEIC → linear RGBA half.
- * 1.0 is SDR white (203 nits). A codec that only returns 8-bit YUV is refused,
- * so the page stays on the platform SDR decode instead of being labeled HDR.
+ * 1.0 is SDR white (203 nits). Bundled libde265 preserves the encoded precision;
+ * MediaCodec remains a fallback on ABIs without the bundled HDR codecs.
  *
  * Stored as BT.2020 when the source is BT.2020 and advanced color is on (same
  * as PQ AVIF). Otherwise the samples are linear scRGB, which is what the HDR
@@ -43,9 +43,9 @@ internal object HevcHdrDecode {
         val cellH = hdr.tiles.first().height
         var peak = 1f
         for ((index, tile) in hdr.tiles.withIndex()) {
-            val picture = HevcDecoder.decode(tile) ?: return null
-            if (tile.bitDepth >= 10 && picture.bitDepth < 10) {
-                Log.w(TAG, "HEVC decoder returned 8-bit for a ${tile.bitDepth}-bit stream")
+            val picture = HevcDecoder.decode(tile, preferSoftware = true) ?: return null
+            if (picture.bitDepth < tile.bitDepth) {
+                Log.w(TAG, "HEVC decoder returned ${picture.bitDepth}-bit for a ${tile.bitDepth}-bit stream")
                 return null
             }
             val col = index % hdr.columns
@@ -55,13 +55,15 @@ internal object HevcHdrDecode {
             val copyW = minOf(picture.width, hdr.width - x0)
             val copyH = minOf(picture.height, hdr.height - y0)
             if (copyW <= 0 || copyH <= 0) return null
+            val chromaXShift = if (picture.chromaWidth == picture.width) 0 else 1
+            val chromaYShift = if (picture.chromaHeight == picture.height) 0 else 1
             for (y in 0 until copyH) {
                 val oy = ((y0 + y).toLong() * outH / hdr.height).toInt().coerceIn(0, outH - 1)
                 for (x in 0 until copyW) {
                     val ox = ((x0 + x).toLong() * outW / hdr.width).toInt().coerceIn(0, outW - 1)
                     val yCode = picture.y[y * picture.width + x].toInt() and 0xffff
-                    val cx = minOf(x / 2, picture.chromaWidth - 1)
-                    val cy = minOf(y / 2, picture.chromaHeight - 1)
+                    val cx = minOf(x shr chromaXShift, picture.chromaWidth - 1)
+                    val cy = minOf(y shr chromaYShift, picture.chromaHeight - 1)
                     val cAt = cy * picture.chromaWidth + cx
                     val cb = picture.cb[cAt].toInt() and 0xffff
                     val cr = picture.cr[cAt].toInt() and 0xffff
@@ -106,9 +108,9 @@ internal object HevcHdrDecode {
         transfer: HdrTransferLut,
         rgb: FloatArray,
     ) {
-        val ten = depth >= 10
-        val maxCode = if (ten) 1023f else 255f
-        val mid = if (ten) 512f else 128f
+        val maxCode = ((1 shl depth) - 1).toFloat()
+        val mid = (1 shl (depth - 1)).toFloat()
+        val codeScale = (1 shl (depth - 8)).toFloat()
         val yf: Float
         val cbf: Float
         val crf: Float
@@ -117,9 +119,9 @@ internal object HevcHdrDecode {
             cbf = (cb - mid) / maxCode
             crf = (cr - mid) / maxCode
         } else {
-            val yBlack = if (ten) 64f else 16f
-            val yRange = if (ten) 876f else 219f
-            val cRange = if (ten) 896f else 224f
+            val yBlack = 16f * codeScale
+            val yRange = 219f * codeScale
+            val cRange = 224f * codeScale
             yf = (y - yBlack) / yRange
             cbf = (cb - mid) / cRange
             crf = (cr - mid) / cRange

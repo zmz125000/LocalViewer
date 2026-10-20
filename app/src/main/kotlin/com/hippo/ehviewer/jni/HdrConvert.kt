@@ -2,13 +2,13 @@ package com.hippo.ehviewer.jni
 
 /**
  * Native still codecs for formats the platform cannot open reliably
- * (libultrahdr + jxrlib + libavif + libjxl + OpenJPEG).
+ * (libultrahdr + jxrlib + libavif + libjxl + OpenJPEG + libde265).
  *
  * Linked only for **arm64-v8a** and **x86_64** ([EHVIEWER_HDR_CODECS] in CMake).
  * On armeabi-v7a the same JNI symbols are stubs (convert → -100, probe → 0).
  *
- * All lib routes use convert* → Ultra HDR JPEG (disk cache). JXR/JXL always convert
- * (SDR content still becomes a Coil-ready base JPEG).
+ * Lib formats can use convert* → Ultra HDR JPEG or direct bitmap presentation.
+ * Camera RAW and absolute PQ/HLG HEIF use direct presentation.
  *
  * @return convert*: 0 on success; non-zero error code on failure.
  */
@@ -36,6 +36,13 @@ external fun convertAvifBytesToUltraHdrMaxEdge(input: ByteArray, outputPath: Str
  * Probe AVIF HDR kind: 0=not avif/error, 1=gain-map, 2=PQ/HLG absolute, 3=other avif.
  */
 external fun probeAvifHdrKind(input: ByteArray): Int
+
+/**
+ * Software HEVC still decode. [outInfo]: width, height, bit depth, chroma width,
+ * chroma height. Returns planar Y/Cb/Cr integer samples at the decoded precision.
+ * Both inputs are Annex-B, split into parameter sets and picture NALs.
+ */
+external fun decodeHevcAnnexB(csd: ByteArray, picture: ByteArray, outInfo: IntArray): ShortArray?
 
 // ── JPEG XL ──────────────────────────────────────────────────────────────
 

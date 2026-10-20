@@ -259,7 +259,7 @@ if (EHVIEWER_HDR_CODECS)
     set(UHDR_WRITE_XMP ON CACHE BOOL "" FORCE)
     set(UHDR_WRITE_ISO ON CACHE BOOL "" FORCE)
     # v2 defaults HEIF/AVIF on and vendors libheif. Encode path is JPEG only
-    # (UHDR_CODEC_JPG); HEIC stays on ImageDecoder, AVIF on libavif.
+    # (UHDR_CODEC_JPG); HEIC uses ImageDecoder or libde265, AVIF uses libavif.
     set(UHDR_ENABLE_HEIF OFF CACHE BOOL "" FORCE)
     set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
 
@@ -342,8 +342,24 @@ if (EHVIEWER_HDR_CODECS)
     )
     FetchContent_MakeAvailable(libjxl)
 
-    # HEIC/HEIF: platform ImageDecoder (minSdk 31), not a native codec here — see HdrKind.
-    set(EHVIEWER_HDR_SOURCES hdr_convert.cpp avif_hdr.cpp jxl_hdr.cpp)
+    # Absolute PQ/HLG HEIF needs actual high-bit-depth HEVC planes. Platform
+    # MediaCodec frequently exposes only 8-bit YUV, so bundle a software decoder.
+    set(ENABLE_DECODER OFF CACHE BOOL "" FORCE) # libde265 CLI, not the library
+    set(ENABLE_ENCODER OFF CACHE BOOL "" FORCE)
+    set(ENABLE_SDL OFF CACHE BOOL "" FORCE)
+    set(ENABLE_SHERLOCK265 OFF CACHE BOOL "" FORCE)
+    set(ENABLE_INTERNAL_DEVELOPMENT_TOOLS OFF CACHE BOOL "" FORCE)
+    set(WITH_FUZZERS OFF CACHE BOOL "" FORCE)
+    FetchContent_Declare(
+            libde265
+            GIT_REPOSITORY https://github.com/strukturag/libde265.git
+            GIT_TAG v1.1.3
+            GIT_SHALLOW 1
+    )
+    FetchContent_MakeAvailable(libde265)
+    target_include_directories(de265 INTERFACE ${libde265_SOURCE_DIR} ${libde265_BINARY_DIR})
+    set(EHVIEWER_HDR_SOURCES hdr_convert.cpp avif_hdr.cpp jxl_hdr.cpp hevc_decode.cpp)
+    list(APPEND EHVIEWER_HDR_LIBS de265)
 
     if (TARGET uhdr)
         list(APPEND EHVIEWER_HDR_LIBS uhdr)

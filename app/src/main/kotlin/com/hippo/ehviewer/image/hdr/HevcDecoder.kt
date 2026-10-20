@@ -6,12 +6,12 @@ import android.media.MediaCodec
 import android.media.MediaCodecInfo
 import android.media.MediaFormat
 import android.util.Log
+import com.hippo.ehviewer.jni.decodeHevcAnnexB
 
 /**
- * One HEVC access unit from a HEIF item, via the platform decoder.
- * 10-bit streams stay 10-bit when the codec offers [ImageFormat.YCBCR_P010].
- * An 8-bit result from a 10-bit stream is reported as bit depth 8 so the caller
- * can refuse to present it as HDR.
+ * One HEVC access unit from a HEIF item. Absolute HDR prefers bundled libde265
+ * to preserve precision independently of the device's MediaCodec output formats.
+ * Apple gain-map auxiliaries keep the platform path by default.
  */
 internal object HevcDecoder {
     private const val TAG = "HevcDecoder"
@@ -19,7 +19,7 @@ internal object HevcDecoder {
     class Picture(
         val width: Int,
         val height: Int,
-        /** 8 or 10, from the buffer the codec actually returned. */
+        /** Actual sample precision (8–16 for software, 8/10 for MediaCodec). */
         val bitDepth: Int,
         val y: ShortArray,
         val cb: ShortArray,
@@ -28,13 +28,40 @@ internal object HevcDecoder {
         val chromaHeight: Int,
     )
 
-    fun decode(unit: HeifContainer.AccessUnit): Picture? = runCatching {
+    fun decode(unit: HeifContainer.AccessUnit, preferSoftware: Boolean = false): Picture? {
+        if (preferSoftware) decodeSoftware(unit)?.let { return it }
+        if (unit.bitDepth >= 10) {
+            decodePlatform(unit, p010 = true)?.takeIf { it.bitDepth >= unit.bitDepth }?.let { return it }
+        }
+        return decodePlatform(unit, p010 = false)
+    }
+
+    private fun decodeSoftware(unit: HeifContainer.AccessUnit): Picture? = runCatching {
+        val info = IntArray(5)
+        val samples = decodeHevcAnnexB(unit.csd, unit.picture, info) ?: return null
+        val (width, height, depth, cw, ch) = info
+        if (width <= 0 || height <= 0 || cw <= 0 || ch <= 0 || depth !in unit.bitDepth..16) return null
+        val ySize = width.toLong() * height
+        val cSize = cw.toLong() * ch
+        if (ySize + 2 * cSize != samples.size.toLong()) return null
+        val yEnd = ySize.toInt()
+        val cbEnd = (ySize + cSize).toInt()
+        Picture(
+            width, height, depth,
+            samples.copyOfRange(0, yEnd),
+            samples.copyOfRange(yEnd, cbEnd),
+            samples.copyOfRange(cbEnd, samples.size),
+            cw, ch,
+        )
+    }.onFailure { Log.e(TAG, "Software HEVC decode failed ${unit.width}x${unit.height}", it) }.getOrNull()
+
+    private fun decodePlatform(unit: HeifContainer.AccessUnit, p010: Boolean): Picture? = runCatching {
         val format = MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_HEVC, unit.width, unit.height).apply {
             if (unit.csd.isNotEmpty()) setByteBuffer("csd-0", java.nio.ByteBuffer.wrap(unit.csd))
             setInteger(MediaFormat.KEY_MAX_INPUT_SIZE, unit.picture.size + unit.csd.size + 4096)
             setInteger(
                 MediaFormat.KEY_COLOR_FORMAT,
-                MediaCodecInfo.CodecCapabilities.COLOR_FormatYUV420Flexible,
+                if (p010) MediaCodecInfo.CodecCapabilities.COLOR_FormatYUVP010 else MediaCodecInfo.CodecCapabilities.COLOR_FormatYUV420Flexible,
             )
         }
         val codec = MediaCodec.createDecoderByType(MediaFormat.MIMETYPE_VIDEO_HEVC)
