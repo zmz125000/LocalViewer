@@ -101,6 +101,7 @@ Build with Grok 4.5.
 * ZIP/RAR/CBZ/CBR/CBT/PDF/EPUB support over network share.
 * PDF/EPUB/MOBI/FB2/TXT/AZW3/Markdown Ebook support with text formatting.
 * JXL/JXR/JPG/AVIF/HEIC HDR support.
+* PQ/HLG HEIF software decoding with preserved high bit depth on 64-bit builds.
 * 14-Bit RAW formats decoding with true HDR output.
 * RAW formats support dng/cr2/cr3/nef/nrw/arw/raf/orf/rw2/pef/srw/raw.
 * Convert JXR and RAW to Ultra HDR JPEG.
@@ -212,6 +213,7 @@ Here is the libraries
 - [libwebp](https://github.com/webmproject/libwebp)
 - [libjxl](https://github.com/libjxl/libjxl)
 - [libavif](https://github.com/AOMediaCodec/libavif) and [dav1d](https://code.videolan.org/videolan/dav1d)
+- [libde265](https://github.com/strukturag/libde265) (PQ/HLG HEIF software decode)
 - [jpegxr](https://github.com/bvibber/jpegxr)
 - [OpenJPEG](https://github.com/uclouvain/openjpeg)
 - [XZ](https://github.com/tukaani-project/xz) and [Nettle](https://gitlab.com/gnutls/nettle)

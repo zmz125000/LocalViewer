@@ -47,11 +47,14 @@ internal object HevcDecoder {
         val yEnd = ySize.toInt()
         val cbEnd = (ySize + cSize).toInt()
         Picture(
-            width, height, depth,
+            width,
+            height,
+            depth,
             samples.copyOfRange(0, yEnd),
             samples.copyOfRange(yEnd, cbEnd),
             samples.copyOfRange(cbEnd, samples.size),
-            cw, ch,
+            cw,
+            ch,
         )
     }.onFailure { Log.e(TAG, "Software HEVC decode failed ${unit.width}x${unit.height}", it) }.getOrNull()
 

@@ -6,7 +6,7 @@ import okio.Path
 
 /**
  * Header-only bit-depth classification for platform PNG/APNG stills.
- * Never decodes pixels. AVIF/HEIF are out of scope for platform HBD.
+ * Never decodes pixels. AVIF/HEIF use HeifPrecisionProbe / PlatformHeifDecode.
  */
 enum class BitDepthClass {
     /** Confirmed ≤8 bpc (e.g. PNG IHDR depth 8). */

@@ -24,6 +24,7 @@
 
 #include "avif/avif.h"
 #include "hdr_encode.h"
+#include "hdr_parallel.h"
 #include "ultrahdr_api.h"
 
 #define LOG_TAG "AvifHdr"
@@ -60,6 +61,57 @@ float hlg_inv_oetf(float x) {
         return (x * x) / 3.f;
     }
     return (std::exp((x - c) / a) + b) / 12.f;
+}
+
+// RGB conversion produces integer 16-bit codes. Evaluate each transfer once
+// per possible code, rather than millions of pow/exp calls for every PQ page.
+std::vector<float> make_avif_linear_lut(avifTransferCharacteristics tc) {
+    std::vector<float> lut(65536);
+    for (unsigned i = 0; i < lut.size(); ++i) {
+        const float v = i / 65535.f;
+        if (tc == AVIF_TRANSFER_CHARACTERISTICS_SMPTE2084) lut[i] = pq_eotf(v) / kSdrWhiteNits;
+        else if (tc == AVIF_TRANSFER_CHARACTERISTICS_HLG) lut[i] = hlg_inv_oetf(v) * 12.f;
+        else if (tc == AVIF_TRANSFER_CHARACTERISTICS_LINEAR) lut[i] = v;
+        else if (tc == AVIF_TRANSFER_CHARACTERISTICS_BT709 || tc == AVIF_TRANSFER_CHARACTERISTICS_BT601 ||
+                 tc == AVIF_TRANSFER_CHARACTERISTICS_BT2020_10BIT || tc == AVIF_TRANSFER_CHARACTERISTICS_BT2020_12BIT) {
+            lut[i] = v < 4.5f * 0.018053968510807f ? v / 4.5f :
+                std::pow((v + 0.09929682680944f) / 1.09929682680944f, 1.f / 0.45f);
+        }
+        else if (tc == AVIF_TRANSFER_CHARACTERISTICS_BT470M) lut[i] = std::pow(v, 2.2f);
+        else if (tc == AVIF_TRANSFER_CHARACTERISTICS_BT470BG) lut[i] = std::pow(v, 2.8f);
+        else lut[i] = srgb_eotf(v);
+    }
+    return lut;
+}
+
+const std::vector<float>& avif_linear_lut(avifTransferCharacteristics tc) {
+    if (tc == AVIF_TRANSFER_CHARACTERISTICS_SMPTE2084) {
+        static const auto lut = make_avif_linear_lut(AVIF_TRANSFER_CHARACTERISTICS_SMPTE2084);
+        return lut;
+    }
+    if (tc == AVIF_TRANSFER_CHARACTERISTICS_HLG) {
+        static const auto lut = make_avif_linear_lut(AVIF_TRANSFER_CHARACTERISTICS_HLG);
+        return lut;
+    }
+    if (tc == AVIF_TRANSFER_CHARACTERISTICS_LINEAR) {
+        static const auto lut = make_avif_linear_lut(AVIF_TRANSFER_CHARACTERISTICS_LINEAR);
+        return lut;
+    }
+    if (tc == AVIF_TRANSFER_CHARACTERISTICS_BT709 || tc == AVIF_TRANSFER_CHARACTERISTICS_BT601 ||
+        tc == AVIF_TRANSFER_CHARACTERISTICS_BT2020_10BIT || tc == AVIF_TRANSFER_CHARACTERISTICS_BT2020_12BIT) {
+        static const auto lut = make_avif_linear_lut(AVIF_TRANSFER_CHARACTERISTICS_BT709);
+        return lut;
+    }
+    if (tc == AVIF_TRANSFER_CHARACTERISTICS_BT470M) {
+        static const auto lut = make_avif_linear_lut(AVIF_TRANSFER_CHARACTERISTICS_BT470M);
+        return lut;
+    }
+    if (tc == AVIF_TRANSFER_CHARACTERISTICS_BT470BG) {
+        static const auto lut = make_avif_linear_lut(AVIF_TRANSFER_CHARACTERISTICS_BT470BG);
+        return lut;
+    }
+    static const auto lut = make_avif_linear_lut(AVIF_TRANSFER_CHARACTERISTICS_SRGB);
+    return lut;
 }
 
 /**
@@ -435,63 +487,41 @@ int decode_avif_to_linear_f16(const uint8_t* data, size_t len, std::vector<uint1
     const uint8_t* row_base = rgb.pixels;
     const uint32_t row_bytes = rgb.rowBytes;
 
-    for (unsigned y = 0; y < h; y++) {
-        const uint16_t* row = reinterpret_cast<const uint16_t*>(row_base + static_cast<size_t>(y) * row_bytes);
-        for (unsigned x = 0; x < w; x++) {
-            const uint16_t* p = row + x * 4;
-            // 16-bit full range normalized (transfer-encoded if PQ/HLG)
-            float rn = p[0] / 65535.f;
-            float gn = p[1] / 65535.f;
-            float bn = p[2] / 65535.f;
-            float an = p[3] / 65535.f;
+    const auto& linear = avif_linear_lut(tc);
+    hdr_parallel_pixels(h, hdr_pixel_jobs(pixels, dec->maxThreads), [&](size_t begin, size_t end, unsigned) {
+        for (unsigned y = begin; y < end; y++) {
+            const uint16_t* row = reinterpret_cast<const uint16_t*>(row_base + static_cast<size_t>(y) * row_bytes);
+            for (unsigned x = 0; x < w; x++) {
+                const uint16_t* p = row + x * 4;
+                // 16-bit full range normalized (transfer-encoded if PQ/HLG)
+                float an = p[3] / 65535.f;
+                float rl = linear[p[0]], gl = linear[p[1]], bl = linear[p[2]];
 
-            float rl, gl, bl;
-            if (is_pq) {
-                // PQ code → nits → linear relative to 203 nits SDR white (source primaries).
-                rl = pq_eotf(rn) / kSdrWhiteNits;
-                gl = pq_eotf(gn) / kSdrWhiteNits;
-                bl = pq_eotf(bn) / kSdrWhiteNits;
-            } else if (is_hlg) {
-                // HLG → scene linear, scale so reference white ≈ 1.
-                rl = hlg_inv_oetf(rn) * 12.f;
-                gl = hlg_inv_oetf(gn) * 12.f;
-                bl = hlg_inv_oetf(bn) * 12.f;
-            } else if (tc == AVIF_TRANSFER_CHARACTERISTICS_LINEAR) {
-                rl = rn;
-                gl = gn;
-                bl = bn;
-            } else {
-                // sRGB / 709 / IEC61966 / unspecified gamma-encoded → linear (IEC sRGB EOTF).
-                // libavif YUVToRGB returns transfer-encoded samples for non-PQ/HLG.
-                rl = srgb_eotf(rn);
-                gl = srgb_eotf(gn);
-                bl = srgb_eotf(bn);
+                // Policy B only: values must match the BT.709 tag. Preserve path never rematrixes.
+                if (need_bt2020_to_709) {
+                    linear_bt2020_to_bt709(rl, gl, bl);
+                }
+
+                // Clamp to Ultra HDR LINEAR nominal max (10000/203).
+                auto clamp_hf = [](float v) {
+                    if (!std::isfinite(v) || v < 0.f) return 0.f;
+                    if (v > kMaxLinear) return kMaxLinear;
+                    return v;
+                };
+                rl = clamp_hf(rl);
+                gl = clamp_hf(gl);
+                bl = clamp_hf(bl);
+                if (an < 0.f) an = 0.f;
+                if (an > 1.f) an = 1.f;
+
+                const size_t i = static_cast<size_t>(y) * w + x;
+                out_rgba[i * 4 + 0] = float_to_half(rl);
+                out_rgba[i * 4 + 1] = float_to_half(gl);
+                out_rgba[i * 4 + 2] = float_to_half(bl);
+                out_rgba[i * 4 + 3] = float_to_half(an);
             }
-
-            // Policy B only: values must match the BT.709 tag. Preserve path never rematrixes.
-            if (need_bt2020_to_709) {
-                linear_bt2020_to_bt709(rl, gl, bl);
-            }
-
-            // Clamp to Ultra HDR LINEAR nominal max (10000/203).
-            auto clamp_hf = [](float v) {
-                if (!std::isfinite(v) || v < 0.f) return 0.f;
-                if (v > kMaxLinear) return kMaxLinear;
-                return v;
-            };
-            rl = clamp_hf(rl);
-            gl = clamp_hf(gl);
-            bl = clamp_hf(bl);
-            if (an < 0.f) an = 0.f;
-            if (an > 1.f) an = 1.f;
-
-            const size_t i = static_cast<size_t>(y) * w + x;
-            out_rgba[i * 4 + 0] = float_to_half(rl);
-            out_rgba[i * 4 + 1] = float_to_half(gl);
-            out_rgba[i * 4 + 2] = float_to_half(bl);
-            out_rgba[i * 4 + 3] = float_to_half(an);
         }
-    }
+    });
 
     ALOGI("AVIF %ux%u tc=%d primaries=%d pq=%d hlg=%d cg=%d rematrix709=%d gainmap=%d", w, h,
           (int)tc, (int)primaries, is_pq ? 1 : 0, is_hlg ? 1 : 0, (int)cg,

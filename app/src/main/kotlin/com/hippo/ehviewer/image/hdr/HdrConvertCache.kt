@@ -91,13 +91,14 @@ object HdrConvertCache {
 
     /**
      * Network page download should RAM→convert→`.jpg` (B1).
-     * False when [Settings.readerLibDirectBitmap]: same path as non-lib (cache original,
-     * normal prefetch slots; reader [LibDirectDecode] presents Bitmap).
+     * Lib-direct or advanced-color AVIF/HEIF keeps the original and uses normal
+     * prefetch slots. The reader selects the platform or native deep-color decoder.
      */
-    fun usesNetworkLibConvert(fileName: String): Boolean = isRamPipelineCandidate(fileName) && !Settings.readerLibDirectBitmap.value
+    fun usesNetworkLibConvert(fileName: String): Boolean = isRamPipelineCandidate(fileName) && !keepOriginalOnNetwork(fileName)
 
     /** Keep original bytes on network finalize (no UHDR encode). */
-    private fun keepOriginalOnNetwork(): Boolean = Settings.readerLibDirectBitmap.value
+    private fun keepOriginalOnNetwork(fileName: String): Boolean = Settings.readerLibDirectBitmap.value ||
+        keepHeifPrecisionOriginal(fileName, Settings.readerAdvancedColor.value)
 
     /** Derived Ultra HDR for local files (user originals untouched). */
     private val localRoot: Path by lazy(LazyThreadSafetyMode.PUBLICATION) {
@@ -135,7 +136,7 @@ object HdrConvertCache {
      * pure [uhdrSiblingOf] + an in-memory set (see Smb/WebDav `isPageCached`).
      */
     fun resolvePagePath(primary: Path): Path {
-        if (Settings.readerLibDirectBitmap.value && isPresent(primary)) return primary
+        if ((Settings.readerLibDirectBitmap.value || keepHeifPrecisionOriginal(primary.name, Settings.readerAdvancedColor.value)) && isPresent(primary)) return primary
         val uhdr = uhdrSiblingOf(primary)
         if (uhdr.toString() != primary.toString() && isPresent(uhdr)) return uhdr
         return primary
@@ -338,7 +339,7 @@ object HdrConvertCache {
         originalFileName: String,
     ): Path = withContext(Dispatchers.IO) {
         if (bytes.isEmpty()) error("empty download: $originalFileName")
-        if (keepOriginalOnNetwork()) {
+        if (keepOriginalOnNetwork(originalFileName)) {
             writeBytesAtomic(bytes, File(primaryPath.toString()))
             return@withContext primaryPath
         }
@@ -374,7 +375,7 @@ object HdrConvertCache {
         primaryPath: Path,
         originalFileName: String,
     ): Path = withContext(Dispatchers.IO) {
-        if (keepOriginalOnNetwork()) {
+        if (keepOriginalOnNetwork(originalFileName)) {
             commitTmp(tmp, File(primaryPath.toString()))
             return@withContext primaryPath
         }

@@ -76,8 +76,9 @@ data class DirectPixels(
 )
 
 /**
- * Decode JXR / JXL / PQ-AVIF straight to a display [Bitmap] for the experimental
- * reader present mode ([com.hippo.ehviewer.Settings.readerLibDirectBitmap]).
+ * Decode lib stills straight to a display [Bitmap]. JXR/JXL follow the optional
+ * reader present mode; advanced-color AVIF bypasses JPEG conversion automatically.
+ * HEIF uses this as its HDR / unsupported-platform high-depth path.
  *
  * ## Color management (advanced color on)
  * - **Display P3:** keep linear P3 in RGBA_F16 + WCG window
@@ -236,11 +237,16 @@ object LibDirectDecode {
         val bytes = readBytes(src) ?: return null
         if (bytes.isEmpty()) return null
         val route = classify(bytes, bytes.size, fileNameHint)
-        if (route !is StillRoute.Lib) return null
         val advanced = Settings.readerAdvancedColor.value
+        val precision = if (advanced && route == StillRoute.Platform) HeifPrecisionProbe.probe(bytes) else null
+        val codec = (route as? StillRoute.Lib)?.codec ?: when {
+            precision?.highDepth != true -> return null
+            precision.avif -> LibCodec.AvifPq
+            else -> LibCodec.HevcHdr
+        }
         val outInfo = IntArray(6)
         val outBoost = FloatArray(1)
-        val pixels = when (route.codec) {
+        val pixels = when (codec) {
             LibCodec.Jxl -> decodeJxlBytesToDirect(bytes, maxEdge, advanced, outInfo, outBoost)
             LibCodec.Jxr -> decodeJxrBytesToDirect(
                 bytes,
@@ -263,13 +269,13 @@ object LibDirectDecode {
     }
 
     /**
-     * PQ/HLG HEIC. Null when HDR display is off or the codec cannot emit 10-bit,
-     * so the caller falls through to the platform SDR image.
+     * PQ/HLG HEIC and SDR high-depth fallback when ImageDecoder cannot retain
+     * precision. Absolute HDR keeps the existing HDR-display preference.
      */
     private fun decodeHevcHdrPacked(bytes: ByteArray, maxEdge: Int, advanced: Boolean): PackedPixels? {
-        if (!Settings.readerHdrDisplay.value) return null
+        if (!Settings.readerHdrDisplay.value && HeifContainer.parse(bytes)?.absoluteHdr() != null) return null
         val frame = HevcHdrDecode.decode(bytes, maxEdge, advanced) ?: return null
-        val outInfo = intArrayOf(frame.width, frame.height, 1, 1, frame.gamut, 16)
+        val outInfo = intArrayOf(frame.width, frame.height, 1, if (frame.isHdr) 1 else 0, frame.gamut, frame.transfer)
         val outBoost = floatArrayOf(frame.boost)
         return PackedPixels(frame.pixels, outInfo, outBoost, advanced = true, premultiplied = true)
     }
