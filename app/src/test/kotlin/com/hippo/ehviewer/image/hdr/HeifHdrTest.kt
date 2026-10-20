@@ -45,6 +45,14 @@ class HeifHdrTest {
         assertEquals(16, hdr.transfer)
         assertEquals(54, hdr.tiles.size)
         assertTrue(hdr.tiles.all { it.bitDepth >= 10 })
+        // PQ HEIF must use the direct HEVC path even when UHDR bypass is off.
+        // It cannot be handed to libavif or the JPEG convert cache.
+        for (name in listOf("photo.heic", "photo.heif", "photo.hif")) {
+            val route = classify(file.readBytes(), fileNameHint = name)
+            assertEquals(LibCodec.HevcHdr, (route as StillRoute.Lib).codec)
+            assertTrue(route.needsLibDecode)
+            assertFalse(route.needsUhdr)
+        }
     }
 
     @Test

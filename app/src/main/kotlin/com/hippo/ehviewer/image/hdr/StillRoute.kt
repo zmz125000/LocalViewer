@@ -66,8 +66,8 @@ enum class LibCodec {
     Raw,
 
     /**
-     * Absolute PQ/HLG HEIC (HEVC). libavif cannot open it. Direct bitmap via
-     * MediaCodec; no Ultra HDR JPEG convert.
+     * Absolute PQ/HLG HEIC (HEVC). Direct HDR bitmap via bundled libde265,
+     * with MediaCodec fallback; no Ultra HDR JPEG convert.
      */
     HevcHdr,
 }
@@ -288,14 +288,14 @@ fun classify(bytes: ByteArray, length: Int = bytes.size, fileNameHint: String? =
 
     // OPPO/OnePlus ProXDR HEIC trailer (opt-in). Sniff uses full buffer because the
     // catalog/`jxrs` footer sits after mdat (often multi‑MB); [looksLike] only scans the tail.
-    if (Settings.readerOppoProxdr.value &&
-        OppoProxdr.looksLike(bytes, n) &&
-        (isHeicImageExtension(ext) || isHeifFamily(bytes, minOf(n, 64)))
+    if (OppoProxdr.looksLike(bytes, n) &&
+        (isHeicImageExtension(ext) || isHeifFamily(bytes, minOf(n, 64))) &&
+        Settings.readerOppoProxdr.value
     ) {
         return StillRoute.OppoProxdr
     }
 
-    // Absolute PQ/HLG. AVIF → libavif. HEIC → MediaCodec (libavif cannot decode HEVC).
+    // Absolute PQ/HLG. AVIF → libavif. HEIC → libde265 (libavif cannot decode HEVC).
     if (isHeifFamily(bytes, n) && hasAbsoluteHdrCicp(bytes, n)) {
         return if (isAvifBrand(bytes, n)) {
             StillRoute.Lib(LibCodec.AvifPq)
