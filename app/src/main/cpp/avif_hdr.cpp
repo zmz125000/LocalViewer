@@ -1,7 +1,9 @@
 /*
  * AVIF still decode via libavif → Ultra HDR JPEG (libultrahdr).
  *
- * - Gain-map AVIF: prefer Android 14+ ImageDecoder (Kotlin); not re-encoded here.
+ * - ISO 21496-1 gain-map AVIF (`tmap`): libavif applies the map. Its linear output
+ *   clamps at 1, so the apply is requested as PQ and converted back to linear
+ *   (1.0 = 203 nits) before the direct / Ultra HDR pack.
  * - Absolute PQ/HLG AVIF: decode with libavif, linearize in **source primaries**,
  *   encode content-matched Ultra HDR JPEG tagged with matching libultrahdr gamut
  *   (BT.2100 / Display P3 / BT.709). Do not force BT.709 clip when the format can
@@ -79,6 +81,83 @@ uhdr_color_gamut_t map_avif_primaries_to_uhdr_cg(avifColorPrimaries primaries,
     }
 }
 
+static float unsigned_frac(avifUnsignedFraction f) {
+    if (f.d == 0) return 0.f;
+    return static_cast<float>(f.n) / static_cast<float>(f.d);
+}
+
+/**
+ * ISO 21496-1 gain map → linear RGBA half.
+ * [avifImageApplyGainMap] clamps a linear destination to 0..1, which drops the
+ * headroom. PQ output keeps it; [pq_eotf] brings those codes back to 203-nit linear.
+ * @return true when [out_rgba] holds the tone-mapped HDR image.
+ */
+bool apply_iso_gain_map(const avifImage* image, std::vector<uint16_t>& out_rgba, int* out_has_gainmap,
+                        int* out_transfer, uhdr_color_gamut_t* out_cg) {
+    if (image->gainMap == nullptr || image->gainMap->image == nullptr) return false;
+    const float headroom = unsigned_frac(image->gainMap->alternateHdrHeadroom);
+    if (!(headroom > 0.05f)) return false;
+
+    avifColorPrimaries primaries = image->gainMap->altColorPrimaries;
+    if (primaries == AVIF_COLOR_PRIMARIES_UNKNOWN || primaries == AVIF_COLOR_PRIMARIES_UNSPECIFIED) {
+        primaries = image->colorPrimaries;
+    }
+    if (primaries == AVIF_COLOR_PRIMARIES_UNKNOWN || primaries == AVIF_COLOR_PRIMARIES_UNSPECIFIED) {
+        primaries = AVIF_COLOR_PRIMARIES_BT2020;
+    }
+
+    avifRGBImage tone;
+    memset(&tone, 0, sizeof(tone));
+    tone.format = AVIF_RGB_FORMAT_RGBA;
+    tone.depth = 16;
+    tone.isFloat = AVIF_FALSE;
+    avifDiagnostics diag;
+    avifDiagnosticsClearError(&diag);
+    const avifResult applied = avifImageApplyGainMap(
+        image, image->gainMap, headroom, primaries, AVIF_TRANSFER_CHARACTERISTICS_SMPTE2084, &tone,
+        nullptr, &diag);
+    if (applied != AVIF_RESULT_OK || tone.pixels == nullptr || tone.width == 0 || tone.height == 0) {
+        ALOGE("ISO gain map apply failed: %s", diag.error[0] ? diag.error : avifResultToString(applied));
+        avifRGBImageFreePixels(&tone);
+        return false;
+    }
+
+    const unsigned tw = tone.width;
+    const unsigned th = tone.height;
+    const size_t pixels = static_cast<size_t>(tw) * static_cast<size_t>(th);
+    out_rgba.resize(pixels * 4);
+    const uint8_t* row_base = tone.pixels;
+    for (unsigned y = 0; y < th; y++) {
+        const uint16_t* row =
+            reinterpret_cast<const uint16_t*>(row_base + static_cast<size_t>(y) * tone.rowBytes);
+        for (unsigned x = 0; x < tw; x++) {
+            const uint16_t* p = row + x * 4;
+            const float rl = pq_eotf(p[0] / 65535.f) / kSdrWhiteNits;
+            const float gl = pq_eotf(p[1] / 65535.f) / kSdrWhiteNits;
+            const float bl = pq_eotf(p[2] / 65535.f) / kSdrWhiteNits;
+            float an = p[3] / 65535.f;
+            auto clamp_hf = [](float v) {
+                if (!std::isfinite(v) || v < 0.f) return 0.f;
+                if (v > kMaxLinear) return kMaxLinear;
+                return v;
+            };
+            if (an < 0.f) an = 0.f;
+            if (an > 1.f) an = 1.f;
+            const size_t i = (static_cast<size_t>(y) * tw + x) * 4;
+            out_rgba[i + 0] = float_to_half(clamp_hf(rl));
+            out_rgba[i + 1] = float_to_half(clamp_hf(gl));
+            out_rgba[i + 2] = float_to_half(clamp_hf(bl));
+            out_rgba[i + 3] = float_to_half(an);
+        }
+    }
+    avifRGBImageFreePixels(&tone);
+    if (out_cg) *out_cg = map_avif_primaries_to_uhdr_cg(primaries, true);
+    if (out_transfer) *out_transfer = 16;
+    if (out_has_gainmap) *out_has_gainmap = 1;
+    ALOGI("ISO gain map %ux%u headroom=%.3f primaries=%d", tw, th, headroom, (int)primaries);
+    return true;
+}
+
 /**
  * Decode AVIF → linear RGBA half in source (or fallback BT.709) primaries.
  * 1.0 = SDR white / 203 nits for PQ.
@@ -99,6 +178,8 @@ int decode_avif_to_linear_f16(const uint8_t* data, size_t len, std::vector<uint1
     if (!dec) return -2;
     dec->ignoreExif = AVIF_TRUE;
     dec->ignoreXMP = AVIF_TRUE;
+    // Default decode skips the gain-map item. ISO 21496-1 AVIF needs those pixels.
+    dec->imageContentToDecode = AVIF_IMAGE_CONTENT_ALL;
     // Prefer progressive; max threads leave default.
     avifResult r = avifDecoderSetIOMemory(dec, data, len);
     if (r != AVIF_RESULT_OK) {
@@ -131,12 +212,10 @@ int decode_avif_to_linear_f16(const uint8_t* data, size_t len, std::vector<uint1
         return -7;
     }
 
-#if defined(AVIF_ENABLE_EXPERIMENTAL_GAIN_MAP) || 1
-    // libavif 1.0+: gain map image pointer when present.
-    if (image->gainMap != nullptr && out_has_gainmap) {
-        *out_has_gainmap = 1;
+    if (apply_iso_gain_map(image, out_rgba, out_has_gainmap, out_transfer, out_cg)) {
+        avifDecoderDestroy(dec);
+        return 0;
     }
-#endif
 
     const avifTransferCharacteristics tc = image->transferCharacteristics;
     if (out_transfer) *out_transfer = static_cast<int>(tc);

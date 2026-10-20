@@ -286,8 +286,12 @@ abstract class PageLoader(
         // RAW is always a direct bitmap. Bypass-UHDR does not apply, and there is no gain map.
         val rawStill = (route is StillRoute.Lib && route.codec == LibCodec.Raw) ||
             isRawStillExtension(pageExt)
+        // PQ/HLG HEIC has no Ultra HDR convert. Decode it here even when the
+        // lib-direct setting is off; a codec that cannot emit 10-bit returns null
+        // and the page falls through to the SDR platform image.
+        val hevcHdr = route is StillRoute.Lib && route.codec == LibCodec.HevcHdr
         if (rawStill) noteRawLoaded()
-        if (!rawStill && !Settings.readerLibDirectBitmap.value) return null
+        if (!rawStill && !hevcHdr && !Settings.readerLibDirectBitmap.value) return null
         if (!route.needsLibDecode && !rawStill) return null
         val maxEdge = Image.maxEdgeForReader(forceOriginal)
         val direct = LibDirectDecode.decode(raw, nameHint, maxEdge)

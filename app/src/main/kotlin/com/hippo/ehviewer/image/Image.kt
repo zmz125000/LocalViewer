@@ -57,6 +57,7 @@ import com.hippo.ehviewer.coil.detectGainmap
 import com.hippo.ehviewer.coil.detectQrCode
 import com.hippo.ehviewer.coil.hardwareThreshold
 import com.hippo.ehviewer.coil.maybeCropBorder
+import com.hippo.ehviewer.image.hdr.AppleHdr
 import com.hippo.ehviewer.image.hdr.BitDepthClass
 import com.hippo.ehviewer.image.hdr.HdrGainmapConvert
 import com.hippo.ehviewer.image.hdr.LibDirectDecode
@@ -80,6 +81,7 @@ import kotlin.concurrent.atomics.AtomicInt
 import kotlin.concurrent.atomics.decrementAndFetch
 import kotlin.concurrent.atomics.updateAndFetch
 import kotlin.math.roundToInt
+import kotlinx.io.readByteArray
 import okio.Path
 import splitties.init.appCtx
 
@@ -354,6 +356,48 @@ class Image private constructor(
             withMap.prepareToDraw()
             val wrapped = withMap.asImage()
             return BitmapImageWithExtraInfo(image = wrapped, hasGainmap = true)
+        }
+
+        /** Apple aux gain map, same present path as ProXDR. No reader setting besides HDR display. */
+        private fun tryAttachAppleHdr(
+            src: Either<ByteBufferSource, PathSource>,
+            image: CoilImage,
+        ): CoilImage {
+            if (!isAtLeastU || !Settings.readerHdrDisplay.value) return image
+            val bi = image.asBitmapImage() ?: return image
+            if (bi.detectGainmap()) return image
+            val bytes = appleHeicBytes(src) ?: return image
+            val withMap = AppleHdr.attachOrCopy(bi.bitmap, bytes) ?: return image
+            withMap.prepareToDraw()
+            return BitmapImageWithExtraInfo(image = withMap.asImage(), hasGainmap = true)
+        }
+
+        private fun appleHeicBytes(src: Either<ByteBufferSource, PathSource>): ByteArray? {
+            return when (src) {
+                is Either.Left -> {
+                    val dup = src.value.source.asReadOnlyBuffer()
+                    val n = dup.remaining()
+                    if (n <= 0) return null
+                    val sniffN = minOf(n, GAINMAP_SNIFF_BYTES)
+                    val sniff = ByteArray(sniffN)
+                    val mark = dup.position()
+                    dup.get(sniff)
+                    if (!AppleHdr.looksLike(sniff, sniffN)) return null
+                    dup.position(mark)
+                    ByteArray(n).also { dup.get(it) }
+                }
+                is Either.Right -> {
+                    val path = src.value.source
+                    val urn = runCatching {
+                        path.read {
+                            val sniff = ByteArray(GAINMAP_SNIFF_BYTES)
+                            val got = readAtMostTo(sniff)
+                            got > 0 && AppleHdr.looksLike(sniff, got)
+                        }
+                    }.getOrDefault(false)
+                    if (!urn) null else runCatching { path.read { readByteArray() } }.getOrNull()
+                }
+            }
         }
 
         private fun CoilImage.asBitmapImage(): BitmapImage? = when (this) {
@@ -699,6 +743,8 @@ class Image private constructor(
 
             // ProXDR: Coil only sees the SDR HEIC base — attach OEM gain map (platform path).
             image = tryAttachOppoProxdr(this, image)
+            // Apple gain-map HEIC: ImageDecoder does not attach urn:com:apple:photo:2020:aux:hdrgainmap.
+            image = tryAttachAppleHdr(this, image)
 
             if (platformHbd && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 image = image.presentPlatformHbdLikeLibDirect()

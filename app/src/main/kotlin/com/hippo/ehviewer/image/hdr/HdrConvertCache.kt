@@ -545,6 +545,7 @@ object HdrConvertCache {
                             LibCodec.Jpeg2000 -> convertJpeg2000(input, tmp, maxEdge)
                             LibCodec.AvifPq -> convertAvifBytesToUltraHdrMaxEdge(input, tmp.absolutePath, maxEdge)
                             LibCodec.Raw -> -1
+                            LibCodec.HevcHdr -> -1
                         }
                     } else {
                         when (codec) {
@@ -553,6 +554,7 @@ object HdrConvertCache {
                             LibCodec.Jpeg2000 -> convertJpeg2000(input, tmp, 0)
                             LibCodec.AvifPq -> convertAvifBytesToUltraHdr(input, tmp.absolutePath)
                             LibCodec.Raw -> -1
+                            LibCodec.HevcHdr -> -1
                         }
                     }
                     if (code != 0 || !tmp.isFile || tmp.length() <= 0L) {
