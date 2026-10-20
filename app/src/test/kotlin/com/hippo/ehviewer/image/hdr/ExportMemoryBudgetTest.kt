@@ -13,6 +13,43 @@ import org.junit.Test
 
 class ExportMemoryBudgetTest {
     @Test
+    fun photoExportsOverlapWhenJavaAndNativeBuffersFitTheirOwnBudgets() = runBlocking {
+        val mb = 1024L * 1024
+        val heap = ExportMemoryBudget(512 * mb / 4 * 3)
+        val native = ExportMemoryBudget(exportNativeCapacity(8192 * mb, 6144 * mb, 512 * mb))
+        val heapBytes = exportHeapBytes(4000, 3000, 16 * mb, false)
+        val nativeBytes = exportWorkingBytes(4000, 3000, 16 * mb, false)
+        // The old policy charged this whole native estimate to a 384 MiB heap
+        // budget, making either job exclusive regardless of available device RAM.
+        assertTrue(nativeBytes > 512 * mb / 4 * 3)
+        val bothEntered = CompletableDeferred<Unit>()
+        var entered = 0
+        withTimeout(5000) {
+            val jobs = List(2) {
+                launch {
+                    heap.withBytes(heapBytes) {
+                        native.withBytes(nativeBytes) {
+                            if (++entered == 2) bothEntered.complete(Unit)
+                            bothEntered.await()
+                        }
+                    }
+                }
+            }
+            jobs.forEach { it.join() }
+        }
+        assertEquals(2, entered)
+    }
+
+    @Test
+    fun nativeCapacityReservesSystemMemoryAndRawDoesNotCopyEncodedInputToJava() {
+        val mb = 1024L * 1024
+        assertEquals(384 * mb, exportNativeCapacity(8192 * mb, 512 * mb, 512 * mb))
+        assertEquals(1024 * mb, exportNativeCapacity(-1, 0, 512 * mb))
+        assertEquals(Long.MAX_VALUE, exportHeapBytes(0, 0, 0, false))
+        assertEquals(16 * mb, exportHeapBytes(4000, 3000, 16 * mb, false) - exportHeapBytes(4000, 3000, 16 * mb, true))
+    }
+
+    @Test
     fun leaseCoversWorkUntilEncodeCompletes() = runBlocking {
         val budget = ExportMemoryBudget(100)
         val decoding = CompletableDeferred<Unit>()

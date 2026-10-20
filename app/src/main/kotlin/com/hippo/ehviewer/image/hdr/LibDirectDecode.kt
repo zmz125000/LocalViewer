@@ -180,12 +180,13 @@ object LibDirectDecode {
         target: StillExportTarget = StillExportTarget.AutoOriginal,
         encode: (DirectPixels) -> T,
     ): T? = withContext(Dispatchers.IO) {
-        // Retain the shared heavy-work permit through encode, including when
-        // reader pages are decoding alongside a batch conversion.
+        // The export memory leases cover decode AND encode. Release the decoder
+        // slot once pixels are ready so encoding can overlap the next decode.
         val parallel = Settings.browseTaskParallel.value || Settings.heavyDecode.value >= HEAVY_DECODE_POOL
-        heavyDecodeGate.run(parallel) {
-            decodePacked(src, fileNameHint, maxEdge, target)?.let(::directPixels)?.let(encode)
-        }
+        val pixels = heavyDecodeGate.run(parallel) {
+            decodePacked(src, fileNameHint, maxEdge, target)?.let(::directPixels)
+        } ?: return@withContext null
+        encode(pixels)
     }
 
     private fun directPixels(packed: PackedPixels): DirectPixels? {
