@@ -7,6 +7,7 @@
 #include <cstring>
 #include <memory>
 #include <thread>
+#include "skcms.h"
 
 namespace {
 constexpr size_t kMaxPixels = 64u * 1024u * 1024u;
@@ -17,6 +18,8 @@ bool copy_picture(const de265_image* image, HevcPlanes& out) {
     decoded.width = de265_get_image_width(image, 0);
     decoded.height = de265_get_image_height(image, 0);
     decoded.depth = de265_get_bits_per_pixel(image, 0);
+    decoded.full_range = de265_get_image_full_range_flag(image);
+    decoded.matrix = de265_get_image_matrix_coefficients(image);
     if (decoded.width <= 0 || decoded.height <= 0 || decoded.width > 16384 || decoded.height > 16384 ||
         decoded.depth < 8 || decoded.depth > 16 ||
         size_t(decoded.width) * decoded.height > kMaxPixels) return false;
@@ -101,8 +104,34 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeHevcAnnexB(
     if (!ok) return nullptr;
     const jint info[]{planes.width, planes.height, planes.depth, planes.chroma_width, planes.chroma_height};
     env->SetIntArrayRegion(jInfo, 0, 5, info);
+    if (env->GetArrayLength(jInfo) >= 7) {
+        const jint color[]{planes.full_range, planes.matrix};
+        env->SetIntArrayRegion(jInfo, 5, 2, color);
+    }
     auto result = env->NewShortArray(static_cast<jsize>(planes.samples.size()));
     if (result) env->SetShortArrayRegion(result, 0, static_cast<jsize>(planes.samples.size()),
                                         reinterpret_cast<const jshort*>(planes.samples.data()));
     return result;
+}
+
+// ICC-tagged HEIF uses the profile's full TRC and matrix. Transform straight
+// encoded RGBA half in place; the caller applies auxiliary alpha afterwards.
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_hippo_ehviewer_jni_HdrConvertKt_linearizeHeifIcc(JNIEnv* env, jclass,
+                                                        jbyteArray jPixels, jbyteArray jIcc) {
+    if (!jPixels || !jIcc) return JNI_FALSE;
+    const jsize size = env->GetArrayLength(jPixels), icc_size = env->GetArrayLength(jIcc);
+    if (size <= 0 || size % 8 || icc_size < 128 || icc_size > 16 * 1024 * 1024) return JNI_FALSE;
+    auto* icc = env->GetByteArrayElements(jIcc, nullptr);
+    if (!icc) return JNI_FALSE;
+    skcms_ICCProfile source{}, dest = *skcms_sRGB_profile();
+    skcms_SetTransferFunction(&dest, skcms_Identity_TransferFunction());
+    const bool usable = skcms_Parse(icc, icc_size, &source) && skcms_MakeUsableAsDestination(&dest);
+    auto* pixels = usable ? env->GetByteArrayElements(jPixels, nullptr) : nullptr;
+    const bool ok = pixels && skcms_Transform(pixels, skcms_PixelFormat_RGBA_hhhh, skcms_AlphaFormat_Unpremul, &source,
+                                            pixels, skcms_PixelFormat_RGBA_hhhh, skcms_AlphaFormat_Unpremul, &dest,
+                                            size / 8);
+    if (pixels) env->ReleaseByteArrayElements(jPixels, pixels, 0);
+    env->ReleaseByteArrayElements(jIcc, icc, JNI_ABORT);
+    return ok ? JNI_TRUE : JNI_FALSE;
 }

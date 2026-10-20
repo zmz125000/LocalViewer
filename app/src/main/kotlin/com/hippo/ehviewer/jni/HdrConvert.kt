@@ -40,9 +40,13 @@ external fun probeAvifHdrKind(input: ByteArray): Int
 /**
  * Software HEVC still decode. [outInfo]: width, height, bit depth, chroma width,
  * chroma height. Returns planar Y/Cb/Cr integer samples at the decoded precision.
+ * If outInfo has seven entries, full-range flag and YUV matrix follow.
  * Both inputs are Annex-B, split into parameter sets and picture NALs.
  */
 external fun decodeHevcAnnexB(csd: ByteArray, picture: ByteArray, outInfo: IntArray): ShortArray?
+
+/** Straight encoded RGBA_F16 → linear extended sRGB, in place using the embedded ICC. */
+external fun linearizeHeifIcc(pixels: ByteArray, icc: ByteArray): Boolean
 
 // ── JPEG XL ──────────────────────────────────────────────────────────────
 

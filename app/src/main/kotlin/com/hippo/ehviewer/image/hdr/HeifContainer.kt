@@ -12,6 +12,7 @@ import kotlin.math.pow
  */
 internal object HeifContainer {
     const val APPLE_GAIN_MAP_URN = "urn:com:apple:photo:2020:aux:hdrgainmap"
+    private const val ALPHA_URN = "urn:mpeg:hevc:2015:auxid:1"
 
     class AccessUnit(
         val width: Int,
@@ -49,6 +50,8 @@ internal object HeifContainer {
         val fullRange: Boolean,
         val rotationDegreesCcw: Int,
         val tiles: List<AccessUnit>,
+        val icc: ByteArray? = null,
+        val hasNclx: Boolean = false,
     )
 
     class Parsed internal constructor(
@@ -79,6 +82,15 @@ internal object HeifContainer {
 
         fun primaryImage(): PrimaryImage? {
             val primary = items[primaryId] ?: return null
+            return image(primary)
+        }
+
+        fun alphaImage(): PrimaryImage? {
+            val ref = refs.firstOrNull { it.type == "auxl" && primaryId in it.to && items[it.from]?.urn == ALPHA_URN } ?: return null
+            return items[ref.from]?.let(::image)
+        }
+
+        private fun image(primary: Item): PrimaryImage? {
             // MIAF defaults when colr is omitted: BT.709 / sRGB / BT.601 full range.
             val color = primary.color ?: Color(1, 13, 6, true)
             val laid = layout(primary) ?: return null
@@ -93,6 +105,8 @@ internal object HeifContainer {
                 fullRange = color.fullRange,
                 rotationDegreesCcw = laid.rotation,
                 tiles = laid.tiles,
+                icc = primary.icc,
+                hasNclx = primary.color != null,
             )
         }
 
@@ -179,6 +193,7 @@ internal object HeifContainer {
         var rotation: Int = 0
         var hvcC: ByteArray? = null
         var color: Color? = null
+        var icc: ByteArray? = null
     }
 
     internal class Extent(val offset: Long, val length: Long)
@@ -480,7 +495,12 @@ internal object HeifContainer {
             "hvcC" -> item.hvcC = body.copyOfRange(4, body.size)
             "irot" -> if (body.size >= 5) item.rotation = (body[4].toInt() and 3) * 90
             "auxC" -> item.urn = cString(body, 8, body.size)?.first
-            "colr" -> item.color = readNclx(body)
+            "colr" -> {
+                readNclx(body)?.let { item.color = it }
+                if (body.size >= 136 && ascii(body, 4, 4) in setOf("prof", "rICC")) {
+                    item.icc = body.copyOfRange(8, body.size)
+                }
+            }
         }
     }
 

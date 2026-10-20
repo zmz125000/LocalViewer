@@ -66,8 +66,8 @@ enum class LibCodec {
     Raw,
 
     /**
-     * Absolute PQ/HLG HEIC (HEVC). Direct HDR bitmap via bundled libde265,
-     * with MediaCodec fallback; no Ultra HDR JPEG convert.
+     * PQ/HLG HEIC, or HEVC still profiles unsupported by the platform.
+     * Direct bitmap via bundled libde265, with MediaCodec fallback; no JPEG convert.
      */
     HevcHdr,
 }
@@ -265,6 +265,9 @@ fun classify(bytes: ByteArray, length: Int = bytes.size, fileNameHint: String? =
 
     val heifPrecision = if (isHeifFamily(bytes, n)) HeifPrecisionProbe.probe(bytes, n) else null
     if (heifPrecision?.animated == true) return StillRoute.Platform
+    // HEVC 4:2:2 / 4:4:4 still profiles can be unsupported by the platform
+    // even at 8 bits. Use the bundled decoder independently of HDR settings.
+    if (heifPrecision?.needsSoftware == true) return StillRoute.Lib(LibCodec.HevcHdr)
 
     // Gain-map markers. ISO `tmap` AVIF is applied by libavif. Apple aux HEIC and
     // JPEG/AVIF gain maps the platform already understands stay on ImageDecoder.

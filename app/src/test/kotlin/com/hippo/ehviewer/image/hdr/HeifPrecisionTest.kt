@@ -64,6 +64,20 @@ class HeifPrecisionTest {
     }
 
     @Test
+    fun softwareChromaRoutingIgnoresAuxiliaryProfiles() {
+        fun hvcc(chroma: Int) = box("hvcC", ByteArray(23).also { it[16] = chroma.toByte() })
+        val properties = listOf(hvcc(1), hvcc(2), hvcc(3))
+        val regular = HeifPrecisionProbe.probe(container(properties, listOf(1 to listOf(1), 2 to listOf(2)), avif = false))!!
+        assertFalse(regular.needsSoftware)
+        assertEquals(HeifDecodePath.Coil, heifDecodePath(regular, false, true))
+        for (index in 2..3) {
+            val unsupported = HeifPrecisionProbe.probe(container(properties, listOf(1 to listOf(index)), avif = false))!!
+            assertTrue(unsupported.needsSoftware)
+            assertEquals(HeifDecodePath.Native, heifDecodePath(unsupported, false, true))
+        }
+    }
+
+    @Test
     fun readsWidePropertyIndicesAndTruncatedMdat() {
         val properties = List(130) { box("free", ByteArray(0)) } + pixi(10)
         val bytes = container(properties, listOf(1 to listOf(131)), wide = true) + u32(1000000) + "mdat".toByteArray()

@@ -26,6 +26,8 @@ internal object HevcDecoder {
         val cr: ShortArray,
         val chromaWidth: Int,
         val chromaHeight: Int,
+        val fullRange: Boolean? = null,
+        val matrix: Int? = null,
     )
 
     fun decode(unit: HeifContainer.AccessUnit, preferSoftware: Boolean = false): Picture? {
@@ -38,7 +40,7 @@ internal object HevcDecoder {
     }
 
     private fun decodeSoftware(unit: HeifContainer.AccessUnit): Picture? = runCatching {
-        val info = IntArray(5)
+        val info = IntArray(7)
         val samples = decodeHevcAnnexB(unit.csd, unit.picture, info) ?: return null
         val (width, height, depth, cw, ch) = info
         if (width <= 0 || height <= 0 || cw <= 0 || ch <= 0 || depth !in unit.bitDepth..16) return null
@@ -56,6 +58,8 @@ internal object HevcDecoder {
             samples.copyOfRange(cbEnd, samples.size),
             cw,
             ch,
+            fullRange = info[5] != 0,
+            matrix = info[6].takeIf { it != 2 },
         )
     }.onFailure { Log.e(TAG, "Software HEVC decode failed ${unit.width}x${unit.height}", it) }.getOrNull()
 

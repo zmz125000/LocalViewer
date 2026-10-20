@@ -8,6 +8,34 @@ import org.junit.Test
 
 class HeifHdrTest {
     @Test
+    fun heifFolderHasOneAppleHdrImageAndLosslessAlphaUsesSoftware() {
+        val folder = sample("heif/iphone_15_pro.heic").parentFile!!
+        assumeTrue("missing HEIF samples", folder.isDirectory)
+        for (file in folder.listFiles().orEmpty().filter { it.extension in setOf("heic", "heif") }) {
+            val bytes = file.readBytes()
+            val parsed = HeifContainer.parse(bytes)!!
+            assertTrue("${file.name} primary", parsed.primaryImage() != null)
+            assertTrue("${file.name} is not PQ/HLG", parsed.absoluteHdr() == null)
+            if (file.name == "iphone_15_pro.heic") {
+                assertEquals(3.848f, parsed.appleGainMap()!!.headroom, 0.01f)
+            } else {
+                assertTrue("${file.name} SDR", parsed.appleGainMap() == null)
+            }
+        }
+        val bytes = sample("heif/Screenshot 2024-10-31 at 08.19.26 Lossless Alpha.heic").readBytes()
+        val parsed = HeifContainer.parse(bytes)!!
+        assertEquals(900, parsed.primaryImage()!!.width)
+        assertEquals(706, parsed.alphaImage()!!.height)
+        assertTrue(parsed.primaryImage()!!.icc!!.size >= 128)
+        val info = HeifPrecisionProbe.probe(bytes)!!
+        assertEquals(8, info.bitDepth)
+        assertEquals(2, info.chroma)
+        assertTrue(info.needsSoftware)
+        assertEquals(HeifDecodePath.Native, heifDecodePath(info, false, true))
+        assertEquals(LibCodec.HevcHdr, (classify(bytes, fileNameHint = "screen.heic") as StillRoute.Lib).codec)
+    }
+
+    @Test
     fun appleGainMapHeadroomAndAnnexB() {
         val expected = mapOf(
             "hdr-sample.heic" to 7.37f,

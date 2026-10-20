@@ -1,14 +1,16 @@
 package com.hippo.ehviewer.image.hdr
 
 /** Primary-item precision. Auxiliary thumbnails/gain maps must not select the base decode path. */
-internal data class HeifPrecision(val avif: Boolean, val bitDepth: Int?, val transfer: Int? = null, val animated: Boolean = false) {
+internal data class HeifPrecision(val avif: Boolean, val bitDepth: Int?, val transfer: Int? = null, val animated: Boolean = false, val chroma: Int? = null) {
     val highDepth: Boolean get() = !animated && (bitDepth == null || bitDepth > 8)
+    val needsSoftware: Boolean get() = !animated && !avif && chroma in 2..3
 }
 
 internal enum class HeifDecodePath { Coil, PlatformDeep, Native }
 
 /** Base stills only: gain-map attachment/application keeps its own route. */
 internal fun heifDecodePath(info: HeifPrecision, advancedColor: Boolean, hevcP010: Boolean): HeifDecodePath = when {
+    info.needsSoftware -> HeifDecodePath.Native
     !advancedColor || info.animated -> HeifDecodePath.Coil
     info.transfer == 16 || info.transfer == 18 -> HeifDecodePath.Native
     // Metadata may be after mdat and outside the header probe. The full native
@@ -22,7 +24,7 @@ internal fun heifDecodePath(info: HeifPrecision, advancedColor: Boolean, hevcP01
 /** Reads only ftyp/meta boxes; compressed image data is never decoded. */
 internal object HeifPrecisionProbe {
     const val HEADER_BYTES = 256 * 1024
-    private data class Property(val depth: Int? = null, val transfer: Int? = null)
+    private data class Property(val depth: Int? = null, val transfer: Int? = null, val chroma: Int? = null)
 
     fun probe(bytes: ByteArray, length: Int = bytes.size): HeifPrecision? = runCatching {
         val end = length.coerceIn(0, bytes.size)
@@ -101,7 +103,10 @@ internal object HeifPrecisionProbe {
                                                 else -> 10
                                             },
                                         )
-                                        property == "hvcC" && s + 19 <= propertyStop -> Property(depth = 8 + maxOf(u8(s + 17) and 7, u8(s + 18) and 7))
+                                        property == "hvcC" && s + 19 <= propertyStop -> Property(
+                                            depth = 8 + maxOf(u8(s + 17) and 7, u8(s + 18) and 7),
+                                            chroma = u8(s + 16) and 3,
+                                        )
                                         property == "colr" && s + 11 <= propertyStop && type(s) == "nclx" -> Property(transfer = uint(s + 6, 2))
                                         else -> Property()
                                     }
@@ -142,6 +147,7 @@ internal object HeifPrecisionProbe {
                 attached.mapNotNull { it.depth }.maxOrNull(),
                 attached.firstNotNullOfOrNull { it.transfer },
                 animated,
+                attached.firstNotNullOfOrNull { it.chroma },
             )
         }
     }.getOrNull()

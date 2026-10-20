@@ -6,6 +6,7 @@
 
 struct HevcPlanes {
     int width = 0, height = 0, depth = 0, chroma_width = 0, chroma_height = 0;
+    int full_range = 0, matrix = 2;
     // Unshifted integer samples, planar Y/Cb/Cr. Depth is the decoded precision.
     std::vector<uint16_t> samples;
 };
