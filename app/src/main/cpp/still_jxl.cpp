@@ -77,8 +77,12 @@ int encode_jxl_f16(unsigned w, unsigned h, uint16_t* rgba, uhdr_color_gamut_t cg
     if (JxlEncoderSetBasicInfo(encoder.get(), &info) != JXL_ENC_SUCCESS ||
         JxlEncoderSetColorEncoding(encoder.get(), &color) != JXL_ENC_SUCCESS) return -62;
     auto* frame = JxlEncoderFrameSettingsCreate(encoder.get(), nullptr);
+    // libjxl 0.12: tier 2 avoids the weighted predictor and uses smaller
+    // modular groups for faster decoding. Lossless F16 samples stay intact;
+    // the trade-off is compression density, not HDR/color precision.
     if (!frame || JxlEncoderSetFrameLossless(frame, JXL_TRUE) != JXL_ENC_SUCCESS ||
-        JxlEncoderFrameSettingsSetOption(frame, JXL_ENC_FRAME_SETTING_EFFORT, 3) != JXL_ENC_SUCCESS) return -63;
+        JxlEncoderFrameSettingsSetOption(frame, JXL_ENC_FRAME_SETTING_EFFORT, 3) != JXL_ENC_SUCCESS ||
+        JxlEncoderFrameSettingsSetOption(frame, JXL_ENC_FRAME_SETTING_DECODING_SPEED, 2) != JXL_ENC_SUCCESS) return -63;
     const JxlPixelFormat format{4, JXL_TYPE_FLOAT16, JXL_NATIVE_ENDIAN, 0};
     if (JxlEncoderAddImageFrame(frame, &format, rgba, pixels * 8) != JXL_ENC_SUCCESS) return -64;
     JxlEncoderCloseInput(encoder.get());
