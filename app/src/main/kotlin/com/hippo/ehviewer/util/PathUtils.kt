@@ -61,7 +61,7 @@ val Uri.displayPath: String?
             return path
         }
 
-        val docId = documentIdForDisplay() ?: return toString()
+        val docId = documentIdForDisplay(pathSegments) ?: return toString()
         val parts = docId.split(":", limit = 2)
         if (parts.size < 2) return toString()
         val type = parts[0]
@@ -72,12 +72,19 @@ val Uri.displayPath: String?
         return toString()
     }
 
-/** Path-segment parse only — no PackageManager / disk. */
-private fun Uri.documentIdForDisplay(): String? = when {
-    DocumentsContractCompat.isTreeUri(this) ->
-        runCatching { DocumentsContract.getTreeDocumentId(this) }.getOrNull()
-    pathSegments.getOrNull(0) == "document" && pathSegments.size >= 2 ->
-        runCatching { DocumentsContract.getDocumentId(this) }.getOrNull()
+/**
+ * Parse decoded URI path segments without PackageManager / disk access.
+ * A tree document URI names both the permission root and the current document.
+ * Filesystem probes must use the document, otherwise root dot folders appear in
+ * every nested folder's listing.
+ */
+internal fun documentIdForDisplay(pathSegments: List<String>): String? = when (pathSegments.firstOrNull()) {
+    "document" -> pathSegments.getOrNull(1)
+    "tree" -> if (pathSegments.getOrNull(2) == "document") {
+        pathSegments.getOrNull(3)
+    } else {
+        pathSegments.getOrNull(1)
+    }
     else -> null
 }
 
