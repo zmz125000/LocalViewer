@@ -451,7 +451,7 @@ bool pack_image(const libraw_processed_image_t* img, int max_edge, int present, 
     const size_t bytes = static_cast<size_t>(dw) * static_cast<size_t>(dh) * (deep ? 8u : 4u);
     if (bytes == 0 || bytes > 400u * 1024u * 1024u) return false;
 
-    const bool hdr = present == 2;
+    const bool hdr = present >= 2;
     const bool linear_hdr = hdr && hdr_linear;
     // 10000/203 matches hdr_encode.h kMaxLinear. HDR does not clamp to 1.
     const float panel = std::isfinite(panel_boost) ? std::clamp(panel_boost, 1.f, 64.f) : 1.f;
@@ -480,7 +480,7 @@ bool pack_image(const libraw_processed_image_t* img, int max_edge, int present, 
     out.is_hdr = hdr ? 1 : 0;
     // 0 is sRGB: 8-bit after the transfer, or HDR linear scRGB (values above 1, and
     // negatives for colors outside sRGB). 1 is linear Display P3, clamped to 0..1.
-    out.gamut = present == 1 ? 1 : 0;
+    out.gamut = present == 3 ? 2 : (present == 1 ? 1 : 0);
     out.boost = 1.f;
 
     // Rows are independent and write disjoint output, so bands give the same bytes.
@@ -561,7 +561,7 @@ bool pack_image(const libraw_processed_image_t* img, int max_edge, int present, 
                             const float m = std::max(rgb[0], std::max(rgb[1], rgb[2]));
                             if (m > 0.f) hdr_scale = raw_linear_sample(m, 0.f, highlight_stops, cap) / m;
                             for (int c = 0; c < 3; ++c) rgb[c] = std::max(rgb[c], 0.f) * hdr_scale;
-                            rec2020_to_scrgb(rgb[0], rgb[1], rgb[2]);
+                            if (present != 3) rec2020_to_scrgb(rgb[0], rgb[1], rgb[2]);
                         }
                         for (int c = 0; c < 3; ++c) {
                             float v = hdr ? rgb[c] : raw_linear_sample(rgb[c], 0.f, highlight_stops, cap);
@@ -837,7 +837,7 @@ void configure_process(LibRaw& raw, int present, int max_edge, int demosaic_qual
         p.output_color = 1;  // linear sRGB. The sRGB transfer is applied after the camera look.
     } else {
         p.output_bps = 16;
-        p.output_color = present == 2 ? 8 : 7;  // Rec.2020 or DCI-P3 D65
+        p.output_color = present >= 2 ? 8 : 7;  // Rec.2020 or DCI-P3 D65
     }
 }
 
@@ -906,11 +906,11 @@ bool process_open_raw(HeadroomRaw& raw, const uint8_t* tiff, size_t tiff_len, in
     // Linear HDR skips the camera look, and so does SDR when the look is off.
     // Baseline exposure lives inside the look, so those paths skip it too.
     // HDR still uses the look unless linear HDR is on.
-    const bool linear_hdr = present == 2 && hdr_linear;
-    const bool skip_look = linear_hdr || (present != 2 && !camera_look);
+    const bool linear_hdr = present >= 2 && hdr_linear;
+    const bool skip_look = linear_hdr || (present < 2 && !camera_look);
     const float user_ev = std::isfinite(exposure_ev) ? exposure_ev : 0.f;
     const float pack_ev = skip_look ? user_ev : user_ev + dng_baseline_ev(raw);
-    int space = present == 2 ? 2 : (present == 1 ? 1 : 0);
+    int space = present >= 2 ? 2 : (present == 1 ? 1 : 0);
     float temp = 5500.f;
     if (wb_mode == 8) {
         temp = static_cast<float>(kelvin);
@@ -998,7 +998,7 @@ jbyteArray decode_raw_buffer(JNIEnv* env, const uint8_t* data, size_t len, jint 
         request_embedded_matrix(raw, wb);
         if (raw.open_buffer(data, len) == LIBRAW_SUCCESS) {
             Decoded decoded;
-            int mode = present < 0 ? 0 : (present > 2 ? 2 : present);
+            int mode = present < 0 ? 0 : (present > 3 ? 3 : present);
             float exposure = std::isfinite(exposure_ev) ? std::clamp(exposure_ev, -3.f, 3.f) : 0.f;
             float stops = std::isfinite(highlight_stops) ? std::clamp(highlight_stops, 0.f, 3.f) : 0.f;
             auto zone = [](float v) { return std::isfinite(v) ? std::clamp(v, -1.f, 1.f) : 0.f; };
@@ -1087,7 +1087,7 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeRawFileToDirect(JNIEnv* env, jcla
         request_embedded_matrix(raw, wb);
         if (raw.open_file(path) == LIBRAW_SUCCESS) {
             Decoded decoded;
-            int mode = present < 0 ? 0 : (present > 2 ? 2 : present);
+            int mode = present < 0 ? 0 : (present > 3 ? 3 : present);
             float exposure = std::isfinite(exposure_ev) ? std::clamp(exposure_ev, -3.f, 3.f) : 0.f;
             float stops = std::isfinite(highlight_stops) ? std::clamp(highlight_stops, 0.f, 3.f) : 0.f;
             auto zone = [](float v) { return std::isfinite(v) ? std::clamp(v, -1.f, 1.f) : 0.f; };

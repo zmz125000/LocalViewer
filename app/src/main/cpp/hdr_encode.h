@@ -165,6 +165,28 @@ inline uint8_t linear_to_srgb_u8(float l) {
     return static_cast<uint8_t>(s * 255.f + 0.5f);
 }
 
+/** Exact transfer values for every half code, shared by display and export. */
+inline const std::vector<float>& half_srgb_table() {
+    static const std::vector<float> values = [] {
+        std::vector<float> table(65536);
+        for (size_t i = 0; i < table.size(); ++i) table[i] = srgb_oetf(half_to_float(i));
+        return table;
+    }();
+    return values;
+}
+
+inline const std::vector<uint8_t>& half_srgb_u8_table() {
+    static const std::vector<uint8_t> values = [] {
+        const auto& curve = half_srgb_table();
+        std::vector<uint8_t> table(65536);
+        for (size_t i = 0; i < table.size(); ++i) table[i] = static_cast<uint8_t>(curve[i] * 255.f + 0.5f);
+        return table;
+    }();
+    return values;
+}
+
+inline uint8_t half_to_srgb_u8(uint16_t code) { return half_srgb_u8_table()[code]; }
+
 // ── Linear RGB gamut rematrix (D65, no CAT) ─────────────────────────────────
 //
 // Built as:  M = XYZ_to_linear_sRGB × source_to_XYZ
@@ -242,3 +264,7 @@ jbyteArray pack_direct_to_jbyte_array(JNIEnv* env, std::vector<uint16_t>& rgba, 
                                       unsigned h, bool force_hdr, uhdr_color_gamut_t cg,
                                       bool advanced_color, int transfer_cicp, jintArray jOutInfo,
                                       jfloatArray jOutBoost);
+
+/** Straight-alpha linear F16 → 16-bit JPEG XL (SDR or absolute HDR). Mutates RGB. */
+int encode_jxl_f16(unsigned w, unsigned h, uint16_t* rgba, uhdr_color_gamut_t cg,
+                   bool hdr, const char* path);

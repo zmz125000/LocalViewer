@@ -104,7 +104,7 @@ Build with Grok 4.5.
 * PQ/HLG HEIF software decoding with preserved high bit depth on 64-bit builds.
 * 14-Bit RAW formats decoding with true HDR output.
 * RAW formats support dng/cr2/cr3/nef/nrw/arw/raf/orf/rw2/pef/srw/raw.
-* Convert JXR and RAW to Ultra HDR JPEG.
+* Batch convert JXL/JXR/RAW to JPEG, Ultra HDR JPEG, or 16-bit SDR/HDR JPEG XL.
 * Compatible with Oppo/OnePlus ProXDR HEIC format.
 * Nearest, Bilinear, B-Spline, Catmull-Rom, Mitchell-Netravali, Lanczos3 image scalers using GPU shader.
 * Open offline html website archive in your browser with built-in HTTP server.

@@ -547,6 +547,68 @@ class FolderSelectStateTest {
     }
 
     @Test
+    fun stopKeepsActiveResultAndDoesNotStartAnotherJob() = runBlocking {
+        FolderSelectHost.parallelSlotsForTest = 1
+        val started = CompletableDeferred<Unit>()
+        val finishEncode = CompletableDeferred<Unit>()
+        var committed = false
+        var nextStarted = false
+        val jobs = mutableStateListOf(
+            TaskJob(1, "encoding", false, pick("1", "encoding"), {
+                started.complete(Unit)
+                finishEncode.await()
+                committed = true
+                true
+            }, TaskStatus.Pending),
+            TaskJob(2, "pending", false, pick("2", "pending"), {
+                nextStarted = true
+                true
+            }, TaskStatus.Pending),
+        )
+        val batch = TaskBatch("a", jobs, kotlinx.coroutines.Job())
+        FolderSelectHost.installBatchForTest(batch)
+        val runner = launch { executeJobs(batch, "/tmp".toPath()) }
+        batch.runner = runner
+        started.await()
+        FolderSelectHost.stopTask()
+        finishEncode.complete(Unit)
+        withTimeout(5000) { runner.join() }
+        assertTrue(committed)
+        assertFalse(nextStarted)
+        assertEquals(TaskStatus.Done, jobs[0].status)
+        assertEquals(TaskStatus.Pending, jobs[1].status)
+        assertEquals(listOf("2"), takeUnfinishedPicks(jobs).map { it.key })
+        assertEquals(0, batch.runningCount)
+    }
+
+    @Test
+    fun removedPendingJobIsSkippedByTheQueue() = runBlocking {
+        FolderSelectHost.parallelSlotsForTest = 1
+        val started = CompletableDeferred<Unit>()
+        val finish = CompletableDeferred<Unit>()
+        var removedRan = false
+        val jobs = mutableStateListOf(
+            TaskJob(1, "first", false, null, {
+                started.complete(Unit)
+                finish.await()
+                true
+            }, TaskStatus.Pending),
+            TaskJob(2, "removed", false, null, {
+                removedRan = true
+                true
+            }, TaskStatus.Pending),
+        )
+        val batch = TaskBatch("a", jobs, kotlinx.coroutines.Job())
+        val runner = launch { executeJobs(batch, "/tmp".toPath()) }
+        started.await()
+        batch.removePending(2)
+        finish.complete(Unit)
+        withTimeout(5000) { runner.join() }
+        assertFalse(removedRan)
+        assertEquals(1, batch.finished)
+    }
+
+    @Test
     fun stopReturnsUnfinishedItemsToTheSelection() {
         val state = FolderSelectState()
         FolderSelectHost.attach(state)

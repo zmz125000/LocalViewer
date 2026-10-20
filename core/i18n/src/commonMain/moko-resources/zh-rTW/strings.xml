@@ -858,8 +858,8 @@
     <string name="convert_auto_original">自動（原始尺寸）</string>
     <string name="convert_jpeg">JPEG</string>
     <string name="convert_jpeg_hdr">JPEG（HDR）</string>
-    <string name="convert_png">PNG</string>
-    <string name="convert_png_16">PNG（16 位元）</string>
+    <string name="convert_jxl">JPEG XL（16 位元 SDR）</string>
+    <string name="convert_jxl_hdr">JPEG XL（16 位元 HDR）</string>
     <string name="pref_category_general">一般</string>
     <string name="pref_fullscreen">全螢幕</string>
     <string name="pref_page_transitions">翻頁轉場動畫</string>

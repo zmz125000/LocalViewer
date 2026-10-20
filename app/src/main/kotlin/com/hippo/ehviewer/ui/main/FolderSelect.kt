@@ -397,6 +397,7 @@ internal class TaskJob(
     status: TaskStatus,
 ) {
     var status by mutableStateOf(status)
+    var removed = false
 }
 
 internal class TaskBatch(
@@ -408,6 +409,7 @@ internal class TaskBatch(
 ) {
     var runner: Job = runner
     var finished by mutableStateOf(0)
+    var runningCount by mutableIntStateOf(jobs.count { it.status == TaskStatus.Running })
     var paused by mutableStateOf(false)
     var finishedRun by mutableStateOf(false)
     var end by mutableStateOf<BatchEnd?>(null)
@@ -418,7 +420,7 @@ internal class TaskBatch(
             val total = jobs.size
             if (total <= 0) return "0/0"
             if (finished >= total) return "$total/$total"
-            val running = jobs.count { it.status == TaskStatus.Running }.coerceAtLeast(1)
+            val running = runningCount.coerceAtLeast(1)
             return "${(finished + running).coerceAtMost(total)}/$total"
         }
 
@@ -431,6 +433,7 @@ internal class TaskBatch(
     fun removePending(id: Long) {
         val job = jobs.find { it.id == id } ?: return
         if (job.status != TaskStatus.Pending) return
+        job.removed = true
         jobs.remove(job)
         wake.trySend(Unit)
     }
@@ -459,12 +462,8 @@ internal class TaskBatch(
 }
 
 /**
- * How many save/convert jobs may run at once.
- *
- * Off is always 1. On, each in-flight job can hold one decoded frame through
- * encode (RGBA_F16 is about 8 bytes per pixel, ~96 MiB at 12 MP). Half the
- * Java heap is the budget, and the count never exceeds the CPU count. When
- * two frames fit, the floor is 2.
+ * Staging/download slots. Pixel allocations are independently budgeted across
+ * decode AND encode by StillExportWork, using probed dimensions and codec costs.
  */
 internal fun taskParallelSlots(enabled: Boolean, cores: Int, maxMemoryBytes: Long): Int {
     if (!enabled) return 1
@@ -485,20 +484,22 @@ internal fun taskParallelSlots(enabled: Boolean, cores: Int, maxMemoryBytes: Lon
 internal suspend fun executeJobs(batch: TaskBatch, dir: Path) {
     coroutineScope {
         val inFlight = ArrayList<Deferred<Unit>>()
+        val pendingJobs = ArrayDeque(batch.jobs.filter { it.status == TaskStatus.Pending })
         while (batch.end == null) {
             inFlight.retainAll { !it.isCompleted }
             val slots = FolderSelectHost.currentParallelSlots()
-            val pending = batch.jobs.any { it.status == TaskStatus.Pending }
-            val running = inFlight.isNotEmpty() ||
-                batch.jobs.any { it.status == TaskStatus.Running }
+            while (pendingJobs.firstOrNull()?.let { it.removed || it.status != TaskStatus.Pending } == true) pendingJobs.removeFirst()
+            val pending = pendingJobs.isNotEmpty()
+            val running = inFlight.isNotEmpty()
             if (!pending && !running) break
             if (batch.paused || inFlight.size >= slots || !pending) {
                 if (batch.paused) FolderSelectHost.syncTaskFgs()
                 batch.awaitProgress(inFlight)
                 continue
             }
-            val next = batch.jobs.firstOrNull { it.status == TaskStatus.Pending } ?: continue
+            val next = pendingJobs.removeFirst()
             next.status = TaskStatus.Running
+            batch.runningCount++
             inFlight += async {
                 val ok = try {
                     next.run(dir)
@@ -506,6 +507,8 @@ internal suspend fun executeJobs(batch: TaskBatch, dir: Path) {
                     throw e
                 } catch (_: Throwable) {
                     false
+                } finally {
+                    batch.runningCount--
                 }
                 if (next.status == TaskStatus.Running) {
                     next.status = if (ok) TaskStatus.Done else TaskStatus.Failed
@@ -776,9 +779,9 @@ object FolderSelectHost {
      */
     internal fun syncTaskFgs() {
         val running = batch
-        val jobRunning = running?.jobs?.any { it.status == TaskStatus.Running } == true
-        val active = running != null && !running.finishedRun && running.end == null &&
-            (!running.paused || jobRunning)
+        val jobRunning = (running?.runningCount ?: 0) > 0
+        val active = running != null && !running.finishedRun &&
+            (jobRunning || (running.end == null && !running.paused))
         runCatching { StreamKeepAlivePolicy.setBrowseTaskActive(active) }
     }
 
@@ -790,14 +793,14 @@ object FolderSelectHost {
         running.wake()
     }
 
-    /** Stop the queue and show the unfinished items under the selection overflow menu. */
+    /** Stop launching work. Active jobs finish and keep their outputs before restoring pending picks. */
     fun stopTask() {
         val running = batch ?: return
         if (running.finishedRun || running.end != null) return
         running.end = BatchEnd.Stop
         running.paused = false
         running.wake()
-        running.runner.cancel()
+        syncTaskFgs()
     }
 
     /** Leave the finished queue and show the selection that is still stored. */
@@ -1587,8 +1590,8 @@ private fun ConvertTargetItems(
         StillExportTarget.AutoOriginal to R.string.convert_auto_original,
         StillExportTarget.Jpeg to R.string.convert_jpeg,
         StillExportTarget.JpegHdr to R.string.convert_jpeg_hdr,
-        StillExportTarget.Png to R.string.convert_png,
-        StillExportTarget.Png16 to R.string.convert_png_16,
+        StillExportTarget.Jxl to R.string.convert_jxl,
+        StillExportTarget.JxlHdr to R.string.convert_jxl_hdr,
     ).forEach { (target, label) ->
         DropdownMenuItem(
             text = { Text(stringResource(label)) },

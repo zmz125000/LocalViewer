@@ -1046,8 +1046,8 @@
     <string name="convert_auto_original">自動（元のサイズ）</string>
     <string name="convert_jpeg">JPEG</string>
     <string name="convert_jpeg_hdr">JPEG（HDR）</string>
-    <string name="convert_png">PNG</string>
-    <string name="convert_png_16">PNG（16ビット）</string>
+    <string name="convert_jxl">JPEG XL（16ビットSDR）</string>
+    <string name="convert_jxl_hdr">JPEG XL（16ビットHDR）</string>
     <string name="wide_color_gamut">Display P3 カラースペースを使用する</string>
     <string name="settings_eh_request_news_timepicker">ニュースをリクエストする時間を設定</string>
     <string name="dark_theme_follow_system">システムに従う</string>
