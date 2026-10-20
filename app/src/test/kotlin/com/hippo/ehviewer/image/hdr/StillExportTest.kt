@@ -10,7 +10,7 @@ class StillExportTest {
     fun autoFollowsHdrThenFp16ThenEightBit() {
         assertEquals(StillExportTarget.JpegHdr, resolveStillExportAuto(hdr = true, f16 = true))
         assertEquals(StillExportTarget.JpegHdr, resolveStillExportAuto(hdr = true, f16 = false))
-        assertEquals(StillExportTarget.Png16, resolveStillExportAuto(hdr = false, f16 = true))
+        assertEquals(StillExportTarget.Jxl, resolveStillExportAuto(hdr = false, f16 = true))
         assertEquals(StillExportTarget.Jpeg, resolveStillExportAuto(hdr = false, f16 = false))
     }
 
@@ -18,22 +18,34 @@ class StillExportTest {
     fun originalSizeUsesTheSameRuleAndHdrIsUltraHdr() {
         assertEquals(StillExportTarget.JpegHdr, StillExportTarget.AutoOriginal.resolve(hdr = true, f16 = true))
         assertEquals(StillExportTarget.JpegHdr, StillExportTarget.AutoOriginal.resolve(hdr = true, f16 = false))
-        assertEquals(StillExportTarget.Png16, StillExportTarget.AutoOriginal.resolve(hdr = false, f16 = true))
+        assertEquals(StillExportTarget.Jxl, StillExportTarget.AutoOriginal.resolve(hdr = false, f16 = true))
         assertEquals(StillExportTarget.Jpeg, StillExportTarget.AutoOriginal.resolve(hdr = false, f16 = false))
         assertEquals(1, StillExportTarget.AutoOriginal.resolve(hdr = true, f16 = false).exportMode())
         assertEquals("jpg", StillExportTarget.AutoOriginal.resolve(hdr = true, f16 = true).fileExtension())
-        assertEquals("png", StillExportTarget.AutoOriginal.resolve(hdr = false, f16 = true).fileExtension())
+        assertEquals("jxl", StillExportTarget.AutoOriginal.resolve(hdr = false, f16 = true).fileExtension())
     }
 
     @Test
     fun explicitTargetsKeepTheirExtension() {
         assertEquals("jpg", StillExportTarget.Jpeg.fileExtension())
         assertEquals("jpg", StillExportTarget.JpegHdr.fileExtension())
-        assertEquals("png", StillExportTarget.Png.fileExtension())
-        assertEquals("png", StillExportTarget.Png16.fileExtension())
-        assertEquals(StillExportTarget.Png, StillExportTarget.Png.resolve(hdr = true, f16 = true))
+        assertEquals("jxl", StillExportTarget.Jxl.fileExtension())
+        assertEquals("jxl", StillExportTarget.JxlHdr.fileExtension())
+        assertEquals(StillExportTarget.Jxl, StillExportTarget.Jxl.resolve(hdr = true, f16 = true))
         assertEquals("photo.jpg", stillExportFileName("photo.jxl", StillExportTarget.JpegHdr))
-        assertEquals("shot.png", stillExportFileName("dir/shot.DNG", StillExportTarget.Png16))
+        assertEquals("shot.jxl", stillExportFileName("dir/shot.DNG", StillExportTarget.JxlHdr))
+    }
+
+    @Test
+    fun rawOutputRangeFollowsTarget() {
+        assertTrue(StillExportTarget.AutoOriginal.rawHdr())
+        assertTrue(StillExportTarget.JpegHdr.rawHdr())
+        assertTrue(StillExportTarget.JxlHdr.rawHdr())
+        assertFalse(StillExportTarget.Jpeg.rawHdr())
+        assertFalse(StillExportTarget.Jxl.rawHdr())
+        assertEquals(2, StillExportTarget.Jxl.exportMode())
+        assertEquals(3, StillExportTarget.JxlHdr.exportMode())
+        assertEquals("image/jxl", StillExportTarget.JxlHdr.mimeType())
     }
 
     @Test

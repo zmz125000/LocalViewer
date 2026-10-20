@@ -115,7 +115,8 @@ external fun decodeAvifBytesToDirect(
 /**
  * LibRaw → packed pixels. [present] matches [com.hippo.ehviewer.image.hdr.RawPresent]
  * ordinal: 0 eight-bit, 1 deep color, 2 deep color + Android 16 HDR.
- * [maxEdge] is already capped (8192 for a full decode).
+ * Reader [maxEdge] is capped at 8192; export passes 0 for original dimensions.
+ * Native present=3 is export HDR in linear Rec.2020, with no display dependency.
  * [panelBoost] clamps HDR highlights. Ignored for the other modes.
  * [exposureEv] is extra stops. [whiteBalance] is 0 camera, 1 auto, 2 daylight,
  * 3 cloudy, 4 shade, 5 tungsten, 6 fluorescent, 7 flash, 8 kelvin.
@@ -208,7 +209,7 @@ external fun extractRawPreviewFd(fd: Int, outPath: String, demosaicFallback: Boo
 /**
  * Encode packed pixels to [outPath].
  *
- * [mode] 0 baseline JPEG, 1 Ultra HDR JPEG, 2 PNG, 3 16-bit PNG.
+ * [mode] 0 baseline JPEG, 1 Ultra HDR JPEG, 2 SDR JPEG XL, 3 HDR JPEG XL.
  * [f16] selects linear half-float RGBA (8 bytes per pixel). Otherwise the buffer
  * is sRGB RGBA_8888 (4 bytes, R,G,B,A). [gamut] is 0 BT.709, 1 Display P3, 2 BT.2100.
  * [premultiplied] un-associates alpha before encode. 8-bit JPEG (HDR) is baseline.
@@ -225,3 +226,6 @@ external fun encodeStillExport(
     premultiplied: Boolean,
     outPath: String,
 ): Int
+
+/** Header-only size probe. Kind: 0 JXL, 1 JXR, 2 RAW; packed width/height, or 0. */
+external fun probeStillExportSize(path: String, kind: Int): Long

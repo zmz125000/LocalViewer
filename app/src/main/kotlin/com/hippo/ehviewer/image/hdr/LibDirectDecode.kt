@@ -34,8 +34,6 @@ import java.io.File
 import java.io.FileDescriptor
 import java.nio.ByteBuffer
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.sync.Semaphore
-import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import kotlinx.io.readByteArray
 import okio.Path
@@ -92,7 +90,7 @@ object LibDirectDecode {
     /** Second RAW decode (view original) stops here instead of a full-sensor float16. */
     private const val RAW_FULL_EDGE = 8192
 
-    /** Upper choice of [Settings.heavyDecode], and the size of [heavyDecodeSlots]. */
+    /** Upper choice of [Settings.heavyDecode], and the size of the decode gate. */
     private const val HEAVY_DECODE_POOL = 2
 
     /**
@@ -102,18 +100,9 @@ object LibDirectDecode {
      * permits; 1 acquires both so heavy native→Bitmap work stays serial.
      * Also used for platform high-depth F16 frames.
      */
-    private val heavyDecodeSlots = Semaphore(HEAVY_DECODE_POOL)
+    private val heavyDecodeGate = DecodeConcurrencyGate()
 
-    internal suspend fun <T> withHeavyDecode(block: suspend () -> T): T {
-        val parallel = Settings.heavyDecode.value >= HEAVY_DECODE_POOL
-        return if (parallel) {
-            heavyDecodeSlots.withPermit { block() }
-        } else {
-            heavyDecodeSlots.withPermit {
-                heavyDecodeSlots.withPermit { block() }
-            }
-        }
-    }
+    internal suspend fun <T> withHeavyDecode(block: suspend () -> T): T = heavyDecodeGate.run(Settings.heavyDecode.value >= HEAVY_DECODE_POOL, block)
 
     /**
      * ICC type-3 identity (Y = X). [Bitmap.wrapHardwareBuffer] requires this;
@@ -181,17 +170,21 @@ object LibDirectDecode {
     }
 
     /**
-     * Same decode as [decode], including reader RAW present settings, but the
-     * packed pixels are kept. [maxEdge] 0 is full resolution (RAW still caps at
-     * [RAW_FULL_EDGE]). Does not start from the 4096 px preview.
+     * Export pixels retain source precision and gamut independently of display
+     * settings. RAW always demosaics at original size and uses the camera look.
      */
-    suspend fun decodePixels(
+    internal suspend fun <T> withExportPixels(
         src: ImageSource,
         fileNameHint: String,
         maxEdge: Int = 0,
-    ): DirectPixels? = withContext(Dispatchers.IO) {
-        withHeavyDecode {
-            decodePacked(src, fileNameHint, maxEdge)?.let(::directPixels)
+        target: StillExportTarget = StillExportTarget.AutoOriginal,
+        encode: (DirectPixels) -> T,
+    ): T? = withContext(Dispatchers.IO) {
+        // Retain the shared heavy-work permit through encode, including when
+        // reader pages are decoding alongside a batch conversion.
+        val parallel = Settings.browseTaskParallel.value || Settings.heavyDecode.value >= HEAVY_DECODE_POOL
+        heavyDecodeGate.run(parallel) {
+            decodePacked(src, fileNameHint, maxEdge, target)?.let(::directPixels)?.let(encode)
         }
     }
 
@@ -223,6 +216,7 @@ object LibDirectDecode {
         src: ImageSource,
         fileNameHint: String,
         maxEdge: Int,
+        exportTarget: StillExportTarget? = null,
     ): PackedPixels? {
         val pathName = (src as? PathSource)?.source?.name
         val rawName = when {
@@ -231,13 +225,13 @@ object LibDirectDecode {
             else -> pathName?.ifBlank { null } ?: fileNameHint
         }
         if (isRawStillExtension(FileUtils.getExtensionFromFilename(rawName))) {
-            return decodeRawPacked(src, maxEdge)
+            return decodeRawPacked(src, maxEdge, exportTarget)
         }
         // Scope source bytes tightly so they are eligible for GC before Bitmap.create.
         val bytes = readBytes(src) ?: return null
         if (bytes.isEmpty()) return null
         val route = classify(bytes, bytes.size, fileNameHint)
-        val advanced = Settings.readerAdvancedColor.value
+        val advanced = exportTarget != null || Settings.readerAdvancedColor.value
         val precision = if (advanced && route == StillRoute.Platform) HeifPrecisionProbe.probe(bytes) else null
         val codec = (route as? StillRoute.Lib)?.codec ?: when {
             precision?.highDepth != true -> return null
@@ -252,17 +246,18 @@ object LibDirectDecode {
                 bytes,
                 maxEdge,
                 advanced,
-                jxrHighlightCap(),
+                if (exportTarget != null) 1f else jxrHighlightCap(),
                 outInfo,
                 outBoost,
             )
             LibCodec.Jpeg2000 -> decodeJpeg2000BytesToDirect(bytes, maxEdge, advanced, outInfo, outBoost)
                 ?: packJpeg2000(bytes, maxEdge, outInfo, outBoost)
             LibCodec.AvifPq -> decodeAvifBytesToDirect(bytes, maxEdge, advanced, outInfo, outBoost)
-            LibCodec.HevcHdr -> return decodeHevcHdrPacked(bytes, maxEdge, advanced)
+            LibCodec.HevcHdr -> return decodeHevcHdrPacked(bytes, maxEdge, advanced, exportTarget != null)
             LibCodec.Raw -> return decodeRawPacked(
                 byteBufferSource(ByteBuffer.wrap(bytes)) {},
                 maxEdge,
+                exportTarget,
             )
         } ?: return null
         return PackedPixels(pixels, outInfo, outBoost, advanced, premultiplied = true)
@@ -272,8 +267,8 @@ object LibDirectDecode {
      * PQ/HLG HEIC and SDR high-depth fallback when ImageDecoder cannot retain
      * precision. Absolute HDR keeps the existing HDR-display preference.
      */
-    private fun decodeHevcHdrPacked(bytes: ByteArray, maxEdge: Int, advanced: Boolean): PackedPixels? {
-        if (!Settings.readerHdrDisplay.value && HeifContainer.parse(bytes)?.absoluteHdr() != null) return null
+    private fun decodeHevcHdrPacked(bytes: ByteArray, maxEdge: Int, advanced: Boolean, export: Boolean = false): PackedPixels? {
+        if (!export && !Settings.readerHdrDisplay.value && HeifContainer.parse(bytes)?.absoluteHdr() != null) return null
         val frame = HevcHdrDecode.decode(bytes, maxEdge, advanced) ?: return null
         val outInfo = intArrayOf(frame.width, frame.height, 1, if (frame.isHdr) 1 else 0, frame.gamut, frame.transfer)
         val outBoost = floatArrayOf(frame.boost)
@@ -281,43 +276,43 @@ object LibDirectDecode {
     }
 
     /**
-     * Full RAW decode is capped at 8192 on the long edge. A 45 MP float16 frame
+     * Reader RAW decode is capped at 8192 on the long edge; export keeps original dimensions. A 45 MP float16 frame
      * is hundreds of megabytes. The hi-res preview stays at 4096. Above 24 MP
      * that preview demosaics at half size; 24 MP and under stay full size.
      */
-    private fun decodeRawPacked(src: ImageSource, maxEdge: Int): PackedPixels? {
+    private fun decodeRawPacked(src: ImageSource, maxEdge: Int, exportTarget: StillExportTarget? = null): PackedPixels? {
         val path = (src as? PathSource)?.source
         if (path != null && !isPhysicalRawPath(path.toString())) {
-            return runCatching { decodeRawContent(path, maxEdge) }
+            return runCatching { decodeRawContent(path, maxEdge, exportTarget) }
                 .getOrElse { e ->
                     android.util.Log.e("LibDirectDecode", "RAW content open failed: $path", e)
                     null
                 }
         }
-        return decodeRawLocal(RawInput.Source(src), maxEdge)
+        return decodeRawLocal(RawInput.Source(src), maxEdge, exportTarget)
     }
 
     /** SAF and MediaStore files are mapped in place. Pipes and unmappable files are copied. */
-    private fun decodeRawContent(path: Path, maxEdge: Int): PackedPixels? {
+    private fun decodeRawContent(path: Path, maxEdge: Int, exportTarget: StillExportTarget? = null): PackedPixels? {
         path.openFileDescriptor("r").use { pfd ->
             if (pfd.isRegularFile()) {
-                decodeRawLocal(RawInput.Fd(pfd.fd, pfd.fileDescriptor), maxEdge)?.let { return it }
+                decodeRawLocal(RawInput.Fd(pfd.fd, pfd.fileDescriptor), maxEdge, exportTarget)?.let { return it }
             }
         }
-        return path.withLocalRawFile { decodeRawFromFile(it, maxEdge) }
+        return path.withLocalRawFile { decodeRawFromFile(it, maxEdge, exportTarget) }
     }
 
     private fun ParcelFileDescriptor.isRegularFile(): Boolean = runCatching {
         OsConstants.S_ISREG(Os.fstat(fileDescriptor).st_mode)
     }.getOrDefault(false)
 
-    private fun decodeRawFromFile(file: File, maxEdge: Int): PackedPixels? {
+    private fun decodeRawFromFile(file: File, maxEdge: Int, exportTarget: StillExportTarget? = null): PackedPixels? {
         val local = object : PathSource {
             override val source = file.toOkioPath()
             override val type = "image/x-raw"
             override fun close() = Unit
         }
-        return decodeRawLocal(RawInput.Source(local), maxEdge)
+        return decodeRawLocal(RawInput.Source(local), maxEdge, exportTarget)
     }
 
     private sealed interface RawInput {
@@ -327,7 +322,11 @@ object LibDirectDecode {
         data class Fd(val fd: Int, val descriptor: FileDescriptor) : RawInput
     }
 
-    private fun decodeRawLocal(input: RawInput, maxEdge: Int): PackedPixels? {
+    private fun decodeRawLocal(input: RawInput, maxEdge: Int, exportTarget: StillExportTarget? = null): PackedPixels? {
+        if (exportTarget != null) {
+            val mode = if (exportTarget.rawHdr()) RawPresent.Hdr else RawPresent.DeepColor
+            return decodeRawPresent(input, maxEdge, mode, export = true)
+        }
         if (!Settings.readerCameraRaw.value) {
             return rawPreviewPacked(input)
         }
@@ -339,32 +338,43 @@ object LibDirectDecode {
         return decodeRawPresent(input, maxEdge, mode) ?: rawPreviewPacked(input)
     }
 
-    private fun decodeRawPresent(input: RawInput, maxEdge: Int, mode: RawPresent): PackedPixels? {
-        val edge = rawDecodeEdge(maxEdge)
-        val panelBoost = if (mode == RawPresent.Hdr) rawPanelBoost() else 1f
+    private fun decodeRawPresent(input: RawInput, maxEdge: Int, mode: RawPresent, export: Boolean = false): PackedPixels? {
+        val edge = if (export) maxEdge else rawDecodeEdge(maxEdge)
+        val panelBoost = if (export && mode == RawPresent.Hdr) {
+            10000f / 203f
+        } else if (mode == RawPresent.Hdr) {
+            rawPanelBoost()
+        } else {
+            1f
+        }
+        // Native mode 3 retains HDR Rec.2020 rather than presentation-only scRGB.
+        val present = if (export && mode == RawPresent.Hdr) 3 else mode.ordinal
         val outInfo = IntArray(6)
         val outBoost = FloatArray(1)
-        val exposureEv = rawExposureEv()
-        val whiteBalance = rawWhiteBalance()
-        val kelvin = rawKelvin()
-        val highlightStops = rawHighlightStops()
-        val shadows = rawZone(Settings.readerRawShadows.value)
-        val midtones = rawZone(Settings.readerRawMidtones.value)
-        val highlights = rawZone(Settings.readerRawHighlights.value)
+        // Batch conversion is as-shot, including camera WB and DNG baseline EV.
+        // Reader edit sliders are presentation choices, not export settings.
+        val exposureEv = if (export) 0f else rawExposureEv()
+        val whiteBalance = if (export) 0 else rawWhiteBalance()
+        val kelvin = if (export) 5200 else rawKelvin()
+        val highlightStops = if (export) 0f else rawHighlightStops()
+        val shoulder = if (export) 0.5f else rawShoulder()
+        val shadows = if (export) 0f else rawZone(Settings.readerRawShadows.value)
+        val midtones = if (export) 0f else rawZone(Settings.readerRawMidtones.value)
+        val highlights = if (export) 0f else rawZone(Settings.readerRawHighlights.value)
         val src = (input as? RawInput.Source)?.src
         val pixels = when {
             input is RawInput.Fd -> decodeRawFdToDirect(
                 input.fd,
                 edge,
-                mode.ordinal,
+                present,
                 panelBoost,
                 exposureEv,
                 whiteBalance,
                 kelvin,
                 highlightStops,
-                Settings.readerRawHdrLinear.value && mode == RawPresent.Hdr,
-                Settings.readerRawCameraLook.value,
-                rawShoulder(),
+                !export && Settings.readerRawHdrLinear.value && mode == RawPresent.Hdr,
+                export || Settings.readerRawCameraLook.value,
+                shoulder,
                 shadows,
                 midtones,
                 highlights,
@@ -374,15 +384,15 @@ object LibDirectDecode {
             src is PathSource -> decodeRawFileToDirect(
                 src.source.toString(),
                 edge,
-                mode.ordinal,
+                present,
                 panelBoost,
                 exposureEv,
                 whiteBalance,
                 kelvin,
                 highlightStops,
-                Settings.readerRawHdrLinear.value && mode == RawPresent.Hdr,
-                Settings.readerRawCameraLook.value,
-                rawShoulder(),
+                !export && Settings.readerRawHdrLinear.value && mode == RawPresent.Hdr,
+                export || Settings.readerRawCameraLook.value,
+                shoulder,
                 shadows,
                 midtones,
                 highlights,
@@ -394,15 +404,15 @@ object LibDirectDecode {
                 decodeRawBytesToDirect(
                     bytes,
                     edge,
-                    mode.ordinal,
+                    present,
                     panelBoost,
                     exposureEv,
                     whiteBalance,
                     kelvin,
                     highlightStops,
-                    Settings.readerRawHdrLinear.value && mode == RawPresent.Hdr,
-                    Settings.readerRawCameraLook.value,
-                    rawShoulder(),
+                    !export && Settings.readerRawHdrLinear.value && mode == RawPresent.Hdr,
+                    export || Settings.readerRawCameraLook.value,
+                    shoulder,
                     shadows,
                     midtones,
                     highlights,

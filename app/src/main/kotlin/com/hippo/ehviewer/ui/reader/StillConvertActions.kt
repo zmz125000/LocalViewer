@@ -15,9 +15,9 @@ import com.ehviewer.core.util.withIOContext
 import com.hippo.ehviewer.gallery.Page
 import com.hippo.ehviewer.gallery.ReaderSession
 import com.hippo.ehviewer.image.PathSource
-import com.hippo.ehviewer.image.hdr.DirectPixels
 import com.hippo.ehviewer.image.hdr.LibDirectDecode
 import com.hippo.ehviewer.image.hdr.StillExportTarget
+import com.hippo.ehviewer.image.hdr.StillExportWork
 import com.hippo.ehviewer.image.hdr.mimeType
 import com.hippo.ehviewer.image.hdr.resolve
 import com.hippo.ehviewer.image.hdr.stillExportFileName
@@ -42,12 +42,12 @@ suspend fun convertTo(page: Page, target: StillExportTarget) {
         return
     }
     if (target == StillExportTarget.AutoOriginal) {
-        val saved = saveOriginalSize(leaf) { decodeOriginalPixels(loader, page.index, leaf) }
+        val saved = saveOriginalSize(leaf) { stageOriginal(loader, page.index) }
         if (!saved) snackbar(string(R.string.error_cant_save_image))
         return
     }
     val saved = pickAndWrite(leaf, target) { dest ->
-        writeFullRes(loader, page.index, leaf, target, dest)
+        writeStaged(leaf, target, dest) { stageOriginal(loader, page.index) }
     }
     if (!saved) snackbar(string(R.string.error_cant_save_image))
 }
@@ -75,33 +75,13 @@ suspend fun exportStillToDirectory(
     stage: suspend () -> File,
 ): Boolean {
     return try {
-        val pixels = withIOContext {
-            val file = stage()
-            try {
-                LibDirectDecode.decodePixels(file.asPathSource(), leaf, maxEdge = 0)
-            } finally {
-                file.delete()
-            }
-        } ?: return false
-        val resolved = if (target == StillExportTarget.AutoOriginal) {
-            target.resolve(pixels.isHdr, pixels.f16)
-        } else {
-            target
+        val encoded = encodeStaged(leaf, target, stage) ?: return false
+        try {
+            withIOContext { BrowseSaveAs.writeConvertFile(dir, stillExportFileName(leaf, encoded.target), encoded.file) }
+        } finally {
+            encoded.file.delete()
         }
-        val name = stillExportFileName(leaf, resolved)
-        val dest = withIOContext {
-            val out = File.createTempFile("still-out", null, appCtx.cacheDir)
-            try {
-                if (!pixels.writeResolved(resolved, out) || out.length() <= 0L) {
-                    null
-                } else {
-                    BrowseSaveAs.writeConvertFile(dir, name, out)
-                }
-            } finally {
-                out.delete()
-            }
-        }
-        dest != null
+        true
     } catch (e: CancellationException) {
         throw e
     } catch (t: Throwable) {
@@ -124,34 +104,11 @@ private suspend fun convertStaged(leaf: String, target: StillExportTarget, stage
 context(_: SnackbarHostState, _: Context)
 private suspend fun convertStagedUnchecked(leaf: String, target: StillExportTarget, stage: suspend () -> File) {
     if (target == StillExportTarget.AutoOriginal) {
-        val saved = saveOriginalSize(leaf) {
-            withIOContext {
-                val file = stage()
-                try {
-                    LibDirectDecode.decodePixels(file.asPathSource(), leaf, maxEdge = 0)
-                } finally {
-                    file.delete()
-                }
-            }
-        }
+        val saved = saveOriginalSize(leaf, stage)
         if (!saved) snackbar(string(R.string.error_cant_save_image))
         return
     }
-    val saved = pickAndWrite(leaf, target) { dest ->
-        val pixels = withIOContext {
-            val file = stage()
-            try {
-                LibDirectDecode.decodePixels(file.asPathSource(), leaf, maxEdge = 0)
-            } finally {
-                file.delete()
-            }
-        }
-        if (pixels == null) {
-            false
-        } else {
-            writeTemp(dest) { pixels.writeResolved(target, it) }
-        }
-    }
+    val saved = pickAndWrite(leaf, target) { dest -> writeStaged(leaf, target, dest, stage) }
     if (!saved) snackbar(string(R.string.error_cant_save_image))
 }
 
@@ -220,86 +177,64 @@ private fun Context.discardUnpublished(uri: Uri) {
 
 /**
  * Picks a folder immediately, then decodes. The file name follows the Auto rule
- * (`.jpg` for JPEG and Ultra HDR JPEG, `.png` for 16-bit PNG).
+ * (`.jpg` for JPEG and Ultra HDR JPEG, `.jxl` for deep SDR).
  * @return false when decode or write fails. Cancel returns true.
  */
 context(_: SnackbarHostState, _: Context)
-private suspend fun saveOriginalSize(leaf: String, decode: suspend () -> DirectPixels?): Boolean {
+private suspend fun saveOriginalSize(leaf: String, stage: suspend () -> File): Boolean {
     val dir = BrowseSaveAs.pickConvertDirectory() ?: return true
-    val pixels = decode() ?: return false
-    val resolved = StillExportTarget.AutoOriginal.resolve(pixels.isHdr, pixels.f16)
-    val name = stillExportFileName(leaf, resolved)
+    val encoded = encodeStaged(leaf, StillExportTarget.AutoOriginal, stage) ?: return false
     val dest = try {
-        withIOContext {
-            val out = File.createTempFile("still-out", null, appCtx.cacheDir)
-            try {
-                if (!pixels.writeResolved(resolved, out) || out.length() <= 0L) {
-                    null
-                } else {
-                    BrowseSaveAs.writeConvertFile(dir, name, out)
-                }
-            } finally {
-                out.delete()
-            }
-        }
-    } catch (e: CancellationException) {
-        throw e
-    } catch (t: Throwable) {
-        t.logcatExport()
-        return false
-    } ?: return false
+        withIOContext { BrowseSaveAs.writeConvertFile(dir, stillExportFileName(leaf, encoded.target), encoded.file) }
+    } finally {
+        encoded.file.delete()
+    }
     snackbar(string(R.string.image_saved, dest.toUri().displayPath ?: dest.toString()))
     return true
 }
 
-/** Full-resolution file decode. HDR pixels are later encoded as Ultra HDR JPEG. */
-private suspend fun decodeOriginalPixels(
-    loader: ReaderSession,
-    index: Int,
-    leaf: String,
-): DirectPixels? = withIOContext {
+private data class EncodedStill(val file: File, val target: StillExportTarget)
+
+/** Download/stage first; retain the memory lease until encoding releases its pixels. */
+private suspend fun encodeStaged(leaf: String, target: StillExportTarget, stage: suspend () -> File): EncodedStill? = withIOContext {
+    val source = stage()
+    try {
+        StillExportWork.withSource(source, leaf) {
+            LibDirectDecode.withExportPixels(source.asPathSource(), leaf, maxEdge = 0, target = target) { pixels ->
+                val resolved = target.resolve(pixels.isHdr, pixels.f16)
+                val out = File.createTempFile("still-out", null, appCtx.cacheDir)
+                var success = false
+                try {
+                    success = pixels.writeResolved(resolved, out) && out.length() > 0L
+                    if (success) EncodedStill(out, resolved) else null
+                } finally {
+                    if (!success) out.delete()
+                }
+            }
+        }
+    } finally {
+        source.delete()
+    }
+}
+
+private suspend fun stageOriginal(loader: ReaderSession, index: Int): File = withIOContext {
     val src = File.createTempFile("still-src", null, appCtx.cacheDir)
     try {
-        if (!loader.saveOriginal(index, src.toOkioPath())) {
-            null
-        } else {
-            LibDirectDecode.decodePixels(src.asPathSource(), leaf, maxEdge = 0)
-        }
-    } finally {
+        check(loader.saveOriginal(index, src.toOkioPath())) { "Cannot read original" }
+        src
+    } catch (t: Throwable) {
         src.delete()
+        throw t
     }
 }
 
-private suspend fun writeFullRes(
-    loader: ReaderSession,
-    index: Int,
-    leaf: String,
-    resolved: StillExportTarget,
-    dest: Path,
-): Boolean {
-    val src = File.createTempFile("still-src", null, appCtx.cacheDir)
+private suspend fun writeStaged(leaf: String, target: StillExportTarget, dest: Path, stage: suspend () -> File): Boolean {
+    val encoded = encodeStaged(leaf, target, stage) ?: return false
     return try {
-        if (!loader.saveOriginal(index, src.toOkioPath())) return false
-        val pixels = LibDirectDecode.decodePixels(src.asPathSource(), leaf, maxEdge = 0) ?: return false
-        writeTemp(dest) { pixels.writeResolved(resolved, it) }
+        withIOContext { encoded.file.toOkioPath() sendTo dest }
+        true
     } finally {
-        src.delete()
-    }
-}
-
-private fun writeTemp(dest: Path, encode: (File) -> Boolean): Boolean {
-    val out = File.createTempFile("still-out", null, appCtx.cacheDir)
-    return try {
-        if (!encode(out) || out.length() <= 0L) {
-            false
-        } else {
-            out.toOkioPath() sendTo dest
-            true
-        }
-    } catch (_: Throwable) {
-        false
-    } finally {
-        out.delete()
+        encoded.file.delete()
     }
 }
 
