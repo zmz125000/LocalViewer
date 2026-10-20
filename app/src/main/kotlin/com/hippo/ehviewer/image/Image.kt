@@ -969,7 +969,8 @@ inline fun byteBufferSource(buffer: ByteBuffer, crossinline release: () -> Unit)
 /** ASCII marker scan for Ultra HDR / gain-map sidecars in JPEG/XMP headers. */
 private fun ByteArray.containsHdrGainMapMarker(length: Int = size): Boolean {
     val n = length.coerceIn(0, size)
-    return indexOfAscii("GainMap", n) >= 0 ||
+    return AppleHdr.looksLike(this, n) ||
+        indexOfAscii("GainMap", n) >= 0 ||
         indexOfAscii("hdrgm", n) >= 0 ||
         indexOfAscii("HDRGainMap", n) >= 0 ||
         indexOfAscii("tmap", n) >= 0

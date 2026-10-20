@@ -93,11 +93,11 @@ class HeifPrecisionTest {
 
     @Test
     fun realSampleHeadersKeepTheirPrimaryTenBitPrecision() {
-        for (rel in listOf("iphone18/50c3d941caaad0f8e437dd25-5k.avif", "iphonec2/DSC05810.avif", "iphonec2/DSC07633.heic")) {
+        for (rel in listOf("iphone18/50c3d941caaad0f8e437dd25-5k.avif", "iphonec2/DSC05810.avif", "DSC07633.heic")) {
             val file = listOf(File("samples/$rel"), File("../samples/$rel")).firstOrNull { it.isFile } ?: continue
             val info = HeifPrecisionProbe.probe(file.inputStream().use { it.readNBytes(HeifPrecisionProbe.HEADER_BYTES) })!!
             assertEquals(rel, 10, info.bitDepth)
-            if (rel.contains("iphonec2")) assertEquals(16, info.transfer)
+            if (!rel.contains("iphone18")) assertEquals(16, info.transfer)
         }
     }
 
