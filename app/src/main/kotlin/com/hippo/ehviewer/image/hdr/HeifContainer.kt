@@ -35,12 +35,12 @@ internal object HeifContainer {
         val tiles: List<AccessUnit>,
     )
 
-    class AbsoluteHdr(
+    class PrimaryImage(
         val width: Int,
         val height: Int,
         val columns: Int,
         val rows: Int,
-        /** 16 = PQ, 18 = HLG. */
+        /** CICP transfer (16 = PQ, 18 = HLG; otherwise SDR). */
         val transfer: Int,
         /** CICP primaries. 9 = BT.2020. */
         val primaries: Int,
@@ -75,12 +75,14 @@ internal object HeifContainer {
             )
         }
 
-        fun absoluteHdr(): AbsoluteHdr? {
+        fun absoluteHdr(): PrimaryImage? = primaryImage()?.takeIf { it.transfer == 16 || it.transfer == 18 }
+
+        fun primaryImage(): PrimaryImage? {
             val primary = items[primaryId] ?: return null
-            val color = primary.color ?: return null
-            if (color.transfer != 16 && color.transfer != 18) return null
+            // MIAF defaults when colr is omitted: BT.709 / sRGB / BT.601 full range.
+            val color = primary.color ?: Color(1, 13, 6, true)
             val laid = layout(primary) ?: return null
-            return AbsoluteHdr(
+            return PrimaryImage(
                 width = laid.width,
                 height = laid.height,
                 columns = laid.columns,

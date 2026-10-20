@@ -5,7 +5,7 @@ import kotlin.math.max
 import kotlin.math.roundToInt
 
 /**
- * Absolute PQ/HLG HEIC → linear RGBA half.
+ * High-bit-depth HEIC (SDR or PQ/HLG) → linear RGBA half.
  * 1.0 is SDR white (203 nits). Bundled libde265 preserves the encoded precision;
  * MediaCodec remains a fallback on ABIs without the bundled HDR codecs.
  *
@@ -21,20 +21,28 @@ internal object HevcHdrDecode {
         val pixels: ByteArray,
         val width: Int,
         val height: Int,
-        /** 0 = linear scRGB, 2 = linear BT.2020. */
+        /** 0 = linear scRGB, 1 = linear Display P3, 2 = linear BT.2020. */
         val gamut: Int,
         val boost: Float,
+        val isHdr: Boolean,
+        val transfer: Int,
     )
 
     fun decode(bytes: ByteArray, maxEdge: Int, advancedColor: Boolean): Frame? {
-        val hdr = HeifContainer.parse(bytes)?.absoluteHdr() ?: return null
+        val hdr = HeifContainer.parse(bytes)?.primaryImage() ?: return null
+        val isHdr = hdr.transfer == 16 || hdr.transfer == 18
         if (hdr.tiles.isEmpty()) return null
         val cap = if (maxEdge > 0) maxEdge else FULL_EDGE
         val longEdge = max(hdr.width, hdr.height)
         val scale = if (longEdge > cap) cap.toFloat() / longEdge else 1f
         var outW = max(1, (hdr.width * scale).roundToInt())
         var outH = max(1, (hdr.height * scale).roundToInt())
-        val keepBt2020 = advancedColor && hdr.primaries == 9
+        val gamut = when {
+            !advancedColor -> 0
+            hdr.primaries == 9 -> 2
+            hdr.primaries == 12 -> 1
+            else -> 0
+        }
         val bt2020 = hdr.primaries == 9 || hdr.matrix == 9
         val transfer = HdrTransferLut(hdr.transfer)
         val rgb = FloatArray(3)
@@ -71,7 +79,7 @@ internal object HevcHdrDecode {
                     val r: Float
                     val g: Float
                     val b: Float
-                    if (keepBt2020) {
+                    if (gamut != 0) {
                         r = rgb[0].coerceAtLeast(0f)
                         g = rgb[1].coerceAtLeast(0f)
                         b = rgb[2].coerceAtLeast(0f)
@@ -79,6 +87,10 @@ internal object HevcHdrDecode {
                         r = 1.6604910021f * rgb[0] - 0.5876411388f * rgb[1] - 0.0728498633f * rgb[2]
                         g = -0.1245504745f * rgb[0] + 1.1328998971f * rgb[1] - 0.0083494226f * rgb[2]
                         b = -0.0181507634f * rgb[0] - 0.1005788980f * rgb[1] + 1.1187296614f * rgb[2]
+                    } else if (hdr.primaries == 12) {
+                        r = 1.2249401763f * rgb[0] - 0.2249401763f * rgb[1]
+                        g = -0.0420569547f * rgb[0] + 1.0420569547f * rgb[1]
+                        b = -0.0196375546f * rgb[0] - 0.0786360456f * rgb[1] + 1.0982736001f * rgb[2]
                     } else {
                         r = rgb[0]
                         g = rgb[1]
@@ -93,10 +105,10 @@ internal object HevcHdrDecode {
             val turned = rotateHalf(pixels, outW, outH, hdr.rotationDegreesCcw)
             outW = turned.width
             outH = turned.height
-            return Frame(turned.pixels, outW, outH, if (keepBt2020) 2 else 0, peak.coerceIn(1f, 64f))
+            return Frame(turned.pixels, outW, outH, gamut, peak.coerceIn(1f, 64f), isHdr, hdr.transfer)
         }
-        Log.i(TAG, "PQ/HLG HEIC ${outW}x$outH transfer=${hdr.transfer} boost=$peak tiles=${hdr.tiles.size}")
-        return Frame(pixels, outW, outH, if (keepBt2020) 2 else 0, peak.coerceIn(1f, 64f))
+        Log.i(TAG, "HEIC F16 ${outW}x$outH transfer=${hdr.transfer} boost=$peak tiles=${hdr.tiles.size}")
+        return Frame(pixels, outW, outH, gamut, peak.coerceIn(1f, 64f), isHdr, hdr.transfer)
     }
 
     private fun yuvToLinear(
@@ -104,7 +116,7 @@ internal object HevcHdrDecode {
         cb: Int,
         cr: Int,
         depth: Int,
-        hdr: HeifContainer.AbsoluteHdr,
+        hdr: HeifContainer.PrimaryImage,
         transfer: HdrTransferLut,
         rgb: FloatArray,
     ) {
@@ -129,14 +141,23 @@ internal object HevcHdrDecode {
         val r: Float
         val g: Float
         val b: Float
-        if (hdr.matrix == 1) {
+        if (hdr.matrix == 0) {
+            rgb[0] = transfer.linear(cr / maxCode)
+            rgb[1] = transfer.linear(y / maxCode)
+            rgb[2] = transfer.linear(cb / maxCode)
+            return
+        } else if (hdr.matrix == 1) {
             r = yf + 1.5748f * crf
             g = yf - 0.1873f * cbf - 0.4681f * crf
             b = yf + 1.8556f * cbf
-        } else {
+        } else if (hdr.matrix == 9 || hdr.primaries == 9) {
             r = yf + 1.4746f * crf
             g = yf - 0.16455f * cbf - 0.57135f * crf
             b = yf + 1.8814f * cbf
+        } else {
+            r = yf + 1.402f * crf
+            g = yf - 0.344136f * cbf - 0.714136f * crf
+            b = yf + 1.772f * cbf
         }
         rgb[0] = transfer.linear(r)
         rgb[1] = transfer.linear(g)

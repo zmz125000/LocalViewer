@@ -54,5 +54,23 @@ public final class HevcHdrBenchmark {
         check(frame.getGamut() == 2 && frame.getBoost() > 1f, "BT.2020 HDR headroom lost");
         System.out.printf("Assembled %dx%d BT.2020 F16, HDR boost=%.3f in %.1f ms%n",
             frame.getWidth(), frame.getHeight(), frame.getBoost(), (System.nanoTime() - start) / 1e6);
+        // Reuse a real 10-bit codestream with SDR color metadata to exercise the
+        // software fallback on devices without platform P010. No codec pixels
+        // are changed; only the declared transfer function is changed to sRGB.
+        byte[] sdrBytes = bytes.clone();
+        int changed = 0;
+        for (int i = 0; i + 11 <= sdrBytes.length; ++i) {
+            if (sdrBytes[i] == 'n' && sdrBytes[i+1] == 'c' && sdrBytes[i+2] == 'l' && sdrBytes[i+3] == 'x' &&
+                sdrBytes[i+6] == 0 && sdrBytes[i+7] == 16) {
+                sdrBytes[i+7] = 13;
+                ++changed;
+            }
+        }
+        check(changed > 0, "SDR fixture needs a nclx transfer");
+        var sdr = HevcHdrDecode.INSTANCE.decode(sdrBytes, 768, true);
+        check(sdr != null && !sdr.isHdr() && sdr.getTransfer() == 13, "SDR fallback was marked HDR");
+        check(sdr.getGamut() == 2 && sdr.getBoost() == 1f, "SDR wide-gamut metadata lost");
+        check(sdr.getPixels().length == sdr.getWidth() * sdr.getHeight() * 8, "SDR fallback lost F16 precision");
+        System.out.println("SDR 10-bit HEIF fallback preserved F16 precision and BT.2020 without forcing HDR");
     }
 }

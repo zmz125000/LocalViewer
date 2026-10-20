@@ -5,6 +5,7 @@ import android.graphics.Gainmap
 import android.os.Build
 import android.util.Log
 import androidx.annotation.RequiresApi
+import com.hippo.ehviewer.Settings
 import kotlin.math.ln
 import kotlin.math.pow
 import kotlin.math.roundToInt
@@ -40,7 +41,8 @@ internal object AppleHdr {
         if (base.isRecycled || !looksLike(heic)) return null
         val gain = HeifContainer.parse(heic)?.appleGainMap() ?: return null
         val gray = decodeGray(gain) ?: return null
-        return runCatching { attach(base, gray, gain.headroom) }
+        val deep = Settings.readerAdvancedColor.value && (HeifPrecisionProbe.probe(heic)?.bitDepth ?: 8) > 8
+        return runCatching { attach(base, gray, gain.headroom, deep) }
             .onFailure { Log.e(TAG, "attach failed", it) }
             .getOrNull()
     }
@@ -71,8 +73,8 @@ internal object AppleHdr {
     }
 
     @RequiresApi(Build.VERSION_CODES.UPSIDE_DOWN_CAKE)
-    private fun attach(base: Bitmap, gray: Bitmap, headroom: Float): Bitmap? {
-        val target = software(base) ?: return null
+    private fun attach(base: Bitmap, gray: Bitmap, headroom: Float, deep: Boolean): Bitmap? {
+        val target = software(base, deep) ?: return null
         val gm = Gainmap(gray)
         gm.setRatioMax(headroom, headroom, headroom)
         gm.setRatioMin(1f, 1f, 1f)
@@ -87,11 +89,16 @@ internal object AppleHdr {
         return target
     }
 
-    private fun software(base: Bitmap): Bitmap? {
+    private fun software(base: Bitmap, deep: Boolean): Bitmap? {
         if (base.isRecycled) return null
         val cfg = base.config
         if (cfg != null && cfg != Bitmap.Config.HARDWARE && base.isMutable) return base
-        return base.copy(Bitmap.Config.ARGB_8888, true)
+        val target = when {
+            deep || cfg == Bitmap.Config.RGBA_F16 -> Bitmap.Config.RGBA_F16
+            cfg == Bitmap.Config.RGBA_1010102 -> Bitmap.Config.RGBA_1010102
+            else -> Bitmap.Config.ARGB_8888
+        }
+        return base.copy(target, true)
     }
 
     private fun bake(luma: IntArray, width: Int, height: Int, headroom: Float): Bitmap? {

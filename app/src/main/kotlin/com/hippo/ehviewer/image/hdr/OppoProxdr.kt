@@ -11,6 +11,7 @@ import com.ehviewer.core.files.metadataOrNull
 import com.ehviewer.core.files.openFileDescriptor
 import com.ehviewer.core.files.read
 import com.ehviewer.core.util.isAtLeastU
+import com.hippo.ehviewer.Settings
 import java.io.File
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -171,14 +172,15 @@ object OppoProxdr {
     fun attachToDecodedBase(base: Bitmap, heicBytes: ByteArray): Boolean {
         if (!isAtLeastU) return false
         val payload = parse(heicBytes) ?: return false
-        return attachPayload(base, payload)
+        val deep = Settings.readerAdvancedColor.value && (HeifPrecisionProbe.probe(heicBytes)?.bitDepth ?: 8) > 8
+        return attachPayload(base, payload, deep)
     }
 
     @RequiresApi(Build.VERSION_CODES.UPSIDE_DOWN_CAKE)
-    private fun attachPayload(base: Bitmap, payload: Payload): Boolean = runCatching {
+    private fun attachPayload(base: Bitmap, payload: Payload, deep: Boolean): Boolean = runCatching {
         if (base.isRecycled) return false
         // Gainmap attach needs a mutable software bitmap (HARDWARE is immutable).
-        val target = ensureSoftwareMutable(base) ?: return false
+        val target = ensureSoftwareMutable(base, deep) ?: return false
         val map = BitmapFactory.decodeByteArray(
             payload.maskJpeg,
             0,
@@ -249,7 +251,8 @@ object OppoProxdr {
         val payload = parse(heicBytes) ?: return null
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.UPSIDE_DOWN_CAKE) return null
         return runCatching {
-            val target = ensureSoftwareMutable(base) ?: return@runCatching null
+            val deep = Settings.readerAdvancedColor.value && (HeifPrecisionProbe.probe(heicBytes)?.bitDepth ?: 8) > 8
+            val target = ensureSoftwareMutable(base, deep) ?: return@runCatching null
             val map = BitmapFactory.decodeByteArray(
                 payload.maskJpeg,
                 0,
@@ -296,12 +299,17 @@ object OppoProxdr {
         }.getOrNull()
     }
 
-    private fun ensureSoftwareMutable(base: Bitmap): Bitmap? {
+    private fun ensureSoftwareMutable(base: Bitmap, deep: Boolean): Bitmap? {
         if (base.isRecycled) return null
         val cfg = base.config
         if (cfg != null && cfg != Bitmap.Config.HARDWARE && base.isMutable) return base
         // HARDWARE or immutable → software copy for Gainmap.
-        return base.copy(Bitmap.Config.ARGB_8888, true)
+        val target = when {
+            deep || cfg == Bitmap.Config.RGBA_F16 -> Bitmap.Config.RGBA_F16
+            Build.VERSION.SDK_INT >= 33 && cfg == Bitmap.Config.RGBA_1010102 -> Bitmap.Config.RGBA_1010102
+            else -> Bitmap.Config.ARGB_8888
+        }
+        return base.copy(target, true)
     }
 
     private fun jpegSofSize(jpeg: ByteArray): Pair<Int, Int>? {

@@ -10,6 +10,19 @@ import org.junit.Test
 
 class HdrTransferLutTest {
     @Test
+    fun sdrTransfersStaySdrAndRetainLowCodePrecision() {
+        for (transfer in listOf(1, 4, 5, 6, 8, 13)) {
+            val lut = HdrTransferLut(transfer)
+            assertEquals(0f, lut.linear(0f), 0f)
+            assertEquals(1f, lut.linear(1f), 0.00001f)
+            assertTrue(lut.linear(1f / 1023f) > 0f)
+            assertTrue(lut.linear(2f / 1023f) > lut.linear(1f / 1023f))
+        }
+        assertEquals(0.5f, HdrTransferLut(8).linear(0.5f), 0f)
+        assertEquals(0.21404114f, HdrTransferLut(13).linear(0.5f), 0.00001f)
+    }
+
+    @Test
     fun matchesAnalyticPqAndHlgBetweenTableEntries() {
         for (transfer in listOf(16, 18)) {
             val lut = HdrTransferLut(transfer)

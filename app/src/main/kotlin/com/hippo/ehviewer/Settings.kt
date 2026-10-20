@@ -1019,6 +1019,7 @@ object Settings : DataStorePreferences(null) {
     /**
      * Lib stills (JXL / JXR / PQ-AVIF): decode to Bitmap and skip Ultra HDR JPEG convert.
      * Default off = convert + Coil (deep color reduced; WCG only as encode tags).
+     * Advanced-color AVIF always bypasses conversion to preserve source precision.
      * When on: [com.hippo.ehviewer.image.hdr.LibDirectDecode]; with [readerAdvancedColor]
      * preserves P3/BT.2020 + F16 where useful; advanced off rematrixes wide→709.
      * Network/SMB/WebDAV keep original when on. Browse covers still convert to small JPEG.

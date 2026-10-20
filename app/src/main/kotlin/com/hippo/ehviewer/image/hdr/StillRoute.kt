@@ -263,6 +263,9 @@ fun classify(bytes: ByteArray, length: Int = bytes.size, fileNameHint: String? =
         return StillRoute.Lib(LibCodec.Jxr)
     }
 
+    val heifPrecision = if (isHeifFamily(bytes, n)) HeifPrecisionProbe.probe(bytes, n) else null
+    if (heifPrecision?.animated == true) return StillRoute.Platform
+
     // Gain-map markers. ISO `tmap` AVIF is applied by libavif. Apple aux HEIC and
     // JPEG/AVIF gain maps the platform already understands stay on ImageDecoder.
     if (bytes.containsAscii("GainMap", n) ||
@@ -287,7 +290,9 @@ fun classify(bytes: ByteArray, length: Int = bytes.size, fileNameHint: String? =
     }
 
     // Absolute PQ/HLG. AVIF → libavif. HEIC → libde265 (libavif cannot decode HEVC).
-    if (isHeifFamily(bytes, n) && hasAbsoluteHdrCicp(bytes, n)) {
+    val primaryTransfer = heifPrecision?.transfer
+    val absoluteHdr = primaryTransfer?.let { it == 16 || it == 18 } ?: hasAbsoluteHdrCicp(bytes, n)
+    if (isHeifFamily(bytes, n) && absoluteHdr) {
         return if (isAvifBrand(bytes, n)) {
             StillRoute.Lib(LibCodec.AvifPq)
         } else {
