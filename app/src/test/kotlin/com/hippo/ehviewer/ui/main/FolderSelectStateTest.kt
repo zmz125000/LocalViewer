@@ -490,6 +490,63 @@ class FolderSelectStateTest {
     }
 
     @Test
+    fun parallelSlotsFollowCoresAndHeap() {
+        val mb = 1024L * 1024L
+        assertEquals(1, taskParallelSlots(false, 8, 512 * mb))
+        assertEquals(1, taskParallelSlots(true, 8, 128 * mb))
+        assertEquals(2, taskParallelSlots(true, 8, 256 * mb))
+        assertEquals(2, taskParallelSlots(true, 8, 512 * mb))
+        assertEquals(4, taskParallelSlots(true, 4, 1024 * mb))
+        assertEquals(5, taskParallelSlots(true, 8, 1024 * mb))
+        assertEquals(1, taskParallelSlots(true, 1, 1024 * mb))
+    }
+
+    @Test
+    fun parallelRunsTwoJobsAndPauseHoldsTheRest() = runBlocking {
+        FolderSelectHost.parallelSlotsForTest = 2
+        val started = java.util.concurrent.atomic.AtomicInteger(0)
+        val both = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        val jobs = mutableStateListOf(
+            TaskJob(1, "one", false, pick("1", "one"), {
+                if (started.incrementAndGet() >= 2) both.complete(Unit)
+                release.await()
+                true
+            }, TaskStatus.Pending),
+            TaskJob(2, "two", false, pick("2", "two"), {
+                if (started.incrementAndGet() >= 2) both.complete(Unit)
+                release.await()
+                true
+            }, TaskStatus.Pending),
+            TaskJob(3, "three", false, pick("3", "three"), {
+                started.incrementAndGet()
+                true
+            }, TaskStatus.Pending),
+        )
+        val batch = TaskBatch("a", jobs, kotlinx.coroutines.Job())
+        val runner = launch(Dispatchers.Default) {
+            executeJobs(batch, "/tmp".toPath())
+        }
+        withTimeout(5_000) { both.await() }
+        assertEquals(TaskStatus.Running, jobs[0].status)
+        assertEquals(TaskStatus.Running, jobs[1].status)
+        assertEquals(TaskStatus.Pending, jobs[2].status)
+        batch.paused = true
+        batch.wake()
+        release.complete(Unit)
+        withTimeout(5_000) {
+            while (jobs[0].status != TaskStatus.Done || jobs[1].status != TaskStatus.Done) delay(10)
+        }
+        delay(80)
+        assertEquals(TaskStatus.Pending, jobs[2].status)
+        batch.paused = false
+        batch.wake()
+        withTimeout(5_000) { runner.join() }
+        assertEquals(TaskStatus.Done, jobs[2].status)
+        assertEquals(3, batch.finished)
+    }
+
+    @Test
     fun stopReturnsUnfinishedItemsToTheSelection() {
         val state = FolderSelectState()
         FolderSelectHost.attach(state)

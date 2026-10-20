@@ -757,6 +757,12 @@ object Settings : DataStorePreferences(null) {
      */
     val browseTaskAutoFinish = boolPref("browse_task_auto_finish", false)
 
+    /**
+     * Run more than one save/convert job at a time. Slot count follows the CPU
+     * count and how many decoded frames fit in the Java heap. Default off.
+     */
+    val browseTaskParallel = boolPref("browse_task_parallel", false)
+
     val hardwareBitmapThreshold = intPref("hardware_bitmap_threshold", 16384)
     val preloadThumbAggressively = boolPref("preload_thumb_aggressively", false)
     val animateItems = boolPref("animate_items", true)
