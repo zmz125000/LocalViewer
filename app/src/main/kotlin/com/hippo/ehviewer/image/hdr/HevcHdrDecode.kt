@@ -2,7 +2,6 @@ package com.hippo.ehviewer.image.hdr
 
 import android.util.Log
 import kotlin.math.max
-import kotlin.math.pow
 import kotlin.math.roundToInt
 
 /**
@@ -36,6 +35,9 @@ internal object HevcHdrDecode {
         var outW = max(1, (hdr.width * scale).roundToInt())
         var outH = max(1, (hdr.height * scale).roundToInt())
         val keepBt2020 = advancedColor && hdr.primaries == 9
+        val bt2020 = hdr.primaries == 9 || hdr.matrix == 9
+        val transfer = HdrTransferLut(hdr.transfer)
+        val rgb = FloatArray(3)
         val pixels = ByteArray(outW * outH * 8)
         val cellW = hdr.tiles.first().width
         val cellH = hdr.tiles.first().height
@@ -63,8 +65,7 @@ internal object HevcHdrDecode {
                     val cAt = cy * picture.chromaWidth + cx
                     val cb = picture.cb[cAt].toInt() and 0xffff
                     val cr = picture.cr[cAt].toInt() and 0xffff
-                    val rgb = yuvToLinear(yCode, cb, cr, picture.bitDepth, hdr)
-                    val bt2020 = hdr.primaries == 9 || hdr.matrix == 9
+                    yuvToLinear(yCode, cb, cr, picture.bitDepth, hdr, transfer, rgb)
                     val r: Float
                     val g: Float
                     val b: Float
@@ -73,10 +74,9 @@ internal object HevcHdrDecode {
                         g = rgb[1].coerceAtLeast(0f)
                         b = rgb[2].coerceAtLeast(0f)
                     } else if (bt2020) {
-                        val sc = bt2020ToScRgb(rgb[0], rgb[1], rgb[2])
-                        r = sc[0]
-                        g = sc[1]
-                        b = sc[2]
+                        r = 1.6604910021f * rgb[0] - 0.5876411388f * rgb[1] - 0.0728498633f * rgb[2]
+                        g = -0.1245504745f * rgb[0] + 1.1328998971f * rgb[1] - 0.0083494226f * rgb[2]
+                        b = -0.0181507634f * rgb[0] - 0.1005788980f * rgb[1] + 1.1187296614f * rgb[2]
                     } else {
                         r = rgb[0]
                         g = rgb[1]
@@ -103,7 +103,9 @@ internal object HevcHdrDecode {
         cr: Int,
         depth: Int,
         hdr: HeifContainer.AbsoluteHdr,
-    ): FloatArray {
+        transfer: HdrTransferLut,
+        rgb: FloatArray,
+    ) {
         val ten = depth >= 10
         val maxCode = if (ten) 1023f else 255f
         val mid = if (ten) 512f else 128f
@@ -134,43 +136,10 @@ internal object HevcHdrDecode {
             g = yf - 0.16455f * cbf - 0.57135f * crf
             b = yf + 1.8814f * cbf
         }
-        return floatArrayOf(transfer(r, hdr.transfer), transfer(g, hdr.transfer), transfer(b, hdr.transfer))
+        rgb[0] = transfer.linear(r)
+        rgb[1] = transfer.linear(g)
+        rgb[2] = transfer.linear(b)
     }
-
-    private fun transfer(code: Float, transfer: Int): Float {
-        val v = code.coerceIn(0f, 1f)
-        return if (transfer == 18) hlg(v) else pq(v) / 203f
-    }
-
-    private fun pq(n: Float): Float {
-        if (n <= 0f) return 0f
-        val m1 = 0.1593017578125
-        val m2 = 78.84375
-        val c1 = 0.8359375
-        val c2 = 18.8515625
-        val c3 = 18.6875
-        val np = n.toDouble().pow(1.0 / m2)
-        val num = (np - c1).coerceAtLeast(0.0)
-        val den = c2 - c3 * np
-        if (den <= 1e-6) return 10000f
-        return (10000.0 * (num / den).pow(1.0 / m1)).toFloat()
-    }
-
-    private fun hlg(x: Float): Float {
-        if (x <= 0f) return 0f
-        val a = 0.17883277f
-        val b = 0.28466892f
-        val c = 0.55991073f
-        val scene = if (x <= 0.5f) (x * x) / 3f else (kotlin.math.exp((x - c) / a) + b) / 12f
-        return scene * 12f
-    }
-
-    /** Same matrix as the camera-RAW Rec.2020 → scRGB pack. */
-    private fun bt2020ToScRgb(r: Float, g: Float, b: Float): FloatArray = floatArrayOf(
-        1.6604910021f * r - 0.5876411388f * g - 0.0728498633f * b,
-        -0.1245504745f * r + 1.1328998971f * g - 0.0083494226f * b,
-        -0.0181507634f * r - 0.1005788980f * g + 1.1187296614f * b,
-    )
 }
 
 private fun writePixel(dst: ByteArray, pixel: Int, r: Float, g: Float, b: Float) {

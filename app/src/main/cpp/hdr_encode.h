@@ -228,7 +228,8 @@ inline void linear_bt2020_to_bt709(float& r, float& g, float& b) {
 int pack_linear_f16_for_direct(std::vector<uint16_t>& rgba, unsigned w, unsigned h, bool force_hdr,
                                uhdr_color_gamut_t cg, bool advanced_color, int transfer_cicp,
                                std::vector<uint8_t>& out_pixels, int* out_format, int* out_is_hdr,
-                               float* out_boost, int* out_gamut, int* out_transfer);
+                               float* out_boost, int* out_gamut, int* out_transfer,
+                               unsigned max_threads = 0);
 
 /**
  * Pack [rgba] then copy into a Java byte[] for Bitmap.createBitmap.
