@@ -2,6 +2,7 @@ package com.hippo.ehviewer.image.hdr
 
 import java.io.File
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
 import org.junit.Test
@@ -55,6 +56,10 @@ class HeifHdrTest {
         val route = classify(bytes, n, file.name)
         assertEquals(LibCodec.AvifPq, (route as StillRoute.Lib).codec)
         assertTrue(route.needsUhdr)
+        assertTrue(needsGeneratedPageThumb("avif"))
+        assertTrue(needsGeneratedPageThumb(".AVIF"))
+        assertFalse(needsGeneratedPageThumb("heic"))
+        assertFalse(needsGeneratedPageThumb("jpg"))
     }
 
     private fun sample(rel: String): File {

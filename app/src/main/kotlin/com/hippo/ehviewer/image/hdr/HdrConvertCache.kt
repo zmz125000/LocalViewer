@@ -73,7 +73,7 @@ object HdrConvertCache {
 
     /**
      * Browse / cover MaxEdge thumbs. Separate pool from [fullConvertSlots]: thumbs are
-     * still heavy (native decodes full F16 then scales) but must not block reader pages.
+     * still heavy (AV1 reconstruct is full-frame; color runs at the thumb edge) but must not block reader pages.
      */
     private val thumbConvertSlots = Semaphore(1)
 
@@ -523,9 +523,11 @@ object HdrConvertCache {
     ): Boolean = withContext(Dispatchers.IO) {
         if (output.isFile && output.length() > 0L) return@withContext true
         if (input.isEmpty()) return@withContext false
-        if (codec == LibCodec.AvifPq) {
+        // Full-page gain-map AVIF stays on the direct bitmap path. A thumb (maxEdge > 0)
+        // has to be generated here: ImageDecoder does not paint these files.
+        if (codec == LibCodec.AvifPq && maxEdge <= 0) {
             when (probeAvifHdrKind(input)) {
-                1 -> return@withContext false // gain-map: keep original for platform
+                1 -> return@withContext false
             }
         }
         // Thumbs and full pages use separate permits so browse MaxEdge cannot block reader.

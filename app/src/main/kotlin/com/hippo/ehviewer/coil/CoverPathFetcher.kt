@@ -18,6 +18,7 @@ import com.hippo.ehviewer.image.hdr.RawPreviewCache
 import com.hippo.ehviewer.image.hdr.isHdrConvertCandidateExtension
 import com.hippo.ehviewer.image.hdr.isRawStillExtension
 import com.hippo.ehviewer.library.LandscapeCoverMarks
+import com.hippo.ehviewer.library.ReaderPageThumb
 import com.hippo.ehviewer.library.ZipMemberCover
 import com.hippo.ehviewer.library.ZipPaths
 import com.hippo.ehviewer.library.isImageFileName
@@ -58,6 +59,8 @@ class CoverPathFetcher(
         val openPath = when {
             isRawStillExtension(ext) -> RawPreviewCache.ensureJpeg(resolved, demosaicFallback = false)
                 ?: throw FileNotFoundException("RAW preview missing: ${data.path}")
+            ext == "avif" -> ReaderPageThumb.ensureFromFile("local:${data.path}", resolved, hint)
+                ?: HdrConvertCache.ensureCoilReady(resolved, hint)
             isHdrConvertCandidateExtension(ext) -> HdrConvertCache.ensureCoilReady(resolved, hint)
             else -> resolved
         }
