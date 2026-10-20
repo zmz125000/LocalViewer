@@ -364,11 +364,13 @@ sealed interface BrowseEntryRemote {
 
 /**
  * Difference between the cached folder roots and one live listing of the current
- * directory. Only [addedDirectories] need the normal child/leaf classification scan.
- * Direct files are reconciled separately via [replaceSlimDirectFilesFromLive].
+ * directory. [addedDirectories] need the normal child/leaf classification scan;
+ * callers also deep-scan [directoriesNeedingDeepScanOnMtimeChange] and
+ * [hiddenDirectoriesNeedingDeepScan]. Direct files are reconciled separately via
+ * [replaceSlimDirectFilesFromLive].
  *
  * Slim "not in live listing" uses [unreachableDirectoryNames] (keep rows + index keys).
- * [removedDirectoryNames] still **drops** parent-listing rows (hidden-dir reclassify).
+ * [removedDirectoryNames] still **drops** parent-listing rows (hidden/mtime reclassify).
  */
 data class RemoteDirectorySlimPlan(
     val addedDirectories: List<RemoteChild>,
@@ -768,6 +770,40 @@ fun hiddenDirectoriesNeedingDeepScan(
             !isProtectedSystemName(it.name) &&
             it.name in shallowHidden
     }
+}
+
+/**
+ * Existing direct folders whose live mtime differs from the cached listing.
+ *
+ * Slim already deep-classifies [RemoteDirectorySlimPlan.addedDirectories]. A known
+ * mtime change means children were added or removed under that folder, so it needs
+ * the same classify pass. Zip-as-dir rows are excluded (zip file size/mtime is
+ * handled via [BrowseEntryRemote.Directory.zipStale]).
+ */
+fun directoriesNeedingDeepScanOnMtimeChange(
+    cachedEntries: List<BrowseEntryRemote>,
+    liveChildren: List<RemoteChild>,
+): List<RemoteChild> {
+    val cachedMtimes = HashMap<String, Long>()
+    for (entry in cachedEntries) {
+        if (entry !is BrowseEntryRemote.Directory) continue
+        val path = entry.relativeName.replace('\\', '/').trim('/')
+        if (path.isEmpty() || '/' in path) continue
+        if (isZipArchiveFileName(path)) continue
+        cachedMtimes[path] = entry.lastModifiedMs
+    }
+    if (cachedMtimes.isEmpty()) return emptyList()
+    val out = ArrayList<RemoteChild>()
+    for (child in liveChildren) {
+        if (!child.isDirectory || isProtectedSystemName(child.name)) continue
+        if (isZipArchiveFileName(child.name)) continue
+        val cachedMtime = cachedMtimes[child.name] ?: continue
+        val liveMtime = child.lastModifiedMs
+        if (cachedMtime > 0L && liveMtime > 0L && cachedMtime != liveMtime) {
+            out += child
+        }
+    }
+    return out
 }
 
 /**
