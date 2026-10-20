@@ -253,12 +253,25 @@ object LibDirectDecode {
             LibCodec.Jpeg2000 -> decodeJpeg2000BytesToDirect(bytes, maxEdge, advanced, outInfo, outBoost)
                 ?: packJpeg2000(bytes, maxEdge, outInfo, outBoost)
             LibCodec.AvifPq -> decodeAvifBytesToDirect(bytes, maxEdge, advanced, outInfo, outBoost)
+            LibCodec.HevcHdr -> return decodeHevcHdrPacked(bytes, maxEdge, advanced)
             LibCodec.Raw -> return decodeRawPacked(
                 byteBufferSource(ByteBuffer.wrap(bytes)) {},
                 maxEdge,
             )
         } ?: return null
         return PackedPixels(pixels, outInfo, outBoost, advanced, premultiplied = true)
+    }
+
+    /**
+     * PQ/HLG HEIC. Null when HDR display is off or the codec cannot emit 10-bit,
+     * so the caller falls through to the platform SDR image.
+     */
+    private fun decodeHevcHdrPacked(bytes: ByteArray, maxEdge: Int, advanced: Boolean): PackedPixels? {
+        if (!Settings.readerHdrDisplay.value) return null
+        val frame = HevcHdrDecode.decode(bytes, maxEdge, advanced) ?: return null
+        val outInfo = intArrayOf(frame.width, frame.height, 1, 1, frame.gamut, 16)
+        val outBoost = floatArrayOf(frame.boost)
+        return PackedPixels(frame.pixels, outInfo, outBoost, advanced = true, premultiplied = true)
     }
 
     /**
