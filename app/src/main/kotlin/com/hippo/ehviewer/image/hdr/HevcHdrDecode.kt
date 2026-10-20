@@ -1,11 +1,12 @@
 package com.hippo.ehviewer.image.hdr
 
 import android.util.Log
+import com.hippo.ehviewer.jni.linearizeHeifIcc
 import kotlin.math.max
 import kotlin.math.roundToInt
 
 /**
- * High-bit-depth HEIC (SDR or PQ/HLG) → linear RGBA half.
+ * High-bit-depth or unsupported-profile HEIC (SDR or PQ/HLG) → linear RGBA half.
  * 1.0 is SDR white (203 nits). Bundled libde265 preserves the encoded precision;
  * MediaCodec remains a fallback on ABIs without the bundled HDR codecs.
  *
@@ -29,8 +30,10 @@ internal object HevcHdrDecode {
     )
 
     fun decode(bytes: ByteArray, maxEdge: Int, advancedColor: Boolean): Frame? {
-        val hdr = HeifContainer.parse(bytes)?.primaryImage() ?: return null
+        val parsed = HeifContainer.parse(bytes) ?: return null
+        val hdr = parsed.primaryImage() ?: return null
         val isHdr = hdr.transfer == 16 || hdr.transfer == 18
+        val icc = hdr.icc.takeUnless { isHdr }
         if (hdr.tiles.isEmpty()) return null
         val cap = if (maxEdge > 0) maxEdge else FULL_EDGE
         val longEdge = max(hdr.width, hdr.height)
@@ -38,13 +41,14 @@ internal object HevcHdrDecode {
         var outW = max(1, (hdr.width * scale).roundToInt())
         var outH = max(1, (hdr.height * scale).roundToInt())
         val gamut = when {
+            icc != null -> 0 // The complete ICC transform below produces linear scRGB.
             !advancedColor -> 0
             hdr.primaries == 9 -> 2
             hdr.primaries == 12 -> 1
             else -> 0
         }
         val bt2020 = hdr.primaries == 9 || hdr.matrix == 9
-        val transfer = HdrTransferLut(hdr.transfer)
+        val transfer = HdrTransferLut(if (icc != null) 8 else hdr.transfer)
         val rgb = FloatArray(3)
         val pixels = ByteArray(outW * outH * 8)
         val cellW = hdr.tiles.first().width
@@ -75,11 +79,20 @@ internal object HevcHdrDecode {
                     val cAt = cy * picture.chromaWidth + cx
                     val cb = picture.cb[cAt].toInt() and 0xffff
                     val cr = picture.cr[cAt].toInt() and 0xffff
-                    yuvToLinear(yCode, cb, cr, picture.bitDepth, hdr, transfer, rgb)
+                    yuvToLinear(
+                        yCode, cb, cr, picture.bitDepth,
+                        if (hdr.hasNclx) hdr.fullRange else picture.fullRange ?: hdr.fullRange,
+                        if (hdr.hasNclx) hdr.matrix else picture.matrix ?: hdr.matrix,
+                        hdr.primaries, transfer, rgb,
+                    )
                     val r: Float
                     val g: Float
                     val b: Float
-                    if (gamut != 0) {
+                    if (icc != null) {
+                        r = rgb[0]
+                        g = rgb[1]
+                        b = rgb[2]
+                    } else if (gamut != 0) {
                         r = rgb[0].coerceAtLeast(0f)
                         g = rgb[1].coerceAtLeast(0f)
                         b = rgb[2].coerceAtLeast(0f)
@@ -101,6 +114,9 @@ internal object HevcHdrDecode {
                 }
             }
         }
+        if (icc != null && !linearizeHeifIcc(pixels, icc)) return null
+        val alpha = parsed.alphaImage()
+        if (alpha != null && !applyAlpha(pixels, outW, outH, hdr, alpha)) return null
         if (hdr.rotationDegreesCcw % 360 != 0) {
             val turned = rotateHalf(pixels, outW, outH, hdr.rotationDegreesCcw)
             outW = turned.width
@@ -116,7 +132,9 @@ internal object HevcHdrDecode {
         cb: Int,
         cr: Int,
         depth: Int,
-        hdr: HeifContainer.PrimaryImage,
+        fullRange: Boolean,
+        matrix: Int,
+        primaries: Int,
         transfer: HdrTransferLut,
         rgb: FloatArray,
     ) {
@@ -126,7 +144,7 @@ internal object HevcHdrDecode {
         val yf: Float
         val cbf: Float
         val crf: Float
-        if (hdr.fullRange) {
+        if (fullRange) {
             yf = y / maxCode
             cbf = (cb - mid) / maxCode
             crf = (cr - mid) / maxCode
@@ -141,16 +159,16 @@ internal object HevcHdrDecode {
         val r: Float
         val g: Float
         val b: Float
-        if (hdr.matrix == 0) {
+        if (matrix == 0) {
             rgb[0] = transfer.linear(cr / maxCode)
             rgb[1] = transfer.linear(y / maxCode)
             rgb[2] = transfer.linear(cb / maxCode)
             return
-        } else if (hdr.matrix == 1) {
+        } else if (matrix == 1) {
             r = yf + 1.5748f * crf
             g = yf - 0.1873f * cbf - 0.4681f * crf
             b = yf + 1.8556f * cbf
-        } else if (hdr.matrix == 9 || hdr.primaries == 9) {
+        } else if (matrix == 9 || primaries == 9) {
             r = yf + 1.4746f * crf
             g = yf - 0.16455f * cbf - 0.57135f * crf
             b = yf + 1.8814f * cbf
@@ -162,6 +180,58 @@ internal object HevcHdrDecode {
         rgb[0] = transfer.linear(r)
         rgb[1] = transfer.linear(g)
         rgb[2] = transfer.linear(b)
+    }
+
+    /** Auxiliary alpha codes are linear coverage, independent of the RGB ICC. */
+    private fun applyAlpha(
+        pixels: ByteArray,
+        outW: Int,
+        outH: Int,
+        primary: HeifContainer.PrimaryImage,
+        alpha: HeifContainer.PrimaryImage,
+    ): Boolean {
+        if (alpha.width != primary.width || alpha.height != primary.height || alpha.tiles.isEmpty()) return false
+        if (alpha.rotationDegreesCcw != 0 && alpha.rotationDegreesCcw != primary.rotationDegreesCcw) return false
+        val cellW = alpha.tiles.first().width
+        val cellH = alpha.tiles.first().height
+        for ((index, tile) in alpha.tiles.withIndex()) {
+            val picture = HevcDecoder.decode(tile, preferSoftware = true) ?: return false
+            val x0 = (index % alpha.columns) * cellW
+            val y0 = (index / alpha.columns) * cellH
+            val copyW = minOf(picture.width, alpha.width - x0)
+            val copyH = minOf(picture.height, alpha.height - y0)
+            if (copyW <= 0 || copyH <= 0) return false
+            val maxCode = ((1 shl picture.bitDepth) - 1).toFloat()
+            for (y in 0 until copyH) {
+                val oy = ((y0 + y).toLong() * outH / alpha.height).toInt().coerceIn(0, outH - 1)
+                // Match the color loop's final sample when downscaling, and apply
+                // alpha once per destination pixel rather than multiplying repeatedly.
+                if (y0 + y + 1 < alpha.height && (y0 + y + 1).toLong() * outH / alpha.height == oy.toLong()) continue
+                for (x in 0 until copyW) {
+                    val ox = ((x0 + x).toLong() * outW / alpha.width).toInt().coerceIn(0, outW - 1)
+                    if (x0 + x + 1 < alpha.width && (x0 + x + 1).toLong() * outW / alpha.width == ox.toLong()) continue
+                    val a = (picture.y[y * picture.width + x].toInt() and 0xffff) / maxCode
+                    val at = (oy * outW + ox) * 8
+                    for (c in 0..2) {
+                        val code = (pixels[at + c * 2].toInt() and 255) or ((pixels[at + c * 2 + 1].toInt() and 255) shl 8)
+                        putHalf(pixels, at + c * 2, halfBitsToFloat(code) * a)
+                    }
+                    putHalf(pixels, at + 6, a)
+                }
+            }
+        }
+        return true
+    }
+}
+
+private fun halfBitsToFloat(bits: Int): Float {
+    val sign = if (bits and 0x8000 == 0) 1f else -1f
+    val exponent = (bits ushr 10) and 31
+    val mantissa = bits and 1023
+    return when (exponent) {
+        0 -> sign * mantissa * (1f / 16777216f)
+        31 -> if (mantissa == 0) sign * Float.POSITIVE_INFINITY else Float.NaN
+        else -> sign * Math.scalb(1f + mantissa / 1024f, exponent - 15)
     }
 }
 

@@ -1,14 +1,16 @@
 cmake_minimum_required(VERSION 3.22)
 project(hevc_hdr_benchmark LANGUAGES C CXX)
-# Host JNI library for HevcHdrBenchmark.java. Supply libde265's source directory.
+# Host JNI library for the HEIF benchmarks. Supply libde265's source directory
+# and libjxl's third_party/skcms directory for embedded ICC transforms.
 set(DE265_SOURCE_DIR "" CACHE PATH "libde265 source directory")
+set(SKCMS_SOURCE_DIR "" CACHE PATH "libjxl third_party/skcms source directory")
 find_package(JNI REQUIRED COMPONENTS JVM)
 set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
 set(ENABLE_DECODER OFF CACHE BOOL "" FORCE)
 set(ENABLE_ENCODER OFF CACHE BOOL "" FORCE)
 set(ENABLE_SDL OFF CACHE BOOL "" FORCE)
 add_subdirectory("${DE265_SOURCE_DIR}" libde265)
-add_library(hevc_hdr_test SHARED ../../app/src/main/cpp/hevc_decode.cpp)
+add_library(hevc_hdr_test SHARED ../../app/src/main/cpp/hevc_decode.cpp "${SKCMS_SOURCE_DIR}/skcms.cc")
 target_compile_features(hevc_hdr_test PRIVATE cxx_std_17)
-target_include_directories(hevc_hdr_test PRIVATE ${JNI_INCLUDE_DIRS} "${DE265_SOURCE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/libde265")
+target_include_directories(hevc_hdr_test PRIVATE ${JNI_INCLUDE_DIRS} "${DE265_SOURCE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/libde265" "${SKCMS_SOURCE_DIR}")
 target_link_libraries(hevc_hdr_test PRIVATE de265)
