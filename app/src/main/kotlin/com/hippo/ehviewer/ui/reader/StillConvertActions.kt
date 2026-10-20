@@ -177,7 +177,7 @@ private fun Context.discardUnpublished(uri: Uri) {
 
 /**
  * Picks a folder immediately, then decodes. The file name follows the Auto rule
- * (`.jpg` for JPEG and Ultra HDR JPEG, `.jxl` for deep SDR).
+ * (`.jpg` by default; encoder-enabled builds use `.jxl` for deep SDR).
  * @return false when decode or write fails. Cancel returns true.
  */
 context(_: SnackbarHostState, _: Context)
@@ -197,6 +197,7 @@ private data class EncodedStill(val file: File, val target: StillExportTarget)
 
 /** Download/stage first; retain the memory lease until encoding releases its pixels. */
 private suspend fun encodeStaged(leaf: String, target: StillExportTarget, stage: suspend () -> File): EncodedStill? = withIOContext {
+    if (!target.available) return@withIOContext null
     val source = stage()
     try {
         StillExportWork.withSource(source, leaf) {

@@ -1,5 +1,6 @@
 package com.hippo.ehviewer.image.hdr
 
+import com.hippo.ehviewer.BuildConfig
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -10,7 +11,8 @@ class StillExportTest {
     fun autoFollowsHdrThenFp16ThenEightBit() {
         assertEquals(StillExportTarget.JpegHdr, resolveStillExportAuto(hdr = true, f16 = true))
         assertEquals(StillExportTarget.JpegHdr, resolveStillExportAuto(hdr = true, f16 = false))
-        assertEquals(StillExportTarget.Jxl, resolveStillExportAuto(hdr = false, f16 = true))
+        assertEquals(StillExportTarget.Jxl, resolveStillExportAuto(hdr = false, f16 = true, jxlEncoder = true))
+        assertEquals(StillExportTarget.Jpeg, resolveStillExportAuto(hdr = false, f16 = true, jxlEncoder = false))
         assertEquals(StillExportTarget.Jpeg, resolveStillExportAuto(hdr = false, f16 = false))
     }
 
@@ -18,11 +20,21 @@ class StillExportTest {
     fun originalSizeUsesTheSameRuleAndHdrIsUltraHdr() {
         assertEquals(StillExportTarget.JpegHdr, StillExportTarget.AutoOriginal.resolve(hdr = true, f16 = true))
         assertEquals(StillExportTarget.JpegHdr, StillExportTarget.AutoOriginal.resolve(hdr = true, f16 = false))
-        assertEquals(StillExportTarget.Jxl, StillExportTarget.AutoOriginal.resolve(hdr = false, f16 = true))
+        val deepSdr = if (BuildConfig.JXL_ENCODER_ENABLED) StillExportTarget.Jxl else StillExportTarget.Jpeg
+        assertEquals(deepSdr, StillExportTarget.AutoOriginal.resolve(hdr = false, f16 = true))
         assertEquals(StillExportTarget.Jpeg, StillExportTarget.AutoOriginal.resolve(hdr = false, f16 = false))
         assertEquals(1, StillExportTarget.AutoOriginal.resolve(hdr = true, f16 = false).exportMode())
         assertEquals("jpg", StillExportTarget.AutoOriginal.resolve(hdr = true, f16 = true).fileExtension())
-        assertEquals("jxl", StillExportTarget.AutoOriginal.resolve(hdr = false, f16 = true).fileExtension())
+        assertEquals(deepSdr.fileExtension(), StillExportTarget.AutoOriginal.resolve(hdr = false, f16 = true).fileExtension())
+    }
+
+    @Test
+    fun jxlAvailabilityMatchesTheNativeBuildOption() {
+        assertTrue(StillExportTarget.AutoOriginal.available)
+        assertTrue(StillExportTarget.Jpeg.available)
+        assertTrue(StillExportTarget.JpegHdr.available)
+        assertEquals(BuildConfig.JXL_ENCODER_ENABLED, StillExportTarget.Jxl.available)
+        assertEquals(BuildConfig.JXL_ENCODER_ENABLED, StillExportTarget.JxlHdr.available)
     }
 
     @Test
