@@ -18,6 +18,7 @@ import com.hippo.ehviewer.library.ZipCentralDirectory
 import com.hippo.ehviewer.library.applySlimDirectoryHidden
 import com.hippo.ehviewer.library.classifyRemoteListing
 import com.hippo.ehviewer.library.classifyRemoteListingWithPeeks
+import com.hippo.ehviewer.library.directoriesNeedingDeepScanOnMtimeChange
 import com.hippo.ehviewer.library.hiddenDirectoriesNeedingDeepScan
 import com.hippo.ehviewer.library.isDotHiddenName
 import com.hippo.ehviewer.library.isPromotableLeafDirName
@@ -457,9 +458,9 @@ object WebDavGateway {
     }
 
     /**
-     * Cache-hit refresh: one PROPFIND for the current directory. Only new child folders
-     * run the existing child/leaf peek classifier. Direct files are reconciled
-     * (drop stale / add new) from the live listing.
+     * Cache-hit refresh: one PROPFIND for the current directory. New child folders
+     * and existing folders whose mtime changed run the child/leaf peek classifier.
+     * Direct files are reconciled (drop stale / add new) from the live listing.
      */
     private suspend fun listDirectorySlim(
         source: WebDavSourceEntity,
@@ -486,7 +487,9 @@ object WebDavGateway {
         } else {
             emptyList()
         }
-        val deepNames = deepHidden.mapTo(HashSet()) { it.name }
+        val mtimeChanged = directoriesNeedingDeepScanOnMtimeChange(cached, children)
+        val reclassifyNames = (deepHidden.asSequence() + mtimeChanged.asSequence())
+            .mapTo(HashSet()) { it.name }
         val cachedZipAsDir = if (zipFileNames.isEmpty()) {
             emptySet()
         } else {
@@ -497,14 +500,15 @@ object WebDavGateway {
         } else {
             children.filter { it.name in zipFileNames && it.name !in cachedZipAsDir }
         }
-        val toClassify = (plan.addedDirectories + deepHidden + newZips).distinctBy { it.name }
+        val toClassify = (plan.addedDirectories + deepHidden + mtimeChanged + newZips)
+            .distinctBy { it.name }
         val dirName = relativeDir.substringAfterLast('/').ifEmpty { source.displayName }
         val zipAdjustedUnreachable = plan.unreachableDirectoryNames - zipFileNames
         val recovered = plan.recoveredDirectoryNames
         val dirsUnchanged = plan.addedDirectories.isEmpty() &&
             zipAdjustedUnreachable.isEmpty() &&
             recovered.isEmpty()
-        if (dirsUnchanged && deepHidden.isEmpty() && newZips.isEmpty()) {
+        if (dirsUnchanged && deepHidden.isEmpty() && mtimeChanged.isEmpty() && newZips.isEmpty()) {
             return SlimDirectoryRefresh(
                 entries = applySlimDirectoryHidden(
                     replaceSlimDirectFilesFromLive(cached, children, dirName),
@@ -517,7 +521,7 @@ object WebDavGateway {
         }
         val effectivePlan = RemoteDirectorySlimPlan(
             addedDirectories = toClassify,
-            removedDirectoryNames = deepNames,
+            removedDirectoryNames = reclassifyNames,
             unreachableDirectoryNames = zipAdjustedUnreachable,
             recoveredDirectoryNames = recovered,
         )
