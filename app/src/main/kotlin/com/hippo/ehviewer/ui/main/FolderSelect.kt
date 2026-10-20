@@ -81,11 +81,15 @@ import com.hippo.ehviewer.ui.theme.snackbarDismissContentColor
 import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.selects.select
 import moe.tarsin.snackbar
 import okio.Path
 
@@ -413,8 +417,9 @@ internal class TaskBatch(
         get() {
             val total = jobs.size
             if (total <= 0) return "0/0"
-            val shown = if (finished >= total) total else finished + 1
-            return "$shown/$total"
+            if (finished >= total) return "$total/$total"
+            val running = jobs.count { it.status == TaskStatus.Running }.coerceAtLeast(1)
+            return "${(finished + running).coerceAtMost(total)}/$total"
         }
 
     val pending: List<TaskJob>
@@ -437,33 +442,76 @@ internal class TaskBatch(
     suspend fun awaitSignal() {
         wake.receive()
     }
+
+    /** Wait until a running job finishes or [wake] is called. */
+    suspend fun awaitProgress(inFlight: List<Deferred<Unit>>) {
+        if (inFlight.isEmpty()) {
+            wake.receive()
+            return
+        }
+        select {
+            inFlight.forEach { deferred ->
+                deferred.onAwait { }
+            }
+            wake.onReceive { }
+        }
+    }
 }
 
 /**
- * Runs [batch] jobs one at a time.
- * While [TaskBatch.paused] is set, the running job finishes and later jobs stay pending.
+ * How many save/convert jobs may run at once.
+ *
+ * Off is always 1. On, each in-flight job can hold one decoded frame through
+ * encode (RGBA_F16 is about 8 bytes per pixel, ~96 MiB at 12 MP). Half the
+ * Java heap is the budget, and the count never exceeds the CPU count. When
+ * two frames fit, the floor is 2.
+ */
+internal fun taskParallelSlots(enabled: Boolean, cores: Int, maxMemoryBytes: Long): Int {
+    if (!enabled) return 1
+    val cpu = cores.coerceAtLeast(1)
+    val perJob = 96L * 1024 * 1024
+    val byRam = (maxMemoryBytes / 2 / perJob).toInt()
+    val slots = minOf(cpu, byRam.coerceAtLeast(1))
+    if (slots >= 2) return slots
+    val twoFit = maxMemoryBytes * 3 / 4 >= perJob * 2
+    return if (twoFit && cpu >= 2) 2 else 1
+}
+
+/**
+ * Runs [batch] until no jobs remain.
+ * Slot count is 1 unless parallel mode is on; see [taskParallelSlots].
+ * While [TaskBatch.paused] is set, in-flight jobs finish and later jobs stay pending.
  */
 internal suspend fun executeJobs(batch: TaskBatch, dir: Path) {
-    while (batch.end == null) {
-        if (batch.paused) {
-            FolderSelectHost.syncTaskFgs()
-            val busy = batch.jobs.any { it.status == TaskStatus.Pending || it.status == TaskStatus.Running }
-            if (!busy) break
-            batch.awaitSignal()
-            continue
-        }
-        val next = batch.jobs.firstOrNull { it.status == TaskStatus.Pending } ?: break
-        next.status = TaskStatus.Running
-        val ok = try {
-            next.run(dir)
-        } catch (e: CancellationException) {
-            throw e
-        } catch (_: Throwable) {
-            false
-        }
-        if (next.status == TaskStatus.Running) {
-            next.status = if (ok) TaskStatus.Done else TaskStatus.Failed
-            batch.finished++
+    coroutineScope {
+        val inFlight = ArrayList<Deferred<Unit>>()
+        while (batch.end == null) {
+            inFlight.retainAll { !it.isCompleted }
+            val slots = FolderSelectHost.currentParallelSlots()
+            val pending = batch.jobs.any { it.status == TaskStatus.Pending }
+            val running = inFlight.isNotEmpty() ||
+                batch.jobs.any { it.status == TaskStatus.Running }
+            if (!pending && !running) break
+            if (batch.paused || inFlight.size >= slots || !pending) {
+                if (batch.paused) FolderSelectHost.syncTaskFgs()
+                batch.awaitProgress(inFlight)
+                continue
+            }
+            val next = batch.jobs.firstOrNull { it.status == TaskStatus.Pending } ?: continue
+            next.status = TaskStatus.Running
+            inFlight += async {
+                val ok = try {
+                    next.run(dir)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Throwable) {
+                    false
+                }
+                if (next.status == TaskStatus.Running) {
+                    next.status = if (ok) TaskStatus.Done else TaskStatus.Failed
+                    synchronized(batch) { batch.finished++ }
+                }
+            }
         }
     }
 }
@@ -511,8 +559,19 @@ object FolderSelectHost {
     /** Unit-test override for [Settings.browseTaskAutoFinish]; null reads the pref. */
     internal var autoFinishForTest: Boolean? = null
 
+    /** Unit-test override for [currentParallelSlots]; null reads the pref and the device. */
+    internal var parallelSlotsForTest: Int? = null
+
     private fun autoFinishEnabled(): Boolean = autoFinishForTest
         ?: runCatching { Settings.browseTaskAutoFinish.value }.getOrDefault(false)
+
+    internal fun currentParallelSlots(): Int {
+        parallelSlotsForTest?.let { return it.coerceAtLeast(1) }
+        val enabled = runCatching { Settings.browseTaskParallel.value }.getOrDefault(false)
+        val cores = runCatching { Runtime.getRuntime().availableProcessors() }.getOrDefault(1)
+        val heap = runCatching { Runtime.getRuntime().maxMemory() }.getOrDefault(0L)
+        return taskParallelSlots(enabled, cores, heap)
+    }
 
     /** Folder keys with a queued batch behind the running task. */
     internal fun queuedFolderKeys(): Set<String> = queuedCounts.keys
@@ -705,6 +764,7 @@ object FolderSelectHost {
         current = null
         dialog = false
         autoFinishForTest = null
+        parallelSlotsForTest = null
         // Unit tests have no Android Main dispatcher.
         scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
         syncTaskFgs()
@@ -1361,6 +1421,7 @@ private fun SelectionOverflowControl(
     val picks = FolderSelectHost.selectionPicks
     val runInBackground = Settings.browseTaskForegroundService.asMutableState()
     val autoFinish = Settings.browseTaskAutoFinish.asMutableState()
+    val runInParallel = Settings.browseTaskParallel.asMutableState()
     val shareable = picks.count { it.shareHttp != null }
     val convertible = picks.count { it.convertStill != null }
     val savable = picks.count { it.saveInto != null }
@@ -1490,6 +1551,23 @@ private fun SelectionOverflowControl(
                         }
                     },
                     onClick = { autoFinish.value = !autoFinish.value },
+                )
+                DropdownMenuItem(
+                    text = { Text(stringResource(R.string.browse_run_in_parallel)) },
+                    trailingIcon = {
+                        Box(
+                            modifier = Modifier.size(24.dp),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            if (runInParallel.value) {
+                                Icon(Icons.Default.Check, contentDescription = null)
+                            }
+                        }
+                    },
+                    onClick = {
+                        runInParallel.value = !runInParallel.value
+                        FolderSelectHost.batch?.wake()
+                    },
                 )
             }
         }
