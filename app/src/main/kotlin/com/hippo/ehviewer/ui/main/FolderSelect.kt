@@ -1592,7 +1592,7 @@ private fun ConvertTargetItems(
         StillExportTarget.JpegHdr to R.string.convert_jpeg_hdr,
         StillExportTarget.Jxl to R.string.convert_jxl,
         StillExportTarget.JxlHdr to R.string.convert_jxl_hdr,
-    ).forEach { (target, label) ->
+    ).filter { (target, _) -> target.available }.forEach { (target, label) ->
         DropdownMenuItem(
             text = { Text(stringResource(label)) },
             onClick = { onTarget(target) },
