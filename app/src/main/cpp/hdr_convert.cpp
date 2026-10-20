@@ -6,6 +6,7 @@
 #include <jni.h>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -17,6 +18,7 @@
 #include <vector>
 
 #include "hdr_encode.h"
+#include "hdr_parallel.h"
 #include "ultrahdr_api.h"
 // Internal libultrahdr: build Display P3 / 709 ICC for baseline JPEG APP2.
 #include "ultrahdr/icc.h"
@@ -1147,24 +1149,31 @@ inline float clamp_nonneg(float v) {
 int pack_linear_f16_for_direct(std::vector<uint16_t>& rgba, unsigned w, unsigned h, bool force_hdr,
                                uhdr_color_gamut_t cg, bool advanced_color, int transfer_cicp,
                                std::vector<uint8_t>& out_pixels, int* out_format, int* out_is_hdr,
-                               float* out_boost, int* out_gamut, int* out_transfer) {
+                               float* out_boost, int* out_gamut, int* out_transfer,
+                               unsigned max_threads) {
     if (w == 0 || h == 0) return -1;
     const size_t pixels = static_cast<size_t>(w) * static_cast<size_t>(h);
     if (rgba.size() < pixels * 4) return -1;
 
-    float peak = 0.f;
-    for (size_t i = 0; i < pixels; i++) {
-        const float r = half_to_float(rgba[i * 4 + 0]);
-        const float g = half_to_float(rgba[i * 4 + 1]);
-        const float b = half_to_float(rgba[i * 4 + 2]);
-        float a = half_to_float(rgba[i * 4 + 3]);
-        if (!std::isfinite(a) || a <= 0.f) continue;
-        if (a > 1.f) a = 1.f;
-        // Buffers are straight-alpha. Invisible RGB must not force HDR mode;
-        // evaluate the linear contribution that Android actually composites.
-        float m = fmax3(r, g, b) * a;
-        if (std::isfinite(m) && m > peak) peak = m;
-    }
+    const unsigned jobs = hdr_pixel_jobs(pixels, max_threads);
+    std::array<float, 8> peaks{};
+    hdr_parallel_pixels(pixels, jobs, [&](size_t begin, size_t end, unsigned job) {
+        float peak = 0.f;
+        for (size_t i = begin; i < end; i++) {
+            const float r = half_to_float(rgba[i * 4 + 0]);
+            const float g = half_to_float(rgba[i * 4 + 1]);
+            const float b = half_to_float(rgba[i * 4 + 2]);
+            float a = half_to_float(rgba[i * 4 + 3]);
+            if (!std::isfinite(a) || a <= 0.f) continue;
+            if (a > 1.f) a = 1.f;
+            // Buffers are straight-alpha. Invisible RGB must not force HDR mode;
+            // evaluate the linear contribution that Android actually composites.
+            float m = fmax3(r, g, b) * a;
+            if (std::isfinite(m) && m > peak) peak = m;
+        }
+        peaks[job] = peak;
+    });
+    float peak = *std::max_element(peaks.begin(), peaks.end());
     if (peak < 1.f) peak = 1.f;
     if (peak > kMaxLinear) peak = kMaxLinear;
 
@@ -1178,26 +1187,28 @@ int pack_linear_f16_for_direct(std::vector<uint16_t>& rgba, unsigned w, unsigned
 
     // Rematrix in-place — never hold a second full-frame F16 buffer.
     if (need_rematrix) {
-        for (size_t i = 0; i < pixels; i++) {
-            float r = half_to_float(rgba[i * 4 + 0]);
-            float g = half_to_float(rgba[i * 4 + 1]);
-            float b = half_to_float(rgba[i * 4 + 2]);
-            float a = half_to_float(rgba[i * 4 + 3]);
-            if (cg == UHDR_CG_DISPLAY_P3) {
-                linear_p3_to_bt709(r, g, b);
-            } else {
-                linear_bt2020_to_bt709(r, g, b);
+        hdr_parallel_pixels(pixels, jobs, [&](size_t begin, size_t end, unsigned) {
+            for (size_t i = begin; i < end; i++) {
+                float r = half_to_float(rgba[i * 4 + 0]);
+                float g = half_to_float(rgba[i * 4 + 1]);
+                float b = half_to_float(rgba[i * 4 + 2]);
+                float a = half_to_float(rgba[i * 4 + 3]);
+                if (cg == UHDR_CG_DISPLAY_P3) {
+                    linear_p3_to_bt709(r, g, b);
+                } else {
+                    linear_bt2020_to_bt709(r, g, b);
+                }
+                r = clamp_nonneg(r);
+                g = clamp_nonneg(g);
+                b = clamp_nonneg(b);
+                if (!std::isfinite(a) || a < 0.f) a = 0.f;
+                if (a > 1.f) a = 1.f;
+                rgba[i * 4 + 0] = float_to_half(r);
+                rgba[i * 4 + 1] = float_to_half(g);
+                rgba[i * 4 + 2] = float_to_half(b);
+                rgba[i * 4 + 3] = float_to_half(a);
             }
-            r = clamp_nonneg(r);
-            g = clamp_nonneg(g);
-            b = clamp_nonneg(b);
-            if (!std::isfinite(a) || a < 0.f) a = 0.f;
-            if (a > 1.f) a = 1.f;
-            rgba[i * 4 + 0] = float_to_half(r);
-            rgba[i * 4 + 1] = float_to_half(g);
-            rgba[i * 4 + 2] = float_to_half(b);
-            rgba[i * 4 + 3] = float_to_half(a);
-        }
+        });
         ALOGI("direct pack rematrix cg=%d → BT.709 %ux%u (in-place)", (int)cg, w, h);
     }
 
@@ -1224,18 +1235,26 @@ int pack_linear_f16_for_direct(std::vector<uint16_t>& rgba, unsigned w, unsigned
         // Android Canvas/View rendering requires premultiplied bitmap storage.
         // Decoder handoff is straight alpha, so associate it once at this final
         // presentation boundary, after gamut conversion and peak measurement.
-        for (size_t i = 0; i < pixels; i++) {
-            float r = half_to_float(rgba[i * 4 + 0]);
-            float g = half_to_float(rgba[i * 4 + 1]);
-            float b = half_to_float(rgba[i * 4 + 2]);
-            float a = half_to_float(rgba[i * 4 + 3]);
-            if (!std::isfinite(a) || a < 0.f) a = 0.f;
-            if (a > 1.f) a = 1.f;
-            rgba[i * 4 + 0] = float_to_half(clamp_nonneg(r) * a);
-            rgba[i * 4 + 1] = float_to_half(clamp_nonneg(g) * a);
-            rgba[i * 4 + 2] = float_to_half(clamp_nonneg(b) * a);
-            rgba[i * 4 + 3] = float_to_half(a);
-        }
+        uint16_t max_half = float_to_half(kMaxLinear);
+        if (half_to_float(max_half) > kMaxLinear) --max_half;
+        hdr_parallel_pixels(pixels, jobs, [&](size_t begin, size_t end, unsigned) {
+            for (size_t i = begin; i < end; i++) {
+                // Most stills are opaque and already valid linear half samples.
+                // Their positive finite half codes are ordered: leave them in place.
+                if (rgba[i * 4 + 3] == 0x3c00 && rgba[i * 4] <= max_half &&
+                    rgba[i * 4 + 1] <= max_half && rgba[i * 4 + 2] <= max_half) continue;
+                float r = half_to_float(rgba[i * 4 + 0]);
+                float g = half_to_float(rgba[i * 4 + 1]);
+                float b = half_to_float(rgba[i * 4 + 2]);
+                float a = half_to_float(rgba[i * 4 + 3]);
+                if (!std::isfinite(a) || a < 0.f) a = 0.f;
+                if (a > 1.f) a = 1.f;
+                rgba[i * 4 + 0] = float_to_half(clamp_nonneg(r) * a);
+                rgba[i * 4 + 1] = float_to_half(clamp_nonneg(g) * a);
+                rgba[i * 4 + 2] = float_to_half(clamp_nonneg(b) * a);
+                rgba[i * 4 + 3] = float_to_half(a);
+            }
+        });
         // Leave packed F16 in [rgba] — no second 66 MiB memcpy buffer.
         out_pixels.clear();
         ALOGI("direct pack F16 %ux%u peak=%.3f hdr=%d advanced=%d gamut=%d tf=%d", w, h, peak,
@@ -1244,20 +1263,26 @@ int pack_linear_f16_for_direct(std::vector<uint16_t>& rgba, unsigned w, unsigned
     }
 
     // SDR 8888: IEC 61966-2-1 sRGB OETF (also used for Display P3 tagging — same curve).
+    // Every input is an integer half code, so this table is exact rather than an
+    // approximation. Keep float results until after encoded-alpha multiplication.
+    static const auto srgb_half = [] {
+        std::vector<float> table(65536);
+        for (size_t i = 0; i < table.size(); ++i) table[i] = srgb_oetf(half_to_float(i));
+        return table;
+    }();
     out_pixels.resize(pixels * 4);
-    for (size_t i = 0; i < pixels; i++) {
-        const float r = half_to_float(rgba[i * 4 + 0]);
-        const float g = half_to_float(rgba[i * 4 + 1]);
-        const float b = half_to_float(rgba[i * 4 + 2]);
-        float a = half_to_float(rgba[i * 4 + 3]);
-        if (!std::isfinite(a) || a < 0.f) a = 0.f;
-        if (a > 1.f) a = 1.f;
-        // RGBA_8888 is premultiplied in its encoded color space.
-        out_pixels[i * 4 + 0] = static_cast<uint8_t>(srgb_oetf(r) * a * 255.f + 0.5f);
-        out_pixels[i * 4 + 1] = static_cast<uint8_t>(srgb_oetf(g) * a * 255.f + 0.5f);
-        out_pixels[i * 4 + 2] = static_cast<uint8_t>(srgb_oetf(b) * a * 255.f + 0.5f);
-        out_pixels[i * 4 + 3] = static_cast<uint8_t>(a * 255.f + 0.5f);
-    }
+    hdr_parallel_pixels(pixels, jobs, [&](size_t begin, size_t end, unsigned) {
+        for (size_t i = begin; i < end; i++) {
+            float a = half_to_float(rgba[i * 4 + 3]);
+            if (!std::isfinite(a) || a < 0.f) a = 0.f;
+            if (a > 1.f) a = 1.f;
+            // RGBA_8888 is premultiplied in its encoded color space.
+            out_pixels[i * 4 + 0] = static_cast<uint8_t>(srgb_half[rgba[i * 4 + 0]] * a * 255.f + 0.5f);
+            out_pixels[i * 4 + 1] = static_cast<uint8_t>(srgb_half[rgba[i * 4 + 1]] * a * 255.f + 0.5f);
+            out_pixels[i * 4 + 2] = static_cast<uint8_t>(srgb_half[rgba[i * 4 + 2]] * a * 255.f + 0.5f);
+            out_pixels[i * 4 + 3] = static_cast<uint8_t>(a * 255.f + 0.5f);
+        }
+    });
     // Drop F16 staging before caller allocates the Java byte[] / Bitmap.
     rgba.clear();
     rgba.shrink_to_fit();
