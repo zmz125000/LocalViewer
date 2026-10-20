@@ -17,10 +17,11 @@ class HeifHdrTest {
             "old-safe-wall.heic" to 3.35f,
         )
         for ((name, headroom) in expected) {
-            val file = sample("iphone/$name")
+            val file = sample(name)
             assumeTrue("missing $file", file.isFile)
             val parsed = HeifContainer.parse(file.readBytes())
             val gain = parsed?.appleGainMap()
+            assertTrue("$name HDR header", AppleHdr.looksLike(file.readBytes(), 64 * 1024))
             assertTrue("$name parsed", gain != null)
             gain!!
             assertEquals("$name headroom", headroom, gain.headroom, 0.08f)
@@ -35,7 +36,7 @@ class HeifHdrTest {
 
     @Test
     fun pqHeicGridIsAbsoluteHdr() {
-        val file = sample("iphonec2/DSC07633.heic")
+        val file = sample("DSC07633.heic")
         assumeTrue("missing $file", file.isFile)
         val hdr = HeifContainer.parse(file.readBytes())?.absoluteHdr()
         assertTrue(hdr != null)

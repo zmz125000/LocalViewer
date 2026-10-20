@@ -11,7 +11,7 @@ import com.hippo.ehviewer.jni.decodeHevcAnnexB
 /**
  * One HEVC access unit from a HEIF item. Absolute HDR prefers bundled libde265
  * to preserve precision independently of the device's MediaCodec output formats.
- * Apple gain-map auxiliaries keep the platform path by default.
+ * Apple gain-map auxiliaries also prefer software; platform decoding is a fallback.
  */
 internal object HevcDecoder {
     private const val TAG = "HevcDecoder"
@@ -33,7 +33,8 @@ internal object HevcDecoder {
         if (unit.bitDepth >= 10) {
             decodePlatform(unit, p010 = true)?.takeIf { it.bitDepth >= unit.bitDepth }?.let { return it }
         }
-        return decodePlatform(unit, p010 = false)
+        decodePlatform(unit, p010 = false)?.takeIf { it.bitDepth >= unit.bitDepth }?.let { return it }
+        return if (preferSoftware) null else decodeSoftware(unit)
     }
 
     private fun decodeSoftware(unit: HeifContainer.AccessUnit): Picture? = runCatching {
