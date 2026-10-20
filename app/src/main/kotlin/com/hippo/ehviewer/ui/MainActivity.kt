@@ -106,6 +106,7 @@ import androidx.compose.ui.util.lerp
 import androidx.compose.ui.zIndex
 import androidx.core.net.toUri
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.navigation.NavController
 import androidx.navigation.compose.currentBackStackEntryAsState
@@ -349,8 +350,7 @@ private fun clearNavTabOnReturn(previous: DestinationSpec?, current: Destination
 
 private fun showTabRoot(navigator: DestinationsNavigator, direction: Direction) {
     if (navigator.popBackStack(direction, inclusive = false)) return
-    // Tabs are peers (no back relationship). saveState=true + restoreState=false leaves
-    // DESTROYED entries in NavHost's AnimatedContent transition → ViewModelStore crash.
+    // ExplorerWindows owns tab restoration; do not retain Navigation's saved stacks.
     navigator.navigate(direction) {
         popUpTo(LibraryScreenDestination) {
             saveState = false
@@ -385,7 +385,7 @@ private fun recallNavWindow(
     with(navigator) {
         // Replace whatever is above Library. Pushing the folder on top of Settings
         // makes the next Settings tap restore that folder.
-        // saveState must stay false — same DESTROYED-entry crash as showTabRoot.
+        // ExplorerWindows owns tab restoration, as in showTabRoot.
         val options: com.ramcosta.composedestinations.navigation.DestinationsNavOptionsBuilder.() -> Unit = {
             popUpTo(LibraryScreenDestination) { saveState = false }
             launchSingleTop = true
@@ -656,6 +656,14 @@ class MainActivity : AppCompatActivity() {
                 clearNavTabOnReturn(previous, currentDestination)
             }
             fun onMainNavClick(item: MainNavItem) {
+                // Read the controller at click time: Compose's entry can still refer to
+                // the previous screen when several taps arrive before recomposition.
+                val entry = navController.currentBackStackEntry ?: return
+                if (entry != navBackStackEntry || entry.lifecycle.currentState != Lifecycle.State.RESUMED) return
+                // NavHost keeps entering/exiting entries below RESUMED until their
+                // transition completes. Replacing them mid-transition can leave
+                // AnimatedContent composing an entry whose ViewModels were destroyed.
+                // Guard before changing ExplorerWindows or handling tab reselection too.
                 val tab = navTabOf(item.direction)
                 if (isFolderNavDestination(currentDestination) && tab != ownerTabOf(fromHistoryArg, fromLibraryArg)) {
                     ExplorerWindows.activeId?.let { id ->
