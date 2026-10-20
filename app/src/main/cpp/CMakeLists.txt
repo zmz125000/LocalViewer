@@ -357,7 +357,12 @@ if (EHVIEWER_HDR_CODECS)
             GIT_SHALLOW 1
     )
     FetchContent_MakeAvailable(libde265)
-    target_include_directories(de265 INTERFACE ${libde265_SOURCE_DIR} ${libde265_BINARY_DIR})
+    # de265.h includes <libde265/de265-version.h>, generated under the FetchContent
+    # binary dir. BUILD_INTERFACE keeps these off the install(EXPORT) interface:
+    # absolute paths inside the Android .cxx tree fail CMake generate.
+    target_include_directories(de265 INTERFACE
+            $<BUILD_INTERFACE:${libde265_SOURCE_DIR}>
+            $<BUILD_INTERFACE:${libde265_BINARY_DIR}>)
     set(EHVIEWER_HDR_SOURCES hdr_convert.cpp avif_hdr.cpp jxl_hdr.cpp hevc_decode.cpp)
     list(APPEND EHVIEWER_HDR_LIBS de265)
 
