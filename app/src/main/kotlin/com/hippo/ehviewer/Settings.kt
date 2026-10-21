@@ -83,7 +83,7 @@ object Settings : DataStorePreferences(null) {
     val browseContentMode = intPref("browse_content_mode", 0)
 
     /**
-     * Folder-view UI listing sort field: 0 = Name, 1 = Date.
+     * Folder-view UI listing sort field: 0 = Name, 1 = Date, 2 = Size.
      * Separate from [librarySortMode]. Does not change DirectoryListing / gallery scan /
      * folder-thumb / open-gallery name order. Default Name.
      */
@@ -91,7 +91,7 @@ object Settings : DataStorePreferences(null) {
 
     /**
      * Folder-view UI listing direction for [browseSortMode].
-     * Default ascending (A→Z / oldest→newest).
+     * Default ascending (A→Z / oldest→newest / smallest→largest).
      */
     val browseSortAscending = boolPref("browse_sort_ascending", true)
 
