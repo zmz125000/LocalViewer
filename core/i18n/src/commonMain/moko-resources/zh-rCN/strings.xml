@@ -877,8 +877,12 @@
     <string name="convert_auto_original">自动（原始尺寸）</string>
     <string name="convert_jpeg">JPEG</string>
     <string name="convert_jpeg_hdr">JPEG（HDR）</string>
-    <string name="convert_jxl">JPEG XL（16 位 SDR）</string>
-    <string name="convert_jxl_hdr">JPEG XL（16 位 HDR）</string>
+    <string name="convert_jxl">JPEG XL（SDR）</string>
+    <string name="convert_jxl_hdr">JPEG XL（HDR）</string>
+    <string name="convert_jpeg_hdr_boost">JPEG（HDR 增强）</string>
+    <string name="convert_jpeg_hdr_custom">JPEG（HDR 自定义）</string>
+    <string name="convert_jxl_hdr_boost">JPEG XL（HDR 增强）</string>
+    <string name="convert_jxl_hdr_custom">JPEG XL（HDR 自定义）</string>
     <string name="pref_category_general">通用</string>
     <string name="pref_fullscreen">全屏</string>
     <string name="pref_page_transitions">页面过渡动画</string>

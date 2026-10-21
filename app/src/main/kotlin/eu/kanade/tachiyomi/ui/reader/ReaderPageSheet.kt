@@ -64,9 +64,13 @@ fun ReaderPageSheetMeta(
             Item(icon = Icons.Default.Save, text = R.string.convert_auto_original, onClick = { convert(StillExportTarget.AutoOriginal) })
             Item(icon = Icons.Default.Save, text = R.string.convert_jpeg, onClick = { convert(StillExportTarget.Jpeg) })
             Item(icon = Icons.Default.Save, text = R.string.convert_jpeg_hdr, onClick = { convert(StillExportTarget.JpegHdr) })
+            Item(icon = Icons.Default.Save, text = R.string.convert_jpeg_hdr_boost, onClick = { convert(StillExportTarget.JpegHdrBoost) })
+            Item(icon = Icons.Default.Save, text = R.string.convert_jpeg_hdr_custom, onClick = { convert(StillExportTarget.JpegHdrCustom) })
             if (StillExportTarget.Jxl.available) {
                 Item(icon = Icons.Default.Save, text = R.string.convert_jxl, onClick = { convert(StillExportTarget.Jxl) })
                 Item(icon = Icons.Default.Save, text = R.string.convert_jxl_hdr, onClick = { convert(StillExportTarget.JxlHdr) })
+                Item(icon = Icons.Default.Save, text = R.string.convert_jxl_hdr_boost, onClick = { convert(StillExportTarget.JxlHdrBoost) })
+                Item(icon = Icons.Default.Save, text = R.string.convert_jxl_hdr_custom, onClick = { convert(StillExportTarget.JxlHdrCustom) })
             }
         } else {
             showAds?.let { Item(icon = Icons.Default.Visibility, text = R.string.show_blocked_image, onClick = it) }

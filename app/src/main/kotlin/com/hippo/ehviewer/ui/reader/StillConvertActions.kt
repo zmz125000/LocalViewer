@@ -21,6 +21,7 @@ import com.hippo.ehviewer.image.hdr.StillExportWork
 import com.hippo.ehviewer.image.hdr.mimeType
 import com.hippo.ehviewer.image.hdr.resolve
 import com.hippo.ehviewer.image.hdr.stillExportFileName
+import com.hippo.ehviewer.image.hdr.withRawExportControls
 import com.hippo.ehviewer.image.hdr.writeResolved
 import com.hippo.ehviewer.ui.main.BrowseSaveAs
 import com.hippo.ehviewer.util.awaitActivityResult
@@ -35,7 +36,12 @@ import okio.Path.Companion.toOkioPath
 import splitties.init.appCtx
 
 context(_: SnackbarHostState, _: Context, loader: ReaderSession)
-suspend fun convertTo(page: Page, target: StillExportTarget) {
+suspend fun convertTo(page: Page, target: StillExportTarget) = withRawExportControls(target) {
+    convertToCaptured(page, target)
+}
+
+context(_: SnackbarHostState, _: Context, loader: ReaderSession)
+private suspend fun convertToCaptured(page: Page, target: StillExportTarget) {
     val leaf = loader.sourceLeafName(page.index)
     if (leaf == null) {
         snackbar(string(R.string.error_cant_save_image))
@@ -91,7 +97,7 @@ suspend fun exportStillToDirectory(
 }
 
 context(_: SnackbarHostState, _: Context)
-private suspend fun convertStaged(leaf: String, target: StillExportTarget, stage: suspend () -> File) {
+private suspend fun convertStaged(leaf: String, target: StillExportTarget, stage: suspend () -> File) = withRawExportControls(target) {
     try {
         convertStagedUnchecked(leaf, target, stage)
     } catch (e: CancellationException) {
@@ -196,7 +202,11 @@ private suspend fun saveOriginalSize(leaf: String, stage: suspend () -> File): B
 private data class EncodedStill(val file: File, val target: StillExportTarget)
 
 /** Download/stage first; retain the memory lease until encoding releases its pixels. */
-private suspend fun encodeStaged(leaf: String, target: StillExportTarget, stage: suspend () -> File): EncodedStill? = withIOContext {
+private suspend fun encodeStaged(leaf: String, target: StillExportTarget, stage: suspend () -> File): EncodedStill? = withRawExportControls(target) {
+    encodeStagedCaptured(leaf, target, stage)
+}
+
+private suspend fun encodeStagedCaptured(leaf: String, target: StillExportTarget, stage: suspend () -> File): EncodedStill? = withIOContext {
     if (!target.available) return@withIOContext null
     val source = stage()
     try {

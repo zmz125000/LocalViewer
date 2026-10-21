@@ -475,7 +475,7 @@ bool pack_image(const libraw_processed_image_t* img, int max_edge, int present, 
 
     // Export HDR retains the camera-look SDR render in the same gamut. Append
     // RGBA8 after the F16 plane so decode/encode share one JNI array and demosaic.
-    const bool keep_sdr = present == 3;
+    const bool keep_sdr = present >= 3;
     const size_t sdr_bytes = keep_sdr ? static_cast<size_t>(dw) * dh * 4u : 0u;
     out.pixels.assign(bytes + sdr_bytes, 0);
     out.w = dw;
@@ -484,7 +484,7 @@ bool pack_image(const libraw_processed_image_t* img, int max_edge, int present, 
     out.is_hdr = hdr ? 1 : 0;
     // 0 is sRGB: 8-bit after the transfer, or HDR linear scRGB (values above 1, and
     // negatives for colors outside sRGB). 1 is linear Display P3, clamped to 0..1.
-    out.gamut = present == 3 ? 2 : (present == 1 ? 1 : 0);
+    out.gamut = present >= 3 ? 2 : (present == 1 ? 1 : 0);
     out.boost = 1.f;
 
     // Rows are independent and write disjoint output, so bands give the same bytes.
@@ -553,10 +553,10 @@ bool pack_image(const libraw_processed_image_t* img, int max_edge, int present, 
                     }
                     apply_raw_zones(rgb[0], rgb[1], rgb[2], shadows, midtones, highlights);
                     if (hdr) {
-                        // Export uses source highlight headroom as its gain target.
-                        // The format's 10000-nit ceiling only limits storage; using
-                        // it as a target manufactures HDR even for dim RAW frames.
-                        const float target = keep_sdr ? std::min(cap, anchor) : cap;
+                        // Ordinary HDR export follows source headroom. Explicit
+                        // boost/custom export opts into the reader-style expansion
+                        // toward the export ceiling, independent of the phone.
+                        const float target = present == 3 ? std::min(cap, anchor) : cap;
                         const float lift = hdr_highlight_gain(scene_luma, anchor, base_at_anchor, hdr_shoulder, target);
                         for (int c = 0; c < 3; ++c) rgb[c] *= lift;
                     }
@@ -578,7 +578,7 @@ bool pack_image(const libraw_processed_image_t* img, int max_edge, int present, 
                             const float m = std::max(rgb[0], std::max(rgb[1], rgb[2]));
                             if (m > 0.f) hdr_scale = raw_linear_sample(m, 0.f, highlight_stops, cap) / m;
                             for (int c = 0; c < 3; ++c) rgb[c] = std::max(rgb[c], 0.f) * hdr_scale;
-                            if (present != 3) rec2020_to_scrgb(rgb[0], rgb[1], rgb[2]);
+                            if (present < 3) rec2020_to_scrgb(rgb[0], rgb[1], rgb[2]);
                         }
                         for (int c = 0; c < 3; ++c) {
                             float v = hdr ? rgb[c] : raw_linear_sample(rgb[c], 0.f, highlight_stops, cap);
@@ -1015,7 +1015,7 @@ jbyteArray decode_raw_buffer(JNIEnv* env, const uint8_t* data, size_t len, jint 
         request_embedded_matrix(raw, wb);
         if (raw.open_buffer(data, len) == LIBRAW_SUCCESS) {
             Decoded decoded;
-            int mode = present < 0 ? 0 : (present > 3 ? 3 : present);
+            int mode = present < 0 ? 0 : (present > 4 ? 4 : present);
             float exposure = std::isfinite(exposure_ev) ? std::clamp(exposure_ev, -3.f, 3.f) : 0.f;
             float stops = std::isfinite(highlight_stops) ? std::clamp(highlight_stops, 0.f, 3.f) : 0.f;
             auto zone = [](float v) { return std::isfinite(v) ? std::clamp(v, -1.f, 1.f) : 0.f; };
@@ -1104,7 +1104,7 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeRawFileToDirect(JNIEnv* env, jcla
         request_embedded_matrix(raw, wb);
         if (raw.open_file(path) == LIBRAW_SUCCESS) {
             Decoded decoded;
-            int mode = present < 0 ? 0 : (present > 3 ? 3 : present);
+            int mode = present < 0 ? 0 : (present > 4 ? 4 : present);
             float exposure = std::isfinite(exposure_ev) ? std::clamp(exposure_ev, -3.f, 3.f) : 0.f;
             float stops = std::isfinite(highlight_stops) ? std::clamp(highlight_stops, 0.f, 3.f) : 0.f;
             auto zone = [](float v) { return std::isfinite(v) ? std::clamp(v, -1.f, 1.f) : 0.f; };

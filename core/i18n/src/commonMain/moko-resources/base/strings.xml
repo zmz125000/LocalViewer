@@ -1140,8 +1140,12 @@
     <string name="convert_auto_original">Auto (original size)</string>
     <string name="convert_jpeg">JPEG</string>
     <string name="convert_jpeg_hdr">JPEG (HDR)</string>
-    <string name="convert_jxl">JPEG XL (16-bit SDR)</string>
-    <string name="convert_jxl_hdr">JPEG XL (16-bit HDR)</string>
+    <string name="convert_jxl">JPEG XL (SDR)</string>
+    <string name="convert_jxl_hdr">JPEG XL (HDR)</string>
+    <string name="convert_jpeg_hdr_boost">JPEG (HDR boost)</string>
+    <string name="convert_jpeg_hdr_custom">JPEG (HDR custom)</string>
+    <string name="convert_jxl_hdr_boost">JPEG XL (HDR boost)</string>
+    <string name="convert_jxl_hdr_custom">JPEG XL (HDR custom)</string>
     <string name="wide_color_gamut">Use Display P3 color space</string>
     <string name="settings_eh_request_news_timepicker">Set time to request news</string>
     <string name="dark_theme_follow_system">Follow system</string>

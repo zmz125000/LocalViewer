@@ -70,6 +70,7 @@ import androidx.compose.ui.window.DialogWindowProvider
 import com.ehviewer.core.i18n.R
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.asMutableState
+import com.hippo.ehviewer.image.hdr.RawExportControls
 import com.hippo.ehviewer.image.hdr.StillExportTarget
 import com.hippo.ehviewer.library.ExplorerWindows
 import com.hippo.ehviewer.provider.StreamKeepAlivePolicy
@@ -90,6 +91,7 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.selects.select
+import kotlinx.coroutines.withContext
 import moe.tarsin.snackbar
 import okio.Path
 
@@ -1590,8 +1592,12 @@ private fun ConvertTargetItems(
         StillExportTarget.AutoOriginal to R.string.convert_auto_original,
         StillExportTarget.Jpeg to R.string.convert_jpeg,
         StillExportTarget.JpegHdr to R.string.convert_jpeg_hdr,
+        StillExportTarget.JpegHdrBoost to R.string.convert_jpeg_hdr_boost,
+        StillExportTarget.JpegHdrCustom to R.string.convert_jpeg_hdr_custom,
         StillExportTarget.Jxl to R.string.convert_jxl,
         StillExportTarget.JxlHdr to R.string.convert_jxl_hdr,
+        StillExportTarget.JxlHdrBoost to R.string.convert_jxl_hdr_boost,
+        StillExportTarget.JxlHdrCustom to R.string.convert_jxl_hdr_custom,
     ).filter { (target, _) -> target.available }.forEach { (target, label) ->
         DropdownMenuItem(
             text = { Text(stringResource(label)) },
@@ -1636,6 +1642,7 @@ private fun beginConvert(
     context: Context,
     target: StillExportTarget,
 ) {
+    val controls = RawExportControls.capture(target)
     val folderKey = FolderSelectHost.selectionSnack?.folderKey
     val items = FolderSelectHost.selectionPicks.filter { it.convertStill != null }
     if (items.isEmpty()) {
@@ -1646,7 +1653,9 @@ private fun beginConvert(
         val dir = with(snackbar) { with(context) { BrowseSaveAs.pickConvertDirectory() } } ?: return@launch
         val jobs = items.map { pick ->
             val convert = pick.convertStill!!
-            FolderSelectHost.newJob(pick.title, pick.isFolder, pick) { dest -> convert(dest, target) }
+            FolderSelectHost.newJob(pick.title, pick.isFolder, pick) { dest ->
+                withContext(controls) { convert(dest, target) }
+            }
         }
         FolderSelectHost.startTasks(jobs, dir, folderKey)
     }
