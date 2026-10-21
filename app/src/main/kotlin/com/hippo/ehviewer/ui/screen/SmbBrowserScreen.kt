@@ -2426,7 +2426,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                     val browseSortMode = BrowseSortMode.fromPref(browseSortModePref)
                     val browseSortAscending by Settings.browseSortAscending.collectAsState()
                     val sections = filteredEntries.toRemoteBrowseSections(contentMode)
-                    // Folder listing follows the folder-view Name/Date setting.
+                    // Folder listing follows the folder-view Name/Date/Size setting.
                     val dirsRaw = sections.directories
                         .filterIsInstance<BrowseEntryRemote.Directory>()
                         .sortedForBrowseFolderUi(
@@ -2434,6 +2434,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                             browseSortAscending,
                             nameOf = { it.name },
                             dateOf = { it.lastModifiedMs },
+                            sizeOf = { it.size },
                         )
                     val dirs = if (favoritesOnTop) {
                         val (fav, rest) = dirsRaw.partition { isDirFavorite(it.relativeName) }
@@ -2446,6 +2447,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                         browseSortAscending,
                         nameOf = { it.name },
                         dateOf = { it.lastModifiedMs },
+                        sizeOf = { it.size },
                     )
                     val videos = sections.videos
                         .filterIsInstance<BrowseEntryRemote.VideoFile>()
@@ -2454,12 +2456,14 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                             browseSortAscending,
                             nameOf = { it.name },
                             dateOf = { it.lastModifiedMs },
+                            sizeOf = { it.size },
                         )
                     val documents = sections.documents.sortedForBrowseFolderUi(
                         browseSortMode,
                         browseSortAscending,
                         nameOf = { it.name },
                         dateOf = { it.lastModifiedMs },
+                        sizeOf = { it.size },
                     )
                     val files = sections.files
                         .filterIsInstance<BrowseEntryRemote.RegularFile>()
@@ -2468,6 +2472,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                             browseSortAscending,
                             nameOf = { it.name },
                             dateOf = { it.lastModifiedMs },
+                            sizeOf = { it.size },
                         )
                     // In-memory only; resets when dirKey changes. No prefs / no ripple on header.
                     val animateItems by Settings.animateItems.collectAsState()

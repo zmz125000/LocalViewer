@@ -2744,7 +2744,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                     val browseSortMode = BrowseSortMode.fromPref(browseSortModePref)
                     val browseSortAscending by Settings.browseSortAscending.collectAsState()
                     val sections = filteredEntries.toBrowseSections(contentMode)
-                    // Folder listing follows the folder-view Name/Date setting.
+                    // Folder listing follows the folder-view Name/Date/Size setting.
                     // Library photo sort by date changes the reader and photo-grid open only.
                     val dirsRaw = sections.directories
                         .filterIsInstance<BrowseEntry.Directory>()
@@ -2753,6 +2753,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                             browseSortAscending,
                             nameOf = { it.name },
                             dateOf = { it.lastModifiedMs },
+                            sizeOf = { it.size },
                         )
                     val dirs = if (favoritesOnTop) {
                         val (fav, rest) = dirsRaw.partition { isDirFavorite(it) }
@@ -2765,6 +2766,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                         browseSortAscending,
                         nameOf = { it.name },
                         dateOf = { it.lastModifiedMs },
+                        sizeOf = { it.size },
                     )
                     val videos = sections.videos
                         .filterIsInstance<BrowseEntry.VideoFile>()
@@ -2773,12 +2775,14 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                             browseSortAscending,
                             nameOf = { it.name },
                             dateOf = { it.lastModifiedMs },
+                            sizeOf = { it.size },
                         )
                     val documents = sections.documents.sortedForBrowseFolderUi(
                         browseSortMode,
                         browseSortAscending,
                         nameOf = { it.name },
                         dateOf = { it.lastModifiedMs },
+                        sizeOf = { it.size },
                     )
                     val files = sections.files
                         .filterIsInstance<BrowseEntry.RegularFile>()
@@ -2787,6 +2791,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                             browseSortAscending,
                             nameOf = { it.name },
                             dateOf = { it.lastModifiedMs },
+                            sizeOf = { it.size },
                         )
                     // In-memory only; resets when path/layout key changes. No prefs.
                     val animateItems by Settings.animateItems.collectAsState()

@@ -48,10 +48,15 @@ import com.hippo.ehviewer.library.naturalCompare
 enum class BrowseSortMode(val prefValue: Int) {
     Name(0),
     Date(1),
+    Size(2),
     ;
 
     companion object {
-        fun fromPref(value: Int): BrowseSortMode = if (value == Date.prefValue) Date else Name
+        fun fromPref(value: Int): BrowseSortMode = when (value) {
+            Date.prefValue -> Date
+            Size.prefValue -> Size
+            else -> Name
+        }
     }
 }
 
@@ -63,6 +68,7 @@ fun <T> Iterable<T>.sortedForBrowseFolderUi(
     ascending: Boolean,
     nameOf: (T) -> String,
     dateOf: (T) -> Long,
+    sizeOf: (T) -> Long = { 0L },
 ): List<T> {
     val nameCmp = Comparator<T> { a, b -> naturalCompare(nameOf(a), nameOf(b)) }
     val cmp = when (mode) {
@@ -70,6 +76,10 @@ fun <T> Iterable<T>.sortedForBrowseFolderUi(
         BrowseSortMode.Date -> Comparator { a, b ->
             val byDate = dateOf(a).compareTo(dateOf(b))
             if (byDate != 0) byDate else naturalCompare(nameOf(a), nameOf(b))
+        }
+        BrowseSortMode.Size -> Comparator { a, b ->
+            val bySize = sizeOf(a).compareTo(sizeOf(b))
+            if (bySize != 0) bySize else nameCmp.compare(a, b)
         }
     }
     return sortedWith(if (ascending) cmp else cmp.reversed())
@@ -339,7 +349,7 @@ fun BrowseViewModeMenu(
                     expanded = false
                 },
             )
-            // Under List/Grid: Name / Date with ↑↓ (folder UI only; not Library sort).
+            // Under List/Grid: folder sort with ↑↓ (separate from Library sort).
             SortMenuItem(
                 label = stringResource(R.string.library_sort_name),
                 selected = sortMode == BrowseSortMode.Name,
@@ -352,6 +362,14 @@ fun BrowseViewModeMenu(
                 ascending = sortAscending,
                 onClick = { selectBrowseSort(BrowseSortMode.Date) },
             )
+            if (onEphemeralSort == null) {
+                SortMenuItem(
+                    label = stringResource(R.string.key_size),
+                    selected = sortMode == BrowseSortMode.Size,
+                    ascending = sortAscending,
+                    onClick = { selectBrowseSort(BrowseSortMode.Size) },
+                )
+            }
             // Tap shows or hides Recent and does not change the lock.
             // Long-press sets the default for a newly opened folder: lock = full list, tick = preview rows.
             ContentModeItem(

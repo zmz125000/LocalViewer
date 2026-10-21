@@ -838,6 +838,7 @@ internal object EbookEngine {
         """(?i)^(?:chapter\s+[0-9ivxlc]+\b.*|第[0-9一二三四五六七八九十百千零〇两]+[章节回部卷篇节].*)$""",
     )
     private val MD_HEADING = Regex("""^(#{1,6})\s+(.+)$""")
+
     // Heading vocabulary adapted from cchenhen/txtautotoc (MIT; see NOTICE).
     private const val HEADING_NUMBER = "[0-9０-９零〇一二三四五六七八九十百千两兩壹贰貳叁參肆伍陆陸柒捌玖拾佰仟廿卅IVXLCDMivxlcdm]+"
     private const val HEADING_SUFFIX = """(?:[\s\p{Z}\-:：.、，。!！?？\[\]【】()（）《》·_].*)?"""
