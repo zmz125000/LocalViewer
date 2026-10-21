@@ -16,6 +16,49 @@ import org.junit.Test
 
 class EbookEngineTest {
     @Test
+    fun plainTxtRecognizesTxtAutoTocVocabulary() {
+        val headings = listOf(
+            "序章", "楔子", "引子", "前言", "后记", "後記", "尾声", "尾聲",
+            "终章", "終章", "番外", "附录", "附錄：人物表", "附录【地图】",
+            "第壹佰章：开始", "第貳冊 新篇", "第兩百節、重逢", "第廿回。归来",
+            "第卅篇", "第IV卷", "第１２章 开始", "Chapter IV: Arrival",
+            "chapter 12. Arrival", "Part IX — Return", "Prologue", "Epilogue",
+            "Appendix", "appendix: Notes",
+        )
+        for (heading in headings) {
+            val chapters = EbookEngine.chaptersFromPlain("$heading\n正文。", "book")
+            assertEquals(heading, chapters.single().title)
+            assertTrue(heading, chapters.single().inToc)
+            assertEquals("正文。", chapters.single().text)
+        }
+    }
+
+    @Test
+    fun plainTxtNestsChaptersUnderChineseAndEnglishVolumes() {
+        for ((volume, chapter) in listOf("第一卷 江湖" to "第壹章：下山", "Part I" to "Chapter IV: Arrival")) {
+            val chapters = EbookEngine.chaptersFromPlain(
+                "\uFEFF序章\r\n序文\r\n$volume\r\n卷介绍\r\n$chapter\r\n正文\r\n尾聲\r\n结束",
+                "book",
+            )
+            assertEquals(listOf("序章", volume, chapter, "尾聲"), chapters.map { it.title })
+            assertEquals(listOf(0, 0, 1, 0), chapters.map { it.depth })
+        }
+    }
+
+    @Test
+    fun plainTxtHeadingKeywordsDoNotMatchProse() {
+        for (line in listOf(
+            "他在第1章里提到过往事。", "第1章里提到过往事。", "第二天他们继续赶路。",
+            "附录材料散落在书箱里。", "Chapter IVory is a phrase.", "Part Inside the house.",
+            "尾声响起的时候。", "Appendixes are useful.", "第1章 " + "长".repeat(81),
+        )) {
+            val chapters = EbookEngine.chaptersFromPlain(line, "book")
+            assertEquals(line, "book", chapters.single().title)
+            assertEquals(line, chapters.single().text)
+        }
+    }
+
+    @Test
     fun zipNameDecoderScoresGbkTxt() {
         val gbk = charset("GBK", "GB18030")
         val body = "这是一段简体中文测试文本，用于代码页检测。"
