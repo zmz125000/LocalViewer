@@ -554,8 +554,8 @@ bool pack_image(const libraw_processed_image_t* img, int max_edge, int present, 
                     apply_raw_zones(rgb[0], rgb[1], rgb[2], shadows, midtones, highlights);
                     if (hdr) {
                         // Ordinary HDR export follows source headroom. Explicit
-                        // boost/custom export opts into the reader-style expansion
-                        // toward the export ceiling, independent of the phone.
+                        // boost/custom export uses the reader's panel headroom,
+                        // passed by Kotlin, rather than the format's 10000-nit ceiling.
                         const float target = present == 3 ? std::min(cap, anchor) : cap;
                         const float lift = hdr_highlight_gain(scene_luma, anchor, base_at_anchor, hdr_shoulder, target);
                         for (int c = 0; c < 3; ++c) rgb[c] *= lift;

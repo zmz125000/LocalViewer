@@ -348,15 +348,18 @@ object LibDirectDecode {
 
     private fun decodeRawPresent(input: RawInput, maxEdge: Int, mode: RawPresent, export: ExportDecode? = null): PackedPixels? {
         val edge = if (export != null) maxEdge else rawDecodeEdge(maxEdge)
-        val panelBoost = if (export != null && mode == RawPresent.Hdr) {
+        val panelBoost = if (export != null && mode == RawPresent.Hdr && !export.target.rawBoosted()) {
+            // Ordinary HDR export preserves source headroom up to the format ceiling.
             10000f / 203f
         } else if (mode == RawPresent.Hdr) {
+            // Boost/custom use the reader's highlight mapping, including its panel
+            // target (as in 1.13.5). A 10000-nit target would create extra gain.
             rawPanelBoost()
         } else {
             1f
         }
         // Export modes retain Rec.2020 and the separate SDR base. Mode 3 uses
-        // source headroom; mode 4 explicitly opens highlights toward export headroom.
+        // source headroom; mode 4 opens highlights toward the reader's panel target.
         val present = when {
             export != null && mode == RawPresent.Hdr -> if (export.target.rawBoosted()) 4 else 3
             else -> mode.ordinal
