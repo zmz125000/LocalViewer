@@ -994,8 +994,10 @@
     <string name="pref_reader_raw_camera_look_summary">Apply tone curve to RAW SDR</string>
     <string name="pref_reader_raw_hdr_linear">HDR linear Rec.2020</string>
     <string name="pref_reader_raw_hdr_linear_summary">HDR RAW skips the camera look and stays linear Rec.2020.</string>
+    <string name="pref_reader_raw_hdr_target_nits">HDR boost target</string>
+    <string name="pref_reader_raw_hdr_target_nits_summary">Sets the target for RAW HDR highlight expansion. Estimated panel target: %1$d nits.</string>
     <string name="pref_reader_raw_shoulder">HDR shoulder</string>
-    <string name="pref_reader_raw_shoulder_summary">Opens HDR highlights for camera look and linear HDR. 0 leaves them, 50 is halfway, 100 reaches the panel.</string>
+    <string name="pref_reader_raw_shoulder_summary">Opens HDR highlights for camera look and linear HDR. 0 leaves them, 50 is halfway, 100 reaches the HDR target.</string>
     <string name="pref_custom_brightness">Custom brightness</string>
     <string name="pref_grayscale">Grayscale</string>
     <string name="pref_inverted_colors">Inverted</string>

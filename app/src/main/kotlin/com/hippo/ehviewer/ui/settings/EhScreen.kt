@@ -80,10 +80,6 @@ fun AnimatedVisibilityScope.EhScreen(navigator: DestinationsNavigator) = Screen(
                 title = stringResource(id = R.string.black_dark_theme),
                 state = Settings.blackDarkTheme.asMutableState(),
             )
-            SwitchPreference(
-                title = stringResource(id = R.string.image_conversion_compression),
-                state = Settings.imageConversionCompression.asMutableState(),
-            )
             val listMode = Settings.listMode.asMutableState()
             SimpleMenuPreferenceInt(
                 title = stringResource(id = R.string.settings_eh_list_mode),
@@ -232,6 +228,10 @@ fun AnimatedVisibilityScope.EhScreen(navigator: DestinationsNavigator) = Screen(
                     state = Settings.openHtmlInIncognito.asMutableState(),
                 )
             }
+            SwitchPreference(
+                title = stringResource(id = R.string.image_conversion_compression),
+                state = Settings.imageConversionCompression.asMutableState(),
+            )
             val useMedia3Player = Settings.useMedia3Player.asMutableState()
             SwitchPreference(
                 title = stringResource(id = R.string.settings_use_media3_player),
