@@ -22,6 +22,16 @@ class OriginCacheFreshTest {
     }
 
     @Test
+    fun failedOrMtimeLessProbeDoesNotBumpCacheMtime() {
+        assertFalse(OriginCacheFresh.mayBumpCacheMtime(null, 100L))
+        assertFalse(OriginCacheFresh.mayBumpCacheMtime(0L, 100L))
+        assertFalse(OriginCacheFresh.mayBumpCacheMtime(-1L, 100L))
+        assertFalse(OriginCacheFresh.mayBumpCacheMtime(150L, 100L))
+        assertTrue(OriginCacheFresh.mayBumpCacheMtime(100L, 100L))
+        assertTrue(OriginCacheFresh.mayBumpCacheMtime(50L, 100L))
+    }
+
+    @Test
     fun remoteLaterThanCacheIsStale() {
         assertTrue(OriginCacheFresh.remoteNewerThanCache(200L, 100L))
         assertFalse(OriginCacheFresh.remoteNewerThanCache(100L, 100L))

@@ -49,7 +49,9 @@ object BrowseOriginCache {
 
     /**
      * Existing origin file if present and still matching remote size + mtime.
-     * Stale files are deleted so [ensureSmb] re-downloads. LRU touch only on keep.
+     * Stale files are deleted so [ensureSmb] re-downloads. LRU touch only when
+     * the probe observed a remote mtime that is not newer. A failed or mtime-less
+     * probe still returns the cache, but does not move its mtime.
      */
     suspend fun smbFreshHit(
         source: SmbSourceEntity,
@@ -160,11 +162,14 @@ object BrowseOriginCache {
         val file = File(cached.toString())
         val cacheMs = file.lastModified()
         val cacheSize = file.length()
-        if (OriginCacheFresh.isStale(remoteStat(), cacheSize, cacheMs, compareSize)) {
+        val stat = remoteStat()
+        if (OriginCacheFresh.isStale(stat, cacheSize, cacheMs, compareSize)) {
             evict()
             return null
         }
-        file.takeIf { it.isFile }?.setLastModified(System.currentTimeMillis())
+        if (OriginCacheFresh.mayBumpCacheMtime(stat?.mtimeMs, cacheMs)) {
+            file.takeIf { it.isFile }?.setLastModified(System.currentTimeMillis())
+        }
         return cached
     }
 
