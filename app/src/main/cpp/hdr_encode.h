@@ -102,13 +102,16 @@ inline float half_to_float(uint16_t h) {
  *   UHDR_CG_BT_709     — BT.709 / scRGB-like
  *   UHDR_CG_DISPLAY_P3 — Display P3
  *   UHDR_CG_BT_2100    — BT.2020 primaries (PQ/HLG HDR stills)
+ * [sdr_base], when supplied, is opaque sRGB-transfer RGBA8 in the same primaries
+ * and dimensions. RAW uses its camera-look render before HDR highlight expansion.
  *
  * @return 0 on success.
  */
 int encode_linear_rgba_f16_to_uhdr(unsigned w, unsigned h, const uint16_t* rgba,
                                    const char* out_path,
                                    uhdr_color_gamut_t cg = UHDR_CG_BT_709,
-                                   float fixed_peak_nits = 0.f, bool force_hdr = false);
+                                   float fixed_peak_nits = 0.f, bool force_hdr = false,
+                                   const uint8_t* sdr_base = nullptr);
 
 /** Downscale packed RGBA F16 so long edge ≤ max_edge (box filter). max_edge 0 = no-op. */
 void scale_rgba_f16_max_edge(std::vector<uint16_t>& rgba, unsigned& w, unsigned& h,

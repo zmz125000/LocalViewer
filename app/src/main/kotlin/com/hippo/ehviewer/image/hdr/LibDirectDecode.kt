@@ -71,6 +71,8 @@ data class DirectPixels(
     val gamut: Int,
     /** Lib-direct pack is premultiplied. Embedded RAW JPEG previews are straight. */
     val premultiplied: Boolean,
+    /** Optional camera-look SDR RGBA8 plane appended after the F16 HDR pixels. */
+    val sdrOffset: Int = 0,
 )
 
 /**
@@ -201,6 +203,7 @@ object LibDirectDecode {
             isHdr = packed.outInfo.getOrNull(3) != 0,
             gamut = packed.outInfo.getOrNull(4) ?: 0,
             premultiplied = packed.premultiplied,
+            sdrOffset = packed.sdrOffset,
         )
     }
 
@@ -348,7 +351,7 @@ object LibDirectDecode {
         } else {
             1f
         }
-        // Native mode 3 retains HDR Rec.2020 rather than presentation-only scRGB.
+        // Native mode 3 retains HDR Rec.2020 and its SDR camera-look plane.
         val present = if (export && mode == RawPresent.Hdr) 3 else mode.ordinal
         val outInfo = IntArray(6)
         val outBoost = FloatArray(1)
@@ -423,7 +426,14 @@ object LibDirectDecode {
             }
             else -> null
         } ?: return null
-        return PackedPixels(pixels, outInfo, outBoost, advanced = true, premultiplied = true)
+        return PackedPixels(
+            pixels,
+            outInfo,
+            outBoost,
+            advanced = true,
+            premultiplied = true,
+            sdrOffset = if (present == 3) outInfo[0] * outInfo[1] * 8 else 0,
+        )
     }
 
     /** Embedded JPEG only. A missing preview stays a page error. */
@@ -610,6 +620,7 @@ object LibDirectDecode {
         val outBoost: FloatArray,
         val advanced: Boolean,
         val premultiplied: Boolean,
+        val sdrOffset: Int = 0,
     )
 
     private fun readBytes(src: ImageSource): ByteArray? = when (src) {

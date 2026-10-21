@@ -473,7 +473,11 @@ bool pack_image(const libraw_processed_image_t* img, int max_edge, int present, 
         base_at_anchor = look && !linear_hdr ? rawlook::tone_map(*look, anchor) : anchor;
     }
 
-    out.pixels.assign(bytes, 0);
+    // Export HDR retains the camera-look SDR render in the same gamut. Append
+    // RGBA8 after the F16 plane so decode/encode share one JNI array and demosaic.
+    const bool keep_sdr = present == 3;
+    const size_t sdr_bytes = keep_sdr ? static_cast<size_t>(dw) * dh * 4u : 0u;
+    out.pixels.assign(bytes + sdr_bytes, 0);
     out.w = dw;
     out.h = dh;
     out.format = deep ? 1 : 0;
@@ -524,6 +528,15 @@ bool pack_image(const libraw_processed_image_t* img, int max_edge, int present, 
                     } else {
                         for (int c = 0; c < 3; ++c) rgb[c] = pre[c];
                     }
+                    if (keep_sdr) {
+                        float base[3] = {rgb[0], rgb[1], rgb[2]};
+                        apply_raw_zones(base[0], base[1], base[2], shadows, midtones, highlights);
+                        const size_t sdr = bytes + (static_cast<size_t>(y) * dw + x) * 4u;
+                        for (int c = 0; c < 3; ++c) {
+                            out.pixels[sdr + c] = static_cast<uint8_t>(std::lround(rawlook::srgb_encode(base[c]) * 255.f));
+                        }
+                        out.pixels[sdr + 3] = 255;
+                    }
                     if (hdr && look && !linear_hdr && hdr_shoulder > 0.f) {
                         // The curve's shoulder moves highlights toward white. Put the
                         // pre-curve color back across the same knee the gain opens,
@@ -540,7 +553,11 @@ bool pack_image(const libraw_processed_image_t* img, int max_edge, int present, 
                     }
                     apply_raw_zones(rgb[0], rgb[1], rgb[2], shadows, midtones, highlights);
                     if (hdr) {
-                        const float lift = hdr_highlight_gain(scene_luma, anchor, base_at_anchor, hdr_shoulder, cap);
+                        // Export uses source highlight headroom as its gain target.
+                        // The format's 10000-nit ceiling only limits storage; using
+                        // it as a target manufactures HDR even for dim RAW frames.
+                        const float target = keep_sdr ? std::min(cap, anchor) : cap;
+                        const float lift = hdr_highlight_gain(scene_luma, anchor, base_at_anchor, hdr_shoulder, target);
                         for (int c = 0; c < 3; ++c) rgb[c] *= lift;
                     }
                     if (!deep) {
