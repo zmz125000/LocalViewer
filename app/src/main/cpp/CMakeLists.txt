@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.14)
 project(ehviewer C CXX)
-option(EHVIEWER_JXL_ENCODER "Include JPEG XL export encoder" OFF)
+option(EHVIEWER_JXL_ENCODER "Include JPEG XL export encoder" ON)
 include(ExternalProject)
 include(FetchContent)
 

@@ -18,8 +18,8 @@ plugins {
 // are only compiled into arm64-v8a + x86_64 (see CMake EHVIEWER_HDR_CODECS).
 // armeabi-v7a still gets libehviewer.so (archive/rust) with HDR JNI stubs.
 val supportedAbis = arrayOf("arm64-v8a", "x86_64", "armeabi-v7a")
-// Keep the encoder implementation available without shipping its code by default.
-val jxlEncoderEnabled = providers.gradleProperty("jxlEncoder").map(String::toBoolean).getOrElse(false)
+// Ship JPEG XL export by default; allow smaller builds with -PjxlEncoder=false.
+val jxlEncoderEnabled = providers.gradleProperty("jxlEncoder").map(String::toBoolean).getOrElse(true)
 
 // GitHub release APKs: LocalViewer-<tag>-{default|easytier}-<abi>.apk
 // Product flavor stays "default"; channel identifies the installed build family.
