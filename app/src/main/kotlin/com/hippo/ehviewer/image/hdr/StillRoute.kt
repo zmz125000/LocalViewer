@@ -278,6 +278,14 @@ fun classify(bytes: ByteArray, length: Int = bytes.size, fileNameHint: String? =
     // even at 8 bits. Use the bundled decoder independently of HDR settings.
     if (heifPrecision?.needsSoftware == true) return StillRoute.Lib(LibCodec.HevcHdr)
 
+    // Explicit primary-item PQ/HLG takes precedence over loose XMP markers.
+    // Adobe XMP can include hdrgm:Version on an absolute-HDR AVIF with no gain
+    // map (DSC3752.avif). Header and full-file scans must select the same codec.
+    val primaryTransfer = heifPrecision?.transfer
+    if (primaryTransfer == 16 || primaryTransfer == 18) {
+        return StillRoute.Lib(if (heifPrecision.avif) LibCodec.AvifPq else LibCodec.HevcHdr)
+    }
+
     // Gain-map markers. ISO `tmap` AVIF is applied by libavif. Apple aux HEIC and
     // JPEG/AVIF gain maps the platform already understands stay on ImageDecoder.
     if (bytes.containsAscii("GainMap", n) ||
@@ -302,7 +310,6 @@ fun classify(bytes: ByteArray, length: Int = bytes.size, fileNameHint: String? =
     }
 
     // Absolute PQ/HLG. AVIF → libavif. HEIC → libde265 (libavif cannot decode HEVC).
-    val primaryTransfer = heifPrecision?.transfer
     val absoluteHdr = primaryTransfer?.let { it == 16 || it == 18 } ?: hasAbsoluteHdrCicp(bytes, n)
     if (isHeifFamily(bytes, n) && absoluteHdr) {
         return if (isAvifBrand(bytes, n)) {
