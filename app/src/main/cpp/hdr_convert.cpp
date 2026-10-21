@@ -18,6 +18,7 @@
 #include <vector>
 
 #include "hdr_encode.h"
+#include "reader_pixels.h"
 #include "hdr_parallel.h"
 #include "ultrahdr_api.h"
 // Internal libultrahdr: build Display P3 / 709 ICC for baseline JPEG APP2.
@@ -1310,6 +1311,11 @@ jbyteArray pack_direct_to_jbyte_array(JNIEnv* env, std::vector<uint16_t>& rgba, 
     env->SetIntArrayRegion(jOutInfo, 0, 6, info);
     env->SetFloatArrayRegion(jOutBoost, 0, 1, &boost);
 
+    // Preserve the exact packed samples and metadata. Reader capture moves the
+    // vector; the empty array is only the legacy JNI success token.
+    if (format == 1 ? retain_reader_pixels(rgba) : retain_reader_pixels(sdr)) {
+        return env->NewByteArray(0);
+    }
     jbyteArray result = nullptr;
     if (format == 1) {
         // F16 still lives in rgba — copy once to Java, then free native immediately.

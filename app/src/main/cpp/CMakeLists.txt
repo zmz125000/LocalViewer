@@ -471,7 +471,7 @@ set_source_files_properties(jp2_decode.cpp PROPERTIES COMPILE_DEFINITIONS OPJ_ST
 # Build and link our app's native lib
 set_source_files_properties(raw_still.cpp PROPERTIES COMPILE_FLAGS "-fexceptions")
 add_library(${PROJECT_NAME} SHARED archive.c gifutils.c hash.c natsort/strnatcmp.c jp2_decode.cpp
-        raw_still.cpp ${EHVIEWER_HDR_SOURCES})
+        raw_still.cpp reader_pixels.cpp ${EHVIEWER_HDR_SOURCES})
 target_include_directories(${PROJECT_NAME} PRIVATE
         ${openjpeg_SOURCE_DIR}/src/lib/openjp2
         ${openjpeg_BINARY_DIR}/src/lib/openjp2
@@ -508,7 +508,7 @@ if (EHVIEWER_HDR_CODECS)
     list(APPEND EHVIEWER_HDR_LIBS ${EH_JPEG_LIB})
 endif ()
 target_link_libraries(
-        ${PROJECT_NAME} archive_static ehviewer_rust z ${EHVIEWER_HDR_LIBS} openjp2 jnigraphics log
+        ${PROJECT_NAME} archive_static ehviewer_rust z ${EHVIEWER_HDR_LIBS} openjp2 jnigraphics log android
         -Wl,-u,JNI_OnLoad -Wl,--undefined-glob,Java_*
         -Wl,--version-script,${CMAKE_SOURCE_DIR}/libehviewer.map.txt
 )

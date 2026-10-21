@@ -5,6 +5,8 @@ import android.graphics.ColorSpace
 import android.hardware.HardwareBuffer
 import android.os.Build
 import com.ehviewer.core.util.logcat
+import com.hippo.ehviewer.jni.copyNativeReaderPixelsToAHB
+import java.nio.ByteBuffer
 
 /**
  * Wrap software [Bitmap.Config.RGBA_F16] into a GPU-sampled HARDWARE bitmap via
@@ -50,17 +52,23 @@ fun tryHardwareF16FromPixels(
     width: Int,
     height: Int,
     colorSpace: ColorSpace?,
+    nativePixels: ByteBuffer? = null,
 ): Bitmap? {
     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return null
     if (width <= 0 || height <= 0) return null
     val expected = width.toLong() * height * 8L
-    if (expected > Int.MAX_VALUE || pixels.size.toLong() != expected) return null
+    val size = nativePixels?.remaining() ?: pixels.size
+    if (expected > Int.MAX_VALUE || size.toLong() != expected) return null
     if (!colorSpaceSupportsHardwareWrap(colorSpace)) return null
     return runCatching {
         val usage = HardwareBuffer.USAGE_GPU_SAMPLED_IMAGE or HardwareBuffer.USAGE_CPU_WRITE_RARELY
         val buffer = HardwareBuffer.create(width, height, HardwareBuffer.RGBA_FP16, 1, usage)
         try {
-            copyByteArrayToAHB(pixels, buffer)
+            if (nativePixels != null) {
+                copyNativeReaderPixelsToAHB(nativePixels, buffer)
+            } else {
+                copyByteArrayToAHB(pixels, buffer)
+            }
             Bitmap.wrapHardwareBuffer(buffer, colorSpace)
                 ?: error("wrapHardwareBuffer returned null")
         } finally {

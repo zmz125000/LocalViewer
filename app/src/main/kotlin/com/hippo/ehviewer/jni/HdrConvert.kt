@@ -1,5 +1,14 @@
 package com.hippo.ehviewer.jni
 
+import android.hardware.HardwareBuffer
+import java.nio.ByteBuffer
+
+/** Synchronous reader-only capture. Release the handle after copying the returned buffer. */
+internal external fun beginNativeReaderPixels(): Long
+internal external fun endNativeReaderPixels(handle: Long): ByteBuffer?
+internal external fun releaseNativeReaderPixels(handle: Long)
+internal external fun copyNativeReaderPixelsToAHB(source: ByteBuffer, destination: HardwareBuffer)
+
 /**
  * Native still codecs for formats the platform cannot open reliably
  * (libultrahdr + jxrlib + libavif + libjxl + OpenJPEG + libde265).
