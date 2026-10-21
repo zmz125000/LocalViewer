@@ -13,7 +13,8 @@ class HeifPrecisionTest {
         assertEquals(HeifDecodePath.Coil, heifDecodePath(HeifPrecision(true, 10, 16, animated = true), true, true))
         assertEquals(HeifDecodePath.Coil, heifDecodePath(HeifPrecision(true, 8, 13), true, true))
         assertEquals(HeifDecodePath.Coil, heifDecodePath(HeifPrecision(true, 10, 13), false, true))
-        assertEquals(HeifDecodePath.PlatformDeep, heifDecodePath(HeifPrecision(true, 10, 13), true, false))
+        assertEquals(HeifDecodePath.Native, heifDecodePath(HeifPrecision(true, 10, 13), true, false))
+        assertEquals(HeifDecodePath.Native, heifDecodePath(HeifPrecision(true, 10, 13), true, true))
         assertEquals(HeifDecodePath.PlatformDeep, heifDecodePath(HeifPrecision(false, 10, 13), true, true))
         assertEquals(HeifDecodePath.Native, heifDecodePath(HeifPrecision(false, 10, 13), true, false))
         for (avif in listOf(true, false)) {

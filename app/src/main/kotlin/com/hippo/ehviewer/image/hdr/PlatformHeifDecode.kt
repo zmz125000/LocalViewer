@@ -19,7 +19,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import splitties.init.appCtx
 
-/** SDR AVIF/HEIF uses Android's optimized still decoder; no JPEG conversion or pixel loop. */
+/** High-depth SDR HEIF uses Android's still decoder when it retains precision. */
 internal object PlatformHeifDecode {
     suspend fun precision(src: ImageSource, hint: String): HeifPrecision? = withContext(Dispatchers.IO) {
         val ext = hint.substringAfterLast('.', "").lowercase()
@@ -53,9 +53,9 @@ internal object PlatformHeifDecode {
     }
 
     suspend fun decode(src: ImageSource, info: HeifPrecision, maxEdge: Int): LibDirectResult? = withContext(Dispatchers.IO) {
-        // A F16 destination alone cannot recover precision from an 8-bit HEVC
-        // codec output. Use software HEVC when the platform lacks readable P010.
-        if (heifDecodePath(info, advancedColor = true, hevcP010 = hevcP010) != HeifDecodePath.PlatformDeep) return@withContext null
+        // AVIF uses libavif for a reliable F16 color transform. For HEVC, a F16
+        // destination cannot recover precision from an 8-bit codec output.
+        if (heifDecodePath(info, advancedColor = true, hevcP010 = !info.avif && hevcP010) != HeifDecodePath.PlatformDeep) return@withContext null
         LibDirectDecode.withHeavyDecode {
             runCatching {
                 val source = when (src) {

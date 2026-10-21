@@ -17,7 +17,10 @@ internal fun heifDecodePath(info: HeifPrecision, advancedColor: Boolean, hevcP01
     // route reclassifies the complete file before deciding SDR versus HDR.
     info.bitDepth == null && info.transfer == null -> HeifDecodePath.Native
     !info.highDepth -> HeifDecodePath.Coil
-    !info.avif && !hevcP010 -> HeifDecodePath.Native
+    // SkAvifCodec's F16 path can copy transfer-encoded RGB without the requested
+    // color transform. A linear destination tag then lifts SDR shadows and
+    // misinterprets P3 primaries. libavif applies the EOTF and tags the gamut.
+    info.avif || !hevcP010 -> HeifDecodePath.Native
     else -> HeifDecodePath.PlatformDeep
 }
 
