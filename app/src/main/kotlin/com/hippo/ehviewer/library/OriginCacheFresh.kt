@@ -28,6 +28,18 @@ object OriginCacheFresh {
     }
 
     /**
+     * Cache mtime is the freshness watermark ([remoteNewerThanCache]) as well as
+     * the LRU stamp. Bump it only after a probe that observed a remote last-write
+     * which is not later than the cache. A failed probe, or a stat with no usable
+     * mtime, must leave the watermark unchanged — otherwise an update that landed
+     * before this open stays hidden from the next successful probe.
+     */
+    fun mayBumpCacheMtime(remoteMtimeMs: Long?, cacheMtimeMs: Long): Boolean {
+        val remote = remoteMtimeMs ?: return false
+        return remote > 0L && remote <= cacheMtimeMs
+    }
+
+    /**
      * True when [remoteSize] is a known length that does not match the cache.
      * Null remote size keeps the cache.
      */
