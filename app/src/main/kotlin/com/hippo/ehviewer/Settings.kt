@@ -485,7 +485,7 @@ object Settings : DataStorePreferences(null) {
      * Toggling drops the proven-address cache, browse pools, and sticky video/FUSE
      * sessions so the next connect resolves again instead of reusing the old TCP.
      */
-    val smbMdns = boolPref("smb_mdns", false).observed {
+    val smbMdns = boolPref("smb_mdns", true).observed {
         com.hippo.ehviewer.smb.SmbMdns.clear()
         com.hippo.ehviewer.smb.SmbGateway.onProtocolSettingsChanged()
     }
