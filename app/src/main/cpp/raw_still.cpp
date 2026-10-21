@@ -351,7 +351,7 @@ float hdr_highlight_weight(float scene_luma, float anchor) {
 // anchor is the sampled highlight peak, at least camera white. base_at_anchor is
 // the render's output for a neutral at the anchor. Below the knee the gain is 1.
 // It then rises with hdr_highlight_weight, and from the anchor up it holds.
-// shoulder 0 keeps the render, 1 puts the anchor at the panel cap, and 0.5 is
+// shoulder 0 keeps the render, 1 puts the anchor at the HDR target, and 0.5 is
 // halfway between the two in stops. Both HDR modes use the shoulder slider.
 float hdr_highlight_gain(float scene_luma, float anchor, float base_at_anchor, float shoulder, float cap) {
     const float w = hdr_highlight_weight(scene_luma, anchor);
@@ -554,8 +554,8 @@ bool pack_image(const libraw_processed_image_t* img, int max_edge, int present, 
                     apply_raw_zones(rgb[0], rgb[1], rgb[2], shadows, midtones, highlights);
                     if (hdr) {
                         // Ordinary HDR export follows source headroom. Explicit
-                        // boost/custom export uses the fixed mastering target
-                        // passed by Kotlin; reader mode uses panel headroom.
+                        // boost/custom export and reader mode use the HDR target
+                        // passed by Kotlin.
                         const float target = present == 3 ? std::min(cap, anchor) : cap;
                         const float lift = hdr_highlight_gain(scene_luma, anchor, base_at_anchor, hdr_shoulder, target);
                         for (int c = 0; c < 3; ++c) rgb[c] *= lift;
@@ -569,7 +569,7 @@ bool pack_image(const libraw_processed_image_t* img, int max_edge, int present, 
                     } else {
                         // Exposure already ran inside the camera look, ahead of the tone curve.
                         // HDR compresses and caps the largest channel and scales the others with
-                        // it, so a saturated highlight keeps its hue at the panel cap.
+                        // it, so a saturated highlight keeps its hue at the HDR target.
                         float hdr_scale = 1.f;
                         if (hdr) {
                             // Cap in Rec.2020, where 1 is camera white. An sRGB channel

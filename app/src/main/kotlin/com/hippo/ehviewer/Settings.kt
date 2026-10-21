@@ -1138,10 +1138,13 @@ object Settings : DataStorePreferences(null) {
 
     /**
      * HDR shoulder, 0..100, for camera-look HDR and linear HDR.
-     * 0 leaves the developed highlights. 100 lifts the sampled peak to the panel cap.
+     * 0 leaves the developed highlights. 100 lifts the sampled peak toward the HDR target.
      * 50 is halfway there in stops. Only the top two stops below the peak change.
      */
     val readerRawShoulder = intPref("pref_reader_raw_shoulder", 50)
+
+    /** Target for RAW HDR highlight expansion, in nits (1000..10000). */
+    val readerRawHdrTargetNits = intPref("pref_reader_raw_hdr_target_nits", 1500)
 
     /** Restore the RAW image controls to their defaults. Does not turn sensor decode off. */
     fun resetReaderRaw() {
@@ -1150,6 +1153,7 @@ object Settings : DataStorePreferences(null) {
         readerRawCameraLook.value = true
         readerRawHdrLinear.value = false
         readerRawShoulder.value = 50
+        readerRawHdrTargetNits.value = 1500
         readerRawExposure.value = 0
         readerRawShadows.value = 0
         readerRawMidtones.value = 0

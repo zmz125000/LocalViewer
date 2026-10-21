@@ -947,8 +947,10 @@
     <string name="pref_reader_raw_camera_look_summary">對 RAW SDR 套用色調曲線</string>
     <string name="pref_reader_raw_hdr_linear">HDR 線性 Rec.2020</string>
     <string name="pref_reader_raw_hdr_linear_summary">HDR RAW 略過相機風格，保持線性 Rec.2020。</string>
+    <string name="pref_reader_raw_hdr_target_nits">HDR 增強目標</string>
+    <string name="pref_reader_raw_hdr_target_nits_summary">設定 RAW HDR 高光擴展的目標亮度。估計螢幕目標：%1$d 尼特。</string>
     <string name="pref_reader_raw_shoulder">HDR 肩部</string>
-    <string name="pref_reader_raw_shoulder_summary">展開相機風格和線性 HDR 的高光。0 保持原樣，50 展開一半，100 展開到螢幕上限。</string>
+    <string name="pref_reader_raw_shoulder_summary">展開相機風格和線性 HDR 的高光。0 保持原樣，50 展開一半，100 展開到 HDR 目標亮度。</string>
     <string name="pref_custom_brightness">自訂亮度</string>
     <string name="pref_custom_color_filter">色彩濾鏡</string>
     <string name="pref_keep_screen_on">保持螢幕恆亮</string>

@@ -20,6 +20,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.stringArrayResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
@@ -32,6 +33,8 @@ import com.ehviewer.core.ui.component.RollingNumber
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.asMutableState
 import com.hippo.ehviewer.ui.settings.Preference
+import com.hippo.ehviewer.util.HdrDisplayInfo
+import kotlin.math.roundToInt
 
 @Composable
 fun ColorFilterSetting(
@@ -169,6 +172,18 @@ private fun CameraRawSetting() = Column {
         range = 0..100,
         field = Settings.readerRawShoulder.asMutableState(),
         valueText = { "$it" },
+    )
+    val display = LocalView.current.display
+    val panelTargetNits = remember(display) {
+        (HdrDisplayInfo.hdrCapabilityBoost(display) * 203f).roundToInt()
+    }
+    CommitSliderChoice(
+        title = stringResource(id = R.string.pref_reader_raw_hdr_target_nits),
+        summary = stringResource(id = R.string.pref_reader_raw_hdr_target_nits_summary, panelTargetNits),
+        range = 1000..10000,
+        field = Settings.readerRawHdrTargetNits.asMutableState(),
+        valueText = { "$it nits" },
+        steps = 89,
     )
     CommitSliderChoice(
         title = stringResource(id = R.string.pref_reader_raw_exposure),

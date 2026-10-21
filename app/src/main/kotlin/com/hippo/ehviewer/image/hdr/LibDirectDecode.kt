@@ -93,9 +93,6 @@ object LibDirectDecode {
     /** Second RAW decode (view original) stops here instead of a full-sensor float16. */
     private const val RAW_FULL_EDGE = 8192
 
-    /** Fixed mastering target for boosted/custom RAW exports, independent of the display. */
-    private const val RAW_EXPORT_BOOST_NITS = 2000f
-
     /** Upper choice of [Settings.heavyDecode], and the size of the decode gate. */
     private const val HEAVY_DECODE_POOL = 2
 
@@ -351,24 +348,22 @@ object LibDirectDecode {
 
     private fun decodeRawPresent(input: RawInput, maxEdge: Int, mode: RawPresent, export: ExportDecode? = null): PackedPixels? {
         val edge = if (export != null) maxEdge else rawDecodeEdge(maxEdge)
+        val controls = export?.controls ?: RawExportControls.current()
         val panelBoost = when {
-            export != null && mode == RawPresent.Hdr -> {
-                // Ordinary HDR follows source headroom; boost/custom use a fixed
-                // export target. Display capabilities only affect reader previews.
-                if (export.target.rawBoosted()) RAW_EXPORT_BOOST_NITS / 203f else 10000f / 203f
-            }
-            mode == RawPresent.Hdr -> rawPanelBoost()
+            // Ordinary HDR exports follow source headroom up to the format ceiling.
+            export != null && mode == RawPresent.Hdr && !export.target.rawBoosted() -> 10000f / 203f
+            // Reader/custom use current controls; boost exports capture default controls.
+            mode == RawPresent.Hdr -> controls.hdrTargetNits / 203f
             else -> 1f
         }
         // Export modes retain Rec.2020 and the separate SDR base. Mode 3 uses
-        // source headroom; mode 4 opens highlights toward the fixed export target.
+        // source headroom; mode 4 opens highlights toward the selected target.
         val present = when {
             export != null && mode == RawPresent.Hdr -> if (export.target.rawBoosted()) 4 else 3
             else -> mode.ordinal
         }
         val outInfo = IntArray(6)
         val outBoost = FloatArray(1)
-        val controls = export?.controls ?: RawExportControls.current()
         val exposureEv = controls.exposure
         val whiteBalance = controls.whiteBalance
         val kelvin = controls.kelvin
@@ -519,13 +514,6 @@ object LibDirectDecode {
             ?.getDisplay(Display.DEFAULT_DISPLAY)
             ?: return false
         return display.isHdr
-    }
-
-    /** Highest panel ratio, as for [jxrHighlightCap]: the live ratio is still 1 when this decode runs. */
-    private fun rawPanelBoost(): Float {
-        val display = appCtx.getSystemService(DisplayManager::class.java)
-            ?.getDisplay(Display.DEFAULT_DISPLAY)
-        return HdrDisplayInfo.hdrCapabilityBoost(display)
     }
 
     /**
