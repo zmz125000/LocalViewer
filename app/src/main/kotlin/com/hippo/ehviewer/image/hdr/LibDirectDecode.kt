@@ -93,6 +93,9 @@ object LibDirectDecode {
     /** Second RAW decode (view original) stops here instead of a full-sensor float16. */
     private const val RAW_FULL_EDGE = 8192
 
+    /** Fixed mastering target for boosted/custom RAW exports, independent of the display. */
+    private const val RAW_EXPORT_BOOST_NITS = 2000f
+
     /** Upper choice of [Settings.heavyDecode], and the size of the decode gate. */
     private const val HEAVY_DECODE_POOL = 2
 
@@ -348,18 +351,17 @@ object LibDirectDecode {
 
     private fun decodeRawPresent(input: RawInput, maxEdge: Int, mode: RawPresent, export: ExportDecode? = null): PackedPixels? {
         val edge = if (export != null) maxEdge else rawDecodeEdge(maxEdge)
-        val panelBoost = if (export != null && mode == RawPresent.Hdr && !export.target.rawBoosted()) {
-            // Ordinary HDR export preserves source headroom up to the format ceiling.
-            10000f / 203f
-        } else if (mode == RawPresent.Hdr) {
-            // Boost/custom use the reader's highlight mapping, including its panel
-            // target (as in 1.13.5). A 10000-nit target would create extra gain.
-            rawPanelBoost()
-        } else {
-            1f
+        val panelBoost = when {
+            export != null && mode == RawPresent.Hdr -> {
+                // Ordinary HDR follows source headroom; boost/custom use a fixed
+                // export target. Display capabilities only affect reader previews.
+                if (export.target.rawBoosted()) RAW_EXPORT_BOOST_NITS / 203f else 10000f / 203f
+            }
+            mode == RawPresent.Hdr -> rawPanelBoost()
+            else -> 1f
         }
         // Export modes retain Rec.2020 and the separate SDR base. Mode 3 uses
-        // source headroom; mode 4 opens highlights toward the reader's panel target.
+        // source headroom; mode 4 opens highlights toward the fixed export target.
         val present = when {
             export != null && mode == RawPresent.Hdr -> if (export.target.rawBoosted()) 4 else 3
             else -> mode.ordinal
