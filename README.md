@@ -121,6 +121,7 @@ Build with Grok 4.5.
 * Reader comic dual pages mode.
 * E-Ink mode support (ported from [venera-next](https://github.com/cyrilpeng/venera-next)).
 * EasyTier support (ported from [moonlight-vplus](https://github.com/qiin2333/moonlight-vplus)).
+* TXT chapter support (ported from [txtautotoc](https://github.com/cchenhen/txtautotoc)).
 
 ### Performance
 * The custom SMBJ and WebDAV clients achieve 1 Gbps network speeds over Wi-Fi 7, so after v1.11.x the image reader defaults to have image caching disabled.
@@ -179,6 +180,9 @@ while ($true) {
 ```
 
 # Thanks
+
+- [cchenhen](https://github.com/cchenhen) for txtautotoc.
+- [miaoxin2003](https://github.com/miaoxin2003) for improvements to PDF.
 
 Here is the libraries
 
