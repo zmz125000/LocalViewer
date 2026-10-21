@@ -147,8 +147,12 @@ fun BrowseItemOverflowButton(
                     StillExportTarget.AutoOriginal to R.string.convert_auto_original,
                     StillExportTarget.Jpeg to R.string.convert_jpeg,
                     StillExportTarget.JpegHdr to R.string.convert_jpeg_hdr,
+                    StillExportTarget.JpegHdrBoost to R.string.convert_jpeg_hdr_boost,
+                    StillExportTarget.JpegHdrCustom to R.string.convert_jpeg_hdr_custom,
                     StillExportTarget.Jxl to R.string.convert_jxl,
                     StillExportTarget.JxlHdr to R.string.convert_jxl_hdr,
+                    StillExportTarget.JxlHdrBoost to R.string.convert_jxl_hdr_boost,
+                    StillExportTarget.JxlHdrCustom to R.string.convert_jxl_hdr_custom,
                 ).filter { (target, _) -> target.available }.forEach { (target, label) ->
                     DropdownMenuItem(
                         text = { Text(stringResource(label)) },
