@@ -763,6 +763,9 @@ object Settings : DataStorePreferences(null) {
      */
     val browseTaskParallel = boolPref("browse_task_parallel", false)
 
+    /** Smaller lossy conversion exports; off preserves the high-quality encoder presets. */
+    val imageConversionCompression = boolPref("image_conversion_compression", true)
+
     val hardwareBitmapThreshold = intPref("hardware_bitmap_threshold", 16384)
     val preloadThumbAggressively = boolPref("preload_thumb_aggressively", false)
     val animateItems = boolPref("animate_items", true)

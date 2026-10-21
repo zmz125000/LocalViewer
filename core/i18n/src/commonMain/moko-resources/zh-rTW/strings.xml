@@ -1083,4 +1083,6 @@
     <string name="dark_theme_on">總是開啟</string>
     <string name="pref_crop_borders">邊緣裁剪</string>
     <!-- Tachiyomi Reader End-->
+    <string name="image_conversion_compression">影像轉換壓縮</string>
+    <string name="image_conversion_compression_summary">開啟：縮小檔案。關閉：高畫質，JPEG XL 使用無損壓縮。</string>
 </resources>

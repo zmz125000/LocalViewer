@@ -59,6 +59,8 @@ extern "C" {
 constexpr int kJpegQualityBaseline = 97;  // pure SDR baseline (no gain map)
 constexpr int kJpegQualityUhdrBase = 97;  // Ultra HDR SDR intent JPEG
 constexpr int kJpegQualityUhdrGainMap = 95;
+constexpr int kJpegQualityCompressed = 90;
+constexpr int kJpegQualityCompressedGainMap = 85;
 #define ALOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
 #define ALOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
 
@@ -845,7 +847,7 @@ void jpeg_err_exit(j_common_ptr cinfo) {
  * Quality [kJpegQualityBaseline], 4:4:4 chroma (no 4:2:0 color blur on 4K stills).
  */
 int encode_baseline_sdr_jpeg(unsigned w, unsigned h, const uint16_t* rgba, const char* out_path,
-                             uhdr_color_gamut_t cg) {
+                             uhdr_color_gamut_t cg, bool compression = false) {
     if (!rgba || !out_path || w == 0 || h == 0) return -30;
     const size_t pixels = static_cast<size_t>(w) * static_cast<size_t>(h);
     std::vector<uint8_t> rgb(pixels * 3);
@@ -907,11 +909,11 @@ int encode_baseline_sdr_jpeg(unsigned w, unsigned h, const uint16_t* rgba, const
     cinfo.input_components = 3;
     cinfo.in_color_space = JCS_RGB;
     jpeg_set_defaults(&cinfo);
-    jpeg_set_quality(&cinfo, kJpegQualityBaseline, TRUE);
-    // jpeg_set_defaults → 4:2:0; force 4:4:4 so fine color edges (text, hair) stay sharp
-    // after 10-bit JXL/AVIF → 8-bit JPEG. File size up ~15–25% vs 4:2:0 at same Q.
-    cinfo.comp_info[0].h_samp_factor = 1;
-    cinfo.comp_info[0].v_samp_factor = 1;
+    jpeg_set_quality(&cinfo, compression ? kJpegQualityCompressed : kJpegQualityBaseline, TRUE);
+    cinfo.optimize_coding = compression ? TRUE : FALSE;
+    // High quality keeps fine color edges with 4:4:4. Compression uses 4:2:0.
+    cinfo.comp_info[0].h_samp_factor = compression ? 2 : 1;
+    cinfo.comp_info[0].v_samp_factor = compression ? 2 : 1;
     cinfo.comp_info[1].h_samp_factor = 1;
     cinfo.comp_info[1].v_samp_factor = 1;
     cinfo.comp_info[2].h_samp_factor = 1;
@@ -967,7 +969,7 @@ int encode_baseline_sdr_jpeg(unsigned w, unsigned h, const uint16_t* rgba, const
  */
 int encode_linear_rgba_f16_to_uhdr(unsigned w, unsigned h, const uint16_t* rgba,
                                    const char* out_path, uhdr_color_gamut_t cg,
-                                   float fixed_peak_nits, bool force_hdr, const uint8_t* sdr_base) {
+                                   float fixed_peak_nits, bool force_hdr, const uint8_t* sdr_base, bool compression) {
     if (!rgba || !out_path || w == 0 || h == 0) return -1;
 
     // Only the three gamuts libultrahdr can tag/ICC-embed.
@@ -995,7 +997,7 @@ int encode_linear_rgba_f16_to_uhdr(unsigned w, unsigned h, const uint16_t* rgba,
 
     // Pure SDR → baseline JPEG (no Ultra HDR gain map / no fake ratio > 1).
     if (!force_hdr && content_peak <= 1.0f) {
-        return encode_baseline_sdr_jpeg(w, h, rgba, out_path, cg);
+        return encode_baseline_sdr_jpeg(w, h, rgba, out_path, cg, compression);
     }
 
     uhdr_codec_private_t* enc = uhdr_create_encoder();
@@ -1022,13 +1024,13 @@ int encode_linear_rgba_f16_to_uhdr(unsigned w, unsigned h, const uint16_t* rgba,
     }
 
     // Quality: base + multi-channel gain map (libultrahdr default is 95/95).
-    err = uhdr_enc_set_quality(enc, kJpegQualityUhdrBase, UHDR_BASE_IMG);
+    err = uhdr_enc_set_quality(enc, compression ? kJpegQualityCompressed : kJpegQualityUhdrBase, UHDR_BASE_IMG);
     if (err.error_code != UHDR_CODEC_OK) {
         ALOGE("uhdr_enc_set_quality base: %s", err.has_detail ? err.detail : "error");
         uhdr_release_encoder(enc);
         return -6;
     }
-    err = uhdr_enc_set_quality(enc, kJpegQualityUhdrGainMap, UHDR_GAIN_MAP_IMG);
+    err = uhdr_enc_set_quality(enc, compression ? kJpegQualityCompressedGainMap : kJpegQualityUhdrGainMap, UHDR_GAIN_MAP_IMG);
     if (err.error_code != UHDR_CODEC_OK) {
         ALOGE("uhdr_enc_set_quality gainmap: %s", err.has_detail ? err.detail : "error");
         uhdr_release_encoder(enc);
@@ -1044,6 +1046,14 @@ int encode_linear_rgba_f16_to_uhdr(unsigned w, unsigned h, const uint16_t* rgba,
     err = uhdr_enc_set_gainmap_gamma(enc, 1.0f);
     if (err.error_code != UHDR_CODEC_OK) {
         ALOGE("uhdr_enc_set_gainmap_gamma: %s", err.has_detail ? err.detail : "error");
+        uhdr_release_encoder(enc);
+        return -6;
+    }
+    // Keep the primary rendition at full size. Compression reduces only the
+    // RGB gain map to one quarter of each dimension (one sixteenth the pixels).
+    err = uhdr_enc_set_gainmap_scale_factor(enc, compression ? 4 : 1);
+    if (err.error_code != UHDR_CODEC_OK) {
+        ALOGE("uhdr_enc_set_gainmap_scale_factor: %s", err.has_detail ? err.detail : "error");
         uhdr_release_encoder(enc);
         return -6;
     }
@@ -1482,7 +1492,7 @@ void unpremultiply_u8(uint8_t* rgba, size_t pixels) {
 }
 
 int encode_srgb_jpeg_u8(unsigned w, unsigned h, const uint8_t* rgba, const char* out_path,
-                        uhdr_color_gamut_t cg) {
+                        uhdr_color_gamut_t cg, bool compression = false) {
     if (!rgba || !out_path || w == 0 || h == 0) return -40;
     FILE* fp = fopen(out_path, "wb");
     if (!fp) return -41;
@@ -1502,9 +1512,10 @@ int encode_srgb_jpeg_u8(unsigned w, unsigned h, const uint8_t* rgba, const char*
     cinfo.input_components = 4;
     cinfo.in_color_space = JCS_EXT_RGBA;
     jpeg_set_defaults(&cinfo);
-    jpeg_set_quality(&cinfo, kJpegQualityBaseline, TRUE);
-    cinfo.comp_info[0].h_samp_factor = 1;
-    cinfo.comp_info[0].v_samp_factor = 1;
+    jpeg_set_quality(&cinfo, compression ? kJpegQualityCompressed : kJpegQualityBaseline, TRUE);
+    cinfo.optimize_coding = compression ? TRUE : FALSE;
+    cinfo.comp_info[0].h_samp_factor = compression ? 2 : 1;
+    cinfo.comp_info[0].v_samp_factor = compression ? 2 : 1;
     cinfo.comp_info[1].h_samp_factor = 1;
     cinfo.comp_info[1].v_samp_factor = 1;
     cinfo.comp_info[2].h_samp_factor = 1;
@@ -1544,7 +1555,8 @@ int encode_srgb_jpeg_u8(unsigned w, unsigned h, const uint8_t* rgba, const char*
  * 8-bit JPEG (HDR) stays a baseline JPEG. There is no headroom to put in a gain map.
  */
 int encode_still_export(const uint8_t* src, size_t src_len, unsigned w, unsigned h, bool f16,
-                        int gamut, int mode, bool premultiplied, const char* out_path, size_t sdr_offset = 0) {
+                        int gamut, int mode, bool premultiplied, const char* out_path, size_t sdr_offset = 0,
+                        bool compression = false) {
     if (!src || !out_path || w == 0 || h == 0 || mode < 0 || mode > 3) return -50;
     const size_t pixels = static_cast<size_t>(w) * static_cast<size_t>(h);
     const size_t bpp = f16 ? 8u : 4u;
@@ -1557,12 +1569,12 @@ int encode_still_export(const uint8_t* src, size_t src_len, unsigned w, unsigned
         if (premultiplied) unpremultiply_f16(rgba.data(), pixels);
         if (mode == kExportJpegHdr) {
             return encode_linear_rgba_f16_to_uhdr(w, h, rgba.data(), out_path, cg, 0.f, true,
-                                                  sdr_offset ? src + sdr_offset : nullptr);
+                                                  sdr_offset ? src + sdr_offset : nullptr, compression);
         }
         if (mode == kExportJxl || mode == kExportJxlHdr) {
-            return encode_jxl_f16(w, h, rgba.data(), cg, mode == kExportJxlHdr, out_path);
+            return encode_jxl_f16(w, h, rgba.data(), cg, mode == kExportJxlHdr, out_path, compression);
         }
-        return encode_baseline_sdr_jpeg(w, h, rgba.data(), out_path, cg);
+        return encode_baseline_sdr_jpeg(w, h, rgba.data(), out_path, cg, compression);
     }
     std::vector<uint8_t> rgba(pixels * 4);
     memcpy(rgba.data(), src, pixels * 4);
@@ -1578,16 +1590,17 @@ int encode_still_export(const uint8_t* src, size_t src_len, unsigned w, unsigned
             }
         });
         std::vector<uint8_t>().swap(rgba);
-        return encode_jxl_f16(w, h, linear.data(), cg, false, out_path);
+        return encode_jxl_f16(w, h, linear.data(), cg, false, out_path, compression);
     }
-    return encode_srgb_jpeg_u8(w, h, rgba.data(), out_path, cg);
+    return encode_srgb_jpeg_u8(w, h, rgba.data(), out_path, cg, compression);
 }
 
 extern "C" JNIEXPORT jint JNICALL
 Java_com_hippo_ehviewer_jni_HdrConvertKt_encodeStillExport(JNIEnv* env, jclass, jbyteArray jPixels,
                                                            jint width, jint height, jboolean f16,
                                                            jint gamut, jint mode,
-                                                           jboolean premultiplied, jstring jOut, jint sdr_offset) {
+                                                           jboolean premultiplied, jstring jOut, jint sdr_offset,
+                                                           jboolean compression) {
     if (!jPixels || !jOut || width <= 0 || height <= 0 || sdr_offset < 0) return -52;
     const jsize len = env->GetArrayLength(jPixels);
     if (len <= 0) return -53;
@@ -1601,7 +1614,8 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_encodeStillExport(JNIEnv* env, jclass, 
     const int rc = encode_still_export(reinterpret_cast<const uint8_t*>(bytes),
                                        static_cast<size_t>(len), static_cast<unsigned>(width),
                                        static_cast<unsigned>(height), f16 == JNI_TRUE, gamut, mode,
-                                       premultiplied == JNI_TRUE, out_path, static_cast<size_t>(sdr_offset));
+                                       premultiplied == JNI_TRUE, out_path, static_cast<size_t>(sdr_offset),
+                                       compression == JNI_TRUE);
     env->ReleaseStringUTFChars(jOut, out_path);
     env->ReleaseByteArrayElements(jPixels, bytes, JNI_ABORT);
     return rc;

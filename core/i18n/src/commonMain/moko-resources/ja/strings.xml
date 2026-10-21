@@ -1060,4 +1060,6 @@
     <string name="blocked_image">ブロックされた画像</string>
     <string name="show_blocked_image">ブロックされた画像を表示</string>
     <!-- Tachiyomi Reader End-->
+    <string name="image_conversion_compression">画像変換の圧縮</string>
+    <string name="image_conversion_compression_summary">オン：ファイルを小さくします。オフ：高画質（JPEG XLは可逆圧縮）。</string>
 </resources>
