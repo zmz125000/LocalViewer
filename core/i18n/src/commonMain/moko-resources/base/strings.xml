@@ -1152,4 +1152,6 @@
     <string name="blocked_image">Blocked image</string>
     <string name="show_blocked_image">Show blocked image</string>
     <!-- Tachiyomi Reader End-->
+    <string name="image_conversion_compression">Image conversion compression</string>
+    <string name="image_conversion_compression_summary">On: smaller files. Off: high quality, including lossless JPEG XL.</string>
 </resources>

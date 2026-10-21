@@ -38,4 +38,9 @@ internal data class RawExportControls(
 }
 
 /** Preserve a batch's snapshot through staging, pickers, queue waits and parallel jobs. */
-internal suspend fun <T> withRawExportControls(target: StillExportTarget, work: suspend () -> T): T = withContext(currentCoroutineContext()[RawExportControls] ?: RawExportControls.capture(target)) { work() }
+internal suspend fun <T> withRawExportControls(target: StillExportTarget, work: suspend () -> T): T {
+    val context = currentCoroutineContext()
+    val raw = context[RawExportControls] ?: RawExportControls.capture(target)
+    val compression = context[StillExportCompression] ?: StillExportCompression.current()
+    return withContext(raw + compression) { work() }
+}

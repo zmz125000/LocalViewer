@@ -1116,4 +1116,6 @@
     <string name="blocked_image">已屏蔽的图片</string>
     <string name="show_blocked_image">显示已屏蔽的图片</string>
     <!-- Tachiyomi Reader End-->
+    <string name="image_conversion_compression">图像转换压缩</string>
+    <string name="image_conversion_compression_summary">开启：减小文件体积。关闭：高画质，JPEG XL 使用无损压缩。</string>
 </resources>

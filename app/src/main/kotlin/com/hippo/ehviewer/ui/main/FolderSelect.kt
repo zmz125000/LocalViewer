@@ -71,6 +71,7 @@ import com.ehviewer.core.i18n.R
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.asMutableState
 import com.hippo.ehviewer.image.hdr.RawExportControls
+import com.hippo.ehviewer.image.hdr.StillExportCompression
 import com.hippo.ehviewer.image.hdr.StillExportTarget
 import com.hippo.ehviewer.library.ExplorerWindows
 import com.hippo.ehviewer.provider.StreamKeepAlivePolicy
@@ -1642,7 +1643,7 @@ private fun beginConvert(
     context: Context,
     target: StillExportTarget,
 ) {
-    val controls = RawExportControls.capture(target)
+    val controls = RawExportControls.capture(target) + StillExportCompression.current()
     val folderKey = FolderSelectHost.selectionSnack?.folderKey
     val items = FolderSelectHost.selectionPicks.filter { it.convertStill != null }
     if (items.isEmpty()) {
