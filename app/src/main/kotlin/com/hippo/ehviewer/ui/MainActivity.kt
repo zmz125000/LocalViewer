@@ -363,9 +363,15 @@ private fun showTabRoot(navigator: DestinationsNavigator, direction: Direction) 
 private fun recallNavWindow(
     navigator: DestinationsNavigator,
     window: ExplorerWindows.Window,
+    tab: NavTabWindows.Tab,
     currentDestination: DestinationSpec?,
     navBackStackEntry: androidx.navigation.NavBackStackEntry?,
 ) {
+    ExplorerWindows.setOrigin(
+        window.id,
+        fromHistory = tab == NavTabWindows.Tab.History,
+        fromLibrary = tab == NavTabWindows.Tab.Library,
+    )
     val shown = ExplorerWindows.activate(window.id) ?: return
     val browserSourceId = when (currentDestination) {
         SmbBrowserScreenDestination ->
@@ -674,7 +680,7 @@ class MainActivity : AppCompatActivity() {
                             NavTabWindows.clear(tab)
                             showTabRoot(navigator, item.direction)
                         } else {
-                            recallNavWindow(navigator, window, currentDestination, navBackStackEntry)
+                            recallNavWindow(navigator, window, tab, currentDestination, navBackStackEntry)
                         }
                         return
                     }
