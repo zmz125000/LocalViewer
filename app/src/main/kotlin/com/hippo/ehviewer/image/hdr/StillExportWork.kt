@@ -58,10 +58,10 @@ internal fun exportWorkingBytes(width: Long, height: Long, sourceBytes: Long, ra
     return width * height * (if (raw) 128 else 80) + sourceBytes.coerceAtLeast(0).coerceAtMost(1024L * 1024 * 1024) * 2 + 16L * 1024 * 1024
 }
 
-/** Java holds the packed F16 frame and, except for mapped RAW, encoded input. */
+/** RAW HDR also retains its camera-look SDR RGBA8 plane in the packed array. */
 internal fun exportHeapBytes(width: Long, height: Long, sourceBytes: Long, raw: Boolean): Long {
     if (width <= 0 || height <= 0 || width > 65536 || height > 65536) return Long.MAX_VALUE
-    return width * height * 8 + (if (raw) 0 else sourceBytes.coerceAtLeast(0)) + 8L * 1024 * 1024
+    return width * height * (if (raw) 12 else 8) + (if (raw) 0 else sourceBytes.coerceAtLeast(0)) + 8L * 1024 * 1024
 }
 
 internal fun exportNativeCapacity(totalBytes: Long, availableBytes: Long, heapBytes: Long): Long {

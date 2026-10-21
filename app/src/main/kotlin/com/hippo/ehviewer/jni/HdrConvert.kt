@@ -217,6 +217,8 @@ external fun extractRawPreviewFd(fd: Int, outPath: String, demosaicFallback: Boo
  * [f16] selects linear half-float RGBA (8 bytes per pixel). Otherwise the buffer
  * is sRGB RGBA_8888 (4 bytes, R,G,B,A). [gamut] is 0 BT.709, 1 Display P3, 2 BT.2100.
  * [premultiplied] un-associates alpha before encode. 8-bit JPEG (HDR) is baseline.
+ * [sdrOffset] is 0, or the offset of a same-gamut camera-look SDR RGBA8 plane
+ * appended to the F16 HDR pixels. Ultra HDR uses this plane as its SDR base.
  *
  * @return 0 on success. armeabi-v7a returns -100.
  */
@@ -229,6 +231,7 @@ external fun encodeStillExport(
     mode: Int,
     premultiplied: Boolean,
     outPath: String,
+    sdrOffset: Int,
 ): Int
 
 /** Header-only size probe. Kind: 0 JXL, 1 JXR, 2 RAW; packed width/height, or 0. */

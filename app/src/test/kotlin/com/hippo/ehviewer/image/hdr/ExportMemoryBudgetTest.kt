@@ -46,7 +46,9 @@ class ExportMemoryBudgetTest {
         assertEquals(384 * mb, exportNativeCapacity(8192 * mb, 512 * mb, 512 * mb))
         assertEquals(1024 * mb, exportNativeCapacity(-1, 0, 512 * mb))
         assertEquals(Long.MAX_VALUE, exportHeapBytes(0, 0, 0, false))
-        assertEquals(16 * mb, exportHeapBytes(4000, 3000, 16 * mb, false) - exportHeapBytes(4000, 3000, 16 * mb, true))
+        // Mapped RAW keeps HDR + the camera-look SDR plane, without encoded input.
+        assertEquals(exportHeapBytes(4000, 3000, 0, true), exportHeapBytes(4000, 3000, 16 * mb, true))
+        assertEquals(4000L * 3000 * 4, exportHeapBytes(4000, 3000, 0, true) - exportHeapBytes(4000, 3000, 0, false))
     }
 
     @Test

@@ -14,5 +14,6 @@ fun DirectPixels.writeResolved(resolved: StillExportTarget, out: File): Boolean 
         resolved.exportMode(),
         premultiplied,
         out.absolutePath,
+        sdrOffset,
     ) == 0
 }

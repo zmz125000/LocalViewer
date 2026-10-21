@@ -953,7 +953,8 @@ int encode_baseline_sdr_jpeg(unsigned w, unsigned h, const uint16_t* rgba, const
  *
  * Pure SDR ([force_hdr] false and peak ≤ 1.0): baseline JPEG only — no gain map.
  *
- * HDR base is that same clamp-at-1.0 sRGB image, passed as [UHDR_SDR_IMG].
+ * HDR base defaults to that clamp-at-1.0 image, passed as [UHDR_SDR_IMG].
+ * RAW can supply its separate camera-look SDR render in the same primaries.
  * API-0 would Reinhard-tone-map LINEAR input against a 10000-nit headroom and
  * darken the base (linear 1.0 lands near 0.5). The gain map then only restores
  * samples above 1. HDR mode stays the original linear picture.
@@ -966,7 +967,7 @@ int encode_baseline_sdr_jpeg(unsigned w, unsigned h, const uint16_t* rgba, const
  */
 int encode_linear_rgba_f16_to_uhdr(unsigned w, unsigned h, const uint16_t* rgba,
                                    const char* out_path, uhdr_color_gamut_t cg,
-                                   float fixed_peak_nits, bool force_hdr) {
+                                   float fixed_peak_nits, bool force_hdr, const uint8_t* sdr_base) {
     if (!rgba || !out_path || w == 0 || h == 0) return -1;
 
     // Only the three gamuts libultrahdr can tag/ICC-embed.
@@ -1075,17 +1076,21 @@ int encode_linear_rgba_f16_to_uhdr(unsigned w, unsigned h, const uint16_t* rgba,
         return -7;
     }
 
-    // Same pixels as encode_baseline_sdr_jpeg. Keeps the base from API-0's
-    // 10000-nit Reinhard map, which darkened midtones that were already ≤ 1.
+    // RAW supplies its camera-look SDR plane before HDR expansion. Other codecs
+    // keep the baseline-JPEG render, avoiding API-0's 10000-nit Reinhard map.
     const size_t sdr_pixels = static_cast<size_t>(w) * static_cast<size_t>(h);
-    std::vector<uint8_t> sdr_rgba(sdr_pixels * 4);
-    const auto& srgb_codes = half_srgb_u8_table();
-    hdr_parallel_pixels(sdr_pixels, hdr_pixel_jobs(sdr_pixels), [&](size_t begin, size_t end, unsigned) {
-        for (size_t i = begin; i < end; ++i) {
-            for (unsigned c = 0; c < 3; ++c) sdr_rgba[i * 4 + c] = srgb_codes[rgba[i * 4 + c]];
-            sdr_rgba[i * 4 + 3] = 255;
-        }
-    });
+    std::vector<uint8_t> sdr_rgba;
+    if (!sdr_base) {
+        sdr_rgba.resize(sdr_pixels * 4);
+        const auto& srgb_codes = half_srgb_u8_table();
+        hdr_parallel_pixels(sdr_pixels, hdr_pixel_jobs(sdr_pixels), [&](size_t begin, size_t end, unsigned) {
+            for (size_t i = begin; i < end; ++i) {
+                for (unsigned c = 0; c < 3; ++c) sdr_rgba[i * 4 + c] = srgb_codes[rgba[i * 4 + c]];
+                sdr_rgba[i * 4 + 3] = 255;
+            }
+        });
+        sdr_base = sdr_rgba.data();
+    }
     uhdr_raw_image_t sdr_img{};
     sdr_img.fmt = UHDR_IMG_FMT_32bppRGBA8888;
     sdr_img.cg = cg;
@@ -1093,7 +1098,7 @@ int encode_linear_rgba_f16_to_uhdr(unsigned w, unsigned h, const uint16_t* rgba,
     sdr_img.range = UHDR_CR_FULL_RANGE;
     sdr_img.w = w;
     sdr_img.h = h;
-    sdr_img.planes[UHDR_PLANE_PACKED] = sdr_rgba.data();
+    sdr_img.planes[UHDR_PLANE_PACKED] = const_cast<uint8_t*>(sdr_base);
     sdr_img.stride[UHDR_PLANE_PACKED] = w;
     err = uhdr_enc_set_raw_image(enc, &sdr_img, UHDR_SDR_IMG);
     if (err.error_code != UHDR_CODEC_OK) {
@@ -1539,18 +1544,20 @@ int encode_srgb_jpeg_u8(unsigned w, unsigned h, const uint8_t* rgba, const char*
  * 8-bit JPEG (HDR) stays a baseline JPEG. There is no headroom to put in a gain map.
  */
 int encode_still_export(const uint8_t* src, size_t src_len, unsigned w, unsigned h, bool f16,
-                        int gamut, int mode, bool premultiplied, const char* out_path) {
+                        int gamut, int mode, bool premultiplied, const char* out_path, size_t sdr_offset = 0) {
     if (!src || !out_path || w == 0 || h == 0 || mode < 0 || mode > 3) return -50;
     const size_t pixels = static_cast<size_t>(w) * static_cast<size_t>(h);
     const size_t bpp = f16 ? 8u : 4u;
     if (pixels == 0 || pixels > 80000000u || src_len < pixels * bpp) return -51;
+    if (sdr_offset && (!f16 || sdr_offset != pixels * 8u || sdr_offset > src_len || pixels * 4u > src_len - sdr_offset)) return -51;
     const uhdr_color_gamut_t cg = export_gamut(gamut);
     if (f16) {
         std::vector<uint16_t> rgba(pixels * 4);
         memcpy(rgba.data(), src, pixels * 8);
         if (premultiplied) unpremultiply_f16(rgba.data(), pixels);
         if (mode == kExportJpegHdr) {
-            return encode_linear_rgba_f16_to_uhdr(w, h, rgba.data(), out_path, cg, 0.f, true);
+            return encode_linear_rgba_f16_to_uhdr(w, h, rgba.data(), out_path, cg, 0.f, true,
+                                                  sdr_offset ? src + sdr_offset : nullptr);
         }
         if (mode == kExportJxl || mode == kExportJxlHdr) {
             return encode_jxl_f16(w, h, rgba.data(), cg, mode == kExportJxlHdr, out_path);
@@ -1580,8 +1587,8 @@ extern "C" JNIEXPORT jint JNICALL
 Java_com_hippo_ehviewer_jni_HdrConvertKt_encodeStillExport(JNIEnv* env, jclass, jbyteArray jPixels,
                                                            jint width, jint height, jboolean f16,
                                                            jint gamut, jint mode,
-                                                           jboolean premultiplied, jstring jOut) {
-    if (!jPixels || !jOut || width <= 0 || height <= 0) return -52;
+                                                           jboolean premultiplied, jstring jOut, jint sdr_offset) {
+    if (!jPixels || !jOut || width <= 0 || height <= 0 || sdr_offset < 0) return -52;
     const jsize len = env->GetArrayLength(jPixels);
     if (len <= 0) return -53;
     jbyte* bytes = env->GetByteArrayElements(jPixels, nullptr);
@@ -1594,7 +1601,7 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_encodeStillExport(JNIEnv* env, jclass, 
     const int rc = encode_still_export(reinterpret_cast<const uint8_t*>(bytes),
                                        static_cast<size_t>(len), static_cast<unsigned>(width),
                                        static_cast<unsigned>(height), f16 == JNI_TRUE, gamut, mode,
-                                       premultiplied == JNI_TRUE, out_path);
+                                       premultiplied == JNI_TRUE, out_path, static_cast<size_t>(sdr_offset));
     env->ReleaseStringUTFChars(jOut, out_path);
     env->ReleaseByteArrayElements(jPixels, bytes, JNI_ABORT);
     return rc;
