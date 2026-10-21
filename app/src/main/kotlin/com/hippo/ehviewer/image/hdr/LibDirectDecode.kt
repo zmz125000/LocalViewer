@@ -17,6 +17,7 @@ import com.hippo.ehviewer.image.ImageSource
 import com.hippo.ehviewer.image.PathSource
 import com.hippo.ehviewer.image.byteBufferSource
 import com.hippo.ehviewer.image.tryHardwareF16FromPixels
+import com.hippo.ehviewer.jni.beginNativeReaderPixels
 import com.hippo.ehviewer.jni.decodeAvifBytesToDirect
 import com.hippo.ehviewer.jni.decodeJpeg2000Bitmap
 import com.hippo.ehviewer.jni.decodeJpeg2000BytesToDirect
@@ -25,9 +26,11 @@ import com.hippo.ehviewer.jni.decodeJxrBytesToDirect
 import com.hippo.ehviewer.jni.decodeRawBytesToDirect
 import com.hippo.ehviewer.jni.decodeRawFdToDirect
 import com.hippo.ehviewer.jni.decodeRawFileToDirect
+import com.hippo.ehviewer.jni.endNativeReaderPixels
 import com.hippo.ehviewer.jni.extractRawPreviewBytes
 import com.hippo.ehviewer.jni.extractRawPreviewFd
 import com.hippo.ehviewer.jni.extractRawPreviewFile
+import com.hippo.ehviewer.jni.releaseNativeReaderPixels
 import com.hippo.ehviewer.util.FileUtils
 import com.hippo.ehviewer.util.HdrDisplayInfo
 import java.io.File
@@ -216,8 +219,25 @@ object LibDirectDecode {
         fileNameHint: String,
         maxEdge: Int,
     ): LibDirectResult? {
-        val packed = decodePacked(src, fileNameHint, maxEdge) ?: return null
-        return bitmapFromPacked(packed.pixels, packed.outInfo, packed.outBoost, wrapHardware = packed.advanced)
+        // This entire scope is synchronous on the same decode thread. Native
+        // packers move their final vector into the capture instead of a Java array.
+        // Exports call decodePacked directly and retain their existing byte[] ABI.
+        val handle = beginNativeReaderPixels()
+        try {
+            val packed = decodePacked(src, fileNameHint, maxEdge)
+            val nativePixels = endNativeReaderPixels(handle)
+            if (packed == null) return null
+            return bitmapFromPacked(
+                packed.pixels,
+                packed.outInfo,
+                packed.outBoost,
+                wrapHardware = packed.advanced,
+                nativePixels = nativePixels,
+            )
+        } finally {
+            // Upload/copy has completed (or failed); no bitmap references this buffer.
+            releaseNativeReaderPixels(handle)
+        }
     }
 
     private fun decodePacked(
@@ -533,6 +553,7 @@ object LibDirectDecode {
         outInfo: IntArray,
         outBoost: FloatArray,
         wrapHardware: Boolean,
+        nativePixels: ByteBuffer?,
     ): LibDirectResult? {
         val w = outInfo[0]
         val h = outInfo[1]
@@ -544,18 +565,18 @@ object LibDirectDecode {
         val f16 = format == 1
         val colorSpace = resolveColorSpace(f16, gamut, transfer)
         // Default advanced/F16 path: copy the JNI result straight into a HardwareBuffer.
-        // This removes the ByteArray → software Bitmap → AHB double copy while preserving
+        // Captured native vectors upload without a full-frame Java array, preserving
         // the exact linear scRGB/BT.2020 ColorSpace chosen above. Fall back to software
         // when the device cannot wrap that color space.
         // RAW deep color / HDR wraps even when the advanced-color switch is off, because
         // HDR display ignores that switch and still packs float16.
         val hardware = if (wrapHardware && f16) {
-            tryHardwareF16FromPixels(pixels, w, h, colorSpace)
+            tryHardwareF16FromPixels(pixels, w, h, colorSpace, nativePixels)
         } else {
             null
         }
         val bitmap = hardware
-            ?: pixelsToSoftwareBitmap(pixels, w, h, f16, colorSpace)
+            ?: pixelsToSoftwareBitmap(nativePixels ?: ByteBuffer.wrap(pixels), w, h, f16, colorSpace)
             ?: return null
         val boost = outBoost.getOrElse(0) { 1f }.coerceIn(1f, 64f)
         val wide = gamut == 1 || gamut == 2 ||
@@ -643,7 +664,7 @@ object LibDirectDecode {
     }
 
     private fun pixelsToSoftwareBitmap(
-        pixels: ByteArray,
+        pixels: ByteBuffer,
         w: Int,
         h: Int,
         f16: Boolean,
@@ -659,12 +680,17 @@ object LibDirectDecode {
         } else {
             Bitmap.createBitmap(w, h, config)
         }
-        val expected = if (config == Bitmap.Config.RGBA_F16) w * h * 8 else w * h * 4
-        if (pixels.size < expected) {
+        val expected = w.toLong() * h * if (config == Bitmap.Config.RGBA_F16) 8 else 4
+        if (expected > Int.MAX_VALUE || pixels.remaining().toLong() < expected) {
             bitmap.recycle()
             return@runCatching null
         }
-        bitmap.copyPixelsFromBuffer(ByteBuffer.wrap(pixels, 0, expected))
-        bitmap
+        try {
+            bitmap.copyPixelsFromBuffer(pixels.duplicate().apply { limit(position() + expected.toInt()) })
+            bitmap
+        } catch (e: Throwable) {
+            bitmap.recycle()
+            throw e
+        }
     }.getOrNull()
 }

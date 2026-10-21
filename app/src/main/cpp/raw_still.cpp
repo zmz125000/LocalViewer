@@ -38,6 +38,7 @@
 #include <vector>
 
 #include "raw_camera_look.h"
+#include "reader_pixels.h"
 
 #if defined(EHVIEWER_HDR_CODECS)
 #include <jpeglib.h>
@@ -991,12 +992,13 @@ bool demosaic_cover_jpeg(const char* path, const uint8_t* mem, size_t mem_len, c
     return write_rgba8_jpeg(decoded.pixels.data(), decoded.w, decoded.h, out_path, 85);
 }
 
-jbyteArray decoded_to_java(JNIEnv* env, const Decoded& decoded, jintArray j_info, jfloatArray j_boost) {
+jbyteArray decoded_to_java(JNIEnv* env, Decoded& decoded, jintArray j_info, jfloatArray j_boost) {
     if (env->GetArrayLength(j_info) < 6 || env->GetArrayLength(j_boost) < 1) return nullptr;
     jint meta[6] = {decoded.w, decoded.h, decoded.format, decoded.is_hdr, decoded.gamut, 0};
     env->SetIntArrayRegion(j_info, 0, 6, meta);
     env->SetFloatArrayRegion(j_boost, 0, 1, &decoded.boost);
     if (decoded.pixels.size() > static_cast<size_t>(std::numeric_limits<jsize>::max())) return nullptr;
+    if (retain_reader_pixels(decoded.pixels)) return env->NewByteArray(0);
     jbyteArray arr = env->NewByteArray(static_cast<jsize>(decoded.pixels.size()));
     if (!arr) return nullptr;
     env->SetByteArrayRegion(arr, 0, static_cast<jsize>(decoded.pixels.size()),
