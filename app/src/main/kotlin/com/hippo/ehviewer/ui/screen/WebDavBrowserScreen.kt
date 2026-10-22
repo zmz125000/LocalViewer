@@ -22,6 +22,7 @@ import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.LibraryBooks
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Explore
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Refresh
@@ -2197,7 +2198,10 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                     colors = adaptiveTopAppBarColors(),
                     navigationIcon = {
                         IconButton(onClick = { onTopBarBack() }, shapes = IconButtonDefaults.shapes()) {
-                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null)
+                            Icon(
+                                if (folderSelect.selecting) Icons.Default.Close else Icons.AutoMirrored.Filled.ArrowBack,
+                                contentDescription = null,
+                            )
                         }
                     },
                     actions = {
