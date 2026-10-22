@@ -5,7 +5,6 @@ import android.graphics.Gainmap
 import android.os.Build
 import android.util.Log
 import androidx.annotation.RequiresApi
-import com.hippo.ehviewer.Settings
 
 /**
  * Apple HEIC gain map (`urn:com:apple:photo:2020:aux:hdrgainmap`) attached as a
@@ -39,15 +38,18 @@ internal object AppleHdr {
         val gain = HeifContainer.parse(heic)?.appleGainMap() ?: return null
         val decoded = AppleGainMapDecode.decode(gain) ?: return null
         val gray = Bitmap.createBitmap(decoded.pixels, decoded.width, decoded.height, Bitmap.Config.ARGB_8888)
-        val deep = Settings.readerAdvancedColor.value && (HeifPrecisionProbe.probe(heic)?.bitDepth ?: 8) > 8
-        return runCatching { attach(base, gray, gain.headroom, deep) }
-            .onFailure { Log.e(TAG, "attach failed", it) }
+        return runCatching { attach(base, gray, gain.headroom) }
+            .onFailure {
+                gray.recycle()
+                Log.e(TAG, "attach failed", it)
+            }
             .getOrNull()
     }
 
     @RequiresApi(Build.VERSION_CODES.UPSIDE_DOWN_CAKE)
-    private fun attach(base: Bitmap, gray: Bitmap, headroom: Float, deep: Boolean): Bitmap? {
-        val target = software(base, deep) ?: return null
+    private fun attach(base: Bitmap, gray: Bitmap, headroom: Float): Bitmap {
+        // Gain-map attachment changes metadata and accepts immutable/HARDWARE
+        // bases. Avoid copying Coil's pixels or changing their precision/profile.
         val gm = Gainmap(gray)
         gm.setRatioMax(headroom, headroom, headroom)
         gm.setRatioMin(1f, 1f, 1f)
@@ -56,21 +58,8 @@ internal object AppleHdr {
         gm.setEpsilonHdr(0f, 0f, 0f)
         gm.setDisplayRatioForFullHdr(headroom)
         gm.setMinDisplayRatioForHdrTransition(1f)
-        target.gainmap = gm
-        if (target !== base && !base.isRecycled) base.recycle()
-        Log.i(TAG, "Apple gain map ${gray.width}x${gray.height} headroom=$headroom on ${target.width}x${target.height}")
-        return target
-    }
-
-    private fun software(base: Bitmap, deep: Boolean): Bitmap? {
-        if (base.isRecycled) return null
-        val cfg = base.config
-        if (cfg != null && cfg != Bitmap.Config.HARDWARE && base.isMutable) return base
-        val target = when {
-            deep || cfg == Bitmap.Config.RGBA_F16 -> Bitmap.Config.RGBA_F16
-            cfg == Bitmap.Config.RGBA_1010102 -> Bitmap.Config.RGBA_1010102
-            else -> Bitmap.Config.ARGB_8888
-        }
-        return base.copy(target, true)
+        base.gainmap = gm
+        Log.i(TAG, "Apple gain map ${gray.width}x${gray.height} headroom=$headroom on ${base.width}x${base.height}")
+        return base
     }
 }

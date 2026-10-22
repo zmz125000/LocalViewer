@@ -6,12 +6,10 @@ import android.graphics.Gainmap
 import android.os.Build
 import android.system.Os
 import android.util.Log
-import androidx.annotation.RequiresApi
 import com.ehviewer.core.files.metadataOrNull
 import com.ehviewer.core.files.openFileDescriptor
 import com.ehviewer.core.files.read
 import com.ehviewer.core.util.isAtLeastU
-import com.hippo.ehviewer.Settings
 import java.io.File
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -68,27 +66,40 @@ object OppoProxdr {
             indexOfAscii(bytes, start, n, "local.hdr") >= 0
     }
 
+    /** Read only the trailer, preserving the caller's buffer position. */
+    fun looksLike(buffer: ByteBuffer): Boolean {
+        val tail = buffer.asReadOnlyBuffer()
+        if (tail.remaining() < 256) return false
+        val n = minOf(768, tail.remaining())
+        tail.position(tail.limit() - n)
+        return looksLike(ByteArray(n).also { tail.get(it) })
+    }
+
     /**
      * Tail-sniff any [Path] (physical `/…`, SAF, `mediastore:`).
      * Do not use java.io.File — library photos are often non-filesystem paths.
      */
-    fun looksLike(path: Path): Boolean {
-        val metaLen = path.metadataOrNull()?.size
+    fun looksLike(path: Path): Boolean = probeTrailer(path) == true
+
+    /** Null means the provider cannot seek/read a tail; attachment may still read it fully. */
+    private fun probeTrailer(path: Path): Boolean? {
+        val metaLen = runCatching { path.metadataOrNull()?.size }.getOrNull()
         return runCatching {
             path.openFileDescriptor("r").use { pfd ->
                 val fd = pfd.fileDescriptor
                 val len = metaLen?.takeIf { it > 0L }
                     ?: runCatching { Os.fstat(fd).st_size }.getOrDefault(-1L)
-                if (len < 1024L) return@use false
-                val n = minOf(768, len.toInt())
+                if (len <= 0L) return@use null
+                if (len < 256L) return@use false
+                val n = minOf(768L, len).toInt()
                 val buf = ByteArray(n)
                 val got = Os.pread(fd, buf, 0, n, len - n)
-                if (got < 256) return@use false
+                if (got < 256) return@use null
                 looksLike(buf, got)
             }
         }.onFailure {
             Log.w(TAG, "looksLike failed for $path", it)
-        }.getOrDefault(false)
+        }.getOrNull()
     }
 
     fun looksLike(file: File): Boolean {
@@ -153,95 +164,14 @@ object OppoProxdr {
         )
     }
 
-    /**
-     * Attach ProXDR gain map to an already-decoded HEIC **base** [Bitmap]
-     * (platform ImageDecoder / Coil path — same as gain-map AVIF present).
-     *
-     * @return true if [base] now has a [Gainmap] (may replace a HARDWARE bitmap with software).
-     */
-    fun attachToDecodedBase(base: Bitmap, path: Path): Boolean {
-        if (!isAtLeastU) return false
-        val bytes = runCatching {
-            path.read { readByteArray() }
-        }.onFailure {
-            Log.e(TAG, "read failed for attach: $path", it)
-        }.getOrNull() ?: return false
-        return attachToDecodedBase(base, bytes)
-    }
+    /** Attach to the existing bitmap, including immutable and HARDWARE bases. */
+    fun attachToDecodedBase(base: Bitmap, path: Path): Boolean = attachOrCopy(base, path) != null
 
-    fun attachToDecodedBase(base: Bitmap, heicBytes: ByteArray): Boolean {
-        if (!isAtLeastU) return false
-        val payload = parse(heicBytes) ?: return false
-        val deep = Settings.readerAdvancedColor.value && (HeifPrecisionProbe.probe(heicBytes)?.bitDepth ?: 8) > 8
-        return attachPayload(base, payload, deep)
-    }
+    fun attachToDecodedBase(base: Bitmap, heicBytes: ByteArray): Boolean = attachOrCopy(base, heicBytes) != null
 
-    @RequiresApi(Build.VERSION_CODES.UPSIDE_DOWN_CAKE)
-    private fun attachPayload(base: Bitmap, payload: Payload, deep: Boolean): Boolean = runCatching {
-        if (base.isRecycled) return false
-        // Gainmap attach needs a mutable software bitmap (HARDWARE is immutable).
-        val target = ensureSoftwareMutable(base, deep) ?: return false
-        val map = BitmapFactory.decodeByteArray(
-            payload.maskJpeg,
-            0,
-            payload.maskJpeg.size,
-            BitmapFactory.Options().apply {
-                inPreferredConfig = Bitmap.Config.ARGB_8888
-                inScaled = false
-            },
-        ) ?: return false
-
-        // Scale mask with base if Coil downscaled (should be rare — ORIGIN forced).
-        val mapForGain = if (target.width > 0 && map.width != payload.maskWidth) {
-            val tw = max(1, target.width / 2)
-            val th = max(1, target.height / 2)
-            if (map.width != tw || map.height != th) {
-                Bitmap.createScaledBitmap(map, tw, th, true).also {
-                    if (it !== map) map.recycle()
-                }
-            } else {
-                map
-            }
-        } else {
-            map
-        }
-
-        val gm = Gainmap(mapForGain)
-        val maxB = payload.maxContentBoost
-        val disp = payload.displayRatioForFullHdr
-        gm.setRatioMax(maxB, maxB, maxB)
-        gm.setRatioMin(1f, 1f, 1f)
-        gm.setGamma(1f, 1f, 1f)
-        gm.setEpsilonSdr(0f, 0f, 0f)
-        gm.setEpsilonHdr(0f, 0f, 0f)
-        gm.setDisplayRatioForFullHdr(disp)
-        gm.setMinDisplayRatioForHdrTransition(1f)
-        target.gainmap = gm
-
-        // If we had to copy off HARDWARE, swap pixels into caller's bitmap when possible.
-        if (target !== base) {
-            // Caller must use the software bitmap — mark via recycle of hardware is unsafe
-            // if still displayed. Image.decode replaces Coil image when we return true
-            // only if base already software; see [Image] attach helper.
-            Log.i(TAG, "attached ProXDR gainmap on software copy ${target.width}x${target.height}")
-        } else {
-            Log.i(
-                TAG,
-                "attached ProXDR gainmap ${target.width}x${target.height} " +
-                    "maxBoost=$maxB displayRatio=$disp",
-            )
-        }
-        true
-    }.onFailure {
-        Log.e(TAG, "attachPayload failed", it)
-    }.getOrDefault(false)
-
-    /**
-     * Attach ProXDR map; if [base] is HARDWARE, returns a new software [Bitmap] with
-     * gainmap (caller must present the returned instance). Otherwise returns [base].
-     */
+    /** Reject ordinary files using a small tail read before loading the HEIC. */
     fun attachOrCopy(base: Bitmap, path: Path): Bitmap? {
-        if (!isAtLeastU) return null
+        if (!isAtLeastU || base.isRecycled || probeTrailer(path) == false) return null
         val bytes = runCatching { path.read { readByteArray() } }.getOrNull() ?: return null
         return attachOrCopy(base, bytes)
     }
@@ -250,9 +180,8 @@ object OppoProxdr {
         if (!isAtLeastU || base.isRecycled) return null
         val payload = parse(heicBytes) ?: return null
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.UPSIDE_DOWN_CAKE) return null
+        var ownedMap: Bitmap? = null
         return runCatching {
-            val deep = Settings.readerAdvancedColor.value && (HeifPrecisionProbe.probe(heicBytes)?.bitDepth ?: 8) > 8
-            val target = ensureSoftwareMutable(base, deep) ?: return@runCatching null
             val map = BitmapFactory.decodeByteArray(
                 payload.maskJpeg,
                 0,
@@ -262,17 +191,9 @@ object OppoProxdr {
                     inScaled = false
                 },
             ) ?: return@runCatching null
-            val mapForGain = run {
-                val tw = max(1, target.width / 2)
-                val th = max(1, target.height / 2)
-                if (map.width != tw || map.height != th) {
-                    Bitmap.createScaledBitmap(map, tw, th, true).also {
-                        if (it !== map) map.recycle()
-                    }
-                } else {
-                    map
-                }
-            }
+            ownedMap = map
+            val mapForGain = shrinkGainmap(map, base)
+            ownedMap = mapForGain
             val gm = Gainmap(mapForGain)
             val maxB = payload.maxContentBoost
             val disp = payload.displayRatioForFullHdr
@@ -283,33 +204,35 @@ object OppoProxdr {
             gm.setEpsilonHdr(0f, 0f, 0f)
             gm.setDisplayRatioForFullHdr(disp)
             gm.setMinDisplayRatioForHdrTransition(1f)
-            target.gainmap = gm
+            // setGainmap changes metadata, not pixels: it accepts immutable and
+            // HARDWARE bitmaps. Keep Coil's original precision and color space.
+            base.gainmap = gm
+            ownedMap = null // The base bitmap now owns the gain map.
             Log.i(
                 TAG,
-                "ProXDR gainmap attached ${target.width}x${target.height} " +
-                    "maxBoost=$maxB displayRatio=$disp hardwareCopy=${target !== base}",
+                "ProXDR gainmap attached ${base.width}x${base.height} " +
+                    "map=${mapForGain.width}x${mapForGain.height} maxBoost=$maxB displayRatio=$disp",
             )
-            if (target !== base && !base.isRecycled) {
-                // Drop hardware original; Coil image will hold [target].
-                base.recycle()
-            }
-            target
+            base
         }.onFailure {
+            ownedMap?.recycle()
             Log.e(TAG, "attachOrCopy failed", it)
         }.getOrNull()
     }
 
-    private fun ensureSoftwareMutable(base: Bitmap, deep: Boolean): Bitmap? {
-        if (base.isRecycled) return null
-        val cfg = base.config
-        if (cfg != null && cfg != Bitmap.Config.HARDWARE && base.isMutable) return base
-        // HARDWARE or immutable → software copy for Gainmap.
-        val target = when {
-            deep || cfg == Bitmap.Config.RGBA_F16 -> Bitmap.Config.RGBA_F16
-            Build.VERSION.SDK_INT >= 33 && cfg == Bitmap.Config.RGBA_1010102 -> Bitmap.Config.RGBA_1010102
-            else -> Bitmap.Config.ARGB_8888
+    /** Bound map memory for reduced previews without enlarging or stretching it. */
+    private fun shrinkGainmap(map: Bitmap, base: Bitmap): Bitmap {
+        val scale = minOf(
+            1.0,
+            max(1, base.width / 2).toDouble() / map.width,
+            max(1, base.height / 2).toDouble() / map.height,
+        )
+        if (scale >= 1.0) return map
+        val width = (map.width * scale).toInt().coerceAtLeast(1)
+        val height = (map.height * scale).toInt().coerceAtLeast(1)
+        return Bitmap.createScaledBitmap(map, width, height, true).also {
+            if (it !== map) map.recycle()
         }
-        return base.copy(target, true)
     }
 
     private fun jpegSofSize(jpeg: ByteArray): Pair<Int, Int>? {
