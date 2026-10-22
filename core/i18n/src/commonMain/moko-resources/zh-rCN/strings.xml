@@ -1095,9 +1095,8 @@
     <string name="rotation_landscape">横屏</string>
     <string name="rotation_portrait">竖屏</string>
     <string name="rotation_type">屏幕方向</string>
-    <string name="pref_comic_color_filter">颜色滤镜</string>
     <string name="pref_comic_filter_sepia">棕褐色</string>
-    <string name="pref_comic_filter_high_contrast">高对比度</string>
+    <string name="pref_comic_filter_contrast">对比度</string>
     <string name="pref_grayscale">灰度</string>
     <string name="automatic_background">自动</string>
     <string name="pref_inverted_colors">反色</string>
