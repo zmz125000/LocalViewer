@@ -17,6 +17,7 @@ import com.hippo.ehviewer.image.hdr.HdrConvertCache
 import com.hippo.ehviewer.image.hdr.RawPreviewCache
 import com.hippo.ehviewer.image.hdr.isHdrConvertCandidateExtension
 import com.hippo.ehviewer.image.hdr.isRawStillExtension
+import com.hippo.ehviewer.library.HistoryThumbKey
 import com.hippo.ehviewer.library.LandscapeCoverMarks
 import com.hippo.ehviewer.library.ReaderPageThumb
 import com.hippo.ehviewer.library.ZipMemberCover
@@ -70,6 +71,10 @@ class CoverPathFetcher(
     }
 
     private fun resolveFile(): Path {
+        if (!ZipPaths.isZipPath(data.path) && HistoryThumbKey.isLogicalKey(data.path)) {
+            return HistoryThumbKey.resolveReadablePath(data.path)?.toPath()
+                ?: throw FileNotFoundException("Cover cache missing: ${data.path}")
+        }
         ZipPaths.parse(data.path)?.let { (zip, member) ->
             if (!isImageFileName(member)) {
                 throw FileNotFoundException("ZIP member is not a cover: ${data.path}")

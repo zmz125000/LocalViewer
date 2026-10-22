@@ -115,17 +115,17 @@ private fun directoryFolderDisplayCoverKey(
 }
 
 @Composable
-private fun coverRequest(coverPath: String?, sizePx: Int): ImageRequest? {
+private fun coverRequest(coverPath: String?, sizePx: Int, memoryKey: String? = coverPath): ImageRequest? {
     val context = LocalContext.current
     // Pass path string only — CoverPathFetcher resolves MediaStore/SAF URI off-main.
     // Do not call path.toUri() here (sync ContentResolver.query freezes tab switches).
-    return remember(coverPath, sizePx) {
+    return remember(coverPath, sizePx, memoryKey) {
         coverPath?.let { path ->
             with(context) {
                 coverThumbRequest(
                     path = path,
                     sizePx = sizePx,
-                    memoryKey = path,
+                    memoryKey = memoryKey ?: path,
                 )
             }
         }
@@ -147,11 +147,10 @@ internal fun CoverImage(
     archiveContentPath: String? = null,
     placeholderSize: Dp = BrowseListLeadingIconSize,
 ) {
-    // Do not paint a DB/history path until IO verifies it still exists — stale
-    // archive_thumb keys cause CoverPathFetcher ENOENT spam. Logical HistoryThumbKey
-    // values (smb-thumb: / dav-thumb:) resolve to smb/webdav_thumb_cache only on hit.
+    // Bind the original key immediately so Coil can paint RAM hits before disk IO.
+    // The fetcher resolves logical keys off-main; probes below repair evicted covers.
     var resolvedCover by remember(coverPath, archiveContentPath) {
-        mutableStateOf<String?>(null)
+        mutableStateOf(coverPath?.takeIf { it.isNotBlank() })
     }
     // Resolve/cache probes stay unbounded. Archive page-0 extract shares
     // [BrowseThumbComposeJobs] with browse thumbs (library/history grids).
@@ -164,7 +163,9 @@ internal fun CoverImage(
             }
             val resolved = withIOContext { HistoryThumbKey.resolveReadablePath(stored) }
             if (resolved != null) {
-                resolvedCover = resolved
+                // Keep the request model stable after the probe. The fetcher can
+                // open logical keys directly, without restarting a running decode.
+                resolvedCover = stored
                 return@LaunchedEffect
             }
             // Evicted / deleted thumb — drop optimistic paint; re-extract if archive.
@@ -205,7 +206,7 @@ internal fun CoverImage(
         if (progressGid != 0L && !cover.isNullOrBlank()) {
             com.hippo.ehviewer.library.LandscapeCoverMarks.bindPath(cover, progressGid)
         }
-        val request = coverRequest(cover, sizePx)
+        val request = coverRequest(cover, sizePx, memoryKey = coverPath ?: cover)
         if (request != null) {
             AsyncImage(
                 model = request,

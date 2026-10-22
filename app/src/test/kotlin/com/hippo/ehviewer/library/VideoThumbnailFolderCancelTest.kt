@@ -5,6 +5,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
@@ -104,27 +105,29 @@ class VideoThumbnailFolderCancelTest {
         val composeCap = 6
         BrowseThumbComposeJobs.limitOverrideForTest = composeCap
         try {
-            val inFlight = AtomicInteger(0)
-            val maxInFlight = AtomicInteger(0)
-            val release = CompletableDeferred<Unit>()
-            val jobs = List(12) {
-                async(Dispatchers.Default) {
-                    BrowseThumbComposeJobs.withJob {
-                        val n = inFlight.incrementAndGet()
-                        maxInFlight.updateAndGet { maxOf(it, n) }
-                        release.await()
-                        inFlight.decrementAndGet()
+            coroutineScope {
+                val inFlight = AtomicInteger(0)
+                val maxInFlight = AtomicInteger(0)
+                val release = CompletableDeferred<Unit>()
+                val jobs = List(12) {
+                    async(Dispatchers.Default) {
+                        BrowseThumbComposeJobs.withJob {
+                            val n = inFlight.incrementAndGet()
+                            maxInFlight.updateAndGet { maxOf(it, n) }
+                            release.await()
+                            inFlight.decrementAndGet()
+                        }
                     }
                 }
+                withTimeout(5_000) {
+                    while (maxInFlight.get() < composeCap) delay(10)
+                }
+                delay(50)
+                assertEquals(composeCap, maxInFlight.get())
+                release.complete(Unit)
+                jobs.forEach { it.await() }
+                assertEquals(0, inFlight.get())
             }
-            withTimeout(5_000) {
-                while (maxInFlight.get() < composeCap) delay(10)
-            }
-            delay(50)
-            assertEquals(composeCap, maxInFlight.get())
-            release.complete(Unit)
-            jobs.forEach { it.await() }
-            assertEquals(0, inFlight.get())
         } finally {
             BrowseThumbComposeJobs.limitOverrideForTest = null
         }
@@ -136,32 +139,42 @@ class VideoThumbnailFolderCancelTest {
         val composeCap = 4
         BrowseThumbComposeJobs.limitOverrideForTest = composeCap
         try {
-            val wave1 = CompletableDeferred<Unit>()
-            val wave1Done = AtomicInteger(0)
-            val wave2Started = AtomicInteger(0)
-            val releaseWave2 = CompletableDeferred<Unit>()
-            val jobs = List(composeCap * 2) { index ->
-                async(Dispatchers.Default) {
-                    BrowseThumbComposeJobs.withJob {
-                        if (index < composeCap) {
+            coroutineScope {
+                val wave1 = CompletableDeferred<Unit>()
+                val wave1Started = AtomicInteger(0)
+                val wave1Done = AtomicInteger(0)
+                val wave2Started = AtomicInteger(0)
+                val releaseWave2 = CompletableDeferred<Unit>()
+                val firstWave = List(composeCap) {
+                    async(Dispatchers.Default) {
+                        BrowseThumbComposeJobs.withJob {
+                            wave1Started.incrementAndGet()
                             wave1.await()
                             wave1Done.incrementAndGet()
-                        } else {
+                        }
+                    }
+                }
+                withTimeout(5_000) {
+                    while (wave1Started.get() < composeCap) delay(10)
+                }
+                val secondWave = List(composeCap) {
+                    async(Dispatchers.Default) {
+                        BrowseThumbComposeJobs.withJob {
                             wave2Started.incrementAndGet()
                             releaseWave2.await()
                         }
                     }
                 }
+                delay(50)
+                wave1.complete(Unit)
+                withTimeout(5_000) {
+                    while (wave2Started.get() < composeCap) delay(10)
+                }
+                assertEquals(composeCap, wave1Done.get())
+                assertEquals(composeCap, wave2Started.get())
+                releaseWave2.complete(Unit)
+                (firstWave + secondWave).forEach { it.await() }
             }
-            delay(50)
-            wave1.complete(Unit)
-            withTimeout(5_000) {
-                while (wave2Started.get() < composeCap) delay(10)
-            }
-            assertEquals(composeCap, wave1Done.get())
-            assertEquals(composeCap, wave2Started.get())
-            releaseWave2.complete(Unit)
-            jobs.forEach { it.await() }
         } finally {
             BrowseThumbComposeJobs.limitOverrideForTest = null
         }

@@ -69,8 +69,10 @@ import com.ehviewer.core.i18n.R
 import com.ehviewer.core.ui.component.ElevatedCard
 import com.ehviewer.core.util.logcat
 import com.ehviewer.core.util.withIOContext
+import com.ehviewer.core.util.withUIContext
 import com.hippo.ehviewer.EhDB
 import com.hippo.ehviewer.Settings
+import com.hippo.ehviewer.coil.CoverPath
 import com.hippo.ehviewer.coil.CoverThumb
 import com.hippo.ehviewer.coil.coverThumbRequest
 import com.hippo.ehviewer.collectAsState
@@ -79,9 +81,11 @@ import com.hippo.ehviewer.image.hdr.readEmbeddedRawJpeg
 import com.hippo.ehviewer.library.ArchiveCoverCache
 import com.hippo.ehviewer.library.BrowseSession
 import com.hippo.ehviewer.library.BrowseThumbComposeJobs
+import com.hippo.ehviewer.library.BrowseThumbPreview
 import com.hippo.ehviewer.library.CoverEnsureResult
 import com.hippo.ehviewer.library.DocumentExtractCache
 import com.hippo.ehviewer.library.EmptyArchiveRegistry
+import com.hippo.ehviewer.library.HistoryThumbKey
 import com.hippo.ehviewer.library.LandscapeCoverMarks
 import com.hippo.ehviewer.library.LocalLibrary
 import com.hippo.ehviewer.library.PdfPageCounts
@@ -1532,19 +1536,21 @@ fun BrowseCoverThumb(
         is BrowseCover.DocumentPage -> "doc\u0000${cover.cacheKey}\u0000${cover.index}"
         null -> null
     }
-    // Local image paths: bind immediately when [allowRemoteFetch] (browse). Reader
-    // photo-grid starts false so the first frame is placeholders only.
+    // Local files and known remote thumbs bind immediately for Coil RAM hits.
+    // Existing reader/native-format thumbs are still probed below. Ordinary local
+    // images keep their original decode path; only remote writes follow preview decode.
+    // Reader photo-grid starts with allowRemoteFetch=false (placeholders only).
     var localPath by remember(remoteKey) {
         mutableStateOf(
             when (cover) {
                 is BrowseCover.Local -> cover.path.takeIf { allowRemoteFetch }
+                is BrowseCover.Smb -> SmbCache.cachedThumbPathIfKnown(cover.sourceId, cover.remoteRelativeFile)
+                is BrowseCover.WebDav -> WebDavCache.cachedThumbPathIfKnown(cover.sourceId, cover.remoteRelativeFile)
                 is BrowseCover.LocalArchive,
                 is BrowseCover.SmbArchive,
                 is BrowseCover.WebDavArchive,
                 is BrowseCover.SmbZipMember,
                 is BrowseCover.WebDavZipMember,
-                is BrowseCover.Smb,
-                is BrowseCover.WebDav,
                 is BrowseCover.DocumentPage,
                 null,
                 -> null
@@ -1552,6 +1558,10 @@ fun BrowseCoverThumb(
         )
     }
     var fetchFailed by remember(remoteKey) { mutableStateOf(false) }
+    var preview by remember(remoteKey) { mutableStateOf<BrowseThumbPreview?>(null) }
+    val publishPreview: suspend (BrowseThumbPreview) -> Unit = { ready ->
+        withUIContext { preview = ready }
+    }
     // Internal resume counter + external retryKey both re-run the download effect.
     var resumeEpoch by remember(remoteKey) { mutableIntStateOf(0) }
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -1604,8 +1614,6 @@ fun BrowseCoverThumb(
         }
         when (cover) {
             is BrowseCover.Local -> {
-                // Reader photo-grid first frame: placeholders only. Browse passes
-                // allowRemoteFetch=true so localPath is already set above.
                 if (allowRemoteFetch) localPath = cover.path
                 return@LaunchedEffect
             }
@@ -1801,6 +1809,7 @@ fun BrowseCoverThumb(
                                     cover.sourceId,
                                     cover.remoteRelativeFile,
                                     cacheOriginal = cacheThumbOriginal,
+                                    onPreviewReady = publishPreview,
                                     readEmbeddedJpeg = {
                                         embeddedRawJpegOrNull(cover.remoteRelativeFile) {
                                             SmbGateway.withFileRangeRead(
@@ -1825,6 +1834,9 @@ fun BrowseCoverThumb(
                         } catch (e: CancellationException) {
                             throw e
                         } catch (e: Throwable) {
+                            // A cache-write failure must not re-download an image
+                            // already handed to Coil. Keep its preview visible.
+                            if (preview != null) return@withJob null
                             lastError = e
                             if (attempt < 2) delay(150L * (attempt + 1))
                         }
@@ -1834,9 +1846,10 @@ fun BrowseCoverThumb(
                 }
                 if (downloaded != null) {
                     localPath = downloaded
+                    preview = null
                     fetchFailed = false
                 } else {
-                    fetchFailed = true
+                    fetchFailed = preview == null
                 }
             }
             is BrowseCover.WebDav -> {
@@ -1864,6 +1877,7 @@ fun BrowseCoverThumb(
                                     cover.sourceId,
                                     cover.remoteRelativeFile,
                                     cacheOriginal = cacheThumbOriginal,
+                                    onPreviewReady = publishPreview,
                                     readEmbeddedJpeg = {
                                         embeddedRawJpegOrNull(cover.remoteRelativeFile) {
                                             val size = WebDavClient.fileSizeOrNull(
@@ -1897,6 +1911,9 @@ fun BrowseCoverThumb(
                         } catch (e: CancellationException) {
                             throw e
                         } catch (e: Throwable) {
+                            // A cache-write failure must not re-download an image
+                            // already handed to Coil. Keep its preview visible.
+                            if (preview != null) return@withJob null
                             lastError = e
                             if (attempt < 2) delay(150L * (attempt + 1))
                         }
@@ -1906,9 +1923,10 @@ fun BrowseCoverThumb(
                 }
                 if (downloaded != null) {
                     localPath = downloaded
+                    preview = null
                     fetchFailed = false
                 } else {
-                    fetchFailed = true
+                    fetchFailed = preview == null
                 }
             }
             is BrowseCover.SmbZipMember -> {
@@ -2037,35 +2055,24 @@ fun BrowseCoverThumb(
     }
 
     // Disk thumbs are already ~768px JPEG (OriginDiskCache.THUMB_EDGE); Coil is a light second pass.
-    val request = remember(cover, localPath, resolvedDecodePx) {
-        localPath?.let { path ->
-            val cacheKey = if (ReaderPageThumb.isThumbPath(path)) {
-                "pgt:${browseCoverThumbIdentity(cover) ?: path}@$resolvedDecodePx"
-            } else {
-                when (cover) {
-                    is BrowseCover.Smb ->
-                        "smb-thumb:${cover.sourceId}:${cover.remoteRelativeFile}@${SmbCache.THUMB_DISK_EDGE}"
-                    is BrowseCover.WebDav ->
-                        "dav-thumb:${cover.sourceId}:${cover.remoteRelativeFile}@${WebDavCache.THUMB_DISK_EDGE}"
-                    is BrowseCover.SmbArchive ->
-                        "smba-thumb:${cover.sourceId}:${cover.remoteRelativeFile}@${ArchiveCoverCache.THUMB_EDGE}"
-                    is BrowseCover.WebDavArchive ->
-                        "dava-thumb:${cover.sourceId}:${cover.remoteRelativeFile}@${ArchiveCoverCache.THUMB_EDGE}"
-                    is BrowseCover.LocalArchive ->
-                        "arch-thumb:${cover.archivePath}@${ArchiveCoverCache.THUMB_EDGE}"
-                    is BrowseCover.SmbZipMember ->
-                        "smbz-thumb:${cover.sourceId}:${cover.zipRelativeFile}!${cover.memberRel}@${SmbCache.THUMB_DISK_EDGE}"
-                    is BrowseCover.WebDavZipMember ->
-                        "davz-thumb:${cover.sourceId}:${cover.zipRelativeFile}!${cover.memberRel}@${WebDavCache.THUMB_DISK_EDGE}"
-                    is BrowseCover.DocumentPage ->
-                        "doc-page:${cover.cacheKey}:${cover.index}@$resolvedDecodePx"
-                    is BrowseCover.Local -> cover.path.toString()
-                    null -> path.toString()
-                }
+    val request = remember(cover, localPath, preview, resolvedDecodePx) {
+        val data = preview?.data ?: localPath?.let { CoverPath(it.toString()) }
+        data?.let {
+            val cacheKey = when (cover) {
+                is BrowseCover.Local -> cover.path.toString()
+                is BrowseCover.Smb -> HistoryThumbKey.smb(cover.sourceId, cover.remoteRelativeFile)
+                is BrowseCover.WebDav -> HistoryThumbKey.webdav(cover.sourceId, cover.remoteRelativeFile)
+                is BrowseCover.SmbArchive -> "smba-thumb:${cover.sourceId}:${cover.remoteRelativeFile}@${ArchiveCoverCache.THUMB_EDGE}"
+                is BrowseCover.WebDavArchive -> "dava-thumb:${cover.sourceId}:${cover.remoteRelativeFile}@${ArchiveCoverCache.THUMB_EDGE}"
+                is BrowseCover.LocalArchive -> "arch-thumb:${cover.archivePath}@${ArchiveCoverCache.THUMB_EDGE}"
+                is BrowseCover.SmbZipMember -> "smbz-thumb:${cover.sourceId}:${cover.zipRelativeFile}!${cover.memberRel}@${SmbCache.THUMB_DISK_EDGE}"
+                is BrowseCover.WebDavZipMember -> "davz-thumb:${cover.sourceId}:${cover.zipRelativeFile}!${cover.memberRel}@${WebDavCache.THUMB_DISK_EDGE}"
+                is BrowseCover.DocumentPage -> "doc-page:${cover.cacheKey}:${cover.index}@$resolvedDecodePx"
+                null -> localPath.toString()
             }
             with(context) {
                 coverThumbRequest(
-                    path = path.toString(),
+                    data = data,
                     sizePx = resolvedDecodePx,
                     memoryKey = cacheKey,
                 )
@@ -2103,6 +2110,17 @@ fun BrowseCoverThumb(
                 contentDescription = null,
                 modifier = Modifier.fillMaxSize(),
                 contentScale = ContentScale.Crop,
+                onSuccess = { state ->
+                    preview?.decoded?.complete(Unit)
+                    // The preview and final file share a RAM entry, so the final
+                    // file may never reach CoverPathFetcher's bounds probe.
+                    if (boundGid != 0L) {
+                        localPath?.let { path ->
+                            LandscapeCoverMarks.notePath(path.toString(), state.result.image.width, state.result.image.height)
+                        }
+                    }
+                },
+                onError = { preview?.decoded?.complete(Unit) },
             )
         }
     }

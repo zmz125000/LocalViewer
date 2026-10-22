@@ -4,7 +4,9 @@ import android.os.Looper
 import com.ehviewer.core.files.mkdirs
 import com.hippo.ehviewer.image.hdr.HdrConvertCache
 import com.hippo.ehviewer.image.hdr.browseEmbeddedRawJpeg
+import com.hippo.ehviewer.library.BrowseThumbPreview
 import com.hippo.ehviewer.library.OriginDiskCache
+import com.hippo.ehviewer.library.previewBrowseThumb
 import com.hippo.ehviewer.util.FileUtils
 import java.io.ByteArrayOutputStream
 import java.io.File
@@ -34,6 +36,9 @@ object WebDavCache {
     private const val THUMB_WEBP_QUALITY = OriginDiskCache.THUMB_QUALITY
     private const val THUMB_FORMAT_VERSION = 2
     private val thumbFetchSlots = Semaphore(3)
+
+    // Bound compressed payloads retained during display decode and cache encoding.
+    private val thumbWorkSlots = Semaphore(3)
 
     /** Share folder/gallery thumbnail network capacity with video prefix fetches. */
     suspend fun <T> withBrowseThumbFetchSlot(block: suspend () -> T): T = thumbFetchSlots.withPermit { block() }
@@ -99,7 +104,15 @@ object WebDavCache {
         return thumbRoot / OriginDiskCache.thumbFileName(sha256Hex(key))
     }
 
-    /** WebP if present, else leftover JPEG of the same hash. Disk probe — not for main. */
+    /** Memory-only hint for immediate Coil RAM-cache access. */
+    fun cachedThumbPathIfKnown(sourceId: Long, remoteRelativeFile: String): Path? {
+        val path = thumbCachePath(sourceId, remoteRelativeFile)
+        if (knownPresent.contains(path.toString())) return path
+        val jpeg = OriginDiskCache.jpegSibling(path)
+        return jpeg.takeIf { knownPresent.contains(it.toString()) }
+    }
+
+    /** WebP if present, else JPEG. Disk probe — not for main. */
     fun cachedThumbIfPresent(sourceId: Long, remoteRelativeFile: String): Path? {
         val hit = OriginDiskCache.existingThumb(thumbCachePath(sourceId, remoteRelativeFile)) ?: return null
         markPresent(hit)
@@ -166,6 +179,7 @@ object WebDavCache {
         remoteRelativeFile: String,
         cacheOriginal: Boolean = false,
         readEmbeddedJpeg: (suspend () -> ByteArray?)? = null,
+        onPreviewReady: (suspend (BrowseThumbPreview) -> Unit)? = null,
         download: suspend (OutputStream) -> Unit,
     ): Path = withContext(Dispatchers.IO) {
         cachedThumbIfPresent(sourceId, remoteRelativeFile)?.let { return@withContext it }
@@ -175,14 +189,18 @@ object WebDavCache {
         val mutex = pathLocks.getOrPut(key) { Mutex() }
         mutex.withLock {
             cachedThumbIfPresent(sourceId, remoteRelativeFile)?.let { return@withContext it }
-            thumbFetchSlots.withPermit {
-                cachedThumbIfPresent(sourceId, remoteRelativeFile)?.let { return@withContext it }
+            thumbWorkSlots.withPermit {
                 val name = remoteRelativeFile.substringAfterLast('/')
                 ensureRootDirs()
                 File(destPath.parent!!.toString()).mkdirs()
                 val dest = File(key)
                 val pageForThumb = resolveReaderPath(pagePath)
-                val embedded = browseEmbeddedRawJpeg(name, probeDisk(pageForThumb), readEmbeddedJpeg)
+                val embedded = browseEmbeddedRawJpeg(
+                    name,
+                    probeDisk(pageForThumb),
+                    readEmbeddedJpeg?.let { read -> suspend { thumbFetchSlots.withPermit { read() } } },
+                )
+                if (embedded != null) previewBrowseThumb(embedded, HdrConvertCache.EMBEDDED_JPEG_NAME, onPreviewReady)
                 val fromEmbedded = embedded != null && HdrConvertCache.writeThumbFromBytes(
                     bytes = embedded,
                     destJpeg = dest,
@@ -192,11 +210,12 @@ object WebDavCache {
                 )
                 if (!fromEmbedded && !probeDisk(pageForThumb) && cacheOriginal) {
                     // Same path + convert pipeline as the folder-gallery reader.
-                    downloadIfNeeded(pagePath, originalFileName = name, write = download)
+                    downloadIfNeeded(pagePath, originalFileName = name, write = { out -> thumbFetchSlots.withPermit { download(out) } })
                 }
                 if (!fromEmbedded) {
                     val pageAfter = resolveReaderPath(pagePath)
                     if (probeDisk(pageAfter)) {
+                        previewBrowseThumb(pageAfter, onPreviewReady)
                         try {
                             writeSubsampledThumb(
                                 File(pageAfter.toString()),
@@ -211,9 +230,11 @@ object WebDavCache {
                     } else {
                         // No page cache: MaxEdge-only thumb (no full-page UHDR from grid browse).
                         val bos = ByteArrayOutputStream(256 * 1024)
-                        download(bos)
+                        thumbFetchSlots.withPermit { download(bos) }
+                        val bytes = bos.toByteArray()
+                        previewBrowseThumb(bytes, name, onPreviewReady)
                         val ok = HdrConvertCache.writeThumbFromBytes(
-                            bytes = bos.toByteArray(),
+                            bytes = bytes,
                             destJpeg = dest,
                             maxEdge = THUMB_DISK_EDGE,
                             quality = THUMB_WEBP_QUALITY,
