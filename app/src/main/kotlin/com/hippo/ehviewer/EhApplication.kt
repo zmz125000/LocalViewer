@@ -53,6 +53,7 @@ import com.ehviewer.core.files.deleteContent
 import com.ehviewer.core.ui.util.initSETConnection
 import com.ehviewer.core.util.launchIO
 import com.ehviewer.core.util.logcat
+import com.hippo.ehviewer.coil.BrowseThumbPreviewFetcher
 import com.hippo.ehviewer.coil.CoverPathFetcher
 import com.hippo.ehviewer.coil.CoverPathKeyer
 import com.hippo.ehviewer.coil.CropBorderInterceptor
@@ -326,6 +327,7 @@ class EhApplication : Application(), SingletonImageLoader.Factory {
             )
             // Local covers (library/history/browse): resolve MediaStore off-main.
             add(CoverPathFetcher.Factory())
+            add(BrowseThumbPreviewFetcher.Factory())
             add(CoverPathKeyer)
             // minSdk 32: hardware bitmaps + platform animated image decoder always available.
             add(HardwareBitmapInterceptor)

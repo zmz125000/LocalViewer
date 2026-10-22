@@ -1559,6 +1559,13 @@ fun BrowseCoverThumb(
     }
     var fetchFailed by remember(remoteKey) { mutableStateOf(false) }
     var preview by remember(remoteKey) { mutableStateOf<BrowseThumbPreview?>(null) }
+    var localPainted by remember(remoteKey) { mutableStateOf(false) }
+    fun acceptRemoteThumb(path: Path) {
+        localPath = path
+        // A cache write is not a new image. Keep the successful preview request
+        // alive while releasing its original compressed bytes.
+        if (preview?.useCachedFile(path) != true) preview = null
+    }
     val publishPreview: suspend (BrowseThumbPreview) -> Unit = { ready ->
         withUIContext { preview = ready }
     }
@@ -1607,7 +1614,7 @@ fun BrowseCoverThumb(
         if (pageThumbId != null) {
             val cached = withIOContext { ReaderPageThumb.find(pageThumbId) }
             if (cached != null) {
-                localPath = cached
+                if (cover !is BrowseCover.Local || !localPainted) localPath = cached
                 fetchFailed = false
                 return@LaunchedEffect
             }
@@ -1786,7 +1793,7 @@ fun BrowseCoverThumb(
                     SmbCache.cachedThumbIfPresent(cover.sourceId, cover.remoteRelativeFile)
                 }
                 if (cached != null) {
-                    localPath = cached
+                    acceptRemoteThumb(cached)
                     fetchFailed = false
                     return@LaunchedEffect
                 }
@@ -1845,8 +1852,7 @@ fun BrowseCoverThumb(
                     null
                 }
                 if (downloaded != null) {
-                    localPath = downloaded
-                    preview = null
+                    acceptRemoteThumb(downloaded)
                     fetchFailed = false
                 } else {
                     fetchFailed = preview == null
@@ -1857,7 +1863,7 @@ fun BrowseCoverThumb(
                     WebDavCache.cachedThumbIfPresent(cover.sourceId, cover.remoteRelativeFile)
                 }
                 if (cached != null) {
-                    localPath = cached
+                    acceptRemoteThumb(cached)
                     fetchFailed = false
                     return@LaunchedEffect
                 }
@@ -1922,8 +1928,7 @@ fun BrowseCoverThumb(
                     null
                 }
                 if (downloaded != null) {
-                    localPath = downloaded
-                    preview = null
+                    acceptRemoteThumb(downloaded)
                     fetchFailed = false
                 } else {
                     fetchFailed = preview == null
@@ -2055,8 +2060,9 @@ fun BrowseCoverThumb(
     }
 
     // Disk thumbs are already ~768px JPEG (OriginDiskCache.THUMB_EDGE); Coil is a light second pass.
-    val request = remember(cover, localPath, preview, resolvedDecodePx) {
-        val data = preview?.data ?: localPath?.let { CoverPath(it.toString()) }
+    val displayData = preview ?: localPath?.let { CoverPath(it.toString()) }
+    val request = remember(cover, displayData, resolvedDecodePx) {
+        val data = displayData
         data?.let {
             val cacheKey = when (cover) {
                 is BrowseCover.Local -> cover.path.toString()
@@ -2111,16 +2117,15 @@ fun BrowseCoverThumb(
                 modifier = Modifier.fillMaxSize(),
                 contentScale = ContentScale.Crop,
                 onSuccess = { state ->
-                    preview?.decoded?.complete(Unit)
-                    // The preview and final file share a RAM entry, so the final
-                    // file may never reach CoverPathFetcher's bounds probe.
+                    preview?.onDecoded(success = true)
+                    if (cover is BrowseCover.Local) localPainted = true
+                    // A stable preview never fetches the saved file again while
+                    // displayed, so record orientation directly from its decode.
                     if (boundGid != 0L) {
-                        localPath?.let { path ->
-                            LandscapeCoverMarks.notePath(path.toString(), state.result.image.width, state.result.image.height)
-                        }
+                        LandscapeCoverMarks.note(boundGid, state.result.image.width, state.result.image.height)
                     }
                 },
-                onError = { preview?.decoded?.complete(Unit) },
+                onError = { preview?.onDecoded(success = false) },
             )
         }
     }

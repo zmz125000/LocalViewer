@@ -8,8 +8,28 @@ import kotlinx.coroutines.CompletableDeferred
 import okio.Path
 
 /** Source published to Coil before the optional thumbnail encode starts. */
-class BrowseThumbPreview(val data: Any) {
+class BrowseThumbPreview(data: Any) {
+    @Volatile
+    var data: Any = data
+        private set
+
     val decoded = CompletableDeferred<Unit>()
+
+    @Volatile
+    private var decodedSuccessfully = false
+
+    fun onDecoded(success: Boolean) {
+        if (decoded.isCompleted) return
+        decodedSuccessfully = success
+        decoded.complete(Unit)
+    }
+
+    /** Release compressed bytes without changing the model of the displayed image. */
+    fun useCachedFile(path: Path): Boolean {
+        if (!decodedSuccessfully) return false
+        data = CoverPath(path.toString())
+        return true
+    }
 }
 
 internal suspend fun previewBrowseThumb(
