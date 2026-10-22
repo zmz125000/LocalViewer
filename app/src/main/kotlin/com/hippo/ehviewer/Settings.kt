@@ -803,9 +803,13 @@ object Settings : DataStorePreferences(null) {
     val colorFilter = boolPref("pref_color_filter_key", false)
     val colorFilterValue = intPref("color_filter_value", 0)
     val colorFilterMode = intPref("color_filter_mode", 0)
+
+    // Bit flags: sepia = 1, contrast = 2. Preserves the old exclusive selections.
     val comicColorFilter = intPref("comic_color_filter", 0)
     val comicSepiaStrength = intPref("comic_sepia_strength", 100)
     val comicContrastStrength = intPref("comic_contrast_strength", 50)
+    val comicBlackLevel = intPref("comic_black_level", 0)
+    val comicWhiteLevel = intPref("comic_white_level", 255)
     val customBrightness = boolPref("pref_custom_brightness_key", false)
     val customBrightnessValue = intPref("custom_brightness_value", 0)
     val readingMode = intPref("pref_default_reading_mode_key", ReadingModeType.WEBTOON.prefValue)

@@ -112,14 +112,12 @@ fun ColorFilterSetting(
         field = Settings.colorFilterMode.asMutableState(),
     )
     var comicFilter by Settings.comicColorFilter.asMutableState()
-    AnimatedVisibility(visible = comicFilter != 1) {
-        SwitchChoice(
-            title = stringResource(id = R.string.pref_comic_filter_contrast),
-            checked = comicFilter == 2,
-            onCheckedChange = { comicFilter = if (it) 2 else 0 },
-        )
-    }
-    AnimatedVisibility(visible = comicFilter == 2) {
+    SwitchChoice(
+        title = stringResource(id = R.string.pref_comic_filter_contrast),
+        checked = comicFilter and 2 != 0,
+        onCheckedChange = { comicFilter = if (it) comicFilter or 2 else comicFilter and 2.inv() },
+    )
+    AnimatedVisibility(visible = comicFilter and 2 != 0) {
         val strength = Settings.comicContrastStrength.asMutableState()
         SliderChoice(
             startSlot = {},
@@ -128,14 +126,30 @@ fun ColorFilterSetting(
             field = strength,
         )
     }
-    AnimatedVisibility(visible = comicFilter != 2) {
-        SwitchChoice(
-            title = stringResource(id = R.string.pref_comic_filter_sepia),
-            checked = comicFilter == 1,
-            onCheckedChange = { comicFilter = if (it) 1 else 0 },
-        )
-    }
-    AnimatedVisibility(visible = comicFilter == 1) {
+    val blackLevel = Settings.comicBlackLevel.asMutableState()
+    val whiteLevel = Settings.comicWhiteLevel.asMutableState()
+    val white = whiteLevel.value.coerceIn(1, 255)
+    val black = blackLevel.value.coerceIn(0, white - 1)
+    SliderChoice(
+        startSlot = { Text(stringResource(id = R.string.pref_comic_black_level)) },
+        endSlot = { Text("$black") },
+        range = 0..(white - 1),
+        steps = (white - 2).coerceAtLeast(0),
+        field = blackLevel,
+    )
+    SliderChoice(
+        startSlot = { Text(stringResource(id = R.string.pref_comic_white_level)) },
+        endSlot = { Text("$white") },
+        range = (black + 1)..255,
+        steps = (253 - black).coerceAtLeast(0),
+        field = whiteLevel,
+    )
+    SwitchChoice(
+        title = stringResource(id = R.string.pref_comic_filter_sepia),
+        checked = comicFilter and 1 != 0,
+        onCheckedChange = { comicFilter = if (it) comicFilter or 1 else comicFilter and 1.inv() },
+    )
+    AnimatedVisibility(visible = comicFilter and 1 != 0) {
         val strength = Settings.comicSepiaStrength.asMutableState()
         SliderChoice(
             startSlot = {},
