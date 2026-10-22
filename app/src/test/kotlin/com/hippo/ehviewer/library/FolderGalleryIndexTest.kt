@@ -12,6 +12,43 @@ import org.junit.Test
 
 class FolderGalleryIndexTest {
     @Test
+    fun `library names refresh preserves existing file metadata`() {
+        val image = BrowseEntryRemote.RegularFile("a.jpg", size = 1234L, lastModifiedMs = 1000L)
+        val video = BrowseEntryRemote.VideoFile("b.mp4", size = 5678L, lastModifiedMs = 2000L)
+        val sidecar = BrowseEntryRemote.RegularFile("notes.txt", size = 90L, lastModifiedMs = 3000L)
+        val previous = listOf(image, video, sidecar)
+        val images = FolderGalleryIndex.mergeLibraryFolderPages(previous, "album", listOf("a.jpg", "new.jpg"))
+        val merged = FolderGalleryIndex.mergeLibraryFolderVideos(images, listOf("b.mp4"))
+        assertEquals(image, merged.filterIsInstance<BrowseEntryRemote.RegularFile>().first { it.name == "a.jpg" })
+        assertEquals(video, merged.filterIsInstance<BrowseEntryRemote.VideoFile>().single())
+        assertTrue(merged.contains(sidecar))
+        assertTrue(merged.any { it.name == "new.jpg" })
+    }
+
+    @Test
+    fun `names only photo and video views inherit size and date from classified rows`() {
+        val metadata = FolderGalleryIndex.directChildMetadata(
+            listOf(
+                BrowseEntryRemote.RegularFile("a.jpg", size = 1234L, lastModifiedMs = 1000L),
+                BrowseEntryRemote.VideoFile("b.mp4", size = 5678L, lastModifiedMs = 2000L),
+                BrowseEntryRemote.RegularFile("a.jpg", fileName = "nested/a.jpg", size = 9999L),
+            ),
+        )
+        val files = FolderGalleryIndex.photoGridLocalFiles("/album", null, listOf("a.jpg")) +
+            FolderGalleryIndex.videoFolderLocalFiles("/album", listOf("b.mp4"))
+        val stamped = FolderGalleryIndex.stampLocalFileMetadata(files, metadata)
+        assertEquals(listOf(1234L, 5678L), stamped.map { it.size })
+        assertEquals(listOf(1000L, 2000L), stamped.map { it.lastModifiedMs })
+        assertEquals(
+            stamped,
+            FolderGalleryIndex.stampLocalFileMetadata(
+                stamped,
+                mapOf("a.jpg" to FolderGalleryIndex.FileMetadata()),
+            ),
+        )
+    }
+
+    @Test
     fun `self listing with empty relativeName is complete`() {
         val names = listOf("01.jpg", "02.jpg")
         val listing = listOf(gallery(relativeName = "", names = names))

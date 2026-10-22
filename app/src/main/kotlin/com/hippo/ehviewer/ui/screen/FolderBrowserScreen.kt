@@ -499,24 +499,10 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         zipInnerRel = parent.zipInnerRel,
     )
 
-    fun stampOpenMtimes(listed: List<BrowseEntry>, mtimes: Map<String, Long>): List<BrowseEntry> {
-        if (mtimes.isEmpty()) return listed
-        return listed.map { entry ->
-            when (entry) {
-                is BrowseEntry.RegularFile -> {
-                    val ms = mtimes[entry.name] ?: 0L
-                    if (ms > 0L) entry.copy(lastModifiedMs = ms) else entry
-                }
-                is BrowseEntry.VideoFile -> {
-                    val ms = mtimes[entry.name] ?: 0L
-                    if (ms > 0L) entry.copy(lastModifiedMs = ms) else entry
-                }
-                else -> entry
-            }
-        }
-    }
-
-    suspend fun mtimesForLibraryOpen(frame: BrowseSession.LocalFrame): Map<String, Long> {
+    suspend fun metadataForLibraryOpen(
+        frame: BrowseSession.LocalFrame,
+        names: List<String>,
+    ): Map<String, FolderGalleryIndex.FileMetadata> {
         val folder = if (frame.isZipBrowse) {
             ZipAsDirListing.virtualRelativeDir(frame.relativePath, frame.zipInnerRel.orEmpty())
         } else {
@@ -528,22 +514,36 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         val indexed = if (rootPath == null) {
             emptyMap()
         } else {
-            FolderGalleryIndex.loadLocalDirectMtimes(
+            FolderGalleryIndex.loadLocalDirectFileMetadata(
                 frame.rootId,
                 LocalFolderListing.rootConfigKey(rootPath, frame.preferMediaStore),
                 folder,
                 rootAbs = rootPath,
             )
         }
-        var merged = mergeOpenMtimes(db, indexed)
-        if (merged.isEmpty() && !frame.isZipBrowse) {
-            val path = frame.path.toPath()
-            val media = if (frame.videoFolder) {
-                MediaStoreFs.videoFileMtimes(path)
-            } else {
-                MediaStoreFs.imageFileMtimes(path)
+        val merged = indexed.toMutableMap()
+        for ((name, mtime) in db) {
+            if (mtime > 0L) {
+                val previous = merged[name] ?: FolderGalleryIndex.FileMetadata()
+                merged[name] = previous.copy(lastModifiedMs = mtime)
             }
-            if (media != null) merged = media
+        }
+        val missingMetadata = names.any { name ->
+            val info = merged[name]
+            info == null || info.size <= 0L || info.lastModifiedMs <= 0L
+        }
+        if (missingMetadata && !frame.isZipBrowse) {
+            // One bulk listing supplies size AND mtime; no per-file opens/stats.
+            val path = resolveBrowsePath(frame.path.toPath())
+            val wanted = names.toHashSet()
+            for (child in MediaStoreFs.listChildren(path)) {
+                if (child.isDirectory || child.name !in wanted) continue
+                val previous = merged[child.name] ?: FolderGalleryIndex.FileMetadata()
+                merged[child.name] = FolderGalleryIndex.FileMetadata(
+                    size = previous.size.takeIf { it > 0L } ?: child.size,
+                    lastModifiedMs = previous.lastModifiedMs.takeIf { it > 0L } ?: child.lastModifiedMs,
+                )
+            }
         }
         return merged
     }
@@ -551,21 +551,22 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
     LaunchedEffect(photoGridKey, gridSort.mode) {
         if (photoGridKey == null || gridSort.mode != BrowseSortMode.Date) return@LaunchedEffect
         val frame = stack.lastOrNull() ?: return@LaunchedEffect
-        val mtimes = withIOContext { mtimesForLibraryOpen(frame) }
-        if (mtimes.isEmpty()) return@LaunchedEffect
-        entries = stampOpenMtimes(entries, mtimes)
+        val names = entries.map { it.name }
+        val metadata = withIOContext { metadataForLibraryOpen(frame, names) }
+        if (metadata.isEmpty()) return@LaunchedEffect
+        entries = FolderGalleryIndex.stampLocalFileMetadata(entries, metadata)
     }
 
-    /** Fill modified times so a date-sorted library photo grid can order its rows. */
-    fun stampLibraryOpenDates(frame: BrowseSession.LocalFrame) {
-        if (!libraryDateSortNow()) return
+    /** Fill size/date even when the grid is sorted by name. */
+    fun stampLibraryOpenMetadata(frame: BrowseSession.LocalFrame) {
+        val names = entries.map { it.name }
         launchIO {
-            val mtimes = mtimesForLibraryOpen(frame)
-            if (mtimes.isEmpty()) return@launchIO
+            val metadata = metadataForLibraryOpen(frame, names)
+            if (metadata.isEmpty()) return@launchIO
             withUIContext {
                 val current = stack.lastOrNull() ?: return@withUIContext
                 if (frameListKey(current) != frameListKey(frame)) return@withUIContext
-                entries = stampOpenMtimes(entries, mtimes)
+                entries = FolderGalleryIndex.stampLocalFileMetadata(entries, metadata)
             }
         }
     }
@@ -573,17 +574,17 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
     fun applyLocalPhotoGridFiles(
         frame: BrowseSession.LocalFrame,
         names: List<String>,
-        mtimes: Map<String, Long> = emptyMap(),
+        metadata: Map<String, FolderGalleryIndex.FileMetadata> = emptyMap(),
     ) {
-        entries = stampOpenMtimes(
+        entries = FolderGalleryIndex.stampLocalFileMetadata(
             FolderGalleryIndex.photoGridLocalFiles(frame.path, frame.zipInnerRel, names),
-            mtimes,
+            metadata,
         )
         listedPath = frameListKey(frame)
         loading = false
         refreshing = false
         error = null
-        if (mtimes.isEmpty()) stampLibraryOpenDates(frame)
+        if (metadata.isEmpty()) stampLibraryOpenMetadata(frame)
     }
 
     fun applyLocalVideoFolderFiles(frame: BrowseSession.LocalFrame, names: List<String>) {
@@ -603,6 +604,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
             pathAlias = effective,
         )
         entries = FolderGalleryIndex.videoFolderLocalFiles(frame.path, names)
+        stampLibraryOpenMetadata(frame)
         listedPath = frameListKey(frame)
         loading = false
         refreshing = false
@@ -696,15 +698,14 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         if (!force && frame.photoGrid) {
             val shownImages = entries.filter { it is BrowseEntry.RegularFile && isImageFileName(it.name) }
             val alreadyShown = listedPath == targetPath && shownImages.isNotEmpty()
-            val missingDates = libraryDateSortNow() &&
-                shownImages.any { (it as BrowseEntry.RegularFile).lastModifiedMs <= 0L }
-            if (alreadyShown && !missingDates) {
+            val missingMetadata = shownImages.any { it.size <= 0L || it.lastModifiedMs <= 0L }
+            if (alreadyShown && !missingMetadata) {
                 loading = false
                 refreshing = false
                 return
             }
-            if (alreadyShown && missingDates) {
-                stampLibraryOpenDates(frame)
+            if (alreadyShown && missingMetadata) {
+                stampLibraryOpenMetadata(frame)
                 loading = false
                 refreshing = false
                 return
@@ -727,8 +728,8 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                 null
             } ?: MediaStoreFs.imageFileNames(frame.path.toPath())
             if (!names.isNullOrEmpty()) {
-                val mtimes = mtimesForLibraryOpen(frame)
-                applyLocalPhotoGridFiles(frame, names, mtimes)
+                val metadata = metadataForLibraryOpen(frame, names)
+                applyLocalPhotoGridFiles(frame, names, metadata)
                 return
             }
         }
@@ -1596,8 +1597,8 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         updateStack(stack + newFrame)
         if (names != null) {
             applyLocalPhotoGridFiles(newFrame, names)
-        } else if (libraryDateSortNow()) {
-            stampLibraryOpenDates(newFrame)
+        } else {
+            stampLibraryOpenMetadata(newFrame)
         }
     }
 

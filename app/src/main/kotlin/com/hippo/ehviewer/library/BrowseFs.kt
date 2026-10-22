@@ -14,7 +14,7 @@ import splitties.init.appCtx
  *
  * [size] / [lastModifiedMs] / [hidden] / [readOnly] are best-effort:
  * physical FS fills them; SAF uses SIZE/LAST_MODIFIED/FLAGS when present;
- * MediaStore leaves flags false and size/date 0 unless the index supplies them.
+ * MediaStore supplies indexed size/date for files; synthetic directories have neither.
  *
  * Dot-prefixed names are listed with [hidden]=true (DocumentsContract has no hidden
  * flag). Callers that also honour `.nomedia` dirs should run [withHiddenFlags].
@@ -157,12 +157,14 @@ internal inline fun Path.forEachSafChild(
     if (overlay != null) {
         for (child in overlay) {
             // Keep SAF directory rows. MediaStore has no directory mtime and no `.nomedia`.
-            if (!child.isDirectory) skipNames += child.name
+            // Let SAF fill missing metadata for indexed files in the same children
+            // query. The duplicate merge below retains MediaStore's known values.
+            if (!child.isDirectory && child.size > 0L && child.lastModifiedMs > 0L) skipNames += child.name
             if (!visitor(child)) return
         }
         if (!includeSafRemainder) return
     }
-    val lightMeta = lightSafMeta ?: !overlay.isNullOrEmpty()
+    val lightMeta = lightSafMeta ?: false
     forEachSafDocumentChild(skipNames, lightMeta, visitor)
 }
 
@@ -301,10 +303,12 @@ internal inline fun Path.forEachSafDocumentChild(
     }
     val childrenUri = DocumentsContract.buildChildDocumentsUriUsingTree(uri, documentId)
     val projection = if (lightMeta) {
-        // Last-modified stays. Slim uses it to notice a folder that gained `.nomedia`.
+        // Size/date stay even in light mode: SAF-only files need both for display
+        // and slim refresh. Only write flags can be omitted.
         arrayOf(
             Document.COLUMN_DISPLAY_NAME,
             Document.COLUMN_MIME_TYPE,
+            Document.COLUMN_SIZE,
             Document.COLUMN_LAST_MODIFIED,
         )
     } else {
@@ -327,7 +331,7 @@ internal inline fun Path.forEachSafDocumentChild(
             if (name in skipNames) continue
             val mime = c.getString(mimeIdx)
             val isDir = mime == Document.MIME_TYPE_DIR
-            val size = if (lightMeta || isDir || sizeIdx < 0 || c.isNull(sizeIdx)) {
+            val size = if (isDir || sizeIdx < 0 || c.isNull(sizeIdx)) {
                 0L
             } else {
                 c.getLong(sizeIdx).coerceAtLeast(0L)
