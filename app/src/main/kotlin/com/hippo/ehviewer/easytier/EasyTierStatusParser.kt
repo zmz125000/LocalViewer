@@ -24,8 +24,8 @@ object EasyTierStatusParser {
             val myNode = instance.getJSONObject("my_node_info")
             var myIp: String? = null
             var myPrefix = 0
-            val hostname = myNode.getString("hostname")
-            val version = myNode.getString("version")
+            val hostname = myNode.optString("hostname")
+            val version = myNode.optString("version")
 
             val virtualIp = myNode.optJSONObject("virtual_ipv4")?.let { virtualIpv4 ->
                 myPrefix = virtualIpv4.getInt("network_length")
@@ -33,7 +33,7 @@ object EasyTierStatusParser {
                 "$myIp/$myPrefix"
             } ?: strings.loading
 
-            val stunInfo = myNode.getJSONObject("stun_info")
+            val stunInfo = myNode.optJSONObject("stun_info") ?: JSONObject()
             val publicIps = stunInfo.optJSONArray("public_ip")
             val publicIp = if (publicIps != null && publicIps.length() > 0) {
                 buildString {
@@ -45,10 +45,10 @@ object EasyTierStatusParser {
             } else {
                 strings.unknown
             }
-            val natType = parseNatType(stunInfo.getInt("udp_nat_type"), strings)
+            val natType = parseNatType(stunInfo, strings)
 
-            val routesMap = parseRoutesToMap(instance.getJSONArray("routes"), strings)
-            val peersMap = parsePeersToMap(instance.getJSONArray("peers"))
+            val routesMap = parseRoutesToMap(instance.optJSONArray("routes") ?: JSONArray(), strings)
+            val peersMap = parsePeersToMap(instance.optJSONArray("peers") ?: JSONArray())
 
             val peerList = ArrayList<EasyTierPeerInfo>()
             for (route in routesMap.values) {
@@ -163,6 +163,24 @@ object EasyTierStatusParser {
         return String.format(Locale.US, "%.1f %sB", bytes / 1024.0.pow(exp.toDouble()), pre)
     }
 
+    // 2.7 uses protobuf JSON enum names; older libraries returned numeric values.
+    private fun parseNatType(stunInfo: JSONObject?, strings: StatusStrings): String {
+        val value = stunInfo?.optString("udp_nat_type").orEmpty()
+        val typeCode = value.toIntOrNull() ?: when (value) {
+            "OpenInternet" -> 1
+            "NoPAT" -> 2
+            "FullCone" -> 3
+            "Restricted" -> 4
+            "PortRestricted" -> 5
+            "Symmetric" -> 6
+            "SymUdpFirewall" -> 7
+            "SymmetricEasyInc" -> 8
+            "SymmetricEasyDec" -> 9
+            else -> 0
+        }
+        return parseNatType(typeCode, strings)
+    }
+
     private fun parseNatType(typeCode: Int, strings: StatusStrings): String = when (typeCode) {
         0 -> strings.natUnknown
         1 -> strings.natOpenInternet
@@ -205,12 +223,12 @@ object EasyTierStatusParser {
             }
             map[peerId] = RouteData(
                 peerId = peerId,
-                hostname = route.getString("hostname"),
+                hostname = route.optString("hostname"),
                 virtualIp = virtualIp,
-                nextHopPeerId = route.getLong("next_hop_peer_id"),
-                pathLatency = route.getInt("path_latency"),
-                version = route.getString("version"),
-                natType = parseNatType(route.getJSONObject("stun_info").getInt("udp_nat_type"), strings),
+                nextHopPeerId = route.optLong("next_hop_peer_id"),
+                pathLatency = route.optInt("path_latency"),
+                version = route.optString("version"),
+                natType = parseNatType(route.optJSONObject("stun_info"), strings),
             )
         }
         return map
@@ -220,16 +238,17 @@ object EasyTierStatusParser {
         val map = HashMap<Long, PeerConnectionData>()
         for (i in 0 until peersJson.length()) {
             val peer = peersJson.getJSONObject(i)
-            val conns = peer.getJSONArray("conns")
+            val conns = peer.optJSONArray("conns") ?: continue
             if (conns.length() > 0) {
                 val conn = conns.getJSONObject(0)
                 val peerId = conn.getLong("peer_id")
+                val stats = conn.optJSONObject("stats") ?: JSONObject()
                 map[peerId] = PeerConnectionData(
                     peerId = peerId,
                     physicalAddr = conn.getJSONObject("tunnel").getJSONObject("remote_addr").getString("url"),
-                    latencyUs = conn.getJSONObject("stats").getLong("latency_us"),
-                    rxBytes = conn.getJSONObject("stats").getLong("rx_bytes"),
-                    txBytes = conn.getJSONObject("stats").getLong("tx_bytes"),
+                    latencyUs = stats.optLong("latency_us"),
+                    rxBytes = stats.optLong("rx_bytes"),
+                    txBytes = stats.optLong("tx_bytes"),
                 )
             }
         }

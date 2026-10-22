@@ -21,8 +21,7 @@ object EasyTierJNI {
         if (libraryLoaded) return true
         loadError?.let { return false }
         return try {
-            // libeasytier_android_jni.so NEEDs libeasytier_ffi.so; the linker resolves
-            // the dependency from the same jniLibs ABI directory when the JNI lib loads.
+            // EasyTier 2.7 links its FFI implementation into the JNI library.
             System.loadLibrary("easytier_android_jni")
             libraryLoaded = true
             true
@@ -50,7 +49,8 @@ object EasyTierJNI {
      */
     external fun retainNetworkInstance(instanceNames: Array<String>?): Int
 
-    external fun collectNetworkInfos(): String
+    /** EasyTier 2.7 requires an explicit capacity for the returned instance entries. */
+    external fun collectNetworkInfos(maxLength: Int): String?
 
     external fun getLastError(): String?
 

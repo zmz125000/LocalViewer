@@ -237,6 +237,7 @@ dependencies {
     implementation(libs.zxing.core)
     // Share enumeration: in-house [MsSrvsShareEnum] (NetrShareEnum over IPC$), no dcerpc.
     testImplementation("junit:junit:4.13.2")
+    testImplementation("org.json:json:20240303")
     implementation(libs.material.motion.core)
     implementation(libs.material.kolor)
 

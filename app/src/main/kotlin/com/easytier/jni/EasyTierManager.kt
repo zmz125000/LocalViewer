@@ -100,7 +100,7 @@ class EasyTierManager(
 
     private fun monitorNetworkStatus() {
         try {
-            val infosJson = EasyTierJNI.collectNetworkInfos()
+            val infosJson = EasyTierJNI.collectNetworkInfos(1)
             latestNetworkInfoJson = infosJson
 
             if (infosJson.isNullOrEmpty()) {
