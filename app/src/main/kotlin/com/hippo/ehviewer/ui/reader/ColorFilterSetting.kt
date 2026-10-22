@@ -111,6 +111,16 @@ fun ColorFilterSetting(
         values = listOf(0, 1, 2, 3, 4, 5),
         field = Settings.colorFilterMode.asMutableState(),
     )
+    SpinnerChoice(
+        title = stringResource(id = R.string.pref_comic_color_filter),
+        entries = arrayOf(
+            stringResource(id = R.string.pref_auto_rotate_off),
+            stringResource(id = R.string.pref_comic_filter_sepia),
+            stringResource(id = R.string.pref_comic_filter_high_contrast),
+        ),
+        values = listOf(0, 1, 2),
+        field = Settings.comicColorFilter.asMutableState(),
+    )
     SwitchChoice(
         title = stringResource(id = R.string.pref_grayscale),
         field = Settings.grayScale.asMutableState(),

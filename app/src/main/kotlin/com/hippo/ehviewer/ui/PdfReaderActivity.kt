@@ -188,6 +188,7 @@ import com.hippo.ehviewer.ui.reader.EInkRefreshOverlay
 import com.hippo.ehviewer.ui.reader.NavigationOverlay
 import com.hippo.ehviewer.ui.reader.PagerItem
 import com.hippo.ehviewer.ui.reader.PendingReaderOpen
+import com.hippo.ehviewer.ui.reader.ReaderFilterOverlay
 import com.hippo.ehviewer.ui.reader.ReaderScreenArgs
 import com.hippo.ehviewer.ui.reader.SCROLL_FRACTION
 import com.hippo.ehviewer.ui.reader.SettingsPager
@@ -210,6 +211,7 @@ import com.hippo.ehviewer.ui.reader.readerMouseWheelPages
 import com.hippo.ehviewer.ui.reader.readerPdfCacheKey
 import com.hippo.ehviewer.ui.reader.readerPhotoGridSheetMaxWidth
 import com.hippo.ehviewer.ui.reader.readerSheetBox
+import com.hippo.ehviewer.ui.reader.rememberComicColorFilter
 import com.hippo.ehviewer.ui.reader.scrollDown
 import com.hippo.ehviewer.ui.reader.scrollLeft
 import com.hippo.ehviewer.ui.reader.scrollRight
@@ -2700,6 +2702,7 @@ private fun PdfReaderScreen(
                 }
             }
         }
+        ReaderFilterOverlay()
         ReaderAppBars(
             visible = appbarVisible,
             onNavigateUp = onClose,
@@ -3321,6 +3324,7 @@ private fun PdfPageBitmap(
             }
             Image(
                 bitmap = bitmap.asImageBitmap(),
+                colorFilter = rememberComicColorFilter(),
                 contentDescription = stringResource(R.string.pdf_reader_page, pageLabel, pageCount),
                 contentScale = contentScale,
                 modifier = pageMod,
