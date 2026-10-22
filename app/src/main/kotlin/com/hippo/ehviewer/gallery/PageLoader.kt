@@ -15,6 +15,7 @@ import com.ehviewer.core.util.logcat
 import com.hippo.ehviewer.EhDB
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.image.ByteBufferSource
+import com.hippo.ehviewer.image.HI_RES_PREVIEW_EDGE
 import com.hippo.ehviewer.image.HiResTier
 import com.hippo.ehviewer.image.Image
 import com.hippo.ehviewer.image.ImageSource
@@ -550,7 +551,8 @@ abstract class PageLoader(
                 val (image, raw) = decoded
                 try {
                     currentCoroutineContext().ensureActive()
-                    image.noteHiResFull()
+                    val preview = (pages[index].status as? PageStatus.Ready)?.image
+                    image.noteHiResFull(preview?.hiResPreviewEdge ?: HI_RES_PREVIEW_EDGE)
                     val keep = hiResEpoch[index] == epoch &&
                         hiResWant[index] == true &&
                         hiResPageStillResident(index) &&

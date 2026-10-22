@@ -1001,6 +1001,9 @@ object Settings : DataStorePreferences(null) {
      */
     val readerHiResSoftwareDownscale = boolPref("pref_reader_hi_res_software_downscale", false)
 
+    /** Use a screen-sized Coil preview under [readerHiResOptimize]. Default off. */
+    val readerComicRendering = boolPref("pref_reader_comic_rendering", false)
+
     /**
      * Coil path only: skip the software intermediate used for QR detection and border crop.
      *

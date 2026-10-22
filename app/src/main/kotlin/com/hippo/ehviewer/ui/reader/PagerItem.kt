@@ -235,7 +235,8 @@ fun PagerItem(
                             src.width * factor.scaleX,
                             src.height * factor.scaleY,
                         )
-                        zoomPastHiResPreview(destLong, scale)
+                        // Allow for rounding when the screen-sized preview fits at zoom 1.
+                        zoomPastHiResPreview(destLong, scale, image.hiResPreviewEdge + 2)
                     }.filterNotNull().distinctUntilChanged().collect { zoomPast = it }
                 }
                 LaunchedEffect(zoomPast, inViewport) {

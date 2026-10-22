@@ -280,6 +280,8 @@
     <string name="pref_reader_hardware_bitmap_summary">より高速な Coil 経路（GPU ビットマップ）。余白切り取りと QR 広告検出を無効化し、ソフトウェアコピーを避けます。</string>
     <string name="pref_reader_hi_res_optimize">高解像度の最適化描画</string>
     <string name="pref_reader_hi_res_optimize_summary">大きい写真は 4096 px でデコードします。ズームインすると原寸を読み込みます。</string>
+    <string name="pref_reader_comic_rendering">コミック描画モード</string>
+    <string name="pref_reader_comic_rendering_summary">スムージングフィルターで画像を画面サイズに再サンプリングします。</string>
     <string name="pref_reader_hi_res_software_downscale">ソフトウェア縮小を使う</string>
     <string name="pref_reader_hi_res_software_downscale_summary">4096 px のプレビューを縮小デコードの方式で再サンプリングします。</string>
     <string name="pref_pdf_direct_image">PDF 直接画像</string>
@@ -919,6 +921,9 @@
     <string name="pref_reader_original_size">常に原寸で読み込む</string>
     <string name="pref_reader_original_size_summary">ファイルのフル解像度でデコード（メモリ多め）。オフ時は画面向け縮小。ページメニューの「オリジナルの画像を表示」で1枚だけ原寸も可。</string>
     <string name="pref_custom_brightness">明るさをカスタマイズ</string>
+    <string name="pref_comic_color_filter">カラーフィルター</string>
+    <string name="pref_comic_filter_sepia">セピア</string>
+    <string name="pref_comic_filter_high_contrast">高コントラスト</string>
     <string name="pref_grayscale">グレースケール</string>
     <string name="pref_inverted_colors">色の反転</string>
     <string name="pref_custom_color_filter">カスタムカラーフィルター</string>
@@ -1062,7 +1067,4 @@
     <!-- Tachiyomi Reader End-->
     <string name="image_conversion_compression">画像変換の圧縮</string>
     <string name="image_conversion_compression_summary">オン：ファイルを小さくします。オフ：高画質（JPEG XLは可逆圧縮）。</string>
-    <string name="pref_comic_color_filter">カラーフィルター</string>
-    <string name="pref_comic_filter_sepia">セピア</string>
-    <string name="pref_comic_filter_high_contrast">高コントラスト</string>
 </resources>

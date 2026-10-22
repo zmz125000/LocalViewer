@@ -130,17 +130,23 @@ class Image private constructor(
     var hiResTier: HiResTier = HiResTier.Normal
         private set
 
-    fun noteHiResPreview(capped: Boolean) {
+    var hiResPreviewEdge: Int = HI_RES_PREVIEW_EDGE
+        private set
+
+    fun noteHiResPreview(capped: Boolean, previewEdge: Int = HI_RES_PREVIEW_EDGE) {
         if (!capped) return
         val longEdge = maxOf(intrinsicSize.width, intrinsicSize.height)
         // Gain-map redo can replace the cap with the file frame. That is not a preview.
-        if (longEdge > HI_RES_PREVIEW_EDGE + 2) return
-        if (longEdge >= HI_RES_PREVIEW_EDGE - 2) hiResTier = HiResTier.Preview
+        if (longEdge > previewEdge + 2) return
+        if (longEdge >= previewEdge - 2) {
+            hiResPreviewEdge = previewEdge
+            hiResTier = HiResTier.Preview
+        }
     }
 
-    fun noteHiResFull() {
+    fun noteHiResFull(previewEdge: Int = HI_RES_PREVIEW_EDGE) {
         val longEdge = maxOf(intrinsicSize.width, intrinsicSize.height)
-        hiResTier = if (longEdge > HI_RES_PREVIEW_EDGE) HiResTier.Full else HiResTier.Normal
+        hiResTier = if (longEdge > previewEdge) HiResTier.Full else HiResTier.Normal
     }
 
     /**
@@ -402,7 +408,11 @@ class Image private constructor(
             asBitmapImage()?.bitmap?.recycle()
         }
 
-        private class CoilDecoded(val image: CoilImage, val capped: Boolean)
+        private class CoilDecoded(
+            val image: CoilImage,
+            val capped: Boolean,
+            val previewEdge: Int = HI_RES_PREVIEW_EDGE,
+        )
 
         private suspend fun Either<ByteBufferSource, PathSource>.decodeCoilOnce(
             mode: DecodeSizeType,
@@ -418,6 +428,7 @@ class Image private constructor(
              * without a slow post-decode transfer pass. Crop/QR off; present may AHB-wrap.
              */
             platformHbd: Boolean = false,
+            comicRendering: Boolean = false,
         ): CoilImage {
             val hardwareDirect = !platformHbd && (Settings.readerHardwareBitmap.value || hdrSafe)
             // A chosen kernel decodes the full software frame, then resamples once.
@@ -426,10 +437,10 @@ class Image private constructor(
             val softwareHiRes = longEdgeCap > 0 && Settings.readerHiResSoftwareDownscale.value
             val kernelRequested = !platformHbd && !hdrSafe &&
                 decodeDownscaleKernel() != 0 &&
-                (softwareHiRes || (longEdgeCap <= 0 && !mode.isOriginal))
+                (comicRendering || softwareHiRes || (longEdgeCap <= 0 && !mode.isOriginal))
             // Header size only. A frame already within the target never takes the
             // full software decode; an unreadable header stays on the codec path.
-            val kernelDownscale = kernelRequested && encodedSizeNeedsDownscale(mode, longEdgeCap)
+            val kernelDownscale = kernelRequested && encodedSizeNeedsDownscale(mode, longEdgeCap, comicRendering)
             val request = with(appCtx) {
                 imageRequest {
                     onLeft { data(it.source) }
@@ -437,6 +448,12 @@ class Image private constructor(
                     when {
                         kernelDownscale -> {
                             size(Size.ORIGINAL)
+                            precision(Precision.EXACT)
+                        }
+                        comicRendering -> {
+                            val metrics = appCtx.resources.displayMetrics
+                            size(Size(metrics.widthPixels.coerceAtLeast(1), metrics.heightPixels.coerceAtLeast(1)))
+                            scale(Scale.FIT)
                             precision(Precision.EXACT)
                         }
                         longEdgeCap > 0 -> {
@@ -515,7 +532,7 @@ class Image private constructor(
                         }
                     }
                     val decoded = result.image
-                    if (kernelDownscale) decoded.resampleDown(mode, longEdgeCap) else decoded
+                    if (kernelDownscale) decoded.resampleDown(mode, longEdgeCap, comicRendering) else decoded
                 }
                 is ErrorResult -> throw result.throwable
             }
@@ -531,7 +548,7 @@ class Image private constructor(
          * Full-frame software bitmap → decode-size target. No upscale.
          * Hardware upload was held off so the pixels could be read; it runs here.
          */
-        private fun CoilImage.resampleDown(mode: DecodeSizeType, longEdgeCap: Int): CoilImage {
+        private fun CoilImage.resampleDown(mode: DecodeSizeType, longEdgeCap: Int, comicRendering: Boolean): CoilImage {
             val kernel = decodeDownscaleKernel()
             val bitmap = when (this) {
                 is BitmapImageWithExtraInfo -> {
@@ -551,11 +568,21 @@ class Image private constructor(
             ) {
                 return this
             }
-            val (dstW, dstH) = decodeOutputSize(bitmap.width, bitmap.height, mode, longEdgeCap)
+            val (dstW, dstH) = decodeOutputSize(bitmap.width, bitmap.height, mode, longEdgeCap, comicRendering)
+            val srcW = bitmap.width
+            val srcH = bitmap.height
             val scaled = if (dstW == bitmap.width && dstH == bitmap.height) {
                 bitmap
             } else {
                 bitmap.downscaleDecoded(dstW, dstH, kernel).also { if (it !== bitmap) bitmap.recycle() }
+            }
+            if (Log.isLoggable("ReaderDecode", Log.DEBUG)) {
+                Log.d(
+                    "ReaderDecode",
+                    "kernel=$kernel comic=$comicRendering " +
+                        "${srcW}x$srcH -> ${scaled.width}x${scaled.height} " +
+                        "target=${dstW}x$dstH",
+                )
             }
             val shown = scaled.presentForReader()
             val wrapped = shown.asImage()
@@ -568,13 +595,15 @@ class Image private constructor(
             }
         }
 
-        /** True only when the encoded frame is larger than the decode target. Unknown size is false. */
+        /** Request software resampling for oversized frames or when header bounds are unavailable. */
         private fun Either<ByteBufferSource, PathSource>.encodedSizeNeedsDownscale(
             mode: DecodeSizeType,
             longEdgeCap: Int,
+            comicRendering: Boolean,
         ): Boolean {
-            val (srcW, srcH) = encodedPixelSize() ?: return false
-            val (dstW, dstH) = decodeOutputSize(srcW, srcH, mode, longEdgeCap)
+            // Unknown bounds must not silently disable an explicitly selected kernel.
+            val (srcW, srcH) = encodedPixelSize() ?: return true
+            val (dstW, dstH) = decodeOutputSize(srcW, srcH, mode, longEdgeCap, comicRendering)
             return dstW < srcW || dstH < srcH
         }
 
@@ -583,8 +612,15 @@ class Image private constructor(
             when (this) {
                 is Either.Right -> {
                     val file = File(value.source.toString())
-                    if (!file.isFile) return null
-                    BitmapFactory.decodeFile(file.path, opts)
+                    if (file.isFile) {
+                        BitmapFactory.decodeFile(file.path, opts)
+                    } else {
+                        runCatching {
+                            value.source.openFileDescriptor("r").use { fd ->
+                                BitmapFactory.decodeFileDescriptor(fd.fileDescriptor, null, opts)
+                            }
+                        }.getOrElse { return null }
+                    }
                 }
                 is Either.Left -> {
                     val dup = value.source.asReadOnlyBuffer()
@@ -605,8 +641,24 @@ class Image private constructor(
         }
 
         /** Coil FILL / FIT box. A multiplier of 1 or more means the file is already small enough. */
-        private fun decodeOutputSize(srcW: Int, srcH: Int, mode: DecodeSizeType, longEdgeCap: Int): Pair<Int, Int> {
+        private fun decodeOutputSize(
+            srcW: Int,
+            srcH: Int,
+            mode: DecodeSizeType,
+            longEdgeCap: Int,
+            comicRendering: Boolean,
+        ): Pair<Int, Int> {
             if (srcW <= 0 || srcH <= 0) return srcW to srcH
+            if (comicRendering) {
+                val metrics = appCtx.resources.displayMetrics
+                val scale = minOf(
+                    1.0,
+                    metrics.widthPixels.coerceAtLeast(1).toDouble() / srcW,
+                    metrics.heightPixels.coerceAtLeast(1).toDouble() / srcH,
+                )
+                return (srcW * scale).roundToInt().coerceAtLeast(1) to
+                    (srcH * scale).roundToInt().coerceAtLeast(1)
+            }
             val fill: Boolean
             val box: Int
             if (longEdgeCap > 0) {
@@ -704,9 +756,13 @@ class Image private constructor(
             val hdrSafe = looksHdr
             // APNG must not take the still PNG F16 BitmapFactory path.
             val platformHbd = !looksAnimated && resolvePlatformHbd(gainMap = looksHdr)
+            val comicRendering = Settings.readerHiResOptimize.value &&
+                Settings.readerComicRendering.value && !forceOriginal &&
+                !looksHdr && !looksAnimated && !platformHbd
             // Gain-map JPEG/HEIC/AVIF stay on Coil. hdrSafe skips the software kernel,
             // and the 4096 FIT below is the same cap as other Coil stills.
-            val longEdgeCap = if (forceOriginal || looksAnimated || platformHbd) {
+            val comicSourceSize = if (comicRendering) encodedPixelSize() else null
+            val longEdgeCap = if (forceOriginal || looksAnimated || platformHbd || comicRendering) {
                 0
             } else {
                 hiResPreviewCapEdge(false)
@@ -718,14 +774,21 @@ class Image private constructor(
                     decodeCoilOnce(m, checkExtraneousAds, hdrSafe = hdr, platformHbd = true, longEdgeCap = longEdgeCap)
                 }
             } else {
-                decodeCoilOnce(m, checkExtraneousAds, hdrSafe = hdr, platformHbd = false, longEdgeCap = longEdgeCap)
+                decodeCoilOnce(
+                    m,
+                    checkExtraneousAds,
+                    hdrSafe = hdr,
+                    platformHbd = false,
+                    longEdgeCap = longEdgeCap,
+                    comicRendering = comicRendering && !hdr,
+                )
             }
 
             var image = runDecode(effectiveMode, hdrSafe, platformHbd)
 
             // Sniff miss: a downscale can still attach a gain map. Redo at file
             // resolution only while HDR display is on. Off keeps the reduced decode.
-            if (isAtLeastU && !effectiveMode.isOriginal && Settings.readerHdrDisplay.value) {
+            if (isAtLeastU && (comicRendering || !effectiveMode.isOriginal) && Settings.readerHdrDisplay.value) {
                 val bm = image.asBitmapImage()
                 if (bm != null && bm.detectGainmap()) {
                     image.recycleBitmaps()
@@ -742,12 +805,17 @@ class Image private constructor(
                 image = image.presentPlatformHbdLikeLibDirect()
             }
 
+            val comicPreview = comicRendering && comicSourceSize?.let { (width, height) ->
+                width > image.width || height > image.height
+            } == true
+            val capped = longEdgeCap > 0 || comicPreview
+            val previewEdge = if (comicPreview) maxOf(image.width, image.height) else HI_RES_PREVIEW_EDGE
             // Annotate gain map when the hardware path skipped MapExtraInfoInterceptor.
             val bitmapImage = image.asBitmapImage()
             if (bitmapImage != null && image !is BitmapImageWithExtraInfo && bitmapImage.detectGainmap()) {
-                return CoilDecoded(BitmapImageWithExtraInfo(image = bitmapImage, hasGainmap = true), longEdgeCap > 0)
+                return CoilDecoded(BitmapImageWithExtraInfo(image = bitmapImage, hasGainmap = true), capped, previewEdge)
             }
-            return CoilDecoded(image, longEdgeCap > 0)
+            return CoilDecoded(image, capped, previewEdge)
         }
 
         /**
@@ -801,7 +869,7 @@ class Image private constructor(
                 image.image,
                 src,
                 displayScaler = image.image.allowsDisplayScaler(),
-            ).also { it.noteHiResPreview(image.capped) }
+            ).also { it.noteHiResPreview(image.capped, image.previewEdge) }
         }
 
         /**
