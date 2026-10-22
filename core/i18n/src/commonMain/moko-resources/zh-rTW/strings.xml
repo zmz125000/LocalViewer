@@ -1068,9 +1068,8 @@
     <string name="rotation_landscape">橫向</string>
     <string name="rotation_portrait">直向</string>
     <string name="rotation_type">螢幕方向</string>
-    <string name="pref_comic_color_filter">色彩濾鏡</string>
     <string name="pref_comic_filter_sepia">懷舊棕褐</string>
-    <string name="pref_comic_filter_high_contrast">高對比</string>
+    <string name="pref_comic_filter_contrast">對比度</string>
     <string name="pref_grayscale">灰階</string>
     <string name="automatic_background">自動</string>
     <string name="pref_inverted_colors">反轉</string>

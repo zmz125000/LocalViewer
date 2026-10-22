@@ -111,16 +111,39 @@ fun ColorFilterSetting(
         values = listOf(0, 1, 2, 3, 4, 5),
         field = Settings.colorFilterMode.asMutableState(),
     )
-    SpinnerChoice(
-        title = stringResource(id = R.string.pref_comic_color_filter),
-        entries = arrayOf(
-            stringResource(id = R.string.pref_auto_rotate_off),
-            stringResource(id = R.string.pref_comic_filter_sepia),
-            stringResource(id = R.string.pref_comic_filter_high_contrast),
-        ),
-        values = listOf(0, 1, 2),
-        field = Settings.comicColorFilter.asMutableState(),
-    )
+    var comicFilter by Settings.comicColorFilter.asMutableState()
+    AnimatedVisibility(visible = comicFilter != 1) {
+        SwitchChoice(
+            title = stringResource(id = R.string.pref_comic_filter_contrast),
+            checked = comicFilter == 2,
+            onCheckedChange = { comicFilter = if (it) 2 else 0 },
+        )
+    }
+    AnimatedVisibility(visible = comicFilter == 2) {
+        val strength = Settings.comicContrastStrength.asMutableState()
+        SliderChoice(
+            startSlot = {},
+            endSlot = { Text("${strength.value}%") },
+            range = 0..100,
+            field = strength,
+        )
+    }
+    AnimatedVisibility(visible = comicFilter != 2) {
+        SwitchChoice(
+            title = stringResource(id = R.string.pref_comic_filter_sepia),
+            checked = comicFilter == 1,
+            onCheckedChange = { comicFilter = if (it) 1 else 0 },
+        )
+    }
+    AnimatedVisibility(visible = comicFilter == 1) {
+        val strength = Settings.comicSepiaStrength.asMutableState()
+        SliderChoice(
+            startSlot = {},
+            endSlot = { Text("${strength.value}%") },
+            range = 0..100,
+            field = strength,
+        )
+    }
     SwitchChoice(
         title = stringResource(id = R.string.pref_grayscale),
         field = Settings.grayScale.asMutableState(),
