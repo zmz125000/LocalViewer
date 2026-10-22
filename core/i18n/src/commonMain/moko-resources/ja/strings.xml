@@ -925,6 +925,8 @@
     <string name="pref_custom_brightness">明るさをカスタマイズ</string>
     <string name="pref_comic_filter_sepia">セピア</string>
     <string name="pref_comic_filter_contrast">コントラスト</string>
+    <string name="pref_comic_black_level">黒レベル</string>
+    <string name="pref_comic_white_level">白レベル</string>
     <string name="pref_grayscale">グレースケール</string>
     <string name="pref_inverted_colors">色の反転</string>
     <string name="pref_custom_color_filter">カスタムカラーフィルター</string>

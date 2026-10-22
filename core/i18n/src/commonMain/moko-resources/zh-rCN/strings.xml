@@ -1097,6 +1097,8 @@
     <string name="rotation_type">屏幕方向</string>
     <string name="pref_comic_filter_sepia">棕褐色</string>
     <string name="pref_comic_filter_contrast">对比度</string>
+    <string name="pref_comic_black_level">黑位</string>
+    <string name="pref_comic_white_level">白位</string>
     <string name="pref_grayscale">灰度</string>
     <string name="automatic_background">自动</string>
     <string name="pref_inverted_colors">反色</string>

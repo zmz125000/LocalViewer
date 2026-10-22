@@ -11,57 +11,52 @@ import com.hippo.ehviewer.collectAsState
 /** Draw-time comic effects; callers bypass these for HDR and wide-gamut images. */
 @Composable
 fun rememberComicColorFilter(enabled: Boolean = true): ColorFilter? {
-    val preset by Settings.comicColorFilter.collectAsState()
+    val effects by Settings.comicColorFilter.collectAsState()
     val sepiaStrength by Settings.comicSepiaStrength.collectAsState()
     val contrastStrength by Settings.comicContrastStrength.collectAsState()
+    val blackLevel by Settings.comicBlackLevel.collectAsState()
+    val whiteLevel by Settings.comicWhiteLevel.collectAsState()
     val grayscale by Settings.grayScale.collectAsState()
     val invert by Settings.invertedColors.collectAsState()
-    return remember(enabled, preset, sepiaStrength, contrastStrength, grayscale, invert) {
-        if (!enabled || (preset !in 1..2 && !grayscale && !invert)) {
+    return remember(enabled, effects, sepiaStrength, contrastStrength, blackLevel, whiteLevel, grayscale, invert) {
+        val white = whiteLevel.coerceIn(1, 255)
+        val black = blackLevel.coerceIn(0, white - 1)
+        val sepia = effects and 1 != 0 && sepiaStrength > 0
+        val contrast = effects and 2 != 0 && contrastStrength > 0
+        if (!enabled || (!sepia && !contrast && black == 0 && white == 255 && !grayscale && !invert)) {
             null
         } else {
-            val matrix = when (preset) {
-                1 -> {
-                    val amount = sepiaStrength.coerceIn(0, 100) / 100f
-                    // Interpolate from the original colors to the full sepia matrix.
-                    ColorMatrix(
-                        floatArrayOf(
-                            1f - .607f * amount, .769f * amount, .189f * amount, 0f, 0f,
-                            .349f * amount, 1f - .314f * amount, .168f * amount, 0f, 0f,
-                            .272f * amount, .534f * amount, 1f - .869f * amount, 0f, 0f,
-                            0f, 0f, 0f, 1f, 0f,
-                        ),
-                    )
-                }
-                2 -> {
-                    val scale = 1f + contrastStrength.coerceIn(0, 100) / 100f
-                    val offset = 127.5f * (1f - scale)
-                    ColorMatrix(
-                        floatArrayOf(
-                            scale, 0f, 0f, 0f, offset,
-                            0f, scale, 0f, 0f, offset,
-                            0f, 0f, scale, 0f, offset,
-                            0f, 0f, 0f, 1f, 0f,
-                        ),
-                    )
-                }
-                else -> ColorMatrix()
-            }
-            // Apply grayscale first, then the preset tint/contrast, then inversion.
+            // Input black -> 0 and input white -> 255. Neutral defaults are identity.
+            // With white=255, raising black darkens gray lines and preserves white.
+            val levelScale = 255f / (white - black)
+            var matrix = channelScaleMatrix(levelScale, -black * levelScale)
             if (grayscale) matrix *= ColorMatrix().apply { setToSaturation(0f) }
-            val result = if (invert) {
-                ColorMatrix(
+            if (contrast) {
+                val scale = 1f + contrastStrength.coerceIn(0, 100) / 100f
+                matrix = channelScaleMatrix(scale, 127.5f * (1f - scale)).apply { this *= matrix }
+            }
+            if (sepia) {
+                val amount = sepiaStrength.coerceIn(0, 100) / 100f
+                matrix = ColorMatrix(
                     floatArrayOf(
-                        -1f, 0f, 0f, 0f, 255f,
-                        0f, -1f, 0f, 0f, 255f,
-                        0f, 0f, -1f, 0f, 255f,
+                        1f - .607f * amount, .769f * amount, .189f * amount, 0f, 0f,
+                        .349f * amount, 1f - .314f * amount, .168f * amount, 0f, 0f,
+                        .272f * amount, .534f * amount, 1f - .869f * amount, 0f, 0f,
                         0f, 0f, 0f, 1f, 0f,
                     ),
                 ).apply { this *= matrix }
-            } else {
-                matrix
             }
-            ColorFilter.colorMatrix(result)
+            if (invert) matrix = channelScaleMatrix(-1f, 255f).apply { this *= matrix }
+            ColorFilter.colorMatrix(matrix)
         }
     }
 }
+
+private fun channelScaleMatrix(scale: Float, offset: Float) = ColorMatrix(
+    floatArrayOf(
+        scale, 0f, 0f, 0f, offset,
+        0f, scale, 0f, 0f, offset,
+        0f, 0f, scale, 0f, offset,
+        0f, 0f, 0f, 1f, 0f,
+    ),
+)
