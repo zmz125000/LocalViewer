@@ -58,7 +58,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.changedToDown
@@ -151,7 +150,6 @@ import com.ramcosta.composedestinations.annotation.RootGraph
 import com.ramcosta.composedestinations.navigation.DestinationsNavigator
 import eu.kanade.tachiyomi.ui.reader.PageIndicatorText
 import eu.kanade.tachiyomi.ui.reader.ReaderAppBars
-import eu.kanade.tachiyomi.ui.reader.ReaderContentOverlay
 import eu.kanade.tachiyomi.ui.reader.ReaderPageSheetMeta
 import eu.kanade.tachiyomi.ui.reader.setting.DecodeSizeType
 import eu.kanade.tachiyomi.ui.reader.setting.ReadingModeType
@@ -165,7 +163,6 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.flow.onCompletion
-import kotlinx.coroutines.flow.sample
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.serialization.Serializable
 import moe.tarsin.snackbar
@@ -1105,33 +1102,7 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
                     }.fillMaxSize().windowInsetsPadding(insets),
             )
         }
-        val brightness by Settings.customBrightness.collectAsState()
-        val brightnessValue by Settings.customBrightnessValue.collectAsState()
-        val colorOverlayEnabled by Settings.colorFilter.collectAsState()
-        val colorOverlay by Settings.colorFilterValue.collectAsState()
-        val colorOverlayMode by Settings.colorFilterMode.collectAsState {
-            when (it) {
-                0 -> BlendMode.SrcOver
-                1 -> BlendMode.Multiply
-                2 -> BlendMode.Screen
-                3 -> BlendMode.Overlay
-                4 -> BlendMode.Lighten
-                5 -> BlendMode.Darken
-                else -> unreachable()
-            }
-        }
-        ReaderContentOverlay(
-            brightness = { brightnessValue }.takeIf { brightness && brightnessValue < 0 },
-            color = { colorOverlay }.takeIf { colorOverlayEnabled },
-            colorBlendMode = colorOverlayMode,
-        )
-        if (brightness) {
-            LaunchedEffect(Unit) {
-                Settings.customBrightnessValue.valueFlow().sample(100)
-                    .onCompletion { activity.setCustomBrightnessValue(0) }
-                    .collect { activity.setCustomBrightnessValue(it) }
-            }
-        }
+        ReaderFilterOverlay()
         val showPageNumber by Settings.showPageNumber.collectAsState()
         if (showPageNumber && !appbarVisible) {
             CompositionLocalProvider(LocalTextStyle provides MaterialTheme.typography.bodySmall) {

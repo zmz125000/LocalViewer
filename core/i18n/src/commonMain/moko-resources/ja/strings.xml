@@ -1062,4 +1062,7 @@
     <!-- Tachiyomi Reader End-->
     <string name="image_conversion_compression">画像変換の圧縮</string>
     <string name="image_conversion_compression_summary">オン：ファイルを小さくします。オフ：高画質（JPEG XLは可逆圧縮）。</string>
+    <string name="pref_comic_color_filter">カラーフィルター</string>
+    <string name="pref_comic_filter_sepia">セピア</string>
+    <string name="pref_comic_filter_high_contrast">高コントラスト</string>
 </resources>

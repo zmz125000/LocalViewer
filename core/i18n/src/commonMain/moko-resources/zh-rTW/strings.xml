@@ -1085,4 +1085,7 @@
     <!-- Tachiyomi Reader End-->
     <string name="image_conversion_compression">影像轉換壓縮</string>
     <string name="image_conversion_compression_summary">開啟：縮小檔案。關閉：高畫質，JPEG XL 使用無損壓縮。</string>
+    <string name="pref_comic_color_filter">色彩濾鏡</string>
+    <string name="pref_comic_filter_sepia">懷舊棕褐</string>
+    <string name="pref_comic_filter_high_contrast">高對比</string>
 </resources>
