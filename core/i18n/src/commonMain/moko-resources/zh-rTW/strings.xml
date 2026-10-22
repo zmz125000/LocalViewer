@@ -1072,6 +1072,7 @@
     <string name="rotation_type">螢幕方向</string>
     <string name="pref_comic_filter_sepia">懷舊棕褐</string>
     <string name="pref_comic_filter_contrast">對比度</string>
+    <string name="pref_comic_levels">色階</string>
     <string name="pref_comic_black_level">黑色色階</string>
     <string name="pref_comic_white_level">白色色階</string>
     <string name="pref_grayscale">灰階</string>

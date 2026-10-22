@@ -14,22 +14,28 @@ fun rememberComicColorFilter(enabled: Boolean = true): ColorFilter? {
     val effects by Settings.comicColorFilter.collectAsState()
     val sepiaStrength by Settings.comicSepiaStrength.collectAsState()
     val contrastStrength by Settings.comicContrastStrength.collectAsState()
+    val levelsEnabled by Settings.comicLevelsEnabled.collectAsState()
     val blackLevel by Settings.comicBlackLevel.collectAsState()
     val whiteLevel by Settings.comicWhiteLevel.collectAsState()
     val grayscale by Settings.grayScale.collectAsState()
     val invert by Settings.invertedColors.collectAsState()
-    return remember(enabled, effects, sepiaStrength, contrastStrength, blackLevel, whiteLevel, grayscale, invert) {
-        val white = whiteLevel.coerceIn(1, 255)
-        val black = blackLevel.coerceIn(0, white - 1)
+    return remember(enabled, effects, sepiaStrength, contrastStrength, levelsEnabled, blackLevel, whiteLevel, grayscale, invert) {
+        val white = whiteLevel.coerceIn(128, 255)
+        val black = blackLevel.coerceIn(0, 127)
+        val levels = levelsEnabled && (black != 0 || white != 255)
         val sepia = effects and 1 != 0 && sepiaStrength > 0
         val contrast = effects and 2 != 0 && contrastStrength > 0
-        if (!enabled || (!sepia && !contrast && black == 0 && white == 255 && !grayscale && !invert)) {
+        if (!enabled || (!sepia && !contrast && !levels && !grayscale && !invert)) {
             null
         } else {
             // Input black -> 0 and input white -> 255. Neutral defaults are identity.
             // With white=255, raising black darkens gray lines and preserves white.
-            val levelScale = 255f / (white - black)
-            var matrix = channelScaleMatrix(levelScale, -black * levelScale)
+            var matrix = if (levels) {
+                val levelScale = 255f / (white - black)
+                channelScaleMatrix(levelScale, -black * levelScale)
+            } else {
+                ColorMatrix()
+            }
             if (grayscale) matrix *= ColorMatrix().apply { setToSaturation(0f) }
             if (contrast) {
                 val scale = 1f + contrastStrength.coerceIn(0, 100) / 100f
