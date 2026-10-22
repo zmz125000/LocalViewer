@@ -126,24 +126,29 @@ fun ColorFilterSetting(
             field = strength,
         )
     }
-    val blackLevel = Settings.comicBlackLevel.asMutableState()
-    val whiteLevel = Settings.comicWhiteLevel.asMutableState()
-    val white = whiteLevel.value.coerceIn(1, 255)
-    val black = blackLevel.value.coerceIn(0, white - 1)
-    SliderChoice(
-        startSlot = { Text(stringResource(id = R.string.pref_comic_black_level)) },
-        endSlot = { Text("$black") },
-        range = 0..(white - 1),
-        steps = (white - 2).coerceAtLeast(0),
-        field = blackLevel,
+    val levelsEnabled = Settings.comicLevelsEnabled.asMutableState()
+    SwitchChoice(
+        title = stringResource(id = R.string.pref_comic_levels),
+        field = levelsEnabled,
     )
-    SliderChoice(
-        startSlot = { Text(stringResource(id = R.string.pref_comic_white_level)) },
-        endSlot = { Text("$white") },
-        range = (black + 1)..255,
-        steps = (253 - black).coerceAtLeast(0),
-        field = whiteLevel,
-    )
+    AnimatedVisibility(visible = levelsEnabled.value) {
+        val blackLevel = Settings.comicBlackLevel.asMutableState()
+        val whiteLevel = Settings.comicWhiteLevel.asMutableState()
+        Column {
+            SliderChoice(
+                startSlot = { Text(stringResource(id = R.string.pref_comic_black_level)) },
+                endSlot = { Text("${blackLevel.value.coerceIn(0, 127)}") },
+                range = 0..127,
+                field = blackLevel,
+            )
+            SliderChoice(
+                startSlot = { Text(stringResource(id = R.string.pref_comic_white_level)) },
+                endSlot = { Text("${whiteLevel.value.coerceIn(128, 255)}") },
+                range = 128..255,
+                field = whiteLevel,
+            )
+        }
+    }
     SwitchChoice(
         title = stringResource(id = R.string.pref_comic_filter_sepia),
         checked = comicFilter and 1 != 0,
