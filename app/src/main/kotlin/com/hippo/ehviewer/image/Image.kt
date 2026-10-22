@@ -226,7 +226,7 @@ class Image private constructor(
 
     /**
      * GPU hint for stills we built outside Coil (lib-direct JXL/JXR/PQ-AVIF,
-     * ProXDR software copy). Coil's [BitmapFactoryDecoder] / ImageDecoder already
+     * auxiliary gain maps). Coil's [BitmapFactoryDecoder] / ImageDecoder already
      * call [Bitmap.prepareToDraw] on JPEG/PNG/WebP/HEIC/UHDR.
      */
     fun prepareToDraw() {
@@ -296,15 +296,7 @@ class Image private constructor(
                         if (bytes.containsHdrGainMapMarker(n)) return@runCatching true
                         // Trailer lives in the last 768 bytes — never copy a 20 MiB page.
                         if (Settings.readerOppoProxdr.value) {
-                            val full = src.value.source.asReadOnlyBuffer()
-                            val len = full.remaining()
-                            if (len >= 256) {
-                                val tail = minOf(768, len)
-                                val trailer = ByteArray(tail)
-                                full.position(full.position() + len - tail)
-                                full.get(trailer)
-                                return@runCatching OppoProxdr.looksLike(trailer)
-                            }
+                            return@runCatching OppoProxdr.looksLike(src.value.source)
                         }
                         false
                     }
@@ -343,7 +335,7 @@ class Image private constructor(
                 is Either.Right -> OppoProxdr.attachOrCopy(base, src.value.source)
                 is Either.Left -> {
                     val dup = src.value.source.asReadOnlyBuffer()
-                    if (dup.remaining() <= 0) {
+                    if (!OppoProxdr.looksLike(dup)) {
                         null
                     } else {
                         val bytes = ByteArray(dup.remaining())
@@ -352,7 +344,7 @@ class Image private constructor(
                     }
                 }
             } ?: return image
-            // Coil prepared the HEIC base; attachOrCopy may replace it with a software copy.
+            // The gain map is attached to Coil's original base, including HARDWARE.
             withMap.prepareToDraw()
             val wrapped = withMap.asImage()
             return BitmapImageWithExtraInfo(image = wrapped, hasGainmap = true)
