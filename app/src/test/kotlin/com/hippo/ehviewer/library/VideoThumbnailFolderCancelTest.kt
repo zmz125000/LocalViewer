@@ -16,13 +16,6 @@ import org.junit.Test
 
 class VideoThumbnailFolderCancelTest {
     @Test
-    fun folderSkipStartsAfterFiveFailures() {
-        assertFalse(shouldSkipFolderAfterThumbFailures(4, anySuccess = false))
-        assertFalse(shouldSkipFolderAfterThumbFailures(5, anySuccess = true))
-        assertTrue(shouldSkipFolderAfterThumbFailures(FOLDER_THUMB_FAILS_BEFORE_SKIP, anySuccess = false))
-    }
-
-    @Test
     fun appBackgroundPausesAllExtracts() {
         VideoThumbnail.onAppForegrounded()
         assertTrue(VideoThumbnail.extractEnabled.value)

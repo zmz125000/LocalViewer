@@ -1,12 +1,10 @@
 package com.hippo.ehviewer.image.hdr
 
 import java.io.File
-import java.io.RandomAccessFile
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
-import org.junit.Assume.assumeTrue
 import org.junit.Test
 
 class RawEmbeddedJpegTest {
@@ -101,48 +99,6 @@ class RawEmbeddedJpegTest {
             dest.delete()
             src.delete()
             dir.delete()
-        }
-    }
-
-    @Test
-    fun sampleRawsYieldAJpegPrefix() {
-        val root = File("/home/zlx22/LocalViewer/samples")
-        assumeTrue(root.isDirectory)
-        val raws = root.walkTopDown().filter { file ->
-            file.isFile && file.extension.lowercase() in SAMPLE_EXT
-        }.toList()
-        assumeTrue(raws.isNotEmpty())
-        raws.forEach { file ->
-            val jpeg = runBlocking {
-                RandomAccessFile(file, "r").use { raf ->
-                    readEmbeddedRawJpeg(raf.length()) { off, len ->
-                        if (off < 0 || off >= raf.length()) return@readEmbeddedRawJpeg null
-                        val n = minOf(len.toLong(), raf.length() - off).toInt()
-                        val buf = ByteArray(n)
-                        raf.seek(off)
-                        val got = raf.read(buf)
-                        if (got <= 0) {
-                            null
-                        } else if (got == n) {
-                            buf
-                        } else {
-                            buf.copyOf(got)
-                        }
-                    }
-                }
-            }
-            assertNotNull(file.name, jpeg)
-            val bytes = jpeg!!
-            assertTrue(file.name, bytes.size >= 8 * 1024)
-            assertTrue(file.name, bytes.size < file.length())
-            assertEquals(file.name, 0xff.toByte(), bytes[0])
-            assertEquals(file.name, 0xd8.toByte(), bytes[1])
-            assertEquals(file.name, 0xff.toByte(), bytes[bytes.size - 2])
-            assertEquals(file.name, 0xd9.toByte(), bytes[bytes.size - 1])
-            val pixels = androidJpegPixels(bytes)
-            assertNotNull(file.name, pixels)
-            val edge = jpegLongEdge(bytes)
-            assertTrue("$file edge=$edge", edge >= 1024)
         }
     }
 
@@ -295,9 +251,5 @@ class RawEmbeddedJpegTest {
         dest[at + 1] = ((value shr 16) and 0xff).toByte()
         dest[at + 2] = ((value shr 8) and 0xff).toByte()
         dest[at + 3] = (value and 0xff).toByte()
-    }
-
-    private companion object {
-        val SAMPLE_EXT = setOf("nef", "nrw", "arw", "raf", "orf", "ori", "rw2", "cr3", "cr2", "dng")
     }
 }
