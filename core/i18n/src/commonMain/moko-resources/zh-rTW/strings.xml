@@ -910,6 +910,8 @@
     <string name="pref_reader_hardware_bitmap_summary">更快的 Coil 路徑（GPU 點陣圖）。會關閉裁邊與 QR 廣告偵測，避免先軟體解碼再拷貝。</string>
     <string name="pref_reader_hi_res_optimize">高解析度最佳化繪製</string>
     <string name="pref_reader_hi_res_optimize_summary">照片以 4096 像素解碼。放大時載入原始尺寸。</string>
+    <string name="pref_reader_comic_rendering">漫畫算繪模式</string>
+    <string name="pref_reader_comic_rendering_summary">使用平滑濾鏡將圖片重新取樣至螢幕大小。</string>
     <string name="pref_reader_hi_res_software_downscale">使用軟體縮小</string>
     <string name="pref_reader_hi_res_software_downscale_summary">以縮小解碼方式重新取樣 4096 像素預覽。</string>
     <string name="pref_reader_lib_direct_bitmap">原生直出點陣圖（實驗）</string>
@@ -1068,6 +1070,9 @@
     <string name="rotation_landscape">橫向</string>
     <string name="rotation_portrait">直向</string>
     <string name="rotation_type">螢幕方向</string>
+    <string name="pref_comic_color_filter">色彩濾鏡</string>
+    <string name="pref_comic_filter_sepia">懷舊棕褐</string>
+    <string name="pref_comic_filter_high_contrast">高對比</string>
     <string name="pref_grayscale">灰階</string>
     <string name="automatic_background">自動</string>
     <string name="pref_inverted_colors">反轉</string>
@@ -1087,7 +1092,4 @@
     <!-- Tachiyomi Reader End-->
     <string name="image_conversion_compression">影像轉換壓縮</string>
     <string name="image_conversion_compression_summary">開啟：縮小檔案。關閉：高畫質，JPEG XL 使用無損壓縮。</string>
-    <string name="pref_comic_color_filter">色彩濾鏡</string>
-    <string name="pref_comic_filter_sepia">懷舊棕褐</string>
-    <string name="pref_comic_filter_high_contrast">高對比</string>
 </resources>
