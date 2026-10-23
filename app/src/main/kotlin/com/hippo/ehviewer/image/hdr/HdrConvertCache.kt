@@ -6,6 +6,7 @@ import android.graphics.ImageDecoder
 import android.util.Log
 import com.ehviewer.core.files.metadataOrNull
 import com.ehviewer.core.files.read
+import com.ehviewer.core.files.toUri
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.jni.convertAvifBytesToUltraHdr
 import com.hippo.ehviewer.jni.convertAvifBytesToUltraHdrMaxEdge
@@ -719,42 +720,38 @@ object HdrConvertCache {
         maxEdge = maxEdge,
     )
 
-    private fun writePlatformThumb(source: Path, destJpeg: File, maxEdge: Int, quality: Int): Boolean {
-        return runCatching {
-            val srcFile = File(source.toString())
-            if (!srcFile.isFile || srcFile.length() <= 0L) {
-                Log.e(TAG, "writePlatformThumb: missing file $source")
-                return false
+    private fun writePlatformThumb(source: Path, destJpeg: File, maxEdge: Int, quality: Int): Boolean = runCatching {
+        // MediaStore and SAF paths are virtual; resolve them through the same
+        // content resolver used by Coil instead of treating them as OS files.
+        val decoderSource = ImageDecoder.createSource(appCtx.contentResolver, source.toUri())
+        destJpeg.parentFile?.mkdirs()
+        val tmp = File("${destJpeg.absolutePath}.tmp.${System.nanoTime()}")
+        val decoded = ImageDecoder.decodeBitmap(decoderSource) { decoder, info, _ ->
+            decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
+            val w = info.size.width
+            val h = info.size.height
+            if (w <= 0 || h <= 0) error("bad bounds")
+            val longEdge = maxOf(w, h)
+            if (longEdge > maxEdge) {
+                val scale = maxEdge.toFloat() / longEdge
+                decoder.setTargetSize(
+                    (w * scale).toInt().coerceAtLeast(1),
+                    (h * scale).toInt().coerceAtLeast(1),
+                )
             }
-            destJpeg.parentFile?.mkdirs()
-            val tmp = File("${destJpeg.absolutePath}.tmp.${System.nanoTime()}")
-            val decoded = ImageDecoder.decodeBitmap(ImageDecoder.createSource(srcFile)) { decoder, info, _ ->
-                decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
-                val w = info.size.width
-                val h = info.size.height
-                if (w <= 0 || h <= 0) error("bad bounds")
-                val longEdge = maxOf(w, h)
-                if (longEdge > maxEdge) {
-                    val scale = maxEdge.toFloat() / longEdge
-                    decoder.setTargetSize(
-                        (w * scale).toInt().coerceAtLeast(1),
-                        (h * scale).toInt().coerceAtLeast(1),
-                    )
-                }
+        }
+        try {
+            FileOutputStream(tmp).use { out ->
+                check(decoded.compress(Bitmap.CompressFormat.WEBP_LOSSY, quality, out))
             }
-            try {
-                FileOutputStream(tmp).use { out ->
-                    check(decoded.compress(Bitmap.CompressFormat.WEBP_LOSSY, quality, out))
-                }
-            } finally {
-                if (!decoded.isRecycled) decoded.recycle()
-            }
-            commitTmp(tmp, destJpeg)
-            true
-        }.onFailure {
-            Log.e(TAG, "writePlatformThumb failed $source", it)
-        }.getOrDefault(false)
-    }
+        } finally {
+            if (!decoded.isRecycled) decoded.recycle()
+        }
+        commitTmp(tmp, destJpeg)
+        true
+    }.onFailure {
+        Log.e(TAG, "writePlatformThumb failed $source", it)
+    }.getOrDefault(false)
 
     private fun commitTmp(tmp: File, dest: File) {
         if (!tmp.isFile || tmp.length() == 0L) {
