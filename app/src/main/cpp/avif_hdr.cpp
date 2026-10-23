@@ -17,6 +17,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <thread>
 #include <vector>
 
 #include "avif/avif.h"
@@ -84,6 +85,49 @@ uhdr_color_gamut_t map_avif_primaries_to_uhdr_cg(avifColorPrimaries primaries,
 static float unsigned_frac(avifUnsignedFraction f) {
     if (f.d == 0) return 0.f;
     return static_cast<float>(f.n) / static_cast<float>(f.d);
+}
+
+/** Two reader pages decode at once, so each decode takes half the cores. */
+int avif_decode_threads() {
+    unsigned hw = std::thread::hardware_concurrency();
+    if (hw == 0) hw = 4;
+    unsigned per = hw / 2;
+    if (per < 2) per = hw;
+    if (per < 1) per = 1;
+    if (per > 8) per = 8;
+    return static_cast<int>(per);
+}
+
+/**
+ * Shrink YUV to the reader/thumb long edge before gain-map apply and YUV→RGB.
+ * dav1d has already reconstructed the full frame. [max_edge] 0 keeps it.
+ * @return false when the image was left unusable.
+ */
+bool scale_avif_to_max_edge(avifImage* image, unsigned max_edge) {
+    if (image == nullptr || max_edge == 0 || image->width == 0 || image->height == 0) return true;
+    const unsigned long_edge = image->width > image->height ? image->width : image->height;
+    if (long_edge <= max_edge) return true;
+    const double scale = static_cast<double>(max_edge) / static_cast<double>(long_edge);
+    uint32_t dw = static_cast<uint32_t>(std::lround(static_cast<double>(image->width) * scale));
+    uint32_t dh = static_cast<uint32_t>(std::lround(static_cast<double>(image->height) * scale));
+    if (dw > image->width) dw = image->width;
+    if (dh > image->height) dh = image->height;
+    if (dw < 2) dw = 2;
+    if (dh < 2) dh = 2;
+    if ((dw & 1u) != 0u && dw > 2) dw -= 1u;
+    if ((dh & 1u) != 0u && dh > 2) dh -= 1u;
+    if (dw == image->width && dh == image->height) return true;
+    avifDiagnostics diag;
+    avifDiagnosticsClearError(&diag);
+    const unsigned src_w = image->width;
+    const unsigned src_h = image->height;
+    const avifResult scaled = avifImageScale(image, dw, dh, &diag);
+    if (scaled != AVIF_RESULT_OK) {
+        ALOGE("avifImageScale %ux%u -> %ux%u failed: %s", src_w, src_h, dw, dh,
+              diag.error[0] ? diag.error : avifResultToString(scaled));
+        return false;
+    }
+    return true;
 }
 
 /**
@@ -168,7 +212,7 @@ bool apply_iso_gain_map(const avifImage* image, std::vector<uint16_t>& out_rgba,
 int decode_avif_to_linear_f16(const uint8_t* data, size_t len, std::vector<uint16_t>& out_rgba,
                               unsigned& w, unsigned& h, int* out_has_gainmap,
                               int* out_transfer /* 16=PQ, 18=HLG, else other */,
-                              uhdr_color_gamut_t* out_cg) {
+                              uhdr_color_gamut_t* out_cg, unsigned max_edge) {
     if (out_has_gainmap) *out_has_gainmap = 0;
     if (out_transfer) *out_transfer = 0;
     if (out_cg) *out_cg = UHDR_CG_BT_709;
@@ -180,7 +224,8 @@ int decode_avif_to_linear_f16(const uint8_t* data, size_t len, std::vector<uint1
     dec->ignoreXMP = AVIF_TRUE;
     // Default decode skips the gain-map item. ISO 21496-1 AVIF needs those pixels.
     dec->imageContentToDecode = AVIF_IMAGE_CONTENT_ALL;
-    // Prefer progressive; max threads leave default.
+    // dav1d API 7 uses this as the tile-thread pool (one still, so frame delay stays 1).
+    dec->maxThreads = avif_decode_threads();
     avifResult r = avifDecoderSetIOMemory(dec, data, len);
     if (r != AVIF_RESULT_OK) {
         ALOGE("avifDecoderSetIOMemory: %s", avifResultToString(r));
@@ -205,12 +250,16 @@ int decode_avif_to_linear_f16(const uint8_t* data, size_t len, std::vector<uint1
         avifDecoderDestroy(dec);
         return -6;
     }
-    w = image->width;
-    h = image->height;
-    if (w > 16384 || h > 16384) {
+    if (image->width > 16384 || image->height > 16384) {
         avifDecoderDestroy(dec);
         return -7;
     }
+    if (!scale_avif_to_max_edge(image, max_edge)) {
+        avifDecoderDestroy(dec);
+        return -11;
+    }
+    w = image->width;
+    h = image->height;
 
     if (apply_iso_gain_map(image, out_rgba, out_has_gainmap, out_transfer, out_cg)) {
         avifDecoderDestroy(dec);
@@ -235,6 +284,7 @@ int decode_avif_to_linear_f16(const uint8_t* data, size_t len, std::vector<uint1
     avifRGBImageSetDefaults(&rgb, image);
     rgb.format = AVIF_RGB_FORMAT_RGBA;
     rgb.depth = 16;
+    rgb.maxThreads = dec->maxThreads;
     rgb.chromaUpsampling = AVIF_CHROMA_UPSAMPLING_BEST_QUALITY;
 
     r = avifRGBImageAllocatePixels(&rgb);
@@ -347,7 +397,7 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_convertAvifBytesToUltraHdr(JNIEnv* env,
     uhdr_color_gamut_t cg = UHDR_CG_BT_709;
     int rc = decode_avif_to_linear_f16(reinterpret_cast<const uint8_t*>(bytes),
                                        static_cast<size_t>(len), rgba, w, h, &has_gm, &transfer,
-                                       &cg);
+                                       &cg, 0);
     if (rc != 0) {
         ALOGE("AVIF decode failed rc=%d", rc);
         env->ReleaseStringUTFChars(jOutput, out_path);
@@ -388,7 +438,7 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_convertAvifBytesToUltraHdrMaxEdge(
     uhdr_color_gamut_t cg = UHDR_CG_BT_709;
     int rc = decode_avif_to_linear_f16(reinterpret_cast<const uint8_t*>(bytes),
                                        static_cast<size_t>(len), rgba, w, h, &has_gm, &transfer,
-                                       &cg);
+                                       &cg, maxEdge > 0 ? static_cast<unsigned>(maxEdge) : 0u);
     if (rc != 0) {
         env->ReleaseStringUTFChars(jOutput, out_path);
         env->ReleaseByteArrayElements(jInput, bytes, JNI_ABORT);
@@ -431,9 +481,9 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeAvifBytesToDirect(JNIEnv* env, jc
     int transfer = 0;
     uhdr_color_gamut_t cg = UHDR_CG_BT_709;
     jbyteArray result = nullptr;
-    int rc = decode_avif_to_linear_f16(reinterpret_cast<const uint8_t*>(bytes),
-                                       static_cast<size_t>(len), rgba, w, h, &has_gm, &transfer,
-                                       &cg);
+    int rc = decode_avif_to_linear_f16(
+        reinterpret_cast<const uint8_t*>(bytes), static_cast<size_t>(len), rgba, w, h, &has_gm,
+        &transfer, &cg, maxEdge > 0 ? static_cast<unsigned>(maxEdge) : 0u);
     if (rc == 0) {
         if (maxEdge > 0) {
             scale_rgba_f16_max_edge(rgba, w, h, static_cast<unsigned>(maxEdge));
