@@ -301,12 +301,17 @@ fun classify(bytes: ByteArray, length: Int = bytes.size, fileNameHint: String? =
     }
 
     // Absolute PQ/HLG. AVIF → libavif. HEIC → libde265 (libavif cannot decode HEVC).
-    val absoluteHdr = primaryTransfer?.let { it == 16 || it == 18 } ?: hasAbsoluteHdrCicp(bytes, n)
-    if (isHeifFamily(bytes, n) && absoluteHdr) {
-        return if (isAvifBrand(bytes, n)) {
-            StillRoute.Lib(LibCodec.AvifPq)
-        } else {
-            StillRoute.Lib(LibCodec.HevcHdr)
+    // CICP/nclx belongs to HEIF containers. The fallback can rescan the buffer for
+    // every candidate byte pair, so running it on large JPEG entropy data stalls
+    // browse thumbnail workers even though its result is discarded for JPEGs.
+    if (isHeifFamily(bytes, n)) {
+        val absoluteHdr = primaryTransfer?.let { it == 16 || it == 18 } ?: hasAbsoluteHdrCicp(bytes, n)
+        if (absoluteHdr) {
+            return if (isAvifBrand(bytes, n)) {
+                StillRoute.Lib(LibCodec.AvifPq)
+            } else {
+                StillRoute.Lib(LibCodec.HevcHdr)
+            }
         }
     }
 
