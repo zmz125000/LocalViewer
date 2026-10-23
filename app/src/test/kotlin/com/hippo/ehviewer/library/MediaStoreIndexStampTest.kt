@@ -26,8 +26,13 @@ class MediaStoreIndexStampTest {
         assertNull(MediaStoreIndexStamp.parse("x:1:2:3:4"))
         // Pre-video 5-field stamps must not skip the first images+video scan.
         assertNull(MediaStoreIndexStamp.parse("7:42:1200:1700000000:43981"))
-        // Pre-size indexes must refill the newly added library size column.
-        assertNull(MediaStoreIndexStamp.parse("7:42:1200:1700000000:43981:2"))
+    }
+
+    @Test
+    fun `size column does not invalidate existing indexes`() {
+        val expected = 7L to MediaStoreIndexStamp(42L, 1200, 1700000000L, 43981L)
+        assertEquals(expected, MediaStoreIndexStamp.parse("7:42:1200:1700000000:43981:2"))
+        assertEquals(expected, MediaStoreIndexStamp.parse("7:42:1200:1700000000:43981:3"))
     }
 
     @Test
