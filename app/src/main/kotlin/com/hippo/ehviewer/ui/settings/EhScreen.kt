@@ -228,9 +228,11 @@ fun AnimatedVisibilityScope.EhScreen(navigator: DestinationsNavigator) = Screen(
                     state = Settings.openHtmlInIncognito.asMutableState(),
                 )
             }
-            SwitchPreference(
-                title = stringResource(id = R.string.image_conversion_compression),
-                state = Settings.imageConversionCompression.asMutableState(),
+            SimpleMenuPreferenceInt(
+                title = stringResource(id = R.string.image_conversion_quality),
+                entry = com.hippo.ehviewer.R.array.image_conversion_quality_entries,
+                entryValueRes = com.hippo.ehviewer.R.array.image_conversion_quality_values,
+                state = Settings.imageConversionQuality.asMutableState(),
             )
             val useMedia3Player = Settings.useMedia3Player.asMutableState()
             SwitchPreference(

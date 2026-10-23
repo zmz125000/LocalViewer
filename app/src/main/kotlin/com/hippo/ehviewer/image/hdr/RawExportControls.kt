@@ -43,6 +43,6 @@ internal data class RawExportControls(
 internal suspend fun <T> withRawExportControls(target: StillExportTarget, work: suspend () -> T): T {
     val context = currentCoroutineContext()
     val raw = context[RawExportControls] ?: RawExportControls.capture(target)
-    val compression = context[StillExportCompression] ?: StillExportCompression.current()
-    return withContext(raw + compression) { work() }
+    val quality = context[StillExportQuality] ?: StillExportQuality.current()
+    return withContext(raw + quality) { work() }
 }

@@ -131,6 +131,10 @@
     <string name="settings_open_html_with_browser_summary">On: tap HTML starts a local HTTP server for the folder and opens the default browser. Off: treat HTML as a regular file.</string>
     <string name="settings_open_html_in_incognito">Open in incognito</string>
     <string name="settings_open_html_in_incognito_summary">On: tap HTML opens a Chrome incognito tab. Off: default browser.</string>
+    <string name="image_conversion_quality">Image conversion quality</string>
+    <string name="image_conversion_quality_lossless">Lossless</string>
+    <string name="image_conversion_quality_high">High</string>
+    <string name="image_conversion_quality_low">Low</string>
     <string name="settings_default_video_player">Default video player</string>
     <string name="settings_default_video_player_always_ask">Always ask</string>
     <string name="settings_default_video_player_none">No video apps found</string>
@@ -1161,6 +1165,4 @@
     <string name="blocked_image">Blocked image</string>
     <string name="show_blocked_image">Show blocked image</string>
     <!-- Tachiyomi Reader End-->
-    <string name="image_conversion_compression">Image conversion compression</string>
-    <string name="image_conversion_compression_summary">On: smaller files. Off: high quality, including lossless JPEG XL.</string>
 </resources>
