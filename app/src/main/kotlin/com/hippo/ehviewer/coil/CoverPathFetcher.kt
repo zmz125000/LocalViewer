@@ -17,7 +17,9 @@ import com.hippo.ehviewer.image.hdr.HdrConvertCache
 import com.hippo.ehviewer.image.hdr.RawPreviewCache
 import com.hippo.ehviewer.image.hdr.isHdrConvertCandidateExtension
 import com.hippo.ehviewer.image.hdr.isRawStillExtension
+import com.hippo.ehviewer.image.hdr.needsGeneratedPageThumb
 import com.hippo.ehviewer.library.LandscapeCoverMarks
+import com.hippo.ehviewer.library.ReaderPageThumb
 import com.hippo.ehviewer.library.ZipMemberCover
 import com.hippo.ehviewer.library.ZipPaths
 import com.hippo.ehviewer.library.isImageFileName
@@ -38,7 +40,8 @@ data class CoverPath(val path: String)
 /**
  * Fetches cover bytes for SAF / file / MediaStore virtual paths.
  *
- * Lib formats → [HdrConvertCache.ensureCoilReady] (Ultra HDR JPEG); platform → original.
+ * Selected local formats share [ReaderPageThumb] with folder view and the reader;
+ * other platform formats open the original. Native conversion remains a fallback.
  * Zip-as-dir members extract first, then the **same** convert — ImageDecoder cannot open
  * JXL/JXR (`Failed to create image decoder` / `unimplemented`).
  */
@@ -47,6 +50,13 @@ class CoverPathFetcher(
     private val options: Options,
 ) : Fetcher {
     override suspend fun fetch(): FetchResult {
+        // Use the folder/reader identity without changing the Coil request key.
+        // Probe before opening/extracting the origin, and never swap a painted request.
+        val thumbIdentity = "local:${data.path}"
+        ReaderPageThumb.find(thumbIdentity)?.let { cached ->
+            noteCoverBounds(data.path, cached)
+            return openAsSource(cached)
+        }
         val resolved = resolveFile()
         val hint = coverConvertHint(data.path, resolved.name)
         val ext = FileUtils.getExtensionFromFilename(hint)?.lowercase()
@@ -54,6 +64,8 @@ class CoverPathFetcher(
         val openPath = when {
             isRawStillExtension(ext) -> RawPreviewCache.ensureJpeg(resolved, demosaicFallback = false)
                 ?: throw FileNotFoundException("RAW preview missing: ${data.path}")
+            needsGeneratedPageThumb(ext) -> ReaderPageThumb.ensureFromFile(thumbIdentity, resolved, hint)
+                ?: HdrConvertCache.ensureCoilReady(resolved, hint)
             isHdrConvertCandidateExtension(ext) -> HdrConvertCache.ensureCoilReady(resolved, hint)
             else -> resolved
         }

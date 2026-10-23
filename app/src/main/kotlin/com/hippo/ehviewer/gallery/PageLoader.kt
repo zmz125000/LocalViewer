@@ -30,8 +30,8 @@ import com.hippo.ehviewer.image.hdr.StillRoute
 import com.hippo.ehviewer.image.hdr.classify
 import com.hippo.ehviewer.image.hdr.classifyPath
 import com.hippo.ehviewer.image.hdr.exportImageExtension
-import com.hippo.ehviewer.image.hdr.isLibStillExtension
 import com.hippo.ehviewer.image.hdr.isRawStillExtension
+import com.hippo.ehviewer.image.hdr.needsGeneratedPageThumb
 import com.hippo.ehviewer.image.hdr.needsLibDecode
 import com.hippo.ehviewer.library.ReaderPageThumb
 import com.hippo.ehviewer.util.FileUtils
@@ -324,7 +324,7 @@ abstract class PageLoader(
         if (raw is PathSource || exportFiles[index] != null) return
         if (!Settings.readerGeneratePageThumb.value) return
         val identity = pageThumbIdentity?.invoke(index) ?: return
-        if (identity.startsWith("local:") && !isLibStillExtension(getImageExtension(index))) return
+        if (identity.startsWith("local:") && !needsGeneratedPageThumb(getImageExtension(index))) return
         runCatching { ReaderPageThumb.ensureFromBitmap(identity, bitmap) }
     }
 
@@ -339,8 +339,8 @@ abstract class PageLoader(
         if (!Settings.readerGeneratePageThumb.value) return
         val identity = pageThumbIdentity?.invoke(index) ?: return
         // Local JPEG/PNG/WebP/HEIC already paint from the file in the photo grid.
-        // Only local lib stills (JXL/JXR) need a generated thumb.
-        if (identity.startsWith("local:") && !isLibStillExtension(getImageExtension(index))) return
+        // Lib stills and AVIF (ISO gain map / PQ) need a generated thumb.
+        if (identity.startsWith("local:") && !needsGeneratedPageThumb(getImageExtension(index))) return
         val path = (source as? PathSource)?.source ?: exportFiles[index]
         if (path != null) {
             scope.launch(Dispatchers.IO) {

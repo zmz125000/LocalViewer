@@ -131,6 +131,15 @@ fun isLibStillExtension(ext: String?): Boolean {
     return e in LIB_STILL_EXTENSIONS
 }
 
+/**
+ * Photo-grid / browse thumbs that ImageDecoder cannot paint from the file.
+ * AVIF includes ISO gain-map stills (iphone18) and absolute PQ AVIF.
+ */
+fun needsGeneratedPageThumb(ext: String?): Boolean {
+    val e = ext?.lowercase()?.removePrefix(".") ?: return false
+    return isLibStillExtension(e) || e == "avif"
+}
+
 fun isRawStillExtension(ext: String?): Boolean {
     val e = ext?.lowercase()?.removePrefix(".") ?: return false
     return e in RAW_STILL_EXTENSIONS
