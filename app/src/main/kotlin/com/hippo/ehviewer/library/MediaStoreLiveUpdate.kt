@@ -16,6 +16,7 @@ data class MediaStoreLiveFile(
     val parentRelative: String,
     val name: String,
     val lastModifiedMs: Long,
+    val sizeBytes: Long?,
     val video: Boolean,
     /** [android.provider.MediaStore.MediaColumns.DATE_ADDED], seconds. Watermark only. */
     val addedSec: Long = 0L,
@@ -146,6 +147,7 @@ object MediaStoreLiveUpdate {
                 coverPath = filePath.toString(),
                 contentPath = filePath.toString(),
                 mtime = file.lastModifiedMs,
+                size = file.sizeBytes ?: existingFile?.size ?: 0L,
             )
         } else {
             LocalGalleryEntity(
@@ -158,6 +160,7 @@ object MediaStoreLiveUpdate {
                 coverPath = filePath.toString(),
                 contentPath = filePath.toString(),
                 mtime = file.lastModifiedMs,
+                size = file.sizeBytes ?: existingFile?.size ?: 0L,
             )
         }
         return PlannedMediaRow(
