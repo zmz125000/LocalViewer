@@ -147,6 +147,7 @@ import com.hippo.ehviewer.gallery.PdfRamPageLoader
 import com.hippo.ehviewer.gallery.ReaderNavigation
 import com.hippo.ehviewer.library.ArchiveByteSource
 import com.hippo.ehviewer.library.BlockCacheArchiveByteSource
+import com.hippo.ehviewer.library.BrowseThumbComposeJobs
 import com.hippo.ehviewer.library.DocumentExtractCache
 import com.hippo.ehviewer.library.EbookBodyCache
 import com.hippo.ehviewer.library.GallerySiblingNavigator
@@ -3636,20 +3637,24 @@ private fun PdfPageThumb(
             skipped = true
             return@LaunchedEffect
         }
+        // Cache miss: admit render/extract so a full-screen grid cannot stampede Pdfium.
+        // Publish [bitmap] after release so other cells can generate while this paints.
         var rendered: Bitmap? = null
         try {
-            rendered = withContext(Dispatchers.IO) {
-                when (doc) {
-                    is PdfDocumentModel.Vector -> runCatching {
-                        doc.session.renderLongEdge(index, OriginDiskCache.THUMB_EDGE)
-                    }.getOrNull()
-                    is PdfDocumentModel.Images -> runCatching {
-                        doc.engine.ensureListedThrough(index)
-                        doc.engine.extractBytes(index)?.let(::decodePdfThumb)
-                    }.getOrNull()
-                    is PdfDocumentModel.MobiImages -> runCatching {
-                        doc.pageBytes(index)?.let(::decodePdfThumb)
-                    }.getOrNull()
+            rendered = BrowseThumbComposeJobs.withJob {
+                withContext(Dispatchers.IO) {
+                    when (doc) {
+                        is PdfDocumentModel.Vector -> runCatching {
+                            doc.session.renderLongEdge(index, OriginDiskCache.THUMB_EDGE)
+                        }.getOrNull()
+                        is PdfDocumentModel.Images -> runCatching {
+                            doc.engine.ensureListedThrough(index)
+                            doc.engine.extractBytes(index)?.let(::decodePdfThumb)
+                        }.getOrNull()
+                        is PdfDocumentModel.MobiImages -> runCatching {
+                            doc.pageBytes(index)?.let(::decodePdfThumb)
+                        }.getOrNull()
+                    }
                 }
             }
             val thumb = rendered
