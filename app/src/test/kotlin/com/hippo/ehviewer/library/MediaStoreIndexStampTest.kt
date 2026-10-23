@@ -26,6 +26,8 @@ class MediaStoreIndexStampTest {
         assertNull(MediaStoreIndexStamp.parse("x:1:2:3:4"))
         // Pre-video 5-field stamps must not skip the first images+video scan.
         assertNull(MediaStoreIndexStamp.parse("7:42:1200:1700000000:43981"))
+        // Pre-size indexes must refill the newly added library size column.
+        assertNull(MediaStoreIndexStamp.parse("7:42:1200:1700000000:43981:2"))
     }
 
     @Test

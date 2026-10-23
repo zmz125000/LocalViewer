@@ -312,6 +312,7 @@ object MediaStoreFs {
                 MediaStore.MediaColumns.DISPLAY_NAME,
                 MediaStore.MediaColumns.RELATIVE_PATH,
                 MediaStore.MediaColumns.DATE_MODIFIED,
+                MediaStore.MediaColumns.SIZE,
             ),
             selection = pathFilter?.first,
             selectionArgs = pathFilter?.second,
@@ -326,6 +327,7 @@ object MediaStoreFs {
                 MediaStore.MediaColumns.RELATIVE_PATH,
                 MediaStore.MediaColumns.DATA,
                 MediaStore.MediaColumns.DATE_MODIFIED,
+                MediaStore.MediaColumns.SIZE,
             ),
             selection = MediaStorePathQuery.emptyRelativePathSelection(),
             selectionArgs = null,
@@ -354,6 +356,7 @@ object MediaStoreFs {
                 MediaStore.MediaColumns.DISPLAY_NAME,
                 MediaStore.MediaColumns.RELATIVE_PATH,
                 MediaStore.MediaColumns.DATE_MODIFIED,
+                MediaStore.MediaColumns.SIZE,
             ),
             selection = pathFilter?.first,
             selectionArgs = pathFilter?.second,
@@ -369,6 +372,7 @@ object MediaStoreFs {
                 MediaStore.MediaColumns.RELATIVE_PATH,
                 MediaStore.MediaColumns.DATA,
                 MediaStore.MediaColumns.DATE_MODIFIED,
+                MediaStore.MediaColumns.SIZE,
             ),
             selection = MediaStorePathQuery.emptyRelativePathSelection(),
             selectionArgs = null,
@@ -456,6 +460,7 @@ object MediaStoreFs {
             val pathIdx = c.getColumnIndexOrThrow(MediaStore.MediaColumns.RELATIVE_PATH)
             val dataIdx = if (includeData) c.getColumnIndex(MediaStore.MediaColumns.DATA) else -1
             val modIdx = c.getColumnIndex(MediaStore.MediaColumns.DATE_MODIFIED)
+            val sizeIdx = c.getColumnIndex(MediaStore.MediaColumns.SIZE)
             val name = c.getString(nameIdx) ?: return@queryMediaPaged false
             val relCol = c.getString(pathIdx)
             if (!includeData && relCol.isNullOrBlank()) return@queryMediaPaged false
@@ -475,6 +480,7 @@ object MediaStoreFs {
                 parentRelativePath = relPath,
                 name = name,
                 lastModifiedMs = lastMod,
+                size = if (sizeIdx < 0 || c.isNull(sizeIdx)) 0L else c.getLong(sizeIdx).coerceAtLeast(0L),
             )
             true
         }
