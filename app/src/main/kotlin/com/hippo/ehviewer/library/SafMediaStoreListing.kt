@@ -37,6 +37,8 @@ object SafMediaStoreListing {
         val name: String,
         /** Epoch ms ([MediaStore.MediaColumns.DATE_MODIFIED] × 1000). */
         val lastModifiedMs: Long = 0L,
+        /** Indexed file bytes (0 when the provider has no size). */
+        val size: Long = 0L,
     )
 
     /** Folder-gallery payload: natural-sorted names + latest image mtime for Date sort. */

@@ -261,6 +261,14 @@ fun isImageFileName(name: String): Boolean {
     return ext in IMAGE_EXTENSIONS
 }
 
+/** SVGs remain viewable images, but are never browse thumbnail sources. */
+fun isSvgFileName(name: String): Boolean = when (FileUtils.getExtensionFromFilename(name)?.lowercase()) {
+    "svg", "svgz" -> true
+    else -> false
+}
+
+fun isThumbnailImageFileName(name: String): Boolean = isImageFileName(name) && !isSvgFileName(name)
+
 fun isArchiveFileName(name: String): Boolean {
     if (name.startsWith('.')) return false
     val ext = FileUtils.getExtensionFromFilename(name)?.lowercase() ?: return false

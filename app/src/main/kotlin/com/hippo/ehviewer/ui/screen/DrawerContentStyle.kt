@@ -1,12 +1,24 @@
 package com.hippo.ehviewer.ui.screen
 
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.updateTransition
+import androidx.compose.foundation.layout.Box
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.DrawerDefaults
+import androidx.compose.material3.Icon
 import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationRailDefaults
 import androidx.compose.material3.TopAppBarColors
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.graphicsLayer
 import com.ehviewer.core.ui.util.LocalWindowSizeClass
 import com.ehviewer.core.ui.util.isMediumWidthOrWider
 
@@ -50,4 +62,36 @@ fun adaptiveTopAppBarColors(): TopAppBarColors {
         )
     }
     return TopAppBarDefaults.topAppBarColors()
+}
+
+/** Back arrow outside select mode, close icon inside. Crossfades and turns between the two. */
+@Composable
+fun FolderSelectNavIcon(selecting: Boolean) {
+    val transition = updateTransition(targetState = selecting, label = "folderSelectNav")
+    val rotation by transition.animateFloat(
+        transitionSpec = { tween(durationMillis = 200) },
+        label = "rotation",
+    ) { close -> if (close) 90f else 0f }
+    val closeAlpha by transition.animateFloat(
+        transitionSpec = { tween(durationMillis = 200) },
+        label = "closeAlpha",
+    ) { close -> if (close) 1f else 0f }
+    Box(contentAlignment = Alignment.Center) {
+        Icon(
+            Icons.AutoMirrored.Filled.ArrowBack,
+            contentDescription = null,
+            modifier = Modifier.graphicsLayer {
+                alpha = 1f - closeAlpha
+                rotationZ = rotation
+            },
+        )
+        Icon(
+            Icons.Default.Close,
+            contentDescription = null,
+            modifier = Modifier.graphicsLayer {
+                alpha = closeAlpha
+                rotationZ = rotation - 90f
+            },
+        )
+    }
 }

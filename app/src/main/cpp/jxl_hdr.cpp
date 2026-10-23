@@ -1,9 +1,9 @@
 /*
  * JPEG XL → one linear RGBA_F16 working contract via libjxl's CMS.
  *
- * libjxl's decoder CMS owns XYB conversion. Original-profile/modular images use
- * an explicit skcms pass because libjxl 0.11.1 leaves those float samples encoded.
- * Neither path applies a second manual EOTF.
+ * libjxl's CMS owns XYB and HDR transfer conversion. Original-profile/modular
+ * frames retain source samples: use the HDR CMS explicitly, skcms for SDR ICC,
+ * or an identity path for a matching linear profile. Never apply a second EOTF.
  *
  * JNI: com.hippo.ehviewer.jni.HdrConvertKt.convertJxlBytesToUltraHdr
  */
@@ -11,6 +11,7 @@
 #include <jni.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
@@ -23,9 +24,17 @@
 #include <jxl/resizable_parallel_runner_cxx.h>
 
 #include "hdr_encode.h"
+#include "hdr_parallel.h"
 #include "skcms.h"
 #include "ultrahdr_api.h"
+#include "ultrahdr/icc.h"
 
+#ifdef ALOGE
+#undef ALOGE
+#endif
+#ifdef ALOGI
+#undef ALOGI
+#endif
 #define LOG_TAG "JxlHdr"
 #define ALOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
 #define ALOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
@@ -98,6 +107,46 @@ bool transform_original_profile_to_linear(std::vector<float>& rgba, size_t npx,
     return true;
 }
 
+/**
+ * libjxl's HDR ICC may contain an SDR display fallback. Its CMS recognizes CICP
+ * and applies PQ/HLG without that fallback, unlike a plain skcms ICC transform.
+ * Process small RGB batches in place so this needs no second complete frame.
+ */
+bool transform_original_hdr_to_linear(std::vector<float>& rgba, size_t pixels,
+                                      const std::vector<uint8_t>& source_icc,
+                                      uhdr_color_gamut_t cg, size_t channels, float intensity) {
+    auto destination = ultrahdr::IccHelper::writeIccProfile(UHDR_CT_LINEAR, cg);
+    const auto* cms = JxlGetDefaultCms();
+    if (!destination || destination->getLength() <= ultrahdr::kICCIdentifierSize || !cms || source_icc.empty()) return false;
+    JxlColorProfile input{}, output{};
+    input.icc = {source_icc.data(), source_icc.size()};
+    input.num_channels = channels;
+    output.icc = {static_cast<const uint8_t*>(destination->getData()) + ultrahdr::kICCIdentifierSize,
+                  destination->getLength() - ultrahdr::kICCIdentifierSize};
+    output.num_channels = 3;
+    constexpr size_t batch = 4096;
+    const unsigned jobs = hdr_pixel_jobs(pixels);
+    void* transform = cms->init(cms->init_data, jobs, batch, &input, &output, intensity);
+    if (!transform) return false;
+    std::unique_ptr<void, jpegxl_cms_destroy_func> owner(transform, cms->destroy);
+    std::atomic<bool> success{true};
+    hdr_parallel_pixels(pixels, jobs, [&](size_t begin, size_t end, unsigned job) {
+        float* src = cms->get_src_buf(transform, job);
+        float* dst = cms->get_dst_buf(transform, job);
+        for (size_t first = begin; first < end; first += batch) {
+            const size_t count = std::min(batch, end - first);
+            for (size_t i = 0; i < count; ++i) {
+                for (size_t c = 0; c < channels; ++c) src[i * channels + c] = rgba[(first + i) * 4 + c];
+            }
+            if (!cms->run(transform, job, src, dst, count)) { success = false; break; }
+            for (size_t i = 0; i < count; ++i) {
+                for (size_t c = 0; c < 3; ++c) rgba[(first + i) * 4 + c] = dst[i * 3 + c];
+            }
+        }
+    });
+    return success;
+}
+
 /** Pick a known linear destination; [out_cg] always names the resulting samples. */
 void choose_linear_output(const JxlColorEncoding* src, bool have_src, bool is_pq, bool is_hlg,
                           JxlColorEncoding* out, uhdr_color_gamut_t* out_cg) {
@@ -116,6 +165,17 @@ void choose_linear_output(const JxlColorEncoding* src, bool have_src, bool is_pq
         set_linear_rgb(out, JXL_PRIMARIES_2100);
         *out_cg = UHDR_CG_BT_2100;
     }
+}
+
+// A structured linear profile already in our chosen working gamut is an
+// identity transform. Going through quantized ICC matrices adds color error
+// and a complete CMS pass, especially for our lossless linear F16 exports.
+bool is_linear_working_encoding(const JxlColorEncoding& src, uhdr_color_gamut_t cg) {
+    if (src.color_space != JXL_COLOR_SPACE_RGB || src.white_point != JXL_WHITE_POINT_D65 ||
+        src.transfer_function != JXL_TRANSFER_FUNCTION_LINEAR) return false;
+    return (src.primaries == JXL_PRIMARIES_SRGB && cg == UHDR_CG_BT_709) ||
+        (src.primaries == JXL_PRIMARIES_P3 && cg == UHDR_CG_DISPLAY_P3) ||
+        (src.primaries == JXL_PRIMARIES_2100 && cg == UHDR_CG_BT_2100);
 }
 
 /**
@@ -183,7 +243,7 @@ int decode_jxl_to_linear_f16(const uint8_t* data, size_t len, std::vector<uint16
             h = info.ysize;
             if (w == 0 || h == 0 || w > 16384 || h > 16384) return -8;
             JxlResizableParallelRunnerSetThreads(
-                runner.get(), JxlResizableParallelRunnerSuggestThreads(w, h));
+                runner.get(), std::min<size_t>(JxlResizableParallelRunnerSuggestThreads(w, h), hdr_pixel_jobs(static_cast<size_t>(w) * h)));
         } else if (status == JXL_DEC_COLOR_ENCODING) {
             have_src = JxlDecoderGetColorAsEncodedProfile(
                            dec.get(), JXL_COLOR_PROFILE_TARGET_ORIGINAL, &src_encoding) ==
@@ -198,7 +258,7 @@ int decode_jxl_to_linear_f16(const uint8_t* data, size_t len, std::vector<uint16
 
             // TARGET_DATA incorrectly remains the original profile for modular images in
             // libjxl 0.11.1, so retain TARGET_ORIGINAL for the explicit transform below.
-            if (info.uses_original_profile) {
+            if (info.uses_original_profile && !(have_src && is_linear_working_encoding(src_encoding, cg))) {
                 size_t icc_size = 0;
                 if (JxlDecoderGetICCProfileSize(dec.get(), JXL_COLOR_PROFILE_TARGET_ORIGINAL,
                                                 &icc_size) == JXL_DEC_SUCCESS &&
@@ -240,10 +300,13 @@ int decode_jxl_to_linear_f16(const uint8_t* data, size_t len, std::vector<uint16
 
     const size_t pixels_n = static_cast<size_t>(w) * static_cast<size_t>(h);
     const bool original_profile = info.uses_original_profile == JXL_TRUE;
-    if (original_profile &&
-        !transform_original_profile_to_linear(pixels, pixels_n, source_icc, cg)) {
-        // Continuing would reinterpret encoded sRGB/P3/etc. as linear and produce the
-        // washed-out, desaturated regression this path is intended to prevent.
+    const bool hdr_cms = original_profile && (is_pq || is_hlg);
+    const float cms_intensity = std::clamp(std::isfinite(info.intensity_target) && info.intensity_target > 0.f ? info.intensity_target : 1000.f, kSdrWhiteNits, kMaxNits);
+    if (hdr_cms) {
+        const size_t channels = have_src && src_encoding.color_space == JXL_COLOR_SPACE_GRAY ? 1 : 3;
+        if (!transform_original_hdr_to_linear(pixels, pixels_n, source_icc, cg, channels, cms_intensity)) return -13;
+    } else if (original_profile && !(have_src && is_linear_working_encoding(src_encoding, cg)) &&
+               !transform_original_profile_to_linear(pixels, pixels_n, source_icc, cg)) {
         return -13;
     }
 
@@ -267,48 +330,47 @@ int decode_jxl_to_linear_f16(const uint8_t* data, size_t len, std::vector<uint16
     // CMS output is normalized linear RGB. Preserve absolute HDR headroom using
     // the codestream intensity target; SDR's common 255-nit metadata stays 1.0.
     float scale = 1.f;
-    if (declared_hdr && original_profile && is_pq) {
-        // skcms PQ linear output is relative to 10,000 nits, not intensity_target.
-        scale = kMaxLinear;
-    } else if (declared_hdr && !(original_profile && is_hlg)) {
-        float peak_nits = intensity;
+    if (declared_hdr) {
+        // Both the decoder CMS and the explicit original-profile HDR CMS return
+        // linear values relative to intensity_target, not 203-nit SDR white.
+        float peak_nits = hdr_cms ? cms_intensity : intensity;
         if (!std::isfinite(peak_nits) || peak_nits < 1.f) peak_nits = 1000.f;
-        scale = peak_nits / kSdrWhiteNits;
-        if (scale < 1.f) scale = 1.f;
-        if (scale > kMaxLinear) scale = kMaxLinear;
+        scale = std::clamp(peak_nits / kSdrWhiteNits, 1.f, kMaxLinear);
     }
 
-    for (size_t i = 0; i < pixels_n; i++) {
-        float r = pixels[i * 4 + 0];
-        float g = pixels[i * 4 + 1];
-        float b = pixels[i * 4 + 2];
-        float a = pixels[i * 4 + 3];
+    hdr_parallel_pixels(pixels_n, hdr_pixel_jobs(pixels_n), [&](size_t begin, size_t end, unsigned) {
+        for (size_t i = begin; i < end; i++) {
+            float r = pixels[i * 4 + 0];
+            float g = pixels[i * 4 + 1];
+            float b = pixels[i * 4 + 2];
+            float a = pixels[i * 4 + 3];
 
-        float rl = r * scale;
-        float gl = g * scale;
-        float bl = b * scale;
-        if (!std::isfinite(a) || a < 0.f) a = 0.f;
-        if (a > 1.f) a = 1.f;
-        if (composite_alpha_on_black && a < 1.f) {
-            rl *= a;
-            gl *= a;
-            bl *= a;
-            a = 1.f;
+            float rl = r * scale;
+            float gl = g * scale;
+            float bl = b * scale;
+            if (!std::isfinite(a) || a < 0.f) a = 0.f;
+            if (a > 1.f) a = 1.f;
+            if (composite_alpha_on_black && a < 1.f) {
+                rl *= a;
+                gl *= a;
+                bl *= a;
+                a = 1.f;
+            }
+
+            auto clamp_hf = [](float v) {
+                if (!std::isfinite(v) || v < 0.f) return 0.f;
+                if (v > kMaxLinear) return kMaxLinear;
+                return v;
+            };
+            rl = clamp_hf(rl);
+            gl = clamp_hf(gl);
+            bl = clamp_hf(bl);
+            out_rgba[i * 4 + 0] = float_to_half(rl);
+            out_rgba[i * 4 + 1] = float_to_half(gl);
+            out_rgba[i * 4 + 2] = float_to_half(bl);
+            out_rgba[i * 4 + 3] = float_to_half(a);
         }
-
-        auto clamp_hf = [](float v) {
-            if (!std::isfinite(v) || v < 0.f) return 0.f;
-            if (v > kMaxLinear) return kMaxLinear;
-            return v;
-        };
-        rl = clamp_hf(rl);
-        gl = clamp_hf(gl);
-        bl = clamp_hf(bl);
-        out_rgba[i * 4 + 0] = float_to_half(rl);
-        out_rgba[i * 4 + 1] = float_to_half(gl);
-        out_rgba[i * 4 + 2] = float_to_half(bl);
-        out_rgba[i * 4 + 3] = float_to_half(a);
-    }
+    });
 
     ALOGI("JXL CMS %ux%u cg=%d pq=%d hlg=%d original=%d intensity=%.1f scale=%.3f hdr=%d "
           "composite=%d",

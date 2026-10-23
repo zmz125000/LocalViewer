@@ -96,4 +96,35 @@ class HistorySourceOwnershipTest {
         assertTrue(historyOwnedBySmbSource(thumb, 7L))
         assertFalse(historyOwnedByLocalRoot(smb, 7L, null, emptyMap()))
     }
+
+    @Test
+    fun removedLibraryGalleryMatchesIdAndFilePath() {
+        val library = BaseGalleryInfo(gid = 42L, token = LOCAL_GALLERY_TOKEN, title = "Album")
+        val video = BaseGalleryInfo(
+            gid = 1L,
+            token = LOCAL_FILE_TOKEN,
+            title = "clip.mp4",
+            uploader = "/storage/pics/clip.mp4",
+        )
+        val archive = BaseGalleryInfo(
+            gid = 2L,
+            token = LOCAL_ARCHIVE_TOKEN,
+            title = "book.zip",
+            uploader = "/storage/pics/book.zip",
+        )
+        val otherFile = BaseGalleryInfo(
+            gid = 3L,
+            token = LOCAL_FILE_TOKEN,
+            title = "keep.mp4",
+            uploader = "/storage/pics/keep.mp4",
+        )
+        val ids = setOf(42L)
+        val paths = setOf("/storage/pics/clip.mp4", "/storage/pics/book.zip")
+        assertTrue(historyMatchesRemovedLibraryGallery(library, ids, paths))
+        assertTrue(historyMatchesRemovedLibraryGallery(video, ids, paths))
+        assertTrue(historyMatchesRemovedLibraryGallery(archive, ids, paths))
+        assertFalse(historyMatchesRemovedLibraryGallery(otherFile, ids, paths))
+        assertFalse(historyMatchesRemovedLibraryGallery(library, emptySet(), paths))
+        assertFalse(historyMatchesRemovedLibraryGallery(video, ids, emptySet()))
+    }
 }

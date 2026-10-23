@@ -57,4 +57,17 @@ class LibraryVideoPlayerChoiceTest {
             ),
         )
     }
+
+    @Test
+    fun localFilesToggleCoversFolderBrowse() {
+        assertTrue(localFolderVideoUsesMedia3(media3 = true, media3ForLocalFiles = false))
+        assertTrue(localFolderVideoUsesMedia3(media3 = false, media3ForLocalFiles = true))
+        assertFalse(localFolderVideoUsesMedia3(media3 = false, media3ForLocalFiles = false))
+        assertFalse(
+            localFolderVideoUsesMedia3(media3 = false, media3ForLocalFiles = true, longPress = true),
+        )
+        assertTrue(
+            localFolderVideoUsesMedia3(media3 = false, media3ForLocalFiles = false, longPress = true),
+        )
+    }
 }

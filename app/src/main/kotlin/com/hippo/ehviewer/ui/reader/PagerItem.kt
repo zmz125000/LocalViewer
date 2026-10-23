@@ -37,7 +37,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.ColorFilter
-import androidx.compose.ui.graphics.ColorMatrix
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.layout.ContentScale
@@ -236,7 +235,8 @@ fun PagerItem(
                             src.width * factor.scaleX,
                             src.height * factor.scaleY,
                         )
-                        zoomPastHiResPreview(destLong, scale)
+                        // Allow for rounding when the screen-sized preview fits at zoom 1.
+                        zoomPastHiResPreview(destLong, scale, image.hiResPreviewEdge + 2)
                     }.filterNotNull().distinctUntilChanged().collect { zoomPast = it }
                 }
                 LaunchedEffect(zoomPast, inViewport) {
@@ -260,20 +260,13 @@ fun PagerItem(
             }
             painter?.let { painter ->
                 val drawable = (painter as? DrawablePainter)?.drawable
-                val grayScale by Settings.grayScale.collectAsState()
-                val invert by Settings.invertedColors.collectAsState()
                 val autoRotateMode by Settings.autoRotateMode.collectAsState()
                 val imgSize = image.intrinsicSize
                 val rotate = shouldAutoRotate(imgSize, viewportSize, autoRotateMode)
                 val clockwise = isAutoRotateClockwise(autoRotateMode)
-                // Color matrices crush Ultra HDR gain-map boost — leave filters off for HDR pages.
-                val colorFilter = when {
-                    image.hasGainmap -> null
-                    grayScale && invert -> grayScaleAndInvertFilter
-                    grayScale -> grayScaleFilter
-                    invert -> invertFilter
-                    else -> null
-                }
+                val colorFilter = rememberComicColorFilter(
+                    enabled = !image.isHdrContent && !image.isWideGamutContent,
+                )
                 FitPageImage(
                     painter = painter,
                     rotate = rotate,
@@ -531,24 +524,6 @@ private const val MIN_ONSCREEN_FRACTION = 0.01f
 
 /** Scale must sit still this long before the kernel cache rebuilds. */
 private const val ZOOM_CACHE_SETTLE_MS = 120L
-
-private val invertMatrix = ColorMatrix(
-    floatArrayOf(
-        -1f, 0f, 0f, 0f, 255f,
-        0f, -1f, 0f, 0f, 255f,
-        0f, 0f, -1f, 0f, 255f,
-        0f, 0f, 0f, 1f, 0f,
-    ),
-)
-private val grayScaleMatrix = ColorMatrix().apply { setToSaturation(0f) }
-private val grayScaleAndInvertMatrix = ColorMatrix().also { mtx ->
-    mtx.setToSaturation(0f)
-    mtx *= invertMatrix
-}
-
-private val grayScaleFilter = ColorFilter.colorMatrix(grayScaleMatrix)
-private val invertFilter = ColorFilter.colorMatrix(invertMatrix)
-private val grayScaleAndInvertFilter = ColorFilter.colorMatrix(grayScaleAndInvertMatrix)
 
 @Composable
 fun AdsPlaceholder(

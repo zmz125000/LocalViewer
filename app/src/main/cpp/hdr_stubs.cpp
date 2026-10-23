@@ -101,8 +101,23 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeAvifBytesToDirect(JNIEnv*, jclass
     return nullptr;
 }
 
+extern "C" JNIEXPORT jshortArray JNICALL
+Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeHevcAnnexB(JNIEnv*, jclass, jbyteArray, jbyteArray, jintArray) {
+    return nullptr;
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_hippo_ehviewer_jni_HdrConvertKt_linearizeHeifIcc(JNIEnv*, jclass, jbyteArray, jbyteArray) {
+    return JNI_FALSE;
+}
+
 extern "C" JNIEXPORT jint JNICALL
 Java_com_hippo_ehviewer_jni_HdrConvertKt_encodeStillExport(JNIEnv*, jclass, jbyteArray, jint, jint,
-                                                           jboolean, jint, jint, jboolean, jstring) {
+                                                           jboolean, jint, jint, jboolean, jstring, jint, jint) {
     return kUnsupportedAbi;
+}
+
+extern "C" JNIEXPORT jlong JNICALL
+Java_com_hippo_ehviewer_jni_HdrConvertKt_probeStillExportSize(JNIEnv*, jclass, jstring, jint) {
+    return 0;
 }

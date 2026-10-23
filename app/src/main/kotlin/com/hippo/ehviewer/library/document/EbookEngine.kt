@@ -458,7 +458,7 @@ internal object EbookEngine {
 
     internal fun chaptersFromPlain(text: String, fallbackTitle: String): List<EbookChapter> {
         val parts = ArrayList<EbookChapter>()
-        val lines = text.replace("\r\n", "\n").replace('\r', '\n').split('\n')
+        val lines = text.removePrefix("\uFEFF").replace("\r\n", "\n").replace('\r', '\n').split('\n')
         var title = ""
         var depth = 0
         var inToc = false
@@ -470,13 +470,15 @@ internal object EbookEngine {
             parts += EbookChapter(title, body, depth, inToc = inToc && title.isNotBlank())
         }
         var sawHeading = false
+        var sawVolume = false
         for (line in lines) {
-            val heading = headingOf(line)
+            val heading = headingOf(line, sawVolume)
             if (heading != null) {
                 sawHeading = true
                 flush()
                 title = heading.first
                 depth = heading.second
+                if (VOLUME_HEADING.matches(title)) sawVolume = true
                 inToc = true
             } else if (line == "\u000c" || line.contains('\u000c')) {
                 flush()
@@ -710,7 +712,7 @@ internal object EbookEngine {
         null
     }
 
-    private fun headingOf(line: String): Pair<String, Int>? {
+    private fun headingOf(line: String, sawVolume: Boolean): Pair<String, Int>? {
         val t = line.trim()
         if (t.isEmpty()) return null
         val md = MD_HEADING.matchEntire(t)
@@ -718,6 +720,9 @@ internal object EbookEngine {
             return md.groupValues[2].trim() to (md.groupValues[1].length - 1).coerceAtLeast(0)
         }
         if (CHAPTER_HEADING.matches(t) && t.length <= 80) {
+            return t to if (sawVolume && !VOLUME_HEADING.matches(t)) 1 else 0
+        }
+        if (SPECIAL_HEADING.matches(t) && t.length <= 80) {
             return t to 0
         }
         return null
@@ -833,8 +838,18 @@ internal object EbookEngine {
         """(?i)^(?:chapter\s+[0-9ivxlc]+\b.*|第[0-9一二三四五六七八九十百千零〇两]+[章节回部卷篇节].*)$""",
     )
     private val MD_HEADING = Regex("""^(#{1,6})\s+(.+)$""")
+
+    // Heading vocabulary adapted from cchenhen/txtautotoc (MIT; see NOTICE).
+    private const val HEADING_NUMBER = "[0-9０-９零〇一二三四五六七八九十百千两兩壹贰貳叁參肆伍陆陸柒捌玖拾佰仟廿卅IVXLCDMivxlcdm]+"
+    private const val HEADING_SUFFIX = """(?:[\s\p{Z}\-:：.、，。!！?？\[\]【】()（）《》·_].*)?"""
+    private val VOLUME_HEADING = Regex(
+        """^(?:第$HEADING_NUMBER[卷部篇册冊]|(?i:part)\s+$HEADING_NUMBER)$HEADING_SUFFIX$""",
+    )
     private val CHAPTER_HEADING = Regex(
-        """^(?:第[0-9一二三四五六七八九十百千零〇两]+[章节回部卷篇节]|(?i:chapter)\s+\d+)(?:\s+.*)?$""",
+        """^(?:第$HEADING_NUMBER[章节節回部卷篇册冊]|(?i:chapter|part)\s+$HEADING_NUMBER)$HEADING_SUFFIX$""",
+    )
+    private val SPECIAL_HEADING = Regex(
+        """^(?:序章|楔子|引子|前言|后记|後記|尾声|尾聲|终章|終章|番外|(?i:prologue|epilogue)|(?:附录|附錄|(?i:appendix))$HEADING_SUFFIX)$""",
     )
     private val CONTENTS_HEADER = Regex(
         """(?i)^(?:contents|table\s+of\s+contents|toc|目录|目錄|目次|目\s*录)$""",

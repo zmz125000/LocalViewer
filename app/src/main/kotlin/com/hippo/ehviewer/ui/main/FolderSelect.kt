@@ -70,7 +70,10 @@ import androidx.compose.ui.window.DialogWindowProvider
 import com.ehviewer.core.i18n.R
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.asMutableState
+import com.hippo.ehviewer.image.hdr.RawExportControls
+import com.hippo.ehviewer.image.hdr.StillExportQuality
 import com.hippo.ehviewer.image.hdr.StillExportTarget
+import com.hippo.ehviewer.image.hdr.supportsSource
 import com.hippo.ehviewer.library.ExplorerWindows
 import com.hippo.ehviewer.provider.StreamKeepAlivePolicy
 import com.hippo.ehviewer.ui.LocalSnackBarHostState
@@ -81,11 +84,16 @@ import com.hippo.ehviewer.ui.theme.snackbarDismissContentColor
 import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.selects.select
+import kotlinx.coroutines.withContext
 import moe.tarsin.snackbar
 import okio.Path
 
@@ -393,6 +401,7 @@ internal class TaskJob(
     status: TaskStatus,
 ) {
     var status by mutableStateOf(status)
+    var removed = false
 }
 
 internal class TaskBatch(
@@ -404,6 +413,7 @@ internal class TaskBatch(
 ) {
     var runner: Job = runner
     var finished by mutableStateOf(0)
+    var runningCount by mutableIntStateOf(jobs.count { it.status == TaskStatus.Running })
     var paused by mutableStateOf(false)
     var finishedRun by mutableStateOf(false)
     var end by mutableStateOf<BatchEnd?>(null)
@@ -413,8 +423,9 @@ internal class TaskBatch(
         get() {
             val total = jobs.size
             if (total <= 0) return "0/0"
-            val shown = if (finished >= total) total else finished + 1
-            return "$shown/$total"
+            if (finished >= total) return "$total/$total"
+            val running = runningCount.coerceAtLeast(1)
+            return "${(finished + running).coerceAtMost(total)}/$total"
         }
 
     val pending: List<TaskJob>
@@ -426,6 +437,7 @@ internal class TaskBatch(
     fun removePending(id: Long) {
         val job = jobs.find { it.id == id } ?: return
         if (job.status != TaskStatus.Pending) return
+        job.removed = true
         jobs.remove(job)
         wake.trySend(Unit)
     }
@@ -437,33 +449,76 @@ internal class TaskBatch(
     suspend fun awaitSignal() {
         wake.receive()
     }
+
+    /** Wait until a running job finishes or [wake] is called. */
+    suspend fun awaitProgress(inFlight: List<Deferred<Unit>>) {
+        if (inFlight.isEmpty()) {
+            wake.receive()
+            return
+        }
+        select {
+            inFlight.forEach { deferred ->
+                deferred.onAwait { }
+            }
+            wake.onReceive { }
+        }
+    }
 }
 
 /**
- * Runs [batch] jobs one at a time.
- * While [TaskBatch.paused] is set, the running job finishes and later jobs stay pending.
+ * Staging/download slots. Pixel allocations are independently budgeted across
+ * decode AND encode by StillExportWork, using probed dimensions and codec costs.
+ */
+internal fun taskParallelSlots(enabled: Boolean, cores: Int, maxMemoryBytes: Long): Int {
+    if (!enabled) return 1
+    val cpu = cores.coerceAtLeast(1)
+    val perJob = 96L * 1024 * 1024
+    val byRam = (maxMemoryBytes / 2 / perJob).toInt()
+    val slots = minOf(cpu, byRam.coerceAtLeast(1))
+    if (slots >= 2) return slots
+    val twoFit = maxMemoryBytes * 3 / 4 >= perJob * 2
+    return if (twoFit && cpu >= 2) 2 else 1
+}
+
+/**
+ * Runs [batch] until no jobs remain.
+ * Slot count is 1 unless parallel mode is on; see [taskParallelSlots].
+ * While [TaskBatch.paused] is set, in-flight jobs finish and later jobs stay pending.
  */
 internal suspend fun executeJobs(batch: TaskBatch, dir: Path) {
-    while (batch.end == null) {
-        if (batch.paused) {
-            FolderSelectHost.syncTaskFgs()
-            val busy = batch.jobs.any { it.status == TaskStatus.Pending || it.status == TaskStatus.Running }
-            if (!busy) break
-            batch.awaitSignal()
-            continue
-        }
-        val next = batch.jobs.firstOrNull { it.status == TaskStatus.Pending } ?: break
-        next.status = TaskStatus.Running
-        val ok = try {
-            next.run(dir)
-        } catch (e: CancellationException) {
-            throw e
-        } catch (_: Throwable) {
-            false
-        }
-        if (next.status == TaskStatus.Running) {
-            next.status = if (ok) TaskStatus.Done else TaskStatus.Failed
-            batch.finished++
+    coroutineScope {
+        val inFlight = ArrayList<Deferred<Unit>>()
+        val pendingJobs = ArrayDeque(batch.jobs.filter { it.status == TaskStatus.Pending })
+        while (batch.end == null) {
+            inFlight.retainAll { !it.isCompleted }
+            val slots = FolderSelectHost.currentParallelSlots()
+            while (pendingJobs.firstOrNull()?.let { it.removed || it.status != TaskStatus.Pending } == true) pendingJobs.removeFirst()
+            val pending = pendingJobs.isNotEmpty()
+            val running = inFlight.isNotEmpty()
+            if (!pending && !running) break
+            if (batch.paused || inFlight.size >= slots || !pending) {
+                if (batch.paused) FolderSelectHost.syncTaskFgs()
+                batch.awaitProgress(inFlight)
+                continue
+            }
+            val next = pendingJobs.removeFirst()
+            next.status = TaskStatus.Running
+            batch.runningCount++
+            inFlight += async {
+                val ok = try {
+                    next.run(dir)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Throwable) {
+                    false
+                } finally {
+                    batch.runningCount--
+                }
+                if (next.status == TaskStatus.Running) {
+                    next.status = if (ok) TaskStatus.Done else TaskStatus.Failed
+                    synchronized(batch) { batch.finished++ }
+                }
+            }
         }
     }
 }
@@ -511,8 +566,19 @@ object FolderSelectHost {
     /** Unit-test override for [Settings.browseTaskAutoFinish]; null reads the pref. */
     internal var autoFinishForTest: Boolean? = null
 
+    /** Unit-test override for [currentParallelSlots]; null reads the pref and the device. */
+    internal var parallelSlotsForTest: Int? = null
+
     private fun autoFinishEnabled(): Boolean = autoFinishForTest
         ?: runCatching { Settings.browseTaskAutoFinish.value }.getOrDefault(false)
+
+    internal fun currentParallelSlots(): Int {
+        parallelSlotsForTest?.let { return it.coerceAtLeast(1) }
+        val enabled = runCatching { Settings.browseTaskParallel.value }.getOrDefault(false)
+        val cores = runCatching { Runtime.getRuntime().availableProcessors() }.getOrDefault(1)
+        val heap = runCatching { Runtime.getRuntime().maxMemory() }.getOrDefault(0L)
+        return taskParallelSlots(enabled, cores, heap)
+    }
 
     /** Folder keys with a queued batch behind the running task. */
     internal fun queuedFolderKeys(): Set<String> = queuedCounts.keys
@@ -705,6 +771,7 @@ object FolderSelectHost {
         current = null
         dialog = false
         autoFinishForTest = null
+        parallelSlotsForTest = null
         // Unit tests have no Android Main dispatcher.
         scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
         syncTaskFgs()
@@ -716,9 +783,9 @@ object FolderSelectHost {
      */
     internal fun syncTaskFgs() {
         val running = batch
-        val jobRunning = running?.jobs?.any { it.status == TaskStatus.Running } == true
-        val active = running != null && !running.finishedRun && running.end == null &&
-            (!running.paused || jobRunning)
+        val jobRunning = (running?.runningCount ?: 0) > 0
+        val active = running != null && !running.finishedRun &&
+            (jobRunning || (running.end == null && !running.paused))
         runCatching { StreamKeepAlivePolicy.setBrowseTaskActive(active) }
     }
 
@@ -730,14 +797,14 @@ object FolderSelectHost {
         running.wake()
     }
 
-    /** Stop the queue and show the unfinished items under the selection overflow menu. */
+    /** Stop launching work. Active jobs finish and keep their outputs before restoring pending picks. */
     fun stopTask() {
         val running = batch ?: return
         if (running.finishedRun || running.end != null) return
         running.end = BatchEnd.Stop
         running.paused = false
         running.wake()
-        running.runner.cancel()
+        syncTaskFgs()
     }
 
     /** Leave the finished queue and show the selection that is still stored. */
@@ -1361,6 +1428,7 @@ private fun SelectionOverflowControl(
     val picks = FolderSelectHost.selectionPicks
     val runInBackground = Settings.browseTaskForegroundService.asMutableState()
     val autoFinish = Settings.browseTaskAutoFinish.asMutableState()
+    val runInParallel = Settings.browseTaskParallel.asMutableState()
     val shareable = picks.count { it.shareHttp != null }
     val convertible = picks.count { it.convertStill != null }
     val savable = picks.count { it.saveInto != null }
@@ -1404,6 +1472,7 @@ private fun SelectionOverflowControl(
         ) {
             if (convertMenu) {
                 ConvertTargetItems(
+                    sourceNames = picks.filter { it.convertStill != null }.map { it.title },
                     onBack = { convertMenu = false },
                     onTarget = { target ->
                         menu = false
@@ -1491,6 +1560,23 @@ private fun SelectionOverflowControl(
                     },
                     onClick = { autoFinish.value = !autoFinish.value },
                 )
+                DropdownMenuItem(
+                    text = { Text(stringResource(R.string.browse_run_in_parallel)) },
+                    trailingIcon = {
+                        Box(
+                            modifier = Modifier.size(24.dp),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            if (runInParallel.value) {
+                                Icon(Icons.Default.Check, contentDescription = null)
+                            }
+                        }
+                    },
+                    onClick = {
+                        runInParallel.value = !runInParallel.value
+                        FolderSelectHost.batch?.wake()
+                    },
+                )
             }
         }
     }
@@ -1498,6 +1584,7 @@ private fun SelectionOverflowControl(
 
 @Composable
 private fun ConvertTargetItems(
+    sourceNames: List<String>,
     onBack: () -> Unit,
     onTarget: (StillExportTarget) -> Unit,
 ) {
@@ -1509,9 +1596,13 @@ private fun ConvertTargetItems(
         StillExportTarget.AutoOriginal to R.string.convert_auto_original,
         StillExportTarget.Jpeg to R.string.convert_jpeg,
         StillExportTarget.JpegHdr to R.string.convert_jpeg_hdr,
-        StillExportTarget.Png to R.string.convert_png,
-        StillExportTarget.Png16 to R.string.convert_png_16,
-    ).forEach { (target, label) ->
+        StillExportTarget.JpegHdrBoost to R.string.convert_jpeg_hdr_boost,
+        StillExportTarget.JpegHdrCustom to R.string.convert_jpeg_hdr_custom,
+        StillExportTarget.Jxl to R.string.convert_jxl,
+        StillExportTarget.JxlHdr to R.string.convert_jxl_hdr,
+        StillExportTarget.JxlHdrBoost to R.string.convert_jxl_hdr_boost,
+        StillExportTarget.JxlHdrCustom to R.string.convert_jxl_hdr_custom,
+    ).filter { (target, _) -> target.available && sourceNames.any { target.supportsSource(it) } }.forEach { (target, label) ->
         DropdownMenuItem(
             text = { Text(stringResource(label)) },
             onClick = { onTarget(target) },
@@ -1555,6 +1646,7 @@ private fun beginConvert(
     context: Context,
     target: StillExportTarget,
 ) {
+    val controls = RawExportControls.capture(target) + StillExportQuality.current()
     val folderKey = FolderSelectHost.selectionSnack?.folderKey
     val items = FolderSelectHost.selectionPicks.filter { it.convertStill != null }
     if (items.isEmpty()) {
@@ -1565,7 +1657,9 @@ private fun beginConvert(
         val dir = with(snackbar) { with(context) { BrowseSaveAs.pickConvertDirectory() } } ?: return@launch
         val jobs = items.map { pick ->
             val convert = pick.convertStill!!
-            FolderSelectHost.newJob(pick.title, pick.isFolder, pick) { dest -> convert(dest, target) }
+            FolderSelectHost.newJob(pick.title, pick.isFolder, pick) { dest ->
+                withContext(controls) { convert(dest, target) }
+            }
         }
         FolderSelectHost.startTasks(jobs, dir, folderKey)
     }

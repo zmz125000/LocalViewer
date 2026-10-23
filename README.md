@@ -101,10 +101,12 @@ Build with Grok 4.5.
 * ZIP/RAR/CBZ/CBR/CBT/PDF/EPUB support over network share.
 * PDF/EPUB/MOBI/FB2/TXT/AZW3/Markdown Ebook support with text formatting.
 * JXL/JXR/JPG/AVIF/HEIC HDR support.
+* PQ/HLG HEIF software decoding with preserved high bit depth on 64-bit builds.
 * 14-Bit RAW formats decoding with true HDR output.
 * RAW formats support dng/cr2/cr3/nef/nrw/arw/raf/orf/rw2/pef/srw/raw.
-* Convert JXR and RAW to Ultra HDR JPEG.
+* Batch convert JXL/JXR/RAW to JPEG, Ultra HDR JPEG, or 16-bit SDR/HDR JPEG XL.
 * Compatible with Oppo/OnePlus ProXDR HEIC format.
+* Compatible with Apple HDR (HEIF, AVIF).
 * Nearest, Bilinear, B-Spline, Catmull-Rom, Mitchell-Netravali, Lanczos3 image scalers using GPU shader.
 * Open offline html website archive in your browser with built-in HTTP server.
 * Network folder playback for MPV/MX Player/VLC with subtitles and external autio track. 
@@ -119,12 +121,32 @@ Build with Grok 4.5.
 * Reader comic dual pages mode.
 * E-Ink mode support (ported from [venera-next](https://github.com/cyrilpeng/venera-next)).
 * EasyTier support (ported from [moonlight-vplus](https://github.com/qiin2333/moonlight-vplus)).
+* TXT chapter support (ported from [txtautotoc](https://github.com/cchenhen/txtautotoc)).
 
 ### Performance
 * The custom SMBJ and WebDAV clients achieve 1 Gbps network speeds over Wi-Fi 7, so after v1.11.x the image reader defaults to have image caching disabled.
-* Windows 11 JXR HDR screenshots can be displayed directly in fp16 bitmaps without tone mapping, or transcode to Ultra HDR Jpeg. The prefetch and decode ahead is set to 1 for JXR format to avoid OOM crashed.
-* The image loader was tweaked for preloading and decoding 20MB jpg files without any OOM crashes, and smaller files should load instantly.
+* Windows 11 JXR HDR screenshots can be displayed in fp16 hdr bitmaps, or transcode to Ultra HDR Jpeg. The HDR processing is faster than any other viewers.
+* The image loader was tweaked for preloading and decoding 100MB jpg hdr files over network without any OOM crashes, and smaller files should load instantly.
 * Accurate HDR presentation of RAW and JXR images (compared with DaVinci Resolve).
+
+# Download
+
+| Flavor      | Minimum Android Version | Features                       |
+|-------------|-------------------------|--------------------------------|
+| Default     | 12                      | Basic                          |
+| Default     | 14 (arm64-v8a, x86-64)  | HDR, GPU Shaders, RAW          |
+| EasyTier    | 12 (arm64-v8a)          | Basic, EasyTier                |
+| EasyTier    | 14 (arm64-v8a)          | HDR, GPU Shaders, RAW, EasyTier|
+
+<a href="https://github.com/zmz125000/LocalViewer/releases">
+<img alt="Get it on GitHub" src="https://github.com/zmz125000/LocalViewer-art/blob/master/get-it-on-github.svg" width="200px"/>
+</a>
+
+# Screenshot
+
+![LocalViewer screenshot main page](https://github.com/zmz125000/LocalViewer-art/blob/master/screenshots-01.webp)
+![LocalViewer screenshot gallery reader](https://github.com/zmz125000/LocalViewer-art/blob/master/screenshots-02.webp)
+![LocalViewer screenshot window manager](https://github.com/zmz125000/LocalViewer-art/blob/master/screenshots-03.webp)
 
 ### To use WebDAV
 
@@ -157,26 +179,10 @@ while ($true) {
 }
 ```
 
-# Download
-
-| Flavor      | Minimum Android Version | Features                       |
-|-------------|-------------------------|--------------------------------|
-| Default     | 12                      | Basic                          |
-| Default     | 14 (arm64-v8a, x86-64)  | HDR, GPU Shaders, RAW          |
-| EasyTier    | 12 (arm64-v8a)          | Basic, EasyTier                |
-| EasyTier    | 14 (arm64-v8a)          | HDR, GPU Shaders, RAW, EasyTier|
-
-<a href="https://github.com/zmz125000/LocalViewer/releases">
-<img alt="Get it on GitHub" src="https://github.com/zmz125000/LocalViewer-art/blob/master/get-it-on-github.svg" width="200px"/>
-</a>
-
-# Screenshot
-
-![LocalViewer screenshot main page](https://github.com/zmz125000/LocalViewer-art/blob/master/screenshots-01.webp)
-![LocalViewer screenshot gallery reader](https://github.com/zmz125000/LocalViewer-art/blob/master/screenshots-02.webp)
-![LocalViewer screenshot window manager](https://github.com/zmz125000/LocalViewer-art/blob/master/screenshots-03.webp)
-
 # Thanks
+
+- [cchenhen](https://github.com/cchenhen) for txtautotoc.
+- [miaoxin2003](https://github.com/miaoxin2003) for improvements to PDF.
 
 Here is the libraries
 
@@ -212,6 +218,7 @@ Here is the libraries
 - [libwebp](https://github.com/webmproject/libwebp)
 - [libjxl](https://github.com/libjxl/libjxl)
 - [libavif](https://github.com/AOMediaCodec/libavif) and [dav1d](https://code.videolan.org/videolan/dav1d)
+- [libde265](https://github.com/strukturag/libde265) (PQ/HLG HEIF software decode)
 - [jpegxr](https://github.com/bvibber/jpegxr)
 - [OpenJPEG](https://github.com/uclouvain/openjpeg)
 - [XZ](https://github.com/tukaani-project/xz) and [Nettle](https://gitlab.com/gnutls/nettle)

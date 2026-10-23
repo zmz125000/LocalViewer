@@ -1,14 +1,23 @@
 package com.hippo.ehviewer.jni
 
+import android.hardware.HardwareBuffer
+import java.nio.ByteBuffer
+
+/** Synchronous reader-only capture. Release the handle after copying the returned buffer. */
+internal external fun beginNativeReaderPixels(): Long
+internal external fun endNativeReaderPixels(handle: Long): ByteBuffer?
+internal external fun releaseNativeReaderPixels(handle: Long)
+internal external fun copyNativeReaderPixelsToAHB(source: ByteBuffer, destination: HardwareBuffer)
+
 /**
  * Native still codecs for formats the platform cannot open reliably
- * (libultrahdr + jxrlib + libavif + libjxl + OpenJPEG).
+ * (libultrahdr + jxrlib + libavif + libjxl + OpenJPEG + libde265).
  *
  * Linked only for **arm64-v8a** and **x86_64** ([EHVIEWER_HDR_CODECS] in CMake).
  * On armeabi-v7a the same JNI symbols are stubs (convert → -100, probe → 0).
  *
- * All lib routes use convert* → Ultra HDR JPEG (disk cache). JXR/JXL always convert
- * (SDR content still becomes a Coil-ready base JPEG).
+ * Lib formats can use convert* → Ultra HDR JPEG or direct bitmap presentation.
+ * Camera RAW and absolute PQ/HLG HEIF use direct presentation.
  *
  * @return convert*: 0 on success; non-zero error code on failure.
  */
@@ -36,6 +45,17 @@ external fun convertAvifBytesToUltraHdrMaxEdge(input: ByteArray, outputPath: Str
  * Probe AVIF HDR kind: 0=not avif/error, 1=gain-map, 2=PQ/HLG absolute, 3=other avif.
  */
 external fun probeAvifHdrKind(input: ByteArray): Int
+
+/**
+ * Software HEVC still decode. [outInfo]: width, height, bit depth, chroma width,
+ * chroma height. Returns planar Y/Cb/Cr integer samples at the decoded precision.
+ * If outInfo has seven entries, full-range flag and YUV matrix follow.
+ * Both inputs are Annex-B, split into parameter sets and picture NALs.
+ */
+external fun decodeHevcAnnexB(csd: ByteArray, picture: ByteArray, outInfo: IntArray): ShortArray?
+
+/** Straight encoded RGBA_F16 → linear extended sRGB, in place using the embedded ICC. */
+external fun linearizeHeifIcc(pixels: ByteArray, icc: ByteArray): Boolean
 
 // ── JPEG XL ──────────────────────────────────────────────────────────────
 
@@ -108,7 +128,8 @@ external fun decodeAvifBytesToDirect(
 /**
  * LibRaw → packed pixels. [present] matches [com.hippo.ehviewer.image.hdr.RawPresent]
  * ordinal: 0 eight-bit, 1 deep color, 2 deep color + Android 16 HDR.
- * [maxEdge] is already capped (8192 for a full decode).
+ * Reader [maxEdge] is capped at 8192; export passes 0 for original dimensions.
+ * Native present=3 is export HDR in linear Rec.2020, with no display dependency.
  * [panelBoost] clamps HDR highlights. Ignored for the other modes.
  * [exposureEv] is extra stops. [whiteBalance] is 0 camera, 1 auto, 2 daylight,
  * 3 cloudy, 4 shade, 5 tungsten, 6 fluorescent, 7 flash, 8 kelvin.
@@ -201,10 +222,14 @@ external fun extractRawPreviewFd(fd: Int, outPath: String, demosaicFallback: Boo
 /**
  * Encode packed pixels to [outPath].
  *
- * [mode] 0 baseline JPEG, 1 Ultra HDR JPEG, 2 PNG, 3 16-bit PNG.
+ * [mode] 0 baseline JPEG, 1 Ultra HDR JPEG, 2 SDR JPEG XL, 3 HDR JPEG XL.
  * [f16] selects linear half-float RGBA (8 bytes per pixel). Otherwise the buffer
  * is sRGB RGBA_8888 (4 bytes, R,G,B,A). [gamut] is 0 BT.709, 1 Display P3, 2 BT.2100.
  * [premultiplied] un-associates alpha before encode. 8-bit JPEG (HDR) is baseline.
+ * [sdrOffset] is 0, or the offset of a same-gamut camera-look SDR RGBA8 plane
+ * appended to the F16 HDR pixels. Ultra HDR uses this plane as its SDR base.
+ * [quality]: 0 lossless (JPEG Q95), 1 high (JPEG Q90), 2 low (JPEG Q85).
+ * JPEG exports retain 4:4:4 chroma at every quality.
  *
  * @return 0 on success. armeabi-v7a returns -100.
  */
@@ -217,4 +242,9 @@ external fun encodeStillExport(
     mode: Int,
     premultiplied: Boolean,
     outPath: String,
+    sdrOffset: Int,
+    quality: Int,
 ): Int
+
+/** Header-only size probe. Kind: 0 JXL, 1 JXR, 2 RAW; packed width/height, or 0. */
+external fun probeStillExportSize(path: String, kind: Int): Long

@@ -63,7 +63,10 @@ object FolderGalleryIndex {
         dirName: String,
         names: List<String>,
     ): List<BrowseEntryRemote> {
-        val pages = listingFromImageNames(dirName, names)
+        val knownFiles = previous.orEmpty().filterIsInstance<BrowseEntryRemote.RegularFile>().associateBy { it.fileName }
+        val pages = listingFromImageNames(dirName, names).map { entry ->
+            if (entry is BrowseEntryRemote.RegularFile) knownFiles[entry.fileName] ?: entry else entry
+        }
         if (pages.isEmpty()) return previous.orEmpty()
         if (previous.isNullOrEmpty()) return pages
         if (shouldKeepPreviousFolderIndex(previous, pages) || !isShallowIncompleteListing(previous)) {
@@ -96,7 +99,8 @@ object FolderGalleryIndex {
         previous: List<BrowseEntryRemote>?,
         names: List<String>,
     ): List<BrowseEntryRemote> {
-        val videos = listingFromVideoNames(names)
+        val knownFiles = previous.orEmpty().filterIsInstance<BrowseEntryRemote.VideoFile>().associateBy { it.fileName }
+        val videos = names.map { name -> knownFiles[name] ?: BrowseEntryRemote.VideoFile(name = name, fileName = name) }
         if (videos.isEmpty()) return previous.orEmpty()
         if (previous.isNullOrEmpty()) return videos
         if (shouldKeepPreviousFolderIndex(previous, videos) || !isShallowIncompleteListing(previous)) {
@@ -223,6 +227,46 @@ object FolderGalleryIndex {
             out.putIfAbsent(path, ms)
         }
         return out
+    }
+
+    data class FileMetadata(val size: Long = 0L, val lastModifiedMs: Long = 0L)
+
+    fun directChildMetadata(entries: List<BrowseEntryRemote>): Map<String, FileMetadata> = buildMap {
+        for (entry in entries) {
+            val fileName = when (entry) {
+                is BrowseEntryRemote.RegularFile -> entry.fileName
+                is BrowseEntryRemote.VideoFile -> entry.fileName
+                else -> continue
+            }.replace('\\', '/').trim('/')
+            if (fileName.isEmpty() || '/' in fileName) continue
+            put(fileName, FileMetadata(entry.size, entry.lastModifiedMs))
+        }
+    }
+
+    /** Names-only image/video opens must keep the metadata from the full listing. */
+    fun stampLocalFileMetadata(
+        entries: List<BrowseEntry>,
+        metadata: Map<String, FileMetadata>,
+    ): List<BrowseEntry> = entries.map { entry ->
+        val info = metadata[entry.name] ?: return@map entry
+        val size = info.size.takeIf { it > 0L } ?: entry.size
+        val mtime = info.lastModifiedMs.takeIf { it > 0L } ?: entry.lastModifiedMs
+        when (entry) {
+            is BrowseEntry.RegularFile -> entry.copy(size = size, lastModifiedMs = mtime)
+            is BrowseEntry.VideoFile -> entry.copy(size = size, lastModifiedMs = mtime)
+            else -> entry
+        }
+    }
+
+    suspend fun loadLocalDirectFileMetadata(
+        rootId: Long,
+        configKey: String,
+        folderDir: String,
+        rootAbs: Path? = null,
+    ): Map<String, FileMetadata> {
+        val folder = normalizeGalleryRelativeDir(folderDir)
+        val entries = localListing(rootId, configKey, folder, rootAbs) ?: return emptyMap()
+        return directChildMetadata(entries)
     }
 
     fun stampRemoteMtimes(

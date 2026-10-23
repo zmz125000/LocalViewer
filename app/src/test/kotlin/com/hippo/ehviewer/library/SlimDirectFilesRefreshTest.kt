@@ -281,6 +281,54 @@ class SlimDirectFilesRefreshTest {
     }
 
     @Test
+    fun mtimeChangeTriggersDeepScanCandidate() {
+        val cached = listOf(
+            BrowseEntryRemote.Directory(
+                name = "Album",
+                hasVideo = false,
+                hasGallery = true,
+                presence = DirPresence.Navigable,
+                lastModifiedMs = 10L,
+            ),
+            BrowseEntryRemote.Directory(
+                name = "Stable",
+                hasVideo = false,
+                hasGallery = false,
+                presence = DirPresence.Navigable,
+                lastModifiedMs = 50L,
+            ),
+            BrowseEntryRemote.Directory(
+                name = "Unknown",
+                hasVideo = false,
+                hasGallery = false,
+                presence = DirPresence.Navigable,
+                lastModifiedMs = 0L,
+            ),
+            BrowseEntryRemote.Directory(
+                name = "tree.zip",
+                relativeName = "tree.zip",
+                hasVideo = false,
+                hasGallery = true,
+                presence = DirPresence.Navigable,
+                lastModifiedMs = 10L,
+            ),
+        )
+        val live = listOf(
+            RemoteChild(name = "Album", isDirectory = true, lastModifiedMs = 20L),
+            RemoteChild(name = "Stable", isDirectory = true, lastModifiedMs = 50L),
+            RemoteChild(name = "Unknown", isDirectory = true, lastModifiedMs = 99L),
+            RemoteChild(name = "tree.zip", isDirectory = false, size = 10L, lastModifiedMs = 99L),
+            RemoteChild(name = "NewFolder", isDirectory = true, lastModifiedMs = 1L),
+        )
+        assertEquals(
+            setOf("Album"),
+            directoriesNeedingDeepScanOnMtimeChange(cached, live).map { it.name }.toSet(),
+        )
+        val plan = planRemoteDirectorySlimRefresh(cached, live)
+        assertEquals(setOf("NewFolder"), plan.addedDirectories.map { it.name }.toSet())
+    }
+
+    @Test
     fun slimNomediaProbeMarksAndClearsFolder() {
         val cached = listOf(
             BrowseEntryRemote.Directory(

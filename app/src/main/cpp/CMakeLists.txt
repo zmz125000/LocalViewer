@@ -1,5 +1,6 @@
 cmake_minimum_required(VERSION 3.14)
 project(ehviewer C CXX)
+option(EHVIEWER_JXL_ENCODER "Include JPEG XL export encoder" OFF)
 include(ExternalProject)
 include(FetchContent)
 
@@ -259,7 +260,7 @@ if (EHVIEWER_HDR_CODECS)
     set(UHDR_WRITE_XMP ON CACHE BOOL "" FORCE)
     set(UHDR_WRITE_ISO ON CACHE BOOL "" FORCE)
     # v2 defaults HEIF/AVIF on and vendors libheif. Encode path is JPEG only
-    # (UHDR_CODEC_JPG); HEIC stays on ImageDecoder, AVIF on libavif.
+    # (UHDR_CODEC_JPG); HEIC uses ImageDecoder or libde265, AVIF uses libavif.
     set(UHDR_ENABLE_HEIF OFF CACHE BOOL "" FORCE)
     set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
 
@@ -342,8 +343,34 @@ if (EHVIEWER_HDR_CODECS)
     )
     FetchContent_MakeAvailable(libjxl)
 
-    # HEIC/HEIF: platform ImageDecoder (minSdk 31), not a native codec here — see HdrKind.
-    set(EHVIEWER_HDR_SOURCES hdr_convert.cpp avif_hdr.cpp jxl_hdr.cpp)
+    # Absolute PQ/HLG HEIF needs actual high-bit-depth HEVC planes. Platform
+    # MediaCodec frequently exposes only 8-bit YUV, so bundle a software decoder.
+    set(ENABLE_DECODER OFF CACHE BOOL "" FORCE) # libde265 CLI, not the library
+    set(ENABLE_ENCODER OFF CACHE BOOL "" FORCE)
+    set(ENABLE_SDL OFF CACHE BOOL "" FORCE)
+    set(ENABLE_SHERLOCK265 OFF CACHE BOOL "" FORCE)
+    set(ENABLE_INTERNAL_DEVELOPMENT_TOOLS OFF CACHE BOOL "" FORCE)
+    set(WITH_FUZZERS OFF CACHE BOOL "" FORCE)
+    FetchContent_Declare(
+            libde265
+            GIT_REPOSITORY https://github.com/strukturag/libde265.git
+            GIT_TAG v1.1.3
+            GIT_SHALLOW 1
+    )
+    FetchContent_MakeAvailable(libde265)
+    # de265.h includes <libde265/de265-version.h>, generated under the FetchContent
+    # binary dir. BUILD_INTERFACE keeps these off the install(EXPORT) interface:
+    # absolute paths inside the Android .cxx tree fail CMake generate.
+    target_include_directories(de265 INTERFACE
+            $<BUILD_INTERFACE:${libde265_SOURCE_DIR}>
+            $<BUILD_INTERFACE:${libde265_BINARY_DIR}>)
+    if (EHVIEWER_JXL_ENCODER)
+        set(EHVIEWER_JXL_EXPORT_SOURCE still_jxl.cpp)
+    else ()
+        set(EHVIEWER_JXL_EXPORT_SOURCE still_jxl_stub.cpp)
+    endif ()
+    set(EHVIEWER_HDR_SOURCES hdr_convert.cpp avif_hdr.cpp jxl_hdr.cpp hevc_decode.cpp ${EHVIEWER_JXL_EXPORT_SOURCE} still_probe.cpp)
+    list(APPEND EHVIEWER_HDR_LIBS de265)
 
     if (TARGET uhdr)
         list(APPEND EHVIEWER_HDR_LIBS uhdr)
@@ -361,12 +388,12 @@ if (EHVIEWER_HDR_CODECS)
     else ()
         message(FATAL_ERROR "libavif CMake target not found (expected avif)")
     endif ()
-    if (TARGET jxl_dec)
-        list(APPEND EHVIEWER_HDR_LIBS jxl_dec)
-    elseif (TARGET jxl)
+    if (EHVIEWER_JXL_ENCODER AND TARGET jxl)
         list(APPEND EHVIEWER_HDR_LIBS jxl)
+    elseif (NOT EHVIEWER_JXL_ENCODER AND TARGET jxl_dec)
+        list(APPEND EHVIEWER_HDR_LIBS jxl_dec)
     else ()
-        message(FATAL_ERROR "libjxl CMake target not found (expected jxl or jxl_dec)")
+        message(FATAL_ERROR "libjxl CMake target not found for selected encoder mode")
     endif ()
     if (TARGET jxl_threads)
         list(APPEND EHVIEWER_HDR_LIBS jxl_threads)
@@ -444,7 +471,7 @@ set_source_files_properties(jp2_decode.cpp PROPERTIES COMPILE_DEFINITIONS OPJ_ST
 # Build and link our app's native lib
 set_source_files_properties(raw_still.cpp PROPERTIES COMPILE_FLAGS "-fexceptions")
 add_library(${PROJECT_NAME} SHARED archive.c gifutils.c hash.c natsort/strnatcmp.c jp2_decode.cpp
-        raw_still.cpp ${EHVIEWER_HDR_SOURCES})
+        raw_still.cpp reader_pixels.cpp ${EHVIEWER_HDR_SOURCES})
 target_include_directories(${PROJECT_NAME} PRIVATE
         ${openjpeg_SOURCE_DIR}/src/lib/openjp2
         ${openjpeg_BINARY_DIR}/src/lib/openjp2
@@ -481,7 +508,7 @@ if (EHVIEWER_HDR_CODECS)
     list(APPEND EHVIEWER_HDR_LIBS ${EH_JPEG_LIB})
 endif ()
 target_link_libraries(
-        ${PROJECT_NAME} archive_static ehviewer_rust z ${EHVIEWER_HDR_LIBS} openjp2 jnigraphics log
+        ${PROJECT_NAME} archive_static ehviewer_rust z ${EHVIEWER_HDR_LIBS} openjp2 jnigraphics log android
         -Wl,-u,JNI_OnLoad -Wl,--undefined-glob,Java_*
         -Wl,--version-script,${CMAKE_SOURCE_DIR}/libehviewer.map.txt
 )

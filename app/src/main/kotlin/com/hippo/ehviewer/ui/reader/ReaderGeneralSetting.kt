@@ -86,6 +86,14 @@ fun ReaderGeneralSetting(
         summary = stringResource(id = R.string.pref_reader_hi_res_optimize_summary),
         field = hiResOptimize,
     )
+    val comicRendering = Settings.readerComicRendering.asMutableState()
+    AnimatedVisibility(visible = hiResOptimize.value) {
+        SwitchChoice(
+            title = stringResource(id = R.string.pref_reader_comic_rendering),
+            summary = stringResource(id = R.string.pref_reader_comic_rendering_summary),
+            field = comicRendering,
+        )
+    }
     AnimatedVisibility(visible = !hiResOptimize.value) {
         SpinnerChoice(
             title = stringResource(id = R.string.pref_decode_size),
@@ -101,14 +109,14 @@ fun ReaderGeneralSetting(
         )
     }
     val softwareDownscale = Settings.readerHiResSoftwareDownscale.asMutableState()
-    AnimatedVisibility(visible = hiResOptimize.value) {
+    AnimatedVisibility(visible = hiResOptimize.value && !comicRendering.value) {
         SwitchChoice(
             title = stringResource(id = R.string.pref_reader_hi_res_software_downscale),
             summary = stringResource(id = R.string.pref_reader_hi_res_software_downscale_summary),
             field = softwareDownscale,
         )
     }
-    AnimatedVisibility(visible = !hiResOptimize.value || softwareDownscale.value) {
+    AnimatedVisibility(visible = comicRendering.value || !hiResOptimize.value || softwareDownscale.value) {
         DecodeScalerChoice()
     }
     if (showDirectImage) {

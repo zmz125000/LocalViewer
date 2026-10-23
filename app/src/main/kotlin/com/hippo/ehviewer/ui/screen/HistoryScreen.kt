@@ -12,8 +12,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.grid.GridItemSpan
+import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.lazy.grid.items
-import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ViewList
 import androidx.compose.material.icons.filled.ClearAll
@@ -26,6 +26,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.fork.SwipeToDismissBox
 import androidx.compose.material3.fork.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -33,6 +34,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -64,7 +66,6 @@ import com.hippo.ehviewer.library.LocalHistory
 import com.hippo.ehviewer.library.LocalHistoryTarget
 import com.hippo.ehviewer.library.LocalLibrary
 import com.hippo.ehviewer.library.libraryBrowseRelative
-import com.hippo.ehviewer.library.parentRelativeOfFile
 import com.hippo.ehviewer.smb.SmbRepository
 import com.hippo.ehviewer.ui.ExplorerGestureEnabled
 import com.hippo.ehviewer.ui.Screen
@@ -75,11 +76,8 @@ import com.hippo.ehviewer.ui.main.HistoryListItem
 import com.hippo.ehviewer.ui.navToReader
 import com.hippo.ehviewer.ui.navToSmbStreamArchiveReader
 import com.hippo.ehviewer.ui.navToWebDavStreamArchiveReader
-import com.hippo.ehviewer.ui.openLocalBrowseDir
 import com.hippo.ehviewer.ui.openLocalFolderPhotoGrid
-import com.hippo.ehviewer.ui.openSmbBrowseDir
 import com.hippo.ehviewer.ui.openSmbFolderPhotoGrid
-import com.hippo.ehviewer.ui.openWebDavBrowseDir
 import com.hippo.ehviewer.ui.openWebDavFolderPhotoGrid
 import com.hippo.ehviewer.ui.tools.awaitConfirmationOrCancel
 import com.hippo.ehviewer.webdav.WebDavRepository
@@ -89,6 +87,7 @@ import com.ramcosta.composedestinations.navigation.DestinationsNavigator
 import kotlin.math.roundToInt
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import moe.tarsin.snackbar
@@ -207,170 +206,6 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
     fun deleteEntry(info: GalleryEntity) {
         launch {
             EhDB.deleteHistoryInfo(info)
-        }
-    }
-
-    fun openFolderFromHistory(info: GalleryEntity) {
-        launch {
-            when (val target = LocalHistory.parse(info)) {
-                is LocalHistoryTarget.LocalBrowseFolder,
-                is LocalHistoryTarget.SmbBrowseFolder,
-                is LocalHistoryTarget.WebDavBrowseFolder,
-                -> openEntry(info)
-                is LocalHistoryTarget.LocalFolderGallery -> {
-                    val root = withIOContext { LocalLibrary.loadRoot(target.rootId) }
-                    val rootPath = root?.let { LocalLibrary.rootPath(it) }
-                    if (root == null || rootPath == null) {
-                        snackbar(string(R.string.history_unavailable))
-                        return@launch
-                    }
-                    openLocalBrowseDir(
-                        rootId = root.id,
-                        rootDisplayName = root.displayName,
-                        rootPath = rootPath,
-                        relativePath = target.relativePath,
-                        preferMediaStore = root.prefersMediaStore,
-                        fromHistory = true,
-                    )
-                }
-                is LocalHistoryTarget.SmbFolderGallery -> {
-                    val source = withIOContext { SmbRepository.load(target.sourceId) }
-                    if (source == null) {
-                        snackbar(string(R.string.history_unavailable))
-                        return@launch
-                    }
-                    openSmbBrowseDir(
-                        sourceId = source.id,
-                        remoteDir = target.remoteDir.trim('/'),
-                        fromHistory = true,
-                    )
-                }
-                is LocalHistoryTarget.WebDavFolderGallery -> {
-                    val source = withIOContext { WebDavRepository.load(target.sourceId) }
-                    if (source == null) {
-                        snackbar(string(R.string.history_unavailable))
-                        return@launch
-                    }
-                    openWebDavBrowseDir(
-                        sourceId = source.id,
-                        remoteDir = target.remoteDir.trim('/'),
-                        fromHistory = true,
-                    )
-                }
-                is LocalHistoryTarget.LocalArchive -> {
-                    val parent = withIOContext { LocalLibrary.resolveArchiveBrowseParent(target.path) }
-                    if (parent == null) {
-                        snackbar(string(R.string.history_unavailable))
-                        return@launch
-                    }
-                    val prefers = withIOContext {
-                        LocalLibrary.loadRoot(parent.rootId)?.prefersMediaStore
-                    } ?: false
-                    openLocalBrowseDir(
-                        rootId = parent.rootId,
-                        rootDisplayName = parent.rootDisplayName,
-                        rootPath = parent.rootPath,
-                        relativePath = parent.parentRelativePath,
-                        preferMediaStore = prefers,
-                        fromHistory = true,
-                    )
-                }
-                is LocalHistoryTarget.LocalFile -> {
-                    val parent = withIOContext { LocalLibrary.resolveArchiveBrowseParent(target.path) }
-                    if (parent == null) {
-                        snackbar(string(R.string.history_unavailable))
-                        return@launch
-                    }
-                    val prefers = withIOContext {
-                        LocalLibrary.loadRoot(parent.rootId)?.prefersMediaStore
-                    } ?: false
-                    openLocalBrowseDir(
-                        rootId = parent.rootId,
-                        rootDisplayName = parent.rootDisplayName,
-                        rootPath = parent.rootPath,
-                        relativePath = parent.parentRelativePath,
-                        preferMediaStore = prefers,
-                        fromHistory = true,
-                    )
-                }
-                is LocalHistoryTarget.SmbStreamArchive -> {
-                    val source = withIOContext { SmbRepository.load(target.sourceId) }
-                    if (source == null) {
-                        snackbar(string(R.string.history_unavailable))
-                        return@launch
-                    }
-                    openSmbBrowseDir(
-                        sourceId = source.id,
-                        remoteDir = parentRelativeOfFile(target.remotePath),
-                        fromHistory = true,
-                    )
-                }
-                is LocalHistoryTarget.SmbFile -> {
-                    val source = withIOContext { SmbRepository.load(target.sourceId) }
-                    if (source == null) {
-                        snackbar(string(R.string.history_unavailable))
-                        return@launch
-                    }
-                    openSmbBrowseDir(
-                        sourceId = source.id,
-                        remoteDir = parentRelativeOfFile(target.remotePath),
-                        fromHistory = true,
-                    )
-                }
-                is LocalHistoryTarget.WebDavStreamArchive -> {
-                    val source = withIOContext { WebDavRepository.load(target.sourceId) }
-                    if (source == null) {
-                        snackbar(string(R.string.history_unavailable))
-                        return@launch
-                    }
-                    openWebDavBrowseDir(
-                        sourceId = source.id,
-                        remoteDir = parentRelativeOfFile(target.remotePath),
-                        fromHistory = true,
-                    )
-                }
-                is LocalHistoryTarget.WebDavFile -> {
-                    val source = withIOContext { WebDavRepository.load(target.sourceId) }
-                    if (source == null) {
-                        snackbar(string(R.string.history_unavailable))
-                        return@launch
-                    }
-                    openWebDavBrowseDir(
-                        sourceId = source.id,
-                        remoteDir = parentRelativeOfFile(target.remotePath),
-                        fromHistory = true,
-                    )
-                }
-                is LocalHistoryTarget.LibraryGallery -> {
-                    val local = withIOContext { LocalLibrary.loadGallery(target.galleryId) }
-                    if (local == null) {
-                        snackbar(string(R.string.history_unavailable))
-                        return@launch
-                    }
-                    val root = withIOContext { LocalLibrary.loadRoot(local.rootId) }
-                    val rootPath = root?.let { LocalLibrary.rootPath(it) }
-                    if (root == null || rootPath == null) {
-                        snackbar(string(R.string.history_unavailable))
-                        return@launch
-                    }
-                    val rel = if (local.kind == LOCAL_GALLERY_KIND_ARCHIVE) {
-                        parentRelativeOfFile(local.relativePath)
-                    } else {
-                        libraryBrowseRelative(local.relativePath)
-                    }
-                    openLocalBrowseDir(
-                        rootId = root.id,
-                        rootDisplayName = root.displayName,
-                        rootPath = rootPath,
-                        relativePath = rel,
-                        preferMediaStore = root.prefersMediaStore,
-                        fromHistory = true,
-                    )
-                }
-                is LocalHistoryTarget.Orphan -> {
-                    snackbar(string(R.string.browse_action_not_supported))
-                }
-            }
         }
     }
 
@@ -494,7 +329,7 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
         favoriteKeys = favoriteKeys,
         openEntry = { openEntry(info) },
         openPhotoGrid = { openPhotoGridFromHistory(info) },
-        openFolder = { openFolderFromHistory(info) },
+        openFolder = { openFolderFromHistory(context, info, filterQuery) },
         imageReader = { imageReaderFromHistory(info) },
     )
 
@@ -548,7 +383,7 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
         }
 
         if (listMode == 0) {
-            val listState = rememberLazyGridState()
+            val listState = rememberHistoryGridState(listMode, historySection)
             // Match browse folder list: no extra horizontal marginH (ListItem inset only).
             val listPadding = PaddingValues(
                 top = paddingValues.calculateTopPadding() + marginV,
@@ -616,7 +451,7 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
                 }
             }
         } else {
-            val gridState = rememberLazyGridState()
+            val gridState = rememberHistoryGridState(listMode, historySection)
             val gridSpacing = GalleryGridDefaults.spacedBy()
             FastScrollLazyVerticalGrid(
                 columns = GalleryGridDefaults.columns(),
@@ -678,6 +513,37 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
             }
         }
     }
+}
+
+/**
+ * History tab scroll across nav-tab switches. The History destination is popped
+ * (not saveState'd), so [LazyGridState] cannot live on the NavBackStackEntry —
+ * persist index/offset in [HistoryListMemory] like folder browse does.
+ */
+@Composable
+private fun rememberHistoryGridState(listMode: Int, section: HistorySection): LazyGridState {
+    val state = remember(listMode, section) {
+        val saved = HistoryListMemory.scroll(listMode, section)
+        LazyGridState(saved?.index ?: 0, saved?.offset ?: 0)
+    }
+    DisposableEffect(listMode, section, state) {
+        onDispose {
+            HistoryListMemory.saveScroll(
+                listMode,
+                section,
+                state.firstVisibleItemIndex,
+                state.firstVisibleItemScrollOffset,
+            )
+        }
+    }
+    // Constructor index can be clamped to 0 before items layout; re-apply once ready.
+    LaunchedEffect(listMode, section, state) {
+        val saved = HistoryListMemory.scroll(listMode, section) ?: return@LaunchedEffect
+        snapshotFlow { state.layoutInfo.totalItemsCount }.first { it > 0 }
+        val max = (state.layoutInfo.totalItemsCount - 1).coerceAtLeast(0)
+        state.scrollToItem(saved.index.coerceIn(0, max), saved.offset)
+    }
+    return state
 }
 
 /** Max browse-dir pins shown per column in History list mode (collapsed). */

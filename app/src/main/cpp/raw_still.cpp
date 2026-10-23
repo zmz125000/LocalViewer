@@ -38,6 +38,7 @@
 #include <vector>
 
 #include "raw_camera_look.h"
+#include "reader_pixels.h"
 
 #if defined(EHVIEWER_HDR_CODECS)
 #include <jpeglib.h>
@@ -351,7 +352,7 @@ float hdr_highlight_weight(float scene_luma, float anchor) {
 // anchor is the sampled highlight peak, at least camera white. base_at_anchor is
 // the render's output for a neutral at the anchor. Below the knee the gain is 1.
 // It then rises with hdr_highlight_weight, and from the anchor up it holds.
-// shoulder 0 keeps the render, 1 puts the anchor at the panel cap, and 0.5 is
+// shoulder 0 keeps the render, 1 puts the anchor at the HDR target, and 0.5 is
 // halfway between the two in stops. Both HDR modes use the shoulder slider.
 float hdr_highlight_gain(float scene_luma, float anchor, float base_at_anchor, float shoulder, float cap) {
     const float w = hdr_highlight_weight(scene_luma, anchor);
@@ -451,7 +452,7 @@ bool pack_image(const libraw_processed_image_t* img, int max_edge, int present, 
     const size_t bytes = static_cast<size_t>(dw) * static_cast<size_t>(dh) * (deep ? 8u : 4u);
     if (bytes == 0 || bytes > 400u * 1024u * 1024u) return false;
 
-    const bool hdr = present == 2;
+    const bool hdr = present >= 2;
     const bool linear_hdr = hdr && hdr_linear;
     // 10000/203 matches hdr_encode.h kMaxLinear. HDR does not clamp to 1.
     const float panel = std::isfinite(panel_boost) ? std::clamp(panel_boost, 1.f, 64.f) : 1.f;
@@ -473,14 +474,18 @@ bool pack_image(const libraw_processed_image_t* img, int max_edge, int present, 
         base_at_anchor = look && !linear_hdr ? rawlook::tone_map(*look, anchor) : anchor;
     }
 
-    out.pixels.assign(bytes, 0);
+    // Export HDR retains the camera-look SDR render in the same gamut. Append
+    // RGBA8 after the F16 plane so decode/encode share one JNI array and demosaic.
+    const bool keep_sdr = present >= 3;
+    const size_t sdr_bytes = keep_sdr ? static_cast<size_t>(dw) * dh * 4u : 0u;
+    out.pixels.assign(bytes + sdr_bytes, 0);
     out.w = dw;
     out.h = dh;
     out.format = deep ? 1 : 0;
     out.is_hdr = hdr ? 1 : 0;
     // 0 is sRGB: 8-bit after the transfer, or HDR linear scRGB (values above 1, and
     // negatives for colors outside sRGB). 1 is linear Display P3, clamped to 0..1.
-    out.gamut = present == 1 ? 1 : 0;
+    out.gamut = present >= 3 ? 2 : (present == 1 ? 1 : 0);
     out.boost = 1.f;
 
     // Rows are independent and write disjoint output, so bands give the same bytes.
@@ -524,6 +529,15 @@ bool pack_image(const libraw_processed_image_t* img, int max_edge, int present, 
                     } else {
                         for (int c = 0; c < 3; ++c) rgb[c] = pre[c];
                     }
+                    if (keep_sdr) {
+                        float base[3] = {rgb[0], rgb[1], rgb[2]};
+                        apply_raw_zones(base[0], base[1], base[2], shadows, midtones, highlights);
+                        const size_t sdr = bytes + (static_cast<size_t>(y) * dw + x) * 4u;
+                        for (int c = 0; c < 3; ++c) {
+                            out.pixels[sdr + c] = static_cast<uint8_t>(std::lround(rawlook::srgb_encode(base[c]) * 255.f));
+                        }
+                        out.pixels[sdr + 3] = 255;
+                    }
                     if (hdr && look && !linear_hdr && hdr_shoulder > 0.f) {
                         // The curve's shoulder moves highlights toward white. Put the
                         // pre-curve color back across the same knee the gain opens,
@@ -540,7 +554,11 @@ bool pack_image(const libraw_processed_image_t* img, int max_edge, int present, 
                     }
                     apply_raw_zones(rgb[0], rgb[1], rgb[2], shadows, midtones, highlights);
                     if (hdr) {
-                        const float lift = hdr_highlight_gain(scene_luma, anchor, base_at_anchor, hdr_shoulder, cap);
+                        // Ordinary HDR export follows source headroom. Explicit
+                        // boost/custom export and reader mode use the HDR target
+                        // passed by Kotlin.
+                        const float target = present == 3 ? std::min(cap, anchor) : cap;
+                        const float lift = hdr_highlight_gain(scene_luma, anchor, base_at_anchor, hdr_shoulder, target);
                         for (int c = 0; c < 3; ++c) rgb[c] *= lift;
                     }
                     if (!deep) {
@@ -552,7 +570,7 @@ bool pack_image(const libraw_processed_image_t* img, int max_edge, int present, 
                     } else {
                         // Exposure already ran inside the camera look, ahead of the tone curve.
                         // HDR compresses and caps the largest channel and scales the others with
-                        // it, so a saturated highlight keeps its hue at the panel cap.
+                        // it, so a saturated highlight keeps its hue at the HDR target.
                         float hdr_scale = 1.f;
                         if (hdr) {
                             // Cap in Rec.2020, where 1 is camera white. An sRGB channel
@@ -561,7 +579,7 @@ bool pack_image(const libraw_processed_image_t* img, int max_edge, int present, 
                             const float m = std::max(rgb[0], std::max(rgb[1], rgb[2]));
                             if (m > 0.f) hdr_scale = raw_linear_sample(m, 0.f, highlight_stops, cap) / m;
                             for (int c = 0; c < 3; ++c) rgb[c] = std::max(rgb[c], 0.f) * hdr_scale;
-                            rec2020_to_scrgb(rgb[0], rgb[1], rgb[2]);
+                            if (present < 3) rec2020_to_scrgb(rgb[0], rgb[1], rgb[2]);
                         }
                         for (int c = 0; c < 3; ++c) {
                             float v = hdr ? rgb[c] : raw_linear_sample(rgb[c], 0.f, highlight_stops, cap);
@@ -837,7 +855,7 @@ void configure_process(LibRaw& raw, int present, int max_edge, int demosaic_qual
         p.output_color = 1;  // linear sRGB. The sRGB transfer is applied after the camera look.
     } else {
         p.output_bps = 16;
-        p.output_color = present == 2 ? 8 : 7;  // Rec.2020 or DCI-P3 D65
+        p.output_color = present >= 2 ? 8 : 7;  // Rec.2020 or DCI-P3 D65
     }
 }
 
@@ -906,11 +924,11 @@ bool process_open_raw(HeadroomRaw& raw, const uint8_t* tiff, size_t tiff_len, in
     // Linear HDR skips the camera look, and so does SDR when the look is off.
     // Baseline exposure lives inside the look, so those paths skip it too.
     // HDR still uses the look unless linear HDR is on.
-    const bool linear_hdr = present == 2 && hdr_linear;
-    const bool skip_look = linear_hdr || (present != 2 && !camera_look);
+    const bool linear_hdr = present >= 2 && hdr_linear;
+    const bool skip_look = linear_hdr || (present < 2 && !camera_look);
     const float user_ev = std::isfinite(exposure_ev) ? exposure_ev : 0.f;
     const float pack_ev = skip_look ? user_ev : user_ev + dng_baseline_ev(raw);
-    int space = present == 2 ? 2 : (present == 1 ? 1 : 0);
+    int space = present >= 2 ? 2 : (present == 1 ? 1 : 0);
     float temp = 5500.f;
     if (wb_mode == 8) {
         temp = static_cast<float>(kelvin);
@@ -974,12 +992,13 @@ bool demosaic_cover_jpeg(const char* path, const uint8_t* mem, size_t mem_len, c
     return write_rgba8_jpeg(decoded.pixels.data(), decoded.w, decoded.h, out_path, 85);
 }
 
-jbyteArray decoded_to_java(JNIEnv* env, const Decoded& decoded, jintArray j_info, jfloatArray j_boost) {
+jbyteArray decoded_to_java(JNIEnv* env, Decoded& decoded, jintArray j_info, jfloatArray j_boost) {
     if (env->GetArrayLength(j_info) < 6 || env->GetArrayLength(j_boost) < 1) return nullptr;
     jint meta[6] = {decoded.w, decoded.h, decoded.format, decoded.is_hdr, decoded.gamut, 0};
     env->SetIntArrayRegion(j_info, 0, 6, meta);
     env->SetFloatArrayRegion(j_boost, 0, 1, &decoded.boost);
     if (decoded.pixels.size() > static_cast<size_t>(std::numeric_limits<jsize>::max())) return nullptr;
+    if (retain_reader_pixels(decoded.pixels)) return env->NewByteArray(0);
     jbyteArray arr = env->NewByteArray(static_cast<jsize>(decoded.pixels.size()));
     if (!arr) return nullptr;
     env->SetByteArrayRegion(arr, 0, static_cast<jsize>(decoded.pixels.size()),
@@ -998,7 +1017,7 @@ jbyteArray decode_raw_buffer(JNIEnv* env, const uint8_t* data, size_t len, jint 
         request_embedded_matrix(raw, wb);
         if (raw.open_buffer(data, len) == LIBRAW_SUCCESS) {
             Decoded decoded;
-            int mode = present < 0 ? 0 : (present > 2 ? 2 : present);
+            int mode = present < 0 ? 0 : (present > 4 ? 4 : present);
             float exposure = std::isfinite(exposure_ev) ? std::clamp(exposure_ev, -3.f, 3.f) : 0.f;
             float stops = std::isfinite(highlight_stops) ? std::clamp(highlight_stops, 0.f, 3.f) : 0.f;
             auto zone = [](float v) { return std::isfinite(v) ? std::clamp(v, -1.f, 1.f) : 0.f; };
@@ -1087,7 +1106,7 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeRawFileToDirect(JNIEnv* env, jcla
         request_embedded_matrix(raw, wb);
         if (raw.open_file(path) == LIBRAW_SUCCESS) {
             Decoded decoded;
-            int mode = present < 0 ? 0 : (present > 2 ? 2 : present);
+            int mode = present < 0 ? 0 : (present > 4 ? 4 : present);
             float exposure = std::isfinite(exposure_ev) ? std::clamp(exposure_ev, -3.f, 3.f) : 0.f;
             float stops = std::isfinite(highlight_stops) ? std::clamp(highlight_stops, 0.f, 3.f) : 0.f;
             auto zone = [](float v) { return std::isfinite(v) ? std::clamp(v, -1.f, 1.f) : 0.f; };

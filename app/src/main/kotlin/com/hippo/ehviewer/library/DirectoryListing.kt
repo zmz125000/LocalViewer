@@ -364,11 +364,13 @@ sealed interface BrowseEntryRemote {
 
 /**
  * Difference between the cached folder roots and one live listing of the current
- * directory. Only [addedDirectories] need the normal child/leaf classification scan.
- * Direct files are reconciled separately via [replaceSlimDirectFilesFromLive].
+ * directory. [addedDirectories] need the normal child/leaf classification scan;
+ * callers also deep-scan [directoriesNeedingDeepScanOnMtimeChange] and
+ * [hiddenDirectoriesNeedingDeepScan]. Direct files are reconciled separately via
+ * [replaceSlimDirectFilesFromLive].
  *
  * Slim "not in live listing" uses [unreachableDirectoryNames] (keep rows + index keys).
- * [removedDirectoryNames] still **drops** parent-listing rows (hidden-dir reclassify).
+ * [removedDirectoryNames] still **drops** parent-listing rows (hidden/mtime reclassify).
  */
 data class RemoteDirectorySlimPlan(
     val addedDirectories: List<RemoteChild>,
@@ -771,6 +773,40 @@ fun hiddenDirectoriesNeedingDeepScan(
 }
 
 /**
+ * Existing direct folders whose live mtime differs from the cached listing.
+ *
+ * Slim already deep-classifies [RemoteDirectorySlimPlan.addedDirectories]. A known
+ * mtime change means children were added or removed under that folder, so it needs
+ * the same classify pass. Zip-as-dir rows are excluded (zip file size/mtime is
+ * handled via [BrowseEntryRemote.Directory.zipStale]).
+ */
+fun directoriesNeedingDeepScanOnMtimeChange(
+    cachedEntries: List<BrowseEntryRemote>,
+    liveChildren: List<RemoteChild>,
+): List<RemoteChild> {
+    val cachedMtimes = HashMap<String, Long>()
+    for (entry in cachedEntries) {
+        if (entry !is BrowseEntryRemote.Directory) continue
+        val path = entry.relativeName.replace('\\', '/').trim('/')
+        if (path.isEmpty() || '/' in path) continue
+        if (isZipArchiveFileName(path)) continue
+        cachedMtimes[path] = entry.lastModifiedMs
+    }
+    if (cachedMtimes.isEmpty()) return emptyList()
+    val out = ArrayList<RemoteChild>()
+    for (child in liveChildren) {
+        if (!child.isDirectory || isProtectedSystemName(child.name)) continue
+        if (isZipArchiveFileName(child.name)) continue
+        val cachedMtime = cachedMtimes[child.name] ?: continue
+        val liveMtime = child.lastModifiedMs
+        if (cachedMtime > 0L && liveMtime > 0L && cachedMtime != liveMtime) {
+            out += child
+        }
+    }
+    return out
+}
+
+/**
  * Keep complete folder-gallery page lists when a newer listing regresses them
  * (empty / [BrowseEntryRemote.FolderGallery.pageCountCapped]). Identity is
  * normalized [BrowseEntryRemote.FolderGallery.relativeName].
@@ -1094,7 +1130,7 @@ fun replaceSlimDirectFilesFromLive(
             relativeName = "",
             pageCount = imageNames.size,
             pageCountCapped = false,
-            coverFileName = imageNames.first(),
+            coverFileName = imageNames.firstOrNull { isThumbnailImageFileName(it) },
             imageFileNames = imageNames,
         )
     } else {
@@ -1133,14 +1169,6 @@ fun isPromotableLeafDirName(name: String): Boolean = !name.startsWith('.') &&
     !isSampleDirName(name)
 
 /**
- * Bound from [com.hippo.ehviewer.Settings] init to the Video folder cover pref.
- * Null in unit tests: video covers stay on, matching the pref default.
- */
-internal var videoFolderCoversFromSettings: (() -> Boolean)? = null
-
-private fun videoFolderCoversEnabled(): Boolean = videoFolderCoversFromSettings?.invoke() ?: true
-
-/**
  * Classify an SMB (or other remote) directory listing.
  *
  * Unlike local SAF, remote [share.list] already returns every child name, so the
@@ -1172,8 +1200,8 @@ fun classifyRemoteListingWithPeeks(
      */
     skipVideoCovers: Boolean = false,
 ): List<BrowseEntryRemote> {
-    // Pref off skips the video step. Zip interiors still pass skipVideoCovers = true.
-    val skipVideoCoversEffective = skipVideoCovers || !videoFolderCoversEnabled()
+    // Zip interiors pass skipVideoCovers = true. The General “Video folder cover”
+    // pref only gates paint / extract, not cover-path discovery here.
     val dirs = ArrayList<BrowseEntryRemote.Directory>()
     val leafGalleries = ArrayList<BrowseEntryRemote.FolderGallery>()
     var coverFileName: String? = null
@@ -1269,7 +1297,7 @@ fun classifyRemoteListingWithPeeks(
                         e.name,
                         leaves,
                         grandPeeks,
-                        skipVideoCovers = skipVideoCoversEffective || (zipAsDir && isZipArchiveFileName(e.name)),
+                        skipVideoCovers = skipVideoCovers || (zipAsDir && isZipArchiveFileName(e.name)),
                     )
                     val sHasImages = peek.any {
                         !it.isDirectory && !it.name.startsWith('.') &&
@@ -1319,7 +1347,7 @@ fun classifyRemoteListingWithPeeks(
                                                 leafPeek,
                                                 e.name,
                                                 zipAsDir,
-                                                skipVideoCoversEffective,
+                                                skipVideoCovers,
                                             ),
                                         )
                                     }
@@ -1371,7 +1399,7 @@ fun classifyRemoteListingWithPeeks(
                                                 leafPeek,
                                                 e.name,
                                                 zipAsDir,
-                                                skipVideoCoversEffective,
+                                                skipVideoCovers,
                                             ),
                                         )
                                         leafHasVideo = true
@@ -1609,7 +1637,7 @@ fun classifyRemoteListingWithPeeks(
                             e.name,
                             leaves,
                             grandPeeks,
-                            skipVideoCovers = skipVideoCoversEffective || (zipAsDir && isZipArchiveFileName(e.name)),
+                            skipVideoCovers = skipVideoCovers || (zipAsDir && isZipArchiveFileName(e.name)),
                         )
                         dirs += BrowseEntryRemote.Directory(
                             name = e.name,
@@ -1678,7 +1706,7 @@ fun classifyRemoteListingWithPeeks(
                     is RemoteChildKind.VideoOnly -> {
                         val single = kind.videoFileNames.singleOrNull()
                         val videoCover = if (
-                            skipVideoCoversEffective || (zipAsDir && isZipArchiveFileName(e.name))
+                            skipVideoCovers || (zipAsDir && isZipArchiveFileName(e.name))
                         ) {
                             null
                         } else {
@@ -1806,9 +1834,9 @@ fun classifyRemoteListingWithPeeks(
     archives.sortWith { a, b -> naturalCompare(a.name, b.name) }
     videos.sortWith { a, b -> naturalCompare(a.name, b.name) }
     regularFiles.sortWith { a, b -> naturalCompare(a.name, b.name) }
-    // Reader page list is natural-sorted here — cover must match page 0, not list order.
+    // Keep reader pages in natural order; choose the first thumbnail-capable image.
     imageNames.sortWith { a, b -> naturalCompare(a, b) }
-    if (imageNames.isNotEmpty()) coverFileName = imageNames.first()
+    if (imageNames.isNotEmpty()) coverFileName = imageNames.firstOrNull { isThumbnailImageFileName(it) }
 
     val result = ArrayList<BrowseEntryRemote>(
         dirs.size + leafGalleries.size + archives.size + videos.size + regularFiles.size + 1,
@@ -1854,7 +1882,7 @@ private fun imagesInPeekAsGallery(
         relativeName = relativeName,
         pageCount = images.size,
         pageCountCapped = false,
-        coverFileName = images.first(),
+        coverFileName = images.firstOrNull { isThumbnailImageFileName(it) },
         imageFileNames = images,
         lastModifiedMs = lastModifiedMs,
         size = size,
@@ -1867,7 +1895,7 @@ private fun imagesInPeekAsGallery(
 private fun firstImageNameInPeek(peek: List<RemoteChild>): String? {
     for (c in peek) {
         if (c.isDirectory || c.name.startsWith('.') || isProtectedSystemName(c.name)) continue
-        if (isImageFileName(c.name)) return c.name
+        if (isThumbnailImageFileName(c.name)) return c.name
     }
     return null
 }
@@ -2041,7 +2069,7 @@ private fun classifyRemoteChild(
         imageNames.sortWith { a, b -> naturalCompare(a, b) }
         RemoteChildKind.LeafGallery(
             pageCount = imageNames.size,
-            coverFileName = imageNames.first(),
+            coverFileName = imageNames.firstOrNull { isThumbnailImageFileName(it) },
             imageFileNames = imageNames,
             videoFileNames = videos,
             hasVideo = sawVideo,

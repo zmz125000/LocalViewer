@@ -12,7 +12,6 @@ import androidx.compose.runtime.remember
 import com.ehviewer.core.preferences.DataStorePreferences
 import com.ehviewer.core.preferences.PrefDelegate
 import com.ehviewer.core.preferences.edit
-import com.hippo.ehviewer.library.videoFolderCoversFromSettings
 import eu.kanade.tachiyomi.ui.reader.setting.OrientationType
 import eu.kanade.tachiyomi.ui.reader.setting.ReadingModeType
 import java.util.Locale
@@ -84,7 +83,7 @@ object Settings : DataStorePreferences(null) {
     val browseContentMode = intPref("browse_content_mode", 0)
 
     /**
-     * Folder-view UI listing sort field: 0 = Name, 1 = Date.
+     * Folder-view UI listing sort field: 0 = Name, 1 = Date, 2 = Size.
      * Separate from [librarySortMode]. Does not change DirectoryListing / gallery scan /
      * folder-thumb / open-gallery name order. Default Name.
      */
@@ -92,7 +91,7 @@ object Settings : DataStorePreferences(null) {
 
     /**
      * Folder-view UI listing direction for [browseSortMode].
-     * Default ascending (A→Z / oldest→newest).
+     * Default ascending (A→Z / oldest→newest / smallest→largest).
      */
     val browseSortAscending = boolPref("browse_sort_ascending", true)
 
@@ -119,16 +118,12 @@ object Settings : DataStorePreferences(null) {
     val browseFolderThumbs = boolPref("browse_folder_thumbs", true)
 
     /**
-     * When true (default), directory listing may mark a platform video as a folder
-     * cover after images and before archives. Off skips that mark. Zip interiors
-     * never use a video cover. Cached listings and history are left as they are.
+     * When true (default), folder rows may paint a stored platform-video cover.
+     * Listing still discovers and stores that cover path; off only skips thumb
+     * display / extract. Zip interiors never store a video cover.
      * Settings → General.
      */
     val videoFolderCover = boolPref("video_folder_cover", true)
-
-    init {
-        videoFolderCoversFromSettings = { videoFolderCover.value }
-    }
 
     /**
      * Persist completed SMB/WebDAV/local-folder lazy-scan listings, one JSON file per folder
@@ -170,6 +165,12 @@ object Settings : DataStorePreferences(null) {
      * all-videos list or a library video folder uses Media3.
      */
     val useMedia3PlayerForLibrary = boolPref("use_media3_player_for_library", true)
+
+    /**
+     * Shown when [useMedia3Player] is off. On: a video opened from local folder
+     * browsing (Browse → folder) uses Media3.
+     */
+    val useMedia3PlayerForLocalFiles = boolPref("use_media3_player_for_local_files", true)
 
     /**
      * In-app player: swipe up/down moves to the next/previous video.
@@ -484,7 +485,7 @@ object Settings : DataStorePreferences(null) {
      * Toggling drops the proven-address cache, browse pools, and sticky video/FUSE
      * sessions so the next connect resolves again instead of reusing the old TCP.
      */
-    val smbMdns = boolPref("smb_mdns", false).observed {
+    val smbMdns = boolPref("smb_mdns", true).observed {
         com.hippo.ehviewer.smb.SmbMdns.clear()
         com.hippo.ehviewer.smb.SmbGateway.onProtocolSettingsChanged()
     }
@@ -614,6 +615,18 @@ object Settings : DataStorePreferences(null) {
     val libraryRecentExpanded = boolPref("library_recent_expanded", false)
 
     /**
+     * Library Favorites section. On (default): show the favorites strip on Library.
+     * Off: hide that section. Library menu Favorites item.
+     */
+    val libraryShowFavorites = boolPref("library_show_favorites", true)
+
+    /**
+     * Long-press of the Library Favorites menu item. On (lock): the strip starts fully
+     * expanded. Off (default, tick): one grid row or two list rows until the header is tapped.
+     */
+    val libraryFavoritesExpanded = boolPref("library_favorites_expanded", false)
+
+    /**
      * Library gallery secondary sort: 0 = name, 1 = date (latest image / archive file
      * mtime from scan). Combined with [libraryRecentOpen] pin. Default name.
      * (Legacy pref value 2 = old exclusive Last-open sort → treated as name.)
@@ -646,7 +659,7 @@ object Settings : DataStorePreferences(null) {
      * media list as well as the document list. Off keeps them in the document
      * list only. Loose text (TXT, HTML, Markdown) is always documents-only.
      */
-    val showEbookFilesAsGallery = boolPref("show_ebook_files_as_gallery", true)
+    val showEbookFilesAsGallery = boolPref("show_ebook_files_as_gallery", false)
 
     /**
      * Library Videos listing via the All videos toggle: 0 = folders that contain
@@ -732,6 +745,15 @@ object Settings : DataStorePreferences(null) {
      */
     val browseTaskAutoFinish = boolPref("browse_task_auto_finish", false)
 
+    /**
+     * Run more than one save/convert job at a time. Slot count follows the CPU
+     * count and how many decoded frames fit in the Java heap. Default off.
+     */
+    val browseTaskParallel = boolPref("browse_task_parallel", false)
+
+    /** 0 lossless (JPEG Q95), 1 high (Q90), 2 low (Q85). JPEG always uses 4:4:4. */
+    val imageConversionQuality = intPref("image_conversion_quality", 1)
+
     val hardwareBitmapThreshold = intPref("hardware_bitmap_threshold", 16384)
     val preloadThumbAggressively = boolPref("preload_thumb_aggressively", false)
     val animateItems = boolPref("animate_items", true)
@@ -781,6 +803,14 @@ object Settings : DataStorePreferences(null) {
     val colorFilter = boolPref("pref_color_filter_key", false)
     val colorFilterValue = intPref("color_filter_value", 0)
     val colorFilterMode = intPref("color_filter_mode", 0)
+
+    // Bit flags: sepia = 1, contrast = 2. Preserves the old exclusive selections.
+    val comicColorFilter = intPref("comic_color_filter", 0)
+    val comicSepiaStrength = intPref("comic_sepia_strength", 100)
+    val comicContrastStrength = intPref("comic_contrast_strength", 50)
+    val comicLevelsEnabled = boolPref("comic_levels_enabled", false)
+    val comicBlackLevel = intPref("comic_black_level", 0)
+    val comicWhiteLevel = intPref("comic_white_level", 255)
     val customBrightness = boolPref("pref_custom_brightness_key", false)
     val customBrightnessValue = intPref("custom_brightness_value", 0)
     val readingMode = intPref("pref_default_reading_mode_key", ReadingModeType.WEBTOON.prefValue)
@@ -978,6 +1008,9 @@ object Settings : DataStorePreferences(null) {
      */
     val readerHiResSoftwareDownscale = boolPref("pref_reader_hi_res_software_downscale", false)
 
+    /** Use a screen-sized Coil preview under [readerHiResOptimize]. Default off. */
+    val readerComicRendering = boolPref("pref_reader_comic_rendering", false)
+
     /**
      * Coil path only: skip the software intermediate used for QR detection and border crop.
      *
@@ -1000,6 +1033,7 @@ object Settings : DataStorePreferences(null) {
     /**
      * Lib stills (JXL / JXR / PQ-AVIF): decode to Bitmap and skip Ultra HDR JPEG convert.
      * Default off = convert + Coil (deep color reduced; WCG only as encode tags).
+     * Advanced-color AVIF always bypasses conversion to preserve source precision.
      * When on: [com.hippo.ehviewer.image.hdr.LibDirectDecode]; with [readerAdvancedColor]
      * preserves P3/BT.2020 + F16 where useful; advanced off rematrixes wide→709.
      * Network/SMB/WebDAV keep original when on. Browse covers still convert to small JPEG.
@@ -1115,10 +1149,13 @@ object Settings : DataStorePreferences(null) {
 
     /**
      * HDR shoulder, 0..100, for camera-look HDR and linear HDR.
-     * 0 leaves the developed highlights. 100 lifts the sampled peak to the panel cap.
+     * 0 leaves the developed highlights. 100 lifts the sampled peak toward the HDR target.
      * 50 is halfway there in stops. Only the top two stops below the peak change.
      */
     val readerRawShoulder = intPref("pref_reader_raw_shoulder", 50)
+
+    /** Target for RAW HDR highlight expansion, in nits (1000..10000). */
+    val readerRawHdrTargetNits = intPref("pref_reader_raw_hdr_target_nits", 1500)
 
     /** Restore the RAW image controls to their defaults. Does not turn sensor decode off. */
     fun resetReaderRaw() {
@@ -1127,6 +1164,7 @@ object Settings : DataStorePreferences(null) {
         readerRawCameraLook.value = true
         readerRawHdrLinear.value = false
         readerRawShoulder.value = 50
+        readerRawHdrTargetNits.value = 1500
         readerRawExposure.value = 0
         readerRawShadows.value = 0
         readerRawMidtones.value = 0

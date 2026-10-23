@@ -74,12 +74,21 @@ fun SwitchChoice(
     field: MutableState<Boolean>,
     summary: String? = null,
 ) {
-    var value by field
+    SwitchChoice(title, field.value, { field.value = it }, summary)
+}
+
+@Composable
+fun SwitchChoice(
+    title: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+    summary: String? = null,
+) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .then(if (summary == null) Modifier.height(48.dp) else Modifier)
-            .clickable { value = !value }
+            .clickable { onCheckedChange(!checked) }
             .padding(horizontal = 16.dp, vertical = if (summary == null) 0.dp else 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -94,8 +103,8 @@ fun SwitchChoice(
             }
         }
         Switch(
-            checked = value,
-            onCheckedChange = { value = !value },
+            checked = checked,
+            onCheckedChange = onCheckedChange,
         )
     }
 }

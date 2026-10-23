@@ -26,6 +26,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import com.ehviewer.core.i18n.R
 import com.hippo.ehviewer.image.hdr.StillExportTarget
+import com.hippo.ehviewer.image.hdr.supportsSource
 import com.hippo.ehviewer.shortcuts.FolderHomeShortcut
 import com.hippo.ehviewer.shortcuts.FolderShortcutTarget
 
@@ -147,9 +148,13 @@ fun BrowseItemOverflowButton(
                     StillExportTarget.AutoOriginal to R.string.convert_auto_original,
                     StillExportTarget.Jpeg to R.string.convert_jpeg,
                     StillExportTarget.JpegHdr to R.string.convert_jpeg_hdr,
-                    StillExportTarget.Png to R.string.convert_png,
-                    StillExportTarget.Png16 to R.string.convert_png_16,
-                ).forEach { (target, label) ->
+                    StillExportTarget.JpegHdrBoost to R.string.convert_jpeg_hdr_boost,
+                    StillExportTarget.JpegHdrCustom to R.string.convert_jpeg_hdr_custom,
+                    StillExportTarget.Jxl to R.string.convert_jxl,
+                    StillExportTarget.JxlHdr to R.string.convert_jxl_hdr,
+                    StillExportTarget.JxlHdrBoost to R.string.convert_jxl_hdr_boost,
+                    StillExportTarget.JxlHdrCustom to R.string.convert_jxl_hdr_custom,
+                ).filter { (target, _) -> target.available && target.supportsSource(actions.selectTitle) }.forEach { (target, label) ->
                     DropdownMenuItem(
                         text = { Text(stringResource(label)) },
                         onClick = {

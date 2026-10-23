@@ -351,9 +351,11 @@ private fun clearNavTabOnReturn(previous: DestinationSpec?, current: Destination
 
 private fun showTabRoot(navigator: DestinationsNavigator, direction: Direction) {
     if (navigator.popBackStack(direction, inclusive = false)) return
+    // Tabs are peers (no back relationship). saveState=true + restoreState=false leaves
+    // DESTROYED entries in NavHost's AnimatedContent transition → ViewModelStore crash.
     navigator.navigate(direction) {
         popUpTo(LibraryScreenDestination) {
-            saveState = true
+            saveState = false
         }
         launchSingleTop = true
         restoreState = false
@@ -363,9 +365,15 @@ private fun showTabRoot(navigator: DestinationsNavigator, direction: Direction) 
 private fun recallNavWindow(
     navigator: DestinationsNavigator,
     window: ExplorerWindows.Window,
+    tab: NavTabWindows.Tab,
     currentDestination: DestinationSpec?,
     navBackStackEntry: androidx.navigation.NavBackStackEntry?,
 ) {
+    ExplorerWindows.setOrigin(
+        window.id,
+        fromHistory = tab == NavTabWindows.Tab.History,
+        fromLibrary = tab == NavTabWindows.Tab.Library,
+    )
     val shown = ExplorerWindows.activate(window.id) ?: return
     val browserSourceId = when (currentDestination) {
         SmbBrowserScreenDestination ->
@@ -385,8 +393,9 @@ private fun recallNavWindow(
     with(navigator) {
         // Replace whatever is above Library. Pushing the folder on top of Settings
         // makes the next Settings tap restore that folder.
+        // saveState must stay false — same DESTROYED-entry crash as showTabRoot.
         val options: com.ramcosta.composedestinations.navigation.DestinationsNavOptionsBuilder.() -> Unit = {
-            popUpTo(LibraryScreenDestination) { saveState = true }
+            popUpTo(LibraryScreenDestination) { saveState = false }
             launchSingleTop = true
             restoreState = false
         }
@@ -673,7 +682,7 @@ class MainActivity : AppCompatActivity() {
                             NavTabWindows.clear(tab)
                             showTabRoot(navigator, item.direction)
                         } else {
-                            recallNavWindow(navigator, window, currentDestination, navBackStackEntry)
+                            recallNavWindow(navigator, window, tab, currentDestination, navBackStackEntry)
                         }
                         return
                     }

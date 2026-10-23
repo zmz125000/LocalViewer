@@ -88,6 +88,12 @@ object BrowseSaveAs {
     private const val SAVE_EXTRACT_MAX_BYTES = 512L * 1024L * 1024L
     private const val SHARE_PIN_MS = 10 * 60 * 1000L
     private val sharePinScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    /**
+     * Parallel converts can pick the same local name before either file exists.
+     * The empty file is created under the lock so the next caller sees it.
+     */
+    private val convertNameLock = Any()
     private const val URI_FLAGS =
         Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
 
@@ -402,13 +408,23 @@ object BrowseSaveAs {
 
     /** Writes [source] into [dir] as [displayName]. A local name that already exists gets a suffix. */
     internal fun writeConvertFile(dir: Path, displayName: String, source: File): Path {
-        val name = uniqueConvertName(dir, FileUtils.sanitizeFilename(displayName))
+        val safe = FileUtils.sanitizeFilename(displayName)
         if (dir.toString().startsWith('/')) {
-            val dest = dir / name
-            source.inputStream().use { input -> dest.sink().use { input.copyTo(it) } }
+            val dest = synchronized(convertNameLock) {
+                val reserved = dir / uniqueConvertName(dir, safe)
+                reserved.sink().close()
+                reserved
+            }
+            try {
+                source.inputStream().use { input -> dest.sink().use { input.copyTo(it) } }
+            } catch (t: Throwable) {
+                runCatching { dest.delete() }
+                throw t
+            }
             MediaStorePublish.indexConvertedFile(dest)
             return dest
         }
+        val name = safe
         val child = dir.createSafChild(name, createDocumentMime(name))
         MediaStorePublish.holdConvertedDocument(child)
         try {

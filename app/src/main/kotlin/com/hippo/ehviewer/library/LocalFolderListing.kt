@@ -443,7 +443,9 @@ object LocalFolderListing {
         } else {
             emptyList()
         }
-        val deepNames = deepHidden.mapTo(HashSet()) { it.name }
+        val mtimeChanged = directoriesNeedingDeepScanOnMtimeChange(cached, children)
+        val reclassifyNames = (deepHidden.asSequence() + mtimeChanged.asSequence())
+            .mapTo(HashSet()) { it.name }
         val cachedZipAsDir = if (zipFileNames.isEmpty()) {
             emptySet()
         } else {
@@ -454,14 +456,15 @@ object LocalFolderListing {
         } else {
             children.filter { it.name in zipFileNames && it.name !in cachedZipAsDir }
         }
-        val toClassify = (plan.addedDirectories + deepHidden + newZips).distinctBy { it.name }
+        val toClassify = (plan.addedDirectories + deepHidden + mtimeChanged + newZips)
+            .distinctBy { it.name }
         val dirName = localFolderTitle(dir)
         val zipAdjustedUnreachable = plan.unreachableDirectoryNames - zipFileNames
         val recovered = plan.recoveredDirectoryNames
         val dirsUnchanged = plan.addedDirectories.isEmpty() &&
             zipAdjustedUnreachable.isEmpty() &&
             recovered.isEmpty()
-        if (dirsUnchanged && deepHidden.isEmpty() && newZips.isEmpty()) {
+        if (dirsUnchanged && deepHidden.isEmpty() && mtimeChanged.isEmpty() && newZips.isEmpty()) {
             // Dirs same — still patch surviving file size/mtime; add/drop direct files.
             // Cached zip-as-dir dirs consume the live zip file (size/mtime + stale mark).
             return SlimRefresh(
@@ -477,12 +480,12 @@ object LocalFolderListing {
                 removedDirectoryNames = emptySet(),
             )
         }
-        // Drop shallow hidden shells (via removedDirectoryNames) then re-add full classify.
+        // Drop shallow hidden shells / mtime-changed dirs then re-add full classify.
         // Missing live dirs are marked unreachable — descendant index keys stay.
         // Keep cached zip-as-dir Directory/FolderGallery rows: live listing still has the file.
         val effectivePlan = RemoteDirectorySlimPlan(
             addedDirectories = toClassify,
-            removedDirectoryNames = deepNames,
+            removedDirectoryNames = reclassifyNames,
             unreachableDirectoryNames = zipAdjustedUnreachable,
             recoveredDirectoryNames = recovered,
         )

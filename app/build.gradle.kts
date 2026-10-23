@@ -18,6 +18,8 @@ plugins {
 // are only compiled into arm64-v8a + x86_64 (see CMake EHVIEWER_HDR_CODECS).
 // armeabi-v7a still gets libehviewer.so (archive/rust) with HDR JNI stubs.
 val supportedAbis = arrayOf("arm64-v8a", "x86_64", "armeabi-v7a")
+// Keep the encoder implementation available without shipping its code by default.
+val jxlEncoderEnabled = providers.gradleProperty("jxlEncoder").map(String::toBoolean).getOrElse(false)
 
 // GitHub release APKs: LocalViewer-<tag>-{default|easytier}-<abi>.apk
 // Product flavor stays "default"; channel identifies the installed build family.
@@ -77,11 +79,17 @@ android {
         applicationId = "moe.tarsin.localviewer"
         versionCode = 38
         versionName = if (snapshot) {
-            "1.13.1-SNAPSHOT"
+            "1.13.10-SNAPSHOT"
         } else {
-            "1.13.1"
+            "1.13.10"
         }
         buildConfigField("boolean", "SNAPSHOT", "$snapshot")
+        buildConfigField("boolean", "JXL_ENCODER_ENABLED", "$jxlEncoderEnabled")
+        externalNativeBuild {
+            cmake {
+                arguments += "-DEHVIEWER_JXL_ENCODER=${if (jxlEncoderEnabled) "ON" else "OFF"}"
+            }
+        }
         buildConfigField("String", "RAW_VERSION_NAME", "\"$versionName\"")
         buildConfigField("String", "COMMIT_SHA", "\"$commitSha\"")
         buildConfigField("long", "COMMIT_TIME", commitTime)

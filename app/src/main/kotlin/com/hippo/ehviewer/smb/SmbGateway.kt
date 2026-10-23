@@ -40,6 +40,7 @@ import com.hippo.ehviewer.library.ZipMemberTooLargeException
 import com.hippo.ehviewer.library.applySlimDirectoryHidden
 import com.hippo.ehviewer.library.classifyRemoteListing
 import com.hippo.ehviewer.library.classifyRemoteListingWithPeeks
+import com.hippo.ehviewer.library.directoriesNeedingDeepScanOnMtimeChange
 import com.hippo.ehviewer.library.hiddenDirectoriesNeedingDeepScan
 import com.hippo.ehviewer.library.isDotHiddenName
 import com.hippo.ehviewer.library.isImageFileName
@@ -2265,9 +2266,9 @@ object SmbGateway {
     }
 
     /**
-     * Cache-hit refresh: list only the current directory. Existing child folders keep
-     * their cached classification; only newly discovered folders run the normal peeks.
-     * Direct files are always reconciled (drop stale / add new) from the live listing.
+     * Cache-hit refresh: list only the current directory. Newly discovered folders and
+     * existing folders whose mtime changed run the normal peeks. Direct files are
+     * always reconciled (drop stale / add new) from the live listing.
      */
     private suspend fun listDirectorySlim(
         source: SmbSourceEntity,
@@ -2312,7 +2313,9 @@ object SmbGateway {
         } else {
             emptyList()
         }
-        val deepNames = deepHidden.mapTo(HashSet()) { it.name }
+        val mtimeChanged = directoriesNeedingDeepScanOnMtimeChange(cached, children)
+        val reclassifyNames = (deepHidden.asSequence() + mtimeChanged.asSequence())
+            .mapTo(HashSet()) { it.name }
         val cachedZipAsDir = if (zipFileNames.isEmpty()) {
             emptySet()
         } else {
@@ -2323,7 +2326,8 @@ object SmbGateway {
         } else {
             children.filter { it.name in zipFileNames && it.name !in cachedZipAsDir }
         }
-        val toClassify = (plan.addedDirectories + deepHidden + newZips).distinctBy { it.name }
+        val toClassify = (plan.addedDirectories + deepHidden + mtimeChanged + newZips)
+            .distinctBy { it.name }
         val dirName = relativeDir.substringAfterLast('/').substringAfterLast('\\')
             .ifEmpty { source.displayName }
         val zipAdjustedUnreachable = plan.unreachableDirectoryNames - zipFileNames
@@ -2331,7 +2335,7 @@ object SmbGateway {
         val dirsUnchanged = plan.addedDirectories.isEmpty() &&
             zipAdjustedUnreachable.isEmpty() &&
             recovered.isEmpty()
-        if (dirsUnchanged && deepHidden.isEmpty() && newZips.isEmpty()) {
+        if (dirsUnchanged && deepHidden.isEmpty() && mtimeChanged.isEmpty() && newZips.isEmpty()) {
             // Dirs same — still patch surviving file size/mtime/hidden; add/drop direct files.
             return SlimDirectoryRefresh(
                 entries = applySlimDirectoryHidden(
@@ -2345,7 +2349,7 @@ object SmbGateway {
         }
         val effectivePlan = RemoteDirectorySlimPlan(
             addedDirectories = toClassify,
-            removedDirectoryNames = deepNames,
+            removedDirectoryNames = reclassifyNames,
             unreachableDirectoryNames = zipAdjustedUnreachable,
             recoveredDirectoryNames = recovered,
         )

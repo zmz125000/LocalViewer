@@ -228,6 +228,12 @@ fun AnimatedVisibilityScope.EhScreen(navigator: DestinationsNavigator) = Screen(
                     state = Settings.openHtmlInIncognito.asMutableState(),
                 )
             }
+            SimpleMenuPreferenceInt(
+                title = stringResource(id = R.string.image_conversion_quality),
+                entry = com.hippo.ehviewer.R.array.image_conversion_quality_entries,
+                entryValueRes = com.hippo.ehviewer.R.array.image_conversion_quality_values,
+                state = Settings.imageConversionQuality.asMutableState(),
+            )
             val useMedia3Player = Settings.useMedia3Player.asMutableState()
             SwitchPreference(
                 title = stringResource(id = R.string.settings_use_media3_player),
@@ -248,10 +254,16 @@ fun AnimatedVisibilityScope.EhScreen(navigator: DestinationsNavigator) = Screen(
                 )
             }
             AnimatedVisibility(visible = !useMedia3Player.value) {
-                SwitchPreference(
-                    title = stringResource(id = R.string.settings_use_media3_player_for_library),
-                    state = Settings.useMedia3PlayerForLibrary.asMutableState(),
-                )
+                Column {
+                    SwitchPreference(
+                        title = stringResource(id = R.string.settings_use_media3_player_for_library),
+                        state = Settings.useMedia3PlayerForLibrary.asMutableState(),
+                    )
+                    SwitchPreference(
+                        title = stringResource(id = R.string.settings_use_media3_player_for_local_files),
+                        state = Settings.useMedia3PlayerForLocalFiles.asMutableState(),
+                    )
+                }
             }
             SwitchPreference(
                 title = stringResource(id = R.string.settings_video_scroll_to_next),

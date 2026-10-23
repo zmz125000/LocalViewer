@@ -15,8 +15,8 @@ import okio.Path.Companion.toPath
  *
  * ```
  * Platform / PlatformGainMap / OppoProxdr  → Coil / ImageDecoder (no UHDR convert)
- * Lib(codec)                               → ensureUhdr → Coil  (JXR / JXL / JPEG 2000 / PQ-AVIF)
- * Lib(Raw)                                 → LibDirectDecode (no Ultra HDR JPEG)
+ * Lib(codec)                               → ensureUhdr → Coil  (JXR / JXL / JPEG 2000 / PQ or ISO-gain-map AVIF)
+ * Lib(Raw) / Lib(HevcHdr)                  → LibDirectDecode (no Ultra HDR JPEG)
  * ```
  *
  * OppoProxdr: same present path as PlatformGainMap (ORIGIN + [Bitmap.gainmap]); the
@@ -56,11 +56,20 @@ enum class LibCodec {
     /** JPEG 2000 (JP2 / J2K). OpenJPEG → baseline JPEG. */
     Jpeg2000,
 
-    /** Absolute PQ/HLG AVIF only (gain-map AVIF is [StillRoute.PlatformGainMap]). */
+    /**
+     * AVIF that libavif can open: absolute PQ/HLG, or ISO 21496-1 `tmap` gain map.
+     * Apple-aux HEIC is not this route.
+     */
     AvifPq,
 
     /** Camera RAW (DNG / CR2 / NEF / …). Direct bitmap, never Ultra HDR convert. */
     Raw,
+
+    /**
+     * PQ/HLG HEIC, or HEVC still profiles unsupported by the platform.
+     * Direct bitmap via bundled libde265, with MediaCodec fallback; no JPEG convert.
+     */
+    HevcHdr,
 }
 
 /**
@@ -68,7 +77,7 @@ enum class LibCodec {
  * RAW has no gain map, so it stays on [LibDirectDecode].
  */
 val StillRoute.needsUhdr: Boolean
-    get() = this is StillRoute.Lib && codec != LibCodec.Raw
+    get() = this is StillRoute.Lib && codec != LibCodec.Raw && codec != LibCodec.HevcHdr
 
 /** Formats that never go through platform ImageDecoder for pixels. */
 val StillRoute.needsLibDecode: Boolean
@@ -223,7 +232,8 @@ fun classify(buffer: ByteBuffer, fileNameHint: String? = null): StillRoute {
  * Metadata-first route classification. Never full-pixel until decode/convert.
  *
  * JXL / JXR: magic or extension → always Lib (convert).
- * AVIF: ftyp + nclx CICP (PQ/HLG → Lib AvifPq; gain-map markers → PlatformGainMap).
+ * AVIF: ftyp + nclx CICP (PQ/HLG → Lib AvifPq). ISO `tmap` gain-map AVIF → Lib AvifPq.
+ * Other gain-map markers → PlatformGainMap. Absolute PQ/HLG HEIC → Lib HevcHdr.
  * HEIC + OPPO ProXDR trailer (when setting on) → OppoProxdr (platform + attach).
  */
 fun classify(bytes: ByteArray, length: Int = bytes.size, fileNameHint: String? = null): StillRoute {
@@ -253,31 +263,55 @@ fun classify(bytes: ByteArray, length: Int = bytes.size, fileNameHint: String? =
         return StillRoute.Lib(LibCodec.Jxr)
     }
 
-    // Gain-map markers — platform path, no lib convert.
+    val heifPrecision = if (isHeifFamily(bytes, n)) HeifPrecisionProbe.probe(bytes, n) else null
+    if (heifPrecision?.animated == true) return StillRoute.Platform
+    // HEVC 4:2:2 / 4:4:4 still profiles can be unsupported by the platform
+    // even at 8 bits. Use the bundled decoder independently of HDR settings.
+    if (heifPrecision?.needsSoftware == true) return StillRoute.Lib(LibCodec.HevcHdr)
+
+    // Explicit primary-item PQ/HLG takes precedence over loose XMP markers.
+    // Adobe XMP can include hdrgm:Version on an absolute-HDR AVIF with no gain
+    // map (DSC3752.avif). Header and full-file scans must select the same codec.
+    val primaryTransfer = heifPrecision?.transfer
+    if (primaryTransfer == 16 || primaryTransfer == 18) {
+        return StillRoute.Lib(if (heifPrecision.avif) LibCodec.AvifPq else LibCodec.HevcHdr)
+    }
+
+    // Gain-map markers. ISO `tmap` AVIF is applied by libavif. Apple aux HEIC and
+    // JPEG/AVIF gain maps the platform already understands stay on ImageDecoder.
     if (bytes.containsAscii("GainMap", n) ||
         bytes.containsAscii("hdrgm", n) ||
         bytes.containsAscii("HDRGainMap", n) ||
         bytes.containsAscii("urn:iso:std:iso:ts:21496:-1", n) ||
         bytes.containsAscii("tmap", n)
     ) {
+        if (isAvifBrand(bytes, n) && bytes.containsAscii("tmap", n)) {
+            return StillRoute.Lib(LibCodec.AvifPq)
+        }
         return StillRoute.PlatformGainMap
     }
 
     // OPPO/OnePlus ProXDR HEIC trailer (opt-in). Sniff uses full buffer because the
     // catalog/`jxrs` footer sits after mdat (often multi‑MB); [looksLike] only scans the tail.
-    if (Settings.readerOppoProxdr.value &&
-        OppoProxdr.looksLike(bytes, n) &&
-        (isHeicImageExtension(ext) || isHeifFamily(bytes, minOf(n, 64)))
+    if (OppoProxdr.looksLike(bytes, n) &&
+        (isHeicImageExtension(ext) || isHeifFamily(bytes, minOf(n, 64))) &&
+        Settings.readerOppoProxdr.value
     ) {
         return StillRoute.OppoProxdr
     }
 
-    // Absolute PQ/HLG AVIF only → UHDR convert. HEIC stays platform.
-    if (isHeifFamily(bytes, n) && hasAbsoluteHdrCicp(bytes, n)) {
-        return if (isAvifBrand(bytes, n)) {
-            StillRoute.Lib(LibCodec.AvifPq)
-        } else {
-            StillRoute.Platform
+    // Absolute PQ/HLG. AVIF → libavif. HEIC → libde265 (libavif cannot decode HEVC).
+    // CICP/nclx belongs to HEIF containers. The fallback can rescan the buffer for
+    // every candidate byte pair, so running it on large JPEG entropy data stalls
+    // browse thumbnail workers even though its result is discarded for JPEGs.
+    if (isHeifFamily(bytes, n)) {
+        val absoluteHdr = primaryTransfer?.let { it == 16 || it == 18 } ?: hasAbsoluteHdrCicp(bytes, n)
+        if (absoluteHdr) {
+            return if (isAvifBrand(bytes, n)) {
+                StillRoute.Lib(LibCodec.AvifPq)
+            } else {
+                StillRoute.Lib(LibCodec.HevcHdr)
+            }
         }
     }
 

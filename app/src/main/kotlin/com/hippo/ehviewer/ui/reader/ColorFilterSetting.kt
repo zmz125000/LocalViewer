@@ -16,22 +16,19 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.res.stringArrayResource
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
-import androidx.core.graphics.alpha
-import androidx.core.graphics.blue
-import androidx.core.graphics.green
-import androidx.core.graphics.red
 import com.ehviewer.core.i18n.R
 import com.ehviewer.core.ui.component.RollingNumber
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.asMutableState
 import com.hippo.ehviewer.ui.settings.Preference
+import com.hippo.ehviewer.util.HdrDisplayInfo
+import kotlin.math.roundToInt
 
 @Composable
 fun ColorFilterSetting(
@@ -59,55 +56,58 @@ fun ColorFilterSetting(
             field = brightness,
         )
     }
-    val colorFilter = Settings.colorFilter.asMutableState()
+    var comicFilter by Settings.comicColorFilter.asMutableState()
     SwitchChoice(
-        title = stringResource(id = R.string.pref_custom_color_filter),
-        field = colorFilter,
+        title = stringResource(id = R.string.pref_comic_filter_contrast),
+        checked = comicFilter and 2 != 0,
+        onCheckedChange = { comicFilter = if (it) comicFilter or 2 else comicFilter and 2.inv() },
     )
-    AnimatedVisibility(visible = colorFilter.value) {
-        var color by Settings.colorFilterValue.asMutableState()
-        val rf = remember { mutableIntStateOf(color.red) }
-        val r by rf
-        val gf = remember { mutableIntStateOf(color.green) }
-        val g by gf
-        val bf = remember { mutableIntStateOf(color.blue) }
-        val b by bf
-        val af = remember { mutableIntStateOf(color.alpha) }
-        val a by af
-        color = (a shl 24) or (r shl 16) or (g shl 8) or b
+    AnimatedVisibility(visible = comicFilter and 2 != 0) {
+        val strength = Settings.comicContrastStrength.asMutableState()
+        SliderChoice(
+            startSlot = {},
+            endSlot = { Text("${strength.value}%") },
+            range = 0..100,
+            field = strength,
+        )
+    }
+    val levelsEnabled = Settings.comicLevelsEnabled.asMutableState()
+    SwitchChoice(
+        title = stringResource(id = R.string.pref_comic_levels),
+        field = levelsEnabled,
+    )
+    AnimatedVisibility(visible = levelsEnabled.value) {
+        val blackLevel = Settings.comicBlackLevel.asMutableState()
+        val whiteLevel = Settings.comicWhiteLevel.asMutableState()
         Column {
             SliderChoice(
-                startSlot = { Text(text = "R") },
-                endSlot = { RollingNumber(number = r, length = 3) },
-                range = 0..255,
-                field = rf,
+                startSlot = { Text(stringResource(id = R.string.pref_comic_black_level)) },
+                endSlot = { Text("${blackLevel.value.coerceIn(0, 127)}") },
+                range = 0..127,
+                field = blackLevel,
             )
             SliderChoice(
-                startSlot = { Text(text = "G") },
-                endSlot = { RollingNumber(number = g, length = 3) },
-                range = 0..255,
-                field = gf,
-            )
-            SliderChoice(
-                startSlot = { Text(text = "B") },
-                endSlot = { RollingNumber(number = b, length = 3) },
-                range = 0..255,
-                field = bf,
-            )
-            SliderChoice(
-                startSlot = { Text(text = "A") },
-                endSlot = { RollingNumber(number = a, length = 3) },
-                range = 0..255,
-                field = af,
+                startSlot = { Text(stringResource(id = R.string.pref_comic_white_level)) },
+                endSlot = { Text("${whiteLevel.value.coerceIn(128, 255)}") },
+                range = 128..255,
+                field = whiteLevel,
             )
         }
     }
-    SpinnerChoice(
-        title = stringResource(id = R.string.pref_color_filter_mode),
-        entries = stringArrayResource(id = com.hippo.ehviewer.R.array.color_filter_modes),
-        values = listOf(0, 1, 2, 3, 4, 5),
-        field = Settings.colorFilterMode.asMutableState(),
+    SwitchChoice(
+        title = stringResource(id = R.string.pref_comic_filter_sepia),
+        checked = comicFilter and 1 != 0,
+        onCheckedChange = { comicFilter = if (it) comicFilter or 1 else comicFilter and 1.inv() },
     )
+    AnimatedVisibility(visible = comicFilter and 1 != 0) {
+        val strength = Settings.comicSepiaStrength.asMutableState()
+        SliderChoice(
+            startSlot = {},
+            endSlot = { Text("${strength.value}%") },
+            range = 0..100,
+            field = strength,
+        )
+    }
     SwitchChoice(
         title = stringResource(id = R.string.pref_grayscale),
         field = Settings.grayScale.asMutableState(),
@@ -169,6 +169,18 @@ private fun CameraRawSetting() = Column {
         range = 0..100,
         field = Settings.readerRawShoulder.asMutableState(),
         valueText = { "$it" },
+    )
+    val display = LocalView.current.display
+    val panelTargetNits = remember(display) {
+        (HdrDisplayInfo.hdrCapabilityBoost(display) * 203f).roundToInt()
+    }
+    CommitSliderChoice(
+        title = stringResource(id = R.string.pref_reader_raw_hdr_target_nits),
+        summary = stringResource(id = R.string.pref_reader_raw_hdr_target_nits_summary, panelTargetNits),
+        range = 1000..10000,
+        field = Settings.readerRawHdrTargetNits.asMutableState(),
+        valueText = { "$it nits" },
+        steps = 89,
     )
     CommitSliderChoice(
         title = stringResource(id = R.string.pref_reader_raw_exposure),

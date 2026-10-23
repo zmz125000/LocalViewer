@@ -147,6 +147,7 @@ import com.hippo.ehviewer.gallery.PdfRamPageLoader
 import com.hippo.ehviewer.gallery.ReaderNavigation
 import com.hippo.ehviewer.library.ArchiveByteSource
 import com.hippo.ehviewer.library.BlockCacheArchiveByteSource
+import com.hippo.ehviewer.library.BrowseThumbComposeJobs
 import com.hippo.ehviewer.library.DocumentExtractCache
 import com.hippo.ehviewer.library.EbookBodyCache
 import com.hippo.ehviewer.library.GallerySiblingNavigator
@@ -187,6 +188,7 @@ import com.hippo.ehviewer.ui.reader.EInkRefreshOverlay
 import com.hippo.ehviewer.ui.reader.NavigationOverlay
 import com.hippo.ehviewer.ui.reader.PagerItem
 import com.hippo.ehviewer.ui.reader.PendingReaderOpen
+import com.hippo.ehviewer.ui.reader.ReaderFilterOverlay
 import com.hippo.ehviewer.ui.reader.ReaderScreenArgs
 import com.hippo.ehviewer.ui.reader.SCROLL_FRACTION
 import com.hippo.ehviewer.ui.reader.SettingsPager
@@ -209,6 +211,7 @@ import com.hippo.ehviewer.ui.reader.readerMouseWheelPages
 import com.hippo.ehviewer.ui.reader.readerPdfCacheKey
 import com.hippo.ehviewer.ui.reader.readerPhotoGridSheetMaxWidth
 import com.hippo.ehviewer.ui.reader.readerSheetBox
+import com.hippo.ehviewer.ui.reader.rememberComicColorFilter
 import com.hippo.ehviewer.ui.reader.scrollDown
 import com.hippo.ehviewer.ui.reader.scrollLeft
 import com.hippo.ehviewer.ui.reader.scrollRight
@@ -2238,6 +2241,9 @@ private fun PdfReaderScreen(
                 readerLibDirectBitmap.changesFlow(),
                 readerDecodeSize.changesFlow(),
                 readerHiResOptimize.changesFlow(),
+                readerComicRendering.changesFlow(),
+                readerDecodeScaler.changesFlow(),
+                readerHiResSoftwareDownscale.changesFlow(),
                 readerAdvancedColor.changesFlow(),
                 readerPlatformHighDepth.changesFlow(),
                 readerOppoProxdr.changesFlow(),
@@ -2699,6 +2705,7 @@ private fun PdfReaderScreen(
                 }
             }
         }
+        ReaderFilterOverlay()
         ReaderAppBars(
             visible = appbarVisible,
             onNavigateUp = onClose,
@@ -3320,6 +3327,7 @@ private fun PdfPageBitmap(
             }
             Image(
                 bitmap = bitmap.asImageBitmap(),
+                colorFilter = rememberComicColorFilter(),
                 contentDescription = stringResource(R.string.pdf_reader_page, pageLabel, pageCount),
                 contentScale = contentScale,
                 modifier = pageMod,
@@ -3629,20 +3637,24 @@ private fun PdfPageThumb(
             skipped = true
             return@LaunchedEffect
         }
+        // Cache miss: admit render/extract so a full-screen grid cannot stampede Pdfium.
+        // Publish [bitmap] after release so other cells can generate while this paints.
         var rendered: Bitmap? = null
         try {
-            rendered = withContext(Dispatchers.IO) {
-                when (doc) {
-                    is PdfDocumentModel.Vector -> runCatching {
-                        doc.session.renderLongEdge(index, OriginDiskCache.THUMB_EDGE)
-                    }.getOrNull()
-                    is PdfDocumentModel.Images -> runCatching {
-                        doc.engine.ensureListedThrough(index)
-                        doc.engine.extractBytes(index)?.let(::decodePdfThumb)
-                    }.getOrNull()
-                    is PdfDocumentModel.MobiImages -> runCatching {
-                        doc.pageBytes(index)?.let(::decodePdfThumb)
-                    }.getOrNull()
+            rendered = BrowseThumbComposeJobs.withJob {
+                withContext(Dispatchers.IO) {
+                    when (doc) {
+                        is PdfDocumentModel.Vector -> runCatching {
+                            doc.session.renderLongEdge(index, OriginDiskCache.THUMB_EDGE)
+                        }.getOrNull()
+                        is PdfDocumentModel.Images -> runCatching {
+                            doc.engine.ensureListedThrough(index)
+                            doc.engine.extractBytes(index)?.let(::decodePdfThumb)
+                        }.getOrNull()
+                        is PdfDocumentModel.MobiImages -> runCatching {
+                            doc.pageBytes(index)?.let(::decodePdfThumb)
+                        }.getOrNull()
+                    }
                 }
             }
             val thumb = rendered

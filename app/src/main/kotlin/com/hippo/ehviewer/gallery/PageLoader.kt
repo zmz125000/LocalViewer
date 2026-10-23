@@ -15,6 +15,7 @@ import com.ehviewer.core.util.logcat
 import com.hippo.ehviewer.EhDB
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.image.ByteBufferSource
+import com.hippo.ehviewer.image.HI_RES_PREVIEW_EDGE
 import com.hippo.ehviewer.image.HiResTier
 import com.hippo.ehviewer.image.Image
 import com.hippo.ehviewer.image.ImageSource
@@ -24,6 +25,7 @@ import com.hippo.ehviewer.image.hdr.DisplaySource
 import com.hippo.ehviewer.image.hdr.HdrConvertCache
 import com.hippo.ehviewer.image.hdr.LibCodec
 import com.hippo.ehviewer.image.hdr.LibDirectDecode
+import com.hippo.ehviewer.image.hdr.PlatformHeifDecode
 import com.hippo.ehviewer.image.hdr.StillRoute
 import com.hippo.ehviewer.image.hdr.classify
 import com.hippo.ehviewer.image.hdr.classifyPath
@@ -261,8 +263,8 @@ abstract class PageLoader(
     }
 
     /**
-     * When [Settings.readerLibDirectBitmap] is on and the page is a lib still,
-     * decode straight to Bitmap. Null → fall through to convert + Coil.
+     * Lib-direct preference or a format that needs HDR/deep-color preservation:
+     * decode straight to Bitmap. Other files fall through to convert + Coil.
      * Camera RAW never falls through: ImageDecoder cannot open it.
      */
     private suspend fun tryDecodeLibDirect(
@@ -286,15 +288,25 @@ abstract class PageLoader(
         // RAW is always a direct bitmap. Bypass-UHDR does not apply, and there is no gain map.
         val rawStill = (route is StillRoute.Lib && route.codec == LibCodec.Raw) ||
             isRawStillExtension(pageExt)
+        // PQ/HLG HEIC uses bundled software HEVC, even when lib-direct is off.
+        // Unsupported ABIs can use MediaCodec; failed HDR decode falls through
+        // to the platform SDR image.
+        val hevcHdr = route is StillRoute.Lib && route.codec == LibCodec.HevcHdr
+        val advanced = Settings.readerAdvancedColor.value
+        val avifDirect = advanced && route is StillRoute.Lib && route.codec == LibCodec.AvifPq
+        val precision = if (advanced && route == StillRoute.Platform) PlatformHeifDecode.precision(raw, nameHint) else null
+        val deepHeif = precision?.highDepth == true
         if (rawStill) noteRawLoaded()
-        if (!rawStill && !Settings.readerLibDirectBitmap.value) return null
-        if (!route.needsLibDecode && !rawStill) return null
+        if (!rawStill && !hevcHdr && !avifDirect && !deepHeif && !Settings.readerLibDirectBitmap.value) return null
+        if (!route.needsLibDecode && !rawStill && !deepHeif) return null
         val maxEdge = Image.maxEdgeForReader(forceOriginal)
-        val direct = LibDirectDecode.decode(raw, nameHint, maxEdge)
+        val direct = (if (deepHeif) PlatformHeifDecode.decode(raw, precision, maxEdge) else null)
+            ?: LibDirectDecode.decode(raw, nameHint, maxEdge)
         if (direct == null) {
             if (rawStill) {
                 error("RAW decode failed: $nameHint")
             }
+            if (deepHeif || avifDirect) error("High-bit-depth image decode failed: $nameHint")
             return null
         }
         thumbSoftwareBitmapBeforeHardware(index, raw, direct.bitmap)
@@ -539,7 +551,8 @@ abstract class PageLoader(
                 val (image, raw) = decoded
                 try {
                     currentCoroutineContext().ensureActive()
-                    image.noteHiResFull()
+                    val preview = (pages[index].status as? PageStatus.Ready)?.image
+                    image.noteHiResFull(preview?.hiResPreviewEdge ?: HI_RES_PREVIEW_EDGE)
                     val keep = hiResEpoch[index] == epoch &&
                         hiResWant[index] == true &&
                         hiResPageStillResident(index) &&

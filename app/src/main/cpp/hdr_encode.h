@@ -102,13 +102,19 @@ inline float half_to_float(uint16_t h) {
  *   UHDR_CG_BT_709     — BT.709 / scRGB-like
  *   UHDR_CG_DISPLAY_P3 — Display P3
  *   UHDR_CG_BT_2100    — BT.2020 primaries (PQ/HLG HDR stills)
+ * [sdr_base], when supplied, is opaque sRGB-transfer RGBA8 in the same primaries
+ * and dimensions. RAW uses its camera-look render before HDR highlight expansion.
+ * [quality]: -1 keeps non-export defaults; 0/1/2 use JPEG Q95/Q90/Q85.
+ * Exports use 4:4:4; low quality downsizes the gain map by 4.
+ * The primary image dimensions, gamut and HDR capacity remain unchanged.
  *
  * @return 0 on success.
  */
 int encode_linear_rgba_f16_to_uhdr(unsigned w, unsigned h, const uint16_t* rgba,
                                    const char* out_path,
                                    uhdr_color_gamut_t cg = UHDR_CG_BT_709,
-                                   float fixed_peak_nits = 0.f, bool force_hdr = false);
+                                   float fixed_peak_nits = 0.f, bool force_hdr = false,
+                                   const uint8_t* sdr_base = nullptr, int quality = -1);
 
 /** Downscale packed RGBA F16 so long edge ≤ max_edge (box filter). max_edge 0 = no-op. */
 void scale_rgba_f16_max_edge(std::vector<uint16_t>& rgba, unsigned& w, unsigned& h,
@@ -164,6 +170,28 @@ inline uint8_t linear_to_srgb_u8(float l) {
     const float s = srgb_oetf(l);
     return static_cast<uint8_t>(s * 255.f + 0.5f);
 }
+
+/** Exact transfer values for every half code, shared by display and export. */
+inline const std::vector<float>& half_srgb_table() {
+    static const std::vector<float> values = [] {
+        std::vector<float> table(65536);
+        for (size_t i = 0; i < table.size(); ++i) table[i] = srgb_oetf(half_to_float(i));
+        return table;
+    }();
+    return values;
+}
+
+inline const std::vector<uint8_t>& half_srgb_u8_table() {
+    static const std::vector<uint8_t> values = [] {
+        const auto& curve = half_srgb_table();
+        std::vector<uint8_t> table(65536);
+        for (size_t i = 0; i < table.size(); ++i) table[i] = static_cast<uint8_t>(curve[i] * 255.f + 0.5f);
+        return table;
+    }();
+    return values;
+}
+
+inline uint8_t half_to_srgb_u8(uint16_t code) { return half_srgb_u8_table()[code]; }
 
 // ── Linear RGB gamut rematrix (D65, no CAT) ─────────────────────────────────
 //
@@ -228,7 +256,8 @@ inline void linear_bt2020_to_bt709(float& r, float& g, float& b) {
 int pack_linear_f16_for_direct(std::vector<uint16_t>& rgba, unsigned w, unsigned h, bool force_hdr,
                                uhdr_color_gamut_t cg, bool advanced_color, int transfer_cicp,
                                std::vector<uint8_t>& out_pixels, int* out_format, int* out_is_hdr,
-                               float* out_boost, int* out_gamut, int* out_transfer);
+                               float* out_boost, int* out_gamut, int* out_transfer,
+                               unsigned max_threads = 0);
 
 /**
  * Pack [rgba] then copy into a Java byte[] for Bitmap.createBitmap.
@@ -241,3 +270,7 @@ jbyteArray pack_direct_to_jbyte_array(JNIEnv* env, std::vector<uint16_t>& rgba, 
                                       unsigned h, bool force_hdr, uhdr_color_gamut_t cg,
                                       bool advanced_color, int transfer_cicp, jintArray jOutInfo,
                                       jfloatArray jOutBoost);
+
+/** Straight-alpha linear F16 → 16-bit JPEG XL (SDR or absolute HDR). Mutates RGB. */
+int encode_jxl_f16(unsigned w, unsigned h, uint16_t* rgba, uhdr_color_gamut_t cg,
+                   bool hdr, const char* path, int quality = -1);

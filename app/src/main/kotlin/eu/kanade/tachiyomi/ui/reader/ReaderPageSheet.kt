@@ -33,6 +33,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.ehviewer.core.i18n.R
 import com.hippo.ehviewer.image.hdr.StillExportTarget
+import com.hippo.ehviewer.image.hdr.supportsSource
 import moe.tarsin.kt.andThen
 
 @Composable
@@ -46,6 +47,7 @@ fun ReaderPageSheetMeta(
     convert: ((StillExportTarget) -> Unit)?,
     showAds: (() -> Unit)?,
     dismiss: () -> Unit,
+    sourceName: String? = null,
 ) {
     var pickingConvert by remember { mutableStateOf(false) }
 
@@ -64,8 +66,18 @@ fun ReaderPageSheetMeta(
             Item(icon = Icons.Default.Save, text = R.string.convert_auto_original, onClick = { convert(StillExportTarget.AutoOriginal) })
             Item(icon = Icons.Default.Save, text = R.string.convert_jpeg, onClick = { convert(StillExportTarget.Jpeg) })
             Item(icon = Icons.Default.Save, text = R.string.convert_jpeg_hdr, onClick = { convert(StillExportTarget.JpegHdr) })
-            Item(icon = Icons.Default.Save, text = R.string.convert_png, onClick = { convert(StillExportTarget.Png) })
-            Item(icon = Icons.Default.Save, text = R.string.convert_png_16, onClick = { convert(StillExportTarget.Png16) })
+            if (StillExportTarget.JpegHdrBoost.supportsSource(sourceName)) {
+                Item(icon = Icons.Default.Save, text = R.string.convert_jpeg_hdr_boost, onClick = { convert(StillExportTarget.JpegHdrBoost) })
+                Item(icon = Icons.Default.Save, text = R.string.convert_jpeg_hdr_custom, onClick = { convert(StillExportTarget.JpegHdrCustom) })
+            }
+            if (StillExportTarget.Jxl.available) {
+                Item(icon = Icons.Default.Save, text = R.string.convert_jxl, onClick = { convert(StillExportTarget.Jxl) })
+                Item(icon = Icons.Default.Save, text = R.string.convert_jxl_hdr, onClick = { convert(StillExportTarget.JxlHdr) })
+                if (StillExportTarget.JxlHdrBoost.supportsSource(sourceName)) {
+                    Item(icon = Icons.Default.Save, text = R.string.convert_jxl_hdr_boost, onClick = { convert(StillExportTarget.JxlHdrBoost) })
+                    Item(icon = Icons.Default.Save, text = R.string.convert_jxl_hdr_custom, onClick = { convert(StillExportTarget.JxlHdrCustom) })
+                }
+            }
         } else {
             showAds?.let { Item(icon = Icons.Default.Visibility, text = R.string.show_blocked_image, onClick = it) }
             Item(icon = Icons.Default.Refresh, text = R.string.refresh, onClick = retry)

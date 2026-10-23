@@ -29,6 +29,13 @@ class MediaStoreIndexStampTest {
     }
 
     @Test
+    fun `size column does not invalidate existing indexes`() {
+        val expected = 7L to MediaStoreIndexStamp(42L, 1200, 1700000000L, 43981L)
+        assertEquals(expected, MediaStoreIndexStamp.parse("7:42:1200:1700000000:43981:2"))
+        assertEquals(expected, MediaStoreIndexStamp.parse("7:42:1200:1700000000:43981:3"))
+    }
+
+    @Test
     fun `generation match skips without needing fingerprint equality`() {
         val stored = MediaStoreIndexStamp(10L, count = 1, maxDateModifiedSecs = 1L, idXor = 1L)
         val current = MediaStoreIndexStamp(10L, count = 99, maxDateModifiedSecs = 9L, idXor = 9L)

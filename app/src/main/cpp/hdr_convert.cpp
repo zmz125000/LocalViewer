@@ -6,9 +6,11 @@
 #include <jni.h>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <fstream>
 #include <limits>
@@ -17,6 +19,8 @@
 #include <vector>
 
 #include "hdr_encode.h"
+#include "reader_pixels.h"
+#include "hdr_parallel.h"
 #include "ultrahdr_api.h"
 // Internal libultrahdr: build Display P3 / 709 ICC for baseline JPEG APP2.
 #include "ultrahdr/icc.h"
@@ -36,7 +40,7 @@ extern "C" {
 }
 #include <csetjmp>
 #include <cstdio>
-#include <zlib.h>
+#include <cstdlib>
 
 // jxrlib (Microsoft / brion jpegxr packaging)
 extern "C" {
@@ -58,6 +62,9 @@ extern "C" {
 constexpr int kJpegQualityBaseline = 97;  // pure SDR baseline (no gain map)
 constexpr int kJpegQualityUhdrBase = 97;  // Ultra HDR SDR intent JPEG
 constexpr int kJpegQualityUhdrGainMap = 95;
+static int export_jpeg_quality(int quality, int legacy) {
+    return quality < 0 ? legacy : quality == 0 ? 95 : quality == 1 ? 90 : 85;
+}
 #define ALOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
 #define ALOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
 
@@ -824,6 +831,17 @@ struct JpegErr {
     jmp_buf jump;
 };
 
+// Owned by the caller, including across libjpeg's setjmp error path.
+struct JpegMemory {
+    unsigned char* data = nullptr;
+    unsigned long size = 0;
+    ~JpegMemory() { std::free(data); }
+};
+
+int encode_srgb_jpeg_u8(unsigned w, unsigned h, const uint8_t* rgba, const char* out_path,
+                        uhdr_color_gamut_t cg, int quality = -1, JpegMemory* memory = nullptr);
+
+
 void jpeg_err_exit(j_common_ptr cinfo) {
     auto* e = reinterpret_cast<JpegErr*>(cinfo->err);
     char buf[JMSG_LENGTH_MAX];
@@ -844,24 +862,19 @@ void jpeg_err_exit(j_common_ptr cinfo) {
  * Quality [kJpegQualityBaseline], 4:4:4 chroma (no 4:2:0 color blur on 4K stills).
  */
 int encode_baseline_sdr_jpeg(unsigned w, unsigned h, const uint16_t* rgba, const char* out_path,
-                             uhdr_color_gamut_t cg) {
+                             uhdr_color_gamut_t cg, int quality = -1) {
     if (!rgba || !out_path || w == 0 || h == 0) return -30;
     const size_t pixels = static_cast<size_t>(w) * static_cast<size_t>(h);
     std::vector<uint8_t> rgb(pixels * 3);
     if (cg != UHDR_CG_BT_709 && cg != UHDR_CG_DISPLAY_P3 && cg != UHDR_CG_BT_2100) {
         cg = UHDR_CG_BT_709;
     }
-    for (size_t i = 0; i < pixels; i++) {
-        float r = half_to_float(rgba[i * 4 + 0]);
-        float g = half_to_float(rgba[i * 4 + 1]);
-        float b = half_to_float(rgba[i * 4 + 2]);
-        if (!std::isfinite(r) || r < 0.f) r = 0.f;
-        if (!std::isfinite(g) || g < 0.f) g = 0.f;
-        if (!std::isfinite(b) || b < 0.f) b = 0.f;
-        rgb[i * 3 + 0] = linear_to_srgb_u8(r);
-        rgb[i * 3 + 1] = linear_to_srgb_u8(g);
-        rgb[i * 3 + 2] = linear_to_srgb_u8(b);
-    }
+    const auto& srgb_codes = half_srgb_u8_table();
+    hdr_parallel_pixels(pixels, hdr_pixel_jobs(pixels), [&](size_t begin, size_t end, unsigned) {
+        for (size_t i = begin; i < end; ++i) {
+            for (unsigned c = 0; c < 3; ++c) rgb[i * 3 + c] = srgb_codes[rgba[i * 4 + c]];
+        }
+    });
 
     FILE* fp = fopen(out_path, "wb");
     if (!fp) {
@@ -911,9 +924,9 @@ int encode_baseline_sdr_jpeg(unsigned w, unsigned h, const uint16_t* rgba, const
     cinfo.input_components = 3;
     cinfo.in_color_space = JCS_RGB;
     jpeg_set_defaults(&cinfo);
-    jpeg_set_quality(&cinfo, kJpegQualityBaseline, TRUE);
-    // jpeg_set_defaults → 4:2:0; force 4:4:4 so fine color edges (text, hair) stay sharp
-    // after 10-bit JXL/AVIF → 8-bit JPEG. File size up ~15–25% vs 4:2:0 at same Q.
+    jpeg_set_quality(&cinfo, export_jpeg_quality(quality, kJpegQualityBaseline), TRUE);
+    cinfo.optimize_coding = quality >= 0 ? TRUE : FALSE;
+    // All export quality presets preserve 4:4:4 color edges.
     cinfo.comp_info[0].h_samp_factor = 1;
     cinfo.comp_info[0].v_samp_factor = 1;
     cinfo.comp_info[1].h_samp_factor = 1;
@@ -957,7 +970,8 @@ int encode_baseline_sdr_jpeg(unsigned w, unsigned h, const uint16_t* rgba, const
  *
  * Pure SDR ([force_hdr] false and peak ≤ 1.0): baseline JPEG only — no gain map.
  *
- * HDR base is that same clamp-at-1.0 sRGB image, passed as [UHDR_SDR_IMG].
+ * HDR base defaults to that clamp-at-1.0 image, passed as [UHDR_SDR_IMG].
+ * RAW can supply its separate camera-look SDR render in the same primaries.
  * API-0 would Reinhard-tone-map LINEAR input against a 10000-nit headroom and
  * darken the base (linear 1.0 lands near 0.5). The gain map then only restores
  * samples above 1. HDR mode stays the original linear picture.
@@ -970,7 +984,7 @@ int encode_baseline_sdr_jpeg(unsigned w, unsigned h, const uint16_t* rgba, const
  */
 int encode_linear_rgba_f16_to_uhdr(unsigned w, unsigned h, const uint16_t* rgba,
                                    const char* out_path, uhdr_color_gamut_t cg,
-                                   float fixed_peak_nits, bool force_hdr) {
+                                   float fixed_peak_nits, bool force_hdr, const uint8_t* sdr_base, int quality) {
     if (!rgba || !out_path || w == 0 || h == 0) return -1;
 
     // Only the three gamuts libultrahdr can tag/ICC-embed.
@@ -998,7 +1012,7 @@ int encode_linear_rgba_f16_to_uhdr(unsigned w, unsigned h, const uint16_t* rgba,
 
     // Pure SDR → baseline JPEG (no Ultra HDR gain map / no fake ratio > 1).
     if (!force_hdr && content_peak <= 1.0f) {
-        return encode_baseline_sdr_jpeg(w, h, rgba, out_path, cg);
+        return encode_baseline_sdr_jpeg(w, h, rgba, out_path, cg, quality);
     }
 
     uhdr_codec_private_t* enc = uhdr_create_encoder();
@@ -1025,13 +1039,13 @@ int encode_linear_rgba_f16_to_uhdr(unsigned w, unsigned h, const uint16_t* rgba,
     }
 
     // Quality: base + multi-channel gain map (libultrahdr default is 95/95).
-    err = uhdr_enc_set_quality(enc, kJpegQualityUhdrBase, UHDR_BASE_IMG);
+    err = uhdr_enc_set_quality(enc, export_jpeg_quality(quality, kJpegQualityUhdrBase), UHDR_BASE_IMG);
     if (err.error_code != UHDR_CODEC_OK) {
         ALOGE("uhdr_enc_set_quality base: %s", err.has_detail ? err.detail : "error");
         uhdr_release_encoder(enc);
         return -6;
     }
-    err = uhdr_enc_set_quality(enc, kJpegQualityUhdrGainMap, UHDR_GAIN_MAP_IMG);
+    err = uhdr_enc_set_quality(enc, export_jpeg_quality(quality, kJpegQualityUhdrGainMap), UHDR_GAIN_MAP_IMG);
     if (err.error_code != UHDR_CODEC_OK) {
         ALOGE("uhdr_enc_set_quality gainmap: %s", err.has_detail ? err.detail : "error");
         uhdr_release_encoder(enc);
@@ -1047,6 +1061,14 @@ int encode_linear_rgba_f16_to_uhdr(unsigned w, unsigned h, const uint16_t* rgba,
     err = uhdr_enc_set_gainmap_gamma(enc, 1.0f);
     if (err.error_code != UHDR_CODEC_OK) {
         ALOGE("uhdr_enc_set_gainmap_gamma: %s", err.has_detail ? err.detail : "error");
+        uhdr_release_encoder(enc);
+        return -6;
+    }
+    // Keep the primary rendition at full size. Low quality reduces only the
+    // RGB gain map to one quarter of each dimension (one sixteenth the pixels).
+    err = uhdr_enc_set_gainmap_scale_factor(enc, quality == 2 ? 4 : 1);
+    if (err.error_code != UHDR_CODEC_OK) {
+        ALOGE("uhdr_enc_set_gainmap_scale_factor: %s", err.has_detail ? err.detail : "error");
         uhdr_release_encoder(enc);
         return -6;
     }
@@ -1079,18 +1101,20 @@ int encode_linear_rgba_f16_to_uhdr(unsigned w, unsigned h, const uint16_t* rgba,
         return -7;
     }
 
-    // Same pixels as encode_baseline_sdr_jpeg. Keeps the base from API-0's
-    // 10000-nit Reinhard map, which darkened midtones that were already ≤ 1.
+    // RAW supplies its camera-look SDR plane before HDR expansion. Other codecs
+    // keep the baseline-JPEG render, avoiding API-0's 10000-nit Reinhard map.
     const size_t sdr_pixels = static_cast<size_t>(w) * static_cast<size_t>(h);
-    std::vector<uint8_t> sdr_rgba(sdr_pixels * 4);
-    for (size_t i = 0; i < sdr_pixels; i++) {
-        const float r = half_to_float(rgba[i * 4 + 0]);
-        const float g = half_to_float(rgba[i * 4 + 1]);
-        const float b = half_to_float(rgba[i * 4 + 2]);
-        sdr_rgba[i * 4 + 0] = linear_to_srgb_u8(r);
-        sdr_rgba[i * 4 + 1] = linear_to_srgb_u8(g);
-        sdr_rgba[i * 4 + 2] = linear_to_srgb_u8(b);
-        sdr_rgba[i * 4 + 3] = 255;
+    std::vector<uint8_t> sdr_rgba;
+    if (!sdr_base) {
+        sdr_rgba.resize(sdr_pixels * 4);
+        const auto& srgb_codes = half_srgb_u8_table();
+        hdr_parallel_pixels(sdr_pixels, hdr_pixel_jobs(sdr_pixels), [&](size_t begin, size_t end, unsigned) {
+            for (size_t i = begin; i < end; ++i) {
+                for (unsigned c = 0; c < 3; ++c) sdr_rgba[i * 4 + c] = srgb_codes[rgba[i * 4 + c]];
+                sdr_rgba[i * 4 + 3] = 255;
+            }
+        });
+        sdr_base = sdr_rgba.data();
     }
     uhdr_raw_image_t sdr_img{};
     sdr_img.fmt = UHDR_IMG_FMT_32bppRGBA8888;
@@ -1099,13 +1123,37 @@ int encode_linear_rgba_f16_to_uhdr(unsigned w, unsigned h, const uint16_t* rgba,
     sdr_img.range = UHDR_CR_FULL_RANGE;
     sdr_img.w = w;
     sdr_img.h = h;
-    sdr_img.planes[UHDR_PLANE_PACKED] = sdr_rgba.data();
+    sdr_img.planes[UHDR_PLANE_PACKED] = const_cast<uint8_t*>(sdr_base);
     sdr_img.stride[UHDR_PLANE_PACKED] = w;
     err = uhdr_enc_set_raw_image(enc, &sdr_img, UHDR_SDR_IMG);
     if (err.error_code != UHDR_CODEC_OK) {
         ALOGE("uhdr_enc_set_raw_image sdr: %s", err.has_detail ? err.detail : "error");
         uhdr_release_encoder(enc);
         return -8;
+    }
+
+    // API-2: keep the raw SDR plane for gain-map computation and provide the
+    // already encoded 4:4:4 rendition for assembly, avoiding internal 4:2:0 encode.
+    JpegMemory base_jpeg;
+    if (quality >= 0) {
+        const int rc = encode_srgb_jpeg_u8(w, h, sdr_base, nullptr, cg, quality, &base_jpeg);
+        if (rc != 0) {
+            uhdr_release_encoder(enc);
+            return rc;
+        }
+        uhdr_compressed_image_t base_img{};
+        base_img.data = base_jpeg.data;
+        base_img.data_sz = base_jpeg.size;
+        base_img.capacity = base_jpeg.size;
+        base_img.cg = cg;
+        base_img.ct = UHDR_CT_SRGB;
+        base_img.range = UHDR_CR_FULL_RANGE;
+        err = uhdr_enc_set_compressed_image(enc, &base_img, UHDR_SDR_IMG);
+        if (err.error_code != UHDR_CODEC_OK) {
+            ALOGE("uhdr_enc_set_compressed_image: %s", err.has_detail ? err.detail : "error");
+            uhdr_release_encoder(enc);
+            return -9;
+        }
     }
 
     ALOGI("Ultra HDR encode content_peak=%.3f peak_nits=%.1f fixed=%d force_hdr=%d cg=%d %ux%u",
@@ -1147,24 +1195,31 @@ inline float clamp_nonneg(float v) {
 int pack_linear_f16_for_direct(std::vector<uint16_t>& rgba, unsigned w, unsigned h, bool force_hdr,
                                uhdr_color_gamut_t cg, bool advanced_color, int transfer_cicp,
                                std::vector<uint8_t>& out_pixels, int* out_format, int* out_is_hdr,
-                               float* out_boost, int* out_gamut, int* out_transfer) {
+                               float* out_boost, int* out_gamut, int* out_transfer,
+                               unsigned max_threads) {
     if (w == 0 || h == 0) return -1;
     const size_t pixels = static_cast<size_t>(w) * static_cast<size_t>(h);
     if (rgba.size() < pixels * 4) return -1;
 
-    float peak = 0.f;
-    for (size_t i = 0; i < pixels; i++) {
-        const float r = half_to_float(rgba[i * 4 + 0]);
-        const float g = half_to_float(rgba[i * 4 + 1]);
-        const float b = half_to_float(rgba[i * 4 + 2]);
-        float a = half_to_float(rgba[i * 4 + 3]);
-        if (!std::isfinite(a) || a <= 0.f) continue;
-        if (a > 1.f) a = 1.f;
-        // Buffers are straight-alpha. Invisible RGB must not force HDR mode;
-        // evaluate the linear contribution that Android actually composites.
-        float m = fmax3(r, g, b) * a;
-        if (std::isfinite(m) && m > peak) peak = m;
-    }
+    const unsigned jobs = hdr_pixel_jobs(pixels, max_threads);
+    std::array<float, 8> peaks{};
+    hdr_parallel_pixels(pixels, jobs, [&](size_t begin, size_t end, unsigned job) {
+        float peak = 0.f;
+        for (size_t i = begin; i < end; i++) {
+            const float r = half_to_float(rgba[i * 4 + 0]);
+            const float g = half_to_float(rgba[i * 4 + 1]);
+            const float b = half_to_float(rgba[i * 4 + 2]);
+            float a = half_to_float(rgba[i * 4 + 3]);
+            if (!std::isfinite(a) || a <= 0.f) continue;
+            if (a > 1.f) a = 1.f;
+            // Buffers are straight-alpha. Invisible RGB must not force HDR mode;
+            // evaluate the linear contribution that Android actually composites.
+            float m = fmax3(r, g, b) * a;
+            if (std::isfinite(m) && m > peak) peak = m;
+        }
+        peaks[job] = peak;
+    });
+    float peak = *std::max_element(peaks.begin(), peaks.end());
     if (peak < 1.f) peak = 1.f;
     if (peak > kMaxLinear) peak = kMaxLinear;
 
@@ -1178,26 +1233,28 @@ int pack_linear_f16_for_direct(std::vector<uint16_t>& rgba, unsigned w, unsigned
 
     // Rematrix in-place — never hold a second full-frame F16 buffer.
     if (need_rematrix) {
-        for (size_t i = 0; i < pixels; i++) {
-            float r = half_to_float(rgba[i * 4 + 0]);
-            float g = half_to_float(rgba[i * 4 + 1]);
-            float b = half_to_float(rgba[i * 4 + 2]);
-            float a = half_to_float(rgba[i * 4 + 3]);
-            if (cg == UHDR_CG_DISPLAY_P3) {
-                linear_p3_to_bt709(r, g, b);
-            } else {
-                linear_bt2020_to_bt709(r, g, b);
+        hdr_parallel_pixels(pixels, jobs, [&](size_t begin, size_t end, unsigned) {
+            for (size_t i = begin; i < end; i++) {
+                float r = half_to_float(rgba[i * 4 + 0]);
+                float g = half_to_float(rgba[i * 4 + 1]);
+                float b = half_to_float(rgba[i * 4 + 2]);
+                float a = half_to_float(rgba[i * 4 + 3]);
+                if (cg == UHDR_CG_DISPLAY_P3) {
+                    linear_p3_to_bt709(r, g, b);
+                } else {
+                    linear_bt2020_to_bt709(r, g, b);
+                }
+                r = clamp_nonneg(r);
+                g = clamp_nonneg(g);
+                b = clamp_nonneg(b);
+                if (!std::isfinite(a) || a < 0.f) a = 0.f;
+                if (a > 1.f) a = 1.f;
+                rgba[i * 4 + 0] = float_to_half(r);
+                rgba[i * 4 + 1] = float_to_half(g);
+                rgba[i * 4 + 2] = float_to_half(b);
+                rgba[i * 4 + 3] = float_to_half(a);
             }
-            r = clamp_nonneg(r);
-            g = clamp_nonneg(g);
-            b = clamp_nonneg(b);
-            if (!std::isfinite(a) || a < 0.f) a = 0.f;
-            if (a > 1.f) a = 1.f;
-            rgba[i * 4 + 0] = float_to_half(r);
-            rgba[i * 4 + 1] = float_to_half(g);
-            rgba[i * 4 + 2] = float_to_half(b);
-            rgba[i * 4 + 3] = float_to_half(a);
-        }
+        });
         ALOGI("direct pack rematrix cg=%d → BT.709 %ux%u (in-place)", (int)cg, w, h);
     }
 
@@ -1224,18 +1281,26 @@ int pack_linear_f16_for_direct(std::vector<uint16_t>& rgba, unsigned w, unsigned
         // Android Canvas/View rendering requires premultiplied bitmap storage.
         // Decoder handoff is straight alpha, so associate it once at this final
         // presentation boundary, after gamut conversion and peak measurement.
-        for (size_t i = 0; i < pixels; i++) {
-            float r = half_to_float(rgba[i * 4 + 0]);
-            float g = half_to_float(rgba[i * 4 + 1]);
-            float b = half_to_float(rgba[i * 4 + 2]);
-            float a = half_to_float(rgba[i * 4 + 3]);
-            if (!std::isfinite(a) || a < 0.f) a = 0.f;
-            if (a > 1.f) a = 1.f;
-            rgba[i * 4 + 0] = float_to_half(clamp_nonneg(r) * a);
-            rgba[i * 4 + 1] = float_to_half(clamp_nonneg(g) * a);
-            rgba[i * 4 + 2] = float_to_half(clamp_nonneg(b) * a);
-            rgba[i * 4 + 3] = float_to_half(a);
-        }
+        uint16_t max_half = float_to_half(kMaxLinear);
+        if (half_to_float(max_half) > kMaxLinear) --max_half;
+        hdr_parallel_pixels(pixels, jobs, [&](size_t begin, size_t end, unsigned) {
+            for (size_t i = begin; i < end; i++) {
+                // Most stills are opaque and already valid linear half samples.
+                // Their positive finite half codes are ordered: leave them in place.
+                if (rgba[i * 4 + 3] == 0x3c00 && rgba[i * 4] <= max_half &&
+                    rgba[i * 4 + 1] <= max_half && rgba[i * 4 + 2] <= max_half) continue;
+                float r = half_to_float(rgba[i * 4 + 0]);
+                float g = half_to_float(rgba[i * 4 + 1]);
+                float b = half_to_float(rgba[i * 4 + 2]);
+                float a = half_to_float(rgba[i * 4 + 3]);
+                if (!std::isfinite(a) || a < 0.f) a = 0.f;
+                if (a > 1.f) a = 1.f;
+                rgba[i * 4 + 0] = float_to_half(clamp_nonneg(r) * a);
+                rgba[i * 4 + 1] = float_to_half(clamp_nonneg(g) * a);
+                rgba[i * 4 + 2] = float_to_half(clamp_nonneg(b) * a);
+                rgba[i * 4 + 3] = float_to_half(a);
+            }
+        });
         // Leave packed F16 in [rgba] — no second 66 MiB memcpy buffer.
         out_pixels.clear();
         ALOGI("direct pack F16 %ux%u peak=%.3f hdr=%d advanced=%d gamut=%d tf=%d", w, h, peak,
@@ -1244,20 +1309,22 @@ int pack_linear_f16_for_direct(std::vector<uint16_t>& rgba, unsigned w, unsigned
     }
 
     // SDR 8888: IEC 61966-2-1 sRGB OETF (also used for Display P3 tagging — same curve).
+    // Every input is an integer half code, so this table is exact rather than an
+    // approximation. Keep float results until after encoded-alpha multiplication.
+    const auto& srgb_half = half_srgb_table();
     out_pixels.resize(pixels * 4);
-    for (size_t i = 0; i < pixels; i++) {
-        const float r = half_to_float(rgba[i * 4 + 0]);
-        const float g = half_to_float(rgba[i * 4 + 1]);
-        const float b = half_to_float(rgba[i * 4 + 2]);
-        float a = half_to_float(rgba[i * 4 + 3]);
-        if (!std::isfinite(a) || a < 0.f) a = 0.f;
-        if (a > 1.f) a = 1.f;
-        // RGBA_8888 is premultiplied in its encoded color space.
-        out_pixels[i * 4 + 0] = static_cast<uint8_t>(srgb_oetf(r) * a * 255.f + 0.5f);
-        out_pixels[i * 4 + 1] = static_cast<uint8_t>(srgb_oetf(g) * a * 255.f + 0.5f);
-        out_pixels[i * 4 + 2] = static_cast<uint8_t>(srgb_oetf(b) * a * 255.f + 0.5f);
-        out_pixels[i * 4 + 3] = static_cast<uint8_t>(a * 255.f + 0.5f);
-    }
+    hdr_parallel_pixels(pixels, jobs, [&](size_t begin, size_t end, unsigned) {
+        for (size_t i = begin; i < end; i++) {
+            float a = half_to_float(rgba[i * 4 + 3]);
+            if (!std::isfinite(a) || a < 0.f) a = 0.f;
+            if (a > 1.f) a = 1.f;
+            // RGBA_8888 is premultiplied in its encoded color space.
+            out_pixels[i * 4 + 0] = static_cast<uint8_t>(srgb_half[rgba[i * 4 + 0]] * a * 255.f + 0.5f);
+            out_pixels[i * 4 + 1] = static_cast<uint8_t>(srgb_half[rgba[i * 4 + 1]] * a * 255.f + 0.5f);
+            out_pixels[i * 4 + 2] = static_cast<uint8_t>(srgb_half[rgba[i * 4 + 2]] * a * 255.f + 0.5f);
+            out_pixels[i * 4 + 3] = static_cast<uint8_t>(a * 255.f + 0.5f);
+        }
+    });
     // Drop F16 staging before caller allocates the Java byte[] / Bitmap.
     rgba.clear();
     rgba.shrink_to_fit();
@@ -1282,6 +1349,11 @@ jbyteArray pack_direct_to_jbyte_array(JNIEnv* env, std::vector<uint16_t>& rgba, 
     env->SetIntArrayRegion(jOutInfo, 0, 6, info);
     env->SetFloatArrayRegion(jOutBoost, 0, 1, &boost);
 
+    // Preserve the exact packed samples and metadata. Reader capture moves the
+    // vector; the empty array is only the legacy JNI success token.
+    if (format == 1 ? retain_reader_pixels(rgba) : retain_reader_pixels(sdr)) {
+        return env->NewByteArray(0);
+    }
     jbyteArray result = nullptr;
     if (format == 1) {
         // F16 still lives in rgba — copy once to Java, then free native immediately.
@@ -1410,8 +1482,8 @@ namespace {
 
 constexpr int kExportJpeg = 0;
 constexpr int kExportJpegHdr = 1;
-constexpr int kExportPng = 2;
-constexpr int kExportPng16 = 3;
+constexpr int kExportJxl = 2;
+constexpr int kExportJxlHdr = 3;
 
 uhdr_color_gamut_t export_gamut(int gamut) {
     if (gamut == 1) return UHDR_CG_DISPLAY_P3;
@@ -1420,245 +1492,73 @@ uhdr_color_gamut_t export_gamut(int gamut) {
 }
 
 void unpremultiply_f16(uint16_t* rgba, size_t pixels) {
-    for (size_t i = 0; i < pixels; i++) {
-        float a = half_to_float(rgba[i * 4 + 3]);
-        if (!std::isfinite(a) || a <= 0.f) {
-            rgba[i * 4 + 0] = float_to_half(0.f);
-            rgba[i * 4 + 1] = float_to_half(0.f);
-            rgba[i * 4 + 2] = float_to_half(0.f);
-            rgba[i * 4 + 3] = float_to_half(0.f);
-            continue;
+    hdr_parallel_pixels(pixels, hdr_pixel_jobs(pixels), [&](size_t begin, size_t end, unsigned) {
+        for (size_t i = begin; i < end; i++) {
+            if (rgba[i * 4 + 3] == 0x3c00 && rgba[i * 4] < 0x7c00 &&
+                rgba[i * 4 + 1] < 0x7c00 && rgba[i * 4 + 2] < 0x7c00) continue;
+            float a = half_to_float(rgba[i * 4 + 3]);
+            if (!std::isfinite(a) || a <= 0.f) {
+                rgba[i * 4 + 0] = float_to_half(0.f);
+                rgba[i * 4 + 1] = float_to_half(0.f);
+                rgba[i * 4 + 2] = float_to_half(0.f);
+                rgba[i * 4 + 3] = float_to_half(0.f);
+                continue;
+            }
+            if (a > 1.f) a = 1.f;
+            float r = half_to_float(rgba[i * 4 + 0]) / a;
+            float g = half_to_float(rgba[i * 4 + 1]) / a;
+            float b = half_to_float(rgba[i * 4 + 2]) / a;
+            rgba[i * 4 + 0] = float_to_half(std::isfinite(r) && r > 0.f ? r : 0.f);
+            rgba[i * 4 + 1] = float_to_half(std::isfinite(g) && g > 0.f ? g : 0.f);
+            rgba[i * 4 + 2] = float_to_half(std::isfinite(b) && b > 0.f ? b : 0.f);
+            rgba[i * 4 + 3] = float_to_half(a);
         }
-        if (a > 1.f) a = 1.f;
-        float r = half_to_float(rgba[i * 4 + 0]) / a;
-        float g = half_to_float(rgba[i * 4 + 1]) / a;
-        float b = half_to_float(rgba[i * 4 + 2]) / a;
-        rgba[i * 4 + 0] = float_to_half(std::isfinite(r) && r > 0.f ? r : 0.f);
-        rgba[i * 4 + 1] = float_to_half(std::isfinite(g) && g > 0.f ? g : 0.f);
-        rgba[i * 4 + 2] = float_to_half(std::isfinite(b) && b > 0.f ? b : 0.f);
-        rgba[i * 4 + 3] = float_to_half(a);
-    }
+    });
 }
 
 void unpremultiply_u8(uint8_t* rgba, size_t pixels) {
-    for (size_t i = 0; i < pixels; i++) {
-        const unsigned a = rgba[i * 4 + 3];
-        if (a == 0) {
-            rgba[i * 4 + 0] = 0;
-            rgba[i * 4 + 1] = 0;
-            rgba[i * 4 + 2] = 0;
-            continue;
-        }
-        if (a == 255) continue;
-        for (int c = 0; c < 3; c++) {
-            const unsigned v = (static_cast<unsigned>(rgba[i * 4 + c]) * 255u + a / 2u) / a;
-            rgba[i * 4 + c] = static_cast<uint8_t>(v > 255u ? 255u : v);
-        }
-    }
-}
-
-void clamp_png_rgb(float& r, float& g, float& b) {
-    if (!std::isfinite(r) || r < 0.f) r = 0.f;
-    if (!std::isfinite(g) || g < 0.f) g = 0.f;
-    if (!std::isfinite(b) || b < 0.f) b = 0.f;
-}
-
-/**
- * Raw ICC profile (no JPEG APP2 wrapper) for pixels encoded with the sRGB curve
- * in [cg] primaries. Display P3 and BT.2020 stay in their own primaries.
- */
-std::vector<uint8_t> export_srgb_icc(uhdr_color_gamut_t cg) {
-    if (cg != UHDR_CG_BT_709 && cg != UHDR_CG_DISPLAY_P3 && cg != UHDR_CG_BT_2100) {
-        cg = UHDR_CG_BT_709;
-    }
-    auto icc = ultrahdr::IccHelper::writeIccProfile(UHDR_CT_SRGB, cg);
-    if (!icc || !icc->getData() || icc->getLength() <= ultrahdr::kICCIdentifierSize) return {};
-    const auto* bytes = static_cast<const uint8_t*>(icc->getData());
-    return std::vector<uint8_t>(bytes + ultrahdr::kICCIdentifierSize, bytes + icc->getLength());
-}
-
-std::vector<uint8_t> png_iccp_data(const std::vector<uint8_t>& profile) {
-    if (profile.empty()) return {};
-    z_stream strm{};
-    if (deflateInit(&strm, Z_BEST_SPEED) != Z_OK) return {};
-    std::vector<uint8_t> compressed(deflateBound(&strm, static_cast<uLong>(profile.size())));
-    strm.next_in = const_cast<Bytef*>(profile.data());
-    strm.avail_in = static_cast<uInt>(profile.size());
-    strm.next_out = compressed.data();
-    strm.avail_out = static_cast<uInt>(compressed.size());
-    const int zrc = deflate(&strm, Z_FINISH);
-    const size_t produced = compressed.size() - strm.avail_out;
-    deflateEnd(&strm);
-    if (zrc != Z_STREAM_END || produced == 0) return {};
-    const char keyword[] = "ICC Profile";
-    std::vector<uint8_t> data;
-    data.reserve(sizeof(keyword) + 1 + produced);
-    data.insert(data.end(), keyword, keyword + sizeof(keyword));
-    data.push_back(0);
-    data.insert(data.end(), compressed.begin(), compressed.begin() + static_cast<std::ptrdiff_t>(produced));
-    return data;
-}
-
-void be32(std::vector<uint8_t>& out, uint32_t v) {
-    out.push_back(static_cast<uint8_t>((v >> 24) & 0xff));
-    out.push_back(static_cast<uint8_t>((v >> 16) & 0xff));
-    out.push_back(static_cast<uint8_t>((v >> 8) & 0xff));
-    out.push_back(static_cast<uint8_t>(v & 0xff));
-}
-
-void png_chunk(std::vector<uint8_t>& out, const char type[4], const uint8_t* data, size_t n) {
-    be32(out, static_cast<uint32_t>(n));
-    const size_t start = out.size();
-    out.insert(out.end(), type, type + 4);
-    if (n > 0 && data) out.insert(out.end(), data, data + n);
-    const uLong crc = crc32(0L, out.data() + start, static_cast<uInt>(4 + n));
-    be32(out, static_cast<uint32_t>(crc));
-}
-
-int encode_png_file(unsigned w, unsigned h, int bit_depth, const std::vector<uint8_t>& raw,
-                    const char* out_path, const std::vector<uint8_t>& icc) {
-    const size_t row_bytes = static_cast<size_t>(w) * 4u * (bit_depth == 16 ? 2u : 1u) + 1u;
-    if (raw.size() != row_bytes * h) return -46;
-    z_stream strm{};
-    if (deflateInit(&strm, Z_BEST_SPEED) != Z_OK) return -47;
-    std::vector<uint8_t> idat;
-    idat.resize(deflateBound(&strm, static_cast<uLong>(raw.size())));
-    strm.next_in = const_cast<Bytef*>(raw.data());
-    strm.avail_in = static_cast<uInt>(raw.size());
-    strm.next_out = idat.data();
-    strm.avail_out = static_cast<uInt>(idat.size());
-    const int zrc = deflate(&strm, Z_FINISH);
-    const size_t produced = idat.size() - strm.avail_out;
-    deflateEnd(&strm);
-    if (zrc != Z_STREAM_END) return -48;
-    idat.resize(produced);
-
-    std::vector<uint8_t> file;
-    file.reserve(8 + 12 + 13 + 12 + idat.size() + 12);
-    const uint8_t sig[8] = {137, 80, 78, 71, 13, 10, 26, 10};
-    file.insert(file.end(), sig, sig + 8);
-    uint8_t ihdr[13];
-    ihdr[0] = static_cast<uint8_t>((w >> 24) & 0xff);
-    ihdr[1] = static_cast<uint8_t>((w >> 16) & 0xff);
-    ihdr[2] = static_cast<uint8_t>((w >> 8) & 0xff);
-    ihdr[3] = static_cast<uint8_t>(w & 0xff);
-    ihdr[4] = static_cast<uint8_t>((h >> 24) & 0xff);
-    ihdr[5] = static_cast<uint8_t>((h >> 16) & 0xff);
-    ihdr[6] = static_cast<uint8_t>((h >> 8) & 0xff);
-    ihdr[7] = static_cast<uint8_t>(h & 0xff);
-    ihdr[8] = static_cast<uint8_t>(bit_depth);
-    ihdr[9] = 6;  // RGBA
-    ihdr[10] = 0;
-    ihdr[11] = 0;
-    ihdr[12] = 0;
-    png_chunk(file, "IHDR", ihdr, 13);
-    const std::vector<uint8_t> iccp = png_iccp_data(icc);
-    if (!icc.empty() && iccp.empty()) return -45;
-    if (!iccp.empty()) png_chunk(file, "iCCP", iccp.data(), iccp.size());
-    png_chunk(file, "IDAT", idat.data(), idat.size());
-    png_chunk(file, "IEND", nullptr, 0);
-    if (!write_file(out_path, file.data(), file.size())) return -49;
-    return 0;
-}
-
-void put_be16(uint8_t* dst, unsigned v) {
-    dst[0] = static_cast<uint8_t>((v >> 8) & 0xff);
-    dst[1] = static_cast<uint8_t>(v & 0xff);
-}
-
-int encode_png_from_f16(unsigned w, unsigned h, const uint16_t* rgba, uhdr_color_gamut_t cg,
-                        bool sixteen, const char* out_path) {
-    const size_t pixels = static_cast<size_t>(w) * h;
-    const size_t sample = sixteen ? 2u : 1u;
-    std::vector<uint8_t> raw((static_cast<size_t>(w) * 4u * sample + 1u) * h);
-    size_t o = 0;
-    for (unsigned y = 0; y < h; y++) {
-        raw[o++] = 0;  // filter None
-        for (unsigned x = 0; x < w; x++) {
-            const size_t i = (static_cast<size_t>(y) * w + x) * 4;
-            float r = half_to_float(rgba[i + 0]);
-            float g = half_to_float(rgba[i + 1]);
-            float b = half_to_float(rgba[i + 2]);
-            float a = half_to_float(rgba[i + 3]);
-            clamp_png_rgb(r, g, b);
-            if (!std::isfinite(a) || a < 0.f) a = 0.f;
-            if (a > 1.f) a = 1.f;
-            if (sixteen) {
-                put_be16(raw.data() + o, static_cast<unsigned>(srgb_oetf(r) * 65535.f + 0.5f));
-                put_be16(raw.data() + o + 2, static_cast<unsigned>(srgb_oetf(g) * 65535.f + 0.5f));
-                put_be16(raw.data() + o + 4, static_cast<unsigned>(srgb_oetf(b) * 65535.f + 0.5f));
-                put_be16(raw.data() + o + 6, static_cast<unsigned>(a * 65535.f + 0.5f));
-                o += 8;
-            } else {
-                raw[o++] = linear_to_srgb_u8(r);
-                raw[o++] = linear_to_srgb_u8(g);
-                raw[o++] = linear_to_srgb_u8(b);
-                raw[o++] = static_cast<uint8_t>(a * 255.f + 0.5f);
+    hdr_parallel_pixels(pixels, hdr_pixel_jobs(pixels), [&](size_t begin, size_t end, unsigned) {
+        for (size_t i = begin; i < end; i++) {
+            const unsigned a = rgba[i * 4 + 3];
+            if (a == 0) {
+                rgba[i * 4 + 0] = 0;
+                rgba[i * 4 + 1] = 0;
+                rgba[i * 4 + 2] = 0;
+                continue;
+            }
+            if (a == 255) continue;
+            for (int c = 0; c < 3; c++) {
+                const unsigned v = (static_cast<unsigned>(rgba[i * 4 + c]) * 255u + a / 2u) / a;
+                rgba[i * 4 + c] = static_cast<uint8_t>(v > 255u ? 255u : v);
             }
         }
-    }
-    const std::vector<uint8_t> icc = export_srgb_icc(cg);
-    if (icc.empty()) return -45;
-    return encode_png_file(w, h, sixteen ? 16 : 8, raw, out_path, icc);
-}
-
-int encode_png_from_u8(unsigned w, unsigned h, const uint8_t* rgba, bool sixteen,
-                       const char* out_path, uhdr_color_gamut_t cg) {
-    const size_t sample = sixteen ? 2u : 1u;
-    std::vector<uint8_t> raw((static_cast<size_t>(w) * 4u * sample + 1u) * h);
-    size_t o = 0;
-    for (unsigned y = 0; y < h; y++) {
-        raw[o++] = 0;
-        for (unsigned x = 0; x < w; x++) {
-            const size_t i = (static_cast<size_t>(y) * w + x) * 4;
-            if (sixteen) {
-                for (int c = 0; c < 4; c++) {
-                    const unsigned v = static_cast<unsigned>(rgba[i + c]) * 257u;
-                    put_be16(raw.data() + o, v);
-                    o += 2;
-                }
-            } else {
-                raw[o++] = rgba[i + 0];
-                raw[o++] = rgba[i + 1];
-                raw[o++] = rgba[i + 2];
-                raw[o++] = rgba[i + 3];
-            }
-        }
-    }
-    const std::vector<uint8_t> icc = export_srgb_icc(cg);
-    if (icc.empty()) return -45;
-    return encode_png_file(w, h, sixteen ? 16 : 8, raw, out_path, icc);
+    });
 }
 
 int encode_srgb_jpeg_u8(unsigned w, unsigned h, const uint8_t* rgba, const char* out_path,
-                        uhdr_color_gamut_t cg) {
-    if (!rgba || !out_path || w == 0 || h == 0) return -40;
-    const size_t pixels = static_cast<size_t>(w) * h;
-    std::vector<uint8_t> rgb(pixels * 3);
-    for (size_t i = 0; i < pixels; i++) {
-        rgb[i * 3 + 0] = rgba[i * 4 + 0];
-        rgb[i * 3 + 1] = rgba[i * 4 + 1];
-        rgb[i * 3 + 2] = rgba[i * 4 + 2];
-    }
-    FILE* fp = fopen(out_path, "wb");
-    if (!fp) return -41;
+                        uhdr_color_gamut_t cg, int quality, JpegMemory* memory) {
+    if (!rgba || (!out_path && !memory) || w == 0 || h == 0) return -40;
+    FILE* fp = memory ? nullptr : fopen(out_path, "wb");
+    if (!memory && !fp) return -41;
     jpeg_compress_struct cinfo{};
     JpegErr jerr{};
     cinfo.err = jpeg_std_error(&jerr.pub);
     jerr.pub.error_exit = jpeg_err_exit;
     if (setjmp(jerr.jump)) {
         jpeg_destroy_compress(&cinfo);
-        fclose(fp);
+        if (fp) fclose(fp);
         return -42;
     }
     jpeg_create_compress(&cinfo);
-    jpeg_stdio_dest(&cinfo, fp);
+    if (memory) jpeg_mem_dest(&cinfo, &memory->data, &memory->size);
+    else jpeg_stdio_dest(&cinfo, fp);
     cinfo.image_width = w;
     cinfo.image_height = h;
-    cinfo.input_components = 3;
-    cinfo.in_color_space = JCS_RGB;
+    cinfo.input_components = 4;
+    cinfo.in_color_space = JCS_EXT_RGBA;
     jpeg_set_defaults(&cinfo);
-    jpeg_set_quality(&cinfo, kJpegQualityBaseline, TRUE);
+    jpeg_set_quality(&cinfo, export_jpeg_quality(quality, kJpegQualityBaseline), TRUE);
+    cinfo.optimize_coding = quality >= 0 ? TRUE : FALSE;
     cinfo.comp_info[0].h_samp_factor = 1;
     cinfo.comp_info[0].v_samp_factor = 1;
     cinfo.comp_info[1].h_samp_factor = 1;
@@ -1669,23 +1569,23 @@ int encode_srgb_jpeg_u8(unsigned w, unsigned h, const uint8_t* rgba, const char*
     auto icc = ultrahdr::IccHelper::writeIccProfile(UHDR_CT_SRGB, cg);
     if (!icc || !icc->getData() || icc->getLength() == 0) {
         jpeg_destroy_compress(&cinfo);
-        fclose(fp);
+        if (fp) fclose(fp);
         return -43;
     }
     const auto len = static_cast<unsigned int>(icc->getLength());
     if (len > 65533u) {
         jpeg_destroy_compress(&cinfo);
-        fclose(fp);
+        if (fp) fclose(fp);
         return -44;
     }
     jpeg_write_marker(&cinfo, JPEG_APP0 + 2, static_cast<const JOCTET*>(icc->getData()), len);
     while (cinfo.next_scanline < cinfo.image_height) {
-        JSAMPROW row = rgb.data() + static_cast<size_t>(cinfo.next_scanline) * w * 3;
+        JSAMPROW row = const_cast<uint8_t*>(rgba) + static_cast<size_t>(cinfo.next_scanline) * w * 4;
         jpeg_write_scanlines(&cinfo, &row, 1);
     }
     jpeg_finish_compress(&cinfo);
     jpeg_destroy_compress(&cinfo);
-    fclose(fp);
+    if (fp) fclose(fp);
     return 0;
 }
 
@@ -1693,46 +1593,60 @@ int encode_srgb_jpeg_u8(unsigned w, unsigned h, const uint8_t* rgba, const char*
 
 /**
  * Encode a reader bitmap or a full-res direct pack.
- * mode: 0 baseline JPEG, 1 Ultra HDR JPEG (force), 2 PNG, 3 16-bit PNG.
- * 8-bit samples are already encoded. F16 samples are linear. SDR JPEG and PNG
+ * mode: 0 baseline JPEG, 1 Ultra HDR JPEG (force), 2 SDR JXL, 3 HDR JXL.
+ * 8-bit samples are already encoded. F16 samples are linear. SDR JPEG
  * apply the sRGB curve and embed an ICC profile for the pixel primaries
- * (BT.709, Display P3, or BT.2020). PNG keeps those primaries.
+ * (BT.709, Display P3, or BT.2020). JXL keeps linear half precision and those primaries.
  * 8-bit JPEG (HDR) stays a baseline JPEG. There is no headroom to put in a gain map.
  */
 int encode_still_export(const uint8_t* src, size_t src_len, unsigned w, unsigned h, bool f16,
-                        int gamut, int mode, bool premultiplied, const char* out_path) {
-    if (!src || !out_path || w == 0 || h == 0) return -50;
+                        int gamut, int mode, bool premultiplied, const char* out_path, size_t sdr_offset = 0,
+                        int quality = -1) {
+    if (!src || !out_path || w == 0 || h == 0 || mode < 0 || mode > 3) return -50;
     const size_t pixels = static_cast<size_t>(w) * static_cast<size_t>(h);
     const size_t bpp = f16 ? 8u : 4u;
     if (pixels == 0 || pixels > 80000000u || src_len < pixels * bpp) return -51;
+    if (sdr_offset && (!f16 || sdr_offset != pixels * 8u || sdr_offset > src_len || pixels * 4u > src_len - sdr_offset)) return -51;
     const uhdr_color_gamut_t cg = export_gamut(gamut);
     if (f16) {
         std::vector<uint16_t> rgba(pixels * 4);
         memcpy(rgba.data(), src, pixels * 8);
         if (premultiplied) unpremultiply_f16(rgba.data(), pixels);
         if (mode == kExportJpegHdr) {
-            return encode_linear_rgba_f16_to_uhdr(w, h, rgba.data(), out_path, cg, 0.f, true);
+            return encode_linear_rgba_f16_to_uhdr(w, h, rgba.data(), out_path, cg, 0.f, true,
+                                                  sdr_offset ? src + sdr_offset : nullptr, quality);
         }
-        if (mode == kExportPng || mode == kExportPng16) {
-            return encode_png_from_f16(w, h, rgba.data(), cg, mode == kExportPng16, out_path);
+        if (mode == kExportJxl || mode == kExportJxlHdr) {
+            return encode_jxl_f16(w, h, rgba.data(), cg, mode == kExportJxlHdr, out_path, quality);
         }
-        return encode_baseline_sdr_jpeg(w, h, rgba.data(), out_path, cg);
+        return encode_baseline_sdr_jpeg(w, h, rgba.data(), out_path, cg, quality);
     }
     std::vector<uint8_t> rgba(pixels * 4);
     memcpy(rgba.data(), src, pixels * 4);
     if (premultiplied) unpremultiply_u8(rgba.data(), pixels);
-    if (mode == kExportPng || mode == kExportPng16) {
-        return encode_png_from_u8(w, h, rgba.data(), mode == kExportPng16, out_path, cg);
+    if (mode == kExportJxl || mode == kExportJxlHdr) {
+        std::vector<uint16_t> linear(pixels * 4);
+        std::array<uint16_t, 256> table{};
+        for (size_t c = 0; c < table.size(); ++c) table[c] = float_to_half(srgb_eotf(c / 255.f));
+        hdr_parallel_pixels(pixels, hdr_pixel_jobs(pixels), [&](size_t begin, size_t end, unsigned) {
+            for (size_t i = begin; i < end; ++i) {
+                for (unsigned c = 0; c < 3; ++c) linear[i * 4 + c] = table[rgba[i * 4 + c]];
+                linear[i * 4 + 3] = float_to_half(rgba[i * 4 + 3] / 255.f);
+            }
+        });
+        std::vector<uint8_t>().swap(rgba);
+        return encode_jxl_f16(w, h, linear.data(), cg, false, out_path, quality);
     }
-    return encode_srgb_jpeg_u8(w, h, rgba.data(), out_path, cg);
+    return encode_srgb_jpeg_u8(w, h, rgba.data(), out_path, cg, quality);
 }
 
 extern "C" JNIEXPORT jint JNICALL
 Java_com_hippo_ehviewer_jni_HdrConvertKt_encodeStillExport(JNIEnv* env, jclass, jbyteArray jPixels,
                                                            jint width, jint height, jboolean f16,
                                                            jint gamut, jint mode,
-                                                           jboolean premultiplied, jstring jOut) {
-    if (!jPixels || !jOut || width <= 0 || height <= 0) return -52;
+                                                           jboolean premultiplied, jstring jOut, jint sdr_offset,
+                                                           jint quality) {
+    if (!jPixels || !jOut || width <= 0 || height <= 0 || sdr_offset < 0 || quality < 0 || quality > 2) return -52;
     const jsize len = env->GetArrayLength(jPixels);
     if (len <= 0) return -53;
     jbyte* bytes = env->GetByteArrayElements(jPixels, nullptr);
@@ -1745,7 +1659,8 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_encodeStillExport(JNIEnv* env, jclass, 
     const int rc = encode_still_export(reinterpret_cast<const uint8_t*>(bytes),
                                        static_cast<size_t>(len), static_cast<unsigned>(width),
                                        static_cast<unsigned>(height), f16 == JNI_TRUE, gamut, mode,
-                                       premultiplied == JNI_TRUE, out_path);
+                                       premultiplied == JNI_TRUE, out_path, static_cast<size_t>(sdr_offset),
+                                       quality);
     env->ReleaseStringUTFChars(jOut, out_path);
     env->ReleaseByteArrayElements(jPixels, bytes, JNI_ABORT);
     return rc;

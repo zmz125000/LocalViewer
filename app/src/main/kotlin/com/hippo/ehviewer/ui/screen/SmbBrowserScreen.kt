@@ -20,7 +20,6 @@ import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyGridScope
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.LibraryBooks
 import androidx.compose.material.icons.filled.Explore
 import androidx.compose.material.icons.filled.History
@@ -2316,7 +2315,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                     colors = adaptiveTopAppBarColors(),
                     navigationIcon = {
                         IconButton(onClick = { onTopBarBack() }, shapes = IconButtonDefaults.shapes()) {
-                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null)
+                            FolderSelectNavIcon(folderSelect.selecting)
                         }
                     },
                     actions = {
@@ -2426,7 +2425,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                     val browseSortMode = BrowseSortMode.fromPref(browseSortModePref)
                     val browseSortAscending by Settings.browseSortAscending.collectAsState()
                     val sections = filteredEntries.toRemoteBrowseSections(contentMode)
-                    // Folder listing follows the folder-view Name/Date setting.
+                    // Folder listing follows the folder-view Name/Date/Size setting.
                     val dirsRaw = sections.directories
                         .filterIsInstance<BrowseEntryRemote.Directory>()
                         .sortedForBrowseFolderUi(
@@ -2434,6 +2433,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                             browseSortAscending,
                             nameOf = { it.name },
                             dateOf = { it.lastModifiedMs },
+                            sizeOf = { it.size },
                         )
                     val dirs = if (favoritesOnTop) {
                         val (fav, rest) = dirsRaw.partition { isDirFavorite(it.relativeName) }
@@ -2446,6 +2446,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                         browseSortAscending,
                         nameOf = { it.name },
                         dateOf = { it.lastModifiedMs },
+                        sizeOf = { it.size },
                     )
                     val videos = sections.videos
                         .filterIsInstance<BrowseEntryRemote.VideoFile>()
@@ -2454,12 +2455,14 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                             browseSortAscending,
                             nameOf = { it.name },
                             dateOf = { it.lastModifiedMs },
+                            sizeOf = { it.size },
                         )
                     val documents = sections.documents.sortedForBrowseFolderUi(
                         browseSortMode,
                         browseSortAscending,
                         nameOf = { it.name },
                         dateOf = { it.lastModifiedMs },
+                        sizeOf = { it.size },
                     )
                     val files = sections.files
                         .filterIsInstance<BrowseEntryRemote.RegularFile>()
@@ -2468,6 +2471,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                             browseSortAscending,
                             nameOf = { it.name },
                             dateOf = { it.lastModifiedMs },
+                            sizeOf = { it.size },
                         )
                     // In-memory only; resets when dirKey changes. No prefs / no ripple on header.
                     val animateItems by Settings.animateItems.collectAsState()

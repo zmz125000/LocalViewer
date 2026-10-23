@@ -95,6 +95,7 @@ import com.hippo.ehviewer.library.isMobiContainerFileName
 import com.hippo.ehviewer.library.isPdfFileName
 import com.hippo.ehviewer.library.isPlatformVideoThumbFileName
 import com.hippo.ehviewer.library.isSolidArchiveFileName
+import com.hippo.ehviewer.library.isSvgFileName
 import com.hippo.ehviewer.library.isVideoFileName
 import com.hippo.ehviewer.library.isZipArchiveFileName
 import com.hippo.ehviewer.library.safFolderLabel
@@ -443,6 +444,15 @@ sealed class BrowseCover {
     data class DocumentPage(val cacheKey: String, val index: Int) : BrowseCover()
 }
 
+internal fun BrowseCover.isSvgThumbnail(): Boolean = when (this) {
+    is BrowseCover.Local -> isSvgFileName(ZipPaths.memberLeafName(path.toString()) ?: path.name)
+    is BrowseCover.Smb -> isSvgFileName(remoteRelativeFile)
+    is BrowseCover.WebDav -> isSvgFileName(remoteRelativeFile)
+    is BrowseCover.SmbZipMember -> isSvgFileName(memberRel)
+    is BrowseCover.WebDavZipMember -> isSvgFileName(memberRel)
+    else -> false
+}
+
 /**
  * Folder thumb: loose image, platform video frame, or archive/PDF first page.
  * Zip-member videos and blocked containers (avi, wmv, …) are not covers.
@@ -450,6 +460,7 @@ sealed class BrowseCover {
 fun directoryBrowseCover(path: Path): BrowseCover? {
     val raw = path.toString()
     val leaf = ZipPaths.memberLeafName(raw) ?: path.name
+    if (isSvgFileName(leaf)) return null
     if (isVideoFileName(leaf)) {
         if (ZipPaths.isZipPath(raw) || !isPlatformVideoThumbFileName(leaf)) return null
         return BrowseCover.Local(path)
@@ -489,6 +500,20 @@ fun BrowseCover.folderVideoThumbSource(knownSizeBytes: Long = 0L): VideoThumbnai
         }
     }
     else -> null
+}
+
+/**
+ * Folder-thumb paint cover. Listing may still store a video path; when
+ * [Settings.videoFolderCover] is off, treat that cover as absent so
+ * [BrowseVideoThumbnail] / [BrowseCoverThumb] effects do not start.
+ */
+@Composable
+fun BrowseCover?.folderThumbDisplayCover(): BrowseCover? {
+    val videoFolderCover by Settings.videoFolderCover.collectAsState()
+    val cover = this ?: return null
+    return remember(cover, videoFolderCover) {
+        if (!videoFolderCover && cover.folderVideoThumbSource() != null) null else cover
+    }
 }
 
 /** Stable identity for [ReaderPageThumb] (reader photo-grid thumbs written after decode). */
@@ -691,7 +716,8 @@ fun BrowseDirectoryRow(
         // Same 56dp leading slot as [BrowseFolderGalleryRow]. Thumbs off: folder icon only,
         // so [BrowseCoverThumb]'s fetch effect is not started.
         leadingContent = {
-            val videoSource = if (showFolderThumb) cover?.folderVideoThumbSource() else null
+            val displayCover = cover.folderThumbDisplayCover()
+            val videoSource = if (showFolderThumb) displayCover?.folderVideoThumbSource() else null
             if (videoSource != null) {
                 BrowseVideoThumbnail(
                     source = videoSource,
@@ -702,9 +728,9 @@ fun BrowseDirectoryRow(
                     allowRemoteFetch = allowRemoteFetch,
                     decodeSizePx = CoverThumb.listDecodePx(),
                 )
-            } else if (showFolderThumb && cover != null) {
+            } else if (showFolderThumb && displayCover != null) {
                 BrowseCoverThumb(
-                    cover = cover,
+                    cover = displayCover,
                     decodeSizePx = CoverThumb.listDecodePx(),
                     retryKey = thumbRetryKey,
                     allowRemoteFetch = allowRemoteFetch,
@@ -986,8 +1012,9 @@ fun BrowseDirectoryGridItem(
     val name = name.safFolderLabel()
     val namePadH = GalleryGridDefaults.namePaddingH()
     val namePadBottom = GalleryGridDefaults.namePaddingBottom()
+    val displayCover = cover.folderThumbDisplayCover()
     // Style is per-item: only folders with a real cover use the gallery-thumb layout.
-    val useThumbStyle = showFolderThumb && cover != null
+    val useThumbStyle = showFolderThumb && displayCover != null
     val tap = folderSelectTap(overflow)
     ElevatedCard(
         onClick = tap?.toggle ?: onClick,
@@ -1003,7 +1030,7 @@ fun BrowseDirectoryGridItem(
             if (useThumbStyle) {
                 // Same as Library [FavoriteSourceGridCell] gallery: cover fills cell; label on scrim.
                 Box(Modifier.fillMaxSize().clip(ShapeDefaults.Medium)) {
-                    val videoSource = cover.folderVideoThumbSource()
+                    val videoSource = displayCover.folderVideoThumbSource()
                     if (videoSource != null) {
                         BrowseVideoThumbnail(
                             source = videoSource,
@@ -1014,7 +1041,7 @@ fun BrowseDirectoryGridItem(
                         )
                     } else {
                         BrowseCoverThumb(
-                            cover = cover,
+                            cover = displayCover,
                             modifier = Modifier.fillMaxSize(),
                             placeholderSize = BrowseGridPlaceholderIconSize,
                             decodeSizePx = GalleryGridDefaults.gridDecodePx(),
@@ -1311,8 +1338,9 @@ internal fun BrowseVideoThumbnail(
     // Disk first (same as gallery covers). Extract only while the app is foreground
     // and (for network) when video thumbs are enabled. extractEnabled is the ON_STOP
     // cancel: leaving Recents must not keep starting local library MMR.
-    // A fast fling composes each row only briefly. Wait 300ms so those rows leave
-    // and cancel this effect before MediaCodec starts. A slow scroll still extracts.
+    // A tablet / small-grid screen can compose ~50 video cells at once. Cache hits
+    // stay unbounded; settle-delay + getOrCreate share [VideoThumbnail.withComposeExtractJob]
+    // so only a few cells hold an extract job (scroll-away cancels waiters).
     LaunchedEffect(source, downloadNetworkVideoThumbs, allowRemoteFetch, extractEnabled) {
         val src = source ?: run {
             thumbnail = null
@@ -1324,11 +1352,15 @@ internal fun BrowseVideoThumbnail(
             return@LaunchedEffect
         }
         if (!allowRemoteFetch || !extractEnabled) return@LaunchedEffect
-        kotlinx.coroutines.delay(400)
-        thumbnail = withIOContext { VideoThumbnail.getOrCreate(context, src)?.absolutePath }
-        if (thumbnail == null) {
-            kotlinx.coroutines.delay(400)
+        VideoThumbnail.withComposeExtractJob {
+            // Fling filter: short-lived cells cancel here before MediaCodec starts.
+            delay(400)
+            if (!VideoThumbnail.extractEnabled.value) return@withComposeExtractJob
             thumbnail = withIOContext { VideoThumbnail.getOrCreate(context, src)?.absolutePath }
+            if (thumbnail == null && VideoThumbnail.extractEnabled.value) {
+                delay(400)
+                thumbnail = withIOContext { VideoThumbnail.getOrCreate(context, src)?.absolutePath }
+            }
         }
     }
     val request = remember(source, thumbnail, sizePx) {
@@ -1486,6 +1518,8 @@ fun BrowseCoverThumb(
     /** Read-progress gid for this cover. 0 = derive from an archive cover, or skip. */
     progressGid: Long = 0L,
 ) {
+    // Also reject SVG covers from cached listings, before disk/network probes or Coil.
+    val cover = cover?.takeUnless { it.isSvgThumbnail() }
     val resolvedDecodePx = decodeSizePx ?: CoverThumb.listDecodePx()
     val context = LocalContext.current
     val downloadRemoteThumbs by Settings.downloadRemoteThumbs.collectAsState()
@@ -2075,10 +2109,12 @@ fun BrowseSectionHeader(
     val host = FolderSelectHost.current
     val count = section?.let { host?.count(it) }
     val label = if (count != null) "$text (${count.first}/${count.second})" else text
-    // Recent keeps its collapse gesture. Other folder sections select their rows,
-    // including when select mode is still off.
+    // Recent/Favorites keep their collapse gesture. Other folder sections select
+    // their rows, including when select mode is still off.
     val selectTarget = section?.takeIf {
-        it != BrowseFolderSection.Recent && host != null
+        it != BrowseFolderSection.Recent &&
+            it != BrowseFolderSection.Favorites &&
+            host != null
     }
     val longClick = onLongClick ?: selectTarget?.let { target ->
         { host?.selectSection(target) }
@@ -2167,6 +2203,7 @@ fun BrowseSearchSectionHeader(
 /** In-memory collapse keys for folder-view section headers (not disk-persisted). */
 enum class BrowseFolderSection {
     Recent,
+    Favorites,
     Search,
     Directories,
     Galleries,
@@ -2187,8 +2224,10 @@ fun browseRecentPreviewLimit(grid: Boolean, gridColumnCount: Int, listColumnCoun
 }
 
 /**
- * Two rows vs full Recent list for one folder. [defaultExpanded] (the lock) applies
- * only until the header is tapped here. Process memory, same as section collapse.
+ * Preview rows vs full strip for one folder (Recent/Favorites).
+ * [defaultExpanded] is the persisted lock: used until the header is tapped
+ * (in-session override in [BrowseSession]). Changing the lock updates the
+ * strip only while there is no override yet — it does not rewrite session state.
  */
 @Composable
 fun rememberRecentStripExpanded(
@@ -2210,8 +2249,9 @@ fun rememberRecentStripExpanded(
 }
 
 /**
- * Header gestures for Recent. A fully collapsed section opens on tap or long-press.
- * Otherwise tap switches the preview rows / full list, and long-press collapses the section.
+ * Header gestures for Recent/Favorites strips. A fully collapsed section opens on
+ * tap or long-press. Otherwise tap switches the preview rows / full list, and
+ * long-press collapses the section.
  */
 fun onRecentHeaderGesture(
     collapsed: Boolean,
