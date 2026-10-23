@@ -936,3 +936,184 @@ fun openHistoryRecord(context: Context, info: GalleryEntity, filterQuery: String
         }
     }
 }
+
+/** The Open folder overflow action, also used by Library Recent long presses. */
+context(_: DestinationsNavigator, _: CoroutineScope, _: SnackbarHostState, _: MainActivity)
+internal fun openFolderFromHistory(
+    context: Context,
+    info: GalleryEntity,
+    filterQuery: String = "",
+    fromLibrary: Boolean = false,
+) {
+    launch {
+        when (val target = LocalHistory.parse(info)) {
+            is LocalHistoryTarget.LocalBrowseFolder,
+            is LocalHistoryTarget.SmbBrowseFolder,
+            is LocalHistoryTarget.WebDavBrowseFolder,
+            -> openHistoryRecord(context, info, filterQuery)
+            is LocalHistoryTarget.LocalFolderGallery -> {
+                val root = withIOContext { LocalLibrary.loadRoot(target.rootId) }
+                val rootPath = root?.let { LocalLibrary.rootPath(it) }
+                if (root == null || rootPath == null) {
+                    snackbar(string(R.string.history_unavailable))
+                    return@launch
+                }
+                openLocalBrowseDir(
+                    rootId = root.id,
+                    rootDisplayName = root.displayName,
+                    rootPath = rootPath,
+                    relativePath = target.relativePath,
+                    preferMediaStore = root.prefersMediaStore,
+                    fromHistory = !fromLibrary,
+                    fromLibrary = fromLibrary,
+                )
+            }
+            is LocalHistoryTarget.SmbFolderGallery -> {
+                val source = withIOContext { SmbRepository.load(target.sourceId) }
+                if (source == null) {
+                    snackbar(string(R.string.history_unavailable))
+                    return@launch
+                }
+                openSmbBrowseDir(
+                    sourceId = source.id,
+                    remoteDir = target.remoteDir.trim('/'),
+                    fromHistory = !fromLibrary,
+                    fromLibrary = fromLibrary,
+                )
+            }
+            is LocalHistoryTarget.WebDavFolderGallery -> {
+                val source = withIOContext { WebDavRepository.load(target.sourceId) }
+                if (source == null) {
+                    snackbar(string(R.string.history_unavailable))
+                    return@launch
+                }
+                openWebDavBrowseDir(
+                    sourceId = source.id,
+                    remoteDir = target.remoteDir.trim('/'),
+                    fromHistory = !fromLibrary,
+                    fromLibrary = fromLibrary,
+                )
+            }
+            is LocalHistoryTarget.LocalArchive -> {
+                val parent = withIOContext { LocalLibrary.resolveArchiveBrowseParent(target.path) }
+                if (parent == null) {
+                    snackbar(string(R.string.history_unavailable))
+                    return@launch
+                }
+                val prefers = withIOContext {
+                    LocalLibrary.loadRoot(parent.rootId)?.prefersMediaStore
+                } ?: false
+                openLocalBrowseDir(
+                    rootId = parent.rootId,
+                    rootDisplayName = parent.rootDisplayName,
+                    rootPath = parent.rootPath,
+                    relativePath = parent.parentRelativePath,
+                    preferMediaStore = prefers,
+                    fromHistory = !fromLibrary,
+                    fromLibrary = fromLibrary,
+                )
+            }
+            is LocalHistoryTarget.LocalFile -> {
+                val parent = withIOContext { LocalLibrary.resolveArchiveBrowseParent(target.path) }
+                if (parent == null) {
+                    snackbar(string(R.string.history_unavailable))
+                    return@launch
+                }
+                val prefers = withIOContext {
+                    LocalLibrary.loadRoot(parent.rootId)?.prefersMediaStore
+                } ?: false
+                openLocalBrowseDir(
+                    rootId = parent.rootId,
+                    rootDisplayName = parent.rootDisplayName,
+                    rootPath = parent.rootPath,
+                    relativePath = parent.parentRelativePath,
+                    preferMediaStore = prefers,
+                    fromHistory = !fromLibrary,
+                    fromLibrary = fromLibrary,
+                )
+            }
+            is LocalHistoryTarget.SmbStreamArchive -> {
+                val source = withIOContext { SmbRepository.load(target.sourceId) }
+                if (source == null) {
+                    snackbar(string(R.string.history_unavailable))
+                    return@launch
+                }
+                openSmbBrowseDir(
+                    sourceId = source.id,
+                    remoteDir = parentRelativeOfFile(target.remotePath),
+                    fromHistory = !fromLibrary,
+                    fromLibrary = fromLibrary,
+                )
+            }
+            is LocalHistoryTarget.SmbFile -> {
+                val source = withIOContext { SmbRepository.load(target.sourceId) }
+                if (source == null) {
+                    snackbar(string(R.string.history_unavailable))
+                    return@launch
+                }
+                openSmbBrowseDir(
+                    sourceId = source.id,
+                    remoteDir = parentRelativeOfFile(target.remotePath),
+                    fromHistory = !fromLibrary,
+                    fromLibrary = fromLibrary,
+                )
+            }
+            is LocalHistoryTarget.WebDavStreamArchive -> {
+                val source = withIOContext { WebDavRepository.load(target.sourceId) }
+                if (source == null) {
+                    snackbar(string(R.string.history_unavailable))
+                    return@launch
+                }
+                openWebDavBrowseDir(
+                    sourceId = source.id,
+                    remoteDir = parentRelativeOfFile(target.remotePath),
+                    fromHistory = !fromLibrary,
+                    fromLibrary = fromLibrary,
+                )
+            }
+            is LocalHistoryTarget.WebDavFile -> {
+                val source = withIOContext { WebDavRepository.load(target.sourceId) }
+                if (source == null) {
+                    snackbar(string(R.string.history_unavailable))
+                    return@launch
+                }
+                openWebDavBrowseDir(
+                    sourceId = source.id,
+                    remoteDir = parentRelativeOfFile(target.remotePath),
+                    fromHistory = !fromLibrary,
+                    fromLibrary = fromLibrary,
+                )
+            }
+            is LocalHistoryTarget.LibraryGallery -> {
+                val local = withIOContext { LocalLibrary.loadGallery(target.galleryId) }
+                if (local == null) {
+                    snackbar(string(R.string.history_unavailable))
+                    return@launch
+                }
+                val root = withIOContext { LocalLibrary.loadRoot(local.rootId) }
+                val rootPath = root?.let { LocalLibrary.rootPath(it) }
+                if (root == null || rootPath == null) {
+                    snackbar(string(R.string.history_unavailable))
+                    return@launch
+                }
+                val rel = if (local.kind == LOCAL_GALLERY_KIND_ARCHIVE) {
+                    parentRelativeOfFile(local.relativePath)
+                } else {
+                    libraryBrowseRelative(local.relativePath)
+                }
+                openLocalBrowseDir(
+                    rootId = root.id,
+                    rootDisplayName = root.displayName,
+                    rootPath = rootPath,
+                    relativePath = rel,
+                    preferMediaStore = root.prefersMediaStore,
+                    fromHistory = !fromLibrary,
+                    fromLibrary = fromLibrary,
+                )
+            }
+            is LocalHistoryTarget.Orphan -> {
+                snackbar(string(R.string.browse_action_not_supported))
+            }
+        }
+    }
+}

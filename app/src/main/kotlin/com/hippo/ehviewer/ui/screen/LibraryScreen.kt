@@ -941,6 +941,7 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
                     HistorySquareGridItem(
                         info = info,
                         onClick = { openHistoryRecord(context, info, recentQuery) },
+                        onLongClick = { openFolderFromHistory(context, info, recentQuery, fromLibrary = true) },
                         showPages = showPages,
                         showProgress = showProgress,
                         modifier = itemMod,
@@ -949,6 +950,7 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
                     HistoryListItem(
                         info = info,
                         onClick = { openHistoryRecord(context, info, recentQuery) },
+                        onLongClick = { openFolderFromHistory(context, info, recentQuery, fromLibrary = true) },
                         showPages = showPages,
                         showProgress = showProgress,
                         modifier = itemMod.fillMaxWidth(),
