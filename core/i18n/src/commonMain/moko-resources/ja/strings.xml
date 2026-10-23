@@ -123,6 +123,10 @@
     <string name="settings_open_html_with_browser_summary">オン：HTML をタップするとフォルダをローカル HTTP で公開し、標準ブラウザで開きます。オフ：通常のファイルとして開きます。</string>
     <string name="settings_open_html_in_incognito">シークレットで開く</string>
     <string name="settings_open_html_in_incognito_summary">オン：HTML をタップすると Chrome のシークレットタブで開きます。オフ：標準ブラウザ。</string>
+    <string name="image_conversion_quality">画像変換の画質</string>
+    <string name="image_conversion_quality_lossless">可逆圧縮</string>
+    <string name="image_conversion_quality_high">高</string>
+    <string name="image_conversion_quality_low">低</string>
     <string name="settings_use_media3_player_for_library">ライブラリは Media3 プレーヤー</string>
     <string name="settings_use_media3_player_for_library_summary">「Media3 プレーヤーを使う」がオフのとき: ライブラリの全動画リスト、またはライブラリの動画フォルダから開いた動画はアプリ内プレーヤーを使います。</string>
     <string name="settings_use_media3_player_for_local_files">ローカルファイルは Media3 プレーヤー</string>
@@ -1069,6 +1073,4 @@
     <string name="blocked_image">ブロックされた画像</string>
     <string name="show_blocked_image">ブロックされた画像を表示</string>
     <!-- Tachiyomi Reader End-->
-    <string name="image_conversion_compression">画像変換の圧縮</string>
-    <string name="image_conversion_compression_summary">オン：ファイルを小さくします。オフ：高画質（JPEG XLは可逆圧縮）。</string>
 </resources>

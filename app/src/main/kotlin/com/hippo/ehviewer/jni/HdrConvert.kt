@@ -228,7 +228,8 @@ external fun extractRawPreviewFd(fd: Int, outPath: String, demosaicFallback: Boo
  * [premultiplied] un-associates alpha before encode. 8-bit JPEG (HDR) is baseline.
  * [sdrOffset] is 0, or the offset of a same-gamut camera-look SDR RGBA8 plane
  * appended to the F16 HDR pixels. Ultra HDR uses this plane as its SDR base.
- * [compression] selects smaller lossy JPEG/JXL exports; false keeps high quality.
+ * [quality]: 0 lossless (JPEG Q95), 1 high (JPEG Q90), 2 low (JPEG Q85).
+ * JPEG exports retain 4:4:4 chroma at every quality.
  *
  * @return 0 on success. armeabi-v7a returns -100.
  */
@@ -242,7 +243,7 @@ external fun encodeStillExport(
     premultiplied: Boolean,
     outPath: String,
     sdrOffset: Int,
-    compression: Boolean,
+    quality: Int,
 ): Int
 
 /** Header-only size probe. Kind: 0 JXL, 1 JXR, 2 RAW; packed width/height, or 0. */

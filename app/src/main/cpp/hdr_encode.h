@@ -104,8 +104,9 @@ inline float half_to_float(uint16_t h) {
  *   UHDR_CG_BT_2100    — BT.2020 primaries (PQ/HLG HDR stills)
  * [sdr_base], when supplied, is opaque sRGB-transfer RGBA8 in the same primaries
  * and dimensions. RAW uses its camera-look render before HDR highlight expansion.
- * [compression] lowers JPEG quality to 90/85 and downsizes the gain map by 4;
- * the primary image dimensions, gamut and HDR capacity remain unchanged.
+ * [quality]: -1 keeps non-export defaults; 0/1/2 use JPEG Q95/Q90/Q85.
+ * Exports use 4:4:4; low quality downsizes the gain map by 4.
+ * The primary image dimensions, gamut and HDR capacity remain unchanged.
  *
  * @return 0 on success.
  */
@@ -113,7 +114,7 @@ int encode_linear_rgba_f16_to_uhdr(unsigned w, unsigned h, const uint16_t* rgba,
                                    const char* out_path,
                                    uhdr_color_gamut_t cg = UHDR_CG_BT_709,
                                    float fixed_peak_nits = 0.f, bool force_hdr = false,
-                                   const uint8_t* sdr_base = nullptr, bool compression = false);
+                                   const uint8_t* sdr_base = nullptr, int quality = -1);
 
 /** Downscale packed RGBA F16 so long edge ≤ max_edge (box filter). max_edge 0 = no-op. */
 void scale_rgba_f16_max_edge(std::vector<uint16_t>& rgba, unsigned& w, unsigned& h,
@@ -272,4 +273,4 @@ jbyteArray pack_direct_to_jbyte_array(JNIEnv* env, std::vector<uint16_t>& rgba, 
 
 /** Straight-alpha linear F16 → 16-bit JPEG XL (SDR or absolute HDR). Mutates RGB. */
 int encode_jxl_f16(unsigned w, unsigned h, uint16_t* rgba, uhdr_color_gamut_t cg,
-                   bool hdr, const char* path, bool compression = false);
+                   bool hdr, const char* path, int quality = -1);

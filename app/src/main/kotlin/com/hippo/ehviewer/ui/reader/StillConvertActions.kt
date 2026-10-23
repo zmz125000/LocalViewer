@@ -16,7 +16,7 @@ import com.hippo.ehviewer.gallery.Page
 import com.hippo.ehviewer.gallery.ReaderSession
 import com.hippo.ehviewer.image.PathSource
 import com.hippo.ehviewer.image.hdr.LibDirectDecode
-import com.hippo.ehviewer.image.hdr.StillExportCompression
+import com.hippo.ehviewer.image.hdr.StillExportQuality
 import com.hippo.ehviewer.image.hdr.StillExportTarget
 import com.hippo.ehviewer.image.hdr.StillExportWork
 import com.hippo.ehviewer.image.hdr.mimeType
@@ -210,7 +210,7 @@ private suspend fun encodeStaged(leaf: String, target: StillExportTarget, stage:
 
 private suspend fun encodeStagedCaptured(leaf: String, target: StillExportTarget, stage: suspend () -> File): EncodedStill? = withIOContext {
     if (!target.available) return@withIOContext null
-    val compression = currentCoroutineContext()[StillExportCompression]?.enabled ?: StillExportCompression.current().enabled
+    val quality = currentCoroutineContext()[StillExportQuality]?.value ?: StillExportQuality.current().value
     val source = stage()
     try {
         StillExportWork.withSource(source, leaf) {
@@ -219,7 +219,7 @@ private suspend fun encodeStagedCaptured(leaf: String, target: StillExportTarget
                 val out = File.createTempFile("still-out", null, appCtx.cacheDir)
                 var success = false
                 try {
-                    success = pixels.writeResolved(resolved, out, compression) && out.length() > 0L
+                    success = pixels.writeResolved(resolved, out, quality) && out.length() > 0L
                     if (success) EncodedStill(out, resolved) else null
                 } finally {
                     if (!success) out.delete()
