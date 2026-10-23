@@ -204,6 +204,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
     shortcutEpoch: Long = 0L,
     navigator: DestinationsNavigator,
 ) = Screen(navigator) {
+    val folderExitHistory = LocalFolderExitHistory.current
     DrawerHandle(false)
     val context = LocalContext.current
     var source by remember { mutableStateOf<WebDavSourceEntity?>(null) }
@@ -831,6 +832,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
 
     /** Same jump as the Back-to Browse/History/Library FAB. */
     fun jumpBackToOrigin() {
+        folderExitHistory.record()
         when {
             fromHistory -> {
                 if (!navigator.popBackStack(HistoryScreenDestination, inclusive = false)) {
@@ -992,6 +994,10 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
             title = title,
             thumbKey = folderThumb,
         )
+    }
+
+    BindFolderExitHistory {
+        source?.id?.let { recordListedFolderHistory(it) }
     }
 
     /**

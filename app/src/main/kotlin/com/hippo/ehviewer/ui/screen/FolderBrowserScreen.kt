@@ -207,6 +207,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
     shortcutEpoch: Long = 0L,
 ) = Screen(navigator) {
     val context = LocalContext.current
+    val folderExitHistory = LocalFolderExitHistory.current
     val roots by LocalLibrary.rootsFlow().collectAsState(initial = emptyList())
     // Session-scoped stack survives reader navigation (unlike remember {}).
     // When opened from Browse with a pre-set stack, start inside that root (no root picker).
@@ -1202,6 +1203,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
 
     /** Same jump as the Back-to Browse/History/Library FAB. */
     fun jumpBackToOrigin() {
+        folderExitHistory.record()
         when {
             fromHistory -> {
                 if (!navigator.popBackStack(HistoryScreenDestination, inclusive = false)) {
@@ -1265,6 +1267,8 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
             thumbKey = folderThumb,
         )
     }
+
+    BindFolderExitHistory { recordListedFolderHistory() }
 
     /**
      * History path link for the folder currently listed (parent of the opened item).
