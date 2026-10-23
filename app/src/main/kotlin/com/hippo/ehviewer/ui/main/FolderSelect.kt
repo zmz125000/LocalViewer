@@ -73,6 +73,7 @@ import com.hippo.ehviewer.asMutableState
 import com.hippo.ehviewer.image.hdr.RawExportControls
 import com.hippo.ehviewer.image.hdr.StillExportQuality
 import com.hippo.ehviewer.image.hdr.StillExportTarget
+import com.hippo.ehviewer.image.hdr.supportsSource
 import com.hippo.ehviewer.library.ExplorerWindows
 import com.hippo.ehviewer.provider.StreamKeepAlivePolicy
 import com.hippo.ehviewer.ui.LocalSnackBarHostState
@@ -1471,6 +1472,7 @@ private fun SelectionOverflowControl(
         ) {
             if (convertMenu) {
                 ConvertTargetItems(
+                    sourceNames = picks.filter { it.convertStill != null }.map { it.title },
                     onBack = { convertMenu = false },
                     onTarget = { target ->
                         menu = false
@@ -1582,6 +1584,7 @@ private fun SelectionOverflowControl(
 
 @Composable
 private fun ConvertTargetItems(
+    sourceNames: List<String>,
     onBack: () -> Unit,
     onTarget: (StillExportTarget) -> Unit,
 ) {
@@ -1599,7 +1602,7 @@ private fun ConvertTargetItems(
         StillExportTarget.JxlHdr to R.string.convert_jxl_hdr,
         StillExportTarget.JxlHdrBoost to R.string.convert_jxl_hdr_boost,
         StillExportTarget.JxlHdrCustom to R.string.convert_jxl_hdr_custom,
-    ).filter { (target, _) -> target.available }.forEach { (target, label) ->
+    ).filter { (target, _) -> target.available && sourceNames.any { target.supportsSource(it) } }.forEach { (target, label) ->
         DropdownMenuItem(
             text = { Text(stringResource(label)) },
             onClick = { onTarget(target) },

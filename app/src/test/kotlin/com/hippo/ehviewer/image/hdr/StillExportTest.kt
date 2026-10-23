@@ -8,6 +8,32 @@ import org.junit.Test
 
 class StillExportTest {
     @Test
+    fun boostAndCustomAreOnlyOfferedForRawSources() {
+        val rawOnly = listOf(
+            StillExportTarget.JpegHdrBoost,
+            StillExportTarget.JpegHdrCustom,
+            StillExportTarget.JxlHdrBoost,
+            StillExportTarget.JxlHdrCustom,
+        )
+        for (target in rawOnly) {
+            assertTrue(target.supportsSource("mediastore:/Pictures/photo.DNG"))
+            assertTrue(target.supportsSource("remote/photo.cr3"))
+            assertTrue(target.supportsSource("photo.NEF"))
+            assertFalse(target.supportsSource("photo.jxl"))
+            assertFalse(target.supportsSource("photo.jxr"))
+            assertFalse(target.supportsSource(null))
+        }
+        for (target in StillExportTarget.entries - rawOnly.toSet()) {
+            assertTrue(target.supportsSource("photo.jxl"))
+            assertTrue(target.supportsSource("photo.jxr"))
+            assertTrue(target.supportsSource("photo.dng"))
+        }
+        val mixedSelection = listOf("photo.jxl", "photo.dng")
+        assertTrue(mixedSelection.any { StillExportTarget.JpegHdrCustom.supportsSource(it) })
+        assertFalse(listOf("photo.jxl", "photo.jxr").any { StillExportTarget.JpegHdrCustom.supportsSource(it) })
+    }
+
+    @Test
     fun autoFollowsHdrThenFp16ThenEightBit() {
         assertEquals(StillExportTarget.JpegHdr, resolveStillExportAuto(hdr = true, f16 = true))
         assertEquals(StillExportTarget.JpegHdr, resolveStillExportAuto(hdr = true, f16 = false))
