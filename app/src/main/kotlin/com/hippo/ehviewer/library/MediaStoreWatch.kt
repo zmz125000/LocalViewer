@@ -393,6 +393,7 @@ object MediaStoreWatch {
                 parentRelative = parent,
                 name = row.name,
                 lastModifiedMs = row.modifiedMs,
+                sizeBytes = row.sizeBytes,
                 video = video,
                 addedSec = row.addedSec,
             ),
@@ -441,6 +442,7 @@ object MediaStoreWatch {
                             parentRelative = row.parentRelative,
                             name = row.name,
                             lastModifiedMs = row.modifiedMs,
+                            sizeBytes = row.sizeBytes,
                             video = video,
                             addedSec = row.addedSec,
                         )
