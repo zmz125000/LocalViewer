@@ -44,6 +44,10 @@ internal fun StillExportTarget.rawBoosted(): Boolean = this == StillExportTarget
 
 internal fun StillExportTarget.rawCustom(): Boolean = this == StillExportTarget.JpegHdrCustom || this == StillExportTarget.JxlHdrCustom
 
+/** Boost and Custom only change the camera RAW decode pipeline. */
+fun StillExportTarget.supportsSource(sourceName: String?): Boolean = !rawBoosted() ||
+    isRawStillExtension(FileUtils.getExtensionFromFilename(sourceName))
+
 /** HDR wins over fp16. A gain-map frame is HDR even when the base is 8-bit. */
 fun resolveStillExportAuto(hdr: Boolean, f16: Boolean, jxlEncoder: Boolean = BuildConfig.JXL_ENCODER_ENABLED): StillExportTarget = when {
     hdr -> StillExportTarget.JpegHdr
