@@ -209,6 +209,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
     shortcutEpoch: Long = 0L,
     navigator: DestinationsNavigator,
 ) = Screen(navigator) {
+    val folderExitHistory = LocalFolderExitHistory.current
     DrawerHandle(false)
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -945,6 +946,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
 
     /** Same jump as the Back-to Browse/History/Library FAB. */
     fun jumpBackToOrigin() {
+        folderExitHistory.record()
         when {
             fromHistory -> {
                 if (!navigator.popBackStack(HistoryScreenDestination, inclusive = false)) {
@@ -1106,6 +1108,10 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
             title = title,
             thumbKey = folderThumb,
         )
+    }
+
+    BindFolderExitHistory {
+        source?.id?.let { recordListedFolderHistory(it) }
     }
 
     /**

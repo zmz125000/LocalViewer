@@ -157,7 +157,9 @@ import com.hippo.ehviewer.ui.navToReader
 import com.hippo.ehviewer.ui.reader.PendingReaderOpen
 import com.hippo.ehviewer.ui.screen.ExplorerPanelActions
 import com.hippo.ehviewer.ui.screen.ExplorerSidePanelHost
+import com.hippo.ehviewer.ui.screen.FolderExitHistoryActions
 import com.hippo.ehviewer.ui.screen.LocalExplorerPanel
+import com.hippo.ehviewer.ui.screen.LocalFolderExitHistory
 import com.hippo.ehviewer.ui.screen.openSelectionPlace
 import com.hippo.ehviewer.ui.screen.toggleHistorySection
 import com.hippo.ehviewer.ui.screen.toggleLibraryFlattenMode
@@ -503,6 +505,7 @@ class MainActivity : AppCompatActivity() {
             val sideSheetState = rememberDrawerState2(DrawerValue.Closed)
             val snackbarState = remember { SnackbarHostState() }
             val scope = rememberCoroutineScope()
+            val folderExitHistory = remember(scope) { FolderExitHistoryActions(scope) }
             val navController = rememberNavController()
             val navigator = navController.rememberDestinationsNavigator()
 
@@ -662,6 +665,7 @@ class MainActivity : AppCompatActivity() {
                 clearNavTabOnReturn(previous, currentDestination)
             }
             fun onMainNavClick(item: MainNavItem) {
+                if (isFolderNavDestination(currentDestination)) folderExitHistory.record()
                 val tab = navTabOf(item.direction)
                 if (isFolderNavDestination(currentDestination) && tab != ownerTabOf(fromHistoryArg, fromLibraryArg)) {
                     ExplorerWindows.activeId?.let { id ->
@@ -718,6 +722,7 @@ class MainActivity : AppCompatActivity() {
             UsbDriveHost(navigator, snackbarState)
             CompositionLocalProvider(
                 LocalExplorerPanel provides explorerPanel,
+                LocalFolderExitHistory provides folderExitHistory,
                 LocalNavDrawerState provides navDrawerState,
                 LocalSideSheetState provides sideSheetState,
                 LocalDrawerHandle provides drawerHandle,
