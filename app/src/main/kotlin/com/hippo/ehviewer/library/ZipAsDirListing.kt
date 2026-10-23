@@ -528,7 +528,7 @@ object ZipAsDirListing {
             relativeName = rel,
             pageCount = simple.imageNames.size,
             pageCountCapped = false,
-            coverFileName = simple.imageNames.first(),
+            coverFileName = simple.imageNames.firstOrNull { isThumbnailImageFileName(it) },
             imageFileNames = simple.imageNames,
             lastModifiedMs = archive.lastModifiedMs,
             size = archive.size,
@@ -1053,7 +1053,7 @@ object ZipAsDirListing {
         for (entry in cd.entries) {
             if (entry.isEncrypted || entry.isDirectory) continue
             val name = normalizeMember(entry.name) ?: continue
-            if (!isImageFileName(name.substringAfterLast('/'))) continue
+            if (!isThumbnailImageFileName(name.substringAfterLast('/'))) continue
             if (best == null || naturalCompare(name, best) < 0) best = name
         }
         return best
@@ -1182,7 +1182,7 @@ object ZipAsDirListing {
             if (prefixSlash.isNotEmpty() && !name.startsWith(prefixSlash)) continue
             val rel = if (prefixSlash.isEmpty()) name else name.removePrefix(prefixSlash)
             if (rel.isEmpty() || '/' in rel) continue
-            if (!isImageFileName(rel)) continue
+            if (!isThumbnailImageFileName(rel)) continue
             if (best == null || naturalCompare(rel, best) < 0) best = rel
         }
         return best?.let { if (prefix.isEmpty()) it else "$prefix/$it" }

@@ -95,6 +95,7 @@ import com.hippo.ehviewer.library.isMobiContainerFileName
 import com.hippo.ehviewer.library.isPdfFileName
 import com.hippo.ehviewer.library.isPlatformVideoThumbFileName
 import com.hippo.ehviewer.library.isSolidArchiveFileName
+import com.hippo.ehviewer.library.isSvgFileName
 import com.hippo.ehviewer.library.isVideoFileName
 import com.hippo.ehviewer.library.isZipArchiveFileName
 import com.hippo.ehviewer.library.safFolderLabel
@@ -443,6 +444,15 @@ sealed class BrowseCover {
     data class DocumentPage(val cacheKey: String, val index: Int) : BrowseCover()
 }
 
+internal fun BrowseCover.isSvgThumbnail(): Boolean = when (this) {
+    is BrowseCover.Local -> isSvgFileName(ZipPaths.memberLeafName(path.toString()) ?: path.name)
+    is BrowseCover.Smb -> isSvgFileName(remoteRelativeFile)
+    is BrowseCover.WebDav -> isSvgFileName(remoteRelativeFile)
+    is BrowseCover.SmbZipMember -> isSvgFileName(memberRel)
+    is BrowseCover.WebDavZipMember -> isSvgFileName(memberRel)
+    else -> false
+}
+
 /**
  * Folder thumb: loose image, platform video frame, or archive/PDF first page.
  * Zip-member videos and blocked containers (avi, wmv, …) are not covers.
@@ -450,6 +460,7 @@ sealed class BrowseCover {
 fun directoryBrowseCover(path: Path): BrowseCover? {
     val raw = path.toString()
     val leaf = ZipPaths.memberLeafName(raw) ?: path.name
+    if (isSvgFileName(leaf)) return null
     if (isVideoFileName(leaf)) {
         if (ZipPaths.isZipPath(raw) || !isPlatformVideoThumbFileName(leaf)) return null
         return BrowseCover.Local(path)
@@ -1502,6 +1513,8 @@ fun BrowseCoverThumb(
     /** Read-progress gid for this cover. 0 = derive from an archive cover, or skip. */
     progressGid: Long = 0L,
 ) {
+    // Also reject SVG covers from cached listings, before disk/network probes or Coil.
+    val cover = cover?.takeUnless { it.isSvgThumbnail() }
     val resolvedDecodePx = decodeSizePx ?: CoverThumb.listDecodePx()
     val context = LocalContext.current
     val downloadRemoteThumbs by Settings.downloadRemoteThumbs.collectAsState()

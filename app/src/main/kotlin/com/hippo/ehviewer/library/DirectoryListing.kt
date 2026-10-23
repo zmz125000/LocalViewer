@@ -1130,7 +1130,7 @@ fun replaceSlimDirectFilesFromLive(
             relativeName = "",
             pageCount = imageNames.size,
             pageCountCapped = false,
-            coverFileName = imageNames.first(),
+            coverFileName = imageNames.firstOrNull { isThumbnailImageFileName(it) },
             imageFileNames = imageNames,
         )
     } else {
@@ -1834,9 +1834,9 @@ fun classifyRemoteListingWithPeeks(
     archives.sortWith { a, b -> naturalCompare(a.name, b.name) }
     videos.sortWith { a, b -> naturalCompare(a.name, b.name) }
     regularFiles.sortWith { a, b -> naturalCompare(a.name, b.name) }
-    // Reader page list is natural-sorted here — cover must match page 0, not list order.
+    // Keep reader pages in natural order; choose the first thumbnail-capable image.
     imageNames.sortWith { a, b -> naturalCompare(a, b) }
-    if (imageNames.isNotEmpty()) coverFileName = imageNames.first()
+    if (imageNames.isNotEmpty()) coverFileName = imageNames.firstOrNull { isThumbnailImageFileName(it) }
 
     val result = ArrayList<BrowseEntryRemote>(
         dirs.size + leafGalleries.size + archives.size + videos.size + regularFiles.size + 1,
@@ -1882,7 +1882,7 @@ private fun imagesInPeekAsGallery(
         relativeName = relativeName,
         pageCount = images.size,
         pageCountCapped = false,
-        coverFileName = images.first(),
+        coverFileName = images.firstOrNull { isThumbnailImageFileName(it) },
         imageFileNames = images,
         lastModifiedMs = lastModifiedMs,
         size = size,
@@ -1895,7 +1895,7 @@ private fun imagesInPeekAsGallery(
 private fun firstImageNameInPeek(peek: List<RemoteChild>): String? {
     for (c in peek) {
         if (c.isDirectory || c.name.startsWith('.') || isProtectedSystemName(c.name)) continue
-        if (isImageFileName(c.name)) return c.name
+        if (isThumbnailImageFileName(c.name)) return c.name
     }
     return null
 }
@@ -2069,7 +2069,7 @@ private fun classifyRemoteChild(
         imageNames.sortWith { a, b -> naturalCompare(a, b) }
         RemoteChildKind.LeafGallery(
             pageCount = imageNames.size,
-            coverFileName = imageNames.first(),
+            coverFileName = imageNames.firstOrNull { isThumbnailImageFileName(it) },
             imageFileNames = imageNames,
             videoFileNames = videos,
             hasVideo = sawVideo,
