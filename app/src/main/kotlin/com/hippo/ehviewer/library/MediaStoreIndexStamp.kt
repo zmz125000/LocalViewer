@@ -29,8 +29,8 @@ data class MediaStoreIndexStamp(
         const val GENERATION_UNKNOWN = -1L
         private const val SEP = ':'
 
-        /** Images+video fingerprint. Old 5-field stamps fail [parse] so startup rescans. */
-        private const val VERSION = "2"
+        /** Rescan older indexes once to populate persisted image/video file sizes. */
+        private const val VERSION = "3"
 
         fun parse(encoded: String): Pair<Long, MediaStoreIndexStamp>? {
             val parts = encoded.split(SEP)

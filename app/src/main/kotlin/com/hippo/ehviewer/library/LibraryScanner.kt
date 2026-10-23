@@ -186,6 +186,7 @@ object LibraryScanner {
                 name = file.name,
                 path = dir / file.name,
                 mtime = file.lastModifiedMs,
+                size = file.size,
                 indexedImageFiles = indexedImageFiles,
                 out = out,
             )
@@ -234,6 +235,7 @@ object LibraryScanner {
                 name = file.name,
                 path = dir / file.name,
                 mtime = file.lastModifiedMs,
+                size = file.size,
                 indexedVideoFiles = indexedVideoFiles,
                 out = out,
             )
@@ -373,6 +375,7 @@ object LibraryScanner {
                     name = image.name,
                     path = image.path,
                     mtime = childMtime(image),
+                    size = image.size,
                     indexedImageFiles = indexedImageFiles,
                     out = out,
                 )
@@ -401,6 +404,7 @@ object LibraryScanner {
                     name = video.name,
                     path = video.path,
                     mtime = childMtime(video),
+                    size = video.size,
                     indexedVideoFiles = indexedVideoFiles,
                     out = out,
                 )
@@ -446,6 +450,7 @@ object LibraryScanner {
                 // Keep extension so zip/rar/pdf/epub are distinguishable from folder titles.
                 title = archive.name,
                 kind = LOCAL_GALLERY_KIND_ARCHIVE,
+                size = archive.size.coerceAtLeast(0L),
                 pageCount = countLocalArchivePages(archive.path, archive.size),
                 coverPath = null,
                 contentPath = contentPath,
@@ -560,12 +565,13 @@ object LibraryScanner {
         )
     }
 
-    private fun emitImageFile(
+    internal fun emitImageFile(
         rootId: Long,
         parentRel: String,
         name: String,
         path: Path,
         mtime: Long,
+        size: Long,
         indexedImageFiles: MutableSet<String>,
         out: MutableList<LocalGalleryEntity>,
     ) {
@@ -581,15 +587,17 @@ object LibraryScanner {
             coverPath = path.toString(),
             contentPath = path.toString(),
             mtime = mtime,
+            size = size.coerceAtLeast(0L),
         )
     }
 
-    private fun emitVideoFile(
+    internal fun emitVideoFile(
         rootId: Long,
         parentRel: String,
         name: String,
         path: Path,
         mtime: Long,
+        size: Long,
         indexedVideoFiles: MutableSet<String>,
         out: MutableList<LocalGalleryEntity>,
     ) {
@@ -605,6 +613,7 @@ object LibraryScanner {
             coverPath = path.toString(),
             contentPath = path.toString(),
             mtime = mtime,
+            size = size.coerceAtLeast(0L),
         )
     }
 

@@ -230,9 +230,14 @@ fun LocalGalleryListItem(
     val isVideoFile = gallery.kind == LOCAL_GALLERY_KIND_VIDEO_FILE
     val isImageFile = gallery.kind == LOCAL_GALLERY_KIND_IMAGE_FILE
     val isLooseFile = isArchive || isVideoFile || isImageFile
-    // Best-effort local size for archive / video-file / image-file rows.
-    val archiveSizeBytes = remember(gallery.contentPath, isLooseFile) {
+    // Indexed sizes also work for MediaStore/SAF paths without a per-file query.
+    // Keep the filesystem fallback for older archive rows not yet rescanned.
+    val fileSizeBytes = remember(gallery.contentPath, gallery.size, isLooseFile) {
         if (!isLooseFile) {
+            0L
+        } else if (gallery.size > 0L) {
+            gallery.size
+        } else if (!gallery.contentPath.startsWith('/')) {
             0L
         } else {
             runCatching {
@@ -249,7 +254,7 @@ fun LocalGalleryListItem(
             isVideoFile || isImageFile -> browseFileExtensionLabel(gallery.title)
             else -> "Folder"
         },
-        sizeBytes = archiveSizeBytes,
+        sizeBytes = fileSizeBytes,
         pageCount = pageCount,
         lastModifiedMs = gallery.mtime,
         readProgress = readProgress,

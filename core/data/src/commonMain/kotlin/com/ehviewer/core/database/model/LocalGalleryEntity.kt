@@ -64,4 +64,8 @@ data class LocalGalleryEntity(
 
     @ColumnInfo(name = "MTIME")
     val mtime: Long,
+
+    /** File bytes from the listing; 0 for folders or unknown size. */
+    @ColumnInfo(name = "SIZE", defaultValue = "0")
+    val size: Long = 0L,
 )
