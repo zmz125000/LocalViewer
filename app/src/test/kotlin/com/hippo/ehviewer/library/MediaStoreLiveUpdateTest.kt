@@ -83,7 +83,7 @@ class MediaStoreLiveUpdateTest {
     fun `sample clip and dotfile are skipped`() {
         assertNull(
             plan(
-                file = MediaStoreLiveFile("Pictures", "sample-clip.mp4", 1L, video = true),
+                file = MediaStoreLiveFile("Pictures", "sample-clip.mp4", 1L, sizeBytes = null, video = true),
                 folder = null,
                 existing = null,
             ),
@@ -122,6 +122,7 @@ class MediaStoreLiveUpdateTest {
         parentRelative = parent,
         name = name,
         lastModifiedMs = mtime,
+        sizeBytes = null,
         video = false,
     )
 
