@@ -2,6 +2,7 @@ package com.hippo.ehviewer.coil
 
 import com.hippo.ehviewer.image.hdr.classifyByExtension
 import com.hippo.ehviewer.image.hdr.isHdrConvertCandidateExtension
+import com.hippo.ehviewer.image.hdr.needsGeneratedPageThumb
 import com.hippo.ehviewer.image.hdr.needsUhdr
 import com.hippo.ehviewer.util.FileUtils
 import org.junit.Assert.assertEquals
@@ -10,6 +11,26 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class CoverPathFetcherTest {
+    @Test
+    fun libraryAndZipCoversUseTheReaderSelectedFormatPolicy() {
+        val formats = listOf("jxl", "jxr", "wdp", "hdp", "jp2", "j2k", "j2c", "jpc", "jpx", "avif")
+        for (ext in formats) {
+            val paths = listOf(
+                "mediastore:/Pictures/cover.$ext",
+                "content:/provider/tree/primary:Pictures/cover.$ext",
+                "zipfile:/sdcard/book.zip!pages/cover.$ext",
+            )
+            for (path in paths) {
+                val resolvedName = if (path.startsWith("zipfile:")) "extracted.bin" else "cover.$ext"
+                val hint = coverConvertHint(path, resolvedName)
+                assertTrue(path, needsGeneratedPageThumb(FileUtils.getExtensionFromFilename(hint)))
+            }
+        }
+        for (ext in listOf("jpg", "jpeg", "png", "webp", "gif", "heic", "heif", "dng", "nef")) {
+            assertFalse(ext, needsGeneratedPageThumb(ext))
+        }
+    }
+
     @Test
     fun zipAsDirLibStillsUseMemberLeafForConvert() {
         // CoverPathFetcher used to open the extracted member as-is; ImageDecoder

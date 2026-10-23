@@ -76,11 +76,16 @@ object ReaderPageThumb {
         }.onFailure { logcat("PageThumb", it) }.getOrNull()
     }
 
-    suspend fun ensureFromFile(identity: String, source: Path): Path? = withContext(Dispatchers.IO) {
+    suspend fun ensureFromFile(
+        identity: String,
+        source: Path,
+        fileNameHint: String = source.name,
+    ): Path? = withContext(Dispatchers.IO) {
         val destPath = dest(identity)
         OriginDiskCache.existingThumb(destPath)?.let { return@withContext it }
-        val src = File(source.toString())
-        if (!src.isFile || src.length() <= 0L) return@withContext null
+        // Local library files are content:/ or mediastore: paths. java.io.File
+        // does not see them; writeThumb reads through the content resolver,
+        // same as JXL/JXR covers.
         encodeSlots.withPermit {
             OriginDiskCache.existingThumb(destPath)?.let { return@withPermit it }
             val key = destPath.toString()
@@ -95,7 +100,7 @@ object ReaderPageThumb {
                         dest = destFile,
                         maxEdge = OriginDiskCache.THUMB_EDGE,
                         quality = OriginDiskCache.THUMB_QUALITY,
-                        fileNameHint = source.name,
+                        fileNameHint = fileNameHint,
                     )
                 }.onFailure { logcat("PageThumb", it) }.getOrDefault(false)
                 OriginDiskCache.existingThumb(destPath).takeIf { ok }

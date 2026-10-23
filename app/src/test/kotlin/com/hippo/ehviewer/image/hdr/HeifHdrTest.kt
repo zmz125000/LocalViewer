@@ -93,6 +93,10 @@ class HeifHdrTest {
         val route = classify(bytes, n, file.name)
         assertEquals(LibCodec.AvifPq, (route as StillRoute.Lib).codec)
         assertTrue(route.needsUhdr)
+        assertTrue(needsGeneratedPageThumb("avif"))
+        assertTrue(needsGeneratedPageThumb(".AVIF"))
+        assertFalse(needsGeneratedPageThumb("heic"))
+        assertFalse(needsGeneratedPageThumb("jpg"))
     }
 
     private fun sample(rel: String): File {
