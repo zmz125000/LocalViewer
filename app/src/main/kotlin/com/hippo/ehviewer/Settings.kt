@@ -763,11 +763,8 @@ object Settings : DataStorePreferences(null) {
      */
     val browseTaskParallel = boolPref("browse_task_parallel", false)
 
-    // Read the previous toggle only to select the initial quality for existing installs.
-    private val imageConversionCompression = boolPref("image_conversion_compression", true)
-
     /** 0 lossless (JPEG Q95), 1 high (Q90), 2 low (Q85). JPEG always uses 4:4:4. */
-    val imageConversionQuality = intPref("image_conversion_quality", if (imageConversionCompression.value) 1 else 0)
+    val imageConversionQuality = intPref("image_conversion_quality", 1)
 
     val hardwareBitmapThreshold = intPref("hardware_bitmap_threshold", 16384)
     val preloadThumbAggressively = boolPref("preload_thumb_aggressively", false)
