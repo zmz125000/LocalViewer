@@ -505,19 +505,22 @@ fun isUntrustedSlimLiveFileListing(
  *
  * [trustEmpty] is local listings. An empty result replaces the stored index. SMB and
  * WebDAV leave it false so a failed PROPFIND cannot wipe the cache.
+ * [trustMissingDirectories] also permits a local folder to become files-only:
+ * local refresh already verifies deleted folders before reaching the writer.
  */
 fun shouldKeepPreviousFolderIndex(
     previous: List<BrowseEntryRemote>,
     next: List<BrowseEntryRemote>,
     zipAsDir: Boolean = true,
     trustEmpty: Boolean = false,
+    trustMissingDirectories: Boolean = false,
 ): Boolean {
     if (previous.isEmpty()) return false
     if (next.isEmpty()) return !trustEmpty
     if (isShallowIncompleteListing(next) && !isShallowIncompleteListing(previous)) return true
     val prevDirs = indexKeepDirectoryNames(previous, zipAsDir)
     val nextDirs = indexKeepDirectoryNames(next, zipAsDir)
-    return prevDirs.isNotEmpty() && nextDirs.isEmpty()
+    return !trustMissingDirectories && prevDirs.isNotEmpty() && nextDirs.isEmpty()
 }
 
 /**

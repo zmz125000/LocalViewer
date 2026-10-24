@@ -46,7 +46,7 @@ sealed class StillRoute {
     /**
      * Non-platform codec → FP16 (or equivalent) + libultrahdr → Ultra HDR JPEG cache.
      */
-    data class Lib(val codec: LibCodec) : StillRoute()
+    data class Lib(val codec: LibCodec, val forceDirect: Boolean = false) : StillRoute()
 }
 
 enum class LibCodec {
@@ -274,9 +274,15 @@ fun classify(bytes: ByteArray, length: Int = bytes.size, fileNameHint: String? =
 
     val heifPrecision = if (isHeifFamily(bytes, n)) HeifPrecisionProbe.probe(bytes, n) else null
     if (heifPrecision?.animated == true) return StillRoute.Platform
-    // HEVC 4:2:2 / 4:4:4 still profiles can be unsupported by the platform
-    // even at 8 bits. Use the bundled decoder independently of HDR settings.
-    if (heifPrecision?.needsSoftware == true) return StillRoute.Lib(LibCodec.HevcHdr)
+    // HEVC 4:2:2 / 4:4:4 and large AV1 Level 6+ stills can be unsupported by
+    // the platform even at 8 bits. Keep the original and decode natively,
+    // independently of HDR settings and the optional JPEG-cache reader path.
+    if (heifPrecision?.needsSoftware == true) {
+        return StillRoute.Lib(
+            if (heifPrecision.avif) LibCodec.AvifPq else LibCodec.HevcHdr,
+            forceDirect = heifPrecision.avif,
+        )
+    }
 
     // Explicit primary-item PQ/HLG takes precedence over loose XMP markers.
     // Adobe XMP can include hdrgm:Version on an absolute-HDR AVIF with no gain

@@ -849,6 +849,35 @@ object WebDavClient {
         }.getOrNull()
     }
 
+    /** Deletion confirmation: auth, transport and unsupported-method errors are not absence. */
+    internal suspend fun pathIsMissing(
+        source: WebDavSourceEntity,
+        password: String,
+        relativePath: String,
+    ): Boolean = withIOContext {
+        try {
+            listSlots.withPermit {
+                val response = http(false).request(absoluteUrl(source, relativePath)) {
+                    method = PropFind
+                    timeout {
+                        connectTimeoutMillis = LIST_CONNECT_MS
+                        requestTimeoutMillis = LIST_REQUEST_MS
+                        socketTimeoutMillis = LIST_SOCKET_MS
+                    }
+                    header("Depth", "0")
+                    basicAuthHeader(source.username, password)?.let { header(HttpHeaders.Authorization, it) }
+                    contentType(ContentType.Application.Xml)
+                    setBody(PropfindBody)
+                }
+                response.status.value == 404 || response.status.value == 410
+            }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            false
+        }
+    }
+
     private fun headerLastModifiedMs(headers: io.ktor.http.Headers): Long? {
         val raw = headers[HttpHeaders.LastModified] ?: headers["Last-Modified"]
         return parseHttpDateMs(raw.orEmpty()).takeIf { it > 0L }

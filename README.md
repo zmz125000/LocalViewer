@@ -142,6 +142,18 @@ Build with Grok 4.5.
 <img alt="Get it on GitHub" src="https://github.com/zmz125000/LocalViewer-art/blob/master/get-it-on-github.svg" width="200px"/>
 </a>
 
+## HDR Image Conversion
+
+LocalViewer supports converting JXR, JXL and RAW formats to Ultra HDR JPEG, AVIF and JXL with multiple HDR transfer options (ISO 21496-1 gain map, Linear, PQ).
+
+| Target | Output depth | Transfer |
+|---|---|---|
+| JXL HDR | 16-bit float | Linear, with luminance metadata |
+| JXL HDR PQ | 16-bit integer | PQ |
+| JPEG HDR | 8-bit base + gain map | sRGB base, HDR reconstruction |
+| AVIF HDR | 10-bit; 12-bit at Lossless | sRGB base + ISO gain map |
+| AVIF HDR PQ | 10-bit; 12-bit at Lossless | PQ |
+
 # Screenshot
 
 ![LocalViewer screenshot main page](https://github.com/zmz125000/LocalViewer-art/blob/master/screenshots-01.webp)

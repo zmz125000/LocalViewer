@@ -1,9 +1,23 @@
 package com.hippo.ehviewer.image.hdr
 
 /** Primary-item precision. Auxiliary thumbnails/gain maps must not select the base decode path. */
-internal data class HeifPrecision(val avif: Boolean, val bitDepth: Int?, val transfer: Int? = null, val animated: Boolean = false, val chroma: Int? = null) {
+internal data class HeifPrecision(
+    val avif: Boolean,
+    val bitDepth: Int?,
+    val transfer: Int? = null,
+    val animated: Boolean = false,
+    val chroma: Int? = null,
+    /** AV1 seq_level_idx_0 from the primary item's av1C; 16 is Level 6.0. */
+    val av1Level: Int? = null,
+) {
     val highDepth: Boolean get() = !animated && (bitDepth == null || bitDepth > 8)
-    val needsSoftware: Boolean get() = !animated && !avif && chroma in 2..3
+    val needsSoftware: Boolean get() = !animated && if (avif) {
+        // Platform AVIF support can stop at Level 5.x even for 8-bit SDR.
+        // Bundled dav1d handles larger still frames without downscaling first.
+        av1Level != null && av1Level >= 16
+    } else {
+        chroma in 2..3
+    }
 }
 
 internal enum class HeifDecodePath { Coil, PlatformDeep, Native }
@@ -27,7 +41,7 @@ internal fun heifDecodePath(info: HeifPrecision, advancedColor: Boolean, hevcP01
 /** Reads only ftyp/meta boxes; compressed image data is never decoded. */
 internal object HeifPrecisionProbe {
     const val HEADER_BYTES = 256 * 1024
-    private data class Property(val depth: Int? = null, val transfer: Int? = null, val chroma: Int? = null)
+    private data class Property(val depth: Int? = null, val transfer: Int? = null, val chroma: Int? = null, val av1Level: Int? = null)
 
     fun probe(bytes: ByteArray, length: Int = bytes.size): HeifPrecision? = runCatching {
         val end = length.coerceIn(0, bytes.size)
@@ -100,6 +114,7 @@ internal object HeifPrecisionProbe {
                                             )
                                         }
                                         property == "av1C" && s + 3 <= propertyStop -> Property(
+                                            av1Level = u8(s + 1) and 31,
                                             depth = when {
                                                 u8(s + 2) and 0x40 == 0 -> 8
                                                 u8(s + 2) and 0x20 != 0 -> 12
@@ -151,6 +166,7 @@ internal object HeifPrecisionProbe {
                 attached.firstNotNullOfOrNull { it.transfer },
                 animated,
                 attached.firstNotNullOfOrNull { it.chroma },
+                attached.firstNotNullOfOrNull { it.av1Level },
             )
         }
     }.getOrNull()

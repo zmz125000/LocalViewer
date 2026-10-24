@@ -145,7 +145,7 @@ object VideoThumbnail {
     private const val MAX_CONCURRENT_EXTRACTIONS = 3
 
     /**
-     * How many Compose [LaunchedEffect] cells may run settle-delay + [getOrCreate] at once.
+     * How many Compose [LaunchedEffect] cells may run [getOrCreate] at once.
      * Decode/MMR is already capped at [MAX_CONCURRENT_EXTRACTIONS]; allow a small queue
      * ahead of it (×2) so a tablet grid does not stampede ~50 effects into IO/Binder.
      */
@@ -433,9 +433,10 @@ object VideoThumbnail {
     }
 
     /**
-     * Admit a browse/library Compose cell into settle-delay + [getOrCreate].
+     * Admit one browse/library Compose extraction attempt into [getOrCreate].
      * Disk cache hits should run outside this so a full grid of cached thumbs
-     * does not serialize. Scroll-away cancels the waiter and frees the permit.
+     * does not serialize. Publication also stays outside.
+     * Scroll-away cancels the waiter and frees the permit.
      */
     suspend fun <T> withComposeExtractJob(block: suspend () -> T): T = composeExtractSemaphore.withPermit { block() }
 

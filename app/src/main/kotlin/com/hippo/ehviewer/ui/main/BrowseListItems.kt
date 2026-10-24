@@ -1339,8 +1339,7 @@ internal fun BrowseVideoThumbnail(
     // and (for network) when video thumbs are enabled. extractEnabled is the ON_STOP
     // cancel: leaving Recents must not keep starting local library MMR.
     // A tablet / small-grid screen can compose ~50 video cells at once. Cache hits
-    // stay unbounded; settle-delay + getOrCreate share [VideoThumbnail.withComposeExtractJob]
-    // so only a few cells hold an extract job (scroll-away cancels waiters).
+    // stay unbounded; only getOrCreate holds [VideoThumbnail.withComposeExtractJob].
     LaunchedEffect(source, downloadNetworkVideoThumbs, allowRemoteFetch, extractEnabled) {
         val src = source ?: run {
             thumbnail = null
@@ -1352,15 +1351,17 @@ internal fun BrowseVideoThumbnail(
             return@LaunchedEffect
         }
         if (!allowRemoteFetch || !extractEnabled) return@LaunchedEffect
-        VideoThumbnail.withComposeExtractJob {
-            // Fling filter: short-lived cells cancel here before MediaCodec starts.
-            delay(400)
-            if (!VideoThumbnail.extractEnabled.value) return@withComposeExtractJob
-            thumbnail = withIOContext { VideoThumbnail.getOrCreate(context, src)?.absolutePath }
-            if (thumbnail == null && VideoThumbnail.extractEnabled.value) {
-                delay(400)
-                thumbnail = withIOContext { VideoThumbnail.getOrCreate(context, src)?.absolutePath }
+        repeat(2) {
+            val ready = VideoThumbnail.withComposeExtractJob {
+                if (!VideoThumbnail.extractEnabled.value) return@withComposeExtractJob null
+                withIOContext { VideoThumbnail.getOrCreate(context, src)?.absolutePath }
             }
+            // Release admission before publishing this cell; never wait for its peers.
+            if (ready != null) {
+                thumbnail = ready
+                return@LaunchedEffect
+            }
+            if (!VideoThumbnail.extractEnabled.value) return@LaunchedEffect
         }
     }
     val request = remember(source, thumbnail, sizePx) {

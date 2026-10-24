@@ -12,6 +12,7 @@ import com.hippo.ehviewer.image.PathSource
 import com.hippo.ehviewer.image.byteBufferSource
 import com.hippo.ehviewer.library.ArchiveByteSource
 import com.hippo.ehviewer.library.ArchiveCoverCache
+import com.hippo.ehviewer.library.BrowseThumbComposeJobs
 import com.hippo.ehviewer.library.DocumentExtractCache
 import com.hippo.ehviewer.library.LocalLibrary
 import com.hippo.ehviewer.library.PfdArchiveByteSource
@@ -799,14 +800,18 @@ internal suspend fun <T> runDocumentExtractPageLoader(
                     val pdf = engine as? PdfImageEngine ?: return
                     val pool = extractPool ?: return
                     if (pdf.streamOffsetOf(index) < 0L) return
-                    val bytes = pool.use { readSource ->
-                        if (!wanted()) return@use null
-                        gridSources[index] = readSource
-                        try {
+                    // Admit actual extraction only. Cells awaiting page discovery or
+                    // checking their cache must not hold these permits.
+                    val bytes = BrowseThumbComposeJobs.withJob {
+                        pool.use { readSource ->
                             if (!wanted()) return@use null
-                            pdf.extractGridThumb(index, readSource, ::wanted)
-                        } finally {
-                            gridSources.remove(index, readSource)
+                            gridSources[index] = readSource
+                            try {
+                                if (!wanted()) return@use null
+                                pdf.extractGridThumb(index, readSource, ::wanted)
+                            } finally {
+                                gridSources.remove(index, readSource)
+                            }
                         }
                     } ?: return
                     if (!wanted()) return

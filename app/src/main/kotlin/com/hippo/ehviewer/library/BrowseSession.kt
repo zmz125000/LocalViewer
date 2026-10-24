@@ -206,6 +206,16 @@ object BrowseSession {
         if (pathAlias != null) invalidateLocalListing(pathKey(pathAlias))
     }
 
+    /** A confirmed deletion removes the folder, descendants and path-based aliases. */
+    fun invalidateLocalFolderListingsUnder(rootId: Long, relativeDir: String, pathAlias: Path) {
+        val exact = localFolderListingKey(rootId, relativeDir)
+        invalidatePrefixed(localListings, exact, "$exact/")
+        invalidateLocalZipListingsUnder(rootId, relativeDir)
+        val alias = pathKey(pathAlias)
+        invalidatePrefixed(localListings, alias, "$alias/")
+        invalidateLocalRawChildren(alias)
+    }
+
     /**
      * Demote a known-empty archive gallery to a regular file in every cached listing
      * so the row stays visible without the gallery tag (process lifetime).

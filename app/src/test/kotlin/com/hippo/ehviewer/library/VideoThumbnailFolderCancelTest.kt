@@ -5,6 +5,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
@@ -124,5 +125,38 @@ class VideoThumbnailFolderCancelTest {
         release.complete(Unit)
         jobs.forEach { it.await() }
         assertEquals(0, inFlight.get())
+    }
+
+    @Test
+    fun composeExtractJobRefillsWhenOneOfSixFinishes() = runBlocking<Unit> {
+        withTimeout(5_000) {
+            coroutineScope {
+                val started = List(6) { CompletableDeferred<Unit>() }
+                val release = List(6) { CompletableDeferred<Unit>() }
+                val holders = List(6) { index ->
+                    async {
+                        VideoThumbnail.withComposeExtractJob {
+                            started[index].complete(Unit)
+                            release[index].await()
+                            index
+                        }
+                    }
+                }
+                started.forEach { it.await() }
+                val nextStarted = CompletableDeferred<Unit>()
+                val next = async {
+                    VideoThumbnail.withComposeExtractJob { nextStarted.complete(Unit) }
+                }
+
+                release[0].complete(Unit)
+                assertEquals(0, holders[0].await())
+                nextStarted.await()
+                assertTrue(holders.drop(1).none { it.isCompleted })
+
+                release.drop(1).forEach { it.complete(Unit) }
+                holders.forEach { it.await() }
+                next.await()
+            }
+        }
     }
 }

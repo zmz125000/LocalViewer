@@ -23,7 +23,6 @@ import androidx.window.core.layout.WindowSizeClass.Companion.WIDTH_DP_MEDIUM_LOW
 import com.ehviewer.core.ui.component.FastScrollLazyVerticalGrid
 import com.ehviewer.core.util.withIOContext
 import com.hippo.ehviewer.gallery.ReaderSession
-import com.hippo.ehviewer.library.BrowseThumbComposeJobs
 import com.hippo.ehviewer.library.DocumentExtractCache
 import com.hippo.ehviewer.library.FolderSearch
 import com.hippo.ehviewer.library.ReaderImageList
@@ -239,23 +238,20 @@ fun ReaderPhotoGridSheet(
             items(count = pageCount, key = { it }) { index ->
                 val name = readerPageFileName(args, pageLoader, index)
                 if (pdfCacheKey != null && allowRemoteFetch) {
-                    // PDF pages extract via the page loader; admit so a dense grid
-                    // cannot start dozens of document extracts at once.
+                    // The loader gates actual PDF extraction; waiting for indexing or
+                    // polling a cache must not occupy a document extraction permit.
                     LaunchedEffect(index, pdfCacheKey) {
                         try {
-                            BrowseThumbComposeJobs.withJob {
-                                while (true) {
-                                    pageLoader.requestPageSource(index)
-                                    val ready = withIOContext {
-                                        DocumentExtractCache.findCachedPage(pdfCacheKey, index) != null ||
-                                            ReaderPageThumb.find("doc:$pdfCacheKey:$index") != null
-                                    }
-                                    if (ready) break
-                                    delay(250)
+                            while (true) {
+                                pageLoader.requestPageSource(index)
+                                val ready = withIOContext {
+                                    DocumentExtractCache.findCachedPage(pdfCacheKey, index) != null ||
+                                        ReaderPageThumb.find("doc:$pdfCacheKey:$index") != null
                                 }
+                                if (ready) break
+                                delay(250)
                             }
-                            // Slot released; keep the pin while Coil paints.
-                            pageLoader.requestPageSource(index)
+                            // Keep the pin while Coil paints, outside extraction admission.
                             awaitCancellation()
                         } finally {
                             pageLoader.releasePageSource(index)

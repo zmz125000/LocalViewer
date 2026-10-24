@@ -369,8 +369,22 @@ object NetworkFolderIndexCache {
         val key = FolderIndexDisk.normalizeDir(relativeDir)
         val previous = idx.decoded[key] ?: idx.disk.readListing(key)
         if (previous != null) idx.decoded[key] = previous
-        val merge = mergeFolderEntry(previous, entries, zipAsDir, logKeep, key, protocol)
-        if (!merge.keepPrevious && removedChildDirs.isNotEmpty()) {
+        // Confirmed deletions must not be resurrected by the sparse-listing
+        // safeguard, even when the last folder disappeared. Unconfirmed rows
+        // retain the existing offline/partial-list protection.
+        val previousForMerge = if (removedChildDirs.isEmpty()) {
+            previous
+        } else {
+            previous?.filter {
+                browseEntryFolderRoot(it) !in removedChildDirs
+            }
+        }
+        val merge = mergeFolderEntry(previousForMerge, entries, zipAsDir, logKeep, key, protocol).let {
+            // Compare with the actual disk snapshot, not the filtered one, so a
+            // deletion-only update still writes the corrected parent listing.
+            it.copy(unchanged = previous != null && it.stored == previous)
+        }
+        if (removedChildDirs.isNotEmpty()) {
             val parent = key
             for (child in removedChildDirs) {
                 val prefix = listOf(parent, FolderIndexDisk.normalizeDir(child))
@@ -407,6 +421,7 @@ object NetworkFolderIndexCache {
                 entries,
                 zipAsDir,
                 trustEmpty = protocol == "local",
+                trustMissingDirectories = protocol == "local",
             )
         val toStore = if (keepPrevious) {
             logcat("FolderIndex") {
