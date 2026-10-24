@@ -29,6 +29,7 @@ internal class PdfExtractPool(
     private val busy = Collections.newSetFromMap(IdentityHashMap<ArchiveByteSource, Boolean>())
     private val dead = Collections.newSetFromMap(IdentityHashMap<ArchiveByteSource, Boolean>())
     private val lock = Any()
+    private var closed = false
 
     /**
      * Close [source] and never hand it out again. An in-flight read on that
@@ -48,6 +49,7 @@ internal class PdfExtractPool(
         gate.acquire()
         val source = try {
             synchronized(lock) {
+                check(!closed) { "PDF extraction pool is closed" }
                 val taken = if (idle.isEmpty()) {
                     open().also { all += it }
                 } else {
@@ -65,7 +67,7 @@ internal class PdfExtractPool(
         } finally {
             val retired = synchronized(lock) {
                 busy.remove(source)
-                val retired = dead.remove(source)
+                val retired = dead.remove(source) || closed
                 if (!retired) idle.addLast(source)
                 retired
             }
@@ -77,6 +79,8 @@ internal class PdfExtractPool(
     @PublishedApi
     internal fun close() {
         val sources = synchronized(lock) {
+            if (closed) return
+            closed = true
             val snapshot = all.toList()
             all.clear()
             idle.clear()

@@ -19,10 +19,12 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.yield
 import okio.Path
 
@@ -74,6 +76,17 @@ internal class PdfRamPageLoader(
     }
 
     override fun getImageExtension(index: Int): String? = engine.extOf(index)
+
+    /** Grid thumbnails share the bounded page-read pool, independently of the parser walk. */
+    internal suspend fun extractGridThumb(index: Int, stillWanted: () -> Boolean): ByteArray? = withContext(Dispatchers.IO) {
+        val pool = extractPool ?: return@withContext null
+        if (sessionClosed.get() || !stillWanted() || engine.streamOffsetOf(index) < 0L) return@withContext null
+        val thumb = pool.use { source ->
+            if (sessionClosed.get() || !stillWanted()) null else engine.extractGridThumb(index, source, stillWanted)
+        }
+        currentCoroutineContext().ensureActive()
+        thumb.takeIf { !sessionClosed.get() && stillWanted() }
+    }
 
     override fun savePage(index: Int, file: Path): Boolean = runCatching {
         val bytes = ramPages[index] ?: return@runCatching false
