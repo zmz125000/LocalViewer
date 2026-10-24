@@ -18,6 +18,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -28,6 +29,7 @@ import com.ehviewer.core.i18n.R
 import com.hippo.ehviewer.image.hdr.StillExportTarget
 import com.hippo.ehviewer.shortcuts.FolderHomeShortcut
 import com.hippo.ehviewer.shortcuts.FolderShortcutTarget
+import com.hippo.ehviewer.ui.LocalSnackBarHostState
 
 enum class BrowseOverflowKind {
     Common,
@@ -98,6 +100,8 @@ fun BrowseItemOverflowButton(
     var expanded by remember { mutableStateOf(false) }
     var convertMenu by remember { mutableStateOf(false) }
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val snackbar = LocalSnackBarHostState.current
     val shortcutUnsupported = stringResource(R.string.browse_shortcut_unsupported)
     val grid = placement == BrowseOverflowPlacement.GridBottomEnd
     val more = stringResource(R.string.browse_item_more)
@@ -137,8 +141,8 @@ fun BrowseItemOverflowButton(
                 convertMenu = false
                 (action ?: actions.onUnsupported)()
             }
-            if (convertMenu && actions.onConvert != null) {
-                val convert = actions.onConvert
+            if (convertMenu && actions.onConvert != null && actions.convertStill != null) {
+                val convert = actions.convertStill
                 DropdownMenuItem(
                     text = { Text(stringResource(R.string.convert_back)) },
                     onClick = { convertMenu = false },
@@ -164,7 +168,7 @@ fun BrowseItemOverflowButton(
                             convertMenu = false
                             val title = actions.selectTitle?.takeIf { it.isNotBlank() }
                                 ?: context.getString(R.string.convert_to)
-                            FolderSelectHost.startSingleTask(title, target) { convert(target) }
+                            beginSingleConvert(scope, snackbar, context, title, target, convert)
                         },
                     )
                 }
