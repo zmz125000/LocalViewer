@@ -125,7 +125,7 @@ Build with Grok 4.5.
 
 ### Performance
 * The custom SMBJ and WebDAV clients achieve 1 Gbps network speeds over Wi-Fi 7, so after v1.11.x the image reader defaults to have image caching disabled.
-* Windows 11 JXR HDR screenshots can be displayed in fp16 hdr bitmaps, or transcode to Ultra HDR Jpeg. The HDR processing is faster than any other viewers.
+* Windows 11 JXR HDR screenshots can be displayed in fp16 hdr bitmaps, or transcode to Ultra HDR Jpeg.
 * The image loader was tweaked for preloading and decoding 100MB jpg hdr files over network without any OOM crashes, and smaller files should load instantly.
 * Accurate HDR presentation of RAW and JXR images (compared with DaVinci Resolve).
 
