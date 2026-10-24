@@ -42,11 +42,7 @@ fun Path.toUri(): Uri {
             val root = Uri.decode(paths[3])
             val prefix = if (root.endsWith(':')) root else "$root/"
             val suffix = uri.encodedFragment?.let { "#$it" }.orEmpty()
-            val children = paths.subList(4, paths.size).filter { it.isNotEmpty() }
-            // A path separator after a document URI is not a child document.
-            // Appending it to the opaque id makes ExternalStorageProvider look
-            // up `primary:Documents/` instead of the granted `primary:Documents`.
-            appendPath(if (children.isEmpty()) root else children.joinToString("/", prefix, suffix))
+            appendPath(paths.subList(4, paths.size).joinToString("/", prefix, suffix))
         }.build()
     } else {
         uri
