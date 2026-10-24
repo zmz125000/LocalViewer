@@ -3,6 +3,7 @@ package com.hippo.ehviewer.image.hdr
 import android.util.Log
 import com.hippo.ehviewer.jni.linearizeHeifIcc
 import kotlin.math.max
+import kotlin.math.pow
 import kotlin.math.roundToInt
 
 /**
@@ -41,8 +42,8 @@ internal object HevcHdrDecode {
         var outW = max(1, (hdr.width * scale).roundToInt())
         var outH = max(1, (hdr.height * scale).roundToInt())
         val gamut = when {
-            icc != null -> 0 // The complete ICC transform below produces linear scRGB.
             !advancedColor -> 0
+            icc != null -> 2 // Full ICC transform produces linear BT.2020, retaining wide colors.
             hdr.primaries == 9 -> 2
             hdr.primaries == 12 -> 1
             else -> 0
@@ -85,6 +86,23 @@ internal object HevcHdrDecode {
                         if (hdr.hasNclx) hdr.matrix else picture.matrix ?: hdr.matrix,
                         hdr.primaries, transfer, rgb,
                     )
+                    if (hdr.transfer == 18) {
+                        // HLG LUT is 12 * scene RGB. Apply BT.2100's reference
+                        // 1000-nit display OOTF, then express light in 203-nit units.
+                        val yr = when (hdr.primaries) {
+                            9 -> 0.2627f
+                            12 -> 0.2289746f
+                            else -> 0.2126f
+                        }
+                        val yb = when (hdr.primaries) {
+                            9 -> 0.0593f
+                            12 -> 0.0792869f
+                            else -> 0.0722f
+                        }
+                        val sceneY = (yr * rgb[0] + (1f - yr - yb) * rgb[1] + yb * rgb[2]) / 12f
+                        val displayScale = sceneY.coerceAtLeast(0f).pow(0.2f) * (1000f / (12f * 203f))
+                        for (channel in 0..2) rgb[channel] *= displayScale
+                    }
                     val r: Float
                     val g: Float
                     val b: Float
@@ -114,7 +132,7 @@ internal object HevcHdrDecode {
                 }
             }
         }
-        if (icc != null && !linearizeHeifIcc(pixels, icc)) return null
+        if (icc != null && !linearizeHeifIcc(pixels, icc, advancedColor)) return null
         val alpha = parsed.alphaImage()
         if (alpha != null && !applyAlpha(pixels, outW, outH, hdr, alpha)) return null
         if (hdr.rotationDegreesCcw % 360 != 0) {

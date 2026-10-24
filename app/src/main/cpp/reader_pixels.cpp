@@ -2,6 +2,7 @@
 
 #include <jni.h>
 #include <android/hardware_buffer_jni.h>
+#include <android/bitmap.h>
 #include <cstring>
 #include <limits>
 #include <new>
@@ -43,6 +44,36 @@ bool retain_reader_pixels(std::vector<uint16_t>& pixels) {
 
 bool export_pixels_capture() { return active && active->exporting; }
 bool export_pixels_keep_sdr() { return !active || !active->exporting || active->keep_sdr; }
+
+extern "C" JNIEXPORT jbyteArray JNICALL
+Java_com_hippo_ehviewer_jni_HdrConvertKt_captureExportBitmap(JNIEnv* env, jclass, jobject bitmap) {
+    if (!bitmap || !export_pixels_capture()) return nullptr;
+    AndroidBitmapInfo info{};
+    if (AndroidBitmap_getInfo(env, bitmap, &info) != ANDROID_BITMAP_RESULT_SUCCESS) return nullptr;
+    const size_t bpp = info.format == ANDROID_BITMAP_FORMAT_RGBA_F16 ? 8 :
+                       info.format == ANDROID_BITMAP_FORMAT_RGBA_8888 ? 4 : 0;
+    const uint64_t count = static_cast<uint64_t>(info.width) * info.height;
+    const size_t row = static_cast<size_t>(info.width) * bpp;
+    if (!bpp || !count || count > 80000000u || info.stride < row) return nullptr;
+    try {
+        std::vector<uint8_t> pixels(static_cast<size_t>(count) * bpp);
+        void* source = nullptr;
+        if (AndroidBitmap_lockPixels(env, bitmap, &source) != ANDROID_BITMAP_RESULT_SUCCESS) return nullptr;
+        if (!source) {
+            AndroidBitmap_unlockPixels(env, bitmap);
+            return nullptr;
+        }
+        for (unsigned y = 0; y < info.height; ++y) {
+            memcpy(pixels.data() + y * row, static_cast<const uint8_t*>(source) + y * info.stride, row);
+        }
+        AndroidBitmap_unlockPixels(env, bitmap);
+        retain_reader_pixels(pixels);
+        return env->NewByteArray(0);
+    } catch (const std::bad_alloc&) {
+        env->ThrowNew(env->FindClass("java/lang/OutOfMemoryError"), "Native SDR export pixels");
+        return nullptr;
+    }
+}
 
 extern "C" JNIEXPORT jlong JNICALL
 Java_com_hippo_ehviewer_jni_HdrConvertKt_beginNativeExportPixels(JNIEnv* env, jclass, jboolean keep_sdr) {

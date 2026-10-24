@@ -1,9 +1,10 @@
 package com.hippo.ehviewer.image.hdr
 
 import com.hippo.ehviewer.BuildConfig
+import com.hippo.ehviewer.library.IMAGE_EXTENSIONS
 import com.hippo.ehviewer.util.FileUtils
 
-/** Full-resolution conversion targets for JXL, JXR, and camera RAW. */
+/** Full-resolution still-image conversion targets. */
 enum class StillExportTarget {
     Jpeg,
     JpegHdr,
@@ -20,12 +21,34 @@ enum class StillExportTarget {
     val available: Boolean get() = BuildConfig.JXL_ENCODER_ENABLED || !jpegXl
 }
 
-/** JXL, the JXR family (jxr/wdp/hdp), and camera RAW. JPEG 2000 and AVIF are not included. */
-fun isStillExportFileName(name: String?): Boolean {
+/** Filename-only HDR selection group; deliberately does not inspect file contents. */
+internal fun isHdrExportFileName(name: String?): Boolean {
     val leaf = name?.substringAfterLast('/')?.substringAfterLast('\\') ?: return false
     val ext = FileUtils.getExtensionFromFilename(leaf)?.lowercase()?.removePrefix(".") ?: return false
     return ext == "jxl" || ext == "jxr" || ext == "wdp" || ext == "hdp" || isRawStillExtension(ext)
 }
+
+/** Raster images supported by the platform or native decoders; SVG is a vector. */
+fun isStillExportFileName(name: String?): Boolean {
+    if (isHdrExportFileName(name)) return true
+    val ext = name?.substringAfterLast('/')?.substringAfterLast('\\')
+        ?.let(FileUtils::getExtensionFromFilename)?.lowercase()?.removePrefix(".") ?: return false
+    return ext in IMAGE_EXTENSIONS && ext != "svg" && ext != "svgz"
+}
+
+internal fun StillExportTarget.forSource(name: String, acceptSdr: Boolean): StillExportTarget? {
+    if (!isStillExportFileName(name)) return null
+    if (!rawHdr() || isHdrExportFileName(name)) return this
+    if (!acceptSdr) return null
+    return when (this) {
+        StillExportTarget.JpegHdr -> StillExportTarget.Jpeg
+        StillExportTarget.JxlHdr, StillExportTarget.JxlPq -> StillExportTarget.Jxl
+        StillExportTarget.AvifPq, StillExportTarget.AvifGainMap -> StillExportTarget.Avif
+        else -> this
+    }
+}
+
+internal fun StillExportTarget.visibleForSources(hasHdr: Boolean): Boolean = available && (hasHdr || !rawHdr())
 
 /** RAW output dynamic range is independent of the reader and the display. */
 internal fun StillExportTarget.rawHdr(): Boolean = when (exportMode()) {

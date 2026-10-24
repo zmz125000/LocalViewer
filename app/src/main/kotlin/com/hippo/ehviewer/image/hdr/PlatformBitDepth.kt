@@ -31,11 +31,14 @@ fun isPlatformHighDepthCandidateExtension(ext: String?): Boolean {
  * True when the reader should take the platform HBD decode path for this name
  * under active prefs (caller checks WCG + HBD toggles and gain-map exclusion).
  *
- * - [BitDepthClass.HIGH] → yes
+ * - [BitDepthClass.HIGH] → yes, including confirmed PNG bytes without a filename
  * - [BitDepthClass.EIGHT] → no (keep normal HW/8888)
  * - [BitDepthClass.UNKNOWN] → format-gate yes for candidate extensions
  */
 fun shouldPlatformHighDepthDecode(probe: BitDepthClass, fileNameHint: String?): Boolean {
+    // HIGH is returned only after validating the PNG signature and IHDR.
+    // RAM/network sources may have no filename; the confirmed header is enough.
+    if (probe == BitDepthClass.HIGH) return true
     if (!isPlatformHighDepthCandidateExtension(FileUtils.getExtensionFromFilename(fileNameHint))) {
         return false
     }

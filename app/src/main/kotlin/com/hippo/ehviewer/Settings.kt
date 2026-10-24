@@ -750,6 +750,7 @@ object Settings : DataStorePreferences(null) {
      * count and how many decoded frames fit in the Java heap. Default off.
      */
     val browseTaskParallel = boolPref("browse_task_parallel", false)
+    val browseConvertAcceptSdr = boolPref("browse_convert_accept_sdr", false)
 
     /** Ask for a destination for each conversion instead of using the saved folder. */
     val browseAskWhereToSave = boolPref("browse_ask_where_to_save", true)

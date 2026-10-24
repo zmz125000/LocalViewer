@@ -143,6 +143,7 @@
     <string name="raw_hdr_conversion_boost">HDR boost</string>
     <string name="raw_hdr_conversion_custom">HDR custom</string>
     <string name="browse_ask_where_to_save">Ask where to save</string>
+    <string name="browse_convert_accept_sdr">Accept SDR formats</string>
     <string name="image_conversion_default_location">Image conversion folder</string>
     <string name="image_conversion_default_location_not_set">No folder selected</string>
     <string name="settings_default_video_player">Default video player</string>

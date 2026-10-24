@@ -37,7 +37,7 @@ class StillExportTest {
     }
 
     @Test
-    fun menuIsOnlyJxlJxrAndRaw() {
+    fun menuAcceptsNativeAndPlatformRasterFormats() {
         assertTrue(isStillExportFileName("a.jxl"))
         assertTrue(isStillExportFileName("a.JXR"))
         assertTrue(isStillExportFileName("folder/a.wdp"))
@@ -45,11 +45,11 @@ class StillExportTest {
         assertTrue(isStillExportFileName("a.cr2"))
         assertTrue(isStillExportFileName("a.ORF"))
         assertTrue(isStillExportFileName("pack.zip/a.jxl"))
-        assertFalse(isStillExportFileName("a.jpg"))
-        assertFalse(isStillExportFileName("a.jp2"))
-        assertFalse(isStillExportFileName("a.avif"))
-        assertFalse(isStillExportFileName("a.heic"))
-        assertFalse(isStillExportFileName("a.png"))
+        assertTrue(isStillExportFileName("a.jpg"))
+        assertTrue(isStillExportFileName("a.jp2"))
+        assertTrue(isStillExportFileName("a.avif"))
+        assertTrue(isStillExportFileName("a.heic"))
+        assertTrue(isStillExportFileName("a.png"))
         assertFalse(isStillExportFileName("a.tif"))
     }
 }

@@ -27,6 +27,8 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import com.ehviewer.core.i18n.R
 import com.hippo.ehviewer.image.hdr.StillExportTarget
+import com.hippo.ehviewer.image.hdr.isHdrExportFileName
+import com.hippo.ehviewer.image.hdr.visibleForSources
 import com.hippo.ehviewer.shortcuts.FolderHomeShortcut
 import com.hippo.ehviewer.shortcuts.FolderShortcutTarget
 import com.hippo.ehviewer.ui.LocalSnackBarHostState
@@ -74,7 +76,7 @@ data class BrowseOverflowActions(
     val onShareViaHttp: (() -> Unit)? = null,
     /** Home-screen pin for this item. Null hides the menu row. */
     val shortcut: FolderShortcutTarget? = null,
-    /** JXL, JXR, and camera RAW. Null hides Convert to…. */
+    /** Still-image conversion. Null hides Convert to…. */
     val onConvert: (suspend (StillExportTarget) -> Unit)? = null,
     /** Set on folder-view rows so the overflow can enter select mode. */
     val selectKey: String? = null,
@@ -159,7 +161,7 @@ fun BrowseItemOverflowButton(
                     StillExportTarget.AvifGainMap to R.string.convert_avif_gain_map,
                     StillExportTarget.AvifPq to R.string.convert_avif_pq,
 
-                ).filter { (target, _) -> target.available }.forEach { (target, label) ->
+                ).filter { (target, _) -> target.visibleForSources(isHdrExportFileName(actions.selectTitle)) }.forEach { (target, label) ->
                     DropdownMenuItem(
                         text = { Text(stringResource(label)) },
                         onClick = {

@@ -1,11 +1,13 @@
 package com.hippo.ehviewer.jni
 
+import android.graphics.Bitmap
 import android.hardware.HardwareBuffer
 import java.nio.ByteBuffer
 
 /** Synchronous reader-only capture. Release the handle after copying the returned buffer. */
 internal external fun beginNativeReaderPixels(): Long
 internal external fun beginNativeExportPixels(keepSdrBase: Boolean): Long
+internal external fun captureExportBitmap(bitmap: Bitmap): ByteArray?
 internal external fun endNativeReaderPixels(handle: Long): ByteBuffer?
 internal external fun releaseNativeReaderPixels(handle: Long)
 internal external fun copyNativeReaderPixelsToAHB(source: ByteBuffer, destination: HardwareBuffer)
@@ -55,8 +57,8 @@ external fun probeAvifHdrKind(input: ByteArray): Int
  */
 external fun decodeHevcAnnexB(csd: ByteArray, picture: ByteArray, outInfo: IntArray): ShortArray?
 
-/** Straight encoded RGBA_F16 → linear extended sRGB, in place using the embedded ICC. */
-external fun linearizeHeifIcc(pixels: ByteArray, icc: ByteArray): Boolean
+/** ICC transform in place: encoded RGBA_F16 → linear BT.2020 (wide) or extended sRGB. */
+external fun linearizeHeifIcc(pixels: ByteArray, icc: ByteArray, wideGamut: Boolean): Boolean
 
 // ── JPEG XL ──────────────────────────────────────────────────────────────
 

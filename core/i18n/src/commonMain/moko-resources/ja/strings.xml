@@ -131,6 +131,7 @@
     <string name="raw_hdr_conversion">RAW HDR 変換</string>
     <string name="raw_hdr_conversion_summary">%1$s</string>
     <string name="browse_ask_where_to_save">保存先を毎回確認</string>
+    <string name="browse_convert_accept_sdr">SDR 形式も含める</string>
     <string name="image_conversion_default_location">画像変換フォルダー</string>
     <string name="image_conversion_default_location_not_set">フォルダー未選択</string>
     <string name="browse_task_progress_for_item">%1$s · %2$s</string>

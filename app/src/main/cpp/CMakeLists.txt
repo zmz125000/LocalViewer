@@ -496,7 +496,7 @@ endif ()
 set_source_files_properties(jp2_decode.cpp PROPERTIES COMPILE_DEFINITIONS OPJ_STATIC)
 
 # Build and link our app's native lib
-set_source_files_properties(raw_still.cpp PROPERTIES COMPILE_FLAGS "-fexceptions")
+set_source_files_properties(raw_still.cpp reader_pixels.cpp PROPERTIES COMPILE_FLAGS "-fexceptions")
 add_library(${PROJECT_NAME} SHARED archive.c gifutils.c hash.c natsort/strnatcmp.c jp2_decode.cpp
         raw_still.cpp reader_pixels.cpp ${EHVIEWER_HDR_SOURCES})
 target_include_directories(${PROJECT_NAME} PRIVATE

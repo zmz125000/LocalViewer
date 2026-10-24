@@ -33,6 +33,8 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.ehviewer.core.i18n.R
 import com.hippo.ehviewer.image.hdr.StillExportTarget
+import com.hippo.ehviewer.image.hdr.isHdrExportFileName
+import com.hippo.ehviewer.image.hdr.visibleForSources
 import moe.tarsin.kt.andThen
 
 @Composable
@@ -44,6 +46,7 @@ fun ReaderPageSheetMeta(
     save: () -> Unit,
     saveTo: () -> Unit,
     convert: ((StillExportTarget) -> Unit)?,
+    sourceName: String?,
     showAds: (() -> Unit)?,
     dismiss: () -> Unit,
 ) {
@@ -70,7 +73,7 @@ fun ReaderPageSheetMeta(
                 StillExportTarget.Avif to R.string.convert_avif,
                 StillExportTarget.AvifGainMap to R.string.convert_avif_gain_map,
                 StillExportTarget.AvifPq to R.string.convert_avif_pq,
-            ).filter { (target, _) -> target.available }.forEach { (target, label) ->
+            ).filter { (target, _) -> target.visibleForSources(isHdrExportFileName(sourceName)) }.forEach { (target, label) ->
                 Item(icon = Icons.Default.Save, text = label, onClick = { convert(target) })
             }
         } else {

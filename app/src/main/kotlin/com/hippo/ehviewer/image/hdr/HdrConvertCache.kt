@@ -60,6 +60,10 @@ import splitties.init.appCtx
  */
 object HdrConvertCache {
     private const val TAG = "HdrConvert"
+
+    // ICC working-gamut / HLG fixes and shared scRGB white normalization.
+    // Local derived JPEGs must be regenerated rather than replaying old colors.
+    private const val COLOR_PIPELINE_REVISION = 2
     private const val THUMB_WEBP_QUALITY = OriginDiskCache.THUMB_QUALITY
 
     private val pathLocks = ConcurrentHashMap<String, Mutex>()
@@ -153,7 +157,7 @@ object HdrConvertCache {
         val meta = source.metadataOrNull()
         val mtime = meta?.lastModifiedAtMillis ?: 0L
         val size = meta?.size ?: 0L
-        val key = "$keyPrefix:$source:$mtime:$size"
+        val key = "$COLOR_PIPELINE_REVISION:$keyPrefix:$source:$mtime:$size"
         return localRoot / "${sha256Hex(key)}.jpg"
     }
 
@@ -309,7 +313,7 @@ object HdrConvertCache {
         if (!route.needsUhdr) error("not UHDR content: $fileNameHint route=$route")
         val lib = route as StillRoute.Lib
         ensureLocalRoot()
-        val dest = localRoot / "${sha256HexBytes(bytes)}.jpg"
+        val dest = localRoot / "$COLOR_PIPELINE_REVISION-${sha256HexBytes(bytes)}.jpg"
         val destFile = File(dest.toString())
         if (destFile.isFile && destFile.length() > 0L) return@withContext dest
         if (lib.codec == LibCodec.AvifPq) {

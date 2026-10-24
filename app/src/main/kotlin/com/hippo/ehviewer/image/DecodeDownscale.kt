@@ -1,6 +1,7 @@
 package com.hippo.ehviewer.image
 
 import android.graphics.Bitmap
+import android.graphics.ColorSpace
 import android.os.Build
 import kotlin.math.PI
 import kotlin.math.abs
@@ -19,6 +20,15 @@ internal fun Bitmap.downscaleDecoded(dstW: Int, dstH: Int, kernel: Int): Bitmap 
     if (dstW <= 0 || dstH <= 0) return this
     if (dstW == width && dstH == height) return this
     if (config == Bitmap.Config.HARDWARE || isRecycled) return this
+    // getPixels()/setPixels() exchange 8-bit sRGB ColorInts, regardless of the
+    // bitmap profile. Retagging those codes with the source profile changes
+    // colors; it also loses F16 precision and attached HDR gain maps. This
+    // comic-only resampler must leave those images on their color-managed path.
+    if (config == Bitmap.Config.RGBA_F16 || colorSpace?.let { it != ColorSpace.get(ColorSpace.Named.SRGB) } == true ||
+        (Build.VERSION.SDK_INT >= 34 && hasGainmap())
+    ) {
+        return this
+    }
     val mode = kernel.coerceIn(1, 6)
     val srcW = width
     val srcH = height

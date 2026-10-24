@@ -1,6 +1,7 @@
 package com.hippo.ehviewer.image.hdr
 
 import android.app.ActivityManager
+import android.graphics.BitmapFactory
 import com.hippo.ehviewer.jni.probeStillExportSize
 import com.hippo.ehviewer.util.OSUtils
 import java.io.File
@@ -88,20 +89,33 @@ internal object StillExportWork {
 
     suspend fun <T> withSource(file: File, leaf: String, work: suspend () -> T): T {
         val raw = isRawStillExtension(leaf.substringAfterLast('.', ""))
-        val kind = if (raw) {
-            2
-        } else if (leaf.endsWith(".jxl", true)) {
-            0
-        } else {
-            1
+        val ext = leaf.substringAfterLast('.', "").lowercase()
+        val kind = when {
+            raw -> 2
+            ext == "jxl" -> 0
+            ext in setOf("jxr", "wdp", "hdp") -> 1
+            else -> -1
         }
-        val size = runCatching { probeStillExportSize(file.absolutePath, kind) }.getOrDefault(0L)
+        // Dimensions are used only for allocation budgets, never to classify HDR.
+        val size = runCatching {
+            if (kind >= 0) {
+                probeStillExportSize(file.absolutePath, kind)
+            } else {
+                val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                BitmapFactory.decodeFile(file.absolutePath, bounds)
+                if (bounds.outWidth > 0 && bounds.outHeight > 0) {
+                    (bounds.outWidth.toLong() shl 32) or bounds.outHeight.toLong()
+                } else {
+                    0L
+                }
+            }
+        }.getOrDefault(0L)
         val width = size ushr 32
         val height = size and 0xffffffffL
         val sourceBytes = file.length()
         // Codec working buffers live on the native heap, not inside the JVM's
         // maxMemory allowance. Keep both leases through encode, with separate limits.
-        val nativePixels = raw || leaf.substringAfterLast('.', "").lowercase() in setOf("jxl", "jxr", "wdp", "hdp")
+        val nativePixels = !isJpeg2000Extension(ext) && !isHeicImageExtension(ext)
         return heapBudget.withBytes(exportHeapBytes(width, height, sourceBytes, raw, nativePixels)) {
             nativeBudget.withBytes(exportWorkingBytes(width, height, sourceBytes, raw), work)
         }
