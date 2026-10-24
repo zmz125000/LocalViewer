@@ -2,7 +2,9 @@ package com.hippo.ehviewer.image.hdr
 
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.Canvas
 import android.graphics.ColorSpace
+import android.graphics.ImageDecoder
 import android.hardware.display.DisplayManager
 import android.os.Build
 import android.os.ParcelFileDescriptor
@@ -11,6 +13,7 @@ import android.system.OsConstants
 import android.view.Display
 import com.ehviewer.core.files.openFileDescriptor
 import com.ehviewer.core.files.read
+import com.ehviewer.core.files.toUri
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.image.ByteBufferSource
 import com.hippo.ehviewer.image.ImageSource
@@ -19,6 +22,7 @@ import com.hippo.ehviewer.image.byteBufferSource
 import com.hippo.ehviewer.image.tryHardwareF16FromPixels
 import com.hippo.ehviewer.jni.beginNativeExportPixels
 import com.hippo.ehviewer.jni.beginNativeReaderPixels
+import com.hippo.ehviewer.jni.captureExportBitmap
 import com.hippo.ehviewer.jni.decodeAvifBytesToDirect
 import com.hippo.ehviewer.jni.decodeJpeg2000Bitmap
 import com.hippo.ehviewer.jni.decodeJpeg2000BytesToDirect
@@ -73,7 +77,7 @@ data class DirectPixels(
     val isHdr: Boolean,
     /** 0 BT.709, 1 Display P3, 2 BT.2100. Matches the direct-pack outInfo gamut. */
     val gamut: Int,
-    /** Lib-direct pack is premultiplied. Embedded RAW JPEG previews are straight. */
+    /** Platform bitmap exports retain associated alpha; native export packs are straight. */
     val premultiplied: Boolean,
     /** Optional camera-look SDR RGBA8 plane appended after the F16 HDR pixels. */
     val sdrOffset: Int = 0,
@@ -227,7 +231,7 @@ object LibDirectDecode {
             f16 = packed.outInfo.getOrNull(2) == 1,
             isHdr = packed.outInfo.getOrNull(3) != 0,
             gamut = packed.outInfo.getOrNull(4) ?: 0,
-            premultiplied = nativePixels == null && packed.premultiplied,
+            premultiplied = packed.premultiplied,
             sdrOffset = packed.sdrOffset,
             nativePixels = nativePixels,
         )
@@ -274,6 +278,11 @@ object LibDirectDecode {
         if (isRawStillExtension(FileUtils.getExtensionFromFilename(rawName))) {
             return decodeRawPacked(src, maxEdge, exportTarget)
         }
+        if (exportTarget != null && !isHdrExportFileName(fileNameHint) &&
+            !isJpeg2000Extension(FileUtils.getExtensionFromFilename(fileNameHint))
+        ) {
+            return decodePlatformExport(src, maxEdge)
+        }
         // Scope source bytes tightly so they are eligible for GC before Bitmap.create.
         val bytes = readBytes(src) ?: return null
         if (bytes.isEmpty()) return null
@@ -307,7 +316,77 @@ object LibDirectDecode {
                 exportTarget,
             )
         } ?: return null
-        return PackedPixels(pixels, outInfo, outBoost, advanced, premultiplied = true)
+        return PackedPixels(pixels, outInfo, outBoost, advanced, premultiplied = exportTarget == null)
+    }
+
+    /** SDR raster export uses the platform decoder's first frame, independent of reader filters. */
+    private fun decodePlatformExport(src: ImageSource, maxEdge: Int): PackedPixels? {
+        var gamut = 0
+        var bitmap = try {
+            val source = when (src) {
+                is PathSource -> ImageDecoder.createSource(appCtx.contentResolver, src.source.toUri())
+                is ByteBufferSource -> ImageDecoder.createSource(src.source.asReadOnlyBuffer())
+            }
+            ImageDecoder.decodeBitmap(source) { decoder, info, _ ->
+                decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
+                gamut = if (info.colorSpace?.isWideGamut == true) 1 else 0
+                decoder.setTargetColorSpace(ColorSpace.get(if (gamut == 1) ColorSpace.Named.DISPLAY_P3 else ColorSpace.Named.SRGB))
+                val edge = maxOf(info.size.width, info.size.height)
+                if (maxEdge > 0 && edge > maxEdge) {
+                    decoder.setTargetSize(
+                        (info.size.width.toLong() * maxEdge / edge).toInt().coerceAtLeast(1),
+                        (info.size.height.toLong() * maxEdge / edge).toInt().coerceAtLeast(1),
+                    )
+                }
+            }
+        } catch (error: Exception) {
+            android.util.Log.w("StillConvert", "Platform export decode failed; trying BitmapFactory", error)
+            gamut = 0
+            val bytes = readBytes(src) ?: return null
+            BitmapFactory.decodeByteArray(
+                bytes,
+                0,
+                bytes.size,
+                BitmapFactory.Options().apply {
+                    inPreferredConfig = Bitmap.Config.ARGB_8888
+                    inPreferredColorSpace = ColorSpace.get(ColorSpace.Named.SRGB)
+                },
+            ) ?: return null
+        }
+        try {
+            if (bitmap.config == Bitmap.Config.RGBA_F16) {
+                // F16 encoders expect linear samples; platform F16 can still have an sRGB curve.
+                val linear = Bitmap.createBitmap(
+                    bitmap.width,
+                    bitmap.height,
+                    Bitmap.Config.RGBA_F16,
+                    bitmap.hasAlpha(),
+                    if (gamut == 1) displayP3LinearExtended else ColorSpace.get(ColorSpace.Named.LINEAR_EXTENDED_SRGB),
+                )
+                try {
+                    Canvas(linear).drawBitmap(bitmap, 0f, 0f, null)
+                } catch (error: Throwable) {
+                    linear.recycle()
+                    throw error
+                }
+                bitmap.recycle()
+                bitmap = linear
+            } else if (bitmap.config != Bitmap.Config.ARGB_8888) {
+                val converted = bitmap.copy(Bitmap.Config.ARGB_8888, false) ?: return null
+                bitmap.recycle()
+                bitmap = converted
+            }
+            val pixels = captureExportBitmap(bitmap) ?: return null
+            return PackedPixels(
+                pixels,
+                intArrayOf(bitmap.width, bitmap.height, if (bitmap.config == Bitmap.Config.RGBA_F16) 1 else 0, 0, gamut, 0),
+                floatArrayOf(1f),
+                advanced = true,
+                premultiplied = bitmap.isPremultiplied,
+            )
+        } finally {
+            bitmap.recycle()
+        }
     }
 
     /**
@@ -477,7 +556,7 @@ object LibDirectDecode {
             outInfo,
             outBoost,
             advanced = true,
-            premultiplied = true,
+            premultiplied = export == null,
             sdrOffset = if (present >= 3 && export?.target?.needsSdrBase() != false) outInfo[0] * outInfo[1] * 8 else 0,
         )
     }

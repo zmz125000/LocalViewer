@@ -129,6 +129,7 @@
     <string name="raw_hdr_conversion">RAW HDR 轉換</string>
     <string name="raw_hdr_conversion_summary">%1$s</string>
     <string name="browse_ask_where_to_save">詢問儲存位置</string>
+    <string name="browse_convert_accept_sdr">接受 SDR 格式</string>
     <string name="image_conversion_default_location">圖片轉換資料夾</string>
     <string name="image_conversion_default_location_not_set">尚未選擇資料夾</string>
     <string name="browse_task_progress_for_item">%1$s · %2$s</string>

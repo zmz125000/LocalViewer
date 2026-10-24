@@ -74,7 +74,7 @@ data class BrowseOverflowActions(
     val onShareViaHttp: (() -> Unit)? = null,
     /** Home-screen pin for this item. Null hides the menu row. */
     val shortcut: FolderShortcutTarget? = null,
-    /** JXL, JXR, and camera RAW. Null hides Convert to…. */
+    /** Still-image conversion. Null hides Convert to…. */
     val onConvert: (suspend (StillExportTarget) -> Unit)? = null,
     /** Set on folder-view rows so the overflow can enter select mode. */
     val selectKey: String? = null,

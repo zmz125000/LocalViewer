@@ -76,6 +76,7 @@ import com.hippo.ehviewer.asMutableState
 import com.hippo.ehviewer.image.hdr.RawExportControls
 import com.hippo.ehviewer.image.hdr.StillExportQuality
 import com.hippo.ehviewer.image.hdr.StillExportTarget
+import com.hippo.ehviewer.image.hdr.forSource
 import com.hippo.ehviewer.library.ExplorerWindows
 import com.hippo.ehviewer.provider.StreamKeepAlivePolicy
 import com.hippo.ehviewer.ui.LocalSnackBarHostState
@@ -1605,6 +1606,7 @@ private fun SelectionOverflowControl(
     val autoFinish = Settings.browseTaskAutoFinish.asMutableState()
     val runInParallel = Settings.browseTaskParallel.asMutableState()
     val askWhereToSave = Settings.browseAskWhereToSave.asMutableState()
+    val acceptSdr = Settings.browseConvertAcceptSdr.asMutableState()
     val shareable = picks.count { it.shareHttp != null }
     val convertible = picks.count { it.convertStill != null }
     val savable = picks.count { it.saveInto != null }
@@ -1707,6 +1709,17 @@ private fun SelectionOverflowControl(
                     )
                 }
                 HorizontalDivider()
+                if (selectionActions) {
+                    DropdownMenuItem(
+                        text = { Text(stringResource(R.string.browse_convert_accept_sdr)) },
+                        trailingIcon = {
+                            Box(Modifier.size(24.dp), contentAlignment = Alignment.Center) {
+                                if (acceptSdr.value) Icon(Icons.Default.Check, contentDescription = null)
+                            }
+                        },
+                        onClick = { acceptSdr.value = !acceptSdr.value },
+                    )
+                }
                 DropdownMenuItem(
                     text = { Text(stringResource(R.string.browse_run_in_background)) },
                     trailingIcon = {
@@ -1850,7 +1863,8 @@ internal suspend fun enqueueSingleConvert(
     target: StillExportTarget,
     convert: suspend (Path, StillExportTarget) -> Boolean,
 ) {
-    val controls = RawExportControls.capture(target) + StillExportQuality.current()
+    val effectiveTarget = target.forSource(title, acceptSdr = true) ?: return
+    val controls = RawExportControls.capture(effectiveTarget) + StillExportQuality.current()
     val dir = with(snackbar) { with(context) { BrowseSaveAs.pickConvertDirectory() } } ?: return
     with(context) { awaitPickerReturn() }
     withUIContext {
@@ -1858,9 +1872,9 @@ internal suspend fun enqueueSingleConvert(
             title,
             isFolder = false,
             pick = null,
-            outputSummary = context.getString(target.conversionLabelRes),
+            outputSummary = context.getString(effectiveTarget.conversionLabelRes),
         ) {
-            withContext(controls) { convert(dir, target) }
+            withContext(controls) { convert(dir, effectiveTarget) }
         }
         FolderSelectHost.startSingleTask(job)
     }
@@ -1874,22 +1888,26 @@ private fun beginConvert(
 ) {
     val controls = RawExportControls.capture(target) + StillExportQuality.current()
     val folderKey = FolderSelectHost.selectionSnack?.folderKey
-    val items = FolderSelectHost.selectionPicks.filter { it.convertStill != null }
+    val acceptSdr = Settings.browseConvertAcceptSdr.value
+    val items = FolderSelectHost.selectionPicks.mapNotNull { pick ->
+        if (pick.convertStill == null) return@mapNotNull null
+        target.forSource(pick.title, acceptSdr)?.let { pick to it }
+    }
     if (items.isEmpty()) {
         scope.launch { with(snackbar) { snackbar(context.getString(R.string.browse_action_not_supported)) } }
         return
     }
     scope.launch {
         val dir = with(snackbar) { with(context) { BrowseSaveAs.pickConvertDirectory() } } ?: return@launch
-        val jobs = items.map { pick ->
+        val jobs = items.map { (pick, effectiveTarget) ->
             val convert = pick.convertStill!!
             FolderSelectHost.newJob(
                 pick.title,
                 pick.isFolder,
                 pick,
-                outputSummary = context.getString(target.conversionLabelRes),
+                outputSummary = context.getString(effectiveTarget.conversionLabelRes),
             ) { dest ->
-                withContext(controls) { convert(dest, target) }
+                withContext(controls) { convert(dest, effectiveTarget) }
             }
         }
         FolderSelectHost.startTasks(jobs, dir, folderKey)
