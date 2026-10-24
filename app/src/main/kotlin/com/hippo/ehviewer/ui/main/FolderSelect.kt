@@ -392,6 +392,7 @@ private data class QueuedBatch(
     val jobs: List<TaskJob>,
     val dir: Path,
     val folderKey: String?,
+    val preview: TaskBatch? = null,
 )
 
 internal class TaskJob(
@@ -420,6 +421,7 @@ internal class TaskBatch(
     var paused by mutableStateOf(false)
     var finishedRun by mutableStateOf(false)
     var end by mutableStateOf<BatchEnd?>(null)
+    var queued by mutableStateOf(false)
     private val wake = Channel<Unit>(Channel.CONFLATED)
     private val jobQueue = ArrayDeque(jobs.filter { it.status == TaskStatus.Pending })
 
@@ -551,6 +553,9 @@ object FolderSelectHost {
         private set
     internal var batch by mutableStateOf<TaskBatch?>(null)
         private set
+    internal var queuedSingleBatch by mutableStateOf<TaskBatch?>(null)
+        private set
+    private var shownTaskBatch by mutableStateOf<TaskBatch?>(null)
     val taskRunning: Boolean get() = batch != null
     var dialog by mutableStateOf(false)
     var selectionSnacks by mutableStateOf<List<SelectionSnack>>(emptyList())
@@ -604,6 +609,7 @@ object FolderSelectHost {
             next[key] = queued.jobs.size
         }
         queuedCounts = next
+        queuedSingleBatch = taskQueue.firstOrNull { it.folderKey == null }?.preview
     }
 
     fun attach(state: FolderSelectState) {
@@ -661,7 +667,11 @@ object FolderSelectHost {
             snacks.add(SelectionSnack(liveKey, live.folderName, live.picks.size))
         }
         selectionSnacks = snacks
-        if (shownFolderKey != null && snacks.none { it.folderKey == shownFolderKey }) {
+        // An open selection panel still owns its folder after the last row is
+        // removed, even though that folder no longer has a selection snackbar.
+        if (shownFolderKey != null && snacks.none { it.folderKey == shownFolderKey } &&
+            !(dialog && !showingTask)
+        ) {
             shownFolderKey = null
         }
         val picksKey = shownFolderKey ?: snacks.lastOrNull()?.folderKey
@@ -681,15 +691,28 @@ object FolderSelectHost {
     fun showList(folderKey: String) {
         shownFolderKey = folderKey
         showingTask = false
+        shownTaskBatch = null
         refreshSelectionSnack()
         dialog = true
     }
 
     /** Open the panel on the running task's file list. */
-    fun showTaskList() {
-        if (batch == null) return
+    internal fun showTaskList(task: TaskBatch? = batch) {
+        if (task == null) return
+        shownTaskBatch = task
         showingTask = true
         dialog = true
+    }
+
+    internal fun panelTask(): TaskBatch? = if (showingTask) shownTaskBatch ?: batch else null
+
+    internal fun cancelQueuedSingles(task: TaskBatch) {
+        if (taskQueue.removeAll { it.preview === task }) syncQueuedCounts()
+        if (shownTaskBatch === task) {
+            shownTaskBatch = null
+            showingTask = false
+            dialog = false
+        }
     }
 
     /** Point actions at [folderKey] without opening the panel. */
@@ -709,7 +732,7 @@ object FolderSelectHost {
     }
 
     internal fun panelPlace(): FolderPlace? {
-        if (showingTask) return batch?.place
+        if (showingTask) return panelTask()?.place
         val key = shownFolderKey ?: selectionSnack?.folderKey ?: return null
         return placeFor(key)
     }
@@ -730,8 +753,9 @@ object FolderSelectHost {
     }
 
     fun cancelShownSelection() {
-        val key = shownFolderKey ?: selectionSnack?.folderKey ?: return
-        cancelSelection(key)
+        val key = shownFolderKey ?: selectionSnack?.folderKey
+        if (key != null) cancelSelection(key)
+        if (!showingTask) dialog = false
     }
 
     fun removeShownPick(pickKey: String) {
@@ -777,6 +801,8 @@ object FolderSelectHost {
         snackbarOrder.clear()
         taskQueue.clear()
         queuedCounts = emptyMap()
+        queuedSingleBatch = null
+        shownTaskBatch = null
         shownFolderKey = null
         selectionSnacks = emptyList()
         selectionSnack = null
@@ -855,7 +881,9 @@ object FolderSelectHost {
         val queuedIndex = taskQueue.indexOfFirst { it.folderKey == null }
         if (queuedIndex >= 0) {
             val queued = taskQueue[queuedIndex]
+            queued.preview?.addJob(job)
             taskQueue[queuedIndex] = queued.copy(jobs = queued.jobs + job)
+            syncQueuedCounts()
             return
         }
         startTasks(listOf(job), "/".toPath(), forceUnassociated = true)
@@ -871,31 +899,43 @@ object FolderSelectHost {
         val key = if (forceUnassociated) null else folderKey ?: shownFolderKey ?: selectionSnack?.folderKey ?: current?.folderKey
         val running = batch
         if (running != null) {
+            val panelWasOpen = dialog
             // Another snackbar started work — run after the current jobs finish (not Done/Continue).
             if (key != null) taskQueue.removeAll { it.folderKey == key }
-            taskQueue.addLast(QueuedBatch(jobs.toList(), dir, key))
+            val preview = if (key == null) {
+                TaskBatch(null, mutableStateListOf<TaskJob>().also { it.addAll(jobs) }, Job()).also { it.queued = true }
+            } else {
+                null
+            }
+            taskQueue.addLast(QueuedBatch(jobs.toList(), dir, key, preview))
             syncQueuedCounts()
             if (running.finishedRun && running.end == null) {
                 // Current batch already finished; release it so the queue can start.
                 advanceFinishedBatch(running)
             }
+            if (panelWasOpen) showTaskList()
             return
         }
         launchBatch(jobs, dir, key)
     }
 
-    private fun launchBatch(jobs: List<TaskJob>, dir: Path, key: String?, execute: Boolean = true) {
+    private fun launchBatch(jobs: List<TaskJob>, dir: Path, key: String?, execute: Boolean = true, preview: TaskBatch? = null) {
         val list = mutableStateListOf<TaskJob>().also { it.addAll(jobs) }
         if (key != null) shownFolderKey = key
-        val running = TaskBatch(
+        val running = preview ?: TaskBatch(
             key,
             list,
             Job(),
             folderNameFor(key),
             key?.let { placeFor(it) },
         )
+        running.queued = false
         batch = running
-        // Do not open the task panel — user opens it from the task snackbar.
+        // Reuse an open selection panel for the task; closed panels stay closed.
+        if (dialog) {
+            showingTask = true
+            shownTaskBatch = running
+        }
         syncTaskFgs()
         if (!execute) return
         running.runner = scope.launch {
@@ -931,7 +971,7 @@ object FolderSelectHost {
         if (batch != null) return
         val next = taskQueue.removeFirstOrNull() ?: return
         syncQueuedCounts()
-        launchBatch(next.jobs, next.dir, next.folderKey, execute = execute)
+        launchBatch(next.jobs, next.dir, next.folderKey, execute = execute, preview = next.preview)
     }
 
     /**
@@ -969,6 +1009,8 @@ object FolderSelectHost {
 
     private fun finishBatch(running: TaskBatch, executeQueued: Boolean = true) {
         if (batch !== running) return
+        val viewedQueued = panelTask()?.takeIf { dialog && it !== running && it.queued }
+        shownTaskBatch = null
         when (running.end ?: BatchEnd.Stop) {
             BatchEnd.Continue -> {
                 batch = null
@@ -995,6 +1037,9 @@ object FolderSelectHost {
         // Queue advances when the previous run finished (Continue from completeRun / auto-hand-off).
         // Done/Stop also clear the batch slot — start the next only if one is waiting.
         startNextQueued(execute = executeQueued)
+        if (viewedQueued != null && (batch === viewedQueued || queuedSingleBatch === viewedQueued)) {
+            showTaskList(viewedQueued)
+        }
     }
 
     private fun restorePendingSelection(running: TaskBatch) {
@@ -1033,8 +1078,9 @@ fun FolderSelectBars(
     onOpenFolder: (FolderPlace) -> Boolean = { false },
 ) {
     val batch = FolderSelectHost.batch
+    val queuedSingleBatch = FolderSelectHost.queuedSingleBatch
     val selectionBars = FolderSelectHost.selectionSnacksBesideTask()
-    if (selectionBars.isNotEmpty() || batch != null) {
+    if (selectionBars.isNotEmpty() || batch != null || queuedSingleBatch != null) {
         Column(
             modifier = modifier
                 .fillMaxWidth()
@@ -1043,6 +1089,9 @@ fun FolderSelectBars(
         ) {
             if (batch != null) {
                 FolderTaskSnackbar(batch)
+            }
+            if (queuedSingleBatch != null) {
+                FolderTaskSnackbar(queuedSingleBatch)
             }
             selectionBars.forEach { snack ->
                 key(snack.folderKey) {
@@ -1103,7 +1152,7 @@ private fun FolderTaskSnackbar(batch: TaskBatch) {
         contentColor = snackbarDismissContentColor(),
         action = {
             TextButton(
-                onClick = { FolderSelectHost.showTaskList() },
+                onClick = { FolderSelectHost.showTaskList(batch) },
                 colors = snackbarActionButtonColors(),
             ) {
                 Text(stringResource(R.string.browse_task))
@@ -1112,25 +1161,40 @@ private fun FolderTaskSnackbar(batch: TaskBatch) {
         dismissAction = {
             val finished = batch.finishedRun
             TextButton(
-                onClick = { if (finished) FolderSelectHost.done() else FolderSelectHost.stopTask() },
+                onClick = {
+                    when {
+                        batch.queued -> FolderSelectHost.cancelQueuedSingles(batch)
+                        finished -> FolderSelectHost.done()
+                        else -> FolderSelectHost.stopTask()
+                    }
+                },
                 colors = snackbarDismissButtonColors(),
             ) {
                 Text(
                     stringResource(
-                        if (finished) R.string.browse_task_done else R.string.browse_http_share_stop,
+                        when {
+                            batch.queued -> R.string.browse_clear
+                            finished -> R.string.browse_task_done
+                            else -> R.string.browse_http_share_stop
+                        },
                     ),
                 )
             }
         },
     ) {
         val name = batch.folderName
+        val progress = if (batch.queued) {
+            stringResource(R.string.browse_task_status_output, stringResource(R.string.browse_task_pending), batch.progressLabel)
+        } else {
+            batch.progressLabel
+        }
         Text(
             text = if (name.isBlank() && batch.jobs.size == 1) {
-                stringResource(R.string.browse_task_progress_for_item, batch.progressLabel, batch.jobs[0].title)
+                stringResource(R.string.browse_task_progress_for_item, progress, batch.jobs[0].title)
             } else if (name.isBlank()) {
-                batch.progressLabel
+                progress
             } else {
-                stringResource(R.string.browse_task_progress_in_folder, batch.progressLabel, name)
+                stringResource(R.string.browse_task_progress_in_folder, progress, name)
             },
             maxLines = 2,
             overflow = TextOverflow.Ellipsis,
@@ -1221,9 +1285,8 @@ private fun FolderTasksDialog(onOpenFolder: (FolderPlace) -> Boolean) {
 
 @Composable
 private fun TasksPanel(tablet: Boolean, onOpenFolder: (FolderPlace) -> Boolean) {
-    val batch = FolderSelectHost.batch
     val picks = FolderSelectHost.selectionPicks
-    val task = if (FolderSelectHost.showingTask) batch else null
+    val task = FolderSelectHost.panelTask()
     val place = FolderSelectHost.panelPlace()
     val headerStyle = if (tablet) {
         MaterialTheme.typography.titleLarge
@@ -1318,7 +1381,10 @@ private fun TasksPanel(tablet: Boolean, onOpenFolder: (FolderPlace) -> Boolean) 
                                 trailing = {
                                     if (!running) {
                                         TaskRowAction(
-                                            onClick = { task.removePending(job.id) },
+                                            onClick = {
+                                                task.removePending(job.id)
+                                                if (task.queued && task.jobs.isEmpty()) FolderSelectHost.cancelQueuedSingles(task)
+                                            },
                                             icon = Icons.Default.Close,
                                             contentDescription = stringResource(R.string.browse_remove),
                                             tablet = tablet,
@@ -1368,6 +1434,8 @@ private fun TaskPanelActions(batch: TaskBatch?) {
     ) {
         if (batch == null) {
             PanelAction(R.string.browse_clear) { FolderSelectHost.cancelShownSelection() }
+        } else if (batch.queued) {
+            PanelAction(R.string.browse_clear) { FolderSelectHost.cancelQueuedSingles(batch) }
         } else if (batch.finishedRun) {
             PanelAction(R.string.browse_continue) { FolderSelectHost.continueSelection() }
             PanelAction(R.string.browse_task_done) { FolderSelectHost.done() }
