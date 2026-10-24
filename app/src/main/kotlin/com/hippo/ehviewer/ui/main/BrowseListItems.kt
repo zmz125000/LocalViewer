@@ -18,6 +18,7 @@ import androidx.compose.foundation.text.InlineTextContent
 import androidx.compose.foundation.text.appendInlineContent
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.InsertDriveFile
+import androidx.compose.material.icons.filled.Android
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.PhotoLibrary
@@ -973,7 +974,7 @@ fun BrowseFileRow(
                 retryKey = thumbRetryKey,
                 allowRemoteFetch = allowRemoteFetch,
                 photoGridThumb = usePhotoThumb,
-                placeholderIcon = Icons.AutoMirrored.Filled.InsertDriveFile,
+                placeholderIcon = browseFileIcon(fileName),
             )
         },
         trailingContent = overflow?.let { actions ->
@@ -1394,6 +1395,11 @@ internal fun BrowseVideoThumbnail(
     }
 }
 
+private fun browseFileIcon(name: String): ImageVector = when (name.substringAfterLast('.', "").lowercase()) {
+    "apk", "apks", "aab", "xapk", "apkm" -> Icons.Default.Android
+    else -> Icons.AutoMirrored.Filled.InsertDriveFile
+}
+
 @Composable
 fun BrowseFileGridItem(
     name: String,
@@ -1415,7 +1421,7 @@ fun BrowseFileGridItem(
                 contentAlignment = Alignment.Center,
             ) {
                 Icon(
-                    Icons.AutoMirrored.Filled.InsertDriveFile,
+                    browseFileIcon(name),
                     contentDescription = null,
                     modifier = Modifier.size(BrowseGridPlaceholderIconSize),
                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
