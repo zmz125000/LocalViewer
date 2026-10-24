@@ -103,7 +103,8 @@ private suspend fun convertStaged(leaf: String, target: StillExportTarget, stage
         convertStagedUnchecked(leaf, target, stage)
     } catch (e: CancellationException) {
         throw e
-    } catch (_: Throwable) {
+    } catch (error: Throwable) {
+        error.logcatExport()
         snackbar(string(R.string.error_cant_save_image))
     }
 }
@@ -199,19 +200,28 @@ private suspend fun encodeStaged(leaf: String, target: StillExportTarget, stage:
 }
 
 private suspend fun encodeStagedCaptured(leaf: String, target: StillExportTarget, stage: suspend () -> File, localSource: Path?): EncodedStill? = withIOContext {
-    if (!target.available) return@withIOContext null
+    check(target.available) { "Export encoder unavailable: $target" }
     val quality = currentCoroutineContext()[StillExportQuality]?.value ?: StillExportQuality.current().value
-    withExportSource(localSource, stage) { source ->
+    withExportSource(localSource, stage) { source, decodeSource ->
+        android.util.Log.i("StillConvert", "Start $leaf -> $target source=$decodeSource")
         StillExportWork.withSource(source, leaf) {
-            LibDirectDecode.withExportPixels(source.asPathSource(), leaf, maxEdge = 0, target = target) { pixels ->
+            LibDirectDecode.withExportPixels(decodeSource.asPathSource(), leaf, maxEdge = 0, target = target) { pixels ->
                 val out = File.createTempFile("still-out", null, appCtx.cacheDir)
                 var success = false
                 try {
                     success = pixels.writeResolved(target, out, quality) && out.length() > 0L
-                    if (success) EncodedStill(out, target) else null
+                    if (success) {
+                        EncodedStill(out, target)
+                    } else {
+                        android.util.Log.e("StillConvert", "Encode failed: $leaf -> $target bytes=${out.length()}")
+                        null
+                    }
                 } finally {
                     if (!success) out.delete()
                 }
+            } ?: run {
+                android.util.Log.e("StillConvert", "No encoded output: $leaf -> $target source=$decodeSource")
+                null
             }
         }
     }
@@ -221,21 +231,23 @@ private suspend fun encodeStagedCaptured(leaf: String, target: StillExportTarget
 private suspend fun <T> withExportSource(
     localSource: Path?,
     stage: suspend () -> File,
-    work: suspend (File) -> T,
+    work: suspend (File, Path) -> T,
 ): T {
     localSource?.toString()?.takeIf { it.startsWith('/') }?.let(::File)?.takeIf { it.isFile }?.let {
-        return work(it)
+        return work(it, it.toOkioPath())
     }
     if (localSource?.toUri()?.scheme == "content") {
         val descriptor = runCatching { localSource.openFileDescriptor("r") }.getOrNull()
         descriptor?.use { opened ->
             val regular = runCatching { OsConstants.S_ISREG(Os.fstat(opened.fileDescriptor).st_mode) }.getOrDefault(false)
-            if (regular) return work(File("/proc/self/fd/${opened.fd}"))
+            // The descriptor alias is only a header-probe hint. Decode the original
+            // SAF path: RAW maps its FD directly; other codecs read its stream.
+            if (regular) return work(File("/proc/self/fd/${opened.fd}"), localSource)
         }
     }
     val source = stage()
     return try {
-        work(source)
+        work(source, source.toOkioPath())
     } finally {
         source.delete()
     }
@@ -262,8 +274,8 @@ private suspend fun writeStaged(leaf: String, target: StillExportTarget, dest: P
     }
 }
 
-private fun File.asPathSource() = object : PathSource {
-    override val source = toOkioPath()
+private fun Path.asPathSource() = object : PathSource {
+    override val source = this@asPathSource
     override val type = "application/octet-stream"
     override fun close() = Unit
 }

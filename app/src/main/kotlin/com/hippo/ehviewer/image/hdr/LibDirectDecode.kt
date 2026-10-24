@@ -204,7 +204,10 @@ object LibDirectDecode {
                     nativePixels = endNativeReaderPixels(handle)
                 }
                 packed?.let { directPixels(it, nativePixels) }
-            } ?: return@withContext null
+            } ?: run {
+                android.util.Log.e("StillConvert", "Export decode failed: $fileNameHint -> $target source=${(src as? PathSource)?.source}")
+                return@withContext null
+            }
             encode(pixels)
         } finally {
             if (handle != 0L) releaseNativeReaderPixels(handle)
@@ -649,7 +652,10 @@ object LibDirectDecode {
     )
 
     private fun readBytes(src: ImageSource): ByteArray? = when (src) {
-        is PathSource -> runCatching { src.source.read { readByteArray() } }.getOrNull()
+        is PathSource -> runCatching { src.source.read { readByteArray() } }.getOrElse { error ->
+            android.util.Log.e("LibDirectDecode", "Cannot read source: ${src.source}", error)
+            null
+        }
         is ByteBufferSource -> {
             val dup = src.source.asReadOnlyBuffer()
             val n = dup.remaining()

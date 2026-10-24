@@ -522,7 +522,8 @@ internal suspend fun executeJobs(batch: TaskBatch, dir: Path) {
                     next.run(dir)
                 } catch (e: CancellationException) {
                     throw e
-                } catch (_: Throwable) {
+                } catch (error: Throwable) {
+                    android.util.Log.e("FolderTasks", "Task failed: ${next.title}", error)
                     false
                 } finally {
                     batch.runningCount--
