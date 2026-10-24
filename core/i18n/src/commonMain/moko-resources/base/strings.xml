@@ -1158,6 +1158,13 @@
     <string name="convert_jpeg_hdr_custom">JPEG (HDR custom)</string>
     <string name="convert_jxl_hdr_boost">JPEG XL (HDR boost)</string>
     <string name="convert_jxl_hdr_custom">JPEG XL (HDR custom)</string>
+    <string name="convert_avif">AVIF (SDR)</string>
+    <string name="convert_avif_pq">AVIF (HDR PQ)</string>
+    <string name="convert_avif_pq_boost">AVIF (HDR PQ boost)</string>
+    <string name="convert_avif_pq_custom">AVIF (HDR PQ custom)</string>
+    <string name="convert_avif_gain_map">AVIF (HDR ISO gain map)</string>
+    <string name="convert_avif_gain_map_boost">AVIF (HDR ISO gain map boost)</string>
+    <string name="convert_avif_gain_map_custom">AVIF (HDR ISO gain map custom)</string>
     <string name="wide_color_gamut">Use Display P3 color space</string>
     <string name="settings_eh_request_news_timepicker">Set time to request news</string>
     <string name="dark_theme_follow_system">Follow system</string>

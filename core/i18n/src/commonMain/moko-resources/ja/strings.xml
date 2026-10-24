@@ -1064,6 +1064,13 @@
     <string name="convert_jpeg_hdr_custom">JPEG（HDRカスタム）</string>
     <string name="convert_jxl_hdr_boost">JPEG XL（HDR強調）</string>
     <string name="convert_jxl_hdr_custom">JPEG XL（HDRカスタム）</string>
+    <string name="convert_avif">AVIF (SDR)</string>
+    <string name="convert_avif_pq">AVIF (HDR PQ)</string>
+    <string name="convert_avif_pq_boost">AVIF (HDR PQ ブースト)</string>
+    <string name="convert_avif_pq_custom">AVIF (HDR PQ カスタム)</string>
+    <string name="convert_avif_gain_map">AVIF (HDR ISO ゲインマップ)</string>
+    <string name="convert_avif_gain_map_boost">AVIF (HDR ISO ゲインマップ ブースト)</string>
+    <string name="convert_avif_gain_map_custom">AVIF (HDR ISO ゲインマップ カスタム)</string>
     <string name="wide_color_gamut">Display P3 カラースペースを使用する</string>
     <string name="settings_eh_request_news_timepicker">ニュースをリクエストする時間を設定</string>
     <string name="dark_theme_follow_system">システムに従う</string>

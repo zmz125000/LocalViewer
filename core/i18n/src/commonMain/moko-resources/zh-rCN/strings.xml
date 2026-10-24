@@ -886,6 +886,13 @@
     <string name="convert_jpeg_hdr_custom">JPEG（HDR 自定义）</string>
     <string name="convert_jxl_hdr_boost">JPEG XL（HDR 增强）</string>
     <string name="convert_jxl_hdr_custom">JPEG XL（HDR 自定义）</string>
+    <string name="convert_avif">AVIF (SDR)</string>
+    <string name="convert_avif_pq">AVIF (HDR PQ)</string>
+    <string name="convert_avif_pq_boost">AVIF (HDR PQ 增强)</string>
+    <string name="convert_avif_pq_custom">AVIF (HDR PQ 自定义)</string>
+    <string name="convert_avif_gain_map">AVIF (HDR ISO 增益图)</string>
+    <string name="convert_avif_gain_map_boost">AVIF (HDR ISO 增益图 增强)</string>
+    <string name="convert_avif_gain_map_custom">AVIF (HDR ISO 增益图 自定义)</string>
     <string name="pref_category_general">通用</string>
     <string name="pref_fullscreen">全屏</string>
     <string name="pref_page_transitions">页面过渡动画</string>

@@ -154,6 +154,13 @@ fun BrowseItemOverflowButton(
                     StillExportTarget.JxlHdr to R.string.convert_jxl_hdr,
                     StillExportTarget.JxlHdrBoost to R.string.convert_jxl_hdr_boost,
                     StillExportTarget.JxlHdrCustom to R.string.convert_jxl_hdr_custom,
+                    StillExportTarget.Avif to R.string.convert_avif,
+                    StillExportTarget.AvifPq to R.string.convert_avif_pq,
+                    StillExportTarget.AvifPqBoost to R.string.convert_avif_pq_boost,
+                    StillExportTarget.AvifPqCustom to R.string.convert_avif_pq_custom,
+                    StillExportTarget.AvifGainMap to R.string.convert_avif_gain_map,
+                    StillExportTarget.AvifGainMapBoost to R.string.convert_avif_gain_map_boost,
+                    StillExportTarget.AvifGainMapCustom to R.string.convert_avif_gain_map_custom,
                 ).filter { (target, _) -> target.available && target.supportsSource(actions.selectTitle) }.forEach { (target, label) ->
                     DropdownMenuItem(
                         text = { Text(stringResource(label)) },
