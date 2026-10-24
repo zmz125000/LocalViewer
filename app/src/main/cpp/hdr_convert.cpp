@@ -1481,6 +1481,7 @@ constexpr int kExportJxlHdr = 3;
 constexpr int kExportAvif = 4;
 constexpr int kExportAvifPq = 5;
 constexpr int kExportAvifGainMap = 6;
+constexpr int kExportJxlPq = 7;
 
 uhdr_color_gamut_t export_gamut(int gamut) {
     if (gamut == 1) return UHDR_CG_DISPLAY_P3;
@@ -1590,7 +1591,7 @@ int encode_srgb_jpeg_u8(unsigned w, unsigned h, const uint8_t* rgba, const char*
 
 /**
  * Encode a reader bitmap or a full-res direct pack.
- * mode: 0 JPEG, 1 Ultra HDR JPEG, 2 SDR JXL, 3 HDR JXL, 4 SDR AVIF, 5 PQ AVIF, 6 ISO AVIF.
+ * mode: 0 JPEG, 1 Ultra HDR JPEG, 2 SDR JXL, 3 HDR JXL, 4 SDR AVIF, 5 PQ AVIF, 6 ISO AVIF, 7 PQ JXL.
  * 8-bit samples are already encoded. F16 samples are linear. SDR JPEG
  * apply the sRGB curve and embed an ICC profile for the pixel primaries
  * (BT.709, Display P3, or BT.2020). JXL keeps linear half precision and those primaries.
@@ -1599,7 +1600,7 @@ int encode_srgb_jpeg_u8(unsigned w, unsigned h, const uint8_t* rgba, const char*
 int encode_still_export(const uint8_t* src, size_t src_len, unsigned w, unsigned h, bool f16,
                         int gamut, int mode, bool premultiplied, const char* out_path, size_t sdr_offset = 0,
                         int quality = 1) {
-    if (!src || !out_path || w == 0 || h == 0 || mode < 0 || mode > kExportAvifGainMap) return -50;
+    if (!src || !out_path || w == 0 || h == 0 || mode < 0 || mode > kExportJxlPq) return -50;
     const size_t pixels = static_cast<size_t>(w) * static_cast<size_t>(h);
     const size_t bpp = f16 ? 8u : 4u;
     if (pixels == 0 || pixels > 80000000u || src_len < pixels * bpp) return -51;
@@ -1609,7 +1610,7 @@ int encode_still_export(const uint8_t* src, size_t src_len, unsigned w, unsigned
         std::vector<uint16_t> rgba(pixels * 4);
         memcpy(rgba.data(), src, pixels * 8);
         if (premultiplied) unpremultiply_f16(rgba.data(), pixels);
-        if (mode >= kExportAvif) {
+        if (mode >= kExportAvif && mode <= kExportAvifGainMap) {
             return encode_avif_f16(w, h, rgba.data(), cg, mode - kExportAvif, out_path, quality,
                                    sdr_offset ? src + sdr_offset : nullptr);
         }
@@ -1617,8 +1618,8 @@ int encode_still_export(const uint8_t* src, size_t src_len, unsigned w, unsigned
             return encode_linear_rgba_f16_to_uhdr(w, h, rgba.data(), out_path, cg, 0.f, true,
                                                   sdr_offset ? src + sdr_offset : nullptr, quality);
         }
-        if (mode == kExportJxl || mode == kExportJxlHdr) {
-            return encode_jxl_f16(w, h, rgba.data(), cg, mode == kExportJxlHdr, out_path, quality);
+        if (mode == kExportJxl || mode == kExportJxlHdr || mode == kExportJxlPq) {
+            return encode_jxl_f16(w, h, rgba.data(), cg, mode != kExportJxl, out_path, quality, mode == kExportJxlPq);
         }
         return encode_baseline_sdr_jpeg(w, h, rgba.data(), out_path, cg, quality);
     }
@@ -1637,10 +1638,10 @@ int encode_still_export(const uint8_t* src, size_t src_len, unsigned w, unsigned
             }
         });
         std::vector<uint8_t>().swap(rgba);
-        if (mode >= kExportAvifPq) {
+        if (mode >= kExportAvifPq && mode <= kExportAvifGainMap) {
             return encode_avif_f16(w, h, linear.data(), cg, mode - kExportAvif, out_path, quality);
         }
-        return encode_jxl_f16(w, h, linear.data(), cg, false, out_path, quality);
+        return encode_jxl_f16(w, h, linear.data(), cg, mode == kExportJxlPq, out_path, quality, mode == kExportJxlPq);
     }
     return encode_srgb_jpeg_u8(w, h, rgba.data(), out_path, cg, quality);
 }

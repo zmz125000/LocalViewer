@@ -16,13 +16,13 @@ struct JxlFileCloser {
 }
 
 // The caller owns straight-alpha linear half samples. Normalize HDR to its
-// declared luminance before encoding; the decoder recovers 1.0 = 203 nits.
+// declared luminance for linear JXL; PQ retains the absolute 10000-nit reference.
 int encode_jxl_f16(unsigned w, unsigned h, uint16_t* rgba, uhdr_color_gamut_t cg,
-                   bool hdr, const char* path, int quality) {
+                   bool hdr, const char* path, int quality, bool pq) {
     const size_t pixels = static_cast<size_t>(w) * h;
     if (!rgba || !path || !pixels) return -60;
-    float peak = 1.f;
-    if (hdr) {
+    float peak = pq ? kMaxLinear : 1.f;
+    if (hdr && !pq) {
         std::array<float, 8> peaks{};
         const unsigned jobs = hdr_pixel_jobs(pixels);
         hdr_parallel_pixels(pixels, jobs, [&](size_t begin, size_t end, unsigned job) {
@@ -37,18 +37,25 @@ int encode_jxl_f16(unsigned w, unsigned h, uint16_t* rgba, uhdr_color_gamut_t cg
         });
         peak = std::clamp(*std::max_element(peaks.begin(), peaks.end()), 400.f / kSdrWhiteNits, kMaxLinear);
     }
-    const float intensity = hdr ? peak * kSdrWhiteNits : kSdrWhiteNits;
+    const float intensity = pq ? kMaxNits : hdr ? peak * kSdrWhiteNits : kSdrWhiteNits;
     // One table also bounds invalid input and avoids per-channel floating-point
-    // conversion in the image loop. Alpha is already straight and stays unchanged.
+    // conversion in the image loop. Alpha stays straight; PQ converts its
+    // storage to the same uint16 precision as the color channels.
     std::vector<uint16_t> table(65536);
     for (size_t code = 0; code < table.size(); ++code) {
         float v = half_to_float(static_cast<uint16_t>(code));
         if (!std::isfinite(v) || v < 0.f) v = 0.f;
-        table[code] = float_to_half(std::min(v, peak) / peak);
+        table[code] = pq ? static_cast<uint16_t>(std::lround(linear_to_pq_code(v) * 65535.f)) :
+                           float_to_half(std::min(v, peak) / peak);
     }
     hdr_parallel_pixels(pixels, hdr_pixel_jobs(pixels), [&](size_t begin, size_t end, unsigned) {
         for (size_t i = begin; i < end; ++i) {
             for (unsigned c = 0; c < 3; ++c) rgba[4 * i + c] = table[rgba[4 * i + c]];
+            if (pq) {
+                float alpha = half_to_float(rgba[4 * i + 3]);
+                if (!std::isfinite(alpha)) alpha = 0.f;
+                rgba[4 * i + 3] = static_cast<uint16_t>(std::lround(std::clamp(alpha, 0.f, 1.f) * 65535.f));
+            }
         }
     });
     auto encoder = JxlEncoderMake(nullptr);
@@ -60,11 +67,11 @@ int encode_jxl_f16(unsigned w, unsigned h, uint16_t* rgba, uhdr_color_gamut_t cg
     info.xsize = w;
     info.ysize = h;
     info.bits_per_sample = 16;
-    info.exponent_bits_per_sample = 5;
+    info.exponent_bits_per_sample = pq ? 0 : 5;
     info.num_color_channels = 3;
     info.num_extra_channels = 1;
     info.alpha_bits = 16;
-    info.alpha_exponent_bits = 5;
+    info.alpha_exponent_bits = pq ? 0 : 5;
     info.alpha_premultiplied = JXL_FALSE;
     const bool compression = quality > 0;
     constexpr float distances[] = {0.f, .3f, .5f, 1.f};
@@ -75,20 +82,20 @@ int encode_jxl_f16(unsigned w, unsigned h, uint16_t* rgba, uhdr_color_gamut_t cg
     color.color_space = JXL_COLOR_SPACE_RGB;
     color.white_point = JXL_WHITE_POINT_D65;
     color.primaries = cg == UHDR_CG_BT_2100 ? JXL_PRIMARIES_2100 : cg == UHDR_CG_DISPLAY_P3 ? JXL_PRIMARIES_P3 : JXL_PRIMARIES_SRGB;
-    color.transfer_function = JXL_TRANSFER_FUNCTION_LINEAR;
+    color.transfer_function = pq ? JXL_TRANSFER_FUNCTION_PQ : JXL_TRANSFER_FUNCTION_LINEAR;
     color.rendering_intent = JXL_RENDERING_INTENT_RELATIVE;
     if (JxlEncoderSetBasicInfo(encoder.get(), &info) != JXL_ENC_SUCCESS ||
         JxlEncoderSetColorEncoding(encoder.get(), &color) != JXL_ENC_SUCCESS) return -62;
     auto* frame = JxlEncoderFrameSettingsCreate(encoder.get(), nullptr);
-    // Lossless keeps the original F16 / fast-decode preset. High/mid/low use
-    // perceptual XYB at distances 0.3/0.5/1.0, preserving primaries, linear transfer
+    // Lossless keeps original-profile / fast-decode coding. High/mid/low use
+    // perceptual XYB at distances 0.3/0.5/1.0, preserving primaries, transfer
     // and HDR intensity target. Alpha remains lossless in every preset.
     if (!frame || JxlEncoderSetFrameLossless(frame, compression ? JXL_FALSE : JXL_TRUE) != JXL_ENC_SUCCESS ||
         JxlEncoderSetFrameDistance(frame, distance) != JXL_ENC_SUCCESS ||
         JxlEncoderSetExtraChannelDistance(frame, 0, 0.f) != JXL_ENC_SUCCESS ||
         JxlEncoderFrameSettingsSetOption(frame, JXL_ENC_FRAME_SETTING_EFFORT, compression ? 5 : 3) != JXL_ENC_SUCCESS ||
         JxlEncoderFrameSettingsSetOption(frame, JXL_ENC_FRAME_SETTING_DECODING_SPEED, compression ? 0 : 2) != JXL_ENC_SUCCESS) return -63;
-    const JxlPixelFormat format{4, JXL_TYPE_FLOAT16, JXL_NATIVE_ENDIAN, 0};
+    const JxlPixelFormat format{4, pq ? JXL_TYPE_UINT16 : JXL_TYPE_FLOAT16, JXL_NATIVE_ENDIAN, 0};
     if (JxlEncoderAddImageFrame(frame, &format, rgba, pixels * 8) != JXL_ENC_SUCCESS) return -64;
     JxlEncoderCloseInput(encoder.get());
     std::unique_ptr<FILE, JxlFileCloser> file(fopen(path, "wb"));

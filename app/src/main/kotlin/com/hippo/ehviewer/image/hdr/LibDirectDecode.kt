@@ -371,7 +371,7 @@ object LibDirectDecode {
         val controls = export?.controls ?: RawExportControls.current()
         val panelBoost = when {
             // Ordinary HDR exports follow source headroom up to the format ceiling.
-            export != null && mode == RawPresent.Hdr && !export.target.rawBoosted() -> 10000f / 203f
+            export != null && mode == RawPresent.Hdr && controls.hdrMode == 0 -> 10000f / 203f
             // Reader/custom use current controls; boost exports capture default controls.
             mode == RawPresent.Hdr -> controls.hdrTargetNits / 203f
             else -> 1f
@@ -379,7 +379,7 @@ object LibDirectDecode {
         // Export modes retain Rec.2020 and the separate SDR base. Mode 3 uses
         // source headroom; mode 4 opens highlights toward the selected target.
         val present = when {
-            export != null && mode == RawPresent.Hdr -> if (export.target.rawBoosted()) 4 else 3
+            export != null && mode == RawPresent.Hdr -> if (controls.hdrMode != 0) 4 else 3
             else -> mode.ordinal
         }
         val outInfo = IntArray(6)

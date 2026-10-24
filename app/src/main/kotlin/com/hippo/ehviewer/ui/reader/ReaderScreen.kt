@@ -916,7 +916,6 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
                             contentWindowInsets = { WindowInsets() },
                         ) {
                             ReaderPageSheetMeta(
-                                sourceName = pageLoader.sourceLeafName(page.index),
                                 retry = { pageLoader.retryPage(page.index) },
                                 retryOrigin = { pageLoader.retryPage(page.index, true) },
                                 share = { launchIO { with(pageLoader) { shareImage(page, info) } } },

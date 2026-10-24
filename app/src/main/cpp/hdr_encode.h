@@ -126,6 +126,17 @@ constexpr float kSdrWhiteNits = 203.0f;
 constexpr float kMaxNits = 10000.0f;
 /** Nominal max LINEAR half value: 10000/203 ≈ 49.26 (ultrahdr_api.h). */
 constexpr float kMaxLinear = kMaxNits / kSdrWhiteNits;
+
+/** ST 2084 OETF. Linear working RGB uses 1.0 = 203 nits, PQ uses 1.0 = 10000 nits. */
+inline float linear_to_pq_code(float linear) {
+    double luminance = static_cast<double>(linear) * kSdrWhiteNits / kMaxNits;
+    if (!(luminance > 0.0)) return 0.f;
+    luminance = std::fmin(luminance, 1.0);
+    const double p = std::pow(luminance, 2610.0 / 16384.0);
+    return static_cast<float>(std::pow((3424.0 / 4096.0 + (2413.0 / 128.0) * p) /
+                                      (1.0 + (2392.0 / 128.0) * p), 2523.0 / 32.0));
+}
+
 /** Fixed MaxCLL for known-HDR thumbs (no peak scan). */
 constexpr float kHdrThumbNits = 1000.0f;
 
@@ -272,9 +283,9 @@ jbyteArray pack_direct_to_jbyte_array(JNIEnv* env, std::vector<uint16_t>& rgba, 
                                       bool advanced_color, int transfer_cicp, jintArray jOutInfo,
                                       jfloatArray jOutBoost);
 
-/** Straight-alpha linear F16 → 16-bit JPEG XL (SDR or absolute HDR). Mutates RGB. */
+/** Straight-alpha linear F16 → JXL. PQ uses uint16 codes, linear uses F16. Mutates RGBA. */
 int encode_jxl_f16(unsigned w, unsigned h, uint16_t* rgba, uhdr_color_gamut_t cg,
-                   bool hdr, const char* path, int quality = 1);
+                   bool hdr, const char* path, int quality = 1, bool pq = false);
 
 /** AVIF: mode 0 SDR, 1 PQ, 2 ISO 21496-1 SDR base + HDR gain map.
  * F16 is linear, straight alpha, with 1.0 = 203 nits; sdr_base is optional RGBA8.

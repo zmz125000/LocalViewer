@@ -62,14 +62,6 @@ int write_avif(avifImage* image, const char* path, int quality) {
     return written && closed ? 0 : -74;
 }
 
-// ST 2084 input is absolute luminance / 10000 nits. Our linear input uses 203 nits.
-float pq_code(float linear) {
-    const double x = std::clamp(static_cast<double>(linear) * kSdrWhiteNits / kMaxNits, 0.0, 1.0);
-    const double p = std::pow(x, 2610.0 / 16384.0);
-    return static_cast<float>(std::pow((3424.0 / 4096.0 + (2413.0 / 128.0) * p) /
-                                      (1.0 + (2392.0 / 128.0) * p), 2523.0 / 32.0));
-}
-
 avifRGBImage rgb_view(const avifImage* image, uint8_t* pixels, unsigned depth, unsigned bytes_per_channel) {
     avifRGBImage rgb;
     avifRGBImageSetDefaults(&rgb, image);
@@ -113,7 +105,7 @@ int encode_avif_f16(unsigned w, unsigned h, uint16_t* rgba, uhdr_color_gamut_t g
         if (!std::isfinite(v)) v = 0.f;
         v = std::clamp(v, 0.f, kMaxLinear);
         sanitized[i] = float_to_half(v);
-        const float hdr_code = pq || gain_map ? pq_code(v) : 0.f;
+        const float hdr_code = pq || gain_map ? linear_to_pq_code(v) : 0.f;
         const float code = pq ? hdr_code : std::clamp(srgb_oetf(std::min(v, 1.f)), 0.f, 1.f);
         codes[i] = static_cast<uint16_t>(std::lround(code * maximum));
         if (gain_map) hdr_codes[i] = static_cast<uint16_t>(std::lround(hdr_code * 65535.f));
