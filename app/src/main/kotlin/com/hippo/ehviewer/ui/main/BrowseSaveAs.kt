@@ -321,6 +321,21 @@ object BrowseSaveAs {
         }
         ?.takeIf { runCatching { it.isDirectory }.getOrDefault(false) }
 
+    /** Disabling prompts requires a usable default folder; cancellation keeps prompts enabled. */
+    context(_: SnackbarHostState, _: Context)
+    internal suspend fun updateAskWhereToSave(ask: Boolean) {
+        if (!ask && withIOContext { configuredConvertDirectory() } == null) {
+            val directory = pickTreeDir() ?: return
+            val documentUri = directory.toUri()
+            val treeUri = DocumentsContract.buildTreeDocumentUri(
+                documentUri.authority!!,
+                DocumentsContract.getTreeDocumentId(documentUri),
+            )
+            Settings.imageConversionLocation.value = treeUri.toString()
+        }
+        Settings.browseAskWhereToSave.value = ask
+    }
+
     /** Same tree picker as Save to… for a folder destination. */
     context(_: SnackbarHostState, _: Context)
     internal suspend fun pickSaveDirectory(): Path? = pickTreeDir()

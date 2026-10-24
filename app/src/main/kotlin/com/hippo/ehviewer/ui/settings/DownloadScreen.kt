@@ -41,6 +41,7 @@ import com.hippo.ehviewer.asMutableState
 import com.hippo.ehviewer.download.downloadLocation
 import com.hippo.ehviewer.ui.Screen
 import com.hippo.ehviewer.ui.keepNoMediaFileStatus
+import com.hippo.ehviewer.ui.main.BrowseSaveAs
 import com.hippo.ehviewer.ui.main.NavigationIcon
 import com.hippo.ehviewer.ui.screen.adaptiveTopAppBarColors
 import com.hippo.ehviewer.ui.tools.awaitConfirmationOrCancel
@@ -128,29 +129,6 @@ fun AnimatedVisibilityScope.DownloadScreen(navigator: DestinationsNavigator) = S
                     }
                 }
             }
-            SwitchPreference(
-                title = stringResource(R.string.browse_ask_where_to_save),
-                state = askWhereToSave,
-            )
-            val conversionLocationSummary = conversionLocation.value?.let { saved ->
-                runCatching {
-                    val treeUri = Uri.parse(saved)
-                    DocumentsContract.buildDocumentUriUsingTree(
-                        treeUri,
-                        DocumentsContract.getTreeDocumentId(treeUri),
-                    ).toOkioPath().toUri().displayPath
-                }.getOrNull()
-            } ?: stringResource(R.string.image_conversion_default_location_not_set)
-            Preference(
-                title = stringResource(R.string.image_conversion_default_location),
-                summary = conversionLocationSummary,
-            ) {
-                try {
-                    selectConversionDirLauncher.launch(null)
-                } catch (_: ActivityNotFoundException) {
-                    launchSnackbar(conversionLocationFailed)
-                }
-            }
             Preference(
                 title = stringResource(id = R.string.settings_download_download_location),
                 summary = downloadLocationState.toUri().displayPath,
@@ -189,6 +167,34 @@ fun AnimatedVisibilityScope.DownloadScreen(navigator: DestinationsNavigator) = S
                     }
                 }
             }
+            val conversionLocationSummary = conversionLocation.value?.let { saved ->
+                runCatching {
+                    val treeUri = Uri.parse(saved)
+                    DocumentsContract.buildDocumentUriUsingTree(
+                        treeUri,
+                        DocumentsContract.getTreeDocumentId(treeUri),
+                    ).toOkioPath().toUri().displayPath
+                }.getOrNull()
+            } ?: stringResource(R.string.image_conversion_default_location_not_set)
+            Preference(
+                title = stringResource(R.string.image_conversion_default_location),
+                summary = conversionLocationSummary,
+            ) {
+                try {
+                    selectConversionDirLauncher.launch(null)
+                } catch (_: ActivityNotFoundException) {
+                    launchSnackbar(conversionLocationFailed)
+                }
+            }
+            me.zhanghai.compose.preference.SwitchPreference(
+                value = askWhereToSave.value,
+                onValueChange = { ask ->
+                    launchIO {
+                        with(contextOf<Context>()) { BrowseSaveAs.updateAskWhereToSave(ask) }
+                    }
+                },
+                title = { Text(stringResource(R.string.browse_ask_where_to_save)) },
+            )
             val mediaScan = Settings.mediaScan.asMutableState()
             SwitchPreference(
                 title = stringResource(id = R.string.settings_download_media_scan),

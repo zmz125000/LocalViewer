@@ -1658,7 +1658,13 @@ private fun SelectionOverflowControl(
                             if (askWhereToSave.value) Icon(Icons.Default.Check, contentDescription = null)
                         }
                     },
-                    onClick = { askWhereToSave.value = !askWhereToSave.value },
+                    onClick = {
+                        val ask = !askWhereToSave.value
+                        menu = false
+                        scope.launch {
+                            with(snackbar) { with(context) { BrowseSaveAs.updateAskWhereToSave(ask) } }
+                        }
+                    },
                 )
             }
         }
