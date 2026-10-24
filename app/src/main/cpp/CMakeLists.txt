@@ -285,6 +285,10 @@ if (EHVIEWER_HDR_CODECS)
     set(CONFIG_AV1_HIGHBITDEPTH 1 CACHE BOOL "" FORCE)
     if (ANDROID_ABI STREQUAL "arm64-v8a")
         set(AOM_TARGET_CPU "arm64" CACHE STRING "" FORCE)
+        # Polly in the global release flags crashes NDK Clang 21 on libaom's
+        # SVE sources. NEON remains enabled for all supported arm64 devices.
+        set(ENABLE_SVE OFF CACHE BOOL "" FORCE)
+        set(ENABLE_SVE2 OFF CACHE BOOL "" FORCE)
     elseif (ANDROID_ABI STREQUAL "x86_64")
         set(AOM_TARGET_CPU "x86_64" CACHE STRING "" FORCE)
     endif ()
@@ -366,7 +370,21 @@ if (EHVIEWER_HDR_CODECS)
             GIT_TAG v1.1.3
             GIT_SHALLOW 1
     )
-    FetchContent_MakeAvailable(libde265)
+    FetchContent_GetProperties(libde265)
+    if (NOT libde265_POPULATED)
+        FetchContent_Populate(libde265)
+    endif ()
+    # libaom and libde265 both unconditionally define a source-archive target
+    # named "dist". Namespace libde265's packaging target before add_subdirectory.
+    # Apply on every configure so already populated .cxx checkouts are fixed too.
+    set(LIBDE265_CMAKE_FILE "${libde265_SOURCE_DIR}/CMakeLists.txt")
+    file(READ "${LIBDE265_CMAKE_FILE}" LIBDE265_CMAKE_ORIGINAL)
+    string(REPLACE "add_custom_target(dist\n" "add_custom_target(libde265_dist\n"
+            LIBDE265_CMAKE_PATCHED "${LIBDE265_CMAKE_ORIGINAL}")
+    if (NOT LIBDE265_CMAKE_ORIGINAL STREQUAL LIBDE265_CMAKE_PATCHED)
+        file(WRITE "${LIBDE265_CMAKE_FILE}" "${LIBDE265_CMAKE_PATCHED}")
+    endif ()
+    add_subdirectory("${libde265_SOURCE_DIR}" "${libde265_BINARY_DIR}")
     # de265.h includes <libde265/de265-version.h>, generated under the FetchContent
     # binary dir. BUILD_INTERFACE keeps these off the install(EXPORT) interface:
     # absolute paths inside the Android .cxx tree fail CMake generate.
