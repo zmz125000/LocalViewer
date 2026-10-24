@@ -2322,7 +2322,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
     fun localConvertStill(path: okio.Path, leaf: String): (suspend (okio.Path, com.hippo.ehviewer.image.hdr.StillExportTarget) -> Boolean)? {
         if (!isStillExportFileName(leaf)) return null
         return { dir, target ->
-            exportStillToDirectory(leaf, target, dir) { BrowseSaveAs.stageLocalForConvert(path) }
+            exportStillToDirectory(leaf, target, dir, localSource = path) { BrowseSaveAs.stageLocalForConvert(path) }
         }
     }
 
@@ -2573,7 +2573,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                     onShare = { shareLocalFile(path) },
                     onShareViaHttp = localHttpShareFile(path),
                     onConvert = if (isStillExportFileName(leaf)) {
-                        { target -> launchIO { with(context) { convertLocalStill(path, leaf, target) } } }
+                        { target -> with(context) { convertLocalStill(path, leaf, target) } }
                     } else {
                         null
                     },

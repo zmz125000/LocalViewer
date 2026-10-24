@@ -476,7 +476,7 @@ bool pack_image(const libraw_processed_image_t* img, int max_edge, int present, 
 
     // Export HDR retains the camera-look SDR render in the same gamut. Append
     // RGBA8 after the F16 plane so decode/encode share one JNI array and demosaic.
-    const bool keep_sdr = present >= 3;
+    const bool keep_sdr = present >= 3 && export_pixels_keep_sdr();
     const size_t sdr_bytes = keep_sdr ? static_cast<size_t>(dw) * dh * 4u : 0u;
     out.pixels.assign(bytes + sdr_bytes, 0);
     out.w = dw;

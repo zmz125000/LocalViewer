@@ -5,6 +5,7 @@ import java.nio.ByteBuffer
 
 /** Synchronous reader-only capture. Release the handle after copying the returned buffer. */
 internal external fun beginNativeReaderPixels(): Long
+internal external fun beginNativeExportPixels(keepSdrBase: Boolean): Long
 internal external fun endNativeReaderPixels(handle: Long): ByteBuffer?
 internal external fun releaseNativeReaderPixels(handle: Long)
 internal external fun copyNativeReaderPixelsToAHB(source: ByteBuffer, destination: HardwareBuffer)
@@ -236,6 +237,20 @@ external fun extractRawPreviewFd(fd: Int, outPath: String, demosaicFallback: Boo
  */
 external fun encodeStillExport(
     pixels: ByteArray,
+    width: Int,
+    height: Int,
+    f16: Boolean,
+    gamut: Int,
+    mode: Int,
+    premultiplied: Boolean,
+    outPath: String,
+    sdrOffset: Int,
+    quality: Int,
+): Int
+
+/** Consumes exclusively owned native pixels in place; the capture must outlive this call. */
+internal external fun encodeNativeStillExport(
+    pixels: ByteBuffer,
     width: Int,
     height: Int,
     f16: Boolean,

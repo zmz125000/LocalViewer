@@ -129,7 +129,11 @@
     <string name="image_conversion_quality_mid">中</string>
     <string name="image_conversion_quality_low">低</string>
     <string name="raw_hdr_conversion">RAW HDR 変換</string>
-    <string name="raw_hdr_conversion_summary">現在：%1$s。カメラ RAW の HDR 出力にのみ適用。HDR は元画像のハイライト範囲、ブーストは既定の RAW 調整、カスタムは現在のリーダーの RAW 調整を使います。</string>
+    <string name="raw_hdr_conversion_summary">%1$s</string>
+    <string name="browse_ask_where_to_save">保存先を毎回確認</string>
+    <string name="image_conversion_default_location">画像変換フォルダー</string>
+    <string name="image_conversion_default_location_not_set">フォルダー未選択</string>
+    <string name="browse_task_progress_for_item">%1$s · %2$s</string>
     <string name="raw_hdr_conversion_hdr">HDR</string>
     <string name="raw_hdr_conversion_boost">HDR ブースト</string>
     <string name="raw_hdr_conversion_custom">HDR カスタム</string>
@@ -1053,6 +1057,7 @@
     <string name="browse_task_running">実行中</string>
     <string name="browse_task_done">完了</string>
     <string name="browse_task_failed">失敗</string>
+    <string name="browse_task_status_output">%1$s · %2$s</string>
     <string name="browse_clear">クリア</string>
     <string name="browse_hide">隠す</string>
     <string name="browse_pause">一時停止</string>
@@ -1060,7 +1065,6 @@
     <string name="browse_background">バックグラウンド</string>
     <string name="browse_continue">続行</string>
     <string name="convert_back">戻る</string>
-    <string name="convert_auto_original">自動（元のサイズ）</string>
     <string name="convert_jpeg">JPEG</string>
     <string name="convert_jpeg_hdr">JPEG（HDR）</string>
     <string name="convert_jxl">JPEG XL（SDR）</string>

@@ -3,16 +3,8 @@ package com.hippo.ehviewer.image.hdr
 import com.hippo.ehviewer.BuildConfig
 import com.hippo.ehviewer.util.FileUtils
 
-/**
- * Convert-to targets for JXL, JXR, and camera RAW.
- *
- * [AutoOriginal] decodes the file at full resolution, then picks the format:
- * HDR becomes Ultra HDR JPEG; SDR becomes JPEG. Encoder-enabled builds can
- * preserve fp16 SDR as lossless JPEG XL.
- * The other targets always redecode the source at the original dimensions.
- */
+/** Full-resolution conversion targets for JXL, JXR, and camera RAW. */
 enum class StillExportTarget {
-    AutoOriginal,
     Jpeg,
     JpegHdr,
     Jxl,
@@ -36,23 +28,13 @@ fun isStillExportFileName(name: String?): Boolean {
 }
 
 /** RAW output dynamic range is independent of the reader and the display. */
-internal fun StillExportTarget.rawHdr(): Boolean = this == StillExportTarget.AutoOriginal ||
-    when (exportMode()) {
-        1, 3, 5, 6, 7 -> true
-        else -> false
-    }
-
-/** HDR wins over fp16. A gain-map frame is HDR even when the base is 8-bit. */
-fun resolveStillExportAuto(hdr: Boolean, f16: Boolean, jxlEncoder: Boolean = BuildConfig.JXL_ENCODER_ENABLED): StillExportTarget = when {
-    hdr -> StillExportTarget.JpegHdr
-    f16 && jxlEncoder -> StillExportTarget.Jxl
-    else -> StillExportTarget.Jpeg
+internal fun StillExportTarget.rawHdr(): Boolean = when (exportMode()) {
+    1, 3, 5, 6, 7 -> true
+    else -> false
 }
 
-fun StillExportTarget.resolve(hdr: Boolean, f16: Boolean): StillExportTarget = when (this) {
-    StillExportTarget.AutoOriginal -> resolveStillExportAuto(hdr, f16)
-    else -> this
-}
+/** Only gain-map outputs need RAW's separately rendered camera-look SDR base. */
+internal fun StillExportTarget.needsSdrBase(): Boolean = this == StillExportTarget.JpegHdr || this == StillExportTarget.AvifGainMap
 
 /** 0 JPEG, 1 Ultra HDR JPEG, 2/3 SDR/linear HDR JXL, 4/5/6 SDR/PQ/gain-map AVIF, 7 PQ JXL. */
 fun StillExportTarget.exportMode(): Int = when (this) {
@@ -63,7 +45,7 @@ fun StillExportTarget.exportMode(): Int = when (this) {
     StillExportTarget.Avif -> 4
     StillExportTarget.AvifPq -> 5
     StillExportTarget.AvifGainMap -> 6
-    StillExportTarget.AutoOriginal, StillExportTarget.Jpeg -> 0
+    StillExportTarget.Jpeg -> 0
 }
 
 fun StillExportTarget.fileExtension(): String = when (this) {

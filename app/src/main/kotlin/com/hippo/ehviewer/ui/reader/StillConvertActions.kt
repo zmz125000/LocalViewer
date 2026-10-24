@@ -5,13 +5,17 @@ import android.content.Context
 import android.net.Uri
 import android.provider.DocumentsContract
 import android.provider.MediaStore
+import android.system.Os
+import android.system.OsConstants
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.material3.SnackbarHostState
+import com.ehviewer.core.files.openFileDescriptor
 import com.ehviewer.core.files.sendTo
 import com.ehviewer.core.files.toOkioPath
 import com.ehviewer.core.files.toUri
 import com.ehviewer.core.i18n.R
 import com.ehviewer.core.util.withIOContext
+import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.gallery.Page
 import com.hippo.ehviewer.gallery.ReaderSession
 import com.hippo.ehviewer.image.PathSource
@@ -20,11 +24,11 @@ import com.hippo.ehviewer.image.hdr.StillExportQuality
 import com.hippo.ehviewer.image.hdr.StillExportTarget
 import com.hippo.ehviewer.image.hdr.StillExportWork
 import com.hippo.ehviewer.image.hdr.mimeType
-import com.hippo.ehviewer.image.hdr.resolve
 import com.hippo.ehviewer.image.hdr.stillExportFileName
 import com.hippo.ehviewer.image.hdr.withRawExportControls
 import com.hippo.ehviewer.image.hdr.writeResolved
 import com.hippo.ehviewer.ui.main.BrowseSaveAs
+import com.hippo.ehviewer.ui.main.enqueueSingleConvert
 import com.hippo.ehviewer.util.awaitActivityResult
 import com.hippo.ehviewer.util.displayPath
 import java.io.File
@@ -37,27 +41,16 @@ import okio.Path
 import okio.Path.Companion.toOkioPath
 import splitties.init.appCtx
 
-context(_: SnackbarHostState, _: Context, loader: ReaderSession)
-suspend fun convertTo(page: Page, target: StillExportTarget) = withRawExportControls(target) {
-    convertToCaptured(page, target)
-}
-
-context(_: SnackbarHostState, _: Context, loader: ReaderSession)
-private suspend fun convertToCaptured(page: Page, target: StillExportTarget) {
+context(snackbar: SnackbarHostState, ctx: Context, loader: ReaderSession)
+suspend fun convertTo(page: Page, target: StillExportTarget) {
     val leaf = loader.sourceLeafName(page.index)
     if (leaf == null) {
         snackbar(string(R.string.error_cant_save_image))
         return
     }
-    if (target == StillExportTarget.AutoOriginal) {
-        val saved = saveOriginalSize(leaf) { stageOriginal(loader, page.index) }
-        if (!saved) snackbar(string(R.string.error_cant_save_image))
-        return
+    enqueueSingleConvert(snackbar, ctx, leaf, target) { dir, selected ->
+        exportStillToDirectory(leaf, selected, dir) { stageOriginal(loader, page.index) }
     }
-    val saved = pickAndWrite(leaf, target) { dest ->
-        writeStaged(leaf, target, dest) { stageOriginal(loader, page.index) }
-    }
-    if (!saved) snackbar(string(R.string.error_cant_save_image))
 }
 
 context(_: SnackbarHostState, _: Context)
@@ -80,10 +73,11 @@ suspend fun exportStillToDirectory(
     leaf: String,
     target: StillExportTarget,
     dir: Path,
+    localSource: Path? = null,
     stage: suspend () -> File,
 ): Boolean {
     return try {
-        val encoded = encodeStaged(leaf, target, stage) ?: return false
+        val encoded = encodeStaged(leaf, target, stage, localSource) ?: return false
         try {
             withIOContext { BrowseSaveAs.writeConvertFile(dir, stillExportFileName(leaf, encoded.target), encoded.file) }
         } finally {
@@ -104,19 +98,29 @@ private suspend fun convertStaged(leaf: String, target: StillExportTarget, stage
         convertStagedUnchecked(leaf, target, stage)
     } catch (e: CancellationException) {
         throw e
-    } catch (_: Throwable) {
+    } catch (error: Throwable) {
+        error.logcatExport()
         snackbar(string(R.string.error_cant_save_image))
     }
 }
 
 context(_: SnackbarHostState, _: Context)
 private suspend fun convertStagedUnchecked(leaf: String, target: StillExportTarget, stage: suspend () -> File) {
-    if (target == StillExportTarget.AutoOriginal) {
-        val saved = saveOriginalSize(leaf, stage)
-        if (!saved) snackbar(string(R.string.error_cant_save_image))
-        return
+    val saved = if (Settings.browseAskWhereToSave.value) {
+        pickAndWrite(leaf, target) { dest -> writeStaged(leaf, target, dest, stage) }
+    } else {
+        val dir = BrowseSaveAs.pickConvertDirectory() ?: return
+        val encoded = encodeStaged(leaf, target, stage) ?: return
+        try {
+            val dest = withIOContext {
+                BrowseSaveAs.writeConvertFile(dir, stillExportFileName(leaf, encoded.target), encoded.file)
+            }
+            snackbar(string(R.string.image_saved, dest.toUri().displayPath ?: dest.toString()))
+            true
+        } finally {
+            encoded.file.delete()
+        }
     }
-    val saved = pickAndWrite(leaf, target) { dest -> writeStaged(leaf, target, dest, stage) }
     if (!saved) snackbar(string(R.string.error_cant_save_image))
 }
 
@@ -183,49 +187,62 @@ private fun Context.discardUnpublished(uri: Uri) {
     runCatching { DocumentsContract.deleteDocument(contentResolver, uri) }
 }
 
-/**
- * Picks a folder immediately, then decodes. The file name follows the Auto rule
- * (`.jpg` by default; encoder-enabled builds use `.jxl` for deep SDR).
- * @return false when decode or write fails. Cancel returns true.
- */
-context(_: SnackbarHostState, _: Context)
-private suspend fun saveOriginalSize(leaf: String, stage: suspend () -> File): Boolean {
-    val dir = BrowseSaveAs.pickConvertDirectory() ?: return true
-    val encoded = encodeStaged(leaf, StillExportTarget.AutoOriginal, stage) ?: return false
-    val dest = try {
-        withIOContext { BrowseSaveAs.writeConvertFile(dir, stillExportFileName(leaf, encoded.target), encoded.file) }
-    } finally {
-        encoded.file.delete()
-    }
-    snackbar(string(R.string.image_saved, dest.toUri().displayPath ?: dest.toString()))
-    return true
-}
-
 private data class EncodedStill(val file: File, val target: StillExportTarget)
 
 /** Download/stage first; retain the memory lease until encoding releases its pixels. */
-private suspend fun encodeStaged(leaf: String, target: StillExportTarget, stage: suspend () -> File): EncodedStill? = withRawExportControls(target) {
-    encodeStagedCaptured(leaf, target, stage)
+private suspend fun encodeStaged(leaf: String, target: StillExportTarget, stage: suspend () -> File, localSource: Path? = null): EncodedStill? = withRawExportControls(target) {
+    encodeStagedCaptured(leaf, target, stage, localSource)
 }
 
-private suspend fun encodeStagedCaptured(leaf: String, target: StillExportTarget, stage: suspend () -> File): EncodedStill? = withIOContext {
-    if (!target.available) return@withIOContext null
+private suspend fun encodeStagedCaptured(leaf: String, target: StillExportTarget, stage: suspend () -> File, localSource: Path?): EncodedStill? = withIOContext {
+    check(target.available) { "Export encoder unavailable: $target" }
     val quality = currentCoroutineContext()[StillExportQuality]?.value ?: StillExportQuality.current().value
-    val source = stage()
-    try {
+    withExportSource(localSource, stage) { source, decodeSource ->
+        android.util.Log.i("StillConvert", "Start $leaf -> $target source=$decodeSource")
         StillExportWork.withSource(source, leaf) {
-            LibDirectDecode.withExportPixels(source.asPathSource(), leaf, maxEdge = 0, target = target) { pixels ->
-                val resolved = target.resolve(pixels.isHdr, pixels.f16)
+            LibDirectDecode.withExportPixels(decodeSource.asPathSource(), leaf, maxEdge = 0, target = target) { pixels ->
                 val out = File.createTempFile("still-out", null, appCtx.cacheDir)
                 var success = false
                 try {
-                    success = pixels.writeResolved(resolved, out, quality) && out.length() > 0L
-                    if (success) EncodedStill(out, resolved) else null
+                    success = pixels.writeResolved(target, out, quality) && out.length() > 0L
+                    if (success) {
+                        EncodedStill(out, target)
+                    } else {
+                        android.util.Log.e("StillConvert", "Encode failed: $leaf -> $target bytes=${out.length()}")
+                        null
+                    }
                 } finally {
                     if (!success) out.delete()
                 }
+            } ?: run {
+                android.util.Log.e("StillConvert", "No encoded output: $leaf -> $target source=$decodeSource")
+                null
             }
         }
+    }
+}
+
+/** Borrow originals without deleting them; only temporary staged copies belong to this job. */
+private suspend fun <T> withExportSource(
+    localSource: Path?,
+    stage: suspend () -> File,
+    work: suspend (File, Path) -> T,
+): T {
+    localSource?.toString()?.takeIf { it.startsWith('/') }?.let(::File)?.takeIf { it.isFile }?.let {
+        return work(it, it.toOkioPath())
+    }
+    if (localSource?.toUri()?.scheme == "content") {
+        val descriptor = runCatching { localSource.openFileDescriptor("r") }.getOrNull()
+        descriptor?.use { opened ->
+            val regular = runCatching { OsConstants.S_ISREG(Os.fstat(opened.fileDescriptor).st_mode) }.getOrDefault(false)
+            // The descriptor alias is only a header-probe hint. Decode the original
+            // SAF path: RAW maps its FD directly; other codecs read its stream.
+            if (regular) return work(File("/proc/self/fd/${opened.fd}"), localSource)
+        }
+    }
+    val source = stage()
+    return try {
+        work(source, source.toOkioPath())
     } finally {
         source.delete()
     }
@@ -252,8 +269,8 @@ private suspend fun writeStaged(leaf: String, target: StillExportTarget, dest: P
     }
 }
 
-private fun File.asPathSource() = object : PathSource {
-    override val source = toOkioPath()
+private fun Path.asPathSource() = object : PathSource {
+    override val source = this@asPathSource
     override val type = "application/octet-stream"
     override fun close() = Unit
 }

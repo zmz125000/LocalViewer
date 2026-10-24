@@ -58,10 +58,18 @@ internal fun exportWorkingBytes(width: Long, height: Long, sourceBytes: Long, ra
     return width * height * (if (raw) 128 else 80) + sourceBytes.coerceAtLeast(0).coerceAtMost(1024L * 1024 * 1024) * 2 + 16L * 1024 * 1024
 }
 
-/** RAW HDR also retains its camera-look SDR RGBA8 plane in the packed array. */
-internal fun exportHeapBytes(width: Long, height: Long, sourceBytes: Long, raw: Boolean): Long {
+/** Native exports keep pixel planes outside the Java heap; fallbacks retain their previous budget. */
+internal fun exportHeapBytes(width: Long, height: Long, sourceBytes: Long, raw: Boolean, nativePixels: Boolean = false): Long {
     if (width <= 0 || height <= 0 || width > 65536 || height > 65536) return Long.MAX_VALUE
-    return width * height * (if (raw) 12 else 8) + (if (raw) 0 else sourceBytes.coerceAtLeast(0)) + 8L * 1024 * 1024
+    return width * height * (
+        if (nativePixels) {
+            0
+        } else if (raw) {
+            12
+        } else {
+            8
+        }
+        ) + (if (raw) 0 else sourceBytes.coerceAtLeast(0)) + 8L * 1024 * 1024
 }
 
 internal fun exportNativeCapacity(totalBytes: Long, availableBytes: Long, heapBytes: Long): Long {
@@ -93,7 +101,8 @@ internal object StillExportWork {
         val sourceBytes = file.length()
         // Codec working buffers live on the native heap, not inside the JVM's
         // maxMemory allowance. Keep both leases through encode, with separate limits.
-        return heapBudget.withBytes(exportHeapBytes(width, height, sourceBytes, raw)) {
+        val nativePixels = raw || leaf.substringAfterLast('.', "").lowercase() in setOf("jxl", "jxr", "wdp", "hdp")
+        return heapBudget.withBytes(exportHeapBytes(width, height, sourceBytes, raw, nativePixels)) {
             nativeBudget.withBytes(exportWorkingBytes(width, height, sourceBytes, raw), work)
         }
     }

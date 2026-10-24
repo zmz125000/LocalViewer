@@ -123,7 +123,11 @@
     <string name="image_conversion_quality_mid">中</string>
     <string name="image_conversion_quality_low">低</string>
     <string name="raw_hdr_conversion">RAW HDR 转换</string>
-    <string name="raw_hdr_conversion_summary">当前：%1$s。仅影响相机 RAW 的 HDR 转换。HDR 使用源文件高光范围；增强使用默认 RAW 控制；自定义使用当前阅读器 RAW 控制。</string>
+    <string name="raw_hdr_conversion_summary">%1$s</string>
+    <string name="browse_ask_where_to_save">询问保存位置</string>
+    <string name="image_conversion_default_location">图像转换文件夹</string>
+    <string name="image_conversion_default_location_not_set">尚未选择文件夹</string>
+    <string name="browse_task_progress_for_item">%1$s · %2$s</string>
     <string name="raw_hdr_conversion_hdr">HDR</string>
     <string name="raw_hdr_conversion_boost">HDR 增强</string>
     <string name="raw_hdr_conversion_custom">HDR 自定义</string>
@@ -875,6 +879,7 @@
     <string name="browse_task_running">进行中</string>
     <string name="browse_task_done">完成</string>
     <string name="browse_task_failed">失败</string>
+    <string name="browse_task_status_output">%1$s · %2$s</string>
     <string name="browse_clear">清除</string>
     <string name="browse_hide">隐藏</string>
     <string name="browse_pause">暂停</string>
@@ -882,7 +887,6 @@
     <string name="browse_background">后台</string>
     <string name="browse_continue">继续</string>
     <string name="convert_back">返回</string>
-    <string name="convert_auto_original">自动（原始尺寸）</string>
     <string name="convert_jpeg">JPEG</string>
     <string name="convert_jpeg_hdr">JPEG（HDR）</string>
     <string name="convert_jxl">JPEG XL（SDR）</string>

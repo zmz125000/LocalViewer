@@ -4,6 +4,7 @@ import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION
 import android.content.Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+import android.net.Uri
 import android.provider.DocumentsContract
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -40,6 +41,7 @@ import com.hippo.ehviewer.asMutableState
 import com.hippo.ehviewer.download.downloadLocation
 import com.hippo.ehviewer.ui.Screen
 import com.hippo.ehviewer.ui.keepNoMediaFileStatus
+import com.hippo.ehviewer.ui.main.BrowseSaveAs
 import com.hippo.ehviewer.ui.main.NavigationIcon
 import com.hippo.ehviewer.ui.screen.adaptiveTopAppBarColors
 import com.hippo.ehviewer.ui.tools.awaitConfirmationOrCancel
@@ -99,6 +101,34 @@ fun AnimatedVisibilityScope.DownloadScreen(navigator: DestinationsNavigator) = S
                     }
                 }
             }
+            val conversionLocation = Settings.imageConversionLocation.asMutableState()
+            val askWhereToSave = Settings.browseAskWhereToSave.asMutableState()
+            val conversionLocationFailed = stringResource(R.string.settings_download_cant_get_download_location)
+            val selectConversionDirLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { treeUri ->
+                treeUri?.let { selectedUri ->
+                    launchIO {
+                        val ctx = contextOf<Context>()
+                        runCatching {
+                            ctx.contentResolver.takePersistableUriPermission(selectedUri, URI_FLAGS)
+                            val documentUri = DocumentsContract.buildDocumentUriUsingTree(
+                                selectedUri,
+                                DocumentsContract.getTreeDocumentId(selectedUri),
+                            )
+                            val path = documentUri.toOkioPath()
+                            check(path.isDirectory) { "$path is not a directory" }
+                            conversionLocation.value?.let(Uri::parse)?.takeIf { it != selectedUri }?.let { previous ->
+                                runCatching {
+                                    ctx.contentResolver.releasePersistableUriPermission(previous, URI_FLAGS)
+                                }
+                            }
+                            conversionLocation.value = selectedUri.toString()
+                        }.onFailure {
+                            logcat(it)
+                            launchSnackbar(conversionLocationFailed)
+                        }
+                    }
+                }
+            }
             Preference(
                 title = stringResource(id = R.string.settings_download_download_location),
                 summary = downloadLocationState.toUri().displayPath,
@@ -137,6 +167,34 @@ fun AnimatedVisibilityScope.DownloadScreen(navigator: DestinationsNavigator) = S
                     }
                 }
             }
+            val conversionLocationSummary = conversionLocation.value?.let { saved ->
+                runCatching {
+                    val treeUri = Uri.parse(saved)
+                    DocumentsContract.buildDocumentUriUsingTree(
+                        treeUri,
+                        DocumentsContract.getTreeDocumentId(treeUri),
+                    ).toOkioPath().toUri().displayPath
+                }.getOrNull()
+            } ?: stringResource(R.string.image_conversion_default_location_not_set)
+            Preference(
+                title = stringResource(R.string.image_conversion_default_location),
+                summary = conversionLocationSummary,
+            ) {
+                try {
+                    selectConversionDirLauncher.launch(null)
+                } catch (_: ActivityNotFoundException) {
+                    launchSnackbar(conversionLocationFailed)
+                }
+            }
+            me.zhanghai.compose.preference.SwitchPreference(
+                value = askWhereToSave.value,
+                onValueChange = { ask ->
+                    launchIO {
+                        with(contextOf<Context>()) { BrowseSaveAs.updateAskWhereToSave(ask) }
+                    }
+                },
+                title = { Text(stringResource(R.string.browse_ask_where_to_save)) },
+            )
             val mediaScan = Settings.mediaScan.asMutableState()
             SwitchPreference(
                 title = stringResource(id = R.string.settings_download_media_scan),

@@ -1648,14 +1648,12 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
         }
     }
 
-    fun webDavConvertAction(fileName: String): ((StillExportTarget) -> Unit)? {
+    fun webDavConvertAction(fileName: String): (suspend (StillExportTarget) -> Unit)? {
         if (!isStillExportFileName(fileName)) return null
         val src = source ?: return null
         val leaf = fileName.substringAfterLast('/').substringAfterLast('\\')
         val remote = if (relativeDir.isEmpty()) fileName else WebDavGateway.joinRelative(relativeDir, fileName)
-        return { target ->
-            launchIO { with(context) { convertWebDavStill(src.id, remote, leaf, target) } }
-        }
+        return { target -> with(context) { convertWebDavStill(src.id, remote, leaf, target) } }
     }
 
     fun saveWebDavFile(fileName: String, displayName: String = fileName.substringAfterLast('/')) {

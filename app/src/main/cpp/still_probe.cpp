@@ -4,15 +4,52 @@
 #include <vector>
 #include <jxl/decode_cxx.h>
 #include <libraw/libraw.h>
-extern "C" {
-#include "JXRGlue.h"
+
+namespace {
+uint16_t read_le16(const uint8_t* bytes) {
+    return static_cast<uint16_t>(bytes[0]) | (static_cast<uint16_t>(bytes[1]) << 8);
 }
-#ifdef min
-#undef min
-#endif
-#ifdef max
-#undef max
-#endif
+
+uint32_t read_le32(const uint8_t* bytes) {
+    return static_cast<uint32_t>(bytes[0]) | (static_cast<uint32_t>(bytes[1]) << 8) |
+           (static_cast<uint32_t>(bytes[2]) << 16) | (static_cast<uint32_t>(bytes[3]) << 24);
+}
+
+// JXR's TIFF-like container stores width/height as inline LONG values. Probe
+// those without a decoder or full-image allocation. In particular, do not use
+// jxrlib's filename stream: a failed fopen leaves an allocated stream whose
+// Close callback unconditionally calls fclose(nullptr), aborting on Android.
+bool probe_jxr_size(const char* path, uint32_t& width, uint32_t& height) {
+    std::ifstream file(path, std::ios::binary | std::ios::ate);
+    if (!file) return false;
+    const auto length = file.tellg();
+    if (length < std::streamoff(8)) return false;
+    file.seekg(0);
+    uint8_t header[8];
+    if (!file.read(reinterpret_cast<char*>(header), sizeof(header)) ||
+        header[0] != 'I' || header[1] != 'I' || read_le16(header + 2) != 0x01bc) return false;
+    const uint32_t offset = read_le32(header + 4);
+    if (offset < sizeof(header) || static_cast<uint64_t>(offset) + 2 > static_cast<uint64_t>(length)) return false;
+    file.seekg(offset);
+    uint8_t count_bytes[2];
+    if (!file.read(reinterpret_cast<char*>(count_bytes), sizeof(count_bytes))) return false;
+    const uint16_t count = read_le16(count_bytes);
+    if (static_cast<uint64_t>(offset) + 2 + static_cast<uint64_t>(count) * 12 > static_cast<uint64_t>(length)) return false;
+    uint32_t w = 0, h = 0;
+    for (uint32_t i = 0; i < count; ++i) {
+        uint8_t entry[12];
+        if (!file.read(reinterpret_cast<char*>(entry), sizeof(entry))) return false;
+        if (read_le16(entry + 2) != 4 || read_le32(entry + 4) != 1) continue;
+        const uint16_t tag = read_le16(entry);
+        if (tag == 0xbc80) w = read_le32(entry + 8);
+        if (tag == 0xbc81) h = read_le32(entry + 8);
+    }
+    if (!w || !h) return false;
+    width = w;
+    height = h;
+    return true;
+}
+}
 
 extern "C" JNIEXPORT jlong JNICALL
 Java_com_hippo_ehviewer_jni_HdrConvertKt_probeStillExportSize(JNIEnv* env, jclass, jstring jpath, jint kind) {
@@ -35,20 +72,7 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_probeStillExportSize(JNIEnv* env, jclas
                 }
             }
         } else if (kind == 1) {
-            PKFactory* factory = nullptr;
-            WMPStream* stream = nullptr;
-            PKImageDecode* dec = nullptr;
-            if (!Failed(PKCreateFactory(&factory, PK_SDK_VERSION)) && factory &&
-                !Failed(factory->CreateStreamFromFilename(&stream, path, "rb")) && stream &&
-                !Failed(PKImageDecode_Create_WMP(&dec)) && dec && !Failed(dec->Initialize(dec, stream))) {
-                dec->fStreamOwner = 1;
-                stream = nullptr;
-                I32 x = 0, y = 0;
-                if (!Failed(dec->GetSize(dec, &x, &y)) && x > 0 && y > 0) { w = x; h = y; }
-            }
-            if (dec) dec->Release(&dec);
-            if (stream) stream->Close(&stream);
-            if (factory) factory->Release(&factory);
+            probe_jxr_size(path, w, h);
         } else if (kind == 2) {
             LibRaw raw;
             if (raw.open_file(path) == LIBRAW_SUCCESS) {

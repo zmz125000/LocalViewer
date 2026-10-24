@@ -12,6 +12,8 @@ struct ReaderPixels {
     std::vector<uint8_t> bytes;
     std::vector<uint16_t> halves;
     ReaderPixels* previous = nullptr;
+    bool exporting = false;
+    bool keep_sdr = true;
     void* data() { return halves.empty() ? static_cast<void*>(bytes.data()) : halves.data(); }
     size_t size() const { return halves.empty() ? bytes.size() : halves.size() * sizeof(uint16_t); }
 };
@@ -37,6 +39,23 @@ bool retain_reader_pixels(std::vector<uint16_t>& pixels) {
     active->halves = std::move(pixels);
     active->bytes.clear();
     return true;
+}
+
+bool export_pixels_capture() { return active && active->exporting; }
+bool export_pixels_keep_sdr() { return !active || !active->exporting || active->keep_sdr; }
+
+extern "C" JNIEXPORT jlong JNICALL
+Java_com_hippo_ehviewer_jni_HdrConvertKt_beginNativeExportPixels(JNIEnv* env, jclass, jboolean keep_sdr) {
+    auto* pixels = new (std::nothrow) ReaderPixels;
+    if (!pixels) {
+        env->ThrowNew(env->FindClass("java/lang/OutOfMemoryError"), "Native export pixels");
+        return 0;
+    }
+    pixels->previous = active;
+    pixels->exporting = true;
+    pixels->keep_sdr = keep_sdr == JNI_TRUE;
+    active = pixels;
+    return reinterpret_cast<jlong>(pixels);
 }
 
 extern "C" JNIEXPORT jlong JNICALL

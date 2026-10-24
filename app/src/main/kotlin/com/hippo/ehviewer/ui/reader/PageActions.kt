@@ -17,16 +17,23 @@ import com.ehviewer.core.i18n.R
 import com.ehviewer.core.model.GalleryInfo
 import com.ehviewer.core.util.isAtLeastT
 import com.ehviewer.core.util.logcat
+import com.ehviewer.core.util.withIOContext
+import com.ehviewer.core.util.withUIContext
 import com.hippo.ehviewer.BuildConfig.APPLICATION_ID
 import com.hippo.ehviewer.gallery.Page
 import com.hippo.ehviewer.gallery.ReaderSession
+import com.hippo.ehviewer.library.MediaStorePublish
+import com.hippo.ehviewer.ui.main.FolderSelectHost
 import com.hippo.ehviewer.util.AppConfig
 import com.hippo.ehviewer.util.FileUtils
 import com.hippo.ehviewer.util.awaitActivityResult
-import com.hippo.ehviewer.util.displayPath
+import com.hippo.ehviewer.util.awaitPickerReturn
 import java.io.File
 import kotlin.time.Clock
-import moe.tarsin.coroutines.runSuspendCatching
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
 import moe.tarsin.snackbar
 import moe.tarsin.string
 import splitties.systemservices.clipboardManager
@@ -122,7 +129,7 @@ suspend fun save(page: Page) {
     }
 }
 
-context(_: SnackbarHostState, _: Context, loader: ReaderSession)
+context(_: SnackbarHostState, ctx: Context, loader: ReaderSession)
 suspend fun saveTo(page: Page) {
     val filename = loader.getImageFilename(page.index)
     if (filename == null) {
@@ -131,14 +138,55 @@ suspend fun saveTo(page: Page) {
     }
     val extension = FileUtils.getExtensionFromFilename(filename)
     val mimeType = MimeTypeMap.getSingleton().getMimeTypeFromExtension(extension) ?: "image/jpeg"
-    page.runSuspendCatching {
-        val uri = awaitActivityResult(ActivityResultContracts.CreateDocument(mimeType), filename)
-        if (uri != null) {
-            loader.save(index, uri.toOkioPath())
-            snackbar(string(R.string.image_saved, uri.displayPath))
-        }
-    }.onFailure {
-        it.logcat(it)
+    val uri = try {
+        awaitActivityResult(ActivityResultContracts.CreateDocument(mimeType), filename)
+    } catch (error: CancellationException) {
+        throw error
+    } catch (error: Throwable) {
+        logcat("SavePage", error)
         snackbar(string(R.string.error_cant_find_activity))
+        return
+    } ?: return
+    val destination = uri.toOkioPath()
+    var submitted = false
+    try {
+        awaitPickerReturn()
+        withUIContext {
+            val job = FolderSelectHost.newJob(
+                filename,
+                isFolder = false,
+                pick = null,
+                outputSummary = ctx.getString(R.string.action_save_to),
+                onDiscard = { MediaStorePublish.discardConvertedDocument(destination) },
+            ) {
+                var saved = false
+                try {
+                    withIOContext {
+                        MediaStorePublish.holdConvertedDocument(destination)
+                        saved = loader.save(page.index, destination)
+                        if (saved) {
+                            MediaStorePublish.indexConvertedFile(destination)
+                        } else {
+                            android.util.Log.e("SavePage", "Cannot save $filename to $uri")
+                        }
+                        saved
+                    }
+                } finally {
+                    if (!saved) {
+                        withContext(NonCancellable + Dispatchers.IO) {
+                            MediaStorePublish.discardConvertedDocument(destination)
+                        }
+                    }
+                }
+            }
+            FolderSelectHost.startSingleTask(job)
+            submitted = true
+        }
+    } finally {
+        if (!submitted) {
+            withContext(NonCancellable + Dispatchers.IO) {
+                MediaStorePublish.discardConvertedDocument(destination)
+            }
+        }
     }
 }

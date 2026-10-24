@@ -751,6 +751,10 @@ object Settings : DataStorePreferences(null) {
      */
     val browseTaskParallel = boolPref("browse_task_parallel", false)
 
+    /** Ask for a destination for each conversion instead of using the saved folder. */
+    val browseAskWhereToSave = boolPref("browse_ask_where_to_save", true)
+    val imageConversionLocation = stringOrNullPref("image_conversion_location")
+
     /** 0 lossless (JPEG Q95), 1 high (Q95), 2 mid (Q90), 3 low (Q85). JPEG always uses 4:4:4. */
     val imageConversionQuality = intPref("image_conversion_quality", 1)
 

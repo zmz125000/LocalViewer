@@ -25,6 +25,7 @@ import com.ehviewer.core.i18n.R
 import com.ehviewer.core.util.withIOContext
 import com.ehviewer.core.util.withUIContext
 import com.hippo.ehviewer.BuildConfig.APPLICATION_ID
+import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.library.GENERIC_FILE_MIME
 import com.hippo.ehviewer.library.MediaStorePublish
 import com.hippo.ehviewer.library.OriginDiskCache
@@ -300,9 +301,42 @@ object BrowseSaveAs {
         return path
     }
 
-    /** Folder for Auto (original size). Opens immediately; the file name is chosen after decode. */
+    /** Use the configured conversion folder or ask for a destination. */
     context(_: SnackbarHostState, _: Context)
-    internal suspend fun pickConvertDirectory(): Path? = pickTreeDir()
+    internal suspend fun pickConvertDirectory(): Path? = if (!Settings.browseAskWhereToSave.value) {
+        configuredConvertDirectory() ?: pickTreeDir()
+    } else {
+        pickTreeDir()
+    }
+
+    internal suspend fun configuredConvertDirectory(): Path? = withIOContext {
+        Settings.imageConversionLocation.value
+            ?.let { saved ->
+                runCatching {
+                    val treeUri = Uri.parse(saved)
+                    DocumentsContract.buildDocumentUriUsingTree(
+                        treeUri,
+                        DocumentsContract.getTreeDocumentId(treeUri),
+                    ).toOkioPath()
+                }.getOrNull()
+            }
+            ?.takeIf { runCatching { it.isDirectory }.getOrDefault(false) }
+    }
+
+    /** Disabling prompts requires a usable default folder; cancellation keeps prompts enabled. */
+    context(_: SnackbarHostState, _: Context)
+    internal suspend fun updateAskWhereToSave(ask: Boolean) {
+        if (!ask && configuredConvertDirectory() == null) {
+            val directory = pickTreeDir() ?: return
+            val documentUri = directory.toUri()
+            val treeUri = DocumentsContract.buildTreeDocumentUri(
+                documentUri.authority!!,
+                DocumentsContract.getTreeDocumentId(documentUri),
+            )
+            Settings.imageConversionLocation.value = treeUri.toString()
+        }
+        Settings.browseAskWhereToSave.value = ask
+    }
 
     /** Same tree picker as Save to… for a folder destination. */
     context(_: SnackbarHostState, _: Context)

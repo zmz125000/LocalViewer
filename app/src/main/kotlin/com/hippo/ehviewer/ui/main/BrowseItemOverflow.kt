@@ -18,6 +18,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -28,6 +29,7 @@ import com.ehviewer.core.i18n.R
 import com.hippo.ehviewer.image.hdr.StillExportTarget
 import com.hippo.ehviewer.shortcuts.FolderHomeShortcut
 import com.hippo.ehviewer.shortcuts.FolderShortcutTarget
+import com.hippo.ehviewer.ui.LocalSnackBarHostState
 
 enum class BrowseOverflowKind {
     Common,
@@ -73,7 +75,7 @@ data class BrowseOverflowActions(
     /** Home-screen pin for this item. Null hides the menu row. */
     val shortcut: FolderShortcutTarget? = null,
     /** JXL, JXR, and camera RAW. Null hides Convert to…. */
-    val onConvert: ((StillExportTarget) -> Unit)? = null,
+    val onConvert: (suspend (StillExportTarget) -> Unit)? = null,
     /** Set on folder-view rows so the overflow can enter select mode. */
     val selectKey: String? = null,
     val selectTitle: String? = null,
@@ -98,6 +100,8 @@ fun BrowseItemOverflowButton(
     var expanded by remember { mutableStateOf(false) }
     var convertMenu by remember { mutableStateOf(false) }
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val snackbar = LocalSnackBarHostState.current
     val shortcutUnsupported = stringResource(R.string.browse_shortcut_unsupported)
     val grid = placement == BrowseOverflowPlacement.GridBottomEnd
     val more = stringResource(R.string.browse_item_more)
@@ -137,14 +141,13 @@ fun BrowseItemOverflowButton(
                 convertMenu = false
                 (action ?: actions.onUnsupported)()
             }
-            if (convertMenu && actions.onConvert != null) {
-                val convert = actions.onConvert
+            if (convertMenu && actions.onConvert != null && actions.convertStill != null) {
+                val convert = actions.convertStill
                 DropdownMenuItem(
                     text = { Text(stringResource(R.string.convert_back)) },
                     onClick = { convertMenu = false },
                 )
                 listOf(
-                    StillExportTarget.AutoOriginal to R.string.convert_auto_original,
                     StillExportTarget.Jpeg to R.string.convert_jpeg,
                     StillExportTarget.JpegHdr to R.string.convert_jpeg_hdr,
 
@@ -153,9 +156,8 @@ fun BrowseItemOverflowButton(
                     StillExportTarget.JxlPq to R.string.convert_jxl_pq,
 
                     StillExportTarget.Avif to R.string.convert_avif,
-                    StillExportTarget.AvifPq to R.string.convert_avif_pq,
-
                     StillExportTarget.AvifGainMap to R.string.convert_avif_gain_map,
+                    StillExportTarget.AvifPq to R.string.convert_avif_pq,
 
                 ).filter { (target, _) -> target.available }.forEach { (target, label) ->
                     DropdownMenuItem(
@@ -163,7 +165,9 @@ fun BrowseItemOverflowButton(
                         onClick = {
                             expanded = false
                             convertMenu = false
-                            convert(target)
+                            val title = actions.selectTitle?.takeIf { it.isNotBlank() }
+                                ?: context.getString(R.string.convert_to)
+                            beginSingleConvert(scope, snackbar, context, title, target, convert)
                         },
                     )
                 }

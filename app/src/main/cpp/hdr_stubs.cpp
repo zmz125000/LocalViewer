@@ -121,3 +121,9 @@ extern "C" JNIEXPORT jlong JNICALL
 Java_com_hippo_ehviewer_jni_HdrConvertKt_probeStillExportSize(JNIEnv*, jclass, jstring, jint) {
     return 0;
 }
+
+extern "C" JNIEXPORT jint JNICALL
+Java_com_hippo_ehviewer_jni_HdrConvertKt_encodeNativeStillExport(JNIEnv*, jclass, jobject, jint, jint,
+                                                             jboolean, jint, jint, jboolean, jstring, jint, jint) {
+    return kUnsupportedAbi;
+}
