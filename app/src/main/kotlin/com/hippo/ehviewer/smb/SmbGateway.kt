@@ -37,8 +37,10 @@ import com.hippo.ehviewer.library.ZipMemberByteSource
 import com.hippo.ehviewer.library.ZipMemberCover
 import com.hippo.ehviewer.library.ZipMemberTooLargeException
 import com.hippo.ehviewer.library.applySlimDirectoryHidden
+import com.hippo.ehviewer.library.browseEntryFolderRoot
 import com.hippo.ehviewer.library.classifyRemoteListing
 import com.hippo.ehviewer.library.classifyRemoteListingWithPeeks
+import com.hippo.ehviewer.library.confirmedMissingRemoteDirectories
 import com.hippo.ehviewer.library.directoriesNeedingDeepScanOnMtimeChange
 import com.hippo.ehviewer.library.hiddenDirectoriesNeedingDeepScan
 import com.hippo.ehviewer.library.isDotHiddenName
@@ -89,6 +91,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
@@ -1958,6 +1961,7 @@ object SmbGateway {
                             }
                             return@startListJob presented
                         }
+                        removeDeletedDirectoryCaches(source.id, relativeDir, refresh.removedDirectoryNames)
                         // Successful slim marks this exact directory current (even if unchanged).
                         val toKeep = if (refresh.persist &&
                             (refresh.entries != cached.entries || refresh.zipInteriors.isNotEmpty())
@@ -1968,6 +1972,7 @@ object SmbGateway {
                                 relativeDir,
                                 refresh.entries,
                                 refresh.zipInteriors,
+                                refresh.removedDirectoryNames,
                             )
                         } else {
                             refresh.entries
@@ -2029,6 +2034,7 @@ object SmbGateway {
         onCached: ((List<BrowseEntryRemote>) -> Unit)?,
     ): List<BrowseEntryRemote> {
         val previous = BrowseSession.getSmbListing(source.id, relativeDir)
+            ?: NetworkFolderIndexCache.loadSmb(source.id, configKey, relativeDir)
         if (isServerRootSource(source) && relativeDir.isBlank()) {
             val shares = listShareRootEntries(source, password)
             val merged = if (previous != null) {
@@ -2043,6 +2049,10 @@ object SmbGateway {
 
         val t0 = System.nanoTime()
         val children = listChildrenForRelativeDir(source, password, relativeDir)
+        val deleted = confirmedMissingRemoteDirectories(previous.orEmpty(), children, maxConcurrentOpsPerHost()) { name ->
+            pathIsMissing(source, password, joinRelative(relativeDir, name))
+        }
+        val retained = previous?.filter { browseEntryFolderRoot(it) !in deleted }
         val dirName = relativeDir.substringAfterLast('/').substringAfterLast('\\')
             .ifEmpty { source.displayName }
         // No peeks: dirs are Empty shells; files/archives/videos by basename; current-dir
@@ -2054,8 +2064,8 @@ object SmbGateway {
             children
         }
         val shallow = classifyRemoteListing(dirName, shallowChildren.withHiddenFlags())
-        val shallowMerged = if (previous != null) {
-            preferCompleteFolderGalleries(previous, shallow)
+        val shallowMerged = if (retained != null) {
+            preferCompleteFolderGalleries(retained, shallow)
         } else {
             shallow
         }
@@ -2105,6 +2115,10 @@ object SmbGateway {
                     },
                 )
                 val fromRam = preferCompleteFolderGalleries(shallowMerged, deep)
+                if (deleted.isNotEmpty()) {
+                    removeDeletedDirectoryCaches(source.id, relativeDir, deleted)
+                    NetworkFolderIndexCache.saveSmb(source.id, configKey, relativeDir, fromRam, deleted)
+                }
                 val zipOn = Settings.browseZipAsDir.value
                 val presented = presentListingForZipAsDirToggle(
                     source,
@@ -2297,34 +2311,39 @@ object SmbGateway {
                 removedDirectoryNames = emptySet(),
             )
         }
+        BrowseSession.invalidateSmbRawChildren(source.id, relativeDir)
         val children = listChildrenForRelativeDir(source, password, relativeDir)
-        if (isUntrustedSlimLiveListing(cached, children)) {
-            return SlimDirectoryRefresh(cached, emptySet(), persist = false)
+        val deleted = confirmedMissingRemoteDirectories(cached, children, maxConcurrentOpsPerHost()) { name ->
+            pathIsMissing(source, password, joinRelative(relativeDir, name))
+        }
+        val retained = if (deleted.isEmpty()) cached else cached.filter { browseEntryFolderRoot(it) !in deleted }
+        if (isUntrustedSlimLiveListing(retained, children)) {
+            return SlimDirectoryRefresh(retained, deleted, persist = deleted.isNotEmpty())
         }
         val (nomediaProbed, nomediaHit) = probeNomediaDirectories(
-            cached,
+            retained,
             children,
         ) { name ->
             listChildrenForRelativeDir(source, password, joinRelative(relativeDir, name))
         }
-        val plan = planRemoteDirectorySlimRefresh(cached, children)
+        val plan = planRemoteDirectorySlimRefresh(retained, children)
         val zipFileNames = if (Settings.browseZipAsDir.value) {
             ZipAsDirListing.zipFileNames(children)
         } else {
             emptySet()
         }
         val deepHidden = if (com.hippo.ehviewer.Settings.browseShowHiddenFiles.value) {
-            hiddenDirectoriesNeedingDeepScan(cached, children)
+            hiddenDirectoriesNeedingDeepScan(retained, children)
         } else {
             emptyList()
         }
-        val mtimeChanged = directoriesNeedingDeepScanOnMtimeChange(cached, children)
+        val mtimeChanged = directoriesNeedingDeepScanOnMtimeChange(retained, children)
         val reclassifyNames = (deepHidden.asSequence() + mtimeChanged.asSequence())
             .mapTo(HashSet()) { it.name }
         val cachedZipAsDir = if (zipFileNames.isEmpty()) {
             emptySet()
         } else {
-            ZipAsDirListing.cachedDirectZipAsDirNames(cached)
+            ZipAsDirListing.cachedDirectZipAsDirNames(retained)
         }
         val newZips = if (zipFileNames.isEmpty()) {
             emptyList()
@@ -2344,12 +2363,12 @@ object SmbGateway {
             // Dirs same — still patch surviving file size/mtime/hidden; add/drop direct files.
             return SlimDirectoryRefresh(
                 entries = applySlimDirectoryHidden(
-                    replaceSlimDirectFilesFromLive(cached, children, dirName),
+                    replaceSlimDirectFilesFromLive(retained, children, dirName),
                     children,
                     nomediaProbed,
                     nomediaHit,
                 ),
-                removedDirectoryNames = emptySet(),
+                removedDirectoryNames = deleted,
             )
         }
         val effectivePlan = RemoteDirectorySlimPlan(
@@ -2365,13 +2384,13 @@ object SmbGateway {
             classifyDirectoryChildren(source, password, relativeDir, toClassify, zipInteriors)
         }
         val merged = replaceSlimDirectFilesFromLive(
-            mergeRemoteDirectorySlimRefresh(cached, effectivePlan, addedEntries),
+            mergeRemoteDirectorySlimRefresh(retained, effectivePlan, addedEntries),
             children,
             dirName,
         )
         return SlimDirectoryRefresh(
             entries = applySlimDirectoryHidden(merged, children, nomediaProbed, nomediaHit),
-            removedDirectoryNames = emptySet(),
+            removedDirectoryNames = deleted,
             zipInteriors = zipInteriors,
         )
     }
@@ -2649,15 +2668,35 @@ object SmbGateway {
         )
     }
 
-    /** One saveAll for the listed parent plus any zip-as-dir interiors. */
+    private suspend fun removeDeletedDirectoryCaches(sourceId: Long, relativeDir: String, names: Set<String>) {
+        for (name in names) {
+            val childDir = joinRelative(relativeDir, name)
+            val childKey = BrowseSession.smbListingKey(sourceId, childDir)
+            for ((key, job) in listJobs.entries.toList()) {
+                if ((key == childKey || key.startsWith("$childKey/")) && listJobs.remove(key, job)) {
+                    job.cancelAndJoin()
+                }
+            }
+            BrowseSession.invalidateSmbListingsUnder(sourceId, childDir)
+        }
+    }
+
+    /** Persist explicit deletions, then the parent and any zip-as-dir interiors. */
     private suspend fun persistParentAndZipInteriors(
         source: SmbSourceEntity,
         configKey: String,
         relativeDir: String,
         parentEntries: List<BrowseEntryRemote>,
         interiors: Map<String, List<BrowseEntryRemote>>,
+        removedChildDirs: Set<String> = emptySet(),
     ): List<BrowseEntryRemote> {
+        val parent = if (removedChildDirs.isNotEmpty()) {
+            NetworkFolderIndexCache.saveSmb(source.id, configKey, relativeDir, parentEntries, removedChildDirs)
+        } else {
+            parentEntries
+        }
         if (interiors.isEmpty()) {
+            if (removedChildDirs.isNotEmpty()) return parent
             return NetworkFolderIndexCache.saveSmb(source.id, configKey, relativeDir, parentEntries)
         }
         val stored = ZipAsDirListing.persistFolderIndexes(
@@ -2669,9 +2708,9 @@ object SmbGateway {
             putRam = { dir, entries ->
                 BrowseSession.putSmbListing(source.id, dir, entries, sessionCurrent = true)
             },
-            parentEntries = parentEntries,
+            parentEntries = parent,
         )
-        return stored[relativeDir.replace('\\', '/').trim('/')] ?: parentEntries
+        return stored[relativeDir.replace('\\', '/').trim('/')] ?: parent
     }
 
     /**
@@ -2725,6 +2764,27 @@ object SmbGateway {
             BrowseSession.invalidateSmbListingsUnder(source.id, joinRelative(relativeDir, name))
         }
         return stored
+    }
+
+    /** Only an explicit missing-path status confirms a deletion. */
+    private suspend fun pathIsMissing(
+        source: SmbSourceEntity,
+        password: String,
+        relativePath: String,
+    ): Boolean = try {
+        val loc = resolveLocation(source, relativePath)
+        withShare(source, password, ShareOp.List, loc.share) { share ->
+            share.getFileInformation(loc.pathInShare)
+            false
+        }
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: SMBApiException) {
+        e.status == NtStatus.STATUS_OBJECT_NAME_NOT_FOUND ||
+            e.status == NtStatus.STATUS_OBJECT_PATH_NOT_FOUND ||
+            e.status == NtStatus.STATUS_NO_SUCH_FILE
+    } catch (_: Exception) {
+        false
     }
 
     /**
