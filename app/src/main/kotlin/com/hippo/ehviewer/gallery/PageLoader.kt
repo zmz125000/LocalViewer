@@ -293,7 +293,7 @@ abstract class PageLoader(
         // to the platform SDR image.
         val hevcHdr = route is StillRoute.Lib && route.codec == LibCodec.HevcHdr
         val advanced = Settings.readerAdvancedColor.value
-        val avifDirect = advanced && route is StillRoute.Lib && route.codec == LibCodec.AvifPq
+        val avifDirect = route is StillRoute.Lib && route.codec == LibCodec.AvifPq && (advanced || route.forceDirect)
         val precision = if (advanced && route == StillRoute.Platform) PlatformHeifDecode.precision(raw, nameHint) else null
         val deepHeif = precision?.highDepth == true
         if (rawStill) noteRawLoaded()
@@ -306,6 +306,7 @@ abstract class PageLoader(
             if (rawStill) {
                 error("RAW decode failed: $nameHint")
             }
+            if (avifDirect && route is StillRoute.Lib && route.forceDirect) error("Native AVIF decode failed: $nameHint")
             if (deepHeif || avifDirect) error("High-bit-depth image decode failed: $nameHint")
             return null
         }

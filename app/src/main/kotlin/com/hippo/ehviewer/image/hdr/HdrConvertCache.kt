@@ -143,7 +143,13 @@ object HdrConvertCache {
     fun resolvePagePath(primary: Path): Path {
         if ((Settings.readerLibDirectBitmap.value || keepHeifPrecisionOriginal(primary.name, Settings.readerAdvancedColor.value)) && isPresent(primary)) return primary
         val uhdr = uhdrSiblingOf(primary)
-        if (uhdr.toString() != primary.toString() && isPresent(uhdr)) return uhdr
+        if (uhdr.toString() != primary.toString() && isPresent(uhdr)) {
+            if (primary.name.endsWith(".avif", ignoreCase = true) && isPresent(primary)) {
+                val route = classifyPath(primary)
+                if (route is StillRoute.Lib && route.forceDirect) return primary
+            }
+            return uhdr
+        }
         return primary
     }
 
@@ -349,7 +355,7 @@ object HdrConvertCache {
             return@withContext primaryPath
         }
         val route = classify(bytes, bytes.size, originalFileName)
-        if (!route.needsUhdr) {
+        if (!route.needsUhdr || (route is StillRoute.Lib && route.forceDirect)) {
             writeBytesAtomic(bytes, File(primaryPath.toString()))
             return@withContext primaryPath
         }
@@ -385,7 +391,7 @@ object HdrConvertCache {
             return@withContext primaryPath
         }
         val route = classify(tmp, fileNameHint = originalFileName)
-        if (!route.needsUhdr) {
+        if (!route.needsUhdr || (route is StillRoute.Lib && route.forceDirect)) {
             commitTmp(tmp, File(primaryPath.toString()))
             return@withContext primaryPath
         }
