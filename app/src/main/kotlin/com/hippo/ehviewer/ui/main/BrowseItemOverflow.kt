@@ -153,9 +153,8 @@ fun BrowseItemOverflowButton(
                     StillExportTarget.JxlPq to R.string.convert_jxl_pq,
 
                     StillExportTarget.Avif to R.string.convert_avif,
-                    StillExportTarget.AvifPq to R.string.convert_avif_pq,
-
                     StillExportTarget.AvifGainMap to R.string.convert_avif_gain_map,
+                    StillExportTarget.AvifPq to R.string.convert_avif_pq,
 
                 ).filter { (target, _) -> target.available }.forEach { (target, label) ->
                     DropdownMenuItem(

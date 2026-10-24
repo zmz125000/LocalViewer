@@ -4,6 +4,7 @@ import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION
 import android.content.Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+import android.net.Uri
 import android.provider.DocumentsContract
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -97,6 +98,57 @@ fun AnimatedVisibilityScope.DownloadScreen(navigator: DestinationsNavigator) = S
                             launchSnackbar(cannotGetDownloadLocation)
                         }
                     }
+                }
+            }
+            val conversionLocation = Settings.imageConversionLocation.asMutableState()
+            val askWhereToSave = Settings.browseAskWhereToSave.asMutableState()
+            val conversionLocationFailed = stringResource(R.string.settings_download_cant_get_download_location)
+            val selectConversionDirLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { treeUri ->
+                treeUri?.let { selectedUri ->
+                    launchIO {
+                        val ctx = contextOf<Context>()
+                        runCatching {
+                            ctx.contentResolver.takePersistableUriPermission(selectedUri, URI_FLAGS)
+                            val documentUri = DocumentsContract.buildDocumentUriUsingTree(
+                                selectedUri,
+                                DocumentsContract.getTreeDocumentId(selectedUri),
+                            )
+                            val path = documentUri.toOkioPath()
+                            check(path.isDirectory) { "$path is not a directory" }
+                            conversionLocation.value?.let(Uri::parse)?.takeIf { it != selectedUri }?.let { previous ->
+                                runCatching {
+                                    ctx.contentResolver.releasePersistableUriPermission(previous, URI_FLAGS)
+                                }
+                            }
+                            conversionLocation.value = selectedUri.toString()
+                        }.onFailure {
+                            logcat(it)
+                            launchSnackbar(conversionLocationFailed)
+                        }
+                    }
+                }
+            }
+            SwitchPreference(
+                title = stringResource(R.string.browse_ask_where_to_save),
+                state = askWhereToSave,
+            )
+            val conversionLocationSummary = conversionLocation.value?.let { saved ->
+                runCatching {
+                    val treeUri = Uri.parse(saved)
+                    DocumentsContract.buildDocumentUriUsingTree(
+                        treeUri,
+                        DocumentsContract.getTreeDocumentId(treeUri),
+                    ).toOkioPath().toUri().displayPath
+                }.getOrNull()
+            } ?: stringResource(R.string.image_conversion_default_location_not_set)
+            Preference(
+                title = stringResource(R.string.image_conversion_default_location),
+                summary = conversionLocationSummary,
+            ) {
+                try {
+                    selectConversionDirLauncher.launch(null)
+                } catch (_: ActivityNotFoundException) {
+                    launchSnackbar(conversionLocationFailed)
                 }
             }
             Preference(

@@ -2,6 +2,7 @@ package com.hippo.ehviewer.ui.main
 
 import android.content.Context
 import android.view.WindowManager
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
@@ -20,6 +21,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
@@ -67,12 +69,14 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.window.DialogWindowProvider
+import com.ehviewer.core.files.toUri
 import com.ehviewer.core.i18n.R
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.asMutableState
 import com.hippo.ehviewer.image.hdr.RawExportControls
 import com.hippo.ehviewer.image.hdr.StillExportQuality
 import com.hippo.ehviewer.image.hdr.StillExportTarget
+import com.hippo.ehviewer.image.hdr.fileExtension
 import com.hippo.ehviewer.library.ExplorerWindows
 import com.hippo.ehviewer.provider.StreamKeepAlivePolicy
 import com.hippo.ehviewer.ui.LocalSnackBarHostState
@@ -80,6 +84,7 @@ import com.hippo.ehviewer.ui.theme.snackbarActionButtonColors
 import com.hippo.ehviewer.ui.theme.snackbarContainerColor
 import com.hippo.ehviewer.ui.theme.snackbarDismissButtonColors
 import com.hippo.ehviewer.ui.theme.snackbarDismissContentColor
+import com.hippo.ehviewer.util.displayPath
 import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -399,6 +404,7 @@ internal class TaskJob(
     val pick: FolderPick?,
     val run: suspend (Path) -> Boolean,
     status: TaskStatus,
+    val outputSummary: String = "",
 ) {
     var status by mutableStateOf(status)
     var removed = false
@@ -829,7 +835,7 @@ object FolderSelectHost {
     /** Start a one-image action in the same serialized task queue used by folder batches. */
     fun startSingleTask(title: String, target: StillExportTarget, run: suspend () -> Unit) {
         val controls = RawExportControls.capture(target) + StillExportQuality.current()
-        val job = newJob(title, isFolder = false, pick = null) {
+        val job = newJob(title, isFolder = false, pick = null, outputSummary = ".${target.fileExtension()}") {
             withContext(controls) { run() }
             true
         }
@@ -996,8 +1002,9 @@ object FolderSelectHost {
         title: String,
         isFolder: Boolean,
         pick: FolderPick?,
+        outputSummary: String = "",
         run: suspend (Path) -> Boolean,
-    ): TaskJob = TaskJob(ids.getAndIncrement(), title, isFolder, pick, run, TaskStatus.Pending)
+    ): TaskJob = TaskJob(ids.getAndIncrement(), title, isFolder, pick, run, TaskStatus.Pending, outputSummary)
 }
 
 @Composable
@@ -1287,7 +1294,7 @@ private fun TasksPanel(tablet: Boolean, onOpenFolder: (FolderPlace) -> Boolean) 
                             val running = job.status == TaskStatus.Running
                             TaskPathRow(
                                 title = job.title,
-                                subtitle = stringResource(job.status.label),
+                                subtitle = taskJobSummary(job),
                                 icon = if (job.isFolder) Icons.Default.Folder else Icons.Default.Description,
                                 tablet = tablet,
                                 trailing = {
@@ -1310,7 +1317,7 @@ private fun TasksPanel(tablet: Boolean, onOpenFolder: (FolderPlace) -> Boolean) 
                         items(completed, key = { "f-${it.id}" }) { job ->
                             TaskPathRow(
                                 title = job.title,
-                                subtitle = stringResource(job.status.label),
+                                subtitle = taskJobSummary(job),
                                 icon = if (job.isFolder) Icons.Default.Folder else Icons.Default.Description,
                                 tablet = tablet,
                                 trailing = {},
@@ -1323,6 +1330,14 @@ private fun TasksPanel(tablet: Boolean, onOpenFolder: (FolderPlace) -> Boolean) 
         HorizontalDivider()
         TaskPanelActions(task)
     }
+}
+
+@Composable
+private fun taskJobSummary(job: TaskJob): String {
+    val status = stringResource(job.status.label)
+    return job.outputSummary.takeIf { it.isNotBlank() }?.let {
+        stringResource(R.string.browse_task_status_output, status, it)
+    } ?: status
 }
 
 @Composable
@@ -1367,6 +1382,18 @@ private fun TaskPathRow(
 ) {
     val rowHorizontal = if (tablet) 12.dp else 8.dp
     val rowStart = if (tablet) 16.dp else 8.dp
+    val running = stringResource(R.string.browse_task_running)
+    val done = stringResource(R.string.browse_task_done)
+    val failed = stringResource(R.string.browse_task_failed)
+    val pending = stringResource(R.string.browse_task_pending)
+    val status = subtitle.substringBefore(" · ")
+    val hasStatus = status == running || status == done || status == failed || status == pending
+    val statusColor = when (status) {
+        running -> MaterialTheme.colorScheme.primary
+        done -> MaterialTheme.colorScheme.tertiary
+        failed -> MaterialTheme.colorScheme.error
+        else -> MaterialTheme.colorScheme.onSurfaceVariant
+    }
     Row(
         modifier = Modifier
             .padding(horizontal = rowHorizontal, vertical = 2.dp)
@@ -1390,13 +1417,24 @@ private fun TaskPathRow(
                 overflow = TextOverflow.Ellipsis,
             )
             if (subtitle.isNotEmpty()) {
-                Text(
-                    subtitle,
-                    style = if (tablet) MaterialTheme.typography.bodyMedium else MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (hasStatus) {
+                        Box(
+                            Modifier
+                                .padding(end = 6.dp)
+                                .size(6.dp)
+                                .clip(CircleShape)
+                                .background(statusColor),
+                        )
+                    }
+                    Text(
+                        subtitle,
+                        style = if (tablet) MaterialTheme.typography.bodyMedium else MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
             }
         }
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1448,6 +1486,7 @@ private fun SelectionOverflowControl(
     val runInBackground = Settings.browseTaskForegroundService.asMutableState()
     val autoFinish = Settings.browseTaskAutoFinish.asMutableState()
     val runInParallel = Settings.browseTaskParallel.asMutableState()
+    val askWhereToSave = Settings.browseAskWhereToSave.asMutableState()
     val shareable = picks.count { it.shareHttp != null }
     val convertible = picks.count { it.convertStill != null }
     val savable = picks.count { it.saveInto != null }
@@ -1595,6 +1634,15 @@ private fun SelectionOverflowControl(
                         FolderSelectHost.batch?.wake()
                     },
                 )
+                DropdownMenuItem(
+                    text = { Text(stringResource(R.string.browse_ask_where_to_save)) },
+                    trailingIcon = {
+                        Box(Modifier.size(24.dp), contentAlignment = Alignment.Center) {
+                            if (askWhereToSave.value) Icon(Icons.Default.Check, contentDescription = null)
+                        }
+                    },
+                    onClick = { askWhereToSave.value = !askWhereToSave.value },
+                )
             }
         }
     }
@@ -1619,9 +1667,8 @@ private fun ConvertTargetItems(
         StillExportTarget.JxlPq to R.string.convert_jxl_pq,
 
         StillExportTarget.Avif to R.string.convert_avif,
-        StillExportTarget.AvifPq to R.string.convert_avif_pq,
-
         StillExportTarget.AvifGainMap to R.string.convert_avif_gain_map,
+        StillExportTarget.AvifPq to R.string.convert_avif_pq,
 
     ).filter { (target, _) -> target.available }.forEach { (target, label) ->
         DropdownMenuItem(
@@ -1678,7 +1725,12 @@ private fun beginConvert(
         val dir = with(snackbar) { with(context) { BrowseSaveAs.pickConvertDirectory() } } ?: return@launch
         val jobs = items.map { pick ->
             val convert = pick.convertStill!!
-            FolderSelectHost.newJob(pick.title, pick.isFolder, pick) { dest ->
+            FolderSelectHost.newJob(
+                pick.title,
+                pick.isFolder,
+                pick,
+                outputSummary = ".${target.fileExtension()}",
+            ) { dest ->
                 withContext(controls) { convert(dest, target) }
             }
         }
@@ -1701,7 +1753,12 @@ private fun beginSave(
         val dir = with(snackbar) { with(context) { BrowseSaveAs.pickSaveDirectory() } } ?: return@launch
         val jobs = items.map { pick ->
             val save = pick.saveInto!!
-            FolderSelectHost.newJob(pick.title, pick.isFolder, pick) { dest -> save(dest) }
+            FolderSelectHost.newJob(
+                pick.title,
+                pick.isFolder,
+                pick,
+                outputSummary = dir.toUri().displayPath ?: dir.toString(),
+            ) { dest -> save(dest) }
         }
         FolderSelectHost.startTasks(jobs, dir, folderKey)
     }

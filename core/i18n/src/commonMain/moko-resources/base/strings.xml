@@ -142,6 +142,9 @@
     <string name="raw_hdr_conversion_hdr">HDR</string>
     <string name="raw_hdr_conversion_boost">HDR boost</string>
     <string name="raw_hdr_conversion_custom">HDR custom</string>
+    <string name="browse_ask_where_to_save">Ask where to save</string>
+    <string name="image_conversion_default_location">Image conversion folder</string>
+    <string name="image_conversion_default_location_not_set">No folder selected</string>
     <string name="settings_default_video_player">Default video player</string>
     <string name="settings_default_video_player_always_ask">Always ask</string>
     <string name="settings_default_video_player_none">No video apps found</string>
@@ -1148,6 +1151,7 @@
     <string name="browse_task_running">Running</string>
     <string name="browse_task_done">Done</string>
     <string name="browse_task_failed">Failed</string>
+    <string name="browse_task_status_output">%1$s · %2$s</string>
     <string name="browse_clear">Clear</string>
     <string name="browse_hide">Hide</string>
     <string name="browse_pause">Pause</string>

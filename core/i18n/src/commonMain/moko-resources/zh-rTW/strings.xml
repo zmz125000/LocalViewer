@@ -128,6 +128,9 @@
     <string name="image_conversion_quality_low">低</string>
     <string name="raw_hdr_conversion">RAW HDR 轉換</string>
     <string name="raw_hdr_conversion_summary">%1$s</string>
+    <string name="browse_ask_where_to_save">詢問儲存位置</string>
+    <string name="image_conversion_default_location">圖片轉換資料夾</string>
+    <string name="image_conversion_default_location_not_set">尚未選擇資料夾</string>
     <string name="browse_task_progress_for_item">%1$s · %2$s</string>
     <string name="raw_hdr_conversion_hdr">HDR</string>
     <string name="raw_hdr_conversion_boost">HDR 增強</string>
@@ -857,6 +860,7 @@
     <string name="browse_task_running">進行中</string>
     <string name="browse_task_done">完成</string>
     <string name="browse_task_failed">失敗</string>
+    <string name="browse_task_status_output">%1$s · %2$s</string>
     <string name="browse_clear">清除</string>
     <string name="browse_hide">隱藏</string>
     <string name="browse_pause">暫停</string>

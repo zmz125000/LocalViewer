@@ -12,6 +12,7 @@ import com.ehviewer.core.files.toOkioPath
 import com.ehviewer.core.files.toUri
 import com.ehviewer.core.i18n.R
 import com.ehviewer.core.util.withIOContext
+import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.gallery.Page
 import com.hippo.ehviewer.gallery.ReaderSession
 import com.hippo.ehviewer.image.PathSource
@@ -116,7 +117,21 @@ private suspend fun convertStagedUnchecked(leaf: String, target: StillExportTarg
         if (!saved) snackbar(string(R.string.error_cant_save_image))
         return
     }
-    val saved = pickAndWrite(leaf, target) { dest -> writeStaged(leaf, target, dest, stage) }
+    val saved = if (Settings.browseAskWhereToSave.value) {
+        pickAndWrite(leaf, target) { dest -> writeStaged(leaf, target, dest, stage) }
+    } else {
+        val dir = BrowseSaveAs.pickConvertDirectory() ?: return
+        val encoded = encodeStaged(leaf, target, stage) ?: return
+        try {
+            val dest = withIOContext {
+                BrowseSaveAs.writeConvertFile(dir, stillExportFileName(leaf, encoded.target), encoded.file)
+            }
+            snackbar(string(R.string.image_saved, dest.toUri().displayPath ?: dest.toString()))
+            true
+        } finally {
+            encoded.file.delete()
+        }
+    }
     if (!saved) snackbar(string(R.string.error_cant_save_image))
 }
 
