@@ -123,7 +123,8 @@
     <string name="image_conversion_quality_mid">中</string>
     <string name="image_conversion_quality_low">低</string>
     <string name="raw_hdr_conversion">RAW HDR 转换</string>
-    <string name="raw_hdr_conversion_summary">当前：%1$s。仅影响相机 RAW 的 HDR 转换。HDR 使用源文件高光范围；增强使用默认 RAW 控制；自定义使用当前阅读器 RAW 控制。</string>
+    <string name="raw_hdr_conversion_summary">%1$s</string>
+    <string name="browse_task_progress_for_item">%1$s · %2$s</string>
     <string name="raw_hdr_conversion_hdr">HDR</string>
     <string name="raw_hdr_conversion_boost">HDR 增强</string>
     <string name="raw_hdr_conversion_custom">HDR 自定义</string>

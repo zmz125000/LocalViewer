@@ -95,6 +95,7 @@ import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.withContext
 import moe.tarsin.snackbar
 import okio.Path
+import okio.Path.Companion.toPath
 
 /**
  * Live selection for the folder browser on screen.
@@ -422,9 +423,7 @@ internal class TaskBatch(
         get() {
             val total = jobs.size
             if (total <= 0) return "0/0"
-            if (finished >= total) return "$total/$total"
-            val running = runningCount.coerceAtLeast(1)
-            return "${(finished + running).coerceAtMost(total)}/$total"
+            return "${finished.coerceIn(0, total)}/$total"
         }
 
     val pending: List<TaskJob>
@@ -824,8 +823,27 @@ object FolderSelectHost {
     }
 
     internal fun startTasks(jobs: List<TaskJob>, dir: Path, folderKey: String? = null) {
+        startTasks(jobs, dir, folderKey, forceUnassociated = false)
+    }
+
+    /** Start a one-image action in the same serialized task queue used by folder batches. */
+    fun startSingleTask(title: String, target: StillExportTarget, run: suspend () -> Unit) {
+        val controls = RawExportControls.capture(target) + StillExportQuality.current()
+        val job = newJob(title, isFolder = false, pick = null) {
+            withContext(controls) { run() }
+            true
+        }
+        startTasks(listOf(job), "/".toPath(), forceUnassociated = true)
+    }
+
+    private fun startTasks(
+        jobs: List<TaskJob>,
+        dir: Path,
+        folderKey: String? = null,
+        forceUnassociated: Boolean,
+    ) {
         if (jobs.isEmpty()) return
-        val key = folderKey ?: shownFolderKey ?: selectionSnack?.folderKey ?: current?.folderKey
+        val key = if (forceUnassociated) null else folderKey ?: shownFolderKey ?: selectionSnack?.folderKey ?: current?.folderKey
         val running = batch
         if (running != null) {
             // Another snackbar started work — run after the current jobs finish (not Done/Continue).
@@ -1080,7 +1098,9 @@ private fun FolderTaskSnackbar(batch: TaskBatch) {
     ) {
         val name = batch.folderName
         Text(
-            text = if (name.isBlank()) {
+            text = if (name.isBlank() && batch.jobs.size == 1) {
+                stringResource(R.string.browse_task_progress_for_item, batch.progressLabel, batch.jobs[0].title)
+            } else if (name.isBlank()) {
                 batch.progressLabel
             } else {
                 stringResource(R.string.browse_task_progress_in_folder, batch.progressLabel, name)

@@ -2573,7 +2573,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                     onShare = { shareLocalFile(path) },
                     onShareViaHttp = localHttpShareFile(path),
                     onConvert = if (isStillExportFileName(leaf)) {
-                        { target -> launchIO { with(context) { convertLocalStill(path, leaf, target) } } }
+                        { target -> with(context) { convertLocalStill(path, leaf, target) } }
                     } else {
                         null
                     },

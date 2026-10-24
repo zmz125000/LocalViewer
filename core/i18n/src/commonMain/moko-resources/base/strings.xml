@@ -137,7 +137,8 @@
     <string name="image_conversion_quality_mid">Mid</string>
     <string name="image_conversion_quality_low">Low</string>
     <string name="raw_hdr_conversion">RAW HDR conversion</string>
-    <string name="raw_hdr_conversion_summary">Current: %1$s. Only affects camera RAW HDR exports. HDR uses source headroom; Boost uses default RAW controls; Custom uses current reader RAW controls.</string>
+    <string name="raw_hdr_conversion_summary">%1$s</string>
+    <string name="browse_task_progress_for_item">%1$s · %2$s</string>
     <string name="raw_hdr_conversion_hdr">HDR</string>
     <string name="raw_hdr_conversion_boost">HDR boost</string>
     <string name="raw_hdr_conversion_custom">HDR custom</string>

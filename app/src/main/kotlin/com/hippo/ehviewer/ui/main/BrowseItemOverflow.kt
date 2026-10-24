@@ -73,7 +73,7 @@ data class BrowseOverflowActions(
     /** Home-screen pin for this item. Null hides the menu row. */
     val shortcut: FolderShortcutTarget? = null,
     /** JXL, JXR, and camera RAW. Null hides Convert to…. */
-    val onConvert: ((StillExportTarget) -> Unit)? = null,
+    val onConvert: (suspend (StillExportTarget) -> Unit)? = null,
     /** Set on folder-view rows so the overflow can enter select mode. */
     val selectKey: String? = null,
     val selectTitle: String? = null,
@@ -163,7 +163,9 @@ fun BrowseItemOverflowButton(
                         onClick = {
                             expanded = false
                             convertMenu = false
-                            convert(target)
+                            val title = actions.selectTitle?.takeIf { it.isNotBlank() }
+                                ?: context.getString(R.string.convert_to)
+                            FolderSelectHost.startSingleTask(title, target) { convert(target) }
                         },
                     )
                 }
