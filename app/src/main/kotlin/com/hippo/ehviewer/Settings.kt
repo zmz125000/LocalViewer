@@ -756,7 +756,7 @@ object Settings : DataStorePreferences(null) {
     val imageConversionLocation = stringOrNullPref("image_conversion_location")
 
     /** 0 lossless (JPEG Q95), 1 high (Q95), 2 mid (Q90), 3 low (Q85). JPEG always uses 4:4:4. */
-    val imageConversionQuality = intPref("image_conversion_quality", 1)
+    val imageConversionQuality = intPref("image_conversion_quality", 2)
 
     /** RAW HDR exports: 0 source headroom, 1 default controls boost, 2 current controls. */
     val rawHdrConversionMode = intPref("raw_hdr_conversion_mode", 1)
