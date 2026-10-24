@@ -48,6 +48,8 @@ internal fun StillExportTarget.forSource(name: String, acceptSdr: Boolean): Stil
     }
 }
 
+internal fun StillExportTarget.visibleForSources(hasHdr: Boolean): Boolean = available && (hasHdr || !rawHdr())
+
 /** RAW output dynamic range is independent of the reader and the display. */
 internal fun StillExportTarget.rawHdr(): Boolean = when (exportMode()) {
     1, 3, 5, 6, 7 -> true

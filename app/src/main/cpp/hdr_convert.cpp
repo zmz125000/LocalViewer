@@ -1640,7 +1640,8 @@ int encode_still_export(const uint8_t* src, size_t src_len, unsigned w, unsigned
     }
     if (premultiplied) unpremultiply_u8(rgba, pixels);
     if (mode == kExportAvif) return encode_avif_u8(w, h, rgba, cg, out_path, quality);
-    if (mode == kExportJxl || mode == kExportJxlHdr || mode >= kExportAvifPq) {
+    if (mode == kExportJxl) return encode_jxl_u8(w, h, rgba, cg, out_path, quality);
+    if (mode == kExportJxlHdr || mode >= kExportAvifPq) {
         std::vector<uint16_t> linear(pixels * 4);
         std::array<uint16_t, 256> table{};
         for (size_t c = 0; c < table.size(); ++c) table[c] = float_to_half(srgb_eotf(c / 255.f));
@@ -1654,7 +1655,7 @@ int encode_still_export(const uint8_t* src, size_t src_len, unsigned w, unsigned
         if (mode >= kExportAvifPq && mode <= kExportAvifGainMap) {
             return encode_avif_f16(w, h, linear.data(), cg, mode - kExportAvif, out_path, quality);
         }
-        return encode_jxl_f16(w, h, linear.data(), cg, mode == kExportJxlPq, out_path, quality, mode == kExportJxlPq);
+        return encode_jxl_f16(w, h, linear.data(), cg, true, out_path, quality, mode == kExportJxlPq);
     }
     return encode_srgb_jpeg_u8(w, h, rgba, out_path, cg, quality);
 }

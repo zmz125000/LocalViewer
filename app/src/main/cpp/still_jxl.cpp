@@ -15,6 +15,67 @@ struct JxlFileCloser {
 };
 }
 
+static int encode_jxl_pixels(unsigned w, unsigned h, const void* rgba, uhdr_color_gamut_t cg,
+                             const char* path, int quality, JxlDataType type,
+                             JxlTransferFunction transfer, float intensity) {
+    const size_t pixels = static_cast<size_t>(w) * h;
+    if (!rgba || !path || !pixels) return -60;
+    auto encoder = JxlEncoderMake(nullptr);
+    const unsigned threads = std::min(4u, hdr_pixel_jobs(pixels));
+    auto runner = JxlThreadParallelRunnerMake(nullptr, threads);
+    if (!encoder || !runner || JxlEncoderSetParallelRunner(encoder.get(), JxlThreadParallelRunner, runner.get()) != JXL_ENC_SUCCESS) return -61;
+    JxlBasicInfo info;
+    JxlEncoderInitBasicInfo(&info);
+    info.xsize = w;
+    info.ysize = h;
+    info.bits_per_sample = type == JXL_TYPE_UINT8 ? 8 : 16;
+    info.exponent_bits_per_sample = type == JXL_TYPE_FLOAT16 ? 5 : 0;
+    info.num_color_channels = 3;
+    info.num_extra_channels = 1;
+    info.alpha_bits = info.bits_per_sample;
+    info.alpha_exponent_bits = info.exponent_bits_per_sample;
+    info.alpha_premultiplied = JXL_FALSE;
+    const bool compression = quality > 0;
+    constexpr float distances[] = {0.f, .3f, .5f, 1.f};
+    const float distance = distances[std::clamp(quality, 0, 3)];
+    info.uses_original_profile = compression ? JXL_FALSE : JXL_TRUE;
+    info.intensity_target = intensity;
+    JxlColorEncoding color{};
+    color.color_space = JXL_COLOR_SPACE_RGB;
+    color.white_point = JXL_WHITE_POINT_D65;
+    color.primaries = cg == UHDR_CG_BT_2100 ? JXL_PRIMARIES_2100 : cg == UHDR_CG_DISPLAY_P3 ? JXL_PRIMARIES_P3 : JXL_PRIMARIES_SRGB;
+    color.transfer_function = transfer;
+    color.rendering_intent = JXL_RENDERING_INTENT_RELATIVE;
+    if (JxlEncoderSetBasicInfo(encoder.get(), &info) != JXL_ENC_SUCCESS ||
+        JxlEncoderSetColorEncoding(encoder.get(), &color) != JXL_ENC_SUCCESS) return -62;
+    auto* frame = JxlEncoderFrameSettingsCreate(encoder.get(), nullptr);
+    // Lossless keeps original-profile / fast-decode coding. High/mid/low use
+    // perceptual XYB at distances 0.3/0.5/1.0, preserving primaries, transfer
+    // and HDR intensity target. Alpha remains lossless in every preset.
+    if (!frame || JxlEncoderSetFrameLossless(frame, compression ? JXL_FALSE : JXL_TRUE) != JXL_ENC_SUCCESS ||
+        JxlEncoderSetFrameDistance(frame, distance) != JXL_ENC_SUCCESS ||
+        JxlEncoderSetExtraChannelDistance(frame, 0, 0.f) != JXL_ENC_SUCCESS ||
+        JxlEncoderFrameSettingsSetOption(frame, JXL_ENC_FRAME_SETTING_EFFORT, compression ? 5 : 3) != JXL_ENC_SUCCESS ||
+        JxlEncoderFrameSettingsSetOption(frame, JXL_ENC_FRAME_SETTING_DECODING_SPEED, compression ? 0 : 2) != JXL_ENC_SUCCESS) return -63;
+    const JxlPixelFormat format{4, type, JXL_NATIVE_ENDIAN, 0};
+    if (JxlEncoderAddImageFrame(frame, &format, rgba, pixels * (type == JXL_TYPE_UINT8 ? 4 : 8)) != JXL_ENC_SUCCESS) return -64;
+    JxlEncoderCloseInput(encoder.get());
+    std::unique_ptr<FILE, JxlFileCloser> file(fopen(path, "wb"));
+    if (!file) return -65;
+    // Stream encoded bytes directly to disk; no second complete compressed file.
+    std::array<uint8_t, 65536> output{};
+    for (;;) {
+        uint8_t* next = output.data();
+        size_t available = output.size();
+        const auto status = JxlEncoderProcessOutput(encoder.get(), &next, &available);
+        const size_t count = output.size() - available;
+        if (count && fwrite(output.data(), 1, count, file.get()) != count) return -66;
+        if (status == JXL_ENC_SUCCESS) break;
+        if (status != JXL_ENC_NEED_MORE_OUTPUT) return -67;
+    }
+    return fflush(file.get()) == 0 ? 0 : -66;
+}
+
 // The caller owns straight-alpha linear half samples. Normalize HDR to its
 // declared luminance for linear JXL; PQ retains the absolute 10000-nit reference.
 int encode_jxl_f16(unsigned w, unsigned h, uint16_t* rgba, uhdr_color_gamut_t cg,
@@ -58,58 +119,13 @@ int encode_jxl_f16(unsigned w, unsigned h, uint16_t* rgba, uhdr_color_gamut_t cg
             }
         }
     });
-    auto encoder = JxlEncoderMake(nullptr);
-    const unsigned threads = std::min(4u, hdr_pixel_jobs(pixels));
-    auto runner = JxlThreadParallelRunnerMake(nullptr, threads);
-    if (!encoder || !runner || JxlEncoderSetParallelRunner(encoder.get(), JxlThreadParallelRunner, runner.get()) != JXL_ENC_SUCCESS) return -61;
-    JxlBasicInfo info;
-    JxlEncoderInitBasicInfo(&info);
-    info.xsize = w;
-    info.ysize = h;
-    info.bits_per_sample = 16;
-    info.exponent_bits_per_sample = pq ? 0 : 5;
-    info.num_color_channels = 3;
-    info.num_extra_channels = 1;
-    info.alpha_bits = 16;
-    info.alpha_exponent_bits = pq ? 0 : 5;
-    info.alpha_premultiplied = JXL_FALSE;
-    const bool compression = quality > 0;
-    constexpr float distances[] = {0.f, .3f, .5f, 1.f};
-    const float distance = distances[std::clamp(quality, 0, 3)];
-    info.uses_original_profile = compression ? JXL_FALSE : JXL_TRUE;
-    info.intensity_target = intensity;
-    JxlColorEncoding color{};
-    color.color_space = JXL_COLOR_SPACE_RGB;
-    color.white_point = JXL_WHITE_POINT_D65;
-    color.primaries = cg == UHDR_CG_BT_2100 ? JXL_PRIMARIES_2100 : cg == UHDR_CG_DISPLAY_P3 ? JXL_PRIMARIES_P3 : JXL_PRIMARIES_SRGB;
-    color.transfer_function = pq ? JXL_TRANSFER_FUNCTION_PQ : JXL_TRANSFER_FUNCTION_LINEAR;
-    color.rendering_intent = JXL_RENDERING_INTENT_RELATIVE;
-    if (JxlEncoderSetBasicInfo(encoder.get(), &info) != JXL_ENC_SUCCESS ||
-        JxlEncoderSetColorEncoding(encoder.get(), &color) != JXL_ENC_SUCCESS) return -62;
-    auto* frame = JxlEncoderFrameSettingsCreate(encoder.get(), nullptr);
-    // Lossless keeps original-profile / fast-decode coding. High/mid/low use
-    // perceptual XYB at distances 0.3/0.5/1.0, preserving primaries, transfer
-    // and HDR intensity target. Alpha remains lossless in every preset.
-    if (!frame || JxlEncoderSetFrameLossless(frame, compression ? JXL_FALSE : JXL_TRUE) != JXL_ENC_SUCCESS ||
-        JxlEncoderSetFrameDistance(frame, distance) != JXL_ENC_SUCCESS ||
-        JxlEncoderSetExtraChannelDistance(frame, 0, 0.f) != JXL_ENC_SUCCESS ||
-        JxlEncoderFrameSettingsSetOption(frame, JXL_ENC_FRAME_SETTING_EFFORT, compression ? 5 : 3) != JXL_ENC_SUCCESS ||
-        JxlEncoderFrameSettingsSetOption(frame, JXL_ENC_FRAME_SETTING_DECODING_SPEED, compression ? 0 : 2) != JXL_ENC_SUCCESS) return -63;
-    const JxlPixelFormat format{4, pq ? JXL_TYPE_UINT16 : JXL_TYPE_FLOAT16, JXL_NATIVE_ENDIAN, 0};
-    if (JxlEncoderAddImageFrame(frame, &format, rgba, pixels * 8) != JXL_ENC_SUCCESS) return -64;
-    JxlEncoderCloseInput(encoder.get());
-    std::unique_ptr<FILE, JxlFileCloser> file(fopen(path, "wb"));
-    if (!file) return -65;
-    // Stream encoded bytes directly to disk; no second complete compressed file.
-    std::array<uint8_t, 65536> output{};
-    for (;;) {
-        uint8_t* next = output.data();
-        size_t available = output.size();
-        const auto status = JxlEncoderProcessOutput(encoder.get(), &next, &available);
-        const size_t count = output.size() - available;
-        if (count && fwrite(output.data(), 1, count, file.get()) != count) return -66;
-        if (status == JXL_ENC_SUCCESS) break;
-        if (status != JXL_ENC_NEED_MORE_OUTPUT) return -67;
-    }
-    return fflush(file.get()) == 0 ? 0 : -66;
+    return encode_jxl_pixels(w, h, rgba, cg, path, quality,
+                             pq ? JXL_TYPE_UINT16 : JXL_TYPE_FLOAT16,
+                             pq ? JXL_TRANSFER_FUNCTION_PQ : JXL_TRANSFER_FUNCTION_LINEAR, intensity);
+}
+
+int encode_jxl_u8(unsigned w, unsigned h, const uint8_t* rgba, uhdr_color_gamut_t cg,
+                   const char* path, int quality) {
+    return encode_jxl_pixels(w, h, rgba, cg, path, quality, JXL_TYPE_UINT8,
+                             JXL_TRANSFER_FUNCTION_SRGB, kSdrWhiteNits);
 }

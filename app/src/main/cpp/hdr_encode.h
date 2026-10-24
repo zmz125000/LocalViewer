@@ -287,6 +287,10 @@ jbyteArray pack_direct_to_jbyte_array(JNIEnv* env, std::vector<uint16_t>& rgba, 
 int encode_jxl_f16(unsigned w, unsigned h, uint16_t* rgba, uhdr_color_gamut_t cg,
                    bool hdr, const char* path, int quality = 1, bool pq = false);
 
+/** Straight-alpha sRGB-curve RGBA8 → 8-bit SDR JXL. */
+int encode_jxl_u8(unsigned w, unsigned h, const uint8_t* rgba, uhdr_color_gamut_t cg,
+                  const char* path, int quality = 1);
+
 /** AVIF: mode 0 SDR, 1 PQ, 2 ISO 21496-1 SDR base + HDR gain map.
  * F16 is linear, straight alpha, with 1.0 = 203 nits; sdr_base is optional RGBA8.
  * Deep sources use 10 bits, or 12 bits for the lossless preset, with 4:4:4 sampling.

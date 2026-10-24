@@ -922,6 +922,7 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
                                 copy = { launchIO { with(pageLoader) { copy(page) } } },
                                 save = { launchIO { with(pageLoader) { save(page) } } },
                                 saveTo = { launchIO { with(pageLoader) { saveTo(page) } } },
+                                sourceName = pageLoader.sourceLeafName(page.index),
                                 convert = pageLoader.sourceLeafName(page.index)
                                     ?.takeIf { isStillExportFileName(it) }
                                     ?.let {

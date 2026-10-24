@@ -281,7 +281,7 @@ object LibDirectDecode {
         if (exportTarget != null && !isHdrExportFileName(fileNameHint) &&
             !isJpeg2000Extension(FileUtils.getExtensionFromFilename(fileNameHint))
         ) {
-            return decodePlatformExport(src, maxEdge)
+            return decodePlatformExport(src, fileNameHint, maxEdge)
         }
         // Scope source bytes tightly so they are eligible for GC before Bitmap.create.
         val bytes = readBytes(src) ?: return null
@@ -320,7 +320,23 @@ object LibDirectDecode {
     }
 
     /** SDR raster export uses the platform decoder's first frame, independent of reader filters. */
-    private fun decodePlatformExport(src: ImageSource, maxEdge: Int): PackedPixels? {
+    private fun decodePlatformExport(src: ImageSource, fileNameHint: String, maxEdge: Int): PackedPixels? {
+        val ext = FileUtils.getExtensionFromFilename(fileNameHint)?.lowercase()
+        val png = isPlatformHighDepthCandidateExtension(ext)
+        val heif = ext == "avif" || isHeicImageExtension(ext)
+        val header = if (png || heif) exportPrecisionHeader(src, if (png) 64 else HeifPrecisionProbe.HEADER_BYTES) else null
+        val deep = png && PlatformBitDepth.probe(header ?: byteArrayOf(), fileNameHint = fileNameHint) != BitDepthClass.EIGHT
+        if (heif) {
+            val precision = header?.let { HeifPrecisionProbe.probe(it) }
+            if (precision == null || precision.highDepth || precision.needsSoftware) {
+                val bytes = readBytes(src) ?: return null
+                if (ext != "avif") return decodeHevcHdrPacked(bytes, maxEdge, advanced = true, export = true)
+                val info = IntArray(6)
+                val boost = FloatArray(1)
+                val pixels = decodeAvifBytesToDirect(bytes, maxEdge, true, info, boost) ?: return null
+                return PackedPixels(pixels, info, boost, advanced = true, premultiplied = false)
+            }
+        }
         var gamut = 0
         var bitmap = try {
             val source = when (src) {
@@ -330,7 +346,13 @@ object LibDirectDecode {
             ImageDecoder.decodeBitmap(source) { decoder, info, _ ->
                 decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
                 gamut = if (info.colorSpace?.isWideGamut == true) 1 else 0
-                decoder.setTargetColorSpace(ColorSpace.get(if (gamut == 1) ColorSpace.Named.DISPLAY_P3 else ColorSpace.Named.SRGB))
+                decoder.setTargetColorSpace(
+                    if (deep) {
+                        if (gamut == 1) displayP3LinearExtended else ColorSpace.get(ColorSpace.Named.LINEAR_EXTENDED_SRGB)
+                    } else {
+                        ColorSpace.get(if (gamut == 1) ColorSpace.Named.DISPLAY_P3 else ColorSpace.Named.SRGB)
+                    },
+                )
                 val edge = maxOf(info.size.width, info.size.height)
                 if (maxEdge > 0 && edge > maxEdge) {
                     decoder.setTargetSize(
@@ -348,20 +370,22 @@ object LibDirectDecode {
                 0,
                 bytes.size,
                 BitmapFactory.Options().apply {
-                    inPreferredConfig = Bitmap.Config.ARGB_8888
-                    inPreferredColorSpace = ColorSpace.get(ColorSpace.Named.SRGB)
+                    inPreferredConfig = if (deep) Bitmap.Config.RGBA_F16 else Bitmap.Config.ARGB_8888
+                    inPreferredColorSpace = ColorSpace.get(if (deep) ColorSpace.Named.LINEAR_EXTENDED_SRGB else ColorSpace.Named.SRGB)
                 },
             ) ?: return null
         }
         try {
-            if (bitmap.config == Bitmap.Config.RGBA_F16) {
+            check(!deep || bitmap.config == Bitmap.Config.RGBA_F16) { "Platform decoder lost high-bit-depth precision: $fileNameHint" }
+            val linearSpace = if (gamut == 1) displayP3LinearExtended else ColorSpace.get(ColorSpace.Named.LINEAR_EXTENDED_SRGB)
+            if (bitmap.config == Bitmap.Config.RGBA_F16 && bitmap.colorSpace != linearSpace) {
                 // F16 encoders expect linear samples; platform F16 can still have an sRGB curve.
                 val linear = Bitmap.createBitmap(
                     bitmap.width,
                     bitmap.height,
                     Bitmap.Config.RGBA_F16,
                     bitmap.hasAlpha(),
-                    if (gamut == 1) displayP3LinearExtended else ColorSpace.get(ColorSpace.Named.LINEAR_EXTENDED_SRGB),
+                    linearSpace,
                 )
                 try {
                     Canvas(linear).drawBitmap(bitmap, 0f, 0f, null)
@@ -371,7 +395,7 @@ object LibDirectDecode {
                 }
                 bitmap.recycle()
                 bitmap = linear
-            } else if (bitmap.config != Bitmap.Config.ARGB_8888) {
+            } else if (bitmap.config != Bitmap.Config.ARGB_8888 && bitmap.config != Bitmap.Config.RGBA_F16) {
                 val converted = bitmap.copy(Bitmap.Config.ARGB_8888, false) ?: return null
                 bitmap.recycle()
                 bitmap = converted
@@ -388,6 +412,26 @@ object LibDirectDecode {
             bitmap.recycle()
         }
     }
+
+    /** Precision-only header read during decode; menu HDR eligibility remains filename-only. */
+    private fun exportPrecisionHeader(src: ImageSource, limit: Int): ByteArray? = runCatching {
+        when (src) {
+            is PathSource -> src.source.read {
+                val bytes = ByteArray(limit)
+                var length = 0
+                while (length < bytes.size) {
+                    val count = readAtMostTo(bytes, length, bytes.size)
+                    if (count <= 0) break
+                    length += count
+                }
+                bytes.copyOf(length)
+            }
+            is ByteBufferSource -> {
+                val buffer = src.source.asReadOnlyBuffer()
+                ByteArray(minOf(limit, buffer.remaining())).also { buffer.get(it) }
+            }
+        }
+    }.getOrNull()
 
     /**
      * PQ/HLG HEIC and SDR high-depth fallback when ImageDecoder cannot retain

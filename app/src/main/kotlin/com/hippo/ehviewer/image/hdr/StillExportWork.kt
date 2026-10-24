@@ -115,7 +115,7 @@ internal object StillExportWork {
         val sourceBytes = file.length()
         // Codec working buffers live on the native heap, not inside the JVM's
         // maxMemory allowance. Keep both leases through encode, with separate limits.
-        val nativePixels = !isJpeg2000Extension(ext)
+        val nativePixels = !isJpeg2000Extension(ext) && !isHeicImageExtension(ext)
         return heapBudget.withBytes(exportHeapBytes(width, height, sourceBytes, raw, nativePixels)) {
             nativeBudget.withBytes(exportWorkingBytes(width, height, sourceBytes, raw), work)
         }
