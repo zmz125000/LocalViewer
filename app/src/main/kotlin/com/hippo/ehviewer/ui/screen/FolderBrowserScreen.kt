@@ -230,7 +230,11 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
     val selectFolderKey = stack.lastOrNull()?.let {
         "${it.rootId}|${it.path}|${it.relativePath}|${it.zipInnerRel}"
     }.orEmpty()
+    // Path checks alone cannot distinguish an old refresh after leave -> return.
+    var activeListingRequest by remember { mutableStateOf<Any?>(null) }
+
     fun updateStack(newStack: List<BrowseSession.LocalFrame>) {
+        if (newStack != stack) activeListingRequest = null
         deepestDepth = FolderBackHistory.afterNavigate(stack.size, newStack.size, deepestDepth)
         stack = newStack
         BrowseSession.localStack = newStack
@@ -684,6 +688,8 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
     }
 
     suspend fun reload(force: Boolean = false) {
+        val request = Any()
+        activeListingRequest = request
         val frame = stack.lastOrNull()
         if (frame == null) {
             notifyLocalThumbFolder(null)
@@ -695,6 +701,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         // Leave→enter folder must not wait on previous path’s stuck MMR workers.
         notifyLocalThumbFolder(frame)
         val targetPath = frameListKey(frame)
+        fun ownsListing(): Boolean = activeListingRequest === request && stack.lastOrNull() == frame
         // Photo-grid open: same complete index the reader uses — no directory scan.
         if (!force && frame.photoGrid) {
             val shownImages = entries.filter { it is BrowseEntry.RegularFile && isImageFileName(it.name) }
@@ -728,6 +735,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
             } else {
                 null
             } ?: MediaStoreFs.imageFileNames(frame.path.toPath())
+            if (!ownsListing()) return
             if (!names.isNullOrEmpty()) {
                 val metadata = metadataForLibraryOpen(frame, names)
                 applyLocalPhotoGridFiles(frame, names, metadata)
@@ -756,6 +764,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                 null
             } ?: LocalLibrary.videoFileNamesInFolder(frame.rootId, frame.relativePath)
                 ?: MediaStoreFs.videoFileNames(frame.path.toPath())
+            if (!ownsListing()) return
             if (!names.isNullOrEmpty()) {
                 applyLocalVideoFolderFiles(frame, names)
                 return
@@ -790,7 +799,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                     useCache = !force,
                     photoGrid = frame.photoGrid,
                     onCached = { cached ->
-                        if (stack.lastOrNull()?.let { frameListKey(it) } == targetPath) {
+                        if (ownsListing()) {
                             entries = cached
                             listedPath = targetPath
                             error = null
@@ -798,7 +807,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                         }
                     },
                 ) ?: error("Cannot read ZIP central directory")
-                if (stack.lastOrNull()?.let { frameListKey(it) } != targetPath) return
+                if (!ownsListing()) return
                 entries = result
                 listedPath = targetPath
                 error = null
@@ -807,6 +816,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                 return
             }
             val root = LocalLibrary.loadRoot(frame.rootId)
+            if (!ownsListing()) return
             if (root == null) {
                 error = "Missing library root"
                 entries = emptyList()
@@ -832,7 +842,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                 preferMediaStore = frame.preferMediaStore,
                 useCache = !force,
                 onCached = { cached ->
-                    if (stack.lastOrNull()?.let { frameListKey(it) } == targetPath) {
+                    if (ownsListing()) {
                         entries = cached
                         listedPath = targetPath
                         error = null
@@ -841,25 +851,31 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                     }
                 },
                 onRefreshDone = {
-                    if (stack.lastOrNull()?.let { frameListKey(it) } == targetPath) {
+                    if (ownsListing()) {
                         refreshing = false
                     }
                 },
             )
             // Path changed mid-load — replacement reload owns spinner state.
-            if (stack.lastOrNull()?.let { frameListKey(it) } != targetPath) return
+            if (!ownsListing()) return
             entries = result
             listedPath = targetPath
             error = null
             loading = false
-            refreshing = LocalListingJobs.isActive(
-                BrowseSession.localFolderListingKey(frame.rootId, frame.relativePath),
-            )
+            val jobKey = BrowseSession.localFolderListingKey(frame.rootId, frame.relativePath)
+            refreshing = LocalListingJobs.isActive(jobKey)
+            if (refreshing) {
+                // The process job may still have callbacks from an older reload.
+                LocalListingJobs.joinExisting(jobKey)
+                if (!ownsListing()) return
+                applyCachedLocalListing(frame)
+                refreshing = false
+            }
         } catch (e: kotlinx.coroutines.CancellationException) {
             // Path change / new reload owns loading — do not clear here (same as SMB).
             throw e
         } catch (e: Throwable) {
-            if (stack.lastOrNull()?.let { frameListKey(it) } != targetPath) return
+            if (!ownsListing()) return
             error = e.message
             entries = emptyList()
             listedPath = targetPath
@@ -889,7 +905,10 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
     }
 
     DisposableEffect(Unit) {
-        onDispose { notifyLocalThumbFolder(null) }
+        onDispose {
+            activeListingRequest = null
+            notifyLocalThumbFolder(null)
+        }
     }
 
     // Zip-as-dir toggle: force re-list in both directions so ArchiveGallery ↔ Folder/Directory

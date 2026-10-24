@@ -1023,6 +1023,11 @@ internal object LocalListingJobs {
 
     fun isActive(key: String): Boolean = jobs[key]?.isActive == true
 
+    /** Wait for a refresh already running; leaving the view only cancels this wait. */
+    suspend fun joinExisting(key: String) {
+        jobs[key]?.join()
+    }
+
     /** Start [loader] if none is running. Does not wait — used so cache paint is not blocked by slim. */
     fun start(
         key: String,
