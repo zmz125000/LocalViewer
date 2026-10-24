@@ -2779,6 +2779,7 @@ private fun PdfReaderScreen(
         if (photoGridOpen && doc != null) {
             PdfThumbGridSheet(
                 doc = doc,
+                imageLoader = imageLoader as? PdfRamPageLoader,
                 pageCount = pageCount,
                 currentPage = currentPage,
                 styleGeneration = ebookStyleGen,
@@ -3552,6 +3553,7 @@ private fun nearestPdfTocIndex(chapters: List<PdfTocEntry>, pageIndex: Int): Int
 @Composable
 private fun PdfThumbGridSheet(
     doc: PdfDocumentModel,
+    imageLoader: PdfRamPageLoader?,
     pageCount: Int,
     currentPage: Int,
     styleGeneration: Int,
@@ -3586,6 +3588,7 @@ private fun PdfThumbGridSheet(
             items(pageCount, key = { it }) { index ->
                 PdfPageThumb(
                     doc = doc,
+                    imageLoader = imageLoader,
                     index = index,
                     styleGeneration = styleGeneration,
                     cacheKey = cacheKey,
@@ -3603,6 +3606,7 @@ private fun PdfThumbGridSheet(
 @Composable
 private fun PdfPageThumb(
     doc: PdfDocumentModel,
+    imageLoader: PdfRamPageLoader?,
     index: Int,
     styleGeneration: Int,
     cacheKey: String?,
@@ -3622,7 +3626,7 @@ private fun PdfPageThumb(
     }
     var bitmap by remember(identity, doc, index) { mutableStateOf<Bitmap?>(null) }
     var skipped by remember(identity) { mutableStateOf(false) }
-    LaunchedEffect(doc, index, identity, allowGenerate) {
+    LaunchedEffect(doc, imageLoader, index, identity, allowGenerate) {
         skipped = false
         val cached = identity?.let { id ->
             withContext(Dispatchers.IO) {
@@ -3640,6 +3644,7 @@ private fun PdfPageThumb(
         // Cache miss: admit render/extract so a full-screen grid cannot stampede Pdfium.
         // Publish [bitmap] after release so other cells can generate while this paints.
         var rendered: Bitmap? = null
+        var encodedThumb: ByteArray? = null
         try {
             rendered = BrowseThumbComposeJobs.withJob {
                 withContext(Dispatchers.IO) {
@@ -3648,8 +3653,15 @@ private fun PdfPageThumb(
                             doc.session.renderLongEdge(index, OriginDiskCache.THUMB_EDGE)
                         }.getOrNull()
                         is PdfDocumentModel.Images -> runCatching {
-                            doc.engine.ensureListedThrough(index)
-                            doc.engine.extractBytes(index)?.let(::decodePdfThumb)
+                            // Same sampled, parallel path as the image reader's
+                            // PDF grid. The shared parser is only a fallback for
+                            // pages without a reusable independent stream.
+                            encodedThumb = imageLoader?.extractGridThumb(index) { isActive }
+                            val bytes = encodedThumb ?: run {
+                                doc.engine.ensureListedThrough(index)
+                                doc.engine.extractBytes(index)
+                            }
+                            bytes?.let(::decodePdfThumb)
                         }.getOrNull()
                         is PdfDocumentModel.MobiImages -> runCatching {
                             doc.pageBytes(index)?.let(::decodePdfThumb)
@@ -3661,7 +3673,14 @@ private fun PdfPageThumb(
             if (thumb != null && identity != null) {
                 // Keep the file even if this cell scrolls off before the encode returns.
                 withContext(NonCancellable + Dispatchers.IO) {
-                    runCatching { ReaderPageThumb.ensureFromBitmap(identity, thumb) }
+                    runCatching {
+                        val encoded = encodedThumb
+                        if (encoded != null) {
+                            ReaderPageThumb.writeEncoded(identity, encoded)
+                        } else {
+                            ReaderPageThumb.ensureFromBitmap(identity, thumb)
+                        }
+                    }
                 }
             }
             if (!isActive) return@LaunchedEffect
