@@ -350,10 +350,12 @@ object LibDirectDecode {
                 // mapping all of them to P3 can clip saturated source colors.
                 gamut = exportGamut(info.colorSpace)
                 decoder.setTargetColorSpace(
-                    if (deep || gamut == 2) {
-                        exportLinearSpace(gamut)
+                    if (deep || gamut != 0) {
+                        // Request extended F16 while decoding the source ICC,
+                        // before any intermediate RGB values are quantized.
+                        ColorSpace.get(ColorSpace.Named.LINEAR_EXTENDED_SRGB)
                     } else {
-                        ColorSpace.get(if (gamut == 1) ColorSpace.Named.DISPLAY_P3 else ColorSpace.Named.SRGB)
+                        ColorSpace.get(ColorSpace.Named.SRGB)
                     },
                 )
                 val edge = maxOf(info.size.width, info.size.height)
@@ -363,32 +365,42 @@ object LibDirectDecode {
                         (info.size.height.toLong() * maxEdge / edge).toInt().coerceAtLeast(1),
                     )
                 }
+            }.also { decoded ->
+                if ((deep || gamut != 0) && decoded.config != Bitmap.Config.RGBA_F16) {
+                    // ImageDecoder has no explicit bitmap-config setter. Retry
+                    // from the original source with BitmapFactory's F16 option;
+                    // promoting this already-quantized bitmap would be too late.
+                    decoded.recycle()
+                    error("ImageDecoder did not provide F16 for color-managed export: $fileNameHint")
+                }
             }
         } catch (error: Exception) {
             android.util.Log.w("StillConvert", "Platform export decode failed; trying BitmapFactory", error)
             val bytes = readBytes(src) ?: return null
             val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
             BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
-            gamut = exportGamut(bounds.outColorSpace)
+            gamut = bounds.outColorSpace?.let(::exportGamut) ?: gamut
             BitmapFactory.decodeByteArray(
                 bytes,
                 0,
                 bytes.size,
                 BitmapFactory.Options().apply {
-                    inPreferredConfig = if (deep || gamut == 2) Bitmap.Config.RGBA_F16 else Bitmap.Config.ARGB_8888
-                    inPreferredColorSpace = if (deep || gamut == 2) {
-                        exportLinearSpace(gamut)
+                    inPreferredConfig = if (deep || gamut != 0) Bitmap.Config.RGBA_F16 else Bitmap.Config.ARGB_8888
+                    inPreferredColorSpace = if (deep || gamut != 0) {
+                        ColorSpace.get(ColorSpace.Named.LINEAR_EXTENDED_SRGB)
                     } else {
-                        ColorSpace.get(if (gamut == 1) ColorSpace.Named.DISPLAY_P3 else ColorSpace.Named.SRGB)
+                        ColorSpace.get(ColorSpace.Named.SRGB)
                     }
                 },
             ) ?: return null
         }
         try {
-            check(!(deep || gamut == 2) || bitmap.config == Bitmap.Config.RGBA_F16) { "Platform decoder lost high-bit-depth precision: $fileNameHint" }
+            check(!(deep || gamut != 0) || bitmap.config == Bitmap.Config.RGBA_F16) { "Platform decoder did not retain F16 export precision: $fileNameHint" }
             val linearSpace = exportLinearSpace(gamut)
             if (bitmap.config == Bitmap.Config.RGBA_F16 && bitmap.colorSpace != linearSpace) {
-                // F16 encoders expect linear samples; platform F16 can still have an sRGB curve.
+                // F16 encoders expect linear samples in the reported gamut.
+                // Convert the extended-linear decode to that gamut while still
+                // in F16, then quantize only if the final output requires it.
                 val linear = Bitmap.createBitmap(
                     bitmap.width,
                     bitmap.height,
