@@ -88,8 +88,9 @@ inline float half_to_float(uint16_t h) {
  * epsilon-bump max boost to ~1.07 when min==max.
  *
  * Encode quality (full page, maxEdge=0 — no downscale):
- *   - Baseline SDR: Q97 + 4:4:4 chroma (libjpeg-turbo).
- *   - Ultra HDR: base Q97 + gain-map Q95, UHDR_USAGE_BEST_QUALITY.
+ *   - JPEG quality: 95/95/90/85 for lossless/high/mid/low; default high.
+ *   - Baseline and Ultra HDR base: 4:4:4 chroma (libjpeg-turbo).
+ *   - Ultra HDR gain map follows the selected quality, UHDR_USAGE_BEST_QUALITY.
  * Thumbs (maxEdge>0) scale long edge first, then same encode; browse platform
  * thumbs use Bitmap JPEG Q85 @ 768px separately.
  *
@@ -104,7 +105,7 @@ inline float half_to_float(uint16_t h) {
  *   UHDR_CG_BT_2100    — BT.2020 primaries (PQ/HLG HDR stills)
  * [sdr_base], when supplied, is opaque sRGB-transfer RGBA8 in the same primaries
  * and dimensions. RAW uses its camera-look render before HDR highlight expansion.
- * [quality]: -1 keeps non-export defaults; 0/1/2 use JPEG Q95/Q90/Q85.
+ * [quality]: 0/1/2/3 use JPEG Q95/Q95/Q90/Q85 (lossless/high/mid/low).
  * Exports use 4:4:4; low quality downsizes the gain map by 4.
  * The primary image dimensions, gamut and HDR capacity remain unchanged.
  *
@@ -114,7 +115,7 @@ int encode_linear_rgba_f16_to_uhdr(unsigned w, unsigned h, const uint16_t* rgba,
                                    const char* out_path,
                                    uhdr_color_gamut_t cg = UHDR_CG_BT_709,
                                    float fixed_peak_nits = 0.f, bool force_hdr = false,
-                                   const uint8_t* sdr_base = nullptr, int quality = -1);
+                                   const uint8_t* sdr_base = nullptr, int quality = 1);
 
 /** Downscale packed RGBA F16 so long edge ≤ max_edge (box filter). max_edge 0 = no-op. */
 void scale_rgba_f16_max_edge(std::vector<uint16_t>& rgba, unsigned& w, unsigned& h,
@@ -125,6 +126,17 @@ constexpr float kSdrWhiteNits = 203.0f;
 constexpr float kMaxNits = 10000.0f;
 /** Nominal max LINEAR half value: 10000/203 ≈ 49.26 (ultrahdr_api.h). */
 constexpr float kMaxLinear = kMaxNits / kSdrWhiteNits;
+
+/** ST 2084 OETF. Linear working RGB uses 1.0 = 203 nits, PQ uses 1.0 = 10000 nits. */
+inline float linear_to_pq_code(float linear) {
+    double luminance = static_cast<double>(linear) * kSdrWhiteNits / kMaxNits;
+    if (!(luminance > 0.0)) return 0.f;
+    luminance = std::fmin(luminance, 1.0);
+    const double p = std::pow(luminance, 2610.0 / 16384.0);
+    return static_cast<float>(std::pow((3424.0 / 4096.0 + (2413.0 / 128.0) * p) /
+                                      (1.0 + (2392.0 / 128.0) * p), 2523.0 / 32.0));
+}
+
 /** Fixed MaxCLL for known-HDR thumbs (no peak scan). */
 constexpr float kHdrThumbNits = 1000.0f;
 
@@ -271,6 +283,15 @@ jbyteArray pack_direct_to_jbyte_array(JNIEnv* env, std::vector<uint16_t>& rgba, 
                                       bool advanced_color, int transfer_cicp, jintArray jOutInfo,
                                       jfloatArray jOutBoost);
 
-/** Straight-alpha linear F16 → 16-bit JPEG XL (SDR or absolute HDR). Mutates RGB. */
+/** Straight-alpha linear F16 → JXL. PQ uses uint16 codes, linear uses F16. Mutates RGBA. */
 int encode_jxl_f16(unsigned w, unsigned h, uint16_t* rgba, uhdr_color_gamut_t cg,
-                   bool hdr, const char* path, int quality = -1);
+                   bool hdr, const char* path, int quality = 1, bool pq = false);
+
+/** AVIF: mode 0 SDR, 1 PQ, 2 ISO 21496-1 SDR base + HDR gain map.
+ * F16 is linear, straight alpha, with 1.0 = 203 nits; sdr_base is optional RGBA8.
+ * Deep sources use 10 bits, or 12 bits for the lossless preset, with 4:4:4 sampling.
+ */
+int encode_avif_f16(unsigned w, unsigned h, uint16_t* rgba, uhdr_color_gamut_t cg,
+                    int mode, const char* path, int quality, const uint8_t* sdr_base = nullptr);
+int encode_avif_u8(unsigned w, unsigned h, const uint8_t* rgba, uhdr_color_gamut_t cg,
+                   const char* path, int quality);

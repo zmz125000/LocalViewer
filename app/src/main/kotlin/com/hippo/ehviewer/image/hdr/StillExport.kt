@@ -15,15 +15,15 @@ enum class StillExportTarget {
     AutoOriginal,
     Jpeg,
     JpegHdr,
-    JpegHdrBoost,
-    JpegHdrCustom,
     Jxl,
     JxlHdr,
-    JxlHdrBoost,
-    JxlHdrCustom,
+    JxlPq,
+    Avif,
+    AvifPq,
+    AvifGainMap,
     ;
 
-    private val jpegXl: Boolean get() = this == Jxl || this == JxlHdr || this == JxlHdrBoost || this == JxlHdrCustom
+    private val jpegXl: Boolean get() = this == Jxl || this == JxlHdr || this == JxlPq
 
     val available: Boolean get() = BuildConfig.JXL_ENCODER_ENABLED || !jpegXl
 }
@@ -37,16 +37,10 @@ fun isStillExportFileName(name: String?): Boolean {
 
 /** RAW output dynamic range is independent of the reader and the display. */
 internal fun StillExportTarget.rawHdr(): Boolean = this == StillExportTarget.AutoOriginal ||
-    exportMode() == 1 || exportMode() == 3
-
-internal fun StillExportTarget.rawBoosted(): Boolean = this == StillExportTarget.JpegHdrBoost ||
-    this == StillExportTarget.JxlHdrBoost || rawCustom()
-
-internal fun StillExportTarget.rawCustom(): Boolean = this == StillExportTarget.JpegHdrCustom || this == StillExportTarget.JxlHdrCustom
-
-/** Boost and Custom only change the camera RAW decode pipeline. */
-fun StillExportTarget.supportsSource(sourceName: String?): Boolean = !rawBoosted() ||
-    isRawStillExtension(FileUtils.getExtensionFromFilename(sourceName))
+    when (exportMode()) {
+        1, 3, 5, 6, 7 -> true
+        else -> false
+    }
 
 /** HDR wins over fp16. A gain-map frame is HDR even when the base is 8-bit. */
 fun resolveStillExportAuto(hdr: Boolean, f16: Boolean, jxlEncoder: Boolean = BuildConfig.JXL_ENCODER_ENABLED): StillExportTarget = when {
@@ -60,21 +54,27 @@ fun StillExportTarget.resolve(hdr: Boolean, f16: Boolean): StillExportTarget = w
     else -> this
 }
 
-/** 0 JPEG, 1 Ultra HDR JPEG, 2 SDR JPEG XL, 3 HDR JPEG XL. Matches encodeStillExport. */
+/** 0 JPEG, 1 Ultra HDR JPEG, 2/3 SDR/linear HDR JXL, 4/5/6 SDR/PQ/gain-map AVIF, 7 PQ JXL. */
 fun StillExportTarget.exportMode(): Int = when (this) {
-    StillExportTarget.JpegHdr, StillExportTarget.JpegHdrBoost, StillExportTarget.JpegHdrCustom -> 1
+    StillExportTarget.JpegHdr -> 1
     StillExportTarget.Jxl -> 2
-    StillExportTarget.JxlHdr, StillExportTarget.JxlHdrBoost, StillExportTarget.JxlHdrCustom -> 3
+    StillExportTarget.JxlHdr -> 3
+    StillExportTarget.JxlPq -> 7
+    StillExportTarget.Avif -> 4
+    StillExportTarget.AvifPq -> 5
+    StillExportTarget.AvifGainMap -> 6
     StillExportTarget.AutoOriginal, StillExportTarget.Jpeg -> 0
 }
 
 fun StillExportTarget.fileExtension(): String = when (this) {
-    StillExportTarget.Jxl, StillExportTarget.JxlHdr, StillExportTarget.JxlHdrBoost, StillExportTarget.JxlHdrCustom -> "jxl"
+    StillExportTarget.Jxl, StillExportTarget.JxlHdr, StillExportTarget.JxlPq -> "jxl"
+    StillExportTarget.Avif, StillExportTarget.AvifPq, StillExportTarget.AvifGainMap -> "avif"
     else -> "jpg"
 }
 
 fun StillExportTarget.mimeType(): String = when (this) {
-    StillExportTarget.Jxl, StillExportTarget.JxlHdr, StillExportTarget.JxlHdrBoost, StillExportTarget.JxlHdrCustom -> "image/jxl"
+    StillExportTarget.Jxl, StillExportTarget.JxlHdr, StillExportTarget.JxlPq -> "image/jxl"
+    StillExportTarget.Avif, StillExportTarget.AvifPq, StillExportTarget.AvifGainMap -> "image/avif"
     else -> "image/jpeg"
 }
 

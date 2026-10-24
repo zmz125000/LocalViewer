@@ -272,16 +272,22 @@ if (EHVIEWER_HDR_CODECS)
     )
     FetchContent_MakeAvailable(libultrahdr)
 
-    # ── libavif (+ dav1d only) for PQ/HLG AVIF stills ───────────────────
-    # Decode-only path: dav1d is smaller/faster than libaom. No encoders
-    # (aom/rav1e/svt) and no second decoder (gav1). libavif ≥1.1 uses
+    # ── libavif: dav1d reader + encode-only libaom exports ──────────────
+    # Keep dav1d as the sole decoder. libaom supplies 8/10/12-bit AV1 encode.
+    # libavif ≥1.1 uses
     # OFF|LOCAL|SYSTEM (not ON/OFF bool) — ON is ignored → no codec at runtime.
     # LocalDav1d.cmake needs host meson (+ ninja on PATH; see above).
     # x86/x86_64 also need nasm (dav1d -Denable_asm=true); arm64 uses gas.
     set(AVIF_CODEC_DAV1D "LOCAL" CACHE STRING "" FORCE)
-    set(AVIF_CODEC_AOM "OFF" CACHE STRING "" FORCE)
+    set(AVIF_CODEC_AOM "LOCAL" CACHE STRING "" FORCE)
     set(AVIF_CODEC_AOM_DECODE OFF CACHE BOOL "" FORCE)
-    set(AVIF_CODEC_AOM_ENCODE OFF CACHE BOOL "" FORCE)
+    set(AVIF_CODEC_AOM_ENCODE ON CACHE BOOL "" FORCE)
+    set(CONFIG_AV1_HIGHBITDEPTH 1 CACHE BOOL "" FORCE)
+    if (ANDROID_ABI STREQUAL "arm64-v8a")
+        set(AOM_TARGET_CPU "arm64" CACHE STRING "" FORCE)
+    elseif (ANDROID_ABI STREQUAL "x86_64")
+        set(AOM_TARGET_CPU "x86_64" CACHE STRING "" FORCE)
+    endif ()
     set(AVIF_CODEC_LIBGAV1 "OFF" CACHE STRING "" FORCE)
     set(AVIF_CODEC_RAV1E "OFF" CACHE STRING "" FORCE)
     set(AVIF_CODEC_SVT "OFF" CACHE STRING "" FORCE)
@@ -316,6 +322,9 @@ if (EHVIEWER_HDR_CODECS)
             GIT_SHALLOW 1
     )
     FetchContent_MakeAvailable(libavif)
+    if (NOT TARGET aom)
+        message(FATAL_ERROR "libavif: encode-only aom target missing")
+    endif ()
     if (NOT TARGET dav1d::dav1d AND NOT TARGET dav1d)
         message(FATAL_ERROR "libavif: dav1d target missing (set AVIF_CODEC_DAV1D=LOCAL)")
     endif ()
@@ -369,7 +378,7 @@ if (EHVIEWER_HDR_CODECS)
     else ()
         set(EHVIEWER_JXL_EXPORT_SOURCE still_jxl_stub.cpp)
     endif ()
-    set(EHVIEWER_HDR_SOURCES hdr_convert.cpp avif_hdr.cpp jxl_hdr.cpp hevc_decode.cpp ${EHVIEWER_JXL_EXPORT_SOURCE} still_probe.cpp)
+    set(EHVIEWER_HDR_SOURCES hdr_convert.cpp avif_hdr.cpp still_avif.cpp jxl_hdr.cpp hevc_decode.cpp ${EHVIEWER_JXL_EXPORT_SOURCE} still_probe.cpp)
     list(APPEND EHVIEWER_HDR_LIBS de265)
 
     if (TARGET uhdr)

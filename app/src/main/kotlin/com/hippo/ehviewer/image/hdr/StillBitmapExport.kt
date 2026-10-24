@@ -3,7 +3,7 @@ package com.hippo.ehviewer.image.hdr
 import com.hippo.ehviewer.jni.encodeStillExport
 import java.io.File
 
-fun DirectPixels.writeResolved(resolved: StillExportTarget, out: File, quality: Int = 0): Boolean {
+fun DirectPixels.writeResolved(resolved: StillExportTarget, out: File, quality: Int = 1): Boolean {
     if (pixels.isEmpty() || width <= 0 || height <= 0) return false
     return encodeStillExport(
         pixels,
@@ -15,6 +15,6 @@ fun DirectPixels.writeResolved(resolved: StillExportTarget, out: File, quality: 
         premultiplied,
         out.absolutePath,
         sdrOffset,
-        quality.coerceIn(0, 2),
+        quality.coerceIn(0, 3),
     ) == 0
 }

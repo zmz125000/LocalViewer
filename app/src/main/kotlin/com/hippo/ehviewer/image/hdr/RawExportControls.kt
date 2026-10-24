@@ -6,8 +6,9 @@ import kotlin.coroutines.CoroutineContext
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.withContext
 
-/** Immutable RAW adjustments; deliberately independent of the main sensor-decode toggle. */
+/** Immutable RAW export mode and adjustments, independent of the main sensor-decode toggle. */
 internal data class RawExportControls(
+    val hdrMode: Int = 0,
     val exposure: Float = 0f,
     val whiteBalance: Int = 0,
     val kelvin: Int = 5200,
@@ -35,7 +36,10 @@ internal data class RawExportControls(
             linearHdr = Settings.readerRawHdrLinear.value,
         )
 
-        fun capture(target: StillExportTarget) = if (target.rawCustom()) current() else RawExportControls()
+        fun capture(target: StillExportTarget): RawExportControls {
+            val mode = if (target.rawHdr()) Settings.rawHdrConversionMode.value.coerceIn(0, 2) else 0
+            return (if (mode == 2) current() else RawExportControls()).copy(hdrMode = mode)
+        }
     }
 }
 

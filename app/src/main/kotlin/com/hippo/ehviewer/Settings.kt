@@ -751,8 +751,11 @@ object Settings : DataStorePreferences(null) {
      */
     val browseTaskParallel = boolPref("browse_task_parallel", false)
 
-    /** 0 lossless (JPEG Q95), 1 high (Q90), 2 low (Q85). JPEG always uses 4:4:4. */
+    /** 0 lossless (JPEG Q95), 1 high (Q95), 2 mid (Q90), 3 low (Q85). JPEG always uses 4:4:4. */
     val imageConversionQuality = intPref("image_conversion_quality", 1)
+
+    /** RAW HDR exports: 0 source headroom, 1 default controls boost, 2 current controls. */
+    val rawHdrConversionMode = intPref("raw_hdr_conversion_mode", 1)
 
     val hardwareBitmapThreshold = intPref("hardware_bitmap_threshold", 16384)
     val preloadThumbAggressively = boolPref("preload_thumb_aggressively", false)

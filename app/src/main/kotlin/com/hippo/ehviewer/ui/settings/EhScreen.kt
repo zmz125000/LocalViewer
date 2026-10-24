@@ -234,6 +234,15 @@ fun AnimatedVisibilityScope.EhScreen(navigator: DestinationsNavigator) = Screen(
                 entryValueRes = com.hippo.ehviewer.R.array.image_conversion_quality_values,
                 state = Settings.imageConversionQuality.asMutableState(),
             )
+            val rawHdrMode = Settings.rawHdrConversionMode.asMutableState()
+            val rawHdrEntries = stringArrayResource(id = com.hippo.ehviewer.R.array.raw_hdr_conversion_entries)
+            SimpleMenuPreferenceInt(
+                title = stringResource(id = R.string.raw_hdr_conversion),
+                summary = stringResource(id = R.string.raw_hdr_conversion_summary, rawHdrEntries[rawHdrMode.value.coerceIn(0, 2)]),
+                entry = com.hippo.ehviewer.R.array.raw_hdr_conversion_entries,
+                entryValueRes = com.hippo.ehviewer.R.array.raw_hdr_conversion_values,
+                state = rawHdrMode,
+            )
             val useMedia3Player = Settings.useMedia3Player.asMutableState()
             SwitchPreference(
                 title = stringResource(id = R.string.settings_use_media3_player),

@@ -16,15 +16,28 @@
 
 <resources xmlns:tools="http://schemas.android.com/tools">
 
+    <string-array name="raw_hdr_conversion_entries" translatable="false">
+        <item>@string/raw_hdr_conversion_hdr</item>
+        <item>@string/raw_hdr_conversion_boost</item>
+        <item>@string/raw_hdr_conversion_custom</item>
+    </string-array>
+    <integer-array name="raw_hdr_conversion_values">
+        <item>0</item>
+        <item>1</item>
+        <item>2</item>
+    </integer-array>
+
     <string-array name="image_conversion_quality_entries" translatable="false">
         <item>@string/image_conversion_quality_lossless</item>
         <item>@string/image_conversion_quality_high</item>
+        <item>@string/image_conversion_quality_mid</item>
         <item>@string/image_conversion_quality_low</item>
     </string-array>
     <integer-array name="image_conversion_quality_values">
         <item>0</item>
         <item>1</item>
         <item>2</item>
+        <item>3</item>
     </integer-array>
 
     <string-array name="toplist_entries" translatable="false">
