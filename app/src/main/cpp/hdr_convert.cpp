@@ -764,6 +764,24 @@ bool decode_jxr_from_memory(const uint8_t* data, size_t len, std::vector<uint16_
     return true;
 }
 
+/**
+ * Untagged linear scRGB uses 1.0 = 80 nits. Our shared linear working space uses 1.0 = 203 nits,
+ * so leaving the codes unchanged lifts midtones against a reference monitor.
+ * Scale RGB only. Alpha stays. Integer sRGB and ICC frames must not come here.
+ */
+void rebase_untagged_scrgb(std::vector<uint16_t>& rgba, unsigned w, unsigned h) {
+    constexpr float kScRgbWhiteNits = 80.f;
+    const float scale = kScRgbWhiteNits / kSdrWhiteNits;
+    const size_t npx = static_cast<size_t>(w) * h;
+    if (w == 0 || h == 0 || rgba.size() < npx * 4) return;
+    for (size_t i = 0; i < npx; i++) {
+        rgba[i * 4 + 0] = float_to_half(half_to_float(rgba[i * 4 + 0]) * scale);
+        rgba[i * 4 + 1] = float_to_half(half_to_float(rgba[i * 4 + 1]) * scale);
+        rgba[i * 4 + 2] = float_to_half(half_to_float(rgba[i * 4 + 2]) * scale);
+    }
+    ALOGI("JXR scRGB rebase 80/203 %ux%u", w, h);
+}
+
 // Path helper: load whole file into memory then decode (no jxrlib file I/O).
 // Path convert is always UHDR/JPEG → composite alpha.
 bool decode_jxr_to_rgba_f16(const char* path, std::vector<uint16_t>& out_rgba, unsigned& w,
@@ -781,8 +799,11 @@ bool decode_jxr_to_rgba_f16(const char* path, std::vector<uint16_t>& out_rgba, u
         ALOGE("read JXR failed: %s", path);
         return false;
     }
-    return decode_jxr_from_memory(buf.data(), buf.size(), out_rgba, w, h,
-                                  /*composite_alpha_on_black=*/true, nullptr, out_cg);
+    bool untagged_linear = false;
+    if (!decode_jxr_from_memory(buf.data(), buf.size(), out_rgba, w, h,
+                                /*composite_alpha_on_black=*/true, &untagged_linear, out_cg)) return false;
+    if (untagged_linear) rebase_untagged_scrgb(out_rgba, w, h);
+    return true;
 }
 
 }  // namespace
@@ -1735,7 +1756,9 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_convertJxrBytesToUltraHdr(JNIEnv* env, 
     unsigned w = 0, h = 0;
     int rc = -20;
     uhdr_color_gamut_t cg = UHDR_CG_BT_709;
-    if (decode_jxr_from_memory(compressed.data(), compressed.size(), rgba, w, h, true, nullptr, &cg)) {
+    bool untagged_linear = false;
+    if (decode_jxr_from_memory(compressed.data(), compressed.size(), rgba, w, h, true, &untagged_linear, &cg)) {
+        if (untagged_linear) rebase_untagged_scrgb(rgba, w, h);
         // Compressed bitstream no longer needed during F16 encode.
         compressed.clear();
         compressed.shrink_to_fit();
@@ -1769,7 +1792,9 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_convertJxrBytesToUltraHdrMaxEdge(
     unsigned w = 0, h = 0;
     int rc = -20;
     uhdr_color_gamut_t cg = UHDR_CG_BT_709;
-    if (decode_jxr_from_memory(compressed.data(), compressed.size(), rgba, w, h, true, nullptr, &cg)) {
+    bool untagged_linear = false;
+    if (decode_jxr_from_memory(compressed.data(), compressed.size(), rgba, w, h, true, &untagged_linear, &cg)) {
+        if (untagged_linear) rebase_untagged_scrgb(rgba, w, h);
         compressed.clear();
         compressed.shrink_to_fit();
         if (maxEdge > 0) {
@@ -1786,25 +1811,6 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_convertJxrBytesToUltraHdrMaxEdge(
 
     env->ReleaseStringUTFChars(jOutput, out_path);
     return rc;
-}
-
-/**
- * Untagged linear scRGB uses 1.0 = 80 nits. Direct float16 uses 1.0 = 203 nits,
- * so leaving the codes unchanged lifts midtones against a reference monitor.
- * The Ultra HDR JPEG is tone-mapped before display and already matches that monitor.
- * Scale RGB only. Alpha stays. Integer sRGB and ICC frames must not come here.
- */
-void rebase_untagged_scrgb(std::vector<uint16_t>& rgba, unsigned w, unsigned h) {
-    constexpr float kScRgbWhiteNits = 80.f;
-    const float scale = kScRgbWhiteNits / kSdrWhiteNits;
-    const size_t npx = static_cast<size_t>(w) * h;
-    if (w == 0 || h == 0 || rgba.size() < npx * 4) return;
-    for (size_t i = 0; i < npx; i++) {
-        rgba[i * 4 + 0] = float_to_half(half_to_float(rgba[i * 4 + 0]) * scale);
-        rgba[i * 4 + 1] = float_to_half(half_to_float(rgba[i * 4 + 1]) * scale);
-        rgba[i * 4 + 2] = float_to_half(half_to_float(rgba[i * 4 + 2]) * scale);
-    }
-    ALOGI("JXR direct scRGB rebase 80/203 %ux%u", w, h);
 }
 
 /**
