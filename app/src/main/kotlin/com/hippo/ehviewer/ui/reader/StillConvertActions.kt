@@ -24,7 +24,6 @@ import com.hippo.ehviewer.image.hdr.StillExportQuality
 import com.hippo.ehviewer.image.hdr.StillExportTarget
 import com.hippo.ehviewer.image.hdr.StillExportWork
 import com.hippo.ehviewer.image.hdr.mimeType
-import com.hippo.ehviewer.image.hdr.resolve
 import com.hippo.ehviewer.image.hdr.stillExportFileName
 import com.hippo.ehviewer.image.hdr.withRawExportControls
 import com.hippo.ehviewer.image.hdr.writeResolved
@@ -51,11 +50,6 @@ private suspend fun convertToCaptured(page: Page, target: StillExportTarget) {
     val leaf = loader.sourceLeafName(page.index)
     if (leaf == null) {
         snackbar(string(R.string.error_cant_save_image))
-        return
-    }
-    if (target == StillExportTarget.AutoOriginal) {
-        val saved = saveOriginalSize(leaf) { stageOriginal(loader, page.index) }
-        if (!saved) snackbar(string(R.string.error_cant_save_image))
         return
     }
     val saved = pickAndWrite(leaf, target) { dest ->
@@ -116,11 +110,6 @@ private suspend fun convertStaged(leaf: String, target: StillExportTarget, stage
 
 context(_: SnackbarHostState, _: Context)
 private suspend fun convertStagedUnchecked(leaf: String, target: StillExportTarget, stage: suspend () -> File) {
-    if (target == StillExportTarget.AutoOriginal) {
-        val saved = saveOriginalSize(leaf, stage)
-        if (!saved) snackbar(string(R.string.error_cant_save_image))
-        return
-    }
     val saved = if (Settings.browseAskWhereToSave.value) {
         pickAndWrite(leaf, target) { dest -> writeStaged(leaf, target, dest, stage) }
     } else {
@@ -202,24 +191,6 @@ private fun Context.discardUnpublished(uri: Uri) {
     runCatching { DocumentsContract.deleteDocument(contentResolver, uri) }
 }
 
-/**
- * Picks a folder immediately, then decodes. The file name follows the Auto rule
- * (`.jpg` by default; encoder-enabled builds use `.jxl` for deep SDR).
- * @return false when decode or write fails. Cancel returns true.
- */
-context(_: SnackbarHostState, _: Context)
-private suspend fun saveOriginalSize(leaf: String, stage: suspend () -> File): Boolean {
-    val dir = BrowseSaveAs.pickConvertDirectory() ?: return true
-    val encoded = encodeStaged(leaf, StillExportTarget.AutoOriginal, stage) ?: return false
-    val dest = try {
-        withIOContext { BrowseSaveAs.writeConvertFile(dir, stillExportFileName(leaf, encoded.target), encoded.file) }
-    } finally {
-        encoded.file.delete()
-    }
-    snackbar(string(R.string.image_saved, dest.toUri().displayPath ?: dest.toString()))
-    return true
-}
-
 private data class EncodedStill(val file: File, val target: StillExportTarget)
 
 /** Download/stage first; retain the memory lease until encoding releases its pixels. */
@@ -233,12 +204,11 @@ private suspend fun encodeStagedCaptured(leaf: String, target: StillExportTarget
     withExportSource(localSource, stage) { source ->
         StillExportWork.withSource(source, leaf) {
             LibDirectDecode.withExportPixels(source.asPathSource(), leaf, maxEdge = 0, target = target) { pixels ->
-                val resolved = target.resolve(pixels.isHdr, pixels.f16)
                 val out = File.createTempFile("still-out", null, appCtx.cacheDir)
                 var success = false
                 try {
-                    success = pixels.writeResolved(resolved, out, quality) && out.length() > 0L
-                    if (success) EncodedStill(out, resolved) else null
+                    success = pixels.writeResolved(target, out, quality) && out.length() > 0L
+                    if (success) EncodedStill(out, target) else null
                 } finally {
                     if (!success) out.delete()
                 }

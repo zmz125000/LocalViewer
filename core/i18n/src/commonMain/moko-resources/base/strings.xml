@@ -1159,7 +1159,6 @@
     <string name="browse_background">Background</string>
     <string name="browse_continue">Continue</string>
     <string name="convert_back">Back</string>
-    <string name="convert_auto_original">Auto (original size)</string>
     <string name="convert_jpeg">JPEG</string>
     <string name="convert_jpeg_hdr">JPEG (HDR)</string>
     <string name="convert_jxl">JPEG XL (SDR)</string>

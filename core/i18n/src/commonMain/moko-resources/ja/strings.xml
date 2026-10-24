@@ -1065,7 +1065,6 @@
     <string name="browse_background">バックグラウンド</string>
     <string name="browse_continue">続行</string>
     <string name="convert_back">戻る</string>
-    <string name="convert_auto_original">自動（元のサイズ）</string>
     <string name="convert_jpeg">JPEG</string>
     <string name="convert_jpeg_hdr">JPEG（HDR）</string>
     <string name="convert_jxl">JPEG XL（SDR）</string>

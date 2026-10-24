@@ -301,7 +301,7 @@ object BrowseSaveAs {
         return path
     }
 
-    /** Folder for Auto (original size). Opens immediately; the file name is chosen after decode. */
+    /** Use the configured conversion folder or ask for a destination. */
     context(_: SnackbarHostState, _: Context)
     internal suspend fun pickConvertDirectory(): Path? = if (!Settings.browseAskWhereToSave.value) {
         configuredConvertDirectory() ?: pickTreeDir()

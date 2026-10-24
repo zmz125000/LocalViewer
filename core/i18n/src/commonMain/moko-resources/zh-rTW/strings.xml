@@ -868,7 +868,6 @@
     <string name="browse_background">背景</string>
     <string name="browse_continue">繼續</string>
     <string name="convert_back">返回</string>
-    <string name="convert_auto_original">自動（原始尺寸）</string>
     <string name="convert_jpeg">JPEG</string>
     <string name="convert_jpeg_hdr">JPEG（HDR）</string>
     <string name="convert_jxl">JPEG XL（SDR）</string>

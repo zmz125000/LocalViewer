@@ -148,7 +148,6 @@ fun BrowseItemOverflowButton(
                     onClick = { convertMenu = false },
                 )
                 listOf(
-                    StillExportTarget.AutoOriginal to R.string.convert_auto_original,
                     StillExportTarget.Jpeg to R.string.convert_jpeg,
                     StillExportTarget.JpegHdr to R.string.convert_jpeg_hdr,
 

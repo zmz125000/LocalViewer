@@ -5,7 +5,6 @@ import com.hippo.ehviewer.image.hdr.StillExportTarget
 
 internal val StillExportTarget.conversionLabelRes: Int
     get() = when (this) {
-        StillExportTarget.AutoOriginal -> R.string.convert_auto_original
         StillExportTarget.Jpeg -> R.string.convert_jpeg
         StillExportTarget.JpegHdr -> R.string.convert_jpeg_hdr
         StillExportTarget.Jxl -> R.string.convert_jxl

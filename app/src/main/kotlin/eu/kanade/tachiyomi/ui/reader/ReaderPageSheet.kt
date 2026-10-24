@@ -62,7 +62,6 @@ fun ReaderPageSheetMeta(
         if (pickingConvert && convert != null) {
             Item(icon = Icons.AutoMirrored.Filled.ArrowBack, text = R.string.convert_back, onClick = { pickingConvert = false }, close = false)
             listOf(
-                StillExportTarget.AutoOriginal to R.string.convert_auto_original,
                 StillExportTarget.Jpeg to R.string.convert_jpeg,
                 StillExportTarget.JpegHdr to R.string.convert_jpeg_hdr,
                 StillExportTarget.Jxl to R.string.convert_jxl,

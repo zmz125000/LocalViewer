@@ -185,7 +185,7 @@ object LibDirectDecode {
         src: ImageSource,
         fileNameHint: String,
         maxEdge: Int = 0,
-        target: StillExportTarget = StillExportTarget.AutoOriginal,
+        target: StillExportTarget,
         encode: (DirectPixels) -> T,
     ): T? = withContext(Dispatchers.IO) {
         // The export memory leases cover decode AND encode. Release the decoder
