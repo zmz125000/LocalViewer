@@ -1340,7 +1340,6 @@ internal fun BrowseVideoThumbnail(
     // cancel: leaving Recents must not keep starting local library MMR.
     // A tablet / small-grid screen can compose ~50 video cells at once. Cache hits
     // stay unbounded; only getOrCreate holds [VideoThumbnail.withComposeExtractJob].
-    // Settle delays run before admission so each ready cell can refill a free slot.
     LaunchedEffect(source, downloadNetworkVideoThumbs, allowRemoteFetch, extractEnabled) {
         val src = source ?: run {
             thumbnail = null
@@ -1352,9 +1351,7 @@ internal fun BrowseVideoThumbnail(
             return@LaunchedEffect
         }
         if (!allowRemoteFetch || !extractEnabled) return@LaunchedEffect
-        // Fling filter runs for every visible cell without occupying extraction slots.
-        delay(400)
-        repeat(2) { attempt ->
+        repeat(2) {
             val ready = VideoThumbnail.withComposeExtractJob {
                 if (!VideoThumbnail.extractEnabled.value) return@withComposeExtractJob null
                 withIOContext { VideoThumbnail.getOrCreate(context, src)?.absolutePath }
@@ -1365,8 +1362,6 @@ internal fun BrowseVideoThumbnail(
                 return@LaunchedEffect
             }
             if (!VideoThumbnail.extractEnabled.value) return@LaunchedEffect
-            // A failed attempt yields its slot while waiting to retry.
-            if (attempt == 0) delay(400)
         }
     }
     val request = remember(source, thumbnail, sizePx) {

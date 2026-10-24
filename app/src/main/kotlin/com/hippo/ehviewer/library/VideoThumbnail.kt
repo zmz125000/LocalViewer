@@ -435,7 +435,7 @@ object VideoThumbnail {
     /**
      * Admit one browse/library Compose extraction attempt into [getOrCreate].
      * Disk cache hits should run outside this so a full grid of cached thumbs
-     * does not serialize. Settle/retry delays and publication also stay outside.
+     * does not serialize. Publication also stays outside.
      * Scroll-away cancels the waiter and frees the permit.
      */
     suspend fun <T> withComposeExtractJob(block: suspend () -> T): T = composeExtractSemaphore.withPermit { block() }
