@@ -26,6 +26,7 @@
 #include "ultrahdr/icc.h"
 // skcms (libjxl third_party) — honor JXR embedded color context (ICC).
 #include "skcms.h"
+#include "linear_color_profile.h"
 // ultrahdrcommon.h may stub ALOG* to no-ops — restore Android logging for this TU.
 #ifdef ALOGE
 #undef ALOGE
@@ -221,26 +222,13 @@ JxrPix classify_guid(const PKPixelFormatGUID& g) {
 }
 
 /**
- * Build linear sRGB destination for skcms (BT.709/sRGB primaries + identity TRC).
- * Output floats are linear light suitable for libultrahdr (1.0 ≈ paper white).
- */
-void skcms_linear_srgb_profile(skcms_ICCProfile* dst) {
-    skcms_Init(dst);
-    skcms_SetTransferFunction(dst, skcms_Identity_TransferFunction());
-    const skcms_ICCProfile* srgb = skcms_sRGB_profile();
-    if (srgb && srgb->has_toXYZD50) {
-        skcms_SetXYZD50(dst, &srgb->toXYZD50);
-    }
-}
-
-/**
  * Apply embedded JXR color context with its **full** ICC (TRC + matrix).
  *
  * WIC: pixel format does not define color space; color context takes priority.
  * Callers must expand numeric samples as **encoded** in the ICC (no default
  * sRGB EOTF / scRGB linear assumption). Do not strip TRC based on float vs int.
  *
- * Output is linear sRGB F16 (1.0 ≈ paper white).
+ * Output is linear BT.2020 F16 (1.0 ≈ paper white).
  */
 bool apply_jxr_color_context(std::vector<uint16_t>& rgba, size_t npx, const uint8_t* icc,
                              size_t icc_len) {
@@ -251,9 +239,8 @@ bool apply_jxr_color_context(std::vector<uint16_t>& rgba, size_t npx, const uint
         return false;
     }
     skcms_ICCProfile dst{};
-    skcms_linear_srgb_profile(&dst);
-    if (!skcms_MakeUsableAsDestination(&dst)) {
-        ALOGI("JXR ICC: linear sRGB dest not usable");
+    if (!make_linear_bt2020_profile(&dst)) {
+        ALOGI("JXR ICC: linear BT.2020 dest not usable");
         return false;
     }
     // skcms supports IEEE-754 half pixels directly. Transforming the existing
@@ -281,19 +268,6 @@ bool apply_jxr_color_context(std::vector<uint16_t>& rgba, size_t npx, const uint
     }
     ALOGI("JXR ICC applied via skcms (%zu B, full TRC)", icc_len);
     return true;
-}
-
-/** Encoded [0,1] F16 samples → linear via sRGB EOTF (ICC transform fallback). */
-void apply_srgb_eotf_in_place(std::vector<uint16_t>& rgba, size_t npx) {
-    for (size_t i = 0; i < npx; i++) {
-        const float r = srgb_eotf(half_to_float(rgba[i * 4 + 0]));
-        const float g = srgb_eotf(half_to_float(rgba[i * 4 + 1]));
-        const float b = srgb_eotf(half_to_float(rgba[i * 4 + 2]));
-        rgba[i * 4 + 0] = float_to_half(r);
-        rgba[i * 4 + 1] = float_to_half(g);
-        rgba[i * 4 + 2] = float_to_half(b);
-        // alpha unchanged
-    }
 }
 
 /**
@@ -392,8 +366,9 @@ bool setup_full_frame(PKImageDecode* dec, PKPixelFormatGUID* fmt) {
  */
 bool decode_jxr_from_memory(const uint8_t* data, size_t len, std::vector<uint16_t>& out_rgba,
                             unsigned& w, unsigned& h, bool composite_alpha_on_black = true,
-                            bool* out_untagged_linear = nullptr) {
+                            bool* out_untagged_linear = nullptr, uhdr_color_gamut_t* out_cg = nullptr) {
     if (out_untagged_linear) *out_untagged_linear = false;
+    if (out_cg) *out_cg = UHDR_CG_BT_709;
     if (!data || len == 0) return false;
 
     PKFactory* factory = nullptr;
@@ -573,7 +548,7 @@ bool decode_jxr_from_memory(const uint8_t* data, size_t len, std::vector<uint16_
     };
     auto store_enc_rgb = [&](size_t i, float er, float eg, float eb, float ea) {
         if (expand_as_encoded) {
-            // Keep encoded; skcms applies ICC TRC + matrix → linear sRGB.
+            // Keep encoded; skcms applies ICC TRC + matrix → linear BT.2020.
             store_lin(i, er, eg, eb, ea);
         } else {
             out_rgba[i * 4 + 0] = enc_to_lin_half(er);
@@ -768,11 +743,10 @@ bool decode_jxr_from_memory(const uint8_t* data, size_t len, std::vector<uint16_
     if (have_valid_icc) {
         // Samples are still encoded in the ICC; apply full TRC + matrix.
         if (!apply_jxr_color_context(out_rgba, npx, color_ctx.data(), color_ctx.size())) {
-            // Transform failed while we skipped default TF — recover with sRGB EOTF
-            // so encoded integers/floats are not left as fake linear.
-            ALOGI("JXR ICC transform failed — fallback sRGB EOTF");
-            apply_srgb_eotf_in_place(out_rgba, npx);
+            ALOGE("JXR ICC transform failed");
+            return false;
         }
+        if (out_cg) *out_cg = UHDR_CG_BT_2100;
     }
     // JPEG/UHDR have no alpha plane — flatten only when the caller will encode
     // to those formats. Direct display keeps straight alpha for transparency.
@@ -782,7 +756,7 @@ bool decode_jxr_from_memory(const uint8_t* data, size_t len, std::vector<uint16_
     if (out_untagged_linear) {
         // Half, float, and 13.3 fixed are linear scRGB when no color context won.
         // Integer formats are sRGB-encoded. An ICC transform already produced linear
-        // sRGB, so those frames must not be fitted again.
+        // BT.2020, so those frames must not be fitted again.
         const bool linear_storage = rgba_half || rgb_half || rgba_float || rgb_float ||
             pix == JxrPix::Fixed16;
         *out_untagged_linear = linear_storage && !have_valid_icc;
@@ -793,7 +767,7 @@ bool decode_jxr_from_memory(const uint8_t* data, size_t len, std::vector<uint16_
 // Path helper: load whole file into memory then decode (no jxrlib file I/O).
 // Path convert is always UHDR/JPEG → composite alpha.
 bool decode_jxr_to_rgba_f16(const char* path, std::vector<uint16_t>& out_rgba, unsigned& w,
-                            unsigned& h) {
+                            unsigned& h, uhdr_color_gamut_t* out_cg) {
     std::ifstream in(path, std::ios::binary | std::ios::ate);
     if (!in) {
         ALOGE("open JXR failed: %s", path);
@@ -808,7 +782,7 @@ bool decode_jxr_to_rgba_f16(const char* path, std::vector<uint16_t>& out_rgba, u
         return false;
     }
     return decode_jxr_from_memory(buf.data(), buf.size(), out_rgba, w, h,
-                                  /*composite_alpha_on_black=*/true);
+                                  /*composite_alpha_on_black=*/true, nullptr, out_cg);
 }
 
 }  // namespace
@@ -1721,9 +1695,10 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_convertJxrToUltraHdr(JNIEnv* env, jclas
     std::vector<uint16_t> rgba;
     unsigned w = 0, h = 0;
     int rc = -20;
-    if (decode_jxr_to_rgba_f16(in_path, rgba, w, h)) {
-        // HD Photo / scRGB-like: BT.709 primaries, linear extended range.
-        rc = encode_linear_rgba_f16_to_uhdr(w, h, rgba.data(), out_path, UHDR_CG_BT_709);
+    uhdr_color_gamut_t cg = UHDR_CG_BT_709;
+    if (decode_jxr_to_rgba_f16(in_path, rgba, w, h, &cg)) {
+        // The reported gamut matches the applied ICC or untagged scRGB.
+        rc = encode_linear_rgba_f16_to_uhdr(w, h, rgba.data(), out_path, cg);
     } else {
         rc = -21;
     }
@@ -1759,12 +1734,13 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_convertJxrBytesToUltraHdr(JNIEnv* env, 
     std::vector<uint16_t> rgba;
     unsigned w = 0, h = 0;
     int rc = -20;
-    if (decode_jxr_from_memory(compressed.data(), compressed.size(), rgba, w, h)) {
+    uhdr_color_gamut_t cg = UHDR_CG_BT_709;
+    if (decode_jxr_from_memory(compressed.data(), compressed.size(), rgba, w, h, true, nullptr, &cg)) {
         // Compressed bitstream no longer needed during F16 encode.
         compressed.clear();
         compressed.shrink_to_fit();
-        // HD Photo / scRGB-like: BT.709 primaries, linear extended range.
-        rc = encode_linear_rgba_f16_to_uhdr(w, h, rgba.data(), out_path, UHDR_CG_BT_709, 0.f);
+        // The reported gamut matches the applied ICC or untagged scRGB.
+        rc = encode_linear_rgba_f16_to_uhdr(w, h, rgba.data(), out_path, cg, 0.f);
     } else {
         rc = -21;
     }
@@ -1792,7 +1768,8 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_convertJxrBytesToUltraHdrMaxEdge(
     std::vector<uint16_t> rgba;
     unsigned w = 0, h = 0;
     int rc = -20;
-    if (decode_jxr_from_memory(compressed.data(), compressed.size(), rgba, w, h)) {
+    uhdr_color_gamut_t cg = UHDR_CG_BT_709;
+    if (decode_jxr_from_memory(compressed.data(), compressed.size(), rgba, w, h, true, nullptr, &cg)) {
         compressed.clear();
         compressed.shrink_to_fit();
         if (maxEdge > 0) {
@@ -1801,7 +1778,7 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_convertJxrBytesToUltraHdrMaxEdge(
         // JXR thumbs: HDR from scanned peak (not format); capacity = content peak nits.
         const float peak = scan_scrgb_peak(rgba.data(), static_cast<size_t>(w) * h);
         const bool force_hdr = peak > 1.25f;
-        rc = encode_linear_rgba_f16_to_uhdr(w, h, rgba.data(), out_path, UHDR_CG_BT_709,
+        rc = encode_linear_rgba_f16_to_uhdr(w, h, rgba.data(), out_path, cg,
                                            thumb_peak_nits_from_linear(peak), force_hdr);
     } else {
         rc = -21;
@@ -1909,8 +1886,9 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeJxrBytesToDirect(JNIEnv* env, jcl
     jbyteArray result = nullptr;
     // Preserve transparency: do not composite onto black (UHDR convert paths do).
     bool untagged_linear = false;
+    uhdr_color_gamut_t cg = UHDR_CG_BT_709;
     if (decode_jxr_from_memory(reinterpret_cast<const uint8_t*>(bytes), static_cast<size_t>(len),
-                               rgba, w, h, /*composite_alpha_on_black=*/false, &untagged_linear)) {
+                               rgba, w, h, /*composite_alpha_on_black=*/false, &untagged_linear, &cg)) {
         if (maxEdge > 0) {
             scale_rgba_f16_max_edge(rgba, w, h, static_cast<unsigned>(maxEdge));
         }
@@ -1920,8 +1898,8 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeJxrBytesToDirect(JNIEnv* env, jcl
             fit_untagged_jxr_highlights(rgba, w, h, panelBoost);
         }
         // Peak (and optional force) decides 8888 vs F16; float JXR often peaks > 1.25.
-        // JXR path has no reliable CICP here — treat as BT.709 scRGB-like.
-        result = pack_direct_to_jbyte_array(env, rgba, w, h, /*force_hdr=*/false, UHDR_CG_BT_709,
+        // Embedded ICC has been transformed to the reported working gamut.
+        result = pack_direct_to_jbyte_array(env, rgba, w, h, /*force_hdr=*/false, cg,
                                             advancedColor == JNI_TRUE, /*transfer_cicp=*/0, jOutInfo,
                                             jOutBoost);
     }

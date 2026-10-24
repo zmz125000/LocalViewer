@@ -8,6 +8,7 @@
 #include <memory>
 #include <thread>
 #include "skcms.h"
+#include "linear_color_profile.h"
 
 namespace {
 constexpr size_t kMaxPixels = 64u * 1024u * 1024u;
@@ -118,15 +119,22 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeHevcAnnexB(
 // encoded RGBA half in place; the caller applies auxiliary alpha afterwards.
 extern "C" JNIEXPORT jboolean JNICALL
 Java_com_hippo_ehviewer_jni_HdrConvertKt_linearizeHeifIcc(JNIEnv* env, jclass,
-                                                        jbyteArray jPixels, jbyteArray jIcc) {
+                                                        jbyteArray jPixels, jbyteArray jIcc,
+                                                        jboolean wideGamut) {
     if (!jPixels || !jIcc) return JNI_FALSE;
     const jsize size = env->GetArrayLength(jPixels), icc_size = env->GetArrayLength(jIcc);
     if (size <= 0 || size % 8 || icc_size < 128 || icc_size > 16 * 1024 * 1024) return JNI_FALSE;
     auto* icc = env->GetByteArrayElements(jIcc, nullptr);
     if (!icc) return JNI_FALSE;
-    skcms_ICCProfile source{}, dest = *skcms_sRGB_profile();
-    skcms_SetTransferFunction(&dest, skcms_Identity_TransferFunction());
-    const bool usable = skcms_Parse(icc, icc_size, &source) && skcms_MakeUsableAsDestination(&dest);
+    skcms_ICCProfile source{}, dest{};
+    bool usable = skcms_Parse(icc, icc_size, &source);
+    if (wideGamut == JNI_TRUE) {
+        usable = usable && make_linear_bt2020_profile(&dest);
+    } else {
+        dest = *skcms_sRGB_profile();
+        skcms_SetTransferFunction(&dest, skcms_Identity_TransferFunction());
+        usable = usable && skcms_MakeUsableAsDestination(&dest);
+    }
     auto* pixels = usable ? env->GetByteArrayElements(jPixels, nullptr) : nullptr;
     const bool ok = pixels && skcms_Transform(pixels, skcms_PixelFormat_RGBA_hhhh, skcms_AlphaFormat_Unpremul, &source,
                                             pixels, skcms_PixelFormat_RGBA_hhhh, skcms_AlphaFormat_Unpremul, &dest,

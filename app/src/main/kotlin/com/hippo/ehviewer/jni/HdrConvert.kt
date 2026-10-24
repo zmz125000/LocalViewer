@@ -57,8 +57,8 @@ external fun probeAvifHdrKind(input: ByteArray): Int
  */
 external fun decodeHevcAnnexB(csd: ByteArray, picture: ByteArray, outInfo: IntArray): ShortArray?
 
-/** Straight encoded RGBA_F16 → linear extended sRGB, in place using the embedded ICC. */
-external fun linearizeHeifIcc(pixels: ByteArray, icc: ByteArray): Boolean
+/** ICC transform in place: encoded RGBA_F16 → linear BT.2020 (wide) or extended sRGB. */
+external fun linearizeHeifIcc(pixels: ByteArray, icc: ByteArray, wideGamut: Boolean): Boolean
 
 // ── JPEG XL ──────────────────────────────────────────────────────────────
 

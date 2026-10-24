@@ -328,7 +328,7 @@ object LibDirectDecode {
         val deep = png && PlatformBitDepth.probe(header ?: byteArrayOf(), fileNameHint = fileNameHint) != BitDepthClass.EIGHT
         if (heif) {
             val precision = header?.let { HeifPrecisionProbe.probe(it) }
-            if (precision == null || precision.highDepth || precision.needsSoftware) {
+            if (ext == "avif" || precision == null || precision.highDepth || precision.needsSoftware) {
                 val bytes = readBytes(src) ?: return null
                 if (ext != "avif") return decodeHevcHdrPacked(bytes, maxEdge, advanced = true, export = true)
                 val info = IntArray(6)
@@ -345,10 +345,13 @@ object LibDirectDecode {
             }
             ImageDecoder.decodeBitmap(source) { decoder, info, _ ->
                 decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
-                gamut = if (info.colorSpace?.isWideGamut == true) 1 else 0
+                // Keep common sRGB/P3 inputs at their original gamut. Adobe RGB,
+                // BT.2020 and custom wide profiles need a wider linear destination;
+                // mapping all of them to P3 can clip saturated source colors.
+                gamut = exportGamut(info.colorSpace)
                 decoder.setTargetColorSpace(
-                    if (deep) {
-                        if (gamut == 1) displayP3LinearExtended else ColorSpace.get(ColorSpace.Named.LINEAR_EXTENDED_SRGB)
+                    if (deep || gamut == 2) {
+                        exportLinearSpace(gamut)
                     } else {
                         ColorSpace.get(if (gamut == 1) ColorSpace.Named.DISPLAY_P3 else ColorSpace.Named.SRGB)
                     },
@@ -363,21 +366,27 @@ object LibDirectDecode {
             }
         } catch (error: Exception) {
             android.util.Log.w("StillConvert", "Platform export decode failed; trying BitmapFactory", error)
-            gamut = 0
             val bytes = readBytes(src) ?: return null
+            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+            gamut = exportGamut(bounds.outColorSpace)
             BitmapFactory.decodeByteArray(
                 bytes,
                 0,
                 bytes.size,
                 BitmapFactory.Options().apply {
-                    inPreferredConfig = if (deep) Bitmap.Config.RGBA_F16 else Bitmap.Config.ARGB_8888
-                    inPreferredColorSpace = ColorSpace.get(if (deep) ColorSpace.Named.LINEAR_EXTENDED_SRGB else ColorSpace.Named.SRGB)
+                    inPreferredConfig = if (deep || gamut == 2) Bitmap.Config.RGBA_F16 else Bitmap.Config.ARGB_8888
+                    inPreferredColorSpace = if (deep || gamut == 2) {
+                        exportLinearSpace(gamut)
+                    } else {
+                        ColorSpace.get(if (gamut == 1) ColorSpace.Named.DISPLAY_P3 else ColorSpace.Named.SRGB)
+                    }
                 },
             ) ?: return null
         }
         try {
-            check(!deep || bitmap.config == Bitmap.Config.RGBA_F16) { "Platform decoder lost high-bit-depth precision: $fileNameHint" }
-            val linearSpace = if (gamut == 1) displayP3LinearExtended else ColorSpace.get(ColorSpace.Named.LINEAR_EXTENDED_SRGB)
+            check(!(deep || gamut == 2) || bitmap.config == Bitmap.Config.RGBA_F16) { "Platform decoder lost high-bit-depth precision: $fileNameHint" }
+            val linearSpace = exportLinearSpace(gamut)
             if (bitmap.config == Bitmap.Config.RGBA_F16 && bitmap.colorSpace != linearSpace) {
                 // F16 encoders expect linear samples; platform F16 can still have an sRGB curve.
                 val linear = Bitmap.createBitmap(
@@ -411,6 +420,18 @@ object LibDirectDecode {
         } finally {
             bitmap.recycle()
         }
+    }
+
+    private fun exportGamut(space: ColorSpace?): Int = when {
+        space == ColorSpace.get(ColorSpace.Named.DISPLAY_P3) -> 1
+        space?.isWideGamut == true -> 2
+        else -> 0
+    }
+
+    private fun exportLinearSpace(gamut: Int): ColorSpace = when (gamut) {
+        2 -> bt2020LinearExtended
+        1 -> displayP3LinearExtended
+        else -> ColorSpace.get(ColorSpace.Named.LINEAR_EXTENDED_SRGB)
     }
 
     /** Precision-only header read during decode; menu HDR eligibility remains filename-only. */

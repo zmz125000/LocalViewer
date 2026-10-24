@@ -107,7 +107,7 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeHevcAnnexB(JNIEnv*, jclass, jbyte
 }
 
 extern "C" JNIEXPORT jboolean JNICALL
-Java_com_hippo_ehviewer_jni_HdrConvertKt_linearizeHeifIcc(JNIEnv*, jclass, jbyteArray, jbyteArray) {
+Java_com_hippo_ehviewer_jni_HdrConvertKt_linearizeHeifIcc(JNIEnv*, jclass, jbyteArray, jbyteArray, jboolean) {
     return JNI_FALSE;
 }
 

@@ -25,6 +25,7 @@
 #include "avif/avif.h"
 #include "hdr_encode.h"
 #include "hdr_parallel.h"
+#include "linear_color_profile.h"
 #include "ultrahdr_api.h"
 
 #define LOG_TAG "AvifHdr"
@@ -446,6 +447,14 @@ int decode_avif_to_linear_f16(const uint8_t* data, size_t len, std::vector<uint1
         avifDecoderDestroy(dec);
         return 0;
     }
+    // An advertised HDR rendition must not silently become an SDR base when
+    // reconstruction fails (libavif currently cannot apply ICC-based maps).
+    if (image->gainMap && image->gainMap->image &&
+        unsigned_frac(image->gainMap->alternateHdrHeadroom) > 0.05f) {
+        ALOGE("Cannot reconstruct the AVIF HDR gain map");
+        avifDecoderDestroy(dec);
+        return -12;
+    }
 
     const avifTransferCharacteristics tc = image->transferCharacteristics;
     if (out_transfer) *out_transfer = static_cast<int>(tc);
@@ -487,6 +496,31 @@ int decode_avif_to_linear_f16(const uint8_t* data, size_t len, std::vector<uint1
     const uint8_t* row_base = rgb.pixels;
     const uint32_t row_bytes = rgb.rowBytes;
 
+    // libavif converts YUV to encoded RGB; it does not apply the image ICC.
+    // For SDR the complete ICC (TRC, white point and primaries) takes priority.
+    // PQ/HLG use CICP explicitly: HDR ICCs can contain an SDR fallback TRC.
+    if (image->icc.size && !is_pq && !is_hlg) {
+        skcms_ICCProfile source{}, destination{};
+        bool ok = image->icc.size <= 16u * 1024u * 1024u &&
+            skcms_Parse(image->icc.data, image->icc.size, &source) &&
+            make_linear_bt2020_profile(&destination);
+        for (unsigned y = 0; ok && y < h; ++y) {
+            ok = skcms_Transform(row_base + static_cast<size_t>(y) * row_bytes,
+                skcms_PixelFormat_RGBA_16161616LE, skcms_AlphaFormat_Unpremul, &source,
+                out_rgba.data() + static_cast<size_t>(y) * w * 4,
+                skcms_PixelFormat_RGBA_hhhh, skcms_AlphaFormat_Unpremul, &destination, w);
+        }
+        avifRGBImageFreePixels(&rgb);
+        avifDecoderDestroy(dec);
+        if (!ok) {
+            ALOGE("AVIF ICC conversion failed");
+            return -13;
+        }
+        if (out_cg) *out_cg = UHDR_CG_BT_2100;
+        if (out_transfer) *out_transfer = 0;
+        return 0;
+    }
+
     const auto& linear = avif_linear_lut(tc);
     hdr_parallel_pixels(h, hdr_pixel_jobs(pixels, dec->maxThreads), [&](size_t begin, size_t end, unsigned) {
         for (unsigned y = begin; y < end; y++) {
@@ -496,6 +530,19 @@ int decode_avif_to_linear_f16(const uint8_t* data, size_t len, std::vector<uint1
                 // 16-bit full range normalized (transfer-encoded if PQ/HLG)
                 float an = p[3] / 65535.f;
                 float rl = linear[p[0]], gl = linear[p[1]], bl = linear[p[2]];
+
+                if (is_hlg) {
+                    // LUT values are 12 * scene RGB. BT.2100's reference
+                    // 1000-nit display needs the luminance-dependent OOTF,
+                    // gamma 1.2, before our 203-nit-relative working space.
+                    const float yr = cg == UHDR_CG_DISPLAY_P3 ? 0.2289746f : cg == UHDR_CG_BT_2100 ? 0.2627f : 0.2126f;
+                    const float yb = cg == UHDR_CG_DISPLAY_P3 ? 0.0792869f : cg == UHDR_CG_BT_2100 ? 0.0593f : 0.0722f;
+                    const float scene_y = (yr * rl + (1.f - yr - yb) * gl + yb * bl) / 12.f;
+                    const float scale = std::pow(std::max(scene_y, 0.f), 0.2f) * (1000.f / (12.f * kSdrWhiteNits));
+                    rl *= scale;
+                    gl *= scale;
+                    bl *= scale;
+                }
 
                 // Policy B only: values must match the BT.709 tag. Preserve path never rematrixes.
                 if (need_bt2020_to_709) {
@@ -522,6 +569,34 @@ int decode_avif_to_linear_f16(const uint8_t* data, size_t len, std::vector<uint1
             }
         }
     });
+
+    // DCI-P3 has a different white point from Display P3. Other CICP gamuts
+    // likewise need a real transform instead of assigning a nearby gamut tag.
+    if (primaries != AVIF_COLOR_PRIMARIES_BT709 &&
+        primaries != AVIF_COLOR_PRIMARIES_BT2020 &&
+        primaries != AVIF_COLOR_PRIMARIES_SMPTE432 &&
+        primaries != AVIF_COLOR_PRIMARIES_UNKNOWN &&
+        primaries != AVIF_COLOR_PRIMARIES_UNSPECIFIED) {
+        float xy[8];
+        avifColorPrimariesGetValues(primaries, xy);
+        skcms_ICCProfile source{}, destination{};
+        skcms_Init(&source);
+        skcms_SetTransferFunction(&source, skcms_Identity_TransferFunction());
+        skcms_Matrix3x3 matrix{};
+        bool ok = skcms_PrimariesToXYZD50(xy[0], xy[1], xy[2], xy[3], xy[4], xy[5], xy[6], xy[7], &matrix);
+        skcms_SetXYZD50(&source, &matrix);
+        ok = ok && make_linear_bt2020_profile(&destination) &&
+            skcms_Transform(out_rgba.data(), skcms_PixelFormat_RGBA_hhhh, skcms_AlphaFormat_Unpremul,
+                &source, out_rgba.data(), skcms_PixelFormat_RGBA_hhhh, skcms_AlphaFormat_Unpremul,
+                &destination, pixels);
+        if (!ok) {
+            avifRGBImageFreePixels(&rgb);
+            avifDecoderDestroy(dec);
+            return -14;
+        }
+        cg = UHDR_CG_BT_2100;
+        if (out_cg) *out_cg = cg;
+    }
 
     ALOGI("AVIF %ux%u tc=%d primaries=%d pq=%d hlg=%d cg=%d rematrix709=%d gainmap=%d", w, h,
           (int)tc, (int)primaries, is_pq ? 1 : 0, is_hlg ? 1 : 0, (int)cg,
