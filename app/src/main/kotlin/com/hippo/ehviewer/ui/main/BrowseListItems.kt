@@ -1339,8 +1339,8 @@ internal fun BrowseVideoThumbnail(
     // and (for network) when video thumbs are enabled. extractEnabled is the ON_STOP
     // cancel: leaving Recents must not keep starting local library MMR.
     // A tablet / small-grid screen can compose ~50 video cells at once. Cache hits
-    // stay unbounded; settle-delay + getOrCreate share [VideoThumbnail.withComposeExtractJob]
-    // so only a few cells hold an extract job (scroll-away cancels waiters).
+    // stay unbounded; only getOrCreate holds [VideoThumbnail.withComposeExtractJob].
+    // Settle delays run before admission so each ready cell can refill a free slot.
     LaunchedEffect(source, downloadNetworkVideoThumbs, allowRemoteFetch, extractEnabled) {
         val src = source ?: run {
             thumbnail = null
@@ -1352,15 +1352,21 @@ internal fun BrowseVideoThumbnail(
             return@LaunchedEffect
         }
         if (!allowRemoteFetch || !extractEnabled) return@LaunchedEffect
-        VideoThumbnail.withComposeExtractJob {
-            // Fling filter: short-lived cells cancel here before MediaCodec starts.
-            delay(400)
-            if (!VideoThumbnail.extractEnabled.value) return@withComposeExtractJob
-            thumbnail = withIOContext { VideoThumbnail.getOrCreate(context, src)?.absolutePath }
-            if (thumbnail == null && VideoThumbnail.extractEnabled.value) {
-                delay(400)
-                thumbnail = withIOContext { VideoThumbnail.getOrCreate(context, src)?.absolutePath }
+        // Fling filter runs for every visible cell without occupying extraction slots.
+        delay(400)
+        repeat(2) { attempt ->
+            val ready = VideoThumbnail.withComposeExtractJob {
+                if (!VideoThumbnail.extractEnabled.value) return@withComposeExtractJob null
+                withIOContext { VideoThumbnail.getOrCreate(context, src)?.absolutePath }
             }
+            // Release admission before publishing this cell; never wait for its peers.
+            if (ready != null) {
+                thumbnail = ready
+                return@LaunchedEffect
+            }
+            if (!VideoThumbnail.extractEnabled.value) return@LaunchedEffect
+            // A failed attempt yields its slot while waiting to retry.
+            if (attempt == 0) delay(400)
         }
     }
     val request = remember(source, thumbnail, sizePx) {
