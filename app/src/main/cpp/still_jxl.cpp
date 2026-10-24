@@ -67,6 +67,8 @@ int encode_jxl_f16(unsigned w, unsigned h, uint16_t* rgba, uhdr_color_gamut_t cg
     info.alpha_exponent_bits = 5;
     info.alpha_premultiplied = JXL_FALSE;
     const bool compression = quality > 0;
+    constexpr float distances[] = {0.f, .3f, .5f, 1.f};
+    const float distance = distances[std::clamp(quality, 0, 3)];
     info.uses_original_profile = compression ? JXL_FALSE : JXL_TRUE;
     info.intensity_target = intensity;
     JxlColorEncoding color{};
@@ -78,11 +80,11 @@ int encode_jxl_f16(unsigned w, unsigned h, uint16_t* rgba, uhdr_color_gamut_t cg
     if (JxlEncoderSetBasicInfo(encoder.get(), &info) != JXL_ENC_SUCCESS ||
         JxlEncoderSetColorEncoding(encoder.get(), &color) != JXL_ENC_SUCCESS) return -62;
     auto* frame = JxlEncoderFrameSettingsCreate(encoder.get(), nullptr);
-    // Lossless keeps the original F16 / fast-decode preset. High/low use
-    // perceptual XYB at distances 1.0/1.5, preserving primaries, linear transfer
+    // Lossless keeps the original F16 / fast-decode preset. High/mid/low use
+    // perceptual XYB at distances 0.3/0.5/1.0, preserving primaries, linear transfer
     // and HDR intensity target. Alpha remains lossless in every preset.
     if (!frame || JxlEncoderSetFrameLossless(frame, compression ? JXL_FALSE : JXL_TRUE) != JXL_ENC_SUCCESS ||
-        JxlEncoderSetFrameDistance(frame, compression ? (quality == 2 ? 1.5f : 1.f) : 0.f) != JXL_ENC_SUCCESS ||
+        JxlEncoderSetFrameDistance(frame, distance) != JXL_ENC_SUCCESS ||
         JxlEncoderSetExtraChannelDistance(frame, 0, 0.f) != JXL_ENC_SUCCESS ||
         JxlEncoderFrameSettingsSetOption(frame, JXL_ENC_FRAME_SETTING_EFFORT, compression ? 5 : 3) != JXL_ENC_SUCCESS ||
         JxlEncoderFrameSettingsSetOption(frame, JXL_ENC_FRAME_SETTING_DECODING_SPEED, compression ? 0 : 2) != JXL_ENC_SUCCESS) return -63;

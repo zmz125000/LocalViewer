@@ -126,6 +126,7 @@
     <string name="image_conversion_quality">画像変換の画質</string>
     <string name="image_conversion_quality_lossless">可逆圧縮</string>
     <string name="image_conversion_quality_high">高</string>
+    <string name="image_conversion_quality_mid">中</string>
     <string name="image_conversion_quality_low">低</string>
     <string name="settings_use_media3_player_for_library">ライブラリは Media3 プレーヤー</string>
     <string name="settings_use_media3_player_for_library_summary">「Media3 プレーヤーを使う」がオフのとき: ライブラリの全動画リスト、またはライブラリの動画フォルダから開いた動画はアプリ内プレーヤーを使います。</string>

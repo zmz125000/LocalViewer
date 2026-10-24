@@ -56,14 +56,10 @@ extern "C" {
 
 #define LOG_TAG "HdrConvert"
 
-// Full-page convert quality (JXL/AVIF/JXR → JPEG). 4K 10-bit sources need higher
-// than libjpeg default (~75) and than our prior 92: chroma 4:2:0 + q92 showed clear
-// blocking on 3840×2160 SDR stills. Thumbs stay on Kotlin Bitmap q=85 / MaxEdge path.
-constexpr int kJpegQualityBaseline = 97;  // pure SDR baseline (no gain map)
-constexpr int kJpegQualityUhdrBase = 97;  // Ultra HDR SDR intent JPEG
-constexpr int kJpegQualityUhdrGainMap = 95;
-static int export_jpeg_quality(int quality, int legacy) {
-    return quality < 0 ? legacy : quality == 0 ? 95 : quality == 1 ? 90 : 85;
+// Lossless/high/mid/low share 4:4:4 sampling; JPEG itself is always lossy.
+static int export_jpeg_quality(int quality) {
+    constexpr int qualities[] = {95, 95, 90, 85};
+    return qualities[std::clamp(quality, 0, 3)];
 }
 #define ALOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
 #define ALOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
@@ -839,7 +835,7 @@ struct JpegMemory {
 };
 
 int encode_srgb_jpeg_u8(unsigned w, unsigned h, const uint8_t* rgba, const char* out_path,
-                        uhdr_color_gamut_t cg, int quality = -1, JpegMemory* memory = nullptr);
+                        uhdr_color_gamut_t cg, int quality = 1, JpegMemory* memory = nullptr);
 
 
 void jpeg_err_exit(j_common_ptr cinfo) {
@@ -859,10 +855,10 @@ void jpeg_err_exit(j_common_ptr cinfo) {
  * - Encode with the sRGB curve and embed the matching ICC (APP2).
  * - If that ICC cannot be built, rematrix to BT.709 and embed an sRGB profile.
  *
- * Quality [kJpegQualityBaseline], 4:4:4 chroma (no 4:2:0 color blur on 4K stills).
+ * Quality from the selected preset, 4:4:4 chroma (no 4:2:0 color blur on 4K stills).
  */
 int encode_baseline_sdr_jpeg(unsigned w, unsigned h, const uint16_t* rgba, const char* out_path,
-                             uhdr_color_gamut_t cg, int quality = -1) {
+                             uhdr_color_gamut_t cg, int quality = 1) {
     if (!rgba || !out_path || w == 0 || h == 0) return -30;
     const size_t pixels = static_cast<size_t>(w) * static_cast<size_t>(h);
     std::vector<uint8_t> rgb(pixels * 3);
@@ -924,8 +920,8 @@ int encode_baseline_sdr_jpeg(unsigned w, unsigned h, const uint16_t* rgba, const
     cinfo.input_components = 3;
     cinfo.in_color_space = JCS_RGB;
     jpeg_set_defaults(&cinfo);
-    jpeg_set_quality(&cinfo, export_jpeg_quality(quality, kJpegQualityBaseline), TRUE);
-    cinfo.optimize_coding = quality >= 0 ? TRUE : FALSE;
+    jpeg_set_quality(&cinfo, export_jpeg_quality(quality), TRUE);
+    cinfo.optimize_coding = TRUE;
     // All export quality presets preserve 4:4:4 color edges.
     cinfo.comp_info[0].h_samp_factor = 1;
     cinfo.comp_info[0].v_samp_factor = 1;
@@ -1039,13 +1035,13 @@ int encode_linear_rgba_f16_to_uhdr(unsigned w, unsigned h, const uint16_t* rgba,
     }
 
     // Quality: base + multi-channel gain map (libultrahdr default is 95/95).
-    err = uhdr_enc_set_quality(enc, export_jpeg_quality(quality, kJpegQualityUhdrBase), UHDR_BASE_IMG);
+    err = uhdr_enc_set_quality(enc, export_jpeg_quality(quality), UHDR_BASE_IMG);
     if (err.error_code != UHDR_CODEC_OK) {
         ALOGE("uhdr_enc_set_quality base: %s", err.has_detail ? err.detail : "error");
         uhdr_release_encoder(enc);
         return -6;
     }
-    err = uhdr_enc_set_quality(enc, export_jpeg_quality(quality, kJpegQualityUhdrGainMap), UHDR_GAIN_MAP_IMG);
+    err = uhdr_enc_set_quality(enc, export_jpeg_quality(quality), UHDR_GAIN_MAP_IMG);
     if (err.error_code != UHDR_CODEC_OK) {
         ALOGE("uhdr_enc_set_quality gainmap: %s", err.has_detail ? err.detail : "error");
         uhdr_release_encoder(enc);
@@ -1066,7 +1062,7 @@ int encode_linear_rgba_f16_to_uhdr(unsigned w, unsigned h, const uint16_t* rgba,
     }
     // Keep the primary rendition at full size. Low quality reduces only the
     // RGB gain map to one quarter of each dimension (one sixteenth the pixels).
-    err = uhdr_enc_set_gainmap_scale_factor(enc, quality == 2 ? 4 : 1);
+    err = uhdr_enc_set_gainmap_scale_factor(enc, quality == 3 ? 4 : 1);
     if (err.error_code != UHDR_CODEC_OK) {
         ALOGE("uhdr_enc_set_gainmap_scale_factor: %s", err.has_detail ? err.detail : "error");
         uhdr_release_encoder(enc);
@@ -1135,25 +1131,23 @@ int encode_linear_rgba_f16_to_uhdr(unsigned w, unsigned h, const uint16_t* rgba,
     // API-2: keep the raw SDR plane for gain-map computation and provide the
     // already encoded 4:4:4 rendition for assembly, avoiding internal 4:2:0 encode.
     JpegMemory base_jpeg;
-    if (quality >= 0) {
-        const int rc = encode_srgb_jpeg_u8(w, h, sdr_base, nullptr, cg, quality, &base_jpeg);
-        if (rc != 0) {
-            uhdr_release_encoder(enc);
-            return rc;
-        }
-        uhdr_compressed_image_t base_img{};
-        base_img.data = base_jpeg.data;
-        base_img.data_sz = base_jpeg.size;
-        base_img.capacity = base_jpeg.size;
-        base_img.cg = cg;
-        base_img.ct = UHDR_CT_SRGB;
-        base_img.range = UHDR_CR_FULL_RANGE;
-        err = uhdr_enc_set_compressed_image(enc, &base_img, UHDR_SDR_IMG);
-        if (err.error_code != UHDR_CODEC_OK) {
-            ALOGE("uhdr_enc_set_compressed_image: %s", err.has_detail ? err.detail : "error");
-            uhdr_release_encoder(enc);
-            return -9;
-        }
+    const int rc = encode_srgb_jpeg_u8(w, h, sdr_base, nullptr, cg, quality, &base_jpeg);
+    if (rc != 0) {
+        uhdr_release_encoder(enc);
+        return rc;
+    }
+    uhdr_compressed_image_t base_img{};
+    base_img.data = base_jpeg.data;
+    base_img.data_sz = base_jpeg.size;
+    base_img.capacity = base_jpeg.size;
+    base_img.cg = cg;
+    base_img.ct = UHDR_CT_SRGB;
+    base_img.range = UHDR_CR_FULL_RANGE;
+    err = uhdr_enc_set_compressed_image(enc, &base_img, UHDR_SDR_IMG);
+    if (err.error_code != UHDR_CODEC_OK) {
+        ALOGE("uhdr_enc_set_compressed_image: %s", err.has_detail ? err.detail : "error");
+        uhdr_release_encoder(enc);
+        return -9;
     }
 
     ALOGI("Ultra HDR encode content_peak=%.3f peak_nits=%.1f fixed=%d force_hdr=%d cg=%d %ux%u",
@@ -1557,8 +1551,8 @@ int encode_srgb_jpeg_u8(unsigned w, unsigned h, const uint8_t* rgba, const char*
     cinfo.input_components = 4;
     cinfo.in_color_space = JCS_EXT_RGBA;
     jpeg_set_defaults(&cinfo);
-    jpeg_set_quality(&cinfo, export_jpeg_quality(quality, kJpegQualityBaseline), TRUE);
-    cinfo.optimize_coding = quality >= 0 ? TRUE : FALSE;
+    jpeg_set_quality(&cinfo, export_jpeg_quality(quality), TRUE);
+    cinfo.optimize_coding = TRUE;
     cinfo.comp_info[0].h_samp_factor = 1;
     cinfo.comp_info[0].v_samp_factor = 1;
     cinfo.comp_info[1].h_samp_factor = 1;
@@ -1601,7 +1595,7 @@ int encode_srgb_jpeg_u8(unsigned w, unsigned h, const uint8_t* rgba, const char*
  */
 int encode_still_export(const uint8_t* src, size_t src_len, unsigned w, unsigned h, bool f16,
                         int gamut, int mode, bool premultiplied, const char* out_path, size_t sdr_offset = 0,
-                        int quality = -1) {
+                        int quality = 1) {
     if (!src || !out_path || w == 0 || h == 0 || mode < 0 || mode > 3) return -50;
     const size_t pixels = static_cast<size_t>(w) * static_cast<size_t>(h);
     const size_t bpp = f16 ? 8u : 4u;
@@ -1646,7 +1640,7 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_encodeStillExport(JNIEnv* env, jclass, 
                                                            jint gamut, jint mode,
                                                            jboolean premultiplied, jstring jOut, jint sdr_offset,
                                                            jint quality) {
-    if (!jPixels || !jOut || width <= 0 || height <= 0 || sdr_offset < 0 || quality < 0 || quality > 2) return -52;
+    if (!jPixels || !jOut || width <= 0 || height <= 0 || sdr_offset < 0 || quality < 0 || quality > 3) return -52;
     const jsize len = env->GetArrayLength(jPixels);
     if (len <= 0) return -53;
     jbyte* bytes = env->GetByteArrayElements(jPixels, nullptr);

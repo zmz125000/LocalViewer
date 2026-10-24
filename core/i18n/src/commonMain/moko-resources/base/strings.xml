@@ -134,6 +134,7 @@
     <string name="image_conversion_quality">Image conversion quality</string>
     <string name="image_conversion_quality_lossless">Lossless</string>
     <string name="image_conversion_quality_high">High</string>
+    <string name="image_conversion_quality_mid">Mid</string>
     <string name="image_conversion_quality_low">Low</string>
     <string name="settings_default_video_player">Default video player</string>
     <string name="settings_default_video_player_always_ask">Always ask</string>

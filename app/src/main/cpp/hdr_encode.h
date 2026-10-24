@@ -88,8 +88,9 @@ inline float half_to_float(uint16_t h) {
  * epsilon-bump max boost to ~1.07 when min==max.
  *
  * Encode quality (full page, maxEdge=0 — no downscale):
- *   - Baseline SDR: Q97 + 4:4:4 chroma (libjpeg-turbo).
- *   - Ultra HDR: base Q97 + gain-map Q95, UHDR_USAGE_BEST_QUALITY.
+ *   - JPEG quality: 95/95/90/85 for lossless/high/mid/low; default high.
+ *   - Baseline and Ultra HDR base: 4:4:4 chroma (libjpeg-turbo).
+ *   - Ultra HDR gain map follows the selected quality, UHDR_USAGE_BEST_QUALITY.
  * Thumbs (maxEdge>0) scale long edge first, then same encode; browse platform
  * thumbs use Bitmap JPEG Q85 @ 768px separately.
  *
@@ -104,7 +105,7 @@ inline float half_to_float(uint16_t h) {
  *   UHDR_CG_BT_2100    — BT.2020 primaries (PQ/HLG HDR stills)
  * [sdr_base], when supplied, is opaque sRGB-transfer RGBA8 in the same primaries
  * and dimensions. RAW uses its camera-look render before HDR highlight expansion.
- * [quality]: -1 keeps non-export defaults; 0/1/2 use JPEG Q95/Q90/Q85.
+ * [quality]: 0/1/2/3 use JPEG Q95/Q95/Q90/Q85 (lossless/high/mid/low).
  * Exports use 4:4:4; low quality downsizes the gain map by 4.
  * The primary image dimensions, gamut and HDR capacity remain unchanged.
  *
@@ -114,7 +115,7 @@ int encode_linear_rgba_f16_to_uhdr(unsigned w, unsigned h, const uint16_t* rgba,
                                    const char* out_path,
                                    uhdr_color_gamut_t cg = UHDR_CG_BT_709,
                                    float fixed_peak_nits = 0.f, bool force_hdr = false,
-                                   const uint8_t* sdr_base = nullptr, int quality = -1);
+                                   const uint8_t* sdr_base = nullptr, int quality = 1);
 
 /** Downscale packed RGBA F16 so long edge ≤ max_edge (box filter). max_edge 0 = no-op. */
 void scale_rgba_f16_max_edge(std::vector<uint16_t>& rgba, unsigned& w, unsigned& h,
@@ -273,4 +274,4 @@ jbyteArray pack_direct_to_jbyte_array(JNIEnv* env, std::vector<uint16_t>& rgba, 
 
 /** Straight-alpha linear F16 → 16-bit JPEG XL (SDR or absolute HDR). Mutates RGB. */
 int encode_jxl_f16(unsigned w, unsigned h, uint16_t* rgba, uhdr_color_gamut_t cg,
-                   bool hdr, const char* path, int quality = -1);
+                   bool hdr, const char* path, int quality = 1);

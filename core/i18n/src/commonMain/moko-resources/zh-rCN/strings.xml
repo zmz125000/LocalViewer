@@ -120,6 +120,7 @@
     <string name="image_conversion_quality">图像转换质量</string>
     <string name="image_conversion_quality_lossless">无损</string>
     <string name="image_conversion_quality_high">高</string>
+    <string name="image_conversion_quality_mid">中</string>
     <string name="image_conversion_quality_low">低</string>
     <string name="settings_default_video_player">默认视频播放器</string>
     <string name="settings_default_video_player_always_ask">每次询问</string>
