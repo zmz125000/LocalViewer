@@ -1,7 +1,11 @@
 package com.hippo.ehviewer.library
 
+import android.provider.DocumentsContract.Document
+import com.ehviewer.core.files.toUri
 import com.ehviewer.core.util.logcat
 import com.hippo.ehviewer.Settings
+import java.io.File
+import java.io.FileNotFoundException
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.coroutines.coroutineContext
 import kotlinx.coroutines.CancellationException
@@ -13,6 +17,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.sync.Semaphore
@@ -21,6 +26,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import okio.Path
 import okio.Path.Companion.toPath
+import splitties.init.appCtx
 
 /**
  * Local folder browse listing aligned with SMB/WebDAV lazy scan:
@@ -279,6 +285,12 @@ object LocalFolderListing {
         val dirKey = BrowseSession.normalizeLocalRelativeDir(relativeDir)
         val configKey = rootConfigKey(rootPath, preferMediaStore)
         val jobKey = BrowseSession.localFolderListingKey(rootId, dirKey)
+        val previousForDeletion = if (!useCache) {
+            BrowseSession.getLocalFolderCachedListing(rootId, dirKey)?.entries
+                ?: NetworkFolderIndexCache.loadLocal(rootId, configKey, dirKey)
+        } else {
+            null
+        }
 
         if (useCache && LocalListingJobs.isActive(jobKey)) {
             BrowseSession.getLocalFolderCachedListing(rootId, dirKey)?.let { ram ->
@@ -373,6 +385,14 @@ object LocalFolderListing {
             val previous = BrowseSession.getLocalFolderCachedListing(rootId, dirKey)?.entries
             val t0 = System.nanoTime()
             val children = listChildrenRemote(effective, preferMediaStore)
+            if (previousForDeletion != null) {
+                removeDeletedLocalSubtrees(
+                    rootId,
+                    dirKey,
+                    effective,
+                    confirmedMissingLocalDirectories(effective, previousForDeletion, children),
+                )
+            }
             val dirName = localFolderTitle(effective)
             val shallow = ZipAsDirListing.applyZipAsDirPreferenceLocal(
                 classifyChildren(effective, dirName, children, emptyMap(), emptyMap()),
@@ -427,29 +447,33 @@ object LocalFolderListing {
         configKey: String,
         relativeDir: String,
     ): SlimRefresh {
+        // A quick scan must enumerate live children, not replay the peek cache.
+        BrowseSession.invalidateLocalRawChildren(BrowseSession.pathKey(dir))
         val children = listChildrenRemote(dir, preferMediaStore)
-        if (isUntrustedLocalSlimLiveListing(cached, children)) {
-            return SlimRefresh(cached, emptySet(), persist = false)
+        val deleted = confirmedMissingLocalDirectories(dir, cached, children)
+        val retained = if (deleted.isEmpty()) cached else cached.filter { browseEntryFolderRoot(it) !in deleted }
+        if (isUntrustedLocalSlimLiveListing(retained, children)) {
+            return SlimRefresh(retained, deleted, persist = deleted.isNotEmpty())
         }
-        val (nomediaProbed, nomediaHit) = probeLocalNomedia(dir, preferMediaStore, cached, children)
-        val plan = planRemoteDirectorySlimRefresh(cached, children)
+        val (nomediaProbed, nomediaHit) = probeLocalNomedia(dir, preferMediaStore, retained, children)
+        val plan = planRemoteDirectorySlimRefresh(retained, children)
         val zipFileNames = if (Settings.browseZipAsDir.value) {
             ZipAsDirListing.zipFileNames(children)
         } else {
             emptySet()
         }
         val deepHidden = if (Settings.browseShowHiddenFiles.value) {
-            hiddenDirectoriesNeedingDeepScan(cached, children)
+            hiddenDirectoriesNeedingDeepScan(retained, children)
         } else {
             emptyList()
         }
-        val mtimeChanged = directoriesNeedingDeepScanOnMtimeChange(cached, children)
+        val mtimeChanged = directoriesNeedingDeepScanOnMtimeChange(retained, children)
         val reclassifyNames = (deepHidden.asSequence() + mtimeChanged.asSequence())
             .mapTo(HashSet()) { it.name }
         val cachedZipAsDir = if (zipFileNames.isEmpty()) {
             emptySet()
         } else {
-            ZipAsDirListing.cachedDirectZipAsDirNames(cached)
+            ZipAsDirListing.cachedDirectZipAsDirNames(retained)
         }
         val newZips = if (zipFileNames.isEmpty()) {
             emptyList()
@@ -471,17 +495,17 @@ object LocalFolderListing {
                 entries = applySlimDirectoryHidden(
                     withLocalArchivePageCounts(
                         dir,
-                        replaceSlimDirectFilesFromLive(cached, children, dirName),
+                        replaceSlimDirectFilesFromLive(retained, children, dirName),
                     ),
                     children,
                     nomediaProbed,
                     nomediaHit,
                 ),
-                removedDirectoryNames = emptySet(),
+                removedDirectoryNames = deleted,
             )
         }
         // Drop shallow hidden shells / mtime-changed dirs then re-add full classify.
-        // Missing live dirs are marked unreachable — descendant index keys stay.
+        // Unconfirmed missing dirs remain unreachable; confirmed deletions were removed above.
         // Keep cached zip-as-dir Directory/FolderGallery rows: live listing still has the file.
         val effectivePlan = RemoteDirectorySlimPlan(
             addedDirectories = toClassify,
@@ -496,7 +520,7 @@ object LocalFolderListing {
             classifyDirectoryChildren(dir, preferMediaStore, toClassify, zipInteriors)
         }
         val merged = replaceSlimDirectFilesFromLive(
-            mergeRemoteDirectorySlimRefresh(cached, effectivePlan, addedEntries),
+            mergeRemoteDirectorySlimRefresh(retained, effectivePlan, addedEntries),
             children,
             dirName,
         )
@@ -507,9 +531,47 @@ object LocalFolderListing {
                 nomediaProbed,
                 nomediaHit,
             ),
-            removedDirectoryNames = emptySet(),
+            removedDirectoryNames = deleted,
             zipInteriors = zipInteriors,
         )
+    }
+
+    /** Verify only absent cached names; an incomplete cursor or denied access is not deletion. */
+    private suspend fun confirmedMissingLocalDirectories(
+        dir: Path,
+        cached: List<BrowseEntryRemote>,
+        children: List<RemoteChild>,
+    ): Set<String> {
+        val live = children.filter { it.isDirectory }.mapTo(HashSet()) { it.name }
+        if (Settings.browseZipAsDir.value) live += ZipAsDirListing.zipFileNames(children)
+        val missing = cachedDirectDirectoryNames(cached) - live
+        if (missing.isEmpty()) return emptySet()
+        // MediaStore folders are virtual: absence from the refreshed media index
+        // removes the row, even if an empty physical directory remains.
+        if (dir.isMediaStorePath()) return missing
+        val parentFile = dir.readableDirectoryFile()?.takeIf { it.canRead() }
+        val removed = ConcurrentHashMap.newKeySet<String>()
+        runParallel(missing.toList()) { name ->
+            val gone = if (parentFile != null) {
+                !File(parentFile, name).exists()
+            } else {
+                try {
+                    appCtx.contentResolver.query(
+                        dir.resolveRelative(name).toUri(),
+                        arrayOf(Document.COLUMN_MIME_TYPE),
+                        null,
+                        null,
+                        null,
+                    )?.use { cursor -> !cursor.moveToFirst() } ?: false
+                } catch (_: FileNotFoundException) {
+                    true
+                } catch (_: Exception) {
+                    false // Permission/provider failures keep the cached entry.
+                }
+            }
+            if (gone) removed += name
+        }
+        return removed
     }
 
     /**
@@ -687,6 +749,7 @@ object LocalFolderListing {
             }
             return materialized
         }
+        removeDeletedLocalSubtrees(rootId, dirKey, effective, refresh.removedDirectoryNames)
         val toKeep = persistFinishedListing(
             rootId,
             configKey,
@@ -697,6 +760,23 @@ object LocalFolderListing {
             persistEntries = refresh.entries != filledRemote || refresh.zipInteriors.isNotEmpty(),
         )
         return materializeLocalEntries(effective, toKeep)
+    }
+
+    private suspend fun removeDeletedLocalSubtrees(
+        rootId: Long,
+        dirKey: String,
+        effective: Path,
+        names: Set<String>,
+    ) {
+        if (names.isEmpty()) return
+        withContext(NonCancellable) {
+            for (name in names) {
+                val childDir = listOf(dirKey, name).filter { it.isNotEmpty() }.joinToString("/")
+                LocalListingJobs.cancelUnder(rootId, childDir)
+                BrowseSession.invalidateLocalFolderListingsUnder(rootId, childDir, effective.resolveRelative(name))
+                NetworkFolderIndexCache.removeLocalUnder(rootId, childDir)
+            }
+        }
     }
 
     private suspend fun runLocalDeepClassifyAndPersist(
@@ -953,6 +1033,19 @@ internal object LocalListingJobs {
 
     fun cancel(key: String) {
         jobs.remove(key)?.cancel()
+    }
+
+    /** Stop subtree writers before their deleted directory indexes are removed. */
+    suspend fun cancelUnder(rootId: Long, relativeDir: String) {
+        val keys = listOf(
+            BrowseSession.localFolderListingKey(rootId, relativeDir),
+            BrowseSession.localZipListingKey(rootId, relativeDir),
+        )
+        for ((key, job) in jobs.entries.toList()) {
+            if (keys.any { key == it || key.startsWith("$it/") } && jobs.remove(key, job)) {
+                job.cancelAndJoin()
+            }
+        }
     }
 
     fun cancelAll(rootId: Long? = null) {
