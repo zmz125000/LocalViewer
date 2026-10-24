@@ -1841,6 +1841,11 @@ object SmbGateway {
 
     fun isListing(sourceId: Long, relativeDir: String): Boolean = isListJobActive(BrowseSession.smbListingKey(sourceId, relativeDir))
 
+    /** Join existing background refresh without starting or cancelling network work. */
+    suspend fun awaitListing(sourceId: Long, relativeDir: String) {
+        listJobs[BrowseSession.smbListingKey(sourceId, relativeDir)]?.join()
+    }
+
     suspend fun listDirectory(
         source: SmbSourceEntity,
         password: String,

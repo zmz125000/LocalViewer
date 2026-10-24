@@ -79,6 +79,11 @@ object WebDavGateway {
 
     fun isListing(sourceId: Long, relativeDir: String): Boolean = isListJobActive(BrowseSession.webDavListingKey(sourceId, relativeDir))
 
+    /** Join existing background refresh without starting or cancelling network work. */
+    suspend fun awaitListing(sourceId: Long, relativeDir: String) {
+        listJobs[BrowseSession.webDavListingKey(sourceId, relativeDir)]?.join()
+    }
+
     suspend fun listDirectory(
         source: WebDavSourceEntity,
         password: String,

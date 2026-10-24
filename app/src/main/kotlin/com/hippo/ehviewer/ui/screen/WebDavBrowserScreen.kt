@@ -111,6 +111,7 @@ import com.hippo.ehviewer.library.isMobiContainerFileName
 import com.hippo.ehviewer.library.isPdfFileName
 import com.hippo.ehviewer.library.isPdfOrEbookFileName
 import com.hippo.ehviewer.library.isPlatformVideoThumbFileName
+import com.hippo.ehviewer.library.isShallowIncompleteListing
 import com.hippo.ehviewer.library.isSolidArchiveFileName
 import com.hippo.ehviewer.library.isStreamableArchiveFileName
 import com.hippo.ehviewer.library.isVideoFileName
@@ -120,6 +121,7 @@ import com.hippo.ehviewer.library.isZipPlainFolderListing
 import com.hippo.ehviewer.library.joinRemoteArchivePath
 import com.hippo.ehviewer.library.mimeTypeForFileName
 import com.hippo.ehviewer.library.naturalCompare
+import com.hippo.ehviewer.library.selectCachedFolderListing
 import com.hippo.ehviewer.library.stableGalleryId
 import com.hippo.ehviewer.library.toRemoteBrowseSections
 import com.hippo.ehviewer.shortcuts.FolderHomeShortcut
@@ -242,7 +244,11 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
      */
     var searchReturnRel by remember(explorerWindowId) { mutableStateOf<String?>(null) }
 
+    // Gateway jobs outlive a path-keyed effect. Only its current request may paint.
+    var activeListingRequest by remember { mutableStateOf<Any?>(null) }
+
     fun updateSegments(new: List<String>) {
+        if (new != segments) activeListingRequest = null
         deepestDepth = FolderBackHistory.afterNavigate(segments.size, new.size, deepestDepth)
         segments = new
         BrowseSession.setWebDavSegments(sourceId, new)
@@ -578,9 +584,10 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
         return true
     }
 
-    /** RAM miss → disk index hydrate so go-up / relaunch paints before network. */
+    /** RAM miss/stub → disk index hydrate so go-up / relaunch paints before network. */
     suspend fun hydrateDiskListing(dir: String): Boolean {
-        if (BrowseSession.getWebDavCachedListing(sourceId, dir) != null) {
+        val ram = BrowseSession.getWebDavCachedListing(sourceId, dir)
+        if (ram?.sessionCurrent == true && !isShallowIncompleteListing(ram.entries)) {
             return applyCachedListing(dir)
         }
         val src = source ?: withIOContext { WebDavRepository.load(sourceId) }?.also { source = it }
@@ -589,11 +596,16 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
             sourceId,
             WebDavGateway.sourceConfigKey(src),
             dir,
-        ) ?: return false
-        val presented = ZipAsDirListing.presentCachedListing(disk)
-        BrowseSession.putWebDavListing(sourceId, dir, presented, sessionCurrent = false)
+        )
+        // A process job may have completed while the disk listing was read.
+        val latest = BrowseSession.getWebDavCachedListing(sourceId, dir) ?: ram
+        val selected = selectCachedFolderListing(latest?.entries, latest?.sessionCurrent == true, disk)
+            ?: return false
+        val (chosen, sessionCurrent) = selected
+        val presented = ZipAsDirListing.presentCachedListing(chosen)
+        BrowseSession.putWebDavListing(sourceId, dir, presented, sessionCurrent = sessionCurrent)
         entries = presented
-        listingSessionCurrent = false
+        listingSessionCurrent = sessionCurrent
         listedDir = dir
         loading = false
         error = null
@@ -602,6 +614,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
 
     fun requestForceReload() {
         forceNextLoad = true
+        activeListingRequest = null
         refreshToken++
     }
 
@@ -631,6 +644,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                     sessionCurrent = false,
                 )
             }
+            activeListingRequest = null
             refreshToken++
         }
         prevShowHidden = showHiddenFiles
@@ -643,6 +657,8 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
     val thumbFolderKey = "dav:$sourceId:$relativeDir"
     val thumbFolderKeyNow = rememberUpdatedState(thumbFolderKey)
     LaunchedEffect(explorerWindowId, sourceId, relativeDir, refreshToken) {
+        val request = Any()
+        activeListingRequest = request
         VideoThumbnail.onBrowseFolderChanged(thumbFolderKey)
         ArchiveCoverCache.onBrowseFolderChanged(thumbFolderKey)
         val targetDir = relativeDir
@@ -693,16 +709,12 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
         val haveListing = listedDir == loadDir && entries.isNotEmpty()
         // Soft resume (same path, already shown): no full-screen spinner.
         val needSpinner = force || configChanged || !haveListing
-        if (needSpinner) {
-            loading = true
-            if (listedDir != loadDir) {
-                // Prefer instant RAM/disk paint before network (especially go-up from History).
-                when {
-                    !force && !configChanged && applyCachedListing(loadDir) -> loading = false
-                    !force && !configChanged && hydrateDiskListing(loadDir) -> loading = false
-                    else -> entries = emptyList()
-                }
-            }
+        if (needSpinner) loading = true
+        if (!force && !configChanged) {
+            // Empty/restored entries and shallow RAM must not suppress a disk hit.
+            if (!hydrateDiskListing(loadDir) && listedDir != loadDir) entries = emptyList()
+        } else if (listedDir != loadDir) {
+            entries = emptyList()
         }
         error = null
 
@@ -731,19 +743,22 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                 loadDir,
                 useCache = !force && !configChanged,
                 onCached = { cached ->
-                    entries = cached
-                    listedDir = loadDir
-                    listingSessionCurrent =
-                        BrowseSession.isWebDavListingSessionCurrent(sourceId, loadDir)
-                    error = null
-                    loading = false
-                    refreshing = true
+                    if (activeListingRequest === request) {
+                        entries = cached
+                        listedDir = loadDir
+                        listingSessionCurrent =
+                            BrowseSession.isWebDavListingSessionCurrent(sourceId, loadDir)
+                        error = null
+                        loading = false
+                        refreshing = true
+                    }
                 },
                 onRefreshDone = {
-                    if (listedDir == loadDir) refreshing = false
+                    if (activeListingRequest === request && listedDir == loadDir) refreshing = false
                 },
             )
-            // Still the active effect for this path (not cancelled) → safe to commit.
+            // A navigation event can invalidate callbacks before Compose cancels this effect.
+            if (activeListingRequest !== request) return@LaunchedEffect
             entries = result
             listedDir = loadDir
             listingSessionCurrent =
@@ -752,10 +767,19 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
             error = null
             loading = false
             refreshing = WebDavGateway.isListing(sourceId, loadDir)
+            if (refreshing) {
+                // Re-entering a folder can join a process job whose original
+                // callbacks belong to the old screen. Paint its completed cache.
+                WebDavGateway.awaitListing(sourceId, loadDir)
+                if (activeListingRequest !== request) return@LaunchedEffect
+                applyCachedListing(loadDir)
+                refreshing = false
+            }
         } catch (e: kotlinx.coroutines.CancellationException) {
             // Path changed or refreshToken bumped — new effect owns loading state.
             throw e
         } catch (e: Throwable) {
+            if (activeListingRequest !== request) return@LaunchedEffect
             if (entries.isEmpty()) {
                 error = e.message
                 listedDir = loadDir
@@ -773,6 +797,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
 
     DisposableEffect(Unit) {
         onDispose {
+            activeListingRequest = null
             VideoThumbnail.onBrowseFolderLeftIfCurrent(thumbFolderKeyNow.value)
             ArchiveCoverCache.onBrowseFolderLeftIfCurrent(thumbFolderKeyNow.value)
         }
@@ -785,6 +810,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
                 // Soft: keep rows if listed; token bump re-runs effect for current relativeDir.
+                activeListingRequest = null
                 refreshToken++
             }
         }
