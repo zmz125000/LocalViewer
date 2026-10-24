@@ -70,6 +70,7 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.window.DialogWindowProvider
 import com.ehviewer.core.i18n.R
+import com.ehviewer.core.util.withUIContext
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.asMutableState
 import com.hippo.ehviewer.image.hdr.RawExportControls
@@ -82,6 +83,7 @@ import com.hippo.ehviewer.ui.theme.snackbarActionButtonColors
 import com.hippo.ehviewer.ui.theme.snackbarContainerColor
 import com.hippo.ehviewer.ui.theme.snackbarDismissButtonColors
 import com.hippo.ehviewer.ui.theme.snackbarDismissContentColor
+import com.hippo.ehviewer.util.awaitPickerReturn
 import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -403,9 +405,16 @@ internal class TaskJob(
     val run: suspend (Path) -> Boolean,
     status: TaskStatus,
     val outputSummary: String = "",
+    private val onDiscard: (() -> Unit)? = null,
 ) {
     var status by mutableStateOf(status)
     var removed = false
+
+    fun discard() {
+        if (removed) return
+        removed = true
+        onDiscard?.invoke()
+    }
 }
 
 internal class TaskBatch(
@@ -453,7 +462,7 @@ internal class TaskBatch(
     fun removePending(id: Long) {
         val job = jobs.find { it.id == id } ?: return
         if (job.status != TaskStatus.Pending) return
-        job.removed = true
+        job.discard()
         jobs.remove(job)
         wake.trySend(Unit)
     }
@@ -707,6 +716,8 @@ object FolderSelectHost {
     internal fun panelTask(): TaskBatch? = if (showingTask) shownTaskBatch ?: batch else null
 
     internal fun cancelQueuedSingles(task: TaskBatch) {
+        if (!task.queued || taskQueue.none { it.preview === task }) return
+        task.jobs.filter { it.status == TaskStatus.Pending }.forEach { it.discard() }
         if (taskQueue.removeAll { it.preview === task }) syncQueuedCounts()
         if (shownTaskBatch === task) {
             shownTaskBatch = null
@@ -1027,6 +1038,7 @@ object FolderSelectHost {
             }
             BatchEnd.Stop -> {
                 restorePendingSelection(running)
+                running.jobs.filter { it.status == TaskStatus.Pending }.forEach { it.discard() }
                 batch = null
                 showingTask = false
                 running.folderKey?.let { shownFolderKey = it }
@@ -1068,8 +1080,28 @@ object FolderSelectHost {
         isFolder: Boolean,
         pick: FolderPick?,
         outputSummary: String = "",
+        onDiscard: (suspend () -> Unit)? = null,
         run: suspend (Path) -> Boolean,
-    ): TaskJob = TaskJob(ids.getAndIncrement(), title, isFolder, pick, run, TaskStatus.Pending, outputSummary)
+    ): TaskJob = TaskJob(
+        ids.getAndIncrement(),
+        title,
+        isFolder,
+        pick,
+        run,
+        TaskStatus.Pending,
+        outputSummary,
+        onDiscard?.let { cleanup ->
+            {
+                scope.launch(Dispatchers.IO) {
+                    try {
+                        cleanup()
+                    } catch (error: Throwable) {
+                        android.util.Log.e("FolderTasks", "Task cleanup failed: $title", error)
+                    }
+                }
+            }
+        },
+    )
 }
 
 @Composable
@@ -1808,9 +1840,20 @@ internal fun beginSingleConvert(
     target: StillExportTarget,
     convert: suspend (Path, StillExportTarget) -> Boolean,
 ) {
+    scope.launch { enqueueSingleConvert(snackbar, context, title, target, convert) }
+}
+
+internal suspend fun enqueueSingleConvert(
+    snackbar: SnackbarHostState,
+    context: Context,
+    title: String,
+    target: StillExportTarget,
+    convert: suspend (Path, StillExportTarget) -> Boolean,
+) {
     val controls = RawExportControls.capture(target) + StillExportQuality.current()
-    scope.launch {
-        val dir = with(snackbar) { with(context) { BrowseSaveAs.pickConvertDirectory() } } ?: return@launch
+    val dir = with(snackbar) { with(context) { BrowseSaveAs.pickConvertDirectory() } } ?: return
+    with(context) { awaitPickerReturn() }
+    withUIContext {
         val job = FolderSelectHost.newJob(
             title,
             isFolder = false,

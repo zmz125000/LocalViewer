@@ -19,6 +19,7 @@ import androidx.core.net.toUri
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.LifecycleOwner
+import androidx.lifecycle.withResumed
 import com.ehviewer.core.i18n.R
 import com.ehviewer.core.util.withIOContext
 import com.ehviewer.core.util.withUIContext
@@ -27,6 +28,7 @@ import kotlin.concurrent.atomics.AtomicInt
 import kotlin.concurrent.atomics.fetchAndIncrement
 import kotlin.coroutines.resume
 import kotlin.coroutines.suspendCoroutine
+import kotlinx.coroutines.android.awaitFrame
 
 // Fuck off the silly Android launcher and callback :)
 
@@ -70,6 +72,14 @@ suspend fun <I, O> awaitActivityResult(contract: ActivityResultContract<I, O>, i
             }.apply { launch(input) }
         }
     }
+}
+
+/** Let the picker finish returning and the app resume before starting file work. */
+context(_: Context)
+internal suspend fun awaitPickerReturn() = withUIContext {
+    lifecycle.withResumed { Unit }
+    awaitFrame()
+    Unit
 }
 
 context(ctx: Context)

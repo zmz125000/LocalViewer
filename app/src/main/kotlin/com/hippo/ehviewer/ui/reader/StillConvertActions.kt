@@ -28,6 +28,7 @@ import com.hippo.ehviewer.image.hdr.stillExportFileName
 import com.hippo.ehviewer.image.hdr.withRawExportControls
 import com.hippo.ehviewer.image.hdr.writeResolved
 import com.hippo.ehviewer.ui.main.BrowseSaveAs
+import com.hippo.ehviewer.ui.main.enqueueSingleConvert
 import com.hippo.ehviewer.util.awaitActivityResult
 import com.hippo.ehviewer.util.displayPath
 import java.io.File
@@ -40,22 +41,16 @@ import okio.Path
 import okio.Path.Companion.toOkioPath
 import splitties.init.appCtx
 
-context(_: SnackbarHostState, _: Context, loader: ReaderSession)
-suspend fun convertTo(page: Page, target: StillExportTarget) = withRawExportControls(target) {
-    convertToCaptured(page, target)
-}
-
-context(_: SnackbarHostState, _: Context, loader: ReaderSession)
-private suspend fun convertToCaptured(page: Page, target: StillExportTarget) {
+context(snackbar: SnackbarHostState, ctx: Context, loader: ReaderSession)
+suspend fun convertTo(page: Page, target: StillExportTarget) {
     val leaf = loader.sourceLeafName(page.index)
     if (leaf == null) {
         snackbar(string(R.string.error_cant_save_image))
         return
     }
-    val saved = pickAndWrite(leaf, target) { dest ->
-        writeStaged(leaf, target, dest) { stageOriginal(loader, page.index) }
+    enqueueSingleConvert(snackbar, ctx, leaf, target) { dir, selected ->
+        exportStillToDirectory(leaf, selected, dir) { stageOriginal(loader, page.index) }
     }
-    if (!saved) snackbar(string(R.string.error_cant_save_image))
 }
 
 context(_: SnackbarHostState, _: Context)
