@@ -42,6 +42,10 @@ internal fun StillExportTarget.rawHdr(): Boolean = this == StillExportTarget.Aut
         else -> false
     }
 
+/** Only gain-map outputs need RAW's separately rendered camera-look SDR base. */
+internal fun StillExportTarget.needsSdrBase(): Boolean = this == StillExportTarget.AutoOriginal ||
+    this == StillExportTarget.JpegHdr || this == StillExportTarget.AvifGainMap
+
 /** HDR wins over fp16. A gain-map frame is HDR even when the base is 8-bit. */
 fun resolveStillExportAuto(hdr: Boolean, f16: Boolean, jxlEncoder: Boolean = BuildConfig.JXL_ENCODER_ENABLED): StillExportTarget = when {
     hdr -> StillExportTarget.JpegHdr

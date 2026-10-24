@@ -17,6 +17,7 @@ import com.hippo.ehviewer.image.ImageSource
 import com.hippo.ehviewer.image.PathSource
 import com.hippo.ehviewer.image.byteBufferSource
 import com.hippo.ehviewer.image.tryHardwareF16FromPixels
+import com.hippo.ehviewer.jni.beginNativeExportPixels
 import com.hippo.ehviewer.jni.beginNativeReaderPixels
 import com.hippo.ehviewer.jni.decodeAvifBytesToDirect
 import com.hippo.ehviewer.jni.decodeJpeg2000Bitmap
@@ -61,9 +62,8 @@ data class LibDirectResult(
 )
 
 /**
- * Packed pixels from the same reader decode used for display, before the
- * hardware-bitmap wrap. Full-res export encodes these bytes instead of reading
- * the GPU copy back.
+ * Full-resolution export pixels before the hardware-bitmap wrap. Native
+ * decoders retain their allocation through encoding; platform fallbacks use bytes.
  */
 data class DirectPixels(
     val pixels: ByteArray,
@@ -77,6 +77,8 @@ data class DirectPixels(
     val premultiplied: Boolean,
     /** Optional camera-look SDR RGBA8 plane appended after the F16 HDR pixels. */
     val sdrOffset: Int = 0,
+    /** Valid only during the synchronous export callback; never escapes its native capture. */
+    val nativePixels: ByteBuffer? = null,
 )
 
 /**
@@ -190,18 +192,31 @@ object LibDirectDecode {
         // slot once pixels are ready so encoding can overlap the next decode.
         val parallel = Settings.browseTaskParallel.value || Settings.heavyDecode.value >= HEAVY_DECODE_POOL
         val request = ExportDecode(target, currentCoroutineContext()[RawExportControls] ?: RawExportControls.capture(target))
-        val pixels = heavyDecodeGate.run(parallel) {
-            decodePacked(src, fileNameHint, maxEdge, request)?.let(::directPixels)
-        } ?: return@withContext null
-        encode(pixels)
+        var handle = 0L
+        try {
+            val pixels = heavyDecodeGate.run(parallel) {
+                handle = beginNativeExportPixels(target.needsSdrBase())
+                var nativePixels: ByteBuffer? = null
+                val packed = try {
+                    decodePacked(src, fileNameHint, maxEdge, request)
+                } finally {
+                    // End capture on the decode thread before any coroutine can suspend.
+                    nativePixels = endNativeReaderPixels(handle)
+                }
+                packed?.let { directPixels(it, nativePixels) }
+            } ?: return@withContext null
+            encode(pixels)
+        } finally {
+            if (handle != 0L) releaseNativeReaderPixels(handle)
+        }
     }
 
     private data class ExportDecode(val target: StillExportTarget, val controls: RawExportControls)
 
-    private fun directPixels(packed: PackedPixels): DirectPixels? {
+    private fun directPixels(packed: PackedPixels, nativePixels: ByteBuffer? = null): DirectPixels? {
         val w = packed.outInfo.getOrNull(0) ?: 0
         val h = packed.outInfo.getOrNull(1) ?: 0
-        if (w <= 0 || h <= 0 || packed.pixels.isEmpty()) return null
+        if (w <= 0 || h <= 0 || (nativePixels == null && packed.pixels.isEmpty())) return null
         return DirectPixels(
             pixels = packed.pixels,
             width = w,
@@ -209,8 +224,9 @@ object LibDirectDecode {
             f16 = packed.outInfo.getOrNull(2) == 1,
             isHdr = packed.outInfo.getOrNull(3) != 0,
             gamut = packed.outInfo.getOrNull(4) ?: 0,
-            premultiplied = packed.premultiplied,
+            premultiplied = nativePixels == null && packed.premultiplied,
             sdrOffset = packed.sdrOffset,
+            nativePixels = nativePixels,
         )
     }
 
@@ -221,7 +237,7 @@ object LibDirectDecode {
     ): LibDirectResult? {
         // This entire scope is synchronous on the same decode thread. Native
         // packers move their final vector into the capture instead of a Java array.
-        // Exports call decodePacked directly and retain their existing byte[] ABI.
+        // Exports use their own capture and keep straight alpha through encoding.
         val handle = beginNativeReaderPixels()
         try {
             val packed = decodePacked(src, fileNameHint, maxEdge)
@@ -459,7 +475,7 @@ object LibDirectDecode {
             outBoost,
             advanced = true,
             premultiplied = true,
-            sdrOffset = if (present >= 3) outInfo[0] * outInfo[1] * 8 else 0,
+            sdrOffset = if (present >= 3 && export?.target?.needsSdrBase() != false) outInfo[0] * outInfo[1] * 8 else 0,
         )
     }
 

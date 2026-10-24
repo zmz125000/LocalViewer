@@ -1277,6 +1277,7 @@ int pack_linear_f16_for_direct(std::vector<uint16_t>& rgba, unsigned w, unsigned
         // presentation boundary, after gamut conversion and peak measurement.
         uint16_t max_half = float_to_half(kMaxLinear);
         if (half_to_float(max_half) > kMaxLinear) --max_half;
+        const bool associate_alpha = !export_pixels_capture();
         hdr_parallel_pixels(pixels, jobs, [&](size_t begin, size_t end, unsigned) {
             for (size_t i = begin; i < end; i++) {
                 // Most stills are opaque and already valid linear half samples.
@@ -1289,9 +1290,12 @@ int pack_linear_f16_for_direct(std::vector<uint16_t>& rgba, unsigned w, unsigned
                 float a = half_to_float(rgba[i * 4 + 3]);
                 if (!std::isfinite(a) || a < 0.f) a = 0.f;
                 if (a > 1.f) a = 1.f;
-                rgba[i * 4 + 0] = float_to_half(clamp_nonneg(r) * a);
-                rgba[i * 4 + 1] = float_to_half(clamp_nonneg(g) * a);
-                rgba[i * 4 + 2] = float_to_half(clamp_nonneg(b) * a);
+                // Keep the existing black RGB for invisible pixels, including
+                // when an output format drops alpha entirely.
+                const float association = associate_alpha || a <= 0.f ? a : 1.f;
+                rgba[i * 4 + 0] = float_to_half(clamp_nonneg(r) * association);
+                rgba[i * 4 + 1] = float_to_half(clamp_nonneg(g) * association);
+                rgba[i * 4 + 2] = float_to_half(clamp_nonneg(b) * association);
                 rgba[i * 4 + 3] = float_to_half(a);
             }
         });
@@ -1599,7 +1603,7 @@ int encode_srgb_jpeg_u8(unsigned w, unsigned h, const uint8_t* rgba, const char*
  */
 int encode_still_export(const uint8_t* src, size_t src_len, unsigned w, unsigned h, bool f16,
                         int gamut, int mode, bool premultiplied, const char* out_path, size_t sdr_offset = 0,
-                        int quality = 1) {
+                        int quality = 1, bool mutable_input = false) {
     if (!src || !out_path || w == 0 || h == 0 || mode < 0 || mode > kExportJxlPq) return -50;
     const size_t pixels = static_cast<size_t>(w) * static_cast<size_t>(h);
     const size_t bpp = f16 ? 8u : 4u;
@@ -1607,26 +1611,35 @@ int encode_still_export(const uint8_t* src, size_t src_len, unsigned w, unsigned
     if (sdr_offset && (!f16 || sdr_offset != pixels * 8u || sdr_offset > src_len || pixels * 4u > src_len - sdr_offset)) return -51;
     const uhdr_color_gamut_t cg = export_gamut(gamut);
     if (f16) {
-        std::vector<uint16_t> rgba(pixels * 4);
-        memcpy(rgba.data(), src, pixels * 8);
-        if (premultiplied) unpremultiply_f16(rgba.data(), pixels);
+        std::vector<uint16_t> rgba_storage;
+        auto* rgba = reinterpret_cast<uint16_t*>(const_cast<uint8_t*>(src));
+        if (!mutable_input) {
+            rgba_storage.resize(pixels * 4);
+            memcpy(rgba_storage.data(), src, pixels * 8);
+            rgba = rgba_storage.data();
+        }
+        if (premultiplied) unpremultiply_f16(rgba, pixels);
         if (mode >= kExportAvif && mode <= kExportAvifGainMap) {
-            return encode_avif_f16(w, h, rgba.data(), cg, mode - kExportAvif, out_path, quality,
+            return encode_avif_f16(w, h, rgba, cg, mode - kExportAvif, out_path, quality,
                                    sdr_offset ? src + sdr_offset : nullptr);
         }
         if (mode == kExportJpegHdr) {
-            return encode_linear_rgba_f16_to_uhdr(w, h, rgba.data(), out_path, cg, 0.f, true,
+            return encode_linear_rgba_f16_to_uhdr(w, h, rgba, out_path, cg, 0.f, true,
                                                   sdr_offset ? src + sdr_offset : nullptr, quality);
         }
         if (mode == kExportJxl || mode == kExportJxlHdr || mode == kExportJxlPq) {
-            return encode_jxl_f16(w, h, rgba.data(), cg, mode != kExportJxl, out_path, quality, mode == kExportJxlPq);
+            return encode_jxl_f16(w, h, rgba, cg, mode != kExportJxl, out_path, quality, mode == kExportJxlPq);
         }
-        return encode_baseline_sdr_jpeg(w, h, rgba.data(), out_path, cg, quality);
+        return encode_baseline_sdr_jpeg(w, h, rgba, out_path, cg, quality);
     }
-    std::vector<uint8_t> rgba(pixels * 4);
-    memcpy(rgba.data(), src, pixels * 4);
-    if (premultiplied) unpremultiply_u8(rgba.data(), pixels);
-    if (mode == kExportAvif) return encode_avif_u8(w, h, rgba.data(), cg, out_path, quality);
+    std::vector<uint8_t> rgba_storage;
+    auto* rgba = const_cast<uint8_t*>(src);
+    if (!mutable_input) {
+        rgba_storage.assign(src, src + pixels * 4);
+        rgba = rgba_storage.data();
+    }
+    if (premultiplied) unpremultiply_u8(rgba, pixels);
+    if (mode == kExportAvif) return encode_avif_u8(w, h, rgba, cg, out_path, quality);
     if (mode == kExportJxl || mode == kExportJxlHdr || mode >= kExportAvifPq) {
         std::vector<uint16_t> linear(pixels * 4);
         std::array<uint16_t, 256> table{};
@@ -1637,13 +1650,33 @@ int encode_still_export(const uint8_t* src, size_t src_len, unsigned w, unsigned
                 linear[i * 4 + 3] = float_to_half(rgba[i * 4 + 3] / 255.f);
             }
         });
-        std::vector<uint8_t>().swap(rgba);
+        std::vector<uint8_t>().swap(rgba_storage);
         if (mode >= kExportAvifPq && mode <= kExportAvifGainMap) {
             return encode_avif_f16(w, h, linear.data(), cg, mode - kExportAvif, out_path, quality);
         }
         return encode_jxl_f16(w, h, linear.data(), cg, mode == kExportJxlPq, out_path, quality, mode == kExportJxlPq);
     }
-    return encode_srgb_jpeg_u8(w, h, rgba.data(), out_path, cg, quality);
+    return encode_srgb_jpeg_u8(w, h, rgba, out_path, cg, quality);
+}
+
+extern "C" JNIEXPORT jint JNICALL
+Java_com_hippo_ehviewer_jni_HdrConvertKt_encodeNativeStillExport(JNIEnv* env, jclass, jobject jPixels,
+                                                               jint width, jint height, jboolean f16,
+                                                               jint gamut, jint mode, jboolean premultiplied,
+                                                               jstring jOut, jint sdr_offset, jint quality) {
+    if (!jPixels || !jOut || width <= 0 || height <= 0 || sdr_offset < 0 || quality < 0 || quality > 3) return -52;
+    auto* pixels = static_cast<uint8_t*>(env->GetDirectBufferAddress(jPixels));
+    const jlong length = env->GetDirectBufferCapacity(jPixels);
+    if (!pixels || length <= 0 || (f16 == JNI_TRUE && reinterpret_cast<uintptr_t>(pixels) % alignof(uint16_t))) return -53;
+    const char* out_path = env->GetStringUTFChars(jOut, nullptr);
+    if (!out_path) return -55;
+    // The synchronous caller exclusively owns this capture until encoding returns.
+    const int rc = encode_still_export(pixels, static_cast<size_t>(length),
+                                       static_cast<unsigned>(width), static_cast<unsigned>(height),
+                                       f16 == JNI_TRUE, gamut, mode, premultiplied == JNI_TRUE,
+                                       out_path, static_cast<size_t>(sdr_offset), quality, true);
+    env->ReleaseStringUTFChars(jOut, out_path);
+    return rc;
 }
 
 extern "C" JNIEXPORT jint JNICALL

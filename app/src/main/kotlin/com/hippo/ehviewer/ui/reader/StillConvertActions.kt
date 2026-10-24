@@ -5,8 +5,11 @@ import android.content.Context
 import android.net.Uri
 import android.provider.DocumentsContract
 import android.provider.MediaStore
+import android.system.Os
+import android.system.OsConstants
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.material3.SnackbarHostState
+import com.ehviewer.core.files.openFileDescriptor
 import com.ehviewer.core.files.sendTo
 import com.ehviewer.core.files.toOkioPath
 import com.ehviewer.core.files.toUri
@@ -81,10 +84,11 @@ suspend fun exportStillToDirectory(
     leaf: String,
     target: StillExportTarget,
     dir: Path,
+    localSource: Path? = null,
     stage: suspend () -> File,
 ): Boolean {
     return try {
-        val encoded = encodeStaged(leaf, target, stage) ?: return false
+        val encoded = encodeStaged(leaf, target, stage, localSource) ?: return false
         try {
             withIOContext { BrowseSaveAs.writeConvertFile(dir, stillExportFileName(leaf, encoded.target), encoded.file) }
         } finally {
@@ -219,15 +223,14 @@ private suspend fun saveOriginalSize(leaf: String, stage: suspend () -> File): B
 private data class EncodedStill(val file: File, val target: StillExportTarget)
 
 /** Download/stage first; retain the memory lease until encoding releases its pixels. */
-private suspend fun encodeStaged(leaf: String, target: StillExportTarget, stage: suspend () -> File): EncodedStill? = withRawExportControls(target) {
-    encodeStagedCaptured(leaf, target, stage)
+private suspend fun encodeStaged(leaf: String, target: StillExportTarget, stage: suspend () -> File, localSource: Path? = null): EncodedStill? = withRawExportControls(target) {
+    encodeStagedCaptured(leaf, target, stage, localSource)
 }
 
-private suspend fun encodeStagedCaptured(leaf: String, target: StillExportTarget, stage: suspend () -> File): EncodedStill? = withIOContext {
+private suspend fun encodeStagedCaptured(leaf: String, target: StillExportTarget, stage: suspend () -> File, localSource: Path?): EncodedStill? = withIOContext {
     if (!target.available) return@withIOContext null
     val quality = currentCoroutineContext()[StillExportQuality]?.value ?: StillExportQuality.current().value
-    val source = stage()
-    try {
+    withExportSource(localSource, stage) { source ->
         StillExportWork.withSource(source, leaf) {
             LibDirectDecode.withExportPixels(source.asPathSource(), leaf, maxEdge = 0, target = target) { pixels ->
                 val resolved = target.resolve(pixels.isHdr, pixels.f16)
@@ -241,6 +244,28 @@ private suspend fun encodeStagedCaptured(leaf: String, target: StillExportTarget
                 }
             }
         }
+    }
+}
+
+/** Borrow originals without deleting them; only temporary staged copies belong to this job. */
+private suspend fun <T> withExportSource(
+    localSource: Path?,
+    stage: suspend () -> File,
+    work: suspend (File) -> T,
+): T {
+    localSource?.toString()?.takeIf { it.startsWith('/') }?.let(::File)?.takeIf { it.isFile }?.let {
+        return work(it)
+    }
+    if (localSource?.toUri()?.scheme == "content") {
+        val descriptor = runCatching { localSource.openFileDescriptor("r") }.getOrNull()
+        descriptor?.use { opened ->
+            val regular = runCatching { OsConstants.S_ISREG(Os.fstat(opened.fileDescriptor).st_mode) }.getOrDefault(false)
+            if (regular) return work(File("/proc/self/fd/${opened.fd}"))
+        }
+    }
+    val source = stage()
+    return try {
+        work(source)
     } finally {
         source.delete()
     }
