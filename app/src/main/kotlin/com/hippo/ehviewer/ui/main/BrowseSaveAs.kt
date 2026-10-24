@@ -309,22 +309,24 @@ object BrowseSaveAs {
         pickTreeDir()
     }
 
-    internal fun configuredConvertDirectory(): Path? = Settings.imageConversionLocation.value
-        ?.let { saved ->
-            runCatching {
-                val treeUri = Uri.parse(saved)
-                DocumentsContract.buildDocumentUriUsingTree(
-                    treeUri,
-                    DocumentsContract.getTreeDocumentId(treeUri),
-                ).toOkioPath()
-            }.getOrNull()
-        }
-        ?.takeIf { runCatching { it.isDirectory }.getOrDefault(false) }
+    internal suspend fun configuredConvertDirectory(): Path? = withIOContext {
+        Settings.imageConversionLocation.value
+            ?.let { saved ->
+                runCatching {
+                    val treeUri = Uri.parse(saved)
+                    DocumentsContract.buildDocumentUriUsingTree(
+                        treeUri,
+                        DocumentsContract.getTreeDocumentId(treeUri),
+                    ).toOkioPath()
+                }.getOrNull()
+            }
+            ?.takeIf { runCatching { it.isDirectory }.getOrDefault(false) }
+    }
 
     /** Disabling prompts requires a usable default folder; cancellation keeps prompts enabled. */
     context(_: SnackbarHostState, _: Context)
     internal suspend fun updateAskWhereToSave(ask: Boolean) {
-        if (!ask && withIOContext { configuredConvertDirectory() } == null) {
+        if (!ask && configuredConvertDirectory() == null) {
             val directory = pickTreeDir() ?: return
             val documentUri = directory.toUri()
             val treeUri = DocumentsContract.buildTreeDocumentUri(
