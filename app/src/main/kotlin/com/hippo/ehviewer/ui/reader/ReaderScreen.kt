@@ -951,6 +951,104 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
         }
         // Same path as double-tap prev/next gallery (folder mode); shared by gesture + FABs.
         val folderNavBusy = remember { java.util.concurrent.atomic.AtomicBoolean(false) }
+        suspend fun openSiblingGallery(sibling: ReaderScreenArgs) {
+            // Progress FK for sibling gallery + bump History (library gallery or browse path).
+            sibling.let { s ->
+                withIOContext {
+                    when (s) {
+                        is ReaderScreenArgs.LocalFolder -> LocalHistory.recordLocalFolderReader(
+                            path = s.path,
+                            info = s.info,
+                            pages = s.info?.pages ?: 0,
+                        )
+                        is ReaderScreenArgs.WebDavFolder -> {
+                            LocalHistory.recordWebDavFolderGallery(
+                                sourceId = s.sourceId,
+                                remoteDir = s.remoteDir,
+                                title = s.info?.title
+                                    ?: s.remoteDir.substringAfterLast('/').ifEmpty { "WebDAV" },
+                                thumbKey = s.info?.thumbKey,
+                                pages = s.info?.pages ?: 0,
+                                info = s.info,
+                            )
+                        }
+                        is ReaderScreenArgs.SmbFolder -> {
+                            LocalHistory.recordSmbFolderGallery(
+                                sourceId = s.sourceId,
+                                remoteDir = s.remoteDir,
+                                title = s.info?.title
+                                    ?: s.remoteDir.substringAfterLast('/').ifEmpty { "Share" },
+                                thumbKey = s.info?.thumbKey,
+                                pages = s.info?.pages ?: 0,
+                                info = s.info,
+                            )
+                        }
+                        is ReaderScreenArgs.SmbStreamArchive -> {
+                            s.info?.let { LocalHistory.ensureGalleryForProgress(it) }
+                            LocalHistory.recordSmbStreamArchive(
+                                sourceId = s.sourceId,
+                                remotePath = s.remotePath,
+                                title = s.info?.title,
+                                pages = s.info?.pages ?: 0,
+                                info = s.info,
+                            )
+                        }
+                        is ReaderScreenArgs.WebDavStreamArchive -> {
+                            s.info?.let { LocalHistory.ensureGalleryForProgress(it) }
+                            LocalHistory.recordWebDavStreamArchive(
+                                sourceId = s.sourceId,
+                                remotePath = s.remotePath,
+                                title = s.info?.title,
+                                pages = s.info?.pages ?: 0,
+                                info = s.info,
+                            )
+                        }
+                        is ReaderScreenArgs.Archive -> {
+                            LocalHistory.recordLocalArchive(s.path)
+                        }
+                        is ReaderScreenArgs.LocalZipFolder -> LocalHistory.recordLocalZipFolderReader(
+                            zipPath = s.zipPath,
+                            innerRel = s.innerRel,
+                            info = s.info,
+                            pages = s.imageNames.size,
+                        )
+                        is ReaderScreenArgs.LocalImageList -> Unit
+                    }
+                }
+            }
+            // Stop this archive extract before replace so the next reader can
+            // preempt ArchiveAccess without waiting on solid decompress.
+            if (OpenPdfBySettings.shouldRedirect(sibling)) {
+                val outcome = runCatching { OpenPdfBySettings.open(activity, sibling) }
+                    .getOrElse { e ->
+                        snackbar(
+                            activity.getString(
+                                R.string.pdf_reader_open_failed,
+                                e.message ?: e.toString(),
+                            ),
+                        )
+                        return
+                    }
+                runCatching { pageLoader.close() }
+                when (outcome) {
+                    is OpenPdfBySettings.Outcome.Gallery -> {
+                        nav.navigate(ReaderScreenDestination(outcome.args)) {
+                            launchSingleTop = true
+                            popUpTo(ReaderScreenDestination) { inclusive = true }
+                        }
+                    }
+                    OpenPdfBySettings.Outcome.Handled -> nav.popBackStack()
+                }
+            } else {
+                runCatching { pageLoader.close() }
+                nav.navigate(ReaderScreenDestination(sibling)) {
+                    launchSingleTop = true
+                    popUpTo(ReaderScreenDestination) {
+                        inclusive = true
+                    }
+                }
+            }
+        }
         fun goFolder(next: Boolean) {
             if (!folderNavBusy.compareAndSet(false, true)) return
             // Navigate on Main after the gesture/input frame finishes — avoids
@@ -960,102 +1058,17 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
                     val sibling = withIOContext {
                         runCatching { GallerySiblingNavigator.sibling(args, next) }.getOrNull()
                     } ?: return@launch
-                    // Progress FK for sibling gallery + bump History (library gallery or browse path).
-                    sibling.let { s ->
-                        withIOContext {
-                            when (s) {
-                                is ReaderScreenArgs.LocalFolder -> LocalHistory.recordLocalFolderReader(
-                                    path = s.path,
-                                    info = s.info,
-                                    pages = s.info?.pages ?: 0,
-                                )
-                                is ReaderScreenArgs.WebDavFolder -> {
-                                    LocalHistory.recordWebDavFolderGallery(
-                                        sourceId = s.sourceId,
-                                        remoteDir = s.remoteDir,
-                                        title = s.info?.title
-                                            ?: s.remoteDir.substringAfterLast('/').ifEmpty { "WebDAV" },
-                                        thumbKey = s.info?.thumbKey,
-                                        pages = s.info?.pages ?: 0,
-                                        info = s.info,
-                                    )
-                                }
-                                is ReaderScreenArgs.SmbFolder -> {
-                                    LocalHistory.recordSmbFolderGallery(
-                                        sourceId = s.sourceId,
-                                        remoteDir = s.remoteDir,
-                                        title = s.info?.title
-                                            ?: s.remoteDir.substringAfterLast('/').ifEmpty { "Share" },
-                                        thumbKey = s.info?.thumbKey,
-                                        pages = s.info?.pages ?: 0,
-                                        info = s.info,
-                                    )
-                                }
-                                is ReaderScreenArgs.SmbStreamArchive -> {
-                                    s.info?.let { LocalHistory.ensureGalleryForProgress(it) }
-                                    LocalHistory.recordSmbStreamArchive(
-                                        sourceId = s.sourceId,
-                                        remotePath = s.remotePath,
-                                        title = s.info?.title,
-                                        pages = s.info?.pages ?: 0,
-                                        info = s.info,
-                                    )
-                                }
-                                is ReaderScreenArgs.WebDavStreamArchive -> {
-                                    s.info?.let { LocalHistory.ensureGalleryForProgress(it) }
-                                    LocalHistory.recordWebDavStreamArchive(
-                                        sourceId = s.sourceId,
-                                        remotePath = s.remotePath,
-                                        title = s.info?.title,
-                                        pages = s.info?.pages ?: 0,
-                                        info = s.info,
-                                    )
-                                }
-                                is ReaderScreenArgs.Archive -> {
-                                    LocalHistory.recordLocalArchive(s.path)
-                                }
-                                is ReaderScreenArgs.LocalZipFolder -> LocalHistory.recordLocalZipFolderReader(
-                                    zipPath = s.zipPath,
-                                    innerRel = s.innerRel,
-                                    info = s.info,
-                                    pages = s.imageNames.size,
-                                )
-                                is ReaderScreenArgs.LocalImageList -> Unit
-                            }
-                        }
-                    }
-                    // Stop this archive extract before replace so the next reader can
-                    // preempt ArchiveAccess without waiting on solid decompress.
-                    if (OpenPdfBySettings.shouldRedirect(sibling)) {
-                        val outcome = runCatching { OpenPdfBySettings.open(activity, sibling) }
-                            .getOrElse { e ->
-                                snackbar(
-                                    activity.getString(
-                                        R.string.pdf_reader_open_failed,
-                                        e.message ?: e.toString(),
-                                    ),
-                                )
-                                return@launch
-                            }
-                        runCatching { pageLoader.close() }
-                        when (outcome) {
-                            is OpenPdfBySettings.Outcome.Gallery -> {
-                                nav.navigate(ReaderScreenDestination(outcome.args)) {
-                                    launchSingleTop = true
-                                    popUpTo(ReaderScreenDestination) { inclusive = true }
-                                }
-                            }
-                            OpenPdfBySettings.Outcome.Handled -> nav.popBackStack()
-                        }
-                    } else {
-                        runCatching { pageLoader.close() }
-                        nav.navigate(ReaderScreenDestination(sibling)) {
-                            launchSingleTop = true
-                            popUpTo(ReaderScreenDestination) {
-                                inclusive = true
-                            }
-                        }
-                    }
+                    openSiblingGallery(sibling)
+                } finally {
+                    folderNavBusy.set(false)
+                }
+            }
+        }
+        fun goFolder(sibling: ReaderScreenArgs) {
+            if (!folderNavBusy.compareAndSet(false, true)) return
+            launch {
+                try {
+                    openSiblingGallery(sibling)
                 } finally {
                     folderNavBusy.set(false)
                 }
@@ -1170,8 +1183,15 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
                     val realPage = if (pagerDual) dualFirstPageIndex(page, landscapeCover) else page
                     val shuffledNext = if (slideshowPlayback == SlideshowPlaybackMode.SHUFFLE) pageLoader.nextSlideshowPage(realPage) else null
                     val atEnd = if (slideshowPlayback == SlideshowPlaybackMode.SHUFFLE) shuffledNext == null else page >= count - 1
-                    if (atEnd && slideshowPlayback == SlideshowPlaybackMode.NEXT_GALLERY && hasNextGallery) {
-                        goFolder(next = true)
+                    if (atEnd && slideshowPlayback == SlideshowPlaybackMode.NEXT_GALLERY) {
+                        val sibling = withIOContext {
+                            runCatching { GallerySiblingNavigator.slideshowNext(args) }.getOrNull()
+                        }
+                        if (sibling != null) {
+                            goFolder(sibling)
+                        } else {
+                            pagerState.performScrollToPage(0)
+                        }
                     } else if (slideshowPlayback == SlideshowPlaybackMode.SHUFFLE) {
                         val target = shuffledNext ?: pageLoader.nextSlideshowPage(realPage, repeat = true)
                         if (target != null) {
