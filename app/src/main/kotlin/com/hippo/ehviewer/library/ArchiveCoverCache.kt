@@ -836,9 +836,7 @@ object ArchiveCoverCache {
                         // Extract page 0 only (coverOnly engine). Do **not** saveIndex:
                         // a 1-member incomplete index is treated as a full page list by
                         // openFromIndex and makes multi-page PDFs/EPUBs open as 1 page.
-                        val page = engine.extractToCache(cacheKey, 0)
-                            ?: return@use CoverEnsureResult.Skip
-                        val thumb = writeCoverFromExtractedPage(cacheKey, page)
+                        val thumb = extractDocumentCover(cacheKey, engine)
                         if (thumb != null) CoverEnsureResult.Hit(thumb) else CoverEnsureResult.Skip
                     }
                 }
@@ -869,9 +867,7 @@ object ArchiveCoverCache {
                         if (engine.pageCount <= 0) return@withCoverExtractSlot CoverEnsureResult.NoImages
                         // Extract page 0 only; never persist coverOnly as document index
                         // (would pin multi-page docs to 1 page via openFromIndex).
-                        val page = engine.extractToCache(key, 0)
-                            ?: return@withCoverExtractSlot CoverEnsureResult.Skip
-                        val thumb = writeCoverFromExtractedPage(key, page)
+                        val thumb = extractDocumentCover(key, engine)
                         if (thumb != null) CoverEnsureResult.Hit(thumb) else CoverEnsureResult.Skip
                     }
                 }
@@ -882,6 +878,20 @@ object ArchiveCoverCache {
                 CoverEnsureResult.Skip
             }
         }
+    }
+
+    private suspend fun extractDocumentCover(
+        cacheKey: String,
+        engine: com.hippo.ehviewer.library.document.DocumentImageEngine,
+    ): Path? {
+        if (engine is PdfImageEngine) {
+            // Creating a reader page first can allocate hundreds of MiB of ARGB
+            // pixels. Sample before expanding colors, as the photo grid does.
+            val bytes = engine.extractCoverThumb(0) ?: return null
+            return writeCoverFromPageBytes(cacheKey, bytes, "webp")
+        }
+        val page = engine.extractToCache(cacheKey, 0) ?: return null
+        return writeCoverFromExtractedPage(cacheKey, page)
     }
 
     /** Catalog `/Count` from the parser this thumb fetch already opened. */
