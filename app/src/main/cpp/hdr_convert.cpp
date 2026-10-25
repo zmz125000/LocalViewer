@@ -58,9 +58,8 @@ extern "C" {
 #define LOG_TAG "HdrConvert"
 
 // Lossless/high/mid/low share 4:4:4 sampling; JPEG itself is always lossy.
-static int export_jpeg_quality(int quality) {
-    constexpr int qualities[] = {95, 95, 90, 85};
-    return qualities[std::clamp(quality, 0, 3)];
+static int export_jpeg_quality(StillEncodeQuality quality) {
+    return quality.jpeg();
 }
 #define ALOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
 #define ALOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
@@ -849,7 +848,7 @@ struct JpegMemory {
 };
 
 int encode_srgb_jpeg_u8(unsigned w, unsigned h, const uint8_t* rgba, const char* out_path,
-                        uhdr_color_gamut_t cg, int quality = 1, JpegMemory* memory = nullptr);
+                        uhdr_color_gamut_t cg, StillEncodeQuality quality = 1, JpegMemory* memory = nullptr);
 
 
 void jpeg_err_exit(j_common_ptr cinfo) {
@@ -872,7 +871,7 @@ void jpeg_err_exit(j_common_ptr cinfo) {
  * Quality from the selected preset, 4:4:4 chroma (no 4:2:0 color blur on 4K stills).
  */
 int encode_baseline_sdr_jpeg(unsigned w, unsigned h, const uint16_t* rgba, const char* out_path,
-                             uhdr_color_gamut_t cg, int quality = 1) {
+                             uhdr_color_gamut_t cg, StillEncodeQuality quality = 1) {
     if (!rgba || !out_path || w == 0 || h == 0) return -30;
     const size_t pixels = static_cast<size_t>(w) * static_cast<size_t>(h);
     std::vector<uint8_t> rgb(pixels * 3);
@@ -994,7 +993,7 @@ int encode_baseline_sdr_jpeg(unsigned w, unsigned h, const uint16_t* rgba, const
  */
 int encode_linear_rgba_f16_to_uhdr(unsigned w, unsigned h, const uint16_t* rgba,
                                    const char* out_path, uhdr_color_gamut_t cg,
-                                   float fixed_peak_nits, bool force_hdr, const uint8_t* sdr_base, int quality) {
+                                   float fixed_peak_nits, bool force_hdr, const uint8_t* sdr_base, StillEncodeQuality quality) {
     if (!rgba || !out_path || w == 0 || h == 0) return -1;
 
     // Only the three gamuts libultrahdr can tag/ICC-embed.
@@ -1076,7 +1075,7 @@ int encode_linear_rgba_f16_to_uhdr(unsigned w, unsigned h, const uint16_t* rgba,
     }
     // Keep the primary rendition at full size. Low quality reduces only the
     // RGB gain map to one quarter of each dimension (one sixteenth the pixels).
-    err = uhdr_enc_set_gainmap_scale_factor(enc, quality == 3 ? 4 : 1);
+    err = uhdr_enc_set_gainmap_scale_factor(enc, quality.preset == 3 ? 4 : 1);
     if (err.error_code != UHDR_CODEC_OK) {
         ALOGE("uhdr_enc_set_gainmap_scale_factor: %s", err.has_detail ? err.detail : "error");
         uhdr_release_encoder(enc);
@@ -1552,7 +1551,7 @@ void unpremultiply_u8(uint8_t* rgba, size_t pixels) {
 }
 
 int encode_srgb_jpeg_u8(unsigned w, unsigned h, const uint8_t* rgba, const char* out_path,
-                        uhdr_color_gamut_t cg, int quality, JpegMemory* memory) {
+                        uhdr_color_gamut_t cg, StillEncodeQuality quality, JpegMemory* memory) {
     if (!rgba || (!out_path && !memory) || w == 0 || h == 0) return -40;
     FILE* fp = memory ? nullptr : fopen(out_path, "wb");
     if (!memory && !fp) return -41;
@@ -1617,7 +1616,7 @@ int encode_srgb_jpeg_u8(unsigned w, unsigned h, const uint8_t* rgba, const char*
  */
 int encode_still_export(const uint8_t* src, size_t src_len, unsigned w, unsigned h, bool f16,
                         int gamut, int mode, bool premultiplied, const char* out_path, size_t sdr_offset = 0,
-                        int quality = 1, bool mutable_input = false) {
+                        StillEncodeQuality quality = 1, bool mutable_input = false) {
     if (!src || !out_path || w == 0 || h == 0 || mode < 0 || mode > kExportJxlPq) return -50;
     const size_t pixels = static_cast<size_t>(w) * static_cast<size_t>(h);
     const size_t bpp = f16 ? 8u : 4u;
@@ -1678,8 +1677,10 @@ extern "C" JNIEXPORT jint JNICALL
 Java_com_hippo_ehviewer_jni_HdrConvertKt_encodeNativeStillExport(JNIEnv* env, jclass, jobject jPixels,
                                                                jint width, jint height, jboolean f16,
                                                                jint gamut, jint mode, jboolean premultiplied,
-                                                               jstring jOut, jint sdr_offset, jint quality) {
-    if (!jPixels || !jOut || width <= 0 || height <= 0 || sdr_offset < 0 || quality < 0 || quality > 3) return -52;
+                                                               jstring jOut, jint sdr_offset, jint quality, jfloat custom_distance, jint custom_quality) {
+    if (!jPixels || !jOut || width <= 0 || height <= 0 || sdr_offset < 0 || quality < 0 || quality > 4 ||
+        (quality == 4 && (!std::isfinite(custom_distance) || custom_distance < 0.f || custom_distance > 15.f ||
+                          custom_quality < 1 || custom_quality > 100))) return -52;
     auto* pixels = static_cast<uint8_t*>(env->GetDirectBufferAddress(jPixels));
     const jlong length = env->GetDirectBufferCapacity(jPixels);
     if (!pixels || length <= 0 || (f16 == JNI_TRUE && reinterpret_cast<uintptr_t>(pixels) % alignof(uint16_t))) return -53;
@@ -1689,7 +1690,7 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_encodeNativeStillExport(JNIEnv* env, jc
     const int rc = encode_still_export(pixels, static_cast<size_t>(length),
                                        static_cast<unsigned>(width), static_cast<unsigned>(height),
                                        f16 == JNI_TRUE, gamut, mode, premultiplied == JNI_TRUE,
-                                       out_path, static_cast<size_t>(sdr_offset), quality, true);
+                                       out_path, static_cast<size_t>(sdr_offset), StillEncodeQuality(quality, custom_distance, custom_quality), true);
     env->ReleaseStringUTFChars(jOut, out_path);
     return rc;
 }
@@ -1699,8 +1700,10 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_encodeStillExport(JNIEnv* env, jclass, 
                                                            jint width, jint height, jboolean f16,
                                                            jint gamut, jint mode,
                                                            jboolean premultiplied, jstring jOut, jint sdr_offset,
-                                                           jint quality) {
-    if (!jPixels || !jOut || width <= 0 || height <= 0 || sdr_offset < 0 || quality < 0 || quality > 3) return -52;
+                                                           jint quality, jfloat custom_distance, jint custom_quality) {
+    if (!jPixels || !jOut || width <= 0 || height <= 0 || sdr_offset < 0 || quality < 0 || quality > 4 ||
+        (quality == 4 && (!std::isfinite(custom_distance) || custom_distance < 0.f || custom_distance > 15.f ||
+                          custom_quality < 1 || custom_quality > 100))) return -52;
     const jsize len = env->GetArrayLength(jPixels);
     if (len <= 0) return -53;
     jbyte* bytes = env->GetByteArrayElements(jPixels, nullptr);
@@ -1714,7 +1717,7 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_encodeStillExport(JNIEnv* env, jclass, 
                                        static_cast<size_t>(len), static_cast<unsigned>(width),
                                        static_cast<unsigned>(height), f16 == JNI_TRUE, gamut, mode,
                                        premultiplied == JNI_TRUE, out_path, static_cast<size_t>(sdr_offset),
-                                       quality);
+                                       StillEncodeQuality(quality, custom_distance, custom_quality));
     env->ReleaseStringUTFChars(jOut, out_path);
     env->ReleaseByteArrayElements(jPixels, bytes, JNI_ABORT);
     return rc;

@@ -32,12 +32,14 @@
         <item>@string/image_conversion_quality_high</item>
         <item>@string/image_conversion_quality_mid</item>
         <item>@string/image_conversion_quality_low</item>
+        <item>@string/image_conversion_quality_custom</item>
     </string-array>
     <integer-array name="image_conversion_quality_values">
         <item>0</item>
         <item>1</item>
         <item>2</item>
         <item>3</item>
+        <item>4</item>
     </integer-array>
 
     <string-array name="toplist_entries" translatable="false">

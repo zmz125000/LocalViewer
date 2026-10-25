@@ -24,13 +24,13 @@ avifColorPrimaries primaries(uhdr_color_gamut_t gamut) {
            gamut == UHDR_CG_DISPLAY_P3 ? AVIF_COLOR_PRIMARIES_SMPTE432 : AVIF_COLOR_PRIMARIES_BT709;
 }
 
-Image make_image(unsigned w, unsigned h, unsigned depth, uhdr_color_gamut_t gamut, bool pq, int quality) {
+Image make_image(unsigned w, unsigned h, unsigned depth, uhdr_color_gamut_t gamut, bool pq, StillEncodeQuality quality) {
     Image image(avifImageCreate(w, h, depth, AVIF_PIXEL_FORMAT_YUV444), avifImageDestroy);
     if (image) {
         image->colorPrimaries = primaries(gamut);
         image->transferCharacteristics = pq ? AVIF_TRANSFER_CHARACTERISTICS_PQ : AVIF_TRANSFER_CHARACTERISTICS_SRGB;
         // Identity + full range preserves the quantized RGB codes in lossless mode.
-        image->matrixCoefficients = quality == 0 ? AVIF_MATRIX_COEFFICIENTS_IDENTITY :
+        image->matrixCoefficients = quality.avif_lossless() ? AVIF_MATRIX_COEFFICIENTS_IDENTITY :
             gamut == UHDR_CG_BT_2100 ? AVIF_MATRIX_COEFFICIENTS_BT2020_NCL : AVIF_MATRIX_COEFFICIENTS_BT709;
         image->yuvRange = AVIF_RANGE_FULL;
         image->alphaPremultiplied = AVIF_FALSE;
@@ -38,12 +38,12 @@ Image make_image(unsigned w, unsigned h, unsigned depth, uhdr_color_gamut_t gamu
     return image;
 }
 
-int write_avif(avifImage* image, const char* path, int quality) {
+int write_avif(avifImage* image, const char* path, StillEncodeQuality quality) {
     Encoder encoder(avifEncoderCreate(), avifEncoderDestroy);
     if (!encoder) return -71;
-    constexpr int qualities[] = {100, 90, 85, 80};
+
     encoder->codecChoice = AVIF_CODEC_CHOICE_AOM;
-    encoder->quality = qualities[std::clamp(quality, 0, 3)];
+    encoder->quality = quality.avif();
     encoder->qualityAlpha = AVIF_QUALITY_LOSSLESS;
     encoder->qualityGainMap = encoder->quality;
     encoder->speed = 6;
@@ -75,7 +75,7 @@ avifRGBImage rgb_view(const avifImage* image, uint8_t* pixels, unsigned depth, u
 } // namespace
 
 int encode_avif_u8(unsigned w, unsigned h, const uint8_t* rgba, uhdr_color_gamut_t gamut,
-                   const char* path, int quality) {
+                   const char* path, StillEncodeQuality quality) {
     if (!rgba || !path || !w || !h) return -70;
     auto image = make_image(w, h, 8, gamut, false, quality);
     if (!image) return -71;
@@ -85,12 +85,12 @@ int encode_avif_u8(unsigned w, unsigned h, const uint8_t* rgba, uhdr_color_gamut
 }
 
 int encode_avif_f16(unsigned w, unsigned h, uint16_t* rgba, uhdr_color_gamut_t gamut,
-                    int mode, const char* path, int quality, const uint8_t* sdr_base) {
+                    int mode, const char* path, StillEncodeQuality quality, const uint8_t* sdr_base) {
     if (!rgba || !path || !w || !h || mode < 0 || mode > 2) return -70;
     const size_t pixels = static_cast<size_t>(w) * h;
     const bool pq = mode == 1;
     const bool gain_map = mode == 2;
-    const unsigned depth = quality == 0 ? 12 : 10;
+    const unsigned depth = quality.avif_lossless() ? 12 : 10;
     const unsigned maximum = (1u << depth) - 1;
     auto image = make_image(w, h, depth, gamut, pq, quality);
     if (!image) return -71;
@@ -151,7 +151,7 @@ int encode_avif_f16(unsigned w, unsigned h, uint16_t* rgba, uhdr_color_gamut_t g
         // Equal-sized map avoids libavif's optional libyuv scaling dependency.
         image->gainMap->image = avifImageCreate(w, h, depth, AVIF_PIXEL_FORMAT_YUV444);
         if (!image->gainMap->image) return -71;
-        image->gainMap->image->matrixCoefficients = quality == 0 ?
+        image->gainMap->image->matrixCoefficients = quality.avif_lossless() ?
             AVIF_MATRIX_COEFFICIENTS_IDENTITY : AVIF_MATRIX_COEFFICIENTS_BT709;
         image->gainMap->image->yuvRange = AVIF_RANGE_FULL;
         // libavif clamps the LINEAR transfer to [0,1]. Pass 16-bit PQ instead,

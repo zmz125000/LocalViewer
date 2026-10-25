@@ -208,7 +208,7 @@ private suspend fun encodeStaged(leaf: String, target: StillExportTarget, stage:
 
 private suspend fun encodeStagedCaptured(leaf: String, target: StillExportTarget, stage: suspend () -> File, localSource: Path?): EncodedStill? = withIOContext {
     check(target.available) { "Export encoder unavailable: $target" }
-    val quality = currentCoroutineContext()[StillExportQuality]?.value ?: StillExportQuality.current().value
+    val quality = currentCoroutineContext()[StillExportQuality] ?: StillExportQuality.current()
     withExportSource(localSource, stage) { source, decodeSource ->
         android.util.Log.i("StillConvert", "Start $leaf -> $target source=$decodeSource")
         StillExportWork.withSource(source, leaf) {

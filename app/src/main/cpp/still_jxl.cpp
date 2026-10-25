@@ -16,7 +16,7 @@ struct JxlFileCloser {
 }
 
 static int encode_jxl_pixels(unsigned w, unsigned h, const void* rgba, uhdr_color_gamut_t cg,
-                             const char* path, int quality, JxlDataType type,
+                             const char* path, StillEncodeQuality quality, JxlDataType type,
                              JxlTransferFunction transfer, float intensity) {
     const size_t pixels = static_cast<size_t>(w) * h;
     if (!rgba || !path || !pixels) return -60;
@@ -35,9 +35,8 @@ static int encode_jxl_pixels(unsigned w, unsigned h, const void* rgba, uhdr_colo
     info.alpha_bits = info.bits_per_sample;
     info.alpha_exponent_bits = info.exponent_bits_per_sample;
     info.alpha_premultiplied = JXL_FALSE;
-    const bool compression = quality > 0;
-    constexpr float distances[] = {0.f, .3f, .5f, 1.f};
-    const float distance = distances[std::clamp(quality, 0, 3)];
+    const float distance = quality.jxl_distance();
+    const bool compression = distance > 0.f;
     info.uses_original_profile = compression ? JXL_FALSE : JXL_TRUE;
     info.intensity_target = intensity;
     JxlColorEncoding color{};
@@ -79,7 +78,7 @@ static int encode_jxl_pixels(unsigned w, unsigned h, const void* rgba, uhdr_colo
 // The caller owns straight-alpha linear half samples. Normalize HDR to its
 // declared luminance for linear JXL; PQ retains the absolute 10000-nit reference.
 int encode_jxl_f16(unsigned w, unsigned h, uint16_t* rgba, uhdr_color_gamut_t cg,
-                   bool hdr, const char* path, int quality, bool pq) {
+                   bool hdr, const char* path, StillEncodeQuality quality, bool pq) {
     const size_t pixels = static_cast<size_t>(w) * h;
     if (!rgba || !path || !pixels) return -60;
     float peak = pq ? kMaxLinear : 1.f;
@@ -125,7 +124,7 @@ int encode_jxl_f16(unsigned w, unsigned h, uint16_t* rgba, uhdr_color_gamut_t cg
 }
 
 int encode_jxl_u8(unsigned w, unsigned h, const uint8_t* rgba, uhdr_color_gamut_t cg,
-                   const char* path, int quality) {
+                   const char* path, StillEncodeQuality quality) {
     return encode_jxl_pixels(w, h, rgba, cg, path, quality, JXL_TYPE_UINT8,
                              JXL_TRANSFER_FUNCTION_SRGB, kSdrWhiteNits);
 }

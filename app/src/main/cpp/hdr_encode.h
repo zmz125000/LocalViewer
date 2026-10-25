@@ -8,6 +8,32 @@
 
 #include "ultrahdr_api.h"
 
+/** One captured export quality selection; existing native callers default to High. */
+struct StillEncodeQuality {
+    int preset;
+    float custom_distance;
+    int custom_quality;
+
+    StillEncodeQuality(int p = 1, float distance = .5f, int quality = 90)
+        : preset(p < 0 ? 0 : p > 4 ? 4 : p),
+          custom_distance(std::isfinite(distance) ? std::fmin(15.f, std::fmax(0.f, distance)) : .5f),
+          custom_quality(quality < 1 ? 1 : quality > 100 ? 100 : quality) {}
+
+    int jpeg() const {
+        constexpr int values[] = {95, 95, 90, 85};
+        return preset == 4 ? custom_quality : values[preset];
+    }
+    int avif() const {
+        constexpr int values[] = {100, 90, 85, 80};
+        return preset == 4 ? custom_quality : values[preset];
+    }
+    float jxl_distance() const {
+        constexpr float values[] = {0.f, .3f, .5f, 1.f};
+        return preset == 4 ? custom_distance : values[preset];
+    }
+    bool avif_lossless() const { return avif() == 100; }
+};
+
 /** IEEE754 binary16 from float (round-to-nearest, portable). */
 inline uint16_t float_to_half(float f) {
     union {
@@ -115,7 +141,7 @@ int encode_linear_rgba_f16_to_uhdr(unsigned w, unsigned h, const uint16_t* rgba,
                                    const char* out_path,
                                    uhdr_color_gamut_t cg = UHDR_CG_BT_709,
                                    float fixed_peak_nits = 0.f, bool force_hdr = false,
-                                   const uint8_t* sdr_base = nullptr, int quality = 1);
+                                   const uint8_t* sdr_base = nullptr, StillEncodeQuality quality = 1);
 
 /** Downscale packed RGBA F16 so long edge ≤ max_edge (box filter). max_edge 0 = no-op. */
 void scale_rgba_f16_max_edge(std::vector<uint16_t>& rgba, unsigned& w, unsigned& h,
@@ -285,17 +311,17 @@ jbyteArray pack_direct_to_jbyte_array(JNIEnv* env, std::vector<uint16_t>& rgba, 
 
 /** Straight-alpha linear F16 → JXL. PQ uses uint16 codes, linear uses F16. Mutates RGBA. */
 int encode_jxl_f16(unsigned w, unsigned h, uint16_t* rgba, uhdr_color_gamut_t cg,
-                   bool hdr, const char* path, int quality = 1, bool pq = false);
+                   bool hdr, const char* path, StillEncodeQuality quality = 1, bool pq = false);
 
 /** Straight-alpha sRGB-curve RGBA8 → 8-bit SDR JXL. */
 int encode_jxl_u8(unsigned w, unsigned h, const uint8_t* rgba, uhdr_color_gamut_t cg,
-                  const char* path, int quality = 1);
+                  const char* path, StillEncodeQuality quality = 1);
 
 /** AVIF: mode 0 SDR, 1 PQ, 2 ISO 21496-1 SDR base + HDR gain map.
  * F16 is linear, straight alpha, with 1.0 = 203 nits; sdr_base is optional RGBA8.
  * Deep sources use 10 bits, or 12 bits for the lossless preset, with 4:4:4 sampling.
  */
 int encode_avif_f16(unsigned w, unsigned h, uint16_t* rgba, uhdr_color_gamut_t cg,
-                    int mode, const char* path, int quality, const uint8_t* sdr_base = nullptr);
+                    int mode, const char* path, StillEncodeQuality quality, const uint8_t* sdr_base = nullptr);
 int encode_avif_u8(unsigned w, unsigned h, const uint8_t* rgba, uhdr_color_gamut_t cg,
-                   const char* path, int quality);
+                   const char* path, StillEncodeQuality quality);

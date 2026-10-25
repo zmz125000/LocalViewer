@@ -19,6 +19,8 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.nestedscroll.nestedScroll
@@ -228,12 +230,33 @@ fun AnimatedVisibilityScope.EhScreen(navigator: DestinationsNavigator) = Screen(
                     state = Settings.openHtmlInIncognito.asMutableState(),
                 )
             }
+            val conversionQuality = Settings.imageConversionQuality.asMutableState()
             SimpleMenuPreferenceInt(
                 title = stringResource(id = R.string.image_conversion_quality),
                 entry = com.hippo.ehviewer.R.array.image_conversion_quality_entries,
                 entryValueRes = com.hippo.ehviewer.R.array.image_conversion_quality_values,
-                state = Settings.imageConversionQuality.asMutableState(),
+                state = conversionQuality,
             )
+            AnimatedVisibility(visible = conversionQuality.value == 4) {
+                Column {
+                    val distance = Settings.imageConversionJxlDistance.asMutableState()
+                    val sliderDistance = remember { mutableIntStateOf(distance.value) }
+                    me.zhanghai.compose.preference.IntSliderPreference(
+                        state = distance,
+                        sliderState = sliderDistance,
+                        title = { Text(stringResource(R.string.image_conversion_jxl_distance)) },
+                        valueRange = 0..1500,
+                        valueSteps = 299,
+                        valueText = { Text("%.2f".format(sliderDistance.intValue / 100f)) },
+                    )
+                    IntSliderPreference(
+                        title = stringResource(R.string.image_conversion_custom_codec_quality),
+                        minValue = 1,
+                        maxValue = 100,
+                        state = Settings.imageConversionCustomQuality.asMutableState(),
+                    )
+                }
+            }
             val rawHdrMode = Settings.rawHdrConversionMode.asMutableState()
             val rawHdrEntries = stringArrayResource(id = com.hippo.ehviewer.R.array.raw_hdr_conversion_entries)
             SimpleMenuPreferenceInt(
