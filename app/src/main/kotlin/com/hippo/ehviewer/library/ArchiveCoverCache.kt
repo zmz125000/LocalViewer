@@ -887,8 +887,10 @@ object ArchiveCoverCache {
         if (engine is PdfImageEngine) {
             // Creating a reader page first can allocate hundreds of MiB of ARGB
             // pixels. Sample before expanding colors, as the photo grid does.
-            val bytes = engine.extractCoverThumb(0) ?: return null
-            return writeCoverFromPageBytes(cacheKey, bytes, "webp")
+            return HdrConvertCache.withThumbConvertSlot {
+                val bytes = engine.extractCoverThumb(0) ?: return@withThumbConvertSlot null
+                writeCoverFromPageBytes(cacheKey, bytes, "webp")
+            }
         }
         val page = engine.extractToCache(cacheKey, 0) ?: return null
         return writeCoverFromExtractedPage(cacheKey, page)

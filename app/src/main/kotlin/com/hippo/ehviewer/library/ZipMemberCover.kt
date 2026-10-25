@@ -5,6 +5,7 @@ import android.os.Looper
 import android.widget.Toast
 import com.ehviewer.core.i18n.R
 import com.hippo.ehviewer.image.hdr.HdrConvertCache
+import com.hippo.ehviewer.image.hdr.writeDownloadedThumbnail
 import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
@@ -193,7 +194,13 @@ object ZipMemberCover {
         .takeIf { it.isFile && it.length() > 0L }?.absolutePath?.toPath()
 
     /** Stream a cached or remote member without building a full compressed/uncompressed array. */
-    fun copyTo(zipKey: String, memberRel: String, output: OutputStream, openSource: () -> ArchiveByteSource?): Boolean {
+    fun copyTo(
+        zipKey: String,
+        memberRel: String,
+        output: OutputStream,
+        notifyTooLarge: Boolean = true,
+        openSource: () -> ArchiveByteSource?,
+    ): Boolean {
         if (!isZipMemberCoverExtractAllowed(memberRel)) return false
         cachedPath(zipKey, memberRel)?.let { path ->
             File(path.toString()).inputStream().use { it.copyTo(output) }
@@ -203,7 +210,7 @@ object ZipMemberCover {
         return try {
             val cd = ZipCentralDirectory.open(source) ?: return false
             val entry = cd.find(memberRel) ?: return false
-            if (rejectIfTooLarge(entry, notify = true)) return false
+            if (rejectIfTooLarge(entry, notifyTooLarge)) return false
             cd.extractToStream(entry, output, MAX_CACHE_BYTES)
         } finally {
             runCatching { source.close() }
@@ -237,7 +244,7 @@ object ZipMemberCover {
      * 1. Thumb hit (WebP or leftover JPEG) → return
      * 2. Reader original already in [destFile] → subsample, no network
      * 3. [cacheOriginal] → [ensure] then subsample (save-thumb-original setting)
-     * 4. Else range-extract to RAM → [HdrConvertCache.writeThumbFromBytes]
+     * 4. Else range-extract with bounded RAM; large members spill to a temporary file.
      */
     suspend fun ensureBrowseThumb(
         zipKey: String,
@@ -261,12 +268,22 @@ object ZipMemberCover {
                 val written = ensure(zipKey, memberRel, notifyTooLarge, openSource) ?: return@withLock null
                 return@withLock encodeThumbFromFile(File(written.toString()), destJpeg, memberRel)
             }
-            val bytes = extractBytes(zipKey, memberRel, notifyTooLarge, openSource) ?: return@withLock null
-            val ok = HdrConvertCache.writeThumbFromBytes(
-                bytes = bytes,
-                destJpeg = destJpeg,
-                fileNameHint = memberRel.substringAfterLast('/').substringAfterLast('\\'),
-            )
+            val ok = try {
+                writeDownloadedThumbnail(
+                    dest = destJpeg,
+                    edge = OriginDiskCache.THUMB_EDGE,
+                    quality = OriginDiskCache.THUMB_QUALITY,
+                    name = memberRel.substringAfterLast('/').substringAfterLast('\\'),
+                ) { output ->
+                    if (!copyTo(zipKey, memberRel, output, notifyTooLarge, openSource)) {
+                        throw IOException("Cannot extract ZIP thumbnail: $memberRel")
+                    }
+                }
+            } catch (error: ZipMemberTooLargeException) {
+                throw error
+            } catch (_: IOException) {
+                return@withLock null
+            }
             OriginDiskCache.existingThumb(destJpeg)?.takeIf { ok }?.absolutePath?.toPath()
         }
     }

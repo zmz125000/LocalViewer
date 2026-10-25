@@ -71,6 +71,18 @@ internal object ThumbnailMemory {
         return withEstimate(bytes.size.toLong(), size, codec, edge, mapped = false, work = work)
     }
 
+    /** PDF Flate/predictor buffers are allocated before the encoded thumb reaches writeThumb. */
+    suspend fun <T> withPdfCover(width: Int, height: Int, streamBytes: Long, rawSamples: Boolean, edge: Int, work: suspend () -> T): T {
+        val pixels = if (width in 1..65536 && height in 1..65536) width.toLong() * height else 0L
+        val compressed = if (streamBytes > 0) streamBytes.coerceAtMost(Long.MAX_VALUE / 4) * 2 else Long.MAX_VALUE / 4
+        // Inflate, undo prediction and unpack can overlap several sample arrays.
+        // JPEG streams only need the compressed payload and reduced decoder output.
+        val heapBytes = if (rawSamples && pixels == 0L) Long.MAX_VALUE else compressed + (if (rawSamples) pixels * 16 else 0) + MIB
+        val thumb = edge.coerceIn(64, 2048).toLong().let { it * it * 24 }
+        val nativeBytes = if (pixels == 0L) Long.MAX_VALUE else pixels * 8 + thumb
+        return heap.withBytes(heapBytes) { native.withBytes(nativeBytes, work) }
+    }
+
     private fun pack(width: Int, height: Int): Long = if (width > 0 && height > 0) (width.toLong() shl 32) or height.toLong() else 0L
 
     private suspend fun <T> withEstimate(sourceBytes: Long, size: Long, codec: LibCodec?, edge: Int, mapped: Boolean, work: suspend () -> T): T {
