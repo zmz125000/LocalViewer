@@ -651,6 +651,46 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_convertAvifBytesToUltraHdr(JNIEnv* env,
     return rc;
 }
 
+/** Full-resolution convert with borrowed mapped/direct input. */
+extern "C" JNIEXPORT jint JNICALL
+Java_com_hippo_ehviewer_jni_HdrConvertKt_convertAvifBufferToUltraHdr(JNIEnv* env, jclass,
+                                                                    jobject jInput,
+                                                                    jstring jOutput) try {
+    if (!jInput || !jOutput) return -10;
+    const jlong len = env->GetDirectBufferCapacity(jInput);
+    const auto* bytes = static_cast<const uint8_t*>(env->GetDirectBufferAddress(jInput));
+    if (!bytes || len <= 0) return -12;
+
+    ThumbnailOutputPath outputPath(env, jOutput);
+    const char* out_path = outputPath.get();
+    if (!out_path) {
+        return -14;
+    }
+
+    std::vector<uint16_t> rgba;
+    unsigned w = 0, h = 0;
+    int has_gm = 0;
+    int transfer = 0;
+    uhdr_color_gamut_t cg = UHDR_CG_BT_709;
+    int rc = decode_avif_to_linear_f16(reinterpret_cast<const uint8_t*>(bytes),
+                                       static_cast<size_t>(len), rgba, w, h, &has_gm, &transfer,
+                                       &cg, 0);
+    if (rc != 0) {
+        ALOGE("AVIF decode failed rc=%d", rc);
+        return -20 + rc;
+    }
+    // Gain-map AVIF should use platform path; if caller still converts, we encode base HDR.
+    if (has_gm) {
+        ALOGI("AVIF has embedded gain map — encoding linearized base to Ultra HDR JPEG");
+    }
+
+    const bool force_hdr = (transfer == 16 /*PQ*/ || transfer == 18 /*HLG*/);
+    rc = encode_linear_rgba_f16_to_uhdr(w, h, rgba.data(), out_path, cg, 0.f, force_hdr);
+    return rc;
+} catch (...) {
+    return -30;
+}
+
 /** AVIF → Ultra HDR with optional long-edge cap (0 = full res). Used for thumbs. */
 extern "C" JNIEXPORT jint JNICALL
 Java_com_hippo_ehviewer_jni_HdrConvertKt_convertAvifBytesToUltraHdrMaxEdge(
@@ -772,6 +812,44 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeAvifBytesToDirect(JNIEnv* env, jc
     return result;
 }
 
+/** Direct/mapped compressed input; the caller owns its lifetime. */
+extern "C" JNIEXPORT jbyteArray JNICALL
+Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeAvifBufferToDirect(JNIEnv* env, jclass,
+                                                                 jobject jInput, jint maxEdge,
+                                                                 jboolean advancedColor,
+                                                                 jintArray jOutInfo,
+                                                                 jfloatArray jOutBoost) try {
+    if (!jInput || !jOutInfo || !jOutBoost) return nullptr;
+    if (env->GetArrayLength(jOutInfo) < 6 || env->GetArrayLength(jOutBoost) < 1) return nullptr;
+    const jlong len = env->GetDirectBufferCapacity(jInput);
+    const auto* bytes = static_cast<const uint8_t*>(env->GetDirectBufferAddress(jInput));
+    if (!bytes || len <= 0) return nullptr;
+
+    std::vector<uint16_t> rgba;
+    unsigned w = 0, h = 0;
+    int has_gm = 0;
+    int transfer = 0;
+    uhdr_color_gamut_t cg = UHDR_CG_BT_709;
+    jbyteArray result = nullptr;
+    int rc = decode_avif_to_linear_f16(
+        reinterpret_cast<const uint8_t*>(bytes), static_cast<size_t>(len), rgba, w, h, &has_gm,
+        &transfer, &cg, maxEdge > 0 ? static_cast<unsigned>(maxEdge) : 0u);
+    if (rc == 0) {
+        if (maxEdge > 0) {
+            scale_rgba_f16_max_edge(rgba, w, h, static_cast<unsigned>(maxEdge));
+        }
+        const bool force_hdr = (transfer == 16 || transfer == 18);
+        result = pack_direct_to_jbyte_array(env, rgba, w, h, force_hdr, cg,
+                                            advancedColor == JNI_TRUE, transfer, jOutInfo,
+                                            jOutBoost);
+    } else {
+        ALOGE("AVIF direct decode failed rc=%d", rc);
+    }
+    return result;
+} catch (...) {
+    return nullptr;
+}
+
 /**
  * Probe: 0 = not AVIF / error, 1 = gain-map AVIF, 2 = absolute PQ/HLG, 3 = other AVIF.
  */
@@ -806,5 +884,37 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_probeAvifHdrKind(JNIEnv* env, jclass, j
         avifDecoderDestroy(dec);
     }
     env->ReleaseByteArrayElements(jInput, bytes, JNI_ABORT);
+    return result;
+}
+
+extern "C" JNIEXPORT jint JNICALL
+Java_com_hippo_ehviewer_jni_HdrConvertKt_probeAvifBufferHdrKind(JNIEnv* env, jclass, jobject jInput) {
+    if (!jInput) return 0;
+    const jlong len = env->GetDirectBufferCapacity(jInput);
+    const auto* bytes = static_cast<const uint8_t*>(env->GetDirectBufferAddress(jInput));
+    if (!bytes || len <= 0) return 0;
+
+    avifDecoder* dec = avifDecoderCreate();
+    jint result = 0;
+    if (dec) {
+        avifResult r =
+            avifDecoderSetIOMemory(dec, reinterpret_cast<const uint8_t*>(bytes), static_cast<size_t>(len));
+        if (r == AVIF_RESULT_OK) {
+            r = avifDecoderParse(dec);
+            if (r == AVIF_RESULT_OK && dec->image) {
+                result = 3;
+                if (dec->image->gainMap != nullptr) {
+                    result = 1;
+                } else {
+                    const auto tc = dec->image->transferCharacteristics;
+                    if (tc == AVIF_TRANSFER_CHARACTERISTICS_SMPTE2084 ||
+                        tc == AVIF_TRANSFER_CHARACTERISTICS_HLG) {
+                        result = 2;
+                    }
+                }
+            }
+        }
+        avifDecoderDestroy(dec);
+    }
     return result;
 }

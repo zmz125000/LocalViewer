@@ -600,6 +600,31 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeJpeg2000BytesToDirect(
                                       jOutInfo, jOutBoost);
 }
 
+/** Direct/mapped compressed input; the caller owns its lifetime. */
+extern "C" JNIEXPORT jbyteArray JNICALL
+Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeJpeg2000BufferToDirect(
+        JNIEnv* env, jclass, jobject input, jint maxEdge, jboolean advancedColor,
+        jintArray jOutInfo, jfloatArray jOutBoost) try {
+    if (!input || !jOutInfo || !jOutBoost) return nullptr;
+    if (env->GetArrayLength(jOutInfo) < 6 || env->GetArrayLength(jOutBoost) < 1) return nullptr;
+    const jlong n = env->GetDirectBufferCapacity(input);
+    const auto* bytes = static_cast<const uint8_t*>(env->GetDirectBufferAddress(input));
+    if (!bytes || n <= 0) return nullptr;
+
+    std::vector<uint16_t> rgba;
+    unsigned w = 0, h = 0;
+    uhdr_color_gamut_t cg = UHDR_CG_BT_709;
+    bool hdr = false;
+    int tf = 0;
+    const bool ok = decode_linear(reinterpret_cast<const uint8_t*>(bytes), n, maxEdge, rgba, w, h,
+                                  cg, hdr, tf, false);
+    if (!ok) return nullptr;
+    return pack_direct_to_jbyte_array(env, rgba, w, h, hdr, cg, advancedColor == JNI_TRUE, tf,
+                                      jOutInfo, jOutBoost);
+} catch (...) {
+    return nullptr;
+}
+
 static jint encode_jpeg2000(JNIEnv* env, jbyteArray input, jstring output, jint maxEdge) {
     if (!input || !output) return -10;
     const jsize n = env->GetArrayLength(input);
@@ -628,6 +653,38 @@ static jint encode_jpeg2000(JNIEnv* env, jbyteArray input, jstring output, jint 
     const int rc = encode_linear_rgba_f16_to_uhdr(w, h, rgba.data(), path, cg, peak, hdr);
     env->ReleaseStringUTFChars(output, path);
     return rc;
+}
+
+/** Full-resolution convert with borrowed mapped/direct input. */
+extern "C" JNIEXPORT jint JNICALL
+Java_com_hippo_ehviewer_jni_HdrConvertKt_convertJpeg2000BufferToUltraHdr(JNIEnv* env, jclass, jobject input, jstring output) try {
+    const jint maxEdge = 0;
+    if (!input || !output) return -10;
+    const jlong n = env->GetDirectBufferCapacity(input);
+    const auto* bytes = static_cast<const uint8_t*>(env->GetDirectBufferAddress(input));
+    if (!bytes || n <= 0) return -12;
+
+    ThumbnailOutputPath outputPath(env, output);
+    const char* path = outputPath.get();
+    if (!path) {
+        return -14;
+    }
+    std::vector<uint16_t> rgba;
+    unsigned w = 0, h = 0;
+    uhdr_color_gamut_t cg = UHDR_CG_BT_709;
+    bool hdr = false;
+    int tf = 0;
+    const bool ok = decode_linear(reinterpret_cast<const uint8_t*>(bytes), n, maxEdge, rgba, w, h,
+                                  cg, hdr, tf, true);
+    if (!ok) {
+        return -20;
+    }
+    (void)tf;
+    const float peak = maxEdge > 0 ? thumb_fixed_peak_nits(hdr) : 0.f;
+    const int rc = encode_linear_rgba_f16_to_uhdr(w, h, rgba.data(), path, cg, peak, hdr);
+    return rc;
+} catch (...) {
+    return -30;
 }
 
 extern "C" JNIEXPORT jint JNICALL

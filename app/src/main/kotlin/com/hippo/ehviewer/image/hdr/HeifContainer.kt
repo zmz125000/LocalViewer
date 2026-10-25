@@ -1,5 +1,6 @@
 package com.hippo.ehviewer.image.hdr
 
+import java.nio.ByteBuffer
 import kotlin.math.pow
 
 /**
@@ -137,14 +138,16 @@ internal object HeifContainer {
         }
     }
 
-    fun parse(bytes: ByteArray): Parsed? = runCatching { parseOrThrow(bytes) }.getOrNull()
+    fun parse(bytes: ByteArray): Parsed? = parse(ByteBuffer.wrap(bytes))
 
-    private fun parseOrThrow(file: ByteArray): Parsed {
+    fun parse(bytes: ByteBuffer): Parsed? = runCatching { parseOrThrow(bytes.slice()) }.getOrNull()
+
+    private fun parseOrThrow(file: ByteBuffer): Parsed {
         val items = LinkedHashMap<Int, Item>()
         val refs = ArrayList<Ref>()
         var primary = 0
         val idat = ArrayList<ByteArray>()
-        walk(file, 0, file.size) { type, start, size ->
+        walk(file, 0, file.limit()) { type, start, size ->
             val payload = start + 8
             val end = start + size
             when (type) {
@@ -161,7 +164,7 @@ internal object HeifContainer {
     }
 
     private fun onMetaChild(
-        file: ByteArray,
+        file: ByteBuffer,
         type: String,
         start: Int,
         size: Int,
@@ -210,13 +213,13 @@ internal object HeifContainer {
     )
     private class HevcSplit(val bitDepth: Int, val csd: ByteArray, val picture: ByteArray)
 
-    private fun readExtents(file: ByteArray, item: Item, idat: List<ByteArray>): ByteArray? {
+    private fun readExtents(file: ByteBuffer, item: Item, idat: List<ByteArray>): ByteArray? {
         if (item.extents.isEmpty()) return null
         val parts = ArrayList<ByteArray>(item.extents.size)
         for (extent in item.extents) {
             val chunk = when (item.construction) {
                 0 -> slice(file, extent.offset, extent.length)
-                1 -> idat.firstOrNull()?.let { slice(it, extent.offset, extent.length) }
+                1 -> idat.firstOrNull()?.let { slice(ByteBuffer.wrap(it), extent.offset, extent.length) }
                 else -> null
             } ?: return null
             parts += chunk
@@ -231,11 +234,11 @@ internal object HeifContainer {
         return all
     }
 
-    private fun slice(file: ByteArray, offset: Long, length: Long): ByteArray? {
-        if (offset < 0 || offset > file.size) return null
+    private fun slice(file: ByteBuffer, offset: Long, length: Long): ByteArray? {
+        if (offset < 0 || offset > file.limit()) return null
         val from = offset.toInt()
-        val to = if (length <= 0L) file.size else (offset + length).toInt()
-        if (to < from || to > file.size) return null
+        val to = if (length <= 0L) file.limit() else (offset + length).toInt()
+        if (to < from || to > file.limit()) return null
         return file.copyOfRange(from, to)
     }
 
@@ -251,7 +254,7 @@ internal object HeifContainer {
         return Grid(rows, columns, width, height)
     }
 
-    private fun readPrimary(file: ByteArray, payload: Int, end: Int): Int? {
+    private fun readPrimary(file: ByteBuffer, payload: Int, end: Int): Int? {
         if (payload + 6 > end) return null
         val version = file[payload].toInt() and 0xff
         return if (version == 0) {
@@ -263,7 +266,7 @@ internal object HeifContainer {
         }
     }
 
-    private fun readIloc(file: ByteArray, payload: Int, end: Int, items: MutableMap<Int, Item>) {
+    private fun readIloc(file: ByteBuffer, payload: Int, end: Int, items: MutableMap<Int, Item>) {
         if (payload + 6 > end) return
         val version = file[payload].toInt() and 0xff
         var p = payload + 4
@@ -331,7 +334,7 @@ internal object HeifContainer {
         }
     }
 
-    private fun readIinf(file: ByteArray, payload: Int, end: Int, items: MutableMap<Int, Item>) {
+    private fun readIinf(file: ByteBuffer, payload: Int, end: Int, items: MutableMap<Int, Item>) {
         if (payload + 6 > end) return
         val version = file[payload].toInt() and 0xff
         val entriesAt = payload + 4
@@ -347,7 +350,7 @@ internal object HeifContainer {
         }
     }
 
-    private fun readInfe(file: ByteArray, payload: Int, end: Int, items: MutableMap<Int, Item>) {
+    private fun readInfe(file: ByteBuffer, payload: Int, end: Int, items: MutableMap<Int, Item>) {
         if (payload + 8 > end) return
         val version = file[payload].toInt() and 0xff
         if (version < 2) return
@@ -375,7 +378,7 @@ internal object HeifContainer {
         if (urn != null) item.urn = urn
     }
 
-    private fun readIref(file: ByteArray, payload: Int, end: Int, refs: MutableList<Ref>) {
+    private fun readIref(file: ByteBuffer, payload: Int, end: Int, refs: MutableList<Ref>) {
         if (payload + 4 > end) return
         val wide = (file[payload].toInt() and 0xff) != 0
         walk(file, payload + 4, end) { type, start, size ->
@@ -412,7 +415,7 @@ internal object HeifContainer {
         }
     }
 
-    private fun readIprp(file: ByteArray, payload: Int, end: Int, items: MutableMap<Int, Item>) {
+    private fun readIprp(file: ByteBuffer, payload: Int, end: Int, items: MutableMap<Int, Item>) {
         var properties: List<ByteArray>? = null
         var associations: List<Pair<Int, IntArray>>? = null
         walk(file, payload, end) { type, start, size ->
@@ -432,17 +435,17 @@ internal object HeifContainer {
     }
 
     /** Each entry is `type || payload`, so property index 1 is the first `ipco` child. */
-    private fun readProperties(file: ByteArray, start: Int, end: Int): List<ByteArray> {
+    private fun readProperties(file: ByteBuffer, start: Int, end: Int): List<ByteArray> {
         val out = ArrayList<ByteArray>()
         walk(file, start, end) { _, boxStart, size ->
             val from = boxStart + 4
             val to = boxStart + size
-            if (from < to && to <= file.size) out += file.copyOfRange(from, to)
+            if (from < to && to <= file.limit()) out += file.copyOfRange(from, to)
         }
         return out
     }
 
-    private fun readIpma(file: ByteArray, payload: Int, end: Int): List<Pair<Int, IntArray>> {
+    private fun readIpma(file: ByteBuffer, payload: Int, end: Int): List<Pair<Int, IntArray>> {
         if (payload + 8 > end) return emptyList()
         val version = file[payload].toInt() and 0xff
         val wideIndex = u24(file, payload + 1) and 1 != 0
@@ -642,13 +645,13 @@ private fun appleStops(maker33: Double, maker48: Double): Double {
 }
 
 private fun walk(
-    file: ByteArray,
+    file: ByteBuffer,
     start: Int,
     end: Int,
     onBox: (type: String, start: Int, size: Int) -> Unit,
 ) {
     var p = start
-    val limit = minOf(end, file.size)
+    val limit = minOf(end, file.limit())
     while (p + 8 <= limit) {
         var size = u32(file, p).toLong()
         val type = ascii(file, p + 4, 4)
@@ -664,6 +667,39 @@ private fun walk(
         onBox(type, p, size.toInt())
         p += size.toInt()
     }
+}
+
+private fun u16(b: ByteBuffer, o: Int): Int = ((b[o].toInt() and 0xff) shl 8) or (b[o + 1].toInt() and 0xff)
+
+private fun u24(b: ByteBuffer, o: Int): Int = ((b[o].toInt() and 0xff) shl 16) or ((b[o + 1].toInt() and 0xff) shl 8) or (b[o + 2].toInt() and 0xff)
+
+private fun u32(b: ByteBuffer, o: Int): Int = ((b[o].toInt() and 0xff) shl 24) or ((b[o + 1].toInt() and 0xff) shl 16) or
+    ((b[o + 2].toInt() and 0xff) shl 8) or (b[o + 3].toInt() and 0xff)
+
+private fun u64(b: ByteBuffer, o: Int): Long = (u32(b, o).toLong() shl 32) or (u32(b, o + 4).toLong() and 0xffffffffL)
+
+private fun readBits(b: ByteBuffer, o: Int, end: Int, size: Int): Long? {
+    if (size == 0) return 0L
+    if (o < 0 || size < 0 || o + size > end || o + size > b.limit()) return null
+    var v = 0L
+    for (i in 0 until size) v = (v shl 8) or (b[o + i].toLong() and 0xff)
+    return v
+}
+
+private fun ascii(b: ByteBuffer, o: Int, n: Int): String {
+    if (o < 0 || n < 0 || o + n > b.limit()) return ""
+    val chars = CharArray(n)
+    for (i in 0 until n) chars[i] = (b[o + i].toInt() and 0xff).toChar()
+    return String(chars)
+}
+
+private fun cString(b: ByteBuffer, o: Int, end: Int): Pair<String, Int>? {
+    if (o < 0 || o >= end || o >= b.limit()) return null
+    var p = o
+    val limit = minOf(end, b.limit())
+    while (p < limit && b[p] != 0.toByte()) p++
+    if (p >= limit) return null
+    return ascii(b, o, p - o) to (p + 1)
 }
 
 private fun u16(b: ByteArray, o: Int): Int = ((b[o].toInt() and 0xff) shl 8) or (b[o + 1].toInt() and 0xff)
@@ -717,3 +753,12 @@ private fun readU32(b: ByteArray, o: Int, be: Boolean): Int? {
 }
 
 private fun readS32(b: ByteArray, o: Int, be: Boolean): Int? = readU32(b, o, be)
+
+private fun ByteBuffer.copyOfRange(from: Int, to: Int): ByteArray = ByteArray(to - from).also { out ->
+    duplicate().apply {
+        position(from)
+        limit(to)
+    }.get(out)
+}
+
+private fun walk(file: ByteArray, start: Int, end: Int, onBox: (String, Int, Int) -> Unit) = walk(ByteBuffer.wrap(file), start, end, onBox)

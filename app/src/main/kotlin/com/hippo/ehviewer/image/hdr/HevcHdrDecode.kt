@@ -2,6 +2,7 @@ package com.hippo.ehviewer.image.hdr
 
 import android.util.Log
 import com.hippo.ehviewer.jni.linearizeHeifIcc
+import java.nio.ByteBuffer
 import kotlin.math.max
 import kotlin.math.pow
 import kotlin.math.roundToInt
@@ -30,7 +31,9 @@ internal object HevcHdrDecode {
         val transfer: Int,
     )
 
-    fun decode(bytes: ByteArray, maxEdge: Int, advancedColor: Boolean): Frame? {
+    fun decode(bytes: ByteArray, maxEdge: Int, advancedColor: Boolean): Frame? = decode(ByteBuffer.wrap(bytes), maxEdge, advancedColor)
+
+    fun decode(bytes: ByteBuffer, maxEdge: Int, advancedColor: Boolean): Frame? {
         val parsed = HeifContainer.parse(bytes) ?: return null
         val hdr = parsed.primaryImage() ?: return null
         val isHdr = hdr.transfer == 16 || hdr.transfer == 18

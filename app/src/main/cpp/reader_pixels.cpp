@@ -1,6 +1,8 @@
 #include "reader_pixels.h"
 
 #include <jni.h>
+#include <sys/mman.h>
+#include <sys/stat.h>
 #include <android/hardware_buffer_jni.h>
 #include <android/bitmap.h>
 #include <cstring>
@@ -158,4 +160,25 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_copyNativeReaderPixelsToAHB(
     if (AHardwareBuffer_unlock(buffer, nullptr) != 0) {
         env->ThrowNew(env->FindClass("java/lang/IllegalStateException"), "HardwareBuffer unlock failed");
     }
+}
+
+// Borrow the descriptor; Kotlin keeps it open for this synchronous decode scope.
+extern "C" JNIEXPORT jobject JNICALL
+Java_com_hippo_ehviewer_jni_HdrConvertKt_mapStillInput(JNIEnv* env, jclass, jint fd) {
+    struct stat st{};
+    if (fstat(fd, &st) != 0 || !S_ISREG(st.st_mode) || st.st_size <= 0 ||
+        st.st_size > std::numeric_limits<int32_t>::max()) return nullptr;
+    const size_t size = static_cast<size_t>(st.st_size);
+    void* data = mmap(nullptr, size, PROT_READ, MAP_PRIVATE, fd, 0);
+    if (data == MAP_FAILED) return nullptr;
+    jobject buffer = env->NewDirectByteBuffer(data, static_cast<jlong>(size));
+    if (!buffer) munmap(data, size);
+    return buffer;
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_hippo_ehviewer_jni_HdrConvertKt_unmapStillInput(JNIEnv* env, jclass, jobject buffer) {
+    void* data = env->GetDirectBufferAddress(buffer);
+    const jlong size = env->GetDirectBufferCapacity(buffer);
+    if (data && size > 0) munmap(data, static_cast<size_t>(size));
 }

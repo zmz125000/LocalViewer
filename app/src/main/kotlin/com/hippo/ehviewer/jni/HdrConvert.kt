@@ -279,3 +279,16 @@ external fun convertJxrFdToUltraHdrMaxEdge(fd: Int, outputPath: String, maxEdge:
 external fun convertJxlFdToUltraHdrMaxEdge(fd: Int, outputPath: String, maxEdge: Int): Int
 external fun convertAvifFdToUltraHdrMaxEdge(fd: Int, outputPath: String, maxEdge: Int): Int
 external fun convertJpeg2000FdToUltraHdrMaxEdge(fd: Int, outputPath: String, maxEdge: Int): Int
+
+/** Only use within a synchronous scope; no bitmap or queued work may retain the mapping. */
+internal external fun mapStillInput(fd: Int): java.nio.ByteBuffer?
+internal external fun unmapStillInput(buffer: java.nio.ByteBuffer)
+internal external fun decodeJxrBufferToDirect(input: java.nio.ByteBuffer, maxEdge: Int, advancedColor: Boolean, panelBoost: Float, outInfo: IntArray, outBoost: FloatArray): ByteArray?
+internal external fun decodeJxlBufferToDirect(input: java.nio.ByteBuffer, maxEdge: Int, advancedColor: Boolean, outInfo: IntArray, outBoost: FloatArray): ByteArray?
+internal external fun decodeAvifBufferToDirect(input: java.nio.ByteBuffer, maxEdge: Int, advancedColor: Boolean, outInfo: IntArray, outBoost: FloatArray): ByteArray?
+internal external fun decodeJpeg2000BufferToDirect(input: java.nio.ByteBuffer, maxEdge: Int, advancedColor: Boolean, outInfo: IntArray, outBoost: FloatArray): ByteArray?
+internal external fun convertJxrBufferToUltraHdr(input: java.nio.ByteBuffer, outputPath: String): Int
+internal external fun convertJxlBufferToUltraHdr(input: java.nio.ByteBuffer, outputPath: String): Int
+internal external fun convertAvifBufferToUltraHdr(input: java.nio.ByteBuffer, outputPath: String): Int
+internal external fun convertJpeg2000BufferToUltraHdr(input: java.nio.ByteBuffer, outputPath: String): Int
+internal external fun probeAvifBufferHdrKind(input: java.nio.ByteBuffer): Int

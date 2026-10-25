@@ -156,3 +156,50 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_convertJpeg2000FdToUltraHdrMaxEdge(
         JNIEnv*, jclass, jint, jstring, jint) {
     return kUnsupportedAbi;
 }
+
+extern "C" JNIEXPORT jbyteArray JNICALL
+Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeJxrBufferToDirect(
+        JNIEnv*, jclass, jobject, jint, jboolean, jfloat, jintArray, jfloatArray) {
+    return nullptr;
+}
+
+extern "C" JNIEXPORT jbyteArray JNICALL
+Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeJxlBufferToDirect(
+        JNIEnv*, jclass, jobject, jint, jboolean, jintArray, jfloatArray) {
+    return nullptr;
+}
+
+extern "C" JNIEXPORT jbyteArray JNICALL
+Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeAvifBufferToDirect(
+        JNIEnv*, jclass, jobject, jint, jboolean, jintArray, jfloatArray) {
+    return nullptr;
+}
+
+extern "C" JNIEXPORT jbyteArray JNICALL
+Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeJpeg2000BufferToDirect(
+        JNIEnv*, jclass, jobject, jint, jboolean, jintArray, jfloatArray) {
+    return nullptr;
+}
+
+extern "C" JNIEXPORT jint JNICALL
+Java_com_hippo_ehviewer_jni_HdrConvertKt_convertJxrBufferToUltraHdr(JNIEnv*, jclass, jobject, jstring) {
+    return kUnsupportedAbi;
+}
+
+extern "C" JNIEXPORT jint JNICALL
+Java_com_hippo_ehviewer_jni_HdrConvertKt_convertJxlBufferToUltraHdr(JNIEnv*, jclass, jobject, jstring) {
+    return kUnsupportedAbi;
+}
+
+extern "C" JNIEXPORT jint JNICALL
+Java_com_hippo_ehviewer_jni_HdrConvertKt_convertAvifBufferToUltraHdr(JNIEnv*, jclass, jobject, jstring) {
+    return kUnsupportedAbi;
+}
+
+extern "C" JNIEXPORT jint JNICALL
+Java_com_hippo_ehviewer_jni_HdrConvertKt_convertJpeg2000BufferToUltraHdr(JNIEnv*, jclass, jobject, jstring) {
+    return kUnsupportedAbi;
+}
+
+extern "C" JNIEXPORT jint JNICALL
+Java_com_hippo_ehviewer_jni_HdrConvertKt_probeAvifBufferHdrKind(JNIEnv*, jclass, jobject) { return 0; }

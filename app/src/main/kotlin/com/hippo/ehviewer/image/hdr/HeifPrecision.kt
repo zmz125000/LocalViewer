@@ -1,5 +1,7 @@
 package com.hippo.ehviewer.image.hdr
 
+import java.nio.ByteBuffer
+
 /** Primary-item precision. Auxiliary thumbnails/gain maps must not select the base decode path. */
 internal data class HeifPrecision(
     val avif: Boolean,
@@ -43,8 +45,11 @@ internal object HeifPrecisionProbe {
     const val HEADER_BYTES = 256 * 1024
     private data class Property(val depth: Int? = null, val transfer: Int? = null, val chroma: Int? = null, val av1Level: Int? = null)
 
-    fun probe(bytes: ByteArray, length: Int = bytes.size): HeifPrecision? = runCatching {
-        val end = length.coerceIn(0, bytes.size)
+    fun probe(bytes: ByteArray, length: Int = bytes.size): HeifPrecision? = probe(ByteBuffer.wrap(bytes, 0, length.coerceIn(0, bytes.size)))
+
+    fun probe(input: ByteBuffer): HeifPrecision? = runCatching {
+        val bytes = input.slice()
+        val end = bytes.remaining()
         var avif = false
         var heif = false
         var animated = false
@@ -59,7 +64,7 @@ internal object HeifPrecisionProbe {
             require(value <= Int.MAX_VALUE)
             return value.toInt()
         }
-        fun type(p: Int) = String(bytes, p, 4, Charsets.ISO_8859_1)
+        fun type(p: Int) = String(CharArray(4) { (bytes[p + it].toInt() and 255).toChar() })
         fun boxes(start: Int, limit: Int, visit: (String, Int, Int) -> Unit) {
             var p = start
             while (p + 8 <= limit) {

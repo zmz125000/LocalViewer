@@ -9,21 +9,25 @@ import com.ehviewer.core.files.openFileDescriptor
 import com.ehviewer.core.files.read
 import com.ehviewer.core.files.toUri
 import com.hippo.ehviewer.Settings
+import com.hippo.ehviewer.jni.convertAvifBufferToUltraHdr
 import com.hippo.ehviewer.jni.convertAvifBytesToUltraHdr
 import com.hippo.ehviewer.jni.convertAvifBytesToUltraHdrMaxEdge
 import com.hippo.ehviewer.jni.convertAvifFdToUltraHdrMaxEdge
+import com.hippo.ehviewer.jni.convertJpeg2000BufferToUltraHdr
 import com.hippo.ehviewer.jni.convertJpeg2000BytesToUltraHdr
 import com.hippo.ehviewer.jni.convertJpeg2000BytesToUltraHdrMaxEdge
 import com.hippo.ehviewer.jni.convertJpeg2000FdToUltraHdrMaxEdge
+import com.hippo.ehviewer.jni.convertJxlBufferToUltraHdr
 import com.hippo.ehviewer.jni.convertJxlBytesToUltraHdr
 import com.hippo.ehviewer.jni.convertJxlBytesToUltraHdrMaxEdge
 import com.hippo.ehviewer.jni.convertJxlFdToUltraHdrMaxEdge
+import com.hippo.ehviewer.jni.convertJxrBufferToUltraHdr
 import com.hippo.ehviewer.jni.convertJxrBytesToUltraHdr
 import com.hippo.ehviewer.jni.convertJxrBytesToUltraHdrMaxEdge
 import com.hippo.ehviewer.jni.convertJxrFdToUltraHdrMaxEdge
-import com.hippo.ehviewer.jni.convertJxrToUltraHdr
 import com.hippo.ehviewer.jni.decodeJpeg2000Bitmap
 import com.hippo.ehviewer.jni.extractRawPreviewBytes
+import com.hippo.ehviewer.jni.probeAvifBufferHdrKind
 import com.hippo.ehviewer.jni.probeAvifHdrKind
 import com.hippo.ehviewer.library.OriginDiskCache
 import com.hippo.ehviewer.util.FileUtils
@@ -409,15 +413,10 @@ object HdrConvertCache {
             commitTmp(tmp, File(primaryPath.toString()))
             return@withContext primaryPath
         }
-        val bytes = runCatching { tmp.readBytes() }.getOrNull()
-        if (bytes != null && bytes.isNotEmpty()) {
-            tmp.delete()
-            return@withContext finalizeNetworkBytes(bytes, primaryPath, originalFileName)
-        }
         val lib = route as StillRoute.Lib
         val outPath = uhdrSiblingOf(primaryPath)
         val outFile = File(outPath.toString())
-        val ok = lib.codec == LibCodec.Jxr && convertJxrViaPath(tmp.absolutePath, outFile)
+        val ok = convertFileToUhdr(tmp.toOkioPath(), outFile, lib.codec)
         if (ok) {
             tmp.delete()
             val primary = File(primaryPath.toString())
@@ -511,34 +510,64 @@ object HdrConvertCache {
         val destFile = File(dest.toString())
         if (destFile.isFile && destFile.length() > 0L) return dest
 
-        val bytes = runCatching {
-            source.read { readByteArray() }
-        }.onFailure {
-            Log.e(TAG, "read failed: $source", it)
-        }.getOrNull()
-        if (bytes == null || bytes.isEmpty()) {
-            if (codec == LibCodec.AvifPq) {
-                Log.w(TAG, "AVIF unreadable, platform fallback: ${source.name}")
-                return source
-            }
-            error("HDR source unreadable: ${source.name}")
-        }
-
-        if (codec == LibCodec.AvifPq) {
-            when (probeAvifHdrKind(bytes)) {
-                1 -> {
-                    Log.i(TAG, "AVIF gain-map → platform path: ${source.name}")
-                    return source
-                }
-            }
-        }
-
-        if (convertToUhdr(bytes, destFile, codec, maxEdge = 0)) return dest
+        if (convertFileToUhdr(source, destFile, codec)) return dest
         if (codec == LibCodec.AvifPq) {
             Log.w(TAG, "AVIF PQ convert failed, platform fallback: ${source.name}")
             return source
         }
         error("${codec.name} → Ultra HDR convert failed: ${source.name}")
+    }
+
+    internal suspend fun finalizeFileSource(source: Path, primaryPath: Path, fileNameHint: String): Path {
+        val route = classifyPath(source, fileNameHint)
+        if (!route.needsUhdr || (route is StillRoute.Lib && route.forceDirect)) return source
+        val codec = (route as StillRoute.Lib).codec
+        val output = uhdrSiblingOf(primaryPath)
+        if (convertFileToUhdr(source, File(output.toString()), codec)) return output
+        if (codec == LibCodec.AvifPq) return source
+        error("HDR file convert failed: $fileNameHint")
+    }
+
+    private suspend fun convertFileToUhdr(source: Path, output: File, codec: LibCodec): Boolean = withContext(Dispatchers.IO) {
+        if (output.isFile && output.length() > 0L) return@withContext true
+        fullConvertSlots.withPermit {
+            pathLocks.getOrPut(output.absolutePath) { Mutex() }.withLock {
+                if (output.isFile && output.length() > 0L) return@withLock true
+                output.parentFile?.mkdirs()
+                val tmp = File("${output.absolutePath}.tmp.${System.nanoTime()}")
+                try {
+                    val code = withStillInput(source) { buffer ->
+                        if (codec == LibCodec.AvifPq && probeAvifBufferHdrKind(buffer) == 1) {
+                            return@withStillInput -1
+                        }
+                        when (codec) {
+                            LibCodec.Jxr -> convertJxrBufferToUltraHdr(buffer, tmp.absolutePath)
+                            LibCodec.Jxl -> convertJxlBufferToUltraHdr(buffer, tmp.absolutePath)
+                            LibCodec.AvifPq -> convertAvifBufferToUltraHdr(buffer, tmp.absolutePath)
+                            LibCodec.Jpeg2000 -> convertJpeg2000BufferToUltraHdr(buffer, tmp.absolutePath).let { result ->
+                                if (result == -100) convertJpeg2000ToJpeg(buffer.heapBytesForConvert(), tmp, 0) else result
+                            }
+                            LibCodec.Raw, LibCodec.HevcHdr -> -1
+                        }
+                    } ?: -1
+                    if (code != 0 || !tmp.isFile || tmp.length() <= 0L) {
+                        Log.e(TAG, "File convert failed codec=$codec code=$code source=$source")
+                        false
+                    } else {
+                        commitTmp(tmp, output)
+                        OriginDiskCache.scheduleTrim()
+                        true
+                    }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    Log.e(TAG, "File convert failed: $source", e)
+                    false
+                } finally {
+                    tmp.delete()
+                }
+            }
+        }
     }
 
     /**
@@ -689,35 +718,6 @@ object HdrConvertCache {
     }.onFailure {
         Log.e(TAG, "writePlatformThumbBytes failed", it)
     }.getOrDefault(false)
-
-    private suspend fun convertJxrViaPath(inputPath: String, output: File): Boolean = withContext(Dispatchers.IO) {
-        if (output.isFile && output.length() > 0L) return@withContext true
-        // Full-page path convert — same pool as byte full-res so it cannot race two fulls.
-        fullConvertSlots.withPermit {
-            val lockKey = output.absolutePath
-            val mutex = pathLocks.getOrPut(lockKey) { Mutex() }
-            mutex.withLock {
-                if (output.isFile && output.length() > 0L) return@withLock true
-                output.parentFile?.mkdirs()
-                val tmp = File("${output.absolutePath}.tmp.${System.nanoTime()}")
-                try {
-                    val code = convertJxrToUltraHdr(inputPath, tmp.absolutePath)
-                    if (code != 0 || !tmp.isFile || tmp.length() <= 0L) {
-                        Log.e(TAG, "convertJxrToUltraHdr failed code=$code in=$inputPath")
-                        tmp.delete()
-                        return@withLock false
-                    }
-                    commitTmp(tmp, output)
-                    OriginDiskCache.scheduleTrim()
-                    true
-                } catch (e: Throwable) {
-                    Log.e(TAG, "convertJxrViaPath exception", e)
-                    tmp.delete()
-                    false
-                }
-            }
-        }
-    }
 
     private suspend fun writeConvertThumb(
         source: Path,
