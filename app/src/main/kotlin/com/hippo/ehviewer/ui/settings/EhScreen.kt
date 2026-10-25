@@ -237,16 +237,23 @@ fun AnimatedVisibilityScope.EhScreen(navigator: DestinationsNavigator) = Screen(
                 entryValueRes = com.hippo.ehviewer.R.array.image_conversion_quality_values,
                 state = conversionQuality,
             )
+            SwitchPreference(
+                title = stringResource(R.string.image_conversion_jxl_jpeg_transcoding),
+                state = Settings.imageConversionJxlJpegTranscoding.asMutableState(),
+            )
             AnimatedVisibility(visible = conversionQuality.value == 4) {
                 Column {
                     val distance = Settings.imageConversionJxlDistance.asMutableState()
-                    val sliderDistance = remember { mutableIntStateOf(distance.value) }
+                    val sliderDistance = remember { mutableIntStateOf(distance.value.coerceIn(0, 300)) }
+                    LaunchedEffect(distance.value) {
+                        if (distance.value !in 0..300) distance.value = distance.value.coerceIn(0, 300)
+                    }
                     me.zhanghai.compose.preference.IntSliderPreference(
                         state = distance,
                         sliderState = sliderDistance,
                         title = { Text(stringResource(R.string.image_conversion_jxl_distance)) },
-                        valueRange = 0..1500,
-                        valueSteps = 299,
+                        valueRange = 0..300,
+                        valueSteps = 59,
                         valueText = { Text("%.2f".format(sliderDistance.intValue / 100f)) },
                     )
                     IntSliderPreference(

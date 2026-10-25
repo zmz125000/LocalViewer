@@ -127,3 +127,8 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_encodeNativeStillExport(JNIEnv*, jclass
                                                              jboolean, jint, jint, jboolean, jstring, jint, jint, jfloat, jint) {
     return kUnsupportedAbi;
 }
+
+extern "C" JNIEXPORT jint JNICALL
+Java_com_hippo_ehviewer_jni_HdrConvertKt_transcodeJpegToJxl(JNIEnv*, jclass, jbyteArray, jstring) {
+    return -100;
+}

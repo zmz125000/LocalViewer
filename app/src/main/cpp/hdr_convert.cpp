@@ -1679,7 +1679,7 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_encodeNativeStillExport(JNIEnv* env, jc
                                                                jint gamut, jint mode, jboolean premultiplied,
                                                                jstring jOut, jint sdr_offset, jint quality, jfloat custom_distance, jint custom_quality) {
     if (!jPixels || !jOut || width <= 0 || height <= 0 || sdr_offset < 0 || quality < 0 || quality > 4 ||
-        (quality == 4 && (!std::isfinite(custom_distance) || custom_distance < 0.f || custom_distance > 15.f ||
+        (quality == 4 && (!std::isfinite(custom_distance) || custom_distance < 0.f || custom_distance > 3.f ||
                           custom_quality < 1 || custom_quality > 100))) return -52;
     auto* pixels = static_cast<uint8_t*>(env->GetDirectBufferAddress(jPixels));
     const jlong length = env->GetDirectBufferCapacity(jPixels);
@@ -1702,7 +1702,7 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_encodeStillExport(JNIEnv* env, jclass, 
                                                            jboolean premultiplied, jstring jOut, jint sdr_offset,
                                                            jint quality, jfloat custom_distance, jint custom_quality) {
     if (!jPixels || !jOut || width <= 0 || height <= 0 || sdr_offset < 0 || quality < 0 || quality > 4 ||
-        (quality == 4 && (!std::isfinite(custom_distance) || custom_distance < 0.f || custom_distance > 15.f ||
+        (quality == 4 && (!std::isfinite(custom_distance) || custom_distance < 0.f || custom_distance > 3.f ||
                           custom_quality < 1 || custom_quality > 100))) return -52;
     const jsize len = env->GetArrayLength(jPixels);
     if (len <= 0) return -53;

@@ -16,7 +16,7 @@ struct StillEncodeQuality {
 
     StillEncodeQuality(int p = 1, float distance = .5f, int quality = 90)
         : preset(p < 0 ? 0 : p > 4 ? 4 : p),
-          custom_distance(std::isfinite(distance) ? std::fmin(15.f, std::fmax(0.f, distance)) : .5f),
+          custom_distance(std::isfinite(distance) ? std::fmin(3.f, std::fmax(0.f, distance)) : .5f),
           custom_quality(quality < 1 ? 1 : quality > 100 ? 100 : quality) {}
 
     int jpeg() const {
@@ -28,7 +28,7 @@ struct StillEncodeQuality {
         return preset == 4 ? custom_quality : values[preset];
     }
     float jxl_distance() const {
-        constexpr float values[] = {0.f, .3f, .5f, 1.f};
+        constexpr float values[] = {0.f, .5f, 1.f, 1.5f};
         return preset == 4 ? custom_distance : values[preset];
     }
     bool avif_lossless() const { return avif() == 100; }

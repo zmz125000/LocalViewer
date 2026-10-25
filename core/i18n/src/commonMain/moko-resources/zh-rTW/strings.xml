@@ -127,6 +127,8 @@
     <string name="image_conversion_quality_mid">中</string>
     <string name="image_conversion_quality_low">低</string>
     <string name="image_conversion_quality_custom">自訂</string>
+    <string name="image_conversion_jxl_jpeg_transcoding">JXL 無損 JPEG 轉碼</string>
+    <string name="image_conversion_jxl_jpeg_transcoding_summary">將 JPEG 轉為 JPEG XL 時保留原始 JPEG 資料，不受距離設定影響。</string>
     <string name="image_conversion_jxl_distance">JPEG XL 距離</string>
     <string name="image_conversion_jxl_distance_summary">距離越低，品質越高；0 為無損。</string>
     <string name="image_conversion_custom_codec_quality">JPEG / AVIF 品質</string>

@@ -9,12 +9,14 @@ internal class StillExportQuality(
     val value: Int,
     val jxlDistance: Float,
     val codecQuality: Int,
+    val jpegTranscoding: Boolean,
 ) : AbstractCoroutineContextElement(Key) {
     companion object Key : CoroutineContext.Key<StillExportQuality> {
         fun current() = StillExportQuality(
             Settings.imageConversionQuality.value.coerceIn(0, 4),
-            Settings.imageConversionJxlDistance.value.coerceIn(0, 1500) / 100f,
+            Settings.imageConversionJxlDistance.value.coerceIn(0, 300) / 100f,
             Settings.imageConversionCustomQuality.value.coerceIn(1, 100),
+            Settings.imageConversionJxlJpegTranscoding.value,
         )
     }
 }

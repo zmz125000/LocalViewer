@@ -270,3 +270,6 @@ internal external fun encodeNativeStillExport(
 
 /** Header-only size probe. Kind: 0 JXL, 1 JXR, 2 RAW; packed width/height, or 0. */
 external fun probeStillExportSize(path: String, kind: Int): Long
+
+/** JPEG coefficients + reconstruction metadata → JXL; bypasses pixel decoding. */
+internal external fun transcodeJpegToJxl(jpeg: ByteArray, outPath: String): Int
