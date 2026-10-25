@@ -661,6 +661,8 @@
     <string name="settings_reader_decode_ahead_summary">Keep the next %s pages decoded in the reading direction</string>
     <string name="settings_heavy_decode">Heavy decode</string>
     <string name="settings_heavy_decode_summary">Up to %s full-size decodes at once</string>
+    <string name="settings_thumbnail_convert_slots">Thumbnail processing slots</string>
+    <string name="settings_thumbnail_convert_slots_summary">Maximum concurrent jobs shared by image, PDF, and archive thumbnails.</string>
     <string name="settings_download_download_delay">Download delay</string>
     <string name="settings_download_download_delay_summary">Delay %s ms per download</string>
     <string name="settings_download_timeout_speed">Minimum download speed (in KB/s)</string>

@@ -40,8 +40,8 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.sync.Semaphore
-import kotlinx.coroutines.sync.withPermit
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import okio.Path
 import okio.Path.Companion.toOkioPath
 import okio.Path.Companion.toPath
@@ -94,11 +94,15 @@ object ArchiveCoverCache {
     /** One comic page read for a MOBI/AZW3 cover. Larger records stay a placeholder. */
     private const val MAX_MOBI_COVER_BYTES = 32 * 1024 * 1024
 
-    private val extractSlots = Semaphore(1)
+    // Native libarchive has one global parser. Queue cover users before the
+    // shared thumbnail gate so they neither drop each other on tryWithArchive
+    // nor occupy thumbnail capacity while waiting for that parser.
+    private val nativeExtractMutex = Mutex()
+
 
     /**
      * Browse folder identity. [onBrowseFolderChanged] cancels cover jobs from the previous
-     * folder so a RAR/7z page-0 extract (semaphore 1 + [ArchiveAccess]) cannot block the
+     * folder so a RAR/7z page-0 extract (shared thumbnail gate + [ArchiveAccess]) cannot block the
      * next folder's archives — same idea as [VideoThumbnail.onBrowseFolderChanged].
      */
     private val browseFolderKey = AtomicReference<String?>(null)
@@ -142,10 +146,10 @@ object ArchiveCoverCache {
     }
 
     /**
-     * One-at-a-time cover extract. Folder change cancels waiters and the holder so the
+     * Shared-capacity cover extract. Folder change cancels waiters and holders so the
      * next listing is not stuck behind a leftover RAR/ZIP page-0.
      */
-    private suspend fun <T> withCoverExtractSlot(block: suspend () -> T): T {
+    private suspend fun <T> withCoverExtractSlot(nativeArchive: Boolean = false, block: suspend () -> T): T {
         val gen = browseGeneration.get()
         val job = currentCoroutineContext().job
         extractJobs[job] = gen
@@ -154,20 +158,23 @@ object ArchiveCoverCache {
             if (browseGeneration.get() != gen) {
                 throw CancellationException("archive cover folder changed")
             }
-            return extractSlots.withPermit {
-                currentCoroutineContext().ensureActive()
-                if (browseGeneration.get() != gen) {
-                    throw CancellationException("archive cover folder changed")
+            val extract: suspend () -> T = {
+                HdrConvertCache.withThumbConvertSlot {
+                    currentCoroutineContext().ensureActive()
+                    if (browseGeneration.get() != gen) {
+                        throw CancellationException("archive cover folder changed")
+                    }
+                    block()
                 }
-                block()
             }
+            return if (nativeArchive) nativeExtractMutex.withLock { extract() } else extract()
         } finally {
             extractJobs.remove(job, gen)
         }
     }
 
     /** Test hook: same slot + folder-generation cancel as live cover extract. */
-    internal suspend fun runCoverExtractForTest(block: suspend () -> Unit) = withCoverExtractSlot(block)
+    internal suspend fun runCoverExtractForTest(block: suspend () -> Unit) = withCoverExtractSlot(block = block)
 
     /**
      * JPEG/UHDR cover encode runs here — **not** as a child of [ArchiveAccess.withArchive].
@@ -530,7 +537,7 @@ object ArchiveCoverCache {
         val dest = destOverride ?: thumbPathFor(cacheKey, 0L, 0L)
         existingCover(dest)?.let { return CoverEnsureResult.Hit(it) }
         val isZip = fileName.isNotEmpty() && isZipArchiveFileName(fileName)
-        val outcome = withCoverExtractSlot {
+        val outcome = withCoverExtractSlot(nativeArchive = true) {
             existingCover(dest)?.let {
                 return@withCoverExtractSlot StreamExtractOutcome.Terminal(CoverEnsureResult.Hit(it))
             }
@@ -937,7 +944,7 @@ object ArchiveCoverCache {
         // Prefer page already extracted by a prior solid reader session.
         coverFromSolidExtractCache(cacheKey)?.let { return CoverEnsureResult.Hit(it) }
 
-        val outcome = withCoverExtractSlot {
+        val outcome = withCoverExtractSlot(nativeArchive = true) {
             existingCover(dest)?.let {
                 return@withCoverExtractSlot SolidExtractOutcome.Terminal(CoverEnsureResult.Hit(it))
             }
