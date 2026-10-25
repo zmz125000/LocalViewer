@@ -298,10 +298,14 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
     val browseFolderThumbs by Settings.browseFolderThumbs.collectAsState()
     val browseZipAsDir by Settings.browseZipAsDir.collectAsState()
     val photoGridMode by Settings.photoGridMode.collectAsState()
+    val networkFolderIndexCacheEnabled by Settings.networkFolderIndexCache.collectAsState()
     val networkFolderIndexQuickScanEnabled by Settings.networkFolderIndexQuickScan.collectAsState()
     val smbConnectionRevision by SmbGateway.connectionRevision.collectAsState()
-    // Enabled while disconnected so a tap can bypass connect backoff and dial again.
-    val refreshEnabled = source != null
+    // Disabled while the cached folder has no live SMB session: the icon is the connection indicator.
+    // Pull-to-refresh is the retry.
+    val refreshEnabled = remember(source, networkFolderIndexCacheEnabled, smbConnectionRevision) {
+        !networkFolderIndexCacheEnabled || source?.let { SmbGateway.isSourceConnected(it) } == true
+    }
     var connectionProbeToken by remember { mutableStateOf(0) }
     val sourceConnectionKey = source?.let { SmbGateway.sourceConfigKey(it) }
     val relativeDirForMode = segments.joinToString("/")
@@ -2368,7 +2372,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                             enabled = refreshEnabled,
                             onClick = {
                                 refreshing = true
-                                source?.let { SmbGateway.prepareUserRefresh(it) }
+                                source?.let { SmbGateway.refreshNameLookup(it) }
                                 requestForceReload()
                             },
                             shapes = IconButtonDefaults.shapes(),

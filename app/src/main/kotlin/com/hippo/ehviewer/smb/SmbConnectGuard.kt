@@ -60,7 +60,7 @@ internal class SmbConnectGuard(
     }
 
     /**
-     * Manual folder refresh while disconnected. Clears this host's backoff and that
+     * Pull-to-refresh while disconnected. Clears this host's backoff and that
      * login so this attempt dials once. Automatic probes never call this.
      */
     @Synchronized

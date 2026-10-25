@@ -1748,8 +1748,9 @@ object SmbGateway {
     }
 
     /**
-     * Toolbar or pull-to-refresh. A live pool just re-reads the folder. A disconnected
-     * host drops its backoff (and a rejected login for this account) so the reload dials now.
+     * Pull-to-refresh. A live pool just re-reads the folder. A disconnected host drops
+     * its backoff (and a rejected login for this account) so the reload dials now.
+     * The toolbar button stays a connection indicator and does not call this.
      */
     fun prepareUserRefresh(source: SmbSourceEntity) {
         refreshNameLookup(source)
