@@ -7,6 +7,28 @@ import org.junit.Test
 
 class SmbHostPoolPolicyTest {
     @Test
+    fun capacityBackoffMultiplexesExistingTcpBelowConfiguredCap() {
+        assertEquals(
+            SmbDataPlacement.Use(0),
+            smbPlaceDataOp(
+                outstanding = intArrayOf(1),
+                availableSlots = intArrayOf(9),
+                maxConnections = 5,
+                allowBusyData = true,
+            ),
+        )
+        assertEquals(
+            SmbDataPlacement.Wait,
+            smbPlaceDataOp(
+                outstanding = intArrayOf(10),
+                availableSlots = intArrayOf(0),
+                maxConnections = 5,
+                allowBusyData = true,
+            ),
+        )
+    }
+
+    @Test
     fun disconnectedDataSessionDoesNotFillTheCap() {
         assertTrue(smbCountsTowardDataCap(retired = false, reservedForList = false, connected = true))
         assertFalse(smbCountsTowardDataCap(retired = false, reservedForList = false, connected = false))

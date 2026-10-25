@@ -615,6 +615,7 @@ object SmbGateway {
     private val hostKeyToSourceIds = ConcurrentHashMap<String, MutableSet<Long>>()
     private val hostConnectLocks = ConcurrentHashMap<String, Mutex>()
     private val hostCircuits = ConcurrentHashMap<String, HostCircuit>()
+    private val connectGuard = SmbConnectGuard()
     private val lastPathChangeMs = AtomicLong(0L)
 
     private val gatewayScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -930,6 +931,7 @@ object SmbGateway {
             shareName: String,
             reservedOnly: Boolean,
             dataOnly: Boolean,
+            allowBusyData: Boolean = false,
         ): PooledSession? = synchronized(sessionsLock) {
             val matching = sessions.filter { !it.retired.get() && it.credKey == credKey && it.isConnected }
                 .filter { ps ->
@@ -944,6 +946,7 @@ object SmbGateway {
                     outstanding = IntArray(matching.size) { matching[it].outstanding.get() },
                     availableSlots = IntArray(matching.size) { matching[it].opSlots.availablePermits },
                     maxConnections = maxConnectionsPerHost(),
+                    allowBusyData = allowBusyData,
                     hasShare = BooleanArray(matching.size) { matching[it].hasShare(shareName) },
                 )
                 val ps = (place as? SmbDataPlacement.Use)?.let { matching[it.index] } ?: return@synchronized null
@@ -1080,6 +1083,15 @@ object SmbGateway {
             // Idle reuse / at-cap multiplex only — do not pack new files onto a busy
             // TCP's leftover [opsPerSession] slots while we can still grow.
             tryReserveExisting(credKey, shareName, forList)?.let { return it }
+            if (connectGuard.isCoolingDown(hostPortKey)) {
+                return tryReserveSession(
+                    credKey,
+                    shareName,
+                    reservedOnly = forList,
+                    dataOnly = !forList,
+                    allowBusyData = true,
+                )
+            }
             val atCap = if (forList) {
                 liveListCount() >= LIST_RESERVED_SESSIONS
             } else {
@@ -1109,11 +1121,17 @@ object SmbGateway {
                 val opened = try {
                     openSession(forList)
                 } catch (e: Throwable) {
-                    if (isHostCapacityError(e)) {
+                    if (isHostCapacityError(e) || e is SmbConnectSuppressedException && connectGuard.isCoolingDown(hostPortKey)) {
                         logcat {
                             "SmbGateway: host $hostPortKey at capacity on open — keeping existing sessions"
                         }
-                        return@withLock null
+                        return@withLock tryReserveSession(
+                            credKey,
+                            shareName,
+                            reservedOnly = forList,
+                            dataOnly = !forList,
+                            allowBusyData = true,
+                        )
                     }
                     throw e
                 }
@@ -1410,6 +1428,34 @@ object SmbGateway {
         }
     }
 
+    private suspend fun <T> withHostConnect(
+        source: SmbSourceEntity,
+        password: String,
+        block: () -> T,
+    ): T = hostConnectLocks.getOrPut(hostKey(endpointHost(source), source.port)) { Mutex() }.withLock {
+        coroutineContext.ensureActive()
+        guardedConnect(source, password, block)
+    }
+
+    private fun <T> guardedConnect(source: SmbSourceEntity, password: String, block: () -> T): T {
+        val key = hostKey(endpointHost(source), source.port)
+        val credential = credKey(source, password)
+        connectGuard.checkAllowed(key, credential)
+        try {
+            return block().also { connectGuard.connected(key) }
+        } catch (error: Throwable) {
+            if (error !is CancellationException) {
+                connectGuard.failed(
+                    key,
+                    credential,
+                    authentication = isSmbAuthenticationFailure(error),
+                    transient = isHostCapacityError(error) || isTransportError(error) || isNetworkUnreachable(error),
+                )
+            }
+            throw error
+        }
+    }
+
     private fun auth(source: SmbSourceEntity, password: String): AuthenticationContext {
         val user = source.username.ifBlank { "Guest" }
         return AuthenticationContext(user, password.toCharArray(), source.domain)
@@ -1507,38 +1553,41 @@ object SmbGateway {
         val host = endpointHost(source)
         ensureHostNotCoolingDown(host, source.port)
         trackSource(source)
-        // Dedicated 64 KiB-transact client — see [smbConfigForShareEnum].
-        val smbClient = SMBClient(smbConfigForShareEnum())
-        val connecting = AtomicReference<SMBClient?>(smbClient)
-        val cancelClose = coroutineContext[Job]?.closeFileOnCancelling(connecting)
-        val t0 = System.nanoTime()
-        fun elapsedMs() = (System.nanoTime() - t0) / 1_000_000L
-        try {
-            // Skip session.logoff after IPC$ enum — LOGOFF can wait full transactTimeout.
-            val connection = smbClient.connectSmb(host, source.port)
+        val connectJob = coroutineContext[Job]
+        withHostConnect(source, password) {
+            // Dedicated 64 KiB-transact client — see [smbConfigForShareEnum].
+            val smbClient = SMBClient(smbConfigForShareEnum())
+            val connecting = AtomicReference<SMBClient?>(smbClient)
+            val cancelClose = connectJob?.closeFileOnCancelling(connecting)
+            val t0 = System.nanoTime()
+            fun elapsedMs() = (System.nanoTime() - t0) / 1_000_000L
             try {
-                val session = connection.authenticate(auth(source, password))
-                val names = listDiskShareNamesOnSession(session)
-                clearHostCircuit(host, source.port)
-                setHostConnected(hostKey(host, source.port), true)
-                logcat {
-                    "SmbGateway: share-enum ok host=$host shares=${names.size} ${elapsedMs()}ms"
+                // Skip session.logoff after IPC$ enum — LOGOFF can wait full transactTimeout.
+                val connection = smbClient.connectSmb(host, source.port)
+                try {
+                    val session = connection.authenticate(auth(source, password))
+                    val names = listDiskShareNamesOnSession(session)
+                    clearHostCircuit(host, source.port)
+                    setHostConnected(hostKey(host, source.port), true)
+                    logcat {
+                        "SmbGateway: share-enum ok host=$host shares=${names.size} ${elapsedMs()}ms"
+                    }
+                    shareRootEntries(names)
+                } finally {
+                    runCatching { connection.close(true) }
                 }
-                shareRootEntries(names)
+            } catch (e: Throwable) {
+                if (e is CancellationException) throw e
+                noteConnectFailure(e)
+                logcat {
+                    "SmbGateway: share-enum failed host=$host ${elapsedMs()}ms: ${e.message}"
+                }
+                throw e
             } finally {
-                runCatching { connection.close(true) }
+                cancelClose?.dispose()
+                connecting.set(null)
+                runCatching { smbClient.close() }
             }
-        } catch (e: Throwable) {
-            if (e is CancellationException) throw e
-            noteConnectFailure(e)
-            logcat {
-                "SmbGateway: share-enum failed host=$host ${elapsedMs()}ms: ${e.message}"
-            }
-            throw e
-        } finally {
-            cancelClose?.dispose()
-            connecting.set(null)
-            runCatching { smbClient.close() }
         }
     }
 
@@ -1789,34 +1838,38 @@ object SmbGateway {
             LocalNetworkPermission.requireGranted()
             val host = endpointHost(source)
             ensureHostNotCoolingDown(host, source.port)
-            val fixed = fixedShare(source)
-            // Empty share uses share-enum config (64 KiB transact); fixed share uses browse config.
-            val smbClient = SMBClient(if (fixed.isEmpty()) smbConfigForShareEnum() else smbConfig())
-            val connecting = AtomicReference<SMBClient?>(smbClient)
-            val cancelClose = coroutineContext[Job]?.closeFileOnCancelling(connecting)
-            try {
-                val connection = smbClient.connectSmb(host, source.port)
+            connectGuard.retryCredentials(credKey(source, password))
+            val connectJob = coroutineContext[Job]
+            withHostConnect(source, password) {
+                val fixed = fixedShare(source)
+                // Empty share uses share-enum config (64 KiB transact); fixed share uses browse config.
+                val smbClient = SMBClient(if (fixed.isEmpty()) smbConfigForShareEnum() else smbConfig())
+                val connecting = AtomicReference<SMBClient?>(smbClient)
+                val cancelClose = connectJob?.closeFileOnCancelling(connecting)
                 try {
-                    val session = connection.authenticate(auth(source, password))
-                    if (fixed.isNotEmpty()) {
-                        (session.connectShare(fixed) as DiskShare).use { share ->
-                            val path = joinPath(source.pathPrefix, "")
-                            share.list(path.ifEmpty { "" })
+                    val connection = smbClient.connectSmb(host, source.port)
+                    try {
+                        val session = connection.authenticate(auth(source, password))
+                        if (fixed.isNotEmpty()) {
+                            (session.connectShare(fixed) as DiskShare).use { share ->
+                                val path = joinPath(source.pathPrefix, "")
+                                share.list(path.ifEmpty { "" })
+                            }
+                            runCatching { session.close() }
+                        } else {
+                            listDiskShareNamesOnSession(session)
                         }
-                        runCatching { session.close() }
-                    } else {
-                        listDiskShareNamesOnSession(session)
+                    } finally {
+                        runCatching { connection.close(true) }
                     }
                 } finally {
-                    runCatching { connection.close(true) }
+                    cancelClose?.dispose()
+                    connecting.set(null)
+                    runCatching { smbClient.close() }
                 }
-            } finally {
-                cancelClose?.dispose()
-                connecting.set(null)
-                runCatching { smbClient.close() }
+                clearHostCircuit(host, source.port)
+                Unit
             }
-            clearHostCircuit(host, source.port)
-            Unit
         }.onFailure { noteConnectFailure(it) }
     }
 
@@ -3430,7 +3483,7 @@ object SmbGateway {
         false
     }
 
-    private fun <T> openStickyConnection(
+    private suspend fun <T> openStickyConnection(
         source: SmbSourceEntity,
         password: String,
         relativeFilePath: String,
@@ -3441,41 +3494,57 @@ object SmbGateway {
         ensureHostNotCoolingDown(host, source.port)
         val loc = resolveLocation(source, relativeFilePath)
         val path = loc.pathInShare
-        val prevTag = TrafficStats.getThreadStatsTag()
+        val reused = takeReusableSticky(source, host, loc.share)
+        if (reused != null) {
+            try {
+                adoptVideoEpoch(reused.connection, videoPlayEpoch)
+                noteStickyUse(reused, videoPlayEpoch)
+                logcat {
+                    "SmbGateway: sticky reuse ${reused.key} file=${PrivacyLog.file(path)}"
+                }
+                return withSmbTrafficTag { openFileOnShare(reused.share, path, block) }
+            } catch (e: Throwable) {
+                // Closing this file (player done, warm-cache trim) must not drop the
+                // TCP. Other HTTP requests still have files open on it.
+                if (e is CancellationException || isFileHandleAbortError(e) || e is SmbStickyMovedException) {
+                    throw e
+                }
+                if (!isShareClosedError(e) && !isTransportError(e)) throw e
+                logcat { "SmbGateway: sticky reuse failed, reconnect: ${e.message}" }
+                retireReusable(reused, "reuse-fail")
+                if (!mayReplaceForeignSticky(source, host, loc.share, videoPlayEpoch)) {
+                    throw SmbStickyMovedException()
+                }
+            }
+        } else if (!mayReplaceForeignSticky(source, host, loc.share, videoPlayEpoch)) {
+            throw SmbStickyMovedException()
+        }
+        val share = hostConnectLocks.getOrPut(hostKey(host, source.port)) { Mutex() }.withLock {
+            coroutineContext.ensureActive()
+            // Another request may have installed this share while we waited.
+            takeReusableSticky(source, host, loc.share)?.let { sticky ->
+                adoptVideoEpoch(sticky.connection, videoPlayEpoch)
+                noteStickyUse(sticky, videoPlayEpoch)
+                sticky.share
+            } ?: run {
+                if (!mayReplaceForeignSticky(source, host, loc.share, videoPlayEpoch)) {
+                    throw SmbStickyMovedException()
+                }
+                guardedConnect(source, password) {
+                    withSmbTrafficTag { connectReusableSticky(source, password, host, loc.share, videoPlayEpoch) }
+                }
+            }
+        }
+        return withSmbTrafficTag { openFileOnShare(share, path, block) }
+    }
+
+    private fun <T> withSmbTrafficTag(block: () -> T): T {
+        val previous = TrafficStats.getThreadStatsTag()
         TrafficStats.setThreadStatsTag(KeepAliveSocketFactory.SMB_TRAFFIC_TAG)
         try {
-            val reused = takeReusableSticky(source, host, loc.share)
-            if (reused != null) {
-                try {
-                    adoptVideoEpoch(reused.connection, videoPlayEpoch)
-                    noteStickyUse(reused, videoPlayEpoch)
-                    logcat {
-                        "SmbGateway: sticky reuse ${reused.key} file=${PrivacyLog.file(path)}"
-                    }
-                    return openFileOnShare(reused.share, path, block)
-                } catch (e: Throwable) {
-                    // Closing this file (player done, warm-cache trim) must not drop the
-                    // TCP. Other HTTP requests still have files open on it.
-                    if (e is CancellationException || isFileHandleAbortError(e) || e is SmbStickyMovedException) {
-                        throw e
-                    }
-                    if (!isShareClosedError(e) && !isTransportError(e)) throw e
-                    logcat { "SmbGateway: sticky reuse failed, reconnect: ${e.message}" }
-                    retireReusable(reused, "reuse-fail")
-                    if (!mayReplaceForeignSticky(source, host, loc.share, videoPlayEpoch)) {
-                        throw SmbStickyMovedException()
-                    }
-                }
-            } else if (!mayReplaceForeignSticky(source, host, loc.share, videoPlayEpoch)) {
-                throw SmbStickyMovedException()
-            }
-            return connectReusableSticky(source, password, host, loc.share, path, videoPlayEpoch, block)
+            return block()
         } finally {
-            if (prevTag == -1) {
-                TrafficStats.clearThreadStatsTag()
-            } else {
-                TrafficStats.setThreadStatsTag(prevTag)
-            }
+            if (previous == -1) TrafficStats.clearThreadStatsTag() else TrafficStats.setThreadStatsTag(previous)
         }
     }
 
@@ -3504,17 +3573,20 @@ object SmbGateway {
         return found
     }
 
-    private fun <T> connectReusableSticky(
+    private fun connectReusableSticky(
         source: SmbSourceEntity,
         password: String,
         host: String,
         shareName: String,
-        path: String,
         videoPlayEpoch: Int?,
-        block: (file: com.hierynomus.smbj.share.File, size: Long) -> T,
-    ): T {
+    ): DiskShare {
         val smbClient = SMBClient(smbConfig(TransportRole.Video))
-        val connection = smbClient.connectSmb(host, source.port)
+        val connection = try {
+            smbClient.connectSmb(host, source.port)
+        } catch (error: Throwable) {
+            runCatching { smbClient.close() }
+            throw error
+        }
         stickyConnections.add(connection)
         val videoSticky = videoPlayEpoch?.let { VideoSticky(it, connection) }
         videoSticky?.let { videoStickies.add(it) }
@@ -3580,7 +3652,7 @@ object SmbGateway {
         }
         // File close and worker cancel end this open only. The TCP stays for the
         // other files HTTP already has open on this session.
-        return openFileOnShare(share, path, block)
+        return share
     }
 
     private fun <T> openFileOnShare(
@@ -3866,6 +3938,7 @@ object SmbGateway {
         } catch (first: Throwable) {
             if (first is SMBApiException && isIgnorableListError(first)) throw first
             if (first is kotlinx.coroutines.CancellationException) throw first
+            if (isSmbAuthenticationFailure(first) || first is SmbConnectSuppressedException) throw first
             // File.close() from a cancelled caller often surfaces as IOException.
             // Do not treat that as a transport blip and restart the whole transfer.
             ensureActive()
@@ -3977,54 +4050,57 @@ object SmbGateway {
         return lock.withLock {
             ensureHostNotCoolingDown(host, source.port)
             coroutineContext.ensureActive()
-            // Dedicated SMBClient per session so smbj's host Connection cache
-            // cannot poison other pool slots / shares on half-open TCP.
-            val smbClient = SMBClient(smbConfig(forList = reservedForList))
-            // Socket.connect is not a cancellation point. Hop / source.close()
-            // cancel this Job while we still hold growLock + a hostOpSlot;
-            // close the client as soon as the job enters cancelling so connect
-            // unblocks now instead of after SMB_IO_TIMEOUT_SEC.
-            val connecting = AtomicReference<SMBClient?>(smbClient)
-            val cancelClose = coroutineContext[Job]?.closeFileOnCancelling(connecting)
-            val prevTag = TrafficStats.getThreadStatsTag()
-            TrafficStats.setThreadStatsTag(KeepAliveSocketFactory.SMB_TRAFFIC_TAG)
-            try {
-                val connection = smbClient.connectSmb(host, source.port)
+            val connectContext = coroutineContext
+            guardedConnect(source, password) {
+                // Dedicated SMBClient per session so smbj's host Connection cache
+                // cannot poison other pool slots / shares on half-open TCP.
+                val smbClient = SMBClient(smbConfig(forList = reservedForList))
+                // Socket.connect is not a cancellation point. Hop / source.close()
+                // cancel this Job while we still hold growLock + a hostOpSlot;
+                // close the client as soon as the job enters cancelling so connect
+                // unblocks now instead of after SMB_IO_TIMEOUT_SEC.
+                val connecting = AtomicReference<SMBClient?>(smbClient)
+                val cancelClose = connectContext[Job]?.closeFileOnCancelling(connecting)
+                val prevTag = TrafficStats.getThreadStatsTag()
+                TrafficStats.setThreadStatsTag(KeepAliveSocketFactory.SMB_TRAFFIC_TAG)
                 try {
-                    val session = connection.authenticate(auth(source, password))
-                    connecting.set(null)
-                    logNegotiated(
-                        if (reservedForList) "list" else "browse",
-                        host,
-                        source.port,
-                        connection,
-                        session,
-                    )
-                    PooledSession(
-                        credKey = ck,
-                        client = smbClient,
-                        connection = connection,
-                        session = session,
-                        reservedForList = reservedForList,
-                    ).also {
-                        setHostConnected(key, true)
+                    val connection = smbClient.connectSmb(host, source.port)
+                    try {
+                        val session = connection.authenticate(auth(source, password))
+                        connecting.set(null)
+                        logNegotiated(
+                            if (reservedForList) "list" else "browse",
+                            host,
+                            source.port,
+                            connection,
+                            session,
+                        )
+                        PooledSession(
+                            credKey = ck,
+                            client = smbClient,
+                            connection = connection,
+                            session = session,
+                            reservedForList = reservedForList,
+                        ).also {
+                            setHostConnected(key, true)
+                        }
+                    } catch (e: Throwable) {
+                        runCatching { connection.close() }
+                        throw e
                     }
                 } catch (e: Throwable) {
-                    runCatching { connection.close() }
+                    runCatching { smbClient.close() }
+                    noteConnectFailure(e)
+                    connectContext.ensureActive()
                     throw e
-                }
-            } catch (e: Throwable) {
-                runCatching { smbClient.close() }
-                noteConnectFailure(e)
-                coroutineContext.ensureActive()
-                throw e
-            } finally {
-                cancelClose?.dispose()
-                connecting.set(null)
-                if (prevTag == -1) {
-                    TrafficStats.clearThreadStatsTag()
-                } else {
-                    TrafficStats.setThreadStatsTag(prevTag)
+                } finally {
+                    cancelClose?.dispose()
+                    connecting.set(null)
+                    if (prevTag == -1) {
+                        TrafficStats.clearThreadStatsTag()
+                    } else {
+                        TrafficStats.setThreadStatsTag(prevTag)
+                    }
                 }
             }
         }
@@ -4052,6 +4128,7 @@ internal fun smbPlaceDataOp(
     availableSlots: IntArray,
     maxConnections: Int,
     hasShare: BooleanArray? = null,
+    allowBusyData: Boolean = false,
 ): SmbDataPlacement {
     require(outstanding.size == availableSlots.size)
     require(hasShare == null || hasShare.size == outstanding.size)
@@ -4062,7 +4139,7 @@ internal fun smbPlaceDataOp(
     var bestHasShare = false
     for (i in outstanding.indices) {
         if (availableSlots[i] <= 0) continue
-        if (!atCap && outstanding[i] >= 1) continue
+        if (!atCap && !allowBusyData && outstanding[i] >= 1) continue
         val share = hasShare?.get(i) == true
         val better = best < 0 ||
             outstanding[i] < bestOut ||
@@ -4074,7 +4151,7 @@ internal fun smbPlaceDataOp(
         }
     }
     if (best >= 0) return SmbDataPlacement.Use(best)
-    return if (!atCap) SmbDataPlacement.Grow else SmbDataPlacement.Wait
+    return if (!atCap && !allowBusyData) SmbDataPlacement.Grow else SmbDataPlacement.Wait
 }
 
 /**

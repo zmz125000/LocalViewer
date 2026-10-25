@@ -1296,6 +1296,6 @@
     <string name="pref_slideshow_transition_override">Page transition override</string>
     <string name="pref_reader_transition_slide">Slide</string>
     <string name="pref_reader_transition_fade_blend">Fade (blend)</string>
-    <string name="pref_slideshow_playback_mode">Slideshow playback mode</string>
+    <string name="pref_slideshow_playback_mode">Slideshow playback</string>
     <string name="pref_slideshow_play_once">Play once</string>
 </resources>
