@@ -24,6 +24,8 @@ internal data class HeifPrecision(
 
 internal enum class HeifDecodePath { Coil, PlatformDeep, Native }
 
+internal data class HeifThumbnailMemory(val dimensions: Long, val codedYuvBytes: Long?)
+
 /** Base stills only: gain-map attachment/application keeps its own route. */
 internal fun heifDecodePath(info: HeifPrecision, advancedColor: Boolean, hevcP010: Boolean): HeifDecodePath = when {
     info.needsSoftware -> HeifDecodePath.Native
@@ -43,11 +45,27 @@ internal fun heifDecodePath(info: HeifPrecision, advancedColor: Boolean, hevcP01
 /** Reads only ftyp/meta boxes; compressed image data is never decoded. */
 internal object HeifPrecisionProbe {
     const val HEADER_BYTES = 256 * 1024
-    private data class Property(val depth: Int? = null, val transfer: Int? = null, val chroma: Int? = null, val av1Level: Int? = null)
+    private data class Property(
+        val depth: Int? = null,
+        val transfer: Int? = null,
+        val chroma: Int? = null,
+        val av1Level: Int? = null,
+        val width: Int? = null,
+        val height: Int? = null,
+    )
 
     fun probe(bytes: ByteArray, length: Int = bytes.size): HeifPrecision? = probe(ByteBuffer.wrap(bytes, 0, length.coerceIn(0, bytes.size)))
 
-    fun probe(input: ByteBuffer): HeifPrecision? = runCatching {
+    fun probe(input: ByteBuffer): HeifPrecision? = probe(input, null)
+
+    /** Metadata only, including coded tiles and auxiliary images that libavif may decode. */
+    fun thumbnailMemory(input: ByteBuffer): HeifThumbnailMemory? {
+        var memory: HeifThumbnailMemory? = null
+        probe(input) { memory = it }
+        return memory
+    }
+
+    private fun probe(input: ByteBuffer, onMemory: ((HeifThumbnailMemory) -> Unit)?): HeifPrecision? = runCatching {
         val bytes = input.slice()
         val end = bytes.remaining()
         var avif = false
@@ -108,6 +126,10 @@ internal object HeifPrecisionProbe {
                             if (propertyBox == "ipco") {
                                 boxes(r, propertyEnd) { property, s, propertyStop ->
                                     properties += when {
+                                        property == "ispe" && s + 12 <= propertyStop -> Property(
+                                            width = uint(s + 4, 4),
+                                            height = uint(s + 8, 4),
+                                        )
                                         property == "pixi" && s + 5 <= propertyStop -> {
                                             val channels = u8(s + 4)
                                             Property(
@@ -120,6 +142,12 @@ internal object HeifPrecisionProbe {
                                         }
                                         property == "av1C" && s + 3 <= propertyStop -> Property(
                                             av1Level = u8(s + 1) and 31,
+                                            chroma = when {
+                                                u8(s + 2) and 0x10 != 0 -> 0
+                                                u8(s + 2) and 0x08 == 0 -> 3
+                                                u8(s + 2) and 0x04 == 0 -> 2
+                                                else -> 1
+                                            },
                                             depth = when {
                                                 u8(s + 2) and 0x40 == 0 -> 8
                                                 u8(s + 2) and 0x20 != 0 -> 12
@@ -165,6 +193,37 @@ internal object HeifPrecisionProbe {
         if (!heif) {
             null
         } else {
+            if (avif && !animated && onMemory != null) {
+                val dimensions = attached.firstOrNull { it.width != null && it.height != null }
+                var codedYuvBytes = 0L
+                var complete = true
+                for (indices in associations.values) {
+                    val item = indices.mapNotNull(properties::getOrNull)
+                    val config = item.firstOrNull { it.av1Level != null } ?: continue
+                    val size = item.firstOrNull { it.width != null && it.height != null }
+                    val w = size?.width?.toLong() ?: 0L
+                    val h = size?.height?.toLong() ?: 0L
+                    if (w !in 1..65536 || h !in 1..65536) {
+                        complete = false
+                        break
+                    }
+                    val chromaPixels = when (config.chroma) {
+                        0 -> 0L
+                        1 -> ((w + 1) / 2) * ((h + 1) / 2)
+                        2 -> ((w + 1) / 2) * h
+                        else -> w * h
+                    }
+                    codedYuvBytes += (w * h + 2 * chromaPixels) * if (config.depth == 8) 1 else 2
+                }
+                val w = dimensions?.width?.toLong() ?: 0L
+                val h = dimensions?.height?.toLong() ?: 0L
+                onMemory(
+                    HeifThumbnailMemory(
+                        dimensions = if (w in 1..65536 && h in 1..65536) (w shl 32) or h else 0L,
+                        codedYuvBytes = codedYuvBytes.takeIf { complete && it > 0L },
+                    ),
+                )
+            }
             HeifPrecision(
                 avif,
                 attached.mapNotNull { it.depth }.maxOrNull(),
