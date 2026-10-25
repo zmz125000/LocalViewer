@@ -43,6 +43,7 @@ import com.hippo.ehviewer.gallery.Page
 import com.hippo.ehviewer.gallery.PageStatus
 import com.hippo.ehviewer.gallery.ReaderSession
 import com.hippo.ehviewer.gallery.statusObserved
+import eu.kanade.tachiyomi.ui.reader.setting.ReadingModeType
 import eu.kanade.tachiyomi.ui.reader.viewer.NavigationRegions
 import eu.kanade.tachiyomi.ui.reader.viewer.ViewerNavigation.NavigationRegion
 import eu.kanade.tachiyomi.ui.reader.viewer.getAction
@@ -89,6 +90,8 @@ fun PagerViewer(
     // Real page count for content; pager pageCount (spread or page) comes from [pagerState].
     val realPageCount = pageLoader.size
     val items = pageLoader.pages
+    val readingMode by Settings.readingMode.collectAsState()
+    val slideshow = readingMode == ReadingModeType.SLIDESHOW.prefValue
     val scaleType = slideshowScaleType()
     val dualPageGap by Settings.dualPageGap.collectAsState()
     val landscapeZoom by Settings.landscapeZoom.collectAsState()
@@ -175,7 +178,7 @@ fun PagerViewer(
                 pager = pagerState,
                 scope = scope,
             ),
-            beyondViewportPageCount = 1,
+            beyondViewportPageCount = if (slideshow) 0 else 1,
             userScrollEnabled = canScroll && transitionModifier.type == 0,
             key = { if (dualPage) dualFirstPageIndex(it, landscapeCover) else it },
         ) { index ->
@@ -192,7 +195,7 @@ fun PagerViewer(
                 pager = pagerState,
                 scope = scope,
             ),
-            beyondViewportPageCount = 1,
+            beyondViewportPageCount = if (slideshow) 0 else 1,
             reverseLayout = isRtl xor isRtlLayout,
             userScrollEnabled = canScroll && transitionModifier.type == 0,
             key = { if (dualPage) dualFirstPageIndex(it, landscapeCover) else it },

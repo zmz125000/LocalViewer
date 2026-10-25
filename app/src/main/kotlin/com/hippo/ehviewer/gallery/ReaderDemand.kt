@@ -162,6 +162,7 @@ class ReaderDemandPlanner(
         navigation: ReaderNavigation,
         pageCount: Int,
         policy: ReaderLoadPolicy,
+        forceForward: Boolean = false,
     ): ReaderDemand {
         if (pageCount <= 0) {
             return ReaderDemand(
@@ -184,6 +185,7 @@ class ReaderDemandPlanner(
             }
         }
         previousAnchor = anchor
+        if (forceForward) direction = ReadingDirection.Forward
 
         val visibleStart = navigation.visiblePages.first.coerceIn(0, lastPage)
         val visibleEnd = navigation.visiblePages.last.coerceIn(visibleStart, lastPage)
@@ -215,8 +217,9 @@ class ReaderDemandPlanner(
 }
 
 /** Keep the current viewport and transition destination decoded together. */
-internal fun ReaderDemand.withTransitionPages(indices: Set<Int>): ReaderDemand {
-    val decode = indices.filterNot(visibleDecode::contains) + decodeAhead.filterNot(indices::contains)
+internal fun ReaderDemand.withTransitionPages(indices: Set<Int>, replaceLookahead: Boolean = false): ReaderDemand {
+    val lookahead = if (replaceLookahead) emptyList() else decodeAhead
+    val decode = indices.filterNot(visibleDecode::contains) + lookahead.filterNot(indices::contains)
     val decoded = (visibleDecode + decode).toSet()
     return copy(decodeAhead = decode, sourceOnly = sourceOnly.filterNot(decoded::contains))
 }

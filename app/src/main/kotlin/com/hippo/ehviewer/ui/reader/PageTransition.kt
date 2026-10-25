@@ -113,6 +113,9 @@ internal fun pagerTransitionModifier(
                                 }
                                 if (ready && currentReady) alpha.animateTo(0f, tween(150))
                                 pager.scrollToPage(target)
+                                // The outgoing page is no longer visible; retain only the
+                                // destination while its painter is installed and faded in.
+                                loader.setTransitionPages(destination.map { it.index }.toSet())
                                 if (ready && currentReady) {
                                     // Compose the destination while hidden; the decoder being ready
                                     // alone does not guarantee that its painter has been installed.
