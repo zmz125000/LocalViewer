@@ -241,6 +241,10 @@ fun AnimatedVisibilityScope.AdvancedScreen(navigator: DestinationsNavigator) = S
                 title = stringResource(R.string.settings_thumbnail_memory_budget),
                 state = Settings.thumbnailMemoryBudget.asMutableState(),
             )
+            SwitchPreference(
+                title = stringResource(R.string.settings_prefer_native_heif_avif),
+                state = Settings.preferNativeHeifAvif.asMutableState(),
+            )
             val smbConnections = Settings.multiThreadDownload.asMutableState()
             SimpleMenuPreferenceInt(
                 title = stringResource(id = R.string.settings_smb_concurrency),

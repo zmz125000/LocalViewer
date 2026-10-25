@@ -6,6 +6,7 @@ import android.media.MediaCodec
 import android.media.MediaCodecInfo
 import android.media.MediaFormat
 import android.util.Log
+import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.jni.decodeHevcAnnexBBuffer
 import java.nio.ShortBuffer
 
@@ -37,7 +38,10 @@ internal object HevcDecoder {
     }
 
     fun decode(unit: HeifContainer.AccessUnit, preferSoftware: Boolean = false): Picture? {
-        if (preferSoftware) decodeSoftware(unit)?.let { return it }
+        if (preferSoftware) {
+            val picture = decodeSoftware(unit)
+            if (picture != null || Settings.preferNativeHeifAvif.value) return picture
+        }
         if (unit.bitDepth >= 10) {
             decodePlatform(unit, p010 = true)?.let { picture ->
                 if (picture.bitDepth >= unit.bitDepth) return picture

@@ -306,12 +306,12 @@ abstract class PageLoader(
             if (rawStill) {
                 error("RAW decode failed: $nameHint")
             }
-            if (avifDirect && route is StillRoute.Lib && route.forceDirect) error("Native AVIF decode failed: $nameHint")
+            if (route is StillRoute.Lib && route.forceDirect) error("Native HEIF/AVIF decode failed: $nameHint")
             if (deepHeif || avifDirect) error("High-bit-depth image decode failed: $nameHint")
             return null
         }
         thumbSoftwareBitmapBeforeHardware(index, raw, direct.bitmap)
-        return Image.fromLibDirect(direct, raw).also {
+        return Image.fromLibDirect(direct, raw, attachHeifGainMap = hevcHdr && Settings.preferNativeHeifAvif.value).also {
             it.noteHiResPreview(Image.hiResPreviewCapEdge(forceOriginal) > 0)
         }
     }

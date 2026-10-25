@@ -137,7 +137,7 @@ fun isLibStillExtension(ext: String?): Boolean {
  */
 fun needsGeneratedPageThumb(ext: String?): Boolean {
     val e = ext?.lowercase()?.removePrefix(".") ?: return false
-    return isLibStillExtension(e) || e == "avif"
+    return isLibStillExtension(e) || e == "avif" || (Settings.preferNativeHeifAvif.value && isHeicImageExtension(e))
 }
 
 fun isRawStillExtension(ext: String?): Boolean {
@@ -190,7 +190,7 @@ fun classify(
     if (!file.isFile || file.length() <= 0L) return StillRoute.Platform
     val hint = fileNameHint ?: file.name
     // ProXDR catalog lives after mdat — head sniff alone cannot see it.
-    if (Settings.readerOppoProxdr.value &&
+    if (!Settings.preferNativeHeifAvif.value && Settings.readerOppoProxdr.value &&
         isHeicImageExtension(FileUtils.getExtensionFromFilename(hint)) &&
         OppoProxdr.looksLike(file.absolutePath.toPath())
     ) {
@@ -214,7 +214,7 @@ fun classifyPath(path: Path, fileNameHint: String? = null, maxBytes: Int = HDR_S
     // HEIC: always consider ProXDR when enabled (trailer is after mdat; extension gate only).
     val heicCandidate = isHeicImageExtension(FileUtils.getExtensionFromFilename(hint)) ||
         isHeicImageExtension(FileUtils.getExtensionFromFilename(path.name))
-    if (Settings.readerOppoProxdr.value && heicCandidate) {
+    if (!Settings.preferNativeHeifAvif.value && Settings.readerOppoProxdr.value && heicCandidate) {
         val match = OppoProxdr.looksLike(path)
         Log.i("OppoProxdr", "classifyPath heic toggle=on match=$match path=$path hint=$hint")
         if (match) return StillRoute.OppoProxdr
@@ -274,6 +274,14 @@ fun classify(bytes: ByteArray, length: Int = bytes.size, fileNameHint: String? =
 
     val heifPrecision = if (isHeifFamily(bytes, n)) HeifPrecisionProbe.probe(bytes, n) else null
     if (heifPrecision?.animated == true) return StillRoute.Platform
+    if (Settings.preferNativeHeifAvif.value &&
+        (heifPrecision != null || isHeifFamily(bytes, n) || ext == "avif" || isHeicImageExtension(ext))
+    ) {
+        return StillRoute.Lib(
+            if (heifPrecision?.avif == true || isAvifBrand(bytes, n) || ext == "avif") LibCodec.AvifPq else LibCodec.HevcHdr,
+            forceDirect = true,
+        )
+    }
     // HEVC 4:2:2 / 4:4:4 and AV1 Level 5+ stills can be unsupported by
     // the platform even at 8 bits. Keep the original and decode natively,
     // independently of HDR settings and the optional JPEG-cache reader path.

@@ -193,7 +193,7 @@ internal object HeifPrecisionProbe {
         if (!heif) {
             null
         } else {
-            if (avif && !animated && onMemory != null) {
+            if (!animated && onMemory != null) {
                 val dimensions = attached.firstOrNull { it.width != null && it.height != null }
                 var codedYuvBytes = 0L
                 var complete = true
@@ -237,5 +237,5 @@ internal object HeifPrecisionProbe {
 }
 
 /** Original AVIF/HEIF bytes are required to keep >8-bit samples through reader decode. */
-internal fun keepHeifPrecisionOriginal(fileName: String, advancedColor: Boolean): Boolean = advancedColor &&
+internal fun keepHeifPrecisionOriginal(fileName: String, advancedColor: Boolean, preferNative: Boolean = false): Boolean = (advancedColor || preferNative) &&
     fileName.substringAfterLast('.', "").lowercase() in setOf("avif", "heic", "heif", "heics", "heifs", "hif")

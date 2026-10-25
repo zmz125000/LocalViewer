@@ -40,22 +40,22 @@ internal object ThumbnailMemory {
         if (!Settings.thumbnailMemoryBudget.value) return work()
         // Header-only probes happen before reading the full compressed source into RAM.
         var sourceBytes = runCatching { source.metadataOrNull()?.size }.getOrNull() ?: -1L
-        var avifMemory: HeifThumbnailMemory? = null
+        var heifMemory: HeifThumbnailMemory? = null
         val size = runCatching {
             source.openFileDescriptor("r").use { descriptor ->
                 if (sourceBytes < 0) sourceBytes = descriptor.statSize
-                if (codec == LibCodec.AvifPq) {
+                if (codec == LibCodec.AvifPq || (codec == LibCodec.HevcHdr && Settings.preferNativeHeifAvif.value)) {
                     // Do not stage a pipe just for admission; the decode stage
                     // handles it once. Unknown metadata keeps the exclusive budget.
                     val buffer = mapStillInput(descriptor.fd)
                     if (buffer != null) {
                         try {
-                            avifMemory = HeifPrecisionProbe.thumbnailMemory(buffer)
+                            heifMemory = HeifPrecisionProbe.thumbnailMemory(buffer)
                         } finally {
                             unmapStillInput(buffer)
                         }
                     }
-                    avifMemory?.dimensions ?: 0L
+                    heifMemory?.dimensions ?: 0L
                 } else if (kind(codec) >= 0) {
                     probeStillExportSize("/proc/self/fd/${descriptor.fd}", kind(codec))
                 } else {
@@ -65,16 +65,16 @@ internal object ThumbnailMemory {
                 }
             }
         }.getOrDefault(0L)
-        return withEstimate(sourceBytes, size, codec, edge, mapped = true, avifYuvBytes = avifMemory?.codedYuvBytes, work = work)
+        return withEstimate(sourceBytes, size, codec, edge, mapped = true, avifYuvBytes = heifMemory?.codedYuvBytes, work = work)
     }
 
     suspend fun <T> withBytes(bytes: ByteArray, codec: LibCodec?, edge: Int, work: suspend () -> T): T {
         if (!Settings.thumbnailMemoryBudget.value) return work()
-        var avifMemory: HeifThumbnailMemory? = null
+        var heifMemory: HeifThumbnailMemory? = null
         val size = runCatching {
-            if (codec == LibCodec.AvifPq) {
-                avifMemory = HeifPrecisionProbe.thumbnailMemory(ByteBuffer.wrap(bytes))
-                avifMemory?.dimensions ?: 0L
+            if (codec == LibCodec.AvifPq || (codec == LibCodec.HevcHdr && Settings.preferNativeHeifAvif.value)) {
+                heifMemory = HeifPrecisionProbe.thumbnailMemory(ByteBuffer.wrap(bytes))
+                heifMemory?.dimensions ?: 0L
             } else if (kind(codec) >= 0) {
                 // Reuse the bounded native header probes without copying a whole download.
                 // An IFD/basic-info beyond this prefix is unknown and runs alone.
@@ -91,7 +91,7 @@ internal object ThumbnailMemory {
                 pack(bounds.outWidth, bounds.outHeight)
             }
         }.getOrDefault(0L)
-        return withEstimate(bytes.size.toLong(), size, codec, edge, mapped = false, avifYuvBytes = avifMemory?.codedYuvBytes, work = work)
+        return withEstimate(bytes.size.toLong(), size, codec, edge, mapped = false, avifYuvBytes = heifMemory?.codedYuvBytes, work = work)
     }
 
     /** PDF Flate/predictor buffers are allocated before the encoded thumb reaches writeThumb. */
@@ -120,7 +120,9 @@ internal object ThumbnailMemory {
         // planes even when progressive thumbnail output is requested. Account for
         // full source planes conservatively when a codec-specific estimate is absent.
         // Bitmap pixel planes live on the native heap on supported Android versions.
-        val heapBytes = (if (mapped) 0 else compressed) + MIB
+        // HEVC assembles Annex-B access units for libde265 even from mapped HEIF.
+        val hevcNative = codec == LibCodec.HevcHdr && Settings.preferNativeHeifAvif.value
+        val heapBytes = (if (mapped && !hevcNative) 0 else compressed) + MIB
         val nativeBytes = when {
             codec == LibCodec.Raw -> thumb + compressed
             codec == LibCodec.AvifPq && avifYuvBytes != null -> {

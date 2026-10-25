@@ -8,6 +8,9 @@ import com.ehviewer.core.files.metadataOrNull
 import com.ehviewer.core.files.openFileDescriptor
 import com.ehviewer.core.files.toUri
 import com.hippo.ehviewer.Settings
+import com.hippo.ehviewer.image.ImageSource
+import com.hippo.ehviewer.image.PathSource
+import com.hippo.ehviewer.image.byteBufferSource
 import com.hippo.ehviewer.jni.convertAvifBufferToUltraHdr
 import com.hippo.ehviewer.jni.convertAvifBytesToUltraHdr
 import com.hippo.ehviewer.jni.convertAvifBytesToUltraHdrMaxEdge
@@ -116,7 +119,7 @@ object HdrConvertCache {
 
     /** Keep original bytes on network finalize (no UHDR encode). */
     private fun keepOriginalOnNetwork(fileName: String): Boolean = Settings.readerLibDirectBitmap.value ||
-        keepHeifPrecisionOriginal(fileName, Settings.readerAdvancedColor.value)
+        keepHeifPrecisionOriginal(fileName, Settings.readerAdvancedColor.value, Settings.preferNativeHeifAvif.value)
 
     /** Derived Ultra HDR for local files (user originals untouched). */
     private val localRoot: Path by lazy(LazyThreadSafetyMode.PUBLICATION) {
@@ -154,7 +157,7 @@ object HdrConvertCache {
      * pure [uhdrSiblingOf] + an in-memory set (see Smb/WebDav `isPageCached`).
      */
     fun resolvePagePath(primary: Path): Path {
-        if ((Settings.readerLibDirectBitmap.value || keepHeifPrecisionOriginal(primary.name, Settings.readerAdvancedColor.value)) && isPresent(primary)) return primary
+        if ((Settings.readerLibDirectBitmap.value || keepHeifPrecisionOriginal(primary.name, Settings.readerAdvancedColor.value, Settings.preferNativeHeifAvif.value)) && isPresent(primary)) return primary
         val uhdr = uhdrSiblingOf(primary)
         if (uhdr.toString() != primary.toString() && isPresent(uhdr)) {
             if (primary.name.endsWith(".avif", ignoreCase = true) && isPresent(primary)) {
@@ -309,7 +312,14 @@ object HdrConvertCache {
                     }
                     return@withPath false
                 }
-                val ok = if (route.needsUhdr) {
+                val ok = if (route is StillRoute.Lib && route.codec == LibCodec.HevcHdr && Settings.preferNativeHeifAvif.value) {
+                    val input = object : PathSource {
+                        override val source = source
+                        override val type = FileUtils.getExtensionFromFilename(fileNameHint) ?: "heic"
+                        override fun close() = Unit
+                    }
+                    writeHeifThumb(input, dest, edge, quality)
+                } else if (route.needsUhdr) {
                     val lib = route as StillRoute.Lib
                     writeConvertThumb(source, dest, edge, fileNameHint, lib.codec)
                 } else {
@@ -472,7 +482,9 @@ object HdrConvertCache {
                     }
                     return@withBytes false
                 }
-                val ok = if (route.needsUhdr) {
+                val ok = if (route is StillRoute.Lib && route.codec == LibCodec.HevcHdr && Settings.preferNativeHeifAvif.value) {
+                    writeHeifThumb(byteBufferSource(ByteBuffer.wrap(bytes)) {}, destJpeg, edge, quality)
+                } else if (route.needsUhdr) {
                     val lib = route as StillRoute.Lib
                     writeConvertThumbBytes(bytes, destJpeg, edge, lib.codec)
                 } else {
@@ -766,6 +778,29 @@ object HdrConvertCache {
     }.onFailure {
         Log.e(TAG, "writePlatformThumbBytes failed", it)
     }.getOrDefault(false)
+
+    private suspend fun writeHeifThumb(source: ImageSource, dest: File, edge: Int, quality: Int): Boolean {
+        val output = OriginDiskCache.jpegSibling(dest)
+        return pathLocks.getOrPut(output.absolutePath) { Mutex() }.withLock {
+            if (output.isFile && output.length() > 0L) return@withLock true
+            output.parentFile?.mkdirs()
+            val tmp = File("${output.absolutePath}.tmp.${System.nanoTime()}")
+            try {
+                if (!LibDirectDecode.writeHeifThumbnail(source, edge, tmp, quality) || tmp.length() <= 0L) {
+                    return@withLock false
+                }
+                commitTmp(tmp, output)
+                true
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                Log.e(TAG, "Native HEIF thumbnail failed", error)
+                false
+            } finally {
+                tmp.delete()
+            }
+        }
+    }
 
     private suspend fun writeConvertThumb(
         source: Path,

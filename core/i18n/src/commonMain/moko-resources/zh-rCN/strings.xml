@@ -296,6 +296,8 @@
     <string name="settings_archive_extract_slots_summary">同时进行 %s 个压缩包缩略图提取。</string>
     <string name="settings_thumbnail_memory_budget">缩略图内存预算限制</string>
     <string name="settings_thumbnail_memory_budget_summary">根据内存使用量限制并发任务。关闭后可能导致内存不足。</string>
+    <string name="settings_prefer_native_heif_avif">优先使用 HEIF 和 AVIF 原生解码器</string>
+    <string name="settings_prefer_native_heif_avif_summary">在阅读器和缩略图中使用内置解码器处理 HEIF/AVIF 静态图像。</string>
     <string name="settings_advanced_read_cache_size_summary">SMB 页面缓存（及旧版在线图片缓存）的最大容量</string>
     <!-- Theme -->
     <string name="homepage">主页</string>

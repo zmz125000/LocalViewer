@@ -667,6 +667,8 @@
     <string name="settings_archive_extract_slots_summary">Up to %s archive thumb extraction jobs.</string>
     <string name="settings_thumbnail_memory_budget">Thumbnail memory budget limit</string>
     <string name="settings_thumbnail_memory_budget_summary">Limit parallel jobs by memory use. Disabling may exhaust memory.</string>
+    <string name="settings_prefer_native_heif_avif">Prefer native decoder for HEIF and AVIF</string>
+    <string name="settings_prefer_native_heif_avif_summary">Use bundled decoders for HEIF/AVIF still images in the reader and thumbnails.</string>
     <string name="settings_download_download_delay">Download delay</string>
     <string name="settings_download_download_delay_summary">Delay %s ms per download</string>
     <string name="settings_download_timeout_speed">Minimum download speed (in KB/s)</string>

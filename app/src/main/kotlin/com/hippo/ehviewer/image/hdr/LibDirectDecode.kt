@@ -227,6 +227,27 @@ object LibDirectDecode {
 
     private data class ExportDecode(val target: StillExportTarget, val controls: RawExportControls)
 
+    /** HEVC thumbnail decode/encode under the caller's thumbnail slots and memory lease. */
+    internal fun writeHeifThumbnail(src: ImageSource, maxEdge: Int, output: File, quality: Int): Boolean {
+        val handle = beginNativeExportPixels(false)
+        try {
+            var nativePixels: ByteBuffer? = null
+            val packed = try {
+                decodeNativePacked(src, LibCodec.HevcHdr, maxEdge, advanced = true, export = true)
+            } finally {
+                nativePixels = endNativeReaderPixels(handle)
+            } ?: return false
+            val pixels = directPixels(packed, nativePixels) ?: return false
+            return pixels.writeResolved(
+                if (pixels.isHdr) StillExportTarget.JpegHdr else StillExportTarget.Jpeg,
+                output,
+                StillExportQuality(4, 1f, quality.coerceIn(1, 100), false),
+            )
+        } finally {
+            releaseNativeReaderPixels(handle)
+        }
+    }
+
     private fun directPixels(packed: PackedPixels, nativePixels: ByteBuffer? = null): DirectPixels? {
         val w = packed.outInfo.getOrNull(0) ?: 0
         val h = packed.outInfo.getOrNull(1) ?: 0
@@ -492,7 +513,7 @@ object LibDirectDecode {
      * precision. Absolute HDR keeps the existing HDR-display preference.
      */
     private fun decodeHevcHdrPacked(bytes: ByteBuffer, maxEdge: Int, advanced: Boolean, export: Boolean = false): PackedPixels? {
-        if (!export && !Settings.readerHdrDisplay.value && HeifContainer.parse(bytes)?.absoluteHdr() != null) return null
+        if (!export && !Settings.preferNativeHeifAvif.value && !Settings.readerHdrDisplay.value && HeifContainer.parse(bytes)?.absoluteHdr() != null) return null
         val frame = HevcHdrDecode.decode(bytes, maxEdge, advanced) ?: return null
         frame.use {
             val outInfo = intArrayOf(frame.width, frame.height, 1, if (frame.isHdr) 1 else 0, frame.gamut, frame.transfer)

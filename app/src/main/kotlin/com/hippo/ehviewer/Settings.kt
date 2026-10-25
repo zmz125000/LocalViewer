@@ -776,6 +776,7 @@ object Settings : DataStorePreferences(null) {
     /** Image/PDF thumbnail conversion and encoding jobs. */
     val thumbnailConvertSlots = intPref("thumbnail_convert_slots", 3)
     val archiveExtractSlots = intPref("archive_extract_slots", 3)
+    val preferNativeHeifAvif = boolPref("prefer_native_heif_avif", false)
     val thumbnailMemoryBudget = boolPref("thumbnail_memory_budget", false)
     val animateItems = boolPref("animate_items", true)
     val desktopSite = boolPref("desktop_site", true)
