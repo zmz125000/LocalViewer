@@ -122,6 +122,12 @@
     <string name="image_conversion_quality_high">高</string>
     <string name="image_conversion_quality_mid">中</string>
     <string name="image_conversion_quality_low">低</string>
+    <string name="image_conversion_quality_custom">自定义</string>
+    <string name="image_conversion_jxl_jpeg_transcoding">JXL 无损 JPEG 转码</string>
+    <string name="image_conversion_jxl_jpeg_transcoding_summary">将 JPEG 转为 JPEG XL 时保留原始 JPEG 数据，不受距离设置影响。</string>
+    <string name="image_conversion_jxl_distance">JPEG XL 距离</string>
+    <string name="image_conversion_jxl_distance_summary">距离越低，质量越高；0 为无损。</string>
+    <string name="image_conversion_custom_codec_quality">JPEG / AVIF 质量</string>
     <string name="raw_hdr_conversion">RAW HDR 转换</string>
     <string name="raw_hdr_conversion_summary">%1$s</string>
     <string name="browse_ask_where_to_save">询问保存位置</string>

@@ -4,7 +4,7 @@ import com.hippo.ehviewer.jni.encodeNativeStillExport
 import com.hippo.ehviewer.jni.encodeStillExport
 import java.io.File
 
-fun DirectPixels.writeResolved(resolved: StillExportTarget, out: File, quality: Int = 1): Boolean {
+internal fun DirectPixels.writeResolved(resolved: StillExportTarget, out: File, quality: StillExportQuality = StillExportQuality.current()): Boolean {
     if ((nativePixels == null && pixels.isEmpty()) || width <= 0 || height <= 0) {
         android.util.Log.e("StillConvert", "Invalid export pixels: ${width}x$height native=${nativePixels != null}")
         return false
@@ -12,7 +12,7 @@ fun DirectPixels.writeResolved(resolved: StillExportTarget, out: File, quality: 
     val rc = nativePixels?.let { native ->
         encodeNativeStillExport(
             native, width, height, f16, gamut, resolved.exportMode(), premultiplied,
-            out.absolutePath, sdrOffset, quality.coerceIn(0, 3),
+            out.absolutePath, sdrOffset, quality.value, quality.jxlDistance, quality.codecQuality,
         )
     } ?: encodeStillExport(
         pixels,
@@ -24,7 +24,7 @@ fun DirectPixels.writeResolved(resolved: StillExportTarget, out: File, quality: 
         premultiplied,
         out.absolutePath,
         sdrOffset,
-        quality.coerceIn(0, 3),
+        quality.value, quality.jxlDistance, quality.codecQuality,
     )
     if (rc != 0) {
         android.util.Log.e(

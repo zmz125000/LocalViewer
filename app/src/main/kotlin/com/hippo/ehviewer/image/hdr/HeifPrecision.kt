@@ -7,14 +7,14 @@ internal data class HeifPrecision(
     val transfer: Int? = null,
     val animated: Boolean = false,
     val chroma: Int? = null,
-    /** AV1 seq_level_idx_0 from the primary item's av1C; 16 is Level 6.0. */
+    /** AV1 seq_level_idx_0 from the primary item's av1C; 12 is Level 5.0, 16 is Level 6.0. */
     val av1Level: Int? = null,
 ) {
     val highDepth: Boolean get() = !animated && (bitDepth == null || bitDepth > 8)
     val needsSoftware: Boolean get() = !animated && if (avif) {
-        // Platform AVIF support can stop at Level 5.x even for 8-bit SDR.
-        // Bundled dav1d handles larger still frames without downscaling first.
-        av1Level != null && av1Level >= 16
+        // Level 5.x 10-bit SDR also fails on platform decoders that reject
+        // Level 6.x. Route Level 5+ stills through bundled dav1d consistently.
+        av1Level != null && av1Level >= 12
     } else {
         chroma in 2..3
     }

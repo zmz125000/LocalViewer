@@ -15,8 +15,25 @@ struct JxlFileCloser {
 };
 }
 
+static int write_jxl_output(JxlEncoder* encoder, const char* path) {
+    std::unique_ptr<FILE, JxlFileCloser> file(fopen(path, "wb"));
+    if (!file) return -65;
+    // Stream encoded bytes directly to disk; no second complete compressed file.
+    std::array<uint8_t, 65536> output{};
+    for (;;) {
+        uint8_t* next = output.data();
+        size_t available = output.size();
+        const auto status = JxlEncoderProcessOutput(encoder, &next, &available);
+        const size_t count = output.size() - available;
+        if (count && fwrite(output.data(), 1, count, file.get()) != count) return -66;
+        if (status == JXL_ENC_SUCCESS) break;
+        if (status != JXL_ENC_NEED_MORE_OUTPUT) return -67;
+    }
+    return fflush(file.get()) == 0 ? 0 : -66;
+}
+
 static int encode_jxl_pixels(unsigned w, unsigned h, const void* rgba, uhdr_color_gamut_t cg,
-                             const char* path, int quality, JxlDataType type,
+                             const char* path, StillEncodeQuality quality, JxlDataType type,
                              JxlTransferFunction transfer, float intensity) {
     const size_t pixels = static_cast<size_t>(w) * h;
     if (!rgba || !path || !pixels) return -60;
@@ -35,9 +52,8 @@ static int encode_jxl_pixels(unsigned w, unsigned h, const void* rgba, uhdr_colo
     info.alpha_bits = info.bits_per_sample;
     info.alpha_exponent_bits = info.exponent_bits_per_sample;
     info.alpha_premultiplied = JXL_FALSE;
-    const bool compression = quality > 0;
-    constexpr float distances[] = {0.f, .3f, .5f, 1.f};
-    const float distance = distances[std::clamp(quality, 0, 3)];
+    const float distance = quality.jxl_distance();
+    const bool compression = distance > 0.f;
     info.uses_original_profile = compression ? JXL_FALSE : JXL_TRUE;
     info.intensity_target = intensity;
     JxlColorEncoding color{};
@@ -50,7 +66,7 @@ static int encode_jxl_pixels(unsigned w, unsigned h, const void* rgba, uhdr_colo
         JxlEncoderSetColorEncoding(encoder.get(), &color) != JXL_ENC_SUCCESS) return -62;
     auto* frame = JxlEncoderFrameSettingsCreate(encoder.get(), nullptr);
     // Lossless keeps original-profile / fast-decode coding. High/mid/low use
-    // perceptual XYB at distances 0.3/0.5/1.0, preserving primaries, transfer
+    // perceptual XYB at distances 0.5/1.0/1.5, preserving primaries, transfer
     // and HDR intensity target. Alpha remains lossless in every preset.
     if (!frame || JxlEncoderSetFrameLossless(frame, compression ? JXL_FALSE : JXL_TRUE) != JXL_ENC_SUCCESS ||
         JxlEncoderSetFrameDistance(frame, distance) != JXL_ENC_SUCCESS ||
@@ -60,26 +76,13 @@ static int encode_jxl_pixels(unsigned w, unsigned h, const void* rgba, uhdr_colo
     const JxlPixelFormat format{4, type, JXL_NATIVE_ENDIAN, 0};
     if (JxlEncoderAddImageFrame(frame, &format, rgba, pixels * (type == JXL_TYPE_UINT8 ? 4 : 8)) != JXL_ENC_SUCCESS) return -64;
     JxlEncoderCloseInput(encoder.get());
-    std::unique_ptr<FILE, JxlFileCloser> file(fopen(path, "wb"));
-    if (!file) return -65;
-    // Stream encoded bytes directly to disk; no second complete compressed file.
-    std::array<uint8_t, 65536> output{};
-    for (;;) {
-        uint8_t* next = output.data();
-        size_t available = output.size();
-        const auto status = JxlEncoderProcessOutput(encoder.get(), &next, &available);
-        const size_t count = output.size() - available;
-        if (count && fwrite(output.data(), 1, count, file.get()) != count) return -66;
-        if (status == JXL_ENC_SUCCESS) break;
-        if (status != JXL_ENC_NEED_MORE_OUTPUT) return -67;
-    }
-    return fflush(file.get()) == 0 ? 0 : -66;
+    return write_jxl_output(encoder.get(), path);
 }
 
 // The caller owns straight-alpha linear half samples. Normalize HDR to its
 // declared luminance for linear JXL; PQ retains the absolute 10000-nit reference.
 int encode_jxl_f16(unsigned w, unsigned h, uint16_t* rgba, uhdr_color_gamut_t cg,
-                   bool hdr, const char* path, int quality, bool pq) {
+                   bool hdr, const char* path, StillEncodeQuality quality, bool pq) {
     const size_t pixels = static_cast<size_t>(w) * h;
     if (!rgba || !path || !pixels) return -60;
     float peak = pq ? kMaxLinear : 1.f;
@@ -125,7 +128,38 @@ int encode_jxl_f16(unsigned w, unsigned h, uint16_t* rgba, uhdr_color_gamut_t cg
 }
 
 int encode_jxl_u8(unsigned w, unsigned h, const uint8_t* rgba, uhdr_color_gamut_t cg,
-                   const char* path, int quality) {
+                   const char* path, StillEncodeQuality quality) {
     return encode_jxl_pixels(w, h, rgba, cg, path, quality, JXL_TYPE_UINT8,
                              JXL_TRANSFER_FUNCTION_SRGB, kSdrWhiteNits);
+}
+
+// JPEG transcoding preserves compressed coefficients and reconstruction metadata.
+// No RGB conversion or distance setting is involved.
+extern "C" JNIEXPORT jint JNICALL
+Java_com_hippo_ehviewer_jni_HdrConvertKt_transcodeJpegToJxl(
+        JNIEnv* env, jclass, jbyteArray input, jstring output) {
+    if (!input || !output) return -60;
+    const jsize length = env->GetArrayLength(input);
+    if (length <= 0) return -60;
+    auto encoder = JxlEncoderMake(nullptr);
+    const unsigned threads = std::min(4u, std::max(1u, std::thread::hardware_concurrency()));
+    auto runner = JxlThreadParallelRunnerMake(nullptr, threads);
+    if (!encoder || !runner ||
+        JxlEncoderSetParallelRunner(encoder.get(), JxlThreadParallelRunner, runner.get()) != JXL_ENC_SUCCESS ||
+        JxlEncoderStoreJPEGMetadata(encoder.get(), JXL_TRUE) != JXL_ENC_SUCCESS) return -61;
+    auto* frame = JxlEncoderFrameSettingsCreate(encoder.get(), nullptr);
+    if (!frame || JxlEncoderFrameSettingsSetOption(frame, JXL_ENC_FRAME_SETTING_EFFORT, 5) != JXL_ENC_SUCCESS) return -63;
+    auto* jpeg = env->GetByteArrayElements(input, nullptr);
+    if (!jpeg) return -60;
+    // AddJPEGFrame copies the JPEG internally. Release the JNI input before
+    // encoding output, avoiding a pinned Java array during compression.
+    const auto added = JxlEncoderAddJPEGFrame(frame, reinterpret_cast<uint8_t*>(jpeg), static_cast<size_t>(length));
+    env->ReleaseByteArrayElements(input, jpeg, JNI_ABORT);
+    if (added != JXL_ENC_SUCCESS) return -68;
+    const char* path = env->GetStringUTFChars(output, nullptr);
+    if (!path) return -65;
+    JxlEncoderCloseInput(encoder.get());
+    const int result = write_jxl_output(encoder.get(), path);
+    env->ReleaseStringUTFChars(output, path);
+    return result;
 }

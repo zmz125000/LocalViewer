@@ -756,8 +756,13 @@ object Settings : DataStorePreferences(null) {
     val browseAskWhereToSave = boolPref("browse_ask_where_to_save", true)
     val imageConversionLocation = stringOrNullPref("image_conversion_location")
 
-    /** 0 lossless (JPEG Q95), 1 high (Q95), 2 mid (Q90), 3 low (Q85). JPEG always uses 4:4:4. */
+    /** 0 lossless (JPEG Q95), 1 high (Q95), 2 mid (Q90), 3 low (Q85), 4 custom. JPEG always uses 4:4:4. */
     val imageConversionQuality = intPref("image_conversion_quality", 2)
+    val imageConversionJxlJpegTranscoding = boolPref("image_conversion_jxl_jpeg_transcoding", false)
+
+    // JXL distance in hundredths: 0 is lossless; lower distances retain more detail.
+    val imageConversionJxlDistance = intPref("image_conversion_jxl_distance", 100)
+    val imageConversionCustomQuality = intPref("image_conversion_custom_quality", 90)
 
     /** RAW HDR exports: 0 source headroom, 1 default controls boost, 2 current controls. */
     val rawHdrConversionMode = intPref("raw_hdr_conversion_mode", 1)

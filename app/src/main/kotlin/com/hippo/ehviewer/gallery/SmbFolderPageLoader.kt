@@ -99,6 +99,16 @@ suspend inline fun <T> useSmbFolderPageLoader(
 
                 override fun getOriginalImageFileName(index: Int) = imageFileNames[index]
 
+                private fun relativeFile(index: Int): String = imageFileNames[index].let { name ->
+                    if (remoteDir.isEmpty()) name else "$remoteDir/$name"
+                }
+
+                override fun originalFile(index: Int): ReaderOriginalFile = ReaderOriginalFile.Smb(
+                    source.id,
+                    relativeFile(index),
+                    readerOriginalRamHit(ramPages[index], ramJpegPages.contains(index), imageFileNames[index]),
+                )
+
                 override fun savePage(index: Int, file: Path): Boolean = runCatching {
                     ramPages[index]?.let {
                         java.io.File(file.toString()).writeBytes(it)
@@ -341,7 +351,7 @@ suspend inline fun <T> useSmbFolderPageLoader(
                     val name = imageFileNames[index]
                     val cache = SmbCache.cachePath(source.id, remoteDir, name)
                     if (SmbCache.isPageCachedOnDisk(cache)) return
-                    val rel = if (remoteDir.isEmpty()) name else "$remoteDir/$name"
+                    val rel = relativeFile(index)
                     ZipAsDirListing.zipMemberPath(rel)?.let { (zipRel, member) ->
                         val bytes = ZipMemberCover.extractBytes(
                             "smb:${source.id}:$zipRel",
@@ -390,7 +400,7 @@ suspend inline fun <T> useSmbFolderPageLoader(
                         RawNetworkPageCache.note(name, cache)
                         return
                     }
-                    val rel = if (remoteDir.isEmpty()) name else "$remoteDir/$name"
+                    val rel = relativeFile(index)
                     // Per-path mutex: two connections never write the same cache file.
                     SmbCache.downloadIfNeeded(cache, originalFileName = name) { out ->
                         SmbGateway.downloadFile(source, password, rel, out)

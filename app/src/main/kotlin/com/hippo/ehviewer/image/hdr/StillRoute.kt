@@ -274,7 +274,7 @@ fun classify(bytes: ByteArray, length: Int = bytes.size, fileNameHint: String? =
 
     val heifPrecision = if (isHeifFamily(bytes, n)) HeifPrecisionProbe.probe(bytes, n) else null
     if (heifPrecision?.animated == true) return StillRoute.Platform
-    // HEVC 4:2:2 / 4:4:4 and large AV1 Level 6+ stills can be unsupported by
+    // HEVC 4:2:2 / 4:4:4 and AV1 Level 5+ stills can be unsupported by
     // the platform even at 8 bits. Keep the original and decode natively,
     // independently of HDR settings and the optional JPEG-cache reader path.
     if (heifPrecision?.needsSoftware == true) {

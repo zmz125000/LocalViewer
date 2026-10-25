@@ -128,6 +128,12 @@
     <string name="image_conversion_quality_high">高</string>
     <string name="image_conversion_quality_mid">中</string>
     <string name="image_conversion_quality_low">低</string>
+    <string name="image_conversion_quality_custom">カスタム</string>
+    <string name="image_conversion_jxl_jpeg_transcoding">JXL JPEG 可逆トランスコード</string>
+    <string name="image_conversion_jxl_jpeg_transcoding_summary">JPEG から JPEG XL への変換時に、距離設定に関係なく元の JPEG データを保持します。</string>
+    <string name="image_conversion_jxl_distance">JPEG XL 距離</string>
+    <string name="image_conversion_jxl_distance_summary">距離が小さいほど高画質です。0 は可逆圧縮です。</string>
+    <string name="image_conversion_custom_codec_quality">JPEG / AVIF 画質</string>
     <string name="raw_hdr_conversion">RAW HDR 変換</string>
     <string name="raw_hdr_conversion_summary">%1$s</string>
     <string name="browse_ask_where_to_save">保存先を毎回確認</string>

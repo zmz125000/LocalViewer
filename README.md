@@ -104,7 +104,7 @@ Build with Grok 4.5.
 * PQ/HLG HEIF software decoding with preserved high bit depth on 64-bit builds.
 * 14-Bit RAW formats decoding with true HDR output.
 * RAW formats support dng/cr2/cr3/nef/nrw/arw/raf/orf/rw2/pef/srw/raw.
-* Batch convert JXL/JXR/RAW to JPEG, Ultra HDR JPEG, or 16-bit SDR/HDR JPEG XL.
+* Batch convert JXL/JXR/RAW to JPEG, JPEG XL, AVIF in both SDR and HDR.
 * Compatible with Oppo/OnePlus ProXDR HEIC format.
 * Compatible with Apple HDR (HEIF, AVIF).
 * Nearest, Bilinear, B-Spline, Catmull-Rom, Mitchell-Netravali, Lanczos3 image scalers using GPU shader.
@@ -125,7 +125,7 @@ Build with Grok 4.5.
 
 ### Performance
 * The custom SMBJ and WebDAV clients achieve 1 Gbps network speeds over Wi-Fi 7, so after v1.11.x the image reader defaults to have image caching disabled.
-* Windows 11 JXR HDR screenshots can be displayed in fp16 hdr bitmaps, or transcode to Ultra HDR Jpeg. The HDR processing is faster than any other viewers.
+* Windows 11 JXR HDR screenshots can be displayed in fp16 hdr bitmaps, or transcode to Ultra HDR Jpeg.
 * The image loader was tweaked for preloading and decoding 100MB jpg hdr files over network without any OOM crashes, and smaller files should load instantly.
 * Accurate HDR presentation of RAW and JXR images (compared with DaVinci Resolve).
 
