@@ -82,6 +82,13 @@ suspend inline fun <T> useWebDavFolderPageLoader(
 
                 override fun getOriginalImageFileName(index: Int) = imageFileNames[index]
 
+                private fun relativeFile(index: Int): String = imageFileNames[index].let { name ->
+                    if (remoteDir.isEmpty()) name else "$remoteDir/$name"
+                }
+
+                override fun originalFile(index: Int): ReaderOriginalFile =
+                    ReaderOriginalFile.WebDav(source.id, relativeFile(index))
+
                 override fun savePage(index: Int, file: Path): Boolean = runCatching {
                     ramPages[index]?.let {
                         java.io.File(file.toString()).writeBytes(it)
@@ -248,7 +255,7 @@ suspend inline fun <T> useWebDavFolderPageLoader(
                                         dispatchReady(index)
                                         return@withFolderNetworkPermit
                                     }
-                                    val remote = if (remoteDir.isEmpty()) name else "$remoteDir/$name"
+                                    val remote = relativeFile(index)
                                     WebDavCache.downloadIfNeeded(cache, originalFileName = name) { out ->
                                         WebDavClient.downloadFile(source, password, remote, out)
                                     }
@@ -293,7 +300,7 @@ suspend inline fun <T> useWebDavFolderPageLoader(
                     val name = imageFileNames[index]
                     val cache = WebDavCache.cachePath(source.id, remoteDir, name)
                     if (WebDavCache.isPageCachedOnDisk(cache)) return
-                    val remote = if (remoteDir.isEmpty()) name else "$remoteDir/$name"
+                    val remote = relativeFile(index)
                     ZipAsDirListing.zipMemberPath(remote)?.let { (zipRel, member) ->
                         val bytes = ZipMemberCover.extractBytes(
                             "webdav:${source.id}:$zipRel",

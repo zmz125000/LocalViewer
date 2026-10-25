@@ -17,6 +17,7 @@ import com.ehviewer.core.i18n.R
 import com.ehviewer.core.util.withIOContext
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.gallery.Page
+import com.hippo.ehviewer.gallery.ReaderOriginalFile
 import com.hippo.ehviewer.gallery.ReaderSession
 import com.hippo.ehviewer.image.PathSource
 import com.hippo.ehviewer.image.hdr.LibDirectDecode
@@ -48,8 +49,22 @@ suspend fun convertTo(page: Page, target: StillExportTarget) {
         snackbar(string(R.string.error_cant_save_image))
         return
     }
+    // Capture the page's original identity before the picker/queue can outlive
+    // this session or its RAM/cache entry. Network reader caches can contain
+    // embedded RAW previews or converted JPEGs instead of original codec bytes.
+    val stage: suspend () -> File = when (val original = loader.originalFile(page.index)) {
+        is ReaderOriginalFile.Smb -> {
+            { BrowseSaveAs.stageSmbForConvert(original.sourceId, original.relativePath) }
+        }
+        is ReaderOriginalFile.WebDav -> {
+            { BrowseSaveAs.stageWebDavForConvert(original.sourceId, original.relativePath) }
+        }
+        null -> {
+            { stageOriginal(loader, page.index) }
+        }
+    }
     enqueueSingleConvert(snackbar, ctx, leaf, target) { dir, selected ->
-        exportStillToDirectory(leaf, selected, dir) { stageOriginal(loader, page.index) }
+        exportStillToDirectory(leaf, selected, dir, stage = stage)
     }
 }
 

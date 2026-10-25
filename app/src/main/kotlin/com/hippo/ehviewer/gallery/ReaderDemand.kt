@@ -53,6 +53,9 @@ interface ReaderSession : AutoCloseable {
     /** Original file name, including a JXL / JXR / RAW extension when the page has one. */
     fun sourceLeafName(index: Int): String? = getImageFilename(index)
 
+    /** Capture the original location, rather than a decoded/converted cache file. */
+    fun originalFile(index: Int): ReaderOriginalFile? = null
+
     /**
      * Copy the original page bytes. Unlike [save], this does not substitute a
      * cached Ultra HDR JPEG.
