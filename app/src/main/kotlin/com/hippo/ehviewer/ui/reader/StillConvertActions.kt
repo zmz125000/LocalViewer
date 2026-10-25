@@ -215,7 +215,7 @@ private suspend fun encodeStagedCaptured(leaf: String, target: StillExportTarget
     withExportSource(localSource, stage) { source, decodeSource ->
         android.util.Log.i("StillConvert", "Start $leaf -> $target source=$decodeSource")
         StillExportWork.withSource(source, leaf) {
-            if (target == StillExportTarget.Jxl && quality.jpegTranscoding &&
+            if (target == StillExportTarget.Jxl && (quality.value == 0 || quality.jpegTranscoding) &&
                 leaf.substringAfterLast('.', "").lowercase() in setOf("jpg", "jpeg", "jpe", "jfif")
             ) {
                 val out = File.createTempFile("still-out", null, appCtx.cacheDir)
