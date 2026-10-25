@@ -281,7 +281,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
     val showSmallGalleries by Settings.browseShowSmallGalleries.collectAsState()
     val smallGalleryMinPages by Settings.browseSmallGalleryMinPages.collectAsState()
     val showHiddenFiles by Settings.browseShowHiddenFiles.collectAsState()
-    val showVirtualGalleries by Settings.browseShowVirtualGalleries.collectAsState()
+    val showVirtualGalleries = rememberEffectiveVirtualGalleries(folderId)
     // Same virtual-layer rules as SMB RPC root / photo grid (not regular folder-view mode).
     val relativeDirForMode = stack.lastOrNull()?.relativePath.orEmpty()
     val virtual = localBrowseVirtual(
@@ -2643,6 +2643,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                         )
                         BrowseViewModeMenu(
                             folder = if (virtual.isVirtual) null else folderId,
+                            virtualGalleriesFolder = folderId,
                             hideContentModes = virtual.hideContentModes,
                             ephemeralSort = if (photoGrid) gridSort.mode else null,
                             ephemeralAscending = gridSort.ascending,

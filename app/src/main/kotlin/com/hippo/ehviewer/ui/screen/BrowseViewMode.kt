@@ -40,6 +40,7 @@ import com.hippo.ehviewer.collectAsState
 import com.hippo.ehviewer.library.BrowseContentMode
 import com.hippo.ehviewer.library.BrowseFolderId
 import com.hippo.ehviewer.library.BrowseModePersist
+import com.hippo.ehviewer.library.BrowseVirtualGalleryPersist
 import com.hippo.ehviewer.library.HistoryHideMode
 import com.hippo.ehviewer.library.HistoryHidePersist
 import com.hippo.ehviewer.library.naturalCompare
@@ -167,6 +168,19 @@ fun rememberEffectiveBrowseContentMode(
     }
 }
 
+@Composable
+fun rememberEffectiveVirtualGalleries(
+    folder: BrowseFolderId?,
+    skipAncestorKeys: Set<String> = emptySet(),
+): Boolean {
+    val revision by BrowseVirtualGalleryPersist.revision.collectAsState()
+    val saved by Settings.persistVirtualGalleries.collectAsState()
+    val global by Settings.browseShowVirtualGalleries.collectAsState()
+    return remember(folder, skipAncestorKeys, revision, saved, global) {
+        BrowseVirtualGalleryPersist.effective(folder, skipAncestorKeys)
+    }
+}
+
 /**
  * View-mode control for folder browsers: content filter, list/grid layout,
  * Name/Date UI sort (separate from Library), and display toggles.
@@ -183,6 +197,8 @@ fun rememberEffectiveBrowseContentMode(
 fun BrowseViewModeMenu(
     modifier: Modifier = Modifier,
     folder: BrowseFolderId? = null,
+    /** Virtual folder layers still inherit this setting from their real path. */
+    virtualGalleriesFolder: BrowseFolderId? = folder,
     skipAncestorKeys: Set<String> = emptySet(),
     hideContentModes: Boolean = false,
     /**
@@ -216,7 +232,13 @@ fun BrowseViewModeMenu(
     var browseZipAsDir by Settings.browseZipAsDir.asMutableState()
     var showSmallGalleries by Settings.browseShowSmallGalleries.asMutableState()
     var showHiddenFiles by Settings.browseShowHiddenFiles.asMutableState()
-    var showVirtualGalleries by Settings.browseShowVirtualGalleries.asMutableState()
+    val showVirtualGalleries = rememberEffectiveVirtualGalleries(virtualGalleriesFolder, skipAncestorKeys)
+    // The effective value can stay unchanged when a lock is added or removed.
+    val virtualRevision by BrowseVirtualGalleryPersist.revision.collectAsState()
+    val virtualSaved by Settings.persistVirtualGalleries.collectAsState()
+    val virtualMatch = remember(virtualGalleriesFolder, skipAncestorKeys, virtualRevision, virtualSaved, showVirtualGalleries) {
+        virtualGalleriesFolder?.let { BrowseVirtualGalleryPersist.resolve(it, skipAncestorKeys) }
+    }
     var favoritesOnTop by Settings.browseFavoritesOnTop.asMutableState()
     var photoGridMode by Settings.photoGridMode.asMutableState()
     var browseRecentOpen by Settings.browseRecentOpen.asMutableState()
@@ -424,10 +446,18 @@ fun BrowseViewModeMenu(
                 checked = showSmallGalleries,
                 onClick = { showSmallGalleries = !showSmallGalleries },
             )
-            ToggleMenuItem(
+            ContentModeItem(
                 label = stringResource(R.string.browse_menu_virtual_galleries),
-                checked = showVirtualGalleries,
-                onClick = { showVirtualGalleries = !showVirtualGalleries },
+                mark = when {
+                    virtualMatch?.showLock == true -> ModeMark.Lock
+                    showVirtualGalleries -> ModeMark.Tick
+                    else -> ModeMark.None
+                },
+                lockedState = showVirtualGalleries,
+                onClick = { BrowseVirtualGalleryPersist.tap(virtualGalleriesFolder, skipAncestorKeys) },
+                onLongClick = virtualGalleriesFolder?.let { current ->
+                    { BrowseVirtualGalleryPersist.longPress(current, skipAncestorKeys) }
+                },
             )
             ToggleMenuItem(
                 label = stringResource(R.string.browse_menu_hidden_files),
@@ -456,6 +486,7 @@ private fun ContentModeItem(
     mark: ModeMark,
     onClick: () -> Unit,
     onLongClick: (() -> Unit)? = null,
+    lockedState: Boolean? = null,
 ) {
     val haptic = LocalHapticFeedback.current
     // Do not use DropdownMenuItem — its clickable consumes the press and
@@ -481,6 +512,10 @@ private fun ContentModeItem(
             modifier = Modifier.weight(1f),
             style = MaterialTheme.typography.labelLarge,
         )
+        // Keep the on/off value visible alongside the lock for a boolean option.
+        if (mark == ModeMark.Lock && lockedState != null) {
+            MenuMarkSlot(if (lockedState) ModeMark.Tick else ModeMark.None)
+        }
         MenuMarkSlot(mark)
     }
 }

@@ -395,7 +395,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
     val showSmallGalleries by Settings.browseShowSmallGalleries.collectAsState()
     val smallGalleryMinPages by Settings.browseSmallGalleryMinPages.collectAsState()
     val showHiddenFiles by Settings.browseShowHiddenFiles.collectAsState()
-    val showVirtualGalleries by Settings.browseShowVirtualGalleries.collectAsState()
+    val showVirtualGalleries = rememberEffectiveVirtualGalleries(folderId)
     val filteredEntries = remember(
         displayEntries,
         search.keyword,
@@ -2236,6 +2236,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                         )
                         BrowseViewModeMenu(
                             folder = if (virtual.isVirtual) null else folderId,
+                            virtualGalleriesFolder = folderId,
                             hideContentModes = virtual.hideContentModes,
                             ephemeralSort = if (photoGrid) gridSort.mode else null,
                             ephemeralAscending = gridSort.ascending,

@@ -429,7 +429,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
     val showSmallGalleries by Settings.browseShowSmallGalleries.collectAsState()
     val smallGalleryMinPages by Settings.browseSmallGalleryMinPages.collectAsState()
     val showHiddenFiles by Settings.browseShowHiddenFiles.collectAsState()
-    val showVirtualGalleries by Settings.browseShowVirtualGalleries.collectAsState()
+    val showVirtualGalleries = rememberEffectiveVirtualGalleries(folderId, smbModeSkipAncestors)
     val filteredEntries = remember(
         displayEntries,
         search.keyword,
@@ -2357,6 +2357,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                         BrowseViewModeMenu(
                             // Virtual layers: list/grid + toggles only (no content-mode persist).
                             folder = if (virtual.isVirtual) null else folderId,
+                            virtualGalleriesFolder = if (virtual == BrowseVirtualKind.RpcShareRoot) null else folderId,
                             skipAncestorKeys = smbModeSkipAncestors,
                             hideContentModes = virtual.hideContentModes,
                             ephemeralSort = if (photoGrid) gridSort.mode else null,
