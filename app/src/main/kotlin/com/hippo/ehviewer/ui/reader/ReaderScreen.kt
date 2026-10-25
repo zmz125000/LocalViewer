@@ -591,11 +591,11 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
     val slideshow = readingMode == ReadingModeType.SLIDESHOW
     val slideshowKeepScreenOn by Settings.slideshowKeepScreenOn.collectAsState()
     val keepScreenOn = keepScreenOnPref || (slideshow && slideshowKeepScreenOn)
-    val disableDualPages by Settings.slideshowDisableDualPages.collectAsState()
+    val slideshowDualPages by Settings.slideshowDualPages.collectAsState()
     val slideshowSeconds by Settings.slideshowDisplaySeconds.collectAsState()
     val slideshowRepeat by Settings.slideshowRepeat.collectAsState()
     val slideshowAutoNext by Settings.slideshowAutoNextGallery.collectAsState()
-    val effectiveDualPages = dualPagePref && !(slideshow && disableDualPages)
+    val effectiveDualPages = if (slideshow) slideshowDualPages else dualPagePref
     val dualActive = dualPageActive(effectiveDualPages, isLandscape)
     val pagerDual = isPagerDual(dualActive, readingMode)
     val webtoonHorizontal = isWebtoonHorizontal(dualActive, readingMode)

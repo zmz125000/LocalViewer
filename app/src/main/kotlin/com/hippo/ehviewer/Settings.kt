@@ -1220,7 +1220,8 @@ object Settings : DataStorePreferences(null) {
     val slideshowDisplaySeconds = intPref("slideshow_display_seconds", 5)
     val slideshowRepeat = intPref("slideshow_repeat", 0)
     val slideshowAutoNextGallery = boolPref("slideshow_auto_next_gallery", false)
-    val slideshowDisableDualPages = boolPref("slideshow_dual_override", true)
+    private val slideshowDisableDualPagesLegacy = boolPref("slideshow_dual_override", true)
+    val slideshowDualPages = boolPref("slideshow_dual_pages_enabled", false)
     val slideshowFillScreen = boolPref("slideshow_scale_override", false)
     val slideshowDisableAutoRotate = boolPref("slideshow_rotate_override", false)
 
@@ -1286,6 +1287,10 @@ object Settings : DataStorePreferences(null) {
                 pref[pageTransition] = if (pref[pageTransitionsLegacy]) 0 else 2
                 pref.remove(pageTransitionsLegacy)
             }
+            if (slideshowDualPages !in pref && slideshowDisableDualPagesLegacy in pref) {
+                pref[slideshowDualPages] = pref[dualPageLandscape] && !pref[slideshowDisableDualPagesLegacy]
+            }
+            pref.remove(slideshowDisableDualPagesLegacy)
             val orientation = pref[orientationMode]
             if (OrientationType.entries.none { it.prefValue == orientation }) {
                 pref.remove(orientationMode)

@@ -22,7 +22,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -53,15 +52,12 @@ import kotlin.contracts.contract
 import kotlin.math.abs
 import kotlin.math.roundToInt
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import me.saket.telephoto.zoomable.DoubleClickToZoomListener
 import me.saket.telephoto.zoomable.OverzoomEffect
 import me.saket.telephoto.zoomable.Viewport
 import me.saket.telephoto.zoomable.ZoomLimit
 import me.saket.telephoto.zoomable.ZoomSpec
-import me.saket.telephoto.zoomable.ZoomableContentLocation
 import me.saket.telephoto.zoomable.ZoomableState
 import me.saket.telephoto.zoomable.rememberZoomableState
 import me.saket.telephoto.zoomable.spatial.CoordinateSpace
@@ -290,11 +286,8 @@ private fun DualPageContainer(
     if (layoutSize != Size.Zero) {
         if (gap) {
             zoomableState.contentScale = ContentScale.Fit
-            LaunchedEffect(layoutSize) {
-                zoomableState.setContentLocation(
-                    ZoomableContentLocation.scaledInsideAndCenterAligned(layoutSize),
-                )
-                zoomableState.contentAlignment = Alignment.Center
+            LaunchedEffect(layoutSize, alignment) {
+                zoomableState.configurePagerZoom(layoutSize, layoutSize, ContentScale.Fit, alignment, autoLandscapeZoom = false)
             }
         } else {
             val rotate = solo && run {
@@ -303,28 +296,14 @@ private fun DualPageContainer(
             }
             val contentScale = ContentScale.fromPreferences(scaleType, zoomSpread, layoutSize)
             zoomableState.contentScale = contentScale
-            LaunchedEffect(zoomSpread, contentScale, alignment) {
-                zoomableState.applyPagerContentAlignment(zoomSpread, contentScale, layoutSize, alignment)
-            }
-            LaunchedEffect(zoomSpread) {
-                zoomableState.setContentLocation(
-                    ZoomableContentLocation.scaledInsideAndCenterAligned(zoomSpread),
+            LaunchedEffect(zoomSpread, contentScale, alignment, layoutSize, landscapeZoom, rotate) {
+                zoomableState.configurePagerZoom(
+                    size = zoomSpread,
+                    viewport = layoutSize,
+                    scale = contentScale,
+                    alignment = alignment,
+                    autoLandscapeZoom = landscapeZoom && !rotate && contentScale == ContentScale.Fit && zoomSpread.width > zoomSpread.height,
                 )
-            }
-            if (landscapeZoom && !rotate && contentScale == ContentScale.Fit && zoomSpread.width > zoomSpread.height) {
-                LaunchedEffect(alignment) {
-                    val zoomFraction = snapshotFlow { zoomableState.zoomFraction }.first { it != null }
-                    if (zoomFraction == 0f) {
-                        delay(500)
-                        val contentSize = with(zoomableState.coordinateSystem) {
-                            unscaledContentBounds(false).sizeIn(CoordinateSpace.Viewport)
-                        }
-                        val scale = ContentScale.FillHeight.computeScaleFactor(contentSize, layoutSize)
-                        val targetScale = scale.scaleX.coerceAtMost(zoomableState.zoomSpec.maximum.factor)
-                        val offset = alignment.align(0, layoutSize.width.toInt(), LayoutDirection.Ltr)
-                        zoomableState.zoomTo(targetScale, Offset(offset.toFloat(), 0f))
-                    }
-                }
             }
         }
     }
@@ -510,28 +489,14 @@ private fun PageContainer(
         val size = rememberStableZoomSize(fitDisplaySize(raw, rotate))
         val contentScale = ContentScale.fromPreferences(scaleType, size, layoutSize)
         zoomableState.contentScale = contentScale
-        LaunchedEffect(size, contentScale, alignment) {
-            zoomableState.applyPagerContentAlignment(size, contentScale, layoutSize, alignment)
-        }
-        LaunchedEffect(size) {
-            val contentLocation = ZoomableContentLocation.scaledInsideAndCenterAligned(size)
-            zoomableState.setContentLocation(contentLocation)
-        }
-        // Skip landscape-zoom when this page was fit-rotated (would double-treat).
-        if (landscapeZoom && !rotate && contentScale == ContentScale.Fit && raw.width > raw.height) {
-            LaunchedEffect(alignment) {
-                val zoomFraction = snapshotFlow { zoomableState.zoomFraction }.first { it != null }
-                if (zoomFraction == 0f) {
-                    delay(500)
-                    val contentSize = with(zoomableState.coordinateSystem) {
-                        unscaledContentBounds(false).sizeIn(CoordinateSpace.Viewport)
-                    }
-                    val scale = ContentScale.FillHeight.computeScaleFactor(contentSize, layoutSize)
-                    val targetScale = scale.scaleX.coerceAtMost(zoomableState.zoomSpec.maximum.factor)
-                    val offset = alignment.align(0, layoutSize.width.toInt(), LayoutDirection.Ltr)
-                    zoomableState.zoomTo(targetScale, Offset(offset.toFloat(), 0f))
-                }
-            }
+        LaunchedEffect(size, contentScale, alignment, layoutSize, landscapeZoom, rotate) {
+            zoomableState.configurePagerZoom(
+                size = size,
+                viewport = layoutSize,
+                scale = contentScale,
+                alignment = alignment,
+                autoLandscapeZoom = landscapeZoom && !rotate && contentScale == ContentScale.Fit && raw.width > raw.height,
+            )
         }
     }
     val onLongClick = { _: Offset -> onSelectPage(page) }

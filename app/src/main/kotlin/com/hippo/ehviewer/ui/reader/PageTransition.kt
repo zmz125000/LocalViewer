@@ -14,6 +14,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.MotionDurationScale
 import androidx.compose.ui.graphics.graphicsLayer
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.collectAsState
@@ -23,6 +24,7 @@ import com.hippo.ehviewer.gallery.ReaderSession
 import com.hippo.ehviewer.gallery.status
 import eu.kanade.tachiyomi.ui.reader.setting.PageTransitionType
 import eu.kanade.tachiyomi.ui.reader.setting.ReadingModeType
+import kotlin.coroutines.EmptyCoroutineContext
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.currentCoroutineContext
@@ -82,6 +84,17 @@ private suspend fun awaitTransitionDisplay(pages: List<Page>): Boolean = combine
 /** Fast initial motion with zero speed at the final frame. */
 internal val PageTransitionEaseOut = CubicBezierEasing(0.16f, 1f, 0.3f, 1f)
 
+/** Preserve the system animator scale, including disabled animations, while slowing slideshow turns. */
+internal class SlideshowMotionDurationScale(private val parent: MotionDurationScale?) : MotionDurationScale {
+    override val scaleFactor: Float get() = (parent?.scaleFactor ?: 1f) * 3f
+}
+
+private suspend fun <T> withReaderTransitionDuration(slideshow: Boolean, block: suspend () -> T): T {
+    val parentScale = currentCoroutineContext()[MotionDurationScale]
+    val scale = if (slideshow) SlideshowMotionDurationScale(parentScale) else EmptyCoroutineContext
+    return withContext(scale) { block() }
+}
+
 internal data class PagerTransitionState(
     val type: Int,
     val modifier: Modifier,
@@ -124,83 +137,85 @@ internal fun pagerTransitionModifier(
             return displayed
         }
         PagerTransitionHandlers[pager] = { target ->
-            mutex.mutate {
-                running = currentCoroutineContext()[Job]
-                PagerTransitionHandlers.setRunning(pager, true)
-                try {
-                    if (target in 0 until pager.pageCount && target != pager.currentPage) {
-                        val destination = realPages(target)
-                        val current = realPages(pager.currentPage)
-                        // Actual viewport demand must remain independent of a requested seek.
-                        loader.setTransitionPages((destination + current).map { it.index }.toSet())
-                        val waitForReady = transition.needsPageReady(slideshow)
-                        val ready = if (waitForReady) {
-                            awaitTransitionImages(destination)
-                        } else {
-                            true
-                        }
-                        val currentReady = current.isNotEmpty() && current.all {
-                            it.status is PageStatus.Ready && it.displayReadyFlow.value
-                        }
-                        when (transition) {
-                            PageTransitionType.DEFAULT -> {
-                                if (ready) pager.animateScrollToPage(target) else pager.scrollToPage(target)
+            withReaderTransitionDuration(slideshow) {
+                mutex.mutate {
+                    running = currentCoroutineContext()[Job]
+                    PagerTransitionHandlers.setRunning(pager, true)
+                    try {
+                        if (target in 0 until pager.pageCount && target != pager.currentPage) {
+                            val destination = realPages(target)
+                            val current = realPages(pager.currentPage)
+                            // Actual viewport demand must remain independent of a requested seek.
+                            loader.setTransitionPages((destination + current).map { it.index }.toSet())
+                            val waitForReady = transition.needsPageReady(slideshow)
+                            val ready = if (waitForReady) {
+                                awaitTransitionImages(destination)
+                            } else {
+                                true
                             }
-                            PageTransitionType.SLIDE -> {
-                                if (ready) {
-                                    pager.animateScrollToPage(target, animationSpec = tween(450, easing = PageTransitionEaseOut))
-                                } else {
-                                    pager.scrollToPage(target)
+                            val currentReady = current.isNotEmpty() && current.all {
+                                it.status is PageStatus.Ready && it.displayReadyFlow.value
+                            }
+                            when (transition) {
+                                PageTransitionType.DEFAULT -> {
+                                    if (ready) pager.animateScrollToPage(target) else pager.scrollToPage(target)
                                 }
-                            }
-                            PageTransitionType.FADE -> {
-                                if (ready) {
-                                    if (currentReady) {
-                                        alpha.animateTo(0f, tween(250, easing = PageTransitionEaseOut))
+                                PageTransitionType.SLIDE -> {
+                                    if (ready) {
+                                        pager.animateScrollToPage(target, animationSpec = tween(450, easing = PageTransitionEaseOut))
                                     } else {
-                                        alpha.snapTo(0f)
+                                        pager.scrollToPage(target)
                                     }
                                 }
-                                pager.scrollToPage(target)
-                                if (ready && awaitPaint(destination)) {
-                                    alpha.animateTo(1f, tween(350, easing = PageTransitionEaseOut))
-                                }
-                            }
-                            PageTransitionType.FADE_BLEND -> {
-                                if (ready && currentReady) {
-                                    outgoingAlpha.snapTo(1f)
-                                    outgoingPage.value = pager.currentPage
-                                    // Move the existing page content above the pager, keeping its
-                                    // zoom, HDR painter and display pin while the new page appears.
-                                    awaitPaint(current)
-                                    pager.scrollToPage(target)
-                                    if (awaitPaint(destination)) {
-                                        // Source-over on the fully opaque destination gives exact
-                                        // complementary image weights, with no dark midpoint.
-                                        outgoingAlpha.animateTo(0f, tween(500, easing = PageTransitionEaseOut))
+                                PageTransitionType.FADE -> {
+                                    if (ready) {
+                                        if (currentReady) {
+                                            alpha.animateTo(0f, tween(250, easing = PageTransitionEaseOut))
+                                        } else {
+                                            alpha.snapTo(0f)
+                                        }
                                     }
-                                } else {
-                                    if (ready) alpha.snapTo(0f)
                                     pager.scrollToPage(target)
                                     if (ready && awaitPaint(destination)) {
                                         alpha.animateTo(1f, tween(350, easing = PageTransitionEaseOut))
                                     }
                                 }
+                                PageTransitionType.FADE_BLEND -> {
+                                    if (ready && currentReady) {
+                                        outgoingAlpha.snapTo(1f)
+                                        outgoingPage.value = pager.currentPage
+                                        // Move the existing page content above the pager, keeping its
+                                        // zoom, HDR painter and display pin while the new page appears.
+                                        awaitPaint(current)
+                                        pager.scrollToPage(target)
+                                        if (awaitPaint(destination)) {
+                                            // Source-over on the fully opaque destination gives exact
+                                            // complementary image weights, with no dark midpoint.
+                                            outgoingAlpha.animateTo(0f, tween(500, easing = PageTransitionEaseOut))
+                                        }
+                                    } else {
+                                        if (ready) alpha.snapTo(0f)
+                                        pager.scrollToPage(target)
+                                        if (ready && awaitPaint(destination)) {
+                                            alpha.animateTo(1f, tween(350, easing = PageTransitionEaseOut))
+                                        }
+                                    }
+                                }
+                                PageTransitionType.NONE -> pager.scrollToPage(target)
                             }
-                            PageTransitionType.NONE -> pager.scrollToPage(target)
+                            if (ready && waitForReady && !transition.isFade) awaitPaint(destination)
                         }
-                        if (ready && waitForReady && !transition.isFade) awaitPaint(destination)
-                    }
-                } finally {
-                    if (!disposed) {
-                        withContext(NonCancellable) {
-                            outgoingPage.value = null
-                            alpha.snapTo(1f)
-                            loader.setTransitionPages(emptySet())
-                            PagerTransitionHandlers.setRunning(pager, false)
+                    } finally {
+                        if (!disposed) {
+                            withContext(NonCancellable) {
+                                outgoingPage.value = null
+                                alpha.snapTo(1f)
+                                loader.setTransitionPages(emptySet())
+                                PagerTransitionHandlers.setRunning(pager, false)
+                            }
                         }
+                        running = null
                     }
-                    running = null
                 }
             }
         }
