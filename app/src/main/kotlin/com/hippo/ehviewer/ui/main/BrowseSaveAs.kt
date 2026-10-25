@@ -506,6 +506,8 @@ object BrowseSaveAs {
 
     internal suspend fun stageLocalForConvert(path: Path): File = stageForConvert { writeLocalBytes(path, it) }
 
+    internal suspend fun stageBytesForConvert(bytes: ByteArray): File = stageForConvert { it.write(bytes) }
+
     internal suspend fun stageSmbForConvert(sourceId: Long, relativeFile: String): File {
         val (source, password) = smbCreds(sourceId)
         return stageForConvert { writeSmbFile(source, password, relativeFile, it) }

@@ -53,14 +53,11 @@ suspend fun convertTo(page: Page, target: StillExportTarget) {
     // this session or its RAM/cache entry. Network reader caches can contain
     // embedded RAW previews or converted JPEGs instead of original codec bytes.
     val stage: suspend () -> File = when (val original = loader.originalFile(page.index)) {
-        is ReaderOriginalFile.Smb -> {
-            { BrowseSaveAs.stageSmbForConvert(original.sourceId, original.relativePath) }
-        }
-        is ReaderOriginalFile.WebDav -> {
-            { BrowseSaveAs.stageWebDavForConvert(original.sourceId, original.relativePath) }
-        }
         null -> {
             { stageOriginal(loader, page.index) }
+        }
+        else -> {
+            { stageOriginal(original) }
         }
     }
     enqueueSingleConvert(snackbar, ctx, leaf, target) { dir, selected ->
@@ -260,6 +257,16 @@ private suspend fun <T> withExportSource(
         work(source, source.toOkioPath())
     } finally {
         source.delete()
+    }
+}
+
+private suspend fun stageOriginal(original: ReaderOriginalFile): File {
+    original.cachedOriginal?.get()?.let { bytes ->
+        return BrowseSaveAs.stageBytesForConvert(bytes)
+    }
+    return when (original) {
+        is ReaderOriginalFile.Smb -> BrowseSaveAs.stageSmbForConvert(original.sourceId, original.relativePath)
+        is ReaderOriginalFile.WebDav -> BrowseSaveAs.stageWebDavForConvert(original.sourceId, original.relativePath)
     }
 }
 

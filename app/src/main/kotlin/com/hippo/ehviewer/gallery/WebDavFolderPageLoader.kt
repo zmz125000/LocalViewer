@@ -86,8 +86,11 @@ suspend inline fun <T> useWebDavFolderPageLoader(
                     if (remoteDir.isEmpty()) name else "$remoteDir/$name"
                 }
 
-                override fun originalFile(index: Int): ReaderOriginalFile =
-                    ReaderOriginalFile.WebDav(source.id, relativeFile(index))
+                override fun originalFile(index: Int): ReaderOriginalFile = ReaderOriginalFile.WebDav(
+                    source.id,
+                    relativeFile(index),
+                    readerOriginalRamHit(ramPages[index], ramJpegPages.contains(index), imageFileNames[index]),
+                )
 
                 override fun savePage(index: Int, file: Path): Boolean = runCatching {
                     ramPages[index]?.let {
