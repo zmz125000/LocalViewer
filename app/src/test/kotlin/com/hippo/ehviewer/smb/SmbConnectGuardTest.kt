@@ -53,6 +53,38 @@ class SmbConnectGuardTest {
     }
 
     @Test
+    fun networkChangeClearsHostTimerAndKeepsRejectedLogin() {
+        var now = 0L
+        val guard = SmbConnectGuard { now }
+        guard.failed("host", "user|bad", authentication = true, transient = false)
+        guard.failed("host", "user|ok", authentication = false, transient = true)
+        guard.failed("other", "user|ok", authentication = false, transient = true)
+        guard.clearHostBackoffs()
+        assertFalse(guard.isCoolingDown("host"))
+        assertFalse(guard.isCoolingDown("other"))
+        assertEquals(60_000L, guard.remainingMs("host", "user|bad"))
+        now += 60_000L
+        assertThrows(SmbConnectSuppressedException::class.java) {
+            guard.checkAllowed("host", "user|bad")
+        }
+        guard.checkAllowed("host", "user|ok")
+    }
+
+    @Test
+    fun manualRefreshBypassesTimerAndThatLoginOnly() {
+        val guard = SmbConnectGuard { 0L }
+        guard.failed("nas:445", "nas:445|me|work|old", authentication = true, transient = false)
+        guard.failed("nas:445", "nas:445|me|work|new", authentication = false, transient = true)
+        guard.failed("other:445", "other:445|me|work|old", authentication = true, transient = false)
+        guard.allowManual("nas:445", "nas:445|me|work|")
+        guard.checkAllowed("nas:445", "nas:445|me|work|old")
+        guard.checkAllowed("nas:445", "nas:445|me|work|new")
+        assertThrows(SmbConnectSuppressedException::class.java) {
+            guard.checkAllowed("other:445", "other:445|me|work|old")
+        }
+    }
+
+    @Test
     fun probeWaitsOutHostBackoffAndRejectedLogin() {
         var now = 0L
         val guard = SmbConnectGuard { now }

@@ -1470,8 +1470,7 @@ object SmbGateway {
      */
     private fun endpointHost(source: SmbSourceEntity): String = source.host
 
-    private fun credKey(source: SmbSourceEntity, password: String): String = buildString {
-        // Pool/session identity follows the live endpoint, not the cache identity host.
+    private fun credPrefix(source: SmbSourceEntity): String = buildString {
         append(endpointHost(source).trim().lowercase(Locale.US))
         append('|')
         append(source.port)
@@ -1480,8 +1479,9 @@ object SmbGateway {
         append('|')
         append(source.domain)
         append('|')
-        append(password)
     }
+
+    private fun credKey(source: SmbSourceEntity, password: String): String = credPrefix(source) + password
 
     /** Configured share on the source (empty = server root: list shares via MS-SRVS). */
     private fun fixedShare(source: SmbSourceEntity): String = source.share.trim().trim('/')
@@ -1748,6 +1748,16 @@ object SmbGateway {
     }
 
     /**
+     * Toolbar or pull-to-refresh. A live pool just re-reads the folder. A disconnected
+     * host drops its backoff (and a rejected login for this account) so the reload dials now.
+     */
+    fun prepareUserRefresh(source: SmbSourceEntity) {
+        refreshNameLookup(source)
+        if (isSourceConnected(source)) return
+        connectGuard.allowManual(hostKey(endpointHost(source), source.port), credPrefix(source))
+    }
+
+    /**
      * Path change (Wi‑Fi/cell/VPN/EasyTier stop). Safe to call from **main**, binder, or
      * EasyTier UI stop — pool maps are cleared immediately; socket teardown is async.
      *
@@ -1768,7 +1778,13 @@ object SmbGateway {
             hasBrowseWork = hasBrowse,
             hasStickyWork = hasSticky,
         )
-        if (plan.clearCircuits) hostCircuits.clear()
+        if (plan.clearCircuits) {
+            hostCircuits.clear()
+            connectGuard.clearHostBackoffs()
+            // Wake a probe that is already sleeping on the old backoff. Session drops
+            // bump this too when the flag changes; a host that was already down would not.
+            _connectionRevision.update { it + 1L }
+        }
         if (plan.dropSticky) dropStickySessions(reason)
         if (plan.dropBrowse) {
             logcat { "SmbGateway: network path changed ($reason) — dropping SMB sessions + lists (async close)" }

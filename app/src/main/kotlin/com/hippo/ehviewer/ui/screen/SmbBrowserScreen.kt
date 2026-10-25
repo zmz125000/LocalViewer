@@ -298,15 +298,10 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
     val browseFolderThumbs by Settings.browseFolderThumbs.collectAsState()
     val browseZipAsDir by Settings.browseZipAsDir.collectAsState()
     val photoGridMode by Settings.photoGridMode.collectAsState()
-    val networkFolderIndexCacheEnabled by Settings.networkFolderIndexCache.collectAsState()
     val networkFolderIndexQuickScanEnabled by Settings.networkFolderIndexQuickScan.collectAsState()
     val smbConnectionRevision by SmbGateway.connectionRevision.collectAsState()
-    val refreshEnabled = remember(source, networkFolderIndexCacheEnabled, smbConnectionRevision) {
-        !networkFolderIndexCacheEnabled || source?.let {
-            // Live connect host via [SmbGateway.endpointHost] (identity host on main).
-            SmbGateway.isSourceConnected(it)
-        } == true
-    }
+    // Enabled while disconnected so a tap can bypass connect backoff and dial again.
+    val refreshEnabled = source != null
     var connectionProbeToken by remember { mutableStateOf(0) }
     val sourceConnectionKey = source?.let { SmbGateway.sourceConfigKey(it) }
     val relativeDirForMode = segments.joinToString("/")
@@ -2373,7 +2368,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                             enabled = refreshEnabled,
                             onClick = {
                                 refreshing = true
-                                source?.let { SmbGateway.refreshNameLookup(it) }
+                                source?.let { SmbGateway.prepareUserRefresh(it) }
                                 requestForceReload()
                             },
                             shapes = IconButtonDefaults.shapes(),
@@ -2427,7 +2422,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
             isRefreshing = refreshing || loading,
             onRefresh = {
                 refreshing = true
-                source?.let { SmbGateway.refreshNameLookup(it) }
+                source?.let { SmbGateway.prepareUserRefresh(it) }
                 requestForceReload()
             },
             modifier = Modifier

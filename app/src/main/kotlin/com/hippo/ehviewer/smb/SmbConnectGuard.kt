@@ -53,6 +53,24 @@ internal class SmbConnectGuard(
         hosts.remove(host)
     }
 
+    /** Wi-Fi / VPN / cell change: the old path's backoff no longer applies. Rejected logins stay. */
+    @Synchronized
+    fun clearHostBackoffs() {
+        hosts.clear()
+    }
+
+    /**
+     * Manual folder refresh while disconnected. Clears this host's backoff and that
+     * login so this attempt dials once. Automatic probes never call this.
+     */
+    @Synchronized
+    fun allowManual(host: String, credentialPrefix: String) {
+        hosts.remove(host)
+        if (credentialPrefix.isNotEmpty()) {
+            rejectedCredentials.removeAll { it.startsWith(credentialPrefix) }
+        }
+    }
+
     /** Explicit user connection test; automatic probes never clear a rejected login. */
     @Synchronized
     fun retryCredentials(credential: String) {
