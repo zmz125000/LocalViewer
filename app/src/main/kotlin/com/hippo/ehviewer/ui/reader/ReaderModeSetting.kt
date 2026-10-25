@@ -405,6 +405,15 @@ private fun SlideshowSetting() = Column {
         values = SlideshowPlaybackMode.entries.map { it.prefValue },
         field = Settings.slideshowPlaybackMode.asMutableState(),
     )
+    SpinnerChoice(
+        title = stringResource(R.string.pref_slideshow_transition_override),
+        entries = (
+            listOf(stringResource(R.string.pref_reader_transition_inherit)) +
+                PageTransitionType.entries.map { stringResource(it.stringRes) }
+            ).toTypedArray(),
+        values = listOf(-1) + PageTransitionType.entries.map { it.prefValue },
+        field = Settings.slideshowPageTransition.asMutableState(),
+    )
     SwitchChoice(
         title = stringResource(R.string.pref_keep_screen_on),
         field = Settings.slideshowKeepScreenOn.asMutableState(),
@@ -424,14 +433,5 @@ private fun SlideshowSetting() = Column {
     CustomBrightnessSetting(
         Settings.slideshowCustomBrightness.asMutableState(),
         Settings.slideshowCustomBrightnessValue.asMutableState(),
-    )
-    SpinnerChoice(
-        title = stringResource(R.string.pref_slideshow_transition_override),
-        entries = (
-            listOf(stringResource(R.string.pref_reader_transition_inherit)) +
-                PageTransitionType.entries.map { stringResource(it.stringRes) }
-            ).toTypedArray(),
-        values = listOf(-1) + PageTransitionType.entries.map { it.prefValue },
-        field = Settings.slideshowPageTransition.asMutableState(),
     )
 }
