@@ -1225,7 +1225,7 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
             .navigationBarsPadding()
             .padding(end = 16.dp, bottom = 16.dp)
         AnimatedVisibility(
-            visible = showNextGalleryFab &&
+            visible = !slideshow && showNextGalleryFab &&
                 pageLoader.size > 0 &&
                 syncState.sliderValue >= pageLoader.size,
             modifier = fabPad,
@@ -1240,7 +1240,7 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
             }
         }
         AnimatedVisibility(
-            visible = showGoFirstFab && syncState.sliderValue > 1 && !showNextGalleryFab,
+            visible = !slideshow && showGoFirstFab && syncState.sliderValue > 1 && !showNextGalleryFab,
             modifier = fabPad,
             enter = fadeIn() + scaleIn(),
             exit = fadeOut() + scaleOut(),

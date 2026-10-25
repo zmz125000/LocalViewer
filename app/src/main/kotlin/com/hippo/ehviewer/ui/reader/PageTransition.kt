@@ -37,9 +37,22 @@ import kotlinx.coroutines.withContext
 internal object PagerTransitionHandlers {
     private val handlers = mutableMapOf<PagerState, suspend (Int) -> Unit>()
     private val active = mutableStateMapOf<PagerState, Boolean>()
+    private val targets = mutableMapOf<PagerState, Int>()
+
+    // currentPage changes halfway through a slide, and only after fade-out for fades.
+    // Relative input must follow the requested destination throughout either animation.
+    fun navigationPage(pager: PagerState): Int = targets[pager] ?: pager.currentPage
+    fun setTarget(pager: PagerState, target: Int) {
+        targets[pager] = target
+    }
     fun isRunning(pager: PagerState): Boolean = active[pager] == true
     fun setRunning(pager: PagerState, running: Boolean) {
-        if (running) active[pager] = true else active.remove(pager)
+        if (running) {
+            active[pager] = true
+        } else {
+            active.remove(pager)
+            targets.remove(pager)
+        }
     }
     operator fun get(pager: PagerState) = handlers[pager]
     operator fun set(pager: PagerState, handler: suspend (Int) -> Unit) {
@@ -48,6 +61,7 @@ internal object PagerTransitionHandlers {
     fun remove(pager: PagerState) {
         handlers.remove(pager)
         active.remove(pager)
+        targets.remove(pager)
     }
 }
 
@@ -141,6 +155,7 @@ internal fun pagerTransitionModifier(
                 mutex.mutate {
                     running = currentCoroutineContext()[Job]
                     PagerTransitionHandlers.setRunning(pager, true)
+                    PagerTransitionHandlers.setTarget(pager, target)
                     try {
                         if (target in 0 until pager.pageCount && target != pager.currentPage) {
                             val destination = realPages(target)

@@ -175,17 +175,19 @@ fun PagerViewer(
         val content = slotContents.getOrPut(index) { movableContentOf { currentRenderSlot(index) } }
         content()
     }
-    Box(modifier = modifier) {
+    Box(
+        modifier = modifier.readerDiscretePageSwipes(
+            enabled = canScroll && (slideshow || transitionModifier.type != 0),
+            vertical = isVertical,
+            rtl = isRtl,
+            pager = pagerState,
+            scope = scope,
+        ),
+    ) {
         if (isVertical) {
             VerticalPager(
                 state = pagerState,
-                modifier = Modifier.fillMaxSize().then(transitionModifier.modifier).readerDiscretePageSwipes(
-                    enabled = canScroll && (slideshow || transitionModifier.type != 0),
-                    vertical = isVertical,
-                    rtl = isRtl,
-                    pager = pagerState,
-                    scope = scope,
-                ),
+                modifier = Modifier.fillMaxSize().then(transitionModifier.modifier),
                 beyondViewportPageCount = 1,
                 userScrollEnabled = canScroll && !slideshow && transitionModifier.type == 0,
                 key = { if (dualPage) dualFirstPageIndex(it, landscapeCover) else it },
@@ -196,13 +198,7 @@ fun PagerViewer(
             val isRtlLayout = LocalLayoutDirection.current == LayoutDirection.Rtl
             HorizontalPager(
                 state = pagerState,
-                modifier = Modifier.fillMaxSize().then(transitionModifier.modifier).readerDiscretePageSwipes(
-                    enabled = canScroll && (slideshow || transitionModifier.type != 0),
-                    vertical = isVertical,
-                    rtl = isRtl,
-                    pager = pagerState,
-                    scope = scope,
-                ),
+                modifier = Modifier.fillMaxSize().then(transitionModifier.modifier),
                 beyondViewportPageCount = 1,
                 reverseLayout = isRtl xor isRtlLayout,
                 userScrollEnabled = canScroll && !slideshow && transitionModifier.type == 0,
@@ -352,12 +348,14 @@ private fun DualPageContainer(
         }
     }
 
+    val currentOnTap by rememberUpdatedState(onTap)
+    val currentOnLongClick by rememberUpdatedState(onLongClick)
     readerDrawScaleProvider(zoomableState) {
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .pointerInput(onTap) {
-                    detectTapGestures(onLongPress = onLongClick, onTap = onTap.partially1(null))
+                .pointerInput(Unit) {
+                    detectTapGestures(onLongPress = { currentOnLongClick(it) }, onTap = { currentOnTap(null, it) })
                 },
             contentAlignment = Alignment.Center,
         ) {
@@ -537,6 +535,8 @@ private fun PageContainer(
             }
         }
     }
+    val currentOnTap by rememberUpdatedState(onTap)
+    val currentOnLongClick by rememberUpdatedState(onLongClick)
     readerDrawScaleProvider(zoomableState) {
         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             PagerItem(
@@ -544,8 +544,8 @@ private fun PageContainer(
                 pageLoader = pageLoader,
                 contentScale = ContentScale.Inside,
                 viewportSize = layoutSize,
-                modifier = Modifier.pointerInput(onTap) {
-                    detectTapGestures(onLongPress = onLongClick, onTap = onTap.partially1(null))
+                modifier = Modifier.pointerInput(Unit) {
+                    detectTapGestures(onLongPress = { currentOnLongClick(it) }, onTap = { currentOnTap(null, it) })
                 },
                 contentModifier = Modifier.zoomable(
                     state = zoomableState,
@@ -629,7 +629,7 @@ private fun spreadAspect(page: Page?): Float {
     return page.layoutAspect.takeIf { it > 0f } ?: DUAL_PAGE_DEFAULT_ASPECT
 }
 
-/** Fade/None turn pages on a completed swipe, so readiness checks also cover touch navigation. */
+/** Own a discrete swipe once it crosses touch slop, cancelling child tap recognition. */
 private fun Modifier.readerDiscretePageSwipes(
     enabled: Boolean,
     vertical: Boolean,
@@ -643,20 +643,28 @@ private fun Modifier.readerDiscretePageSwipes(
         awaitEachGesture {
             val down = awaitFirstDown(requireUnconsumed = false)
             var distance = 0f
+            var crossDistance = 0f
             var cancelled = false
+            var claimed = false
             do {
-                val event = awaitPointerEvent(PointerEventPass.Final)
+                // Children get first refusal for zoom/pan. Once we claim a page swipe,
+                // consume its movement before their Final pass can recognize a tap.
+                val event = awaitPointerEvent(PointerEventPass.Main)
                 val change = event.changes.firstOrNull { it.id == down.id }
                 if (event.changes.size > 1) cancelled = true
                 if (change != null) {
                     val delta = change.positionChangeIgnoreConsumed()
-                    // Leave pinch/pan to the image's zoom gesture handler.
-                    if (delta != Offset.Zero && change.isConsumed) cancelled = true
+                    if (!claimed && delta != Offset.Zero && change.isConsumed) cancelled = true
                     distance += if (vertical) delta.y else delta.x
+                    crossDistance += if (vertical) delta.x else delta.y
+                    if (!cancelled && !claimed && abs(distance) > viewConfiguration.touchSlop) {
+                        if (abs(distance) > abs(crossDistance)) claimed = true else cancelled = true
+                    }
+                    if (claimed && !cancelled) change.consume()
                 }
             } while (event.changes.any { it.pressed })
             val threshold = maxOf(viewConfiguration.touchSlop * 2, (if (vertical) size.height else size.width) * 0.12f)
-            if (!cancelled && abs(distance) >= threshold) {
+            if (claimed && !cancelled && abs(distance) >= threshold) {
                 val forward = if (!vertical && rtl) distance > 0 else distance < 0
                 scope.launch { if (forward) pager.moveToNext() else pager.moveToPrevious() }
             }

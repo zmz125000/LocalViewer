@@ -1215,7 +1215,7 @@ object Settings : DataStorePreferences(null) {
     val slideshowCustomBrightnessValue = intPref("slideshow_custom_brightness_value", 0)
 
     // -1 inherits the general reading-mode transition.
-    val slideshowPageTransition = intPref("slideshow_page_transition", -1)
+    val slideshowPageTransition = intPref("slideshow_page_transition", PageTransitionType.FADE_BLEND.prefValue)
     val slideshowKeepScreenOn = boolPref("slideshow_keep_screen_on_override", true)
     val slideshowDisplaySeconds = intPref("slideshow_display_seconds", 5)
     val slideshowRepeat = intPref("slideshow_repeat", 0)

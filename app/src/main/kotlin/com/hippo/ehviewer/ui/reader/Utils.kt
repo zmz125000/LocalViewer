@@ -106,14 +106,14 @@ suspend fun PagerState.performScrollToPage(page: Int) {
 }
 
 suspend fun PagerState.moveToPrevious() {
-    val target = currentPage - 1
+    val target = PagerTransitionHandlers.navigationPage(this) - 1
     if (target >= 0) {
         performScrollToPage(target)
     }
 }
 
 suspend fun PagerState.moveToNext() {
-    val target = currentPage + 1
+    val target = PagerTransitionHandlers.navigationPage(this) + 1
     if (target < pageCount) {
         performScrollToPage(target)
     }
