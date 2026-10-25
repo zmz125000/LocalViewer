@@ -428,6 +428,9 @@ object Settings : DataStorePreferences(null) {
      */
     val persistBrowseModes = stringSetPref("persist_browse_modes", emptySet())
 
+    /** Per-folder virtual-gallery on/off locks, inherited by descendants. */
+    val persistVirtualGalleries = stringSetPref("persist_virtual_galleries", emptySet())
+
     /**
      * Per-folder history hide. Entries: `{lf|sf|wf}:{id}:{rel}={0|1|2}`
      * (off / hide from History screen / do not record). See [com.hippo.ehviewer.library.HistoryHidePersist].
@@ -769,6 +772,10 @@ object Settings : DataStorePreferences(null) {
 
     val hardwareBitmapThreshold = intPref("hardware_bitmap_threshold", 16384)
     val preloadThumbAggressively = boolPref("preload_thumb_aggressively", false)
+
+    /** Image/PDF thumbnail conversion and encoding jobs. */
+    val thumbnailConvertSlots = intPref("thumbnail_convert_slots", 3)
+    val archiveExtractSlots = intPref("archive_extract_slots", 3)
     val animateItems = boolPref("animate_items", true)
     val desktopSite = boolPref("desktop_site", true)
 

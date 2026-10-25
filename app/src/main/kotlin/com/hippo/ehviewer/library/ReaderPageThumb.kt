@@ -9,9 +9,7 @@ import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
-import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import okio.Path
 import okio.Path.Companion.toOkioPath
@@ -36,7 +34,6 @@ object ReaderPageThumb {
     }
 
     private val pathLocks = ConcurrentHashMap<String, Mutex>()
-    private val encodeSlots = Semaphore(1)
 
     fun dest(identity: String): Path = root / OriginDiskCache.thumbFileName(sha256Hex("v$FORMAT_VERSION:$identity"))
 
@@ -86,8 +83,8 @@ object ReaderPageThumb {
         // Local library files are content:/ or mediastore: paths. java.io.File
         // does not see them; writeThumb reads through the content resolver,
         // same as JXL/JXR covers.
-        encodeSlots.withPermit {
-            OriginDiskCache.existingThumb(destPath)?.let { return@withPermit it }
+        HdrConvertCache.withThumbConvertSlot {
+            OriginDiskCache.existingThumb(destPath)?.let { return@withThumbConvertSlot it }
             val key = destPath.toString()
             val mutex = pathLocks.getOrPut(key) { Mutex() }
             mutex.withLock {
@@ -118,8 +115,8 @@ object ReaderPageThumb {
         if (bitmap.isRecycled) return@withContext null
         val pixels = bitmap.width.toLong().coerceAtLeast(0) * bitmap.height.toLong().coerceAtLeast(0)
         if (pixels <= 0L || pixels > MAX_BITMAP_PIXELS) return@withContext null
-        encodeSlots.withPermit {
-            OriginDiskCache.existingThumb(destPath)?.let { return@withPermit it }
+        HdrConvertCache.withThumbConvertSlot {
+            OriginDiskCache.existingThumb(destPath)?.let { return@withThumbConvertSlot it }
             val key = destPath.toString()
             val mutex = pathLocks.getOrPut(key) { Mutex() }
             mutex.withLock {

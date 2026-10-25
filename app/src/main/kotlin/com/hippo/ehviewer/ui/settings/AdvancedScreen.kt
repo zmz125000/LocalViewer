@@ -211,6 +211,25 @@ fun AnimatedVisibilityScope.AdvancedScreen(navigator: DestinationsNavigator) = S
                 entryValueRes = com.hippo.ehviewer.R.array.heavy_decode_entry_values,
                 state = heavyDecode,
             )
+            val thumbnailConvertSlots = Settings.thumbnailConvertSlots.asMutableState()
+            LaunchedEffect(thumbnailConvertSlots.value) {
+                val clamped = thumbnailConvertSlots.value.coerceIn(1, 3)
+                if (clamped != thumbnailConvertSlots.value) thumbnailConvertSlots.value = clamped
+            }
+            SimpleMenuPreferenceInt(
+                title = stringResource(R.string.settings_thumbnail_convert_slots),
+                summary = stringResource(R.string.settings_thumbnail_convert_slots_summary),
+                entry = com.hippo.ehviewer.R.array.thumbnail_convert_slots_entries,
+                entryValueRes = com.hippo.ehviewer.R.array.thumbnail_convert_slots_entry_values,
+                state = thumbnailConvertSlots,
+            )
+            SimpleMenuPreferenceInt(
+                title = stringResource(R.string.settings_archive_extract_slots),
+                summary = stringResource(R.string.settings_archive_extract_slots_summary),
+                entry = com.hippo.ehviewer.R.array.archive_extract_slots_entries,
+                entryValueRes = com.hippo.ehviewer.R.array.archive_extract_slots_entry_values,
+                state = Settings.archiveExtractSlots.asMutableState(),
+            )
             val smbConnections = Settings.multiThreadDownload.asMutableState()
             SimpleMenuPreferenceInt(
                 title = stringResource(id = R.string.settings_smb_concurrency),
