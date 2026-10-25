@@ -5,14 +5,23 @@ import androidx.compose.ui.layout.ContentScale
 import eu.kanade.tachiyomi.ui.reader.setting.ReadingModeType
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class SlideshowTest {
     @Test
-    fun orientationFitUsesViewportOrientation() {
-        val image = Size(600f, 800f)
-        assertEquals(ContentScale.FillWidth, ContentScale.fromPreferences(7, image, Size(800f, 1200f)))
-        assertEquals(ContentScale.FillHeight, ContentScale.fromPreferences(7, image, Size(1200f, 800f)))
+    fun fillScreenCoversViewportWithoutDistortingImageInEitherOrientation() {
+        for (image in listOf(Size(600f, 800f), Size(2400f, 600f))) {
+            for (viewport in listOf(Size(800f, 1200f), Size(1200f, 800f))) {
+                val factor = ContentScale.fromPreferences(7, image, viewport).computeScaleFactor(image, viewport)
+                assertEquals(factor.scaleX, factor.scaleY, 0.0001f)
+                val width = image.width * factor.scaleX
+                val height = image.height * factor.scaleY
+                assertTrue(width >= viewport.width - 0.001f)
+                assertTrue(height >= viewport.height - 0.001f)
+                assertTrue(width > viewport.width || height > viewport.height)
+            }
+        }
     }
 
     @Test

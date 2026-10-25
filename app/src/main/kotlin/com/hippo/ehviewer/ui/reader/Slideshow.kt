@@ -9,17 +9,15 @@ import eu.kanade.tachiyomi.ui.reader.setting.ReadingModeType
 @Composable
 fun slideshowAutoRotateMode(): Int {
     val mode by Settings.readingMode.collectAsState()
-    val override by Settings.slideshowRotateOverride.collectAsState()
-    val slideshowRotation by Settings.slideshowAutoRotateMode.collectAsState()
+    val disable by Settings.slideshowDisableAutoRotate.collectAsState()
     val rotation by Settings.autoRotateMode.collectAsState()
-    return if (mode == ReadingModeType.SLIDESHOW.prefValue && override) slideshowRotation else rotation
+    return if (mode == ReadingModeType.SLIDESHOW.prefValue && disable) AUTO_ROTATE_OFF else rotation
 }
 
 @Composable
 fun slideshowScaleType(): Int {
     val mode by Settings.readingMode.collectAsState()
-    val override by Settings.slideshowScaleOverride.collectAsState()
-    val slideshowScale by Settings.slideshowScaleType.collectAsState()
+    val fillScreen by Settings.slideshowFillScreen.collectAsState()
     val scale by Settings.imageScaleType.collectAsState()
-    return if (mode == ReadingModeType.SLIDESHOW.prefValue && override) slideshowScale else scale
+    return if (mode == ReadingModeType.SLIDESHOW.prefValue && fillScreen) 7 else scale
 }

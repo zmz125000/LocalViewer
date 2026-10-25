@@ -29,12 +29,14 @@ import eu.kanade.tachiyomi.ui.reader.setting.ReadingModeType
 fun ReaderModeSetting(
     isWebtoon: Boolean,
     isDocument: Boolean = false,
+    supportsSlideshow: Boolean = true,
 ) = Column(modifier = Modifier.verticalScroll(rememberScrollState()).navigationBarsPadding()) {
+    val readingMode = Settings.readingMode.asMutableState()
     SpinnerChoice(
         title = stringResource(id = R.string.pref_category_reading_mode),
         entries = stringArrayResource(id = com.hippo.ehviewer.R.array.viewers_selector),
         values = ReadingModeType.entries.map { it.prefValue },
-        field = Settings.readingMode.asMutableState(),
+        field = readingMode,
     )
     val dualPageLandscape = Settings.dualPageLandscape.asMutableState()
     SwitchChoice(
@@ -86,7 +88,9 @@ fun ReaderModeSetting(
         DocumentStyleSetting()
     }
     Spacer(modifier = Modifier.size(16.dp))
-    SlideshowSetting()
+    AnimatedVisibility(supportsSlideshow && readingMode.value == ReadingModeType.SLIDESHOW.prefValue) {
+        SlideshowSetting()
+    }
     Crossfade(targetState = isWebtoon, label = "Setting") { webtoon ->
         if (webtoon) {
             WebtoonSetting()
@@ -402,36 +406,16 @@ private fun SlideshowSetting() = Column {
         title = stringResource(R.string.pref_slideshow_next_gallery),
         field = Settings.slideshowAutoNextGallery.asMutableState(),
     )
-    val dualOverride = Settings.slideshowDualOverride.asMutableState()
-    SwitchChoice(title = stringResource(R.string.pref_slideshow_dual_override), field = dualOverride)
-    AnimatedVisibility(dualOverride.value) {
-        SwitchChoice(
-            title = stringResource(R.string.pref_dual_page_landscape),
-            field = Settings.slideshowDualPages.asMutableState(),
-        )
-    }
-    val scaleOverride = Settings.slideshowScaleOverride.asMutableState()
-    SwitchChoice(title = stringResource(R.string.pref_slideshow_scale_override), field = scaleOverride)
-    AnimatedVisibility(scaleOverride.value) {
-        SpinnerChoice(
-            title = stringResource(R.string.pref_image_scale_type),
-            entries = stringArrayResource(com.hippo.ehviewer.R.array.image_scale_type),
-            values = listOf(1, 2, 3, 4, 5, 6, 7),
-            field = Settings.slideshowScaleType.asMutableState(),
-        )
-    }
-    val rotateOverride = Settings.slideshowRotateOverride.asMutableState()
-    SwitchChoice(title = stringResource(R.string.pref_slideshow_rotate_override), field = rotateOverride)
-    AnimatedVisibility(rotateOverride.value) {
-        SpinnerChoice(
-            title = stringResource(R.string.pref_auto_rotate_mode),
-            entries = arrayOf(
-                stringResource(R.string.pref_auto_rotate_off),
-                stringResource(R.string.pref_auto_rotate_cw),
-                stringResource(R.string.pref_auto_rotate_ccw),
-            ),
-            values = listOf(0, 1, 2),
-            field = Settings.slideshowAutoRotateMode.asMutableState(),
-        )
-    }
+    SwitchChoice(
+        title = stringResource(R.string.pref_slideshow_disable_dual_pages),
+        field = Settings.slideshowDisableDualPages.asMutableState(),
+    )
+    SwitchChoice(
+        title = stringResource(R.string.scale_type_fill_screen),
+        field = Settings.slideshowFillScreen.asMutableState(),
+    )
+    SwitchChoice(
+        title = stringResource(R.string.pref_slideshow_disable_auto_rotate),
+        field = Settings.slideshowDisableAutoRotate.asMutableState(),
+    )
 }

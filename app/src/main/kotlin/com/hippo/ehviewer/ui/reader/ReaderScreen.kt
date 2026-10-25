@@ -589,12 +589,11 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
     val dualPageGap by Settings.dualPageGap.collectAsState()
     val isLandscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
     val slideshow = readingMode == ReadingModeType.SLIDESHOW
-    val slideshowDualOverride by Settings.slideshowDualOverride.collectAsState()
-    val slideshowDualPages by Settings.slideshowDualPages.collectAsState()
+    val disableDualPages by Settings.slideshowDisableDualPages.collectAsState()
     val slideshowSeconds by Settings.slideshowDisplaySeconds.collectAsState()
     val slideshowRepeat by Settings.slideshowRepeat.collectAsState()
     val slideshowAutoNext by Settings.slideshowAutoNextGallery.collectAsState()
-    val effectiveDualPages = if (slideshow && slideshowDualOverride) slideshowDualPages else dualPagePref
+    val effectiveDualPages = dualPagePref && !(slideshow && disableDualPages)
     val dualActive = dualPageActive(effectiveDualPages, isLandscape)
     val pagerDual = isPagerDual(dualActive, readingMode)
     val webtoonHorizontal = isWebtoonHorizontal(dualActive, readingMode)
@@ -640,7 +639,6 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
     val syncState = rememberSliderPagerDoubleSyncState(lazyListState, pagerState, pageLoader)
     var appbarVisible by remember { mutableStateOf(false) }
     var photoGridOpen by remember { mutableStateOf(false) }
-    var settingsOpen by remember { mutableStateOf(false) }
     val isWebtoon by rememberUpdatedState(ReadingModeType.isWebtoon(readingMode))
     val focusRequester = remember { FocusRequester() }
 
@@ -1146,17 +1144,24 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
             )
         }
         LaunchedEffect(
-            slideshow, slideshowSeconds, slideshowRepeat, slideshowAutoNext,
-            appbarVisible, photoGridOpen, settingsOpen, hasNextGallery, pagerDual, landscapeCover, lifecycleOwner,
+            pageLoader,
+            slideshow,
+            slideshowSeconds,
+            slideshowRepeat,
+            slideshowAutoNext,
+            pagerDual,
+            landscapeCover,
+            lifecycleOwner,
         ) {
-            if (!slideshow || appbarVisible || photoGridOpen || settingsOpen) return@LaunchedEffect
+            if (!slideshow) return@LaunchedEffect
             lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
                 snapshotFlow {
-                    Triple(pagerState.settledPage, pagerState.isScrollInProgress, if (pageLoader.size > 0) pagerState.pageCount else 0)
-                }.collectLatest { (page, scrolling, count) ->
-                    if (scrolling || count <= 0) return@collectLatest
+                    Triple(pagerState.settledPage, pagerState.isScrollInProgress, pageLoader.size > 0)
+                }.collectLatest { (page, scrolling, hasPages) ->
+                    if (scrolling || !hasPages) return@collectLatest
                     while (true) {
                         delay(slideshowSeconds.coerceIn(3, 200) * 1000L)
+                        val count = pagerState.pageCount
                         val realPage = if (pagerDual) dualFirstPageIndex(page, landscapeCover) else page
                         val shuffledNext = if (slideshowRepeat == 1) pageLoader.nextSlideshowPage(realPage) else null
                         val atEnd = if (slideshowRepeat == 1) shuffledNext == null else page >= count - 1
@@ -1167,13 +1172,16 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
                         if (slideshowRepeat == 1) {
                             val target = shuffledNext ?: pageLoader.nextSlideshowPage(realPage, repeat = true)
                             if (target != null) {
-                                pagerState.performScrollToPage(if (pagerDual) dualSpreadIndex(target, landscapeCover) else target)
+                                launch {
+                                    pagerState.performScrollToPage(if (pagerDual) dualSpreadIndex(target, landscapeCover) else target)
+                                }
                             }
                         } else if (!atEnd) {
-                            // Use the same next-page action as manual reader navigation.
-                            pagerState.moveToNext()
+                            // Keep the transition outside collectLatest: scrolling resets the
+                            // countdown and must not cancel the animation that triggered it.
+                            launch { pagerState.moveToNext() }
                         } else if (slideshowRepeat == 2) {
-                            pagerState.performScrollToPage(0)
+                            launch { pagerState.performScrollToPage(0) }
                         } else {
                             return@collectLatest
                         }
@@ -1268,36 +1276,31 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
             onSliderValueChange = syncState::sliderScrollTo,
             onClickSettings = {
                 launch {
-                    settingsOpen = true
-                    try {
-                        dialog { cont ->
-                            // Sheet dismiss can fire onDismissRequest more than once (animation /
-                            // back / mode change under a transparent scrim). Guard the resume.
-                            fun dispose() {
-                                if (cont.isActive) cont.resume(Unit)
-                            }
-                            // No dim overlay while settings are open (was BottomSheetDefaults.ScrimColor
-                            // with color-filter tab force-undim). Keep reader fully visible underneath.
-                            val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-                            ModalBottomSheet(
-                                onDismissRequest = { dispose() },
-                                modifier = Modifier.windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top)),
-                                sheetState = sheetState,
-                                scrimColor = Color.Transparent,
-                                dragHandle = null,
-                                contentWindowInsets = { WindowInsets() },
-                            ) {
-                                Box(Modifier.readerSettingsSheetBox()) {
-                                    SettingsPager(
-                                        isWebtoon = isWebtoon,
-                                        rawLoaded = pageLoader.rawLoaded,
-                                        modifier = Modifier.fillMaxSize(),
-                                    )
-                                }
+                    dialog { cont ->
+                        // Sheet dismiss can fire onDismissRequest more than once (animation /
+                        // back / mode change under a transparent scrim). Guard the resume.
+                        fun dispose() {
+                            if (cont.isActive) cont.resume(Unit)
+                        }
+                        // No dim overlay while settings are open (was BottomSheetDefaults.ScrimColor
+                        // with color-filter tab force-undim). Keep reader fully visible underneath.
+                        val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+                        ModalBottomSheet(
+                            onDismissRequest = { dispose() },
+                            modifier = Modifier.windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top)),
+                            sheetState = sheetState,
+                            scrimColor = Color.Transparent,
+                            dragHandle = null,
+                            contentWindowInsets = { WindowInsets() },
+                        ) {
+                            Box(Modifier.readerSettingsSheetBox()) {
+                                SettingsPager(
+                                    isWebtoon = isWebtoon,
+                                    rawLoaded = pageLoader.rawLoaded,
+                                    modifier = Modifier.fillMaxSize(),
+                                )
                             }
                         }
-                    } finally {
-                        settingsOpen = false
                     }
                 }
             },

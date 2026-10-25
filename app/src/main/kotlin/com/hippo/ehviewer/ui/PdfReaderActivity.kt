@@ -2740,6 +2740,7 @@ private fun PdfReaderScreen(
                                     isWebtoon = ReadingModeType.isWebtoon(sheetMode),
                                     isDocument = isEbook,
                                     showImageScaler = false,
+                                    supportsSlideshow = false,
                                     showDirectImage = true,
                                     modifier = Modifier.fillMaxSize(),
                                 )

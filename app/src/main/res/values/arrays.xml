@@ -427,7 +427,7 @@
         <item>@string/scale_type_fit_height</item>
         <item>@string/scale_type_original_size</item>
         <item>@string/scale_type_smart_fit</item>
-        <item>@string/scale_type_fit_orientation</item>
+        <item>@string/scale_type_fill_screen</item>
     </string-array>
 
     <string-array name="eink_refresh_style">

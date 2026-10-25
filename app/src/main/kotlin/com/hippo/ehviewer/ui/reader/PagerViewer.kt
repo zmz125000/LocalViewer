@@ -358,7 +358,7 @@ private fun DualPageContainer(
                     PagerItem(
                         page = page,
                         pageLoader = pageLoader,
-                        contentScale = ContentScale.Inside,
+                        contentScale = if (gap && scaleType == 7) ContentScale.Crop else ContentScale.Inside,
                         modifier = Modifier.fillMaxSize(),
                         viewportSize = layoutSize,
                     )
@@ -372,7 +372,7 @@ private fun DualPageContainer(
                             PagerItem(
                                 page = leftPage,
                                 pageLoader = pageLoader,
-                                contentScale = ContentScale.Fit,
+                                contentScale = if (scaleType == 7) ContentScale.Crop else ContentScale.Fit,
                                 viewportSize = halfSize,
                             )
                         }
@@ -382,7 +382,7 @@ private fun DualPageContainer(
                             PagerItem(
                                 page = rightPage,
                                 pageLoader = pageLoader,
-                                contentScale = ContentScale.Fit,
+                                contentScale = if (scaleType == 7) ContentScale.Crop else ContentScale.Fit,
                                 viewportSize = halfSize,
                             )
                         }
