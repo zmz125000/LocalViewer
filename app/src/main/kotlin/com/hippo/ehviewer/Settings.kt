@@ -13,6 +13,7 @@ import com.ehviewer.core.preferences.DataStorePreferences
 import com.ehviewer.core.preferences.PrefDelegate
 import com.ehviewer.core.preferences.edit
 import eu.kanade.tachiyomi.ui.reader.setting.OrientationType
+import eu.kanade.tachiyomi.ui.reader.setting.PageTransitionType
 import eu.kanade.tachiyomi.ui.reader.setting.ReadingModeType
 import java.util.Locale
 import kotlin.reflect.KProperty
@@ -1199,10 +1200,7 @@ object Settings : DataStorePreferences(null) {
     private val pageTransitionsLegacy = boolPref("pref_enable_transitions_key", true)
     val pageTransition = intPref("reader_page_transition", 0)
 
-    fun effectivePageTransition(slideshow: Boolean = readingMode.value == ReadingModeType.SLIDESHOW.prefValue): Int {
-        val override = slideshowPageTransition.value
-        return if (slideshow && override in 0..2) override else pageTransition.value
-    }
+    fun effectivePageTransition(slideshow: Boolean = readingMode.value == ReadingModeType.SLIDESHOW.prefValue): Int = PageTransitionType.resolve(pageTransition.value, slideshowPageTransition.value, slideshow).prefValue
     val readWithVolumeKeys = boolPref("reader_volume_keys", false)
     val readWithVolumeKeysInverted = boolPref("reader_volume_keys_inverted", false)
     val grayScale = boolPref("pref_grayscale", false)

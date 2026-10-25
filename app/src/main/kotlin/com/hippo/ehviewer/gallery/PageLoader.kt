@@ -38,6 +38,7 @@ import com.hippo.ehviewer.util.FileUtils
 import com.hippo.ehviewer.util.OSUtils
 import com.hippo.ehviewer.util.detectAds
 import com.hippo.ehviewer.util.displayString
+import eu.kanade.tachiyomi.ui.reader.setting.PageTransitionType
 import eu.kanade.tachiyomi.ui.reader.setting.ReadingModeType
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.locks.ReentrantReadWriteLock
@@ -880,7 +881,7 @@ abstract class PageLoader(
                 1
             } else {
                 Settings.readerDecodeAhead.value.coerceAtLeast(
-                    if (Settings.effectivePageTransition() == 1) slideshowPagesPerSlide else 0,
+                    if (PageTransitionType.fromPreference(Settings.effectivePageTransition()).isFade) slideshowPagesPerSlide else 0,
                 )
             },
         )

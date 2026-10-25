@@ -1,5 +1,6 @@
 package com.hippo.ehviewer.ui.reader
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -15,6 +16,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.movableContentOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -122,7 +124,7 @@ fun PagerViewer(
     val canScroll = realPageCount > 0
 
     @Composable
-    fun SpreadOrPage(index: Int) {
+    fun RenderSlot(index: Int) {
         if (dualPage) {
             val (leftIdx, rightIdx) = dualLeftRight(index, realPageCount, dualRtl, landscapeCover)
             val left = leftIdx?.let { items.getOrNull(it) }
@@ -168,39 +170,57 @@ fun PagerViewer(
     }
 
     val transitionModifier = pagerTransitionModifier(pagerState, pageLoader, dualPage, landscapeCover)
-    if (isVertical) {
-        VerticalPager(
-            state = pagerState,
-            modifier = modifier.then(transitionModifier.modifier).readerDiscretePageSwipes(
-                enabled = canScroll && (slideshow || transitionModifier.type != 0),
-                vertical = isVertical,
-                rtl = isRtl,
-                pager = pagerState,
-                scope = scope,
-            ),
-            beyondViewportPageCount = 1,
-            userScrollEnabled = canScroll && !slideshow && transitionModifier.type == 0,
-            key = { if (dualPage) dualFirstPageIndex(it, landscapeCover) else it },
-        ) { index ->
-            SpreadOrPage(index)
+    val background by collectBackgroundColorAsState()
+    val slotContents = remember(pagerState, pageLoader) { mutableMapOf<Int, @Composable () -> Unit>() }
+    val currentRenderSlot by rememberUpdatedState<@Composable (Int) -> Unit>({ RenderSlot(it) })
+
+    @Composable
+    fun SpreadOrPage(index: Int) {
+        val content = slotContents.getOrPut(index) { movableContentOf { currentRenderSlot(index) } }
+        content()
+    }
+    Box(modifier = modifier) {
+        if (isVertical) {
+            VerticalPager(
+                state = pagerState,
+                modifier = Modifier.fillMaxSize().then(transitionModifier.modifier).readerDiscretePageSwipes(
+                    enabled = canScroll && (slideshow || transitionModifier.type != 0),
+                    vertical = isVertical,
+                    rtl = isRtl,
+                    pager = pagerState,
+                    scope = scope,
+                ),
+                beyondViewportPageCount = 1,
+                userScrollEnabled = canScroll && !slideshow && transitionModifier.type == 0,
+                key = { if (dualPage) dualFirstPageIndex(it, landscapeCover) else it },
+            ) { index ->
+                if (transitionModifier.outgoingPage != index) SpreadOrPage(index)
+            }
+        } else {
+            val isRtlLayout = LocalLayoutDirection.current == LayoutDirection.Rtl
+            HorizontalPager(
+                state = pagerState,
+                modifier = Modifier.fillMaxSize().then(transitionModifier.modifier).readerDiscretePageSwipes(
+                    enabled = canScroll && (slideshow || transitionModifier.type != 0),
+                    vertical = isVertical,
+                    rtl = isRtl,
+                    pager = pagerState,
+                    scope = scope,
+                ),
+                beyondViewportPageCount = 1,
+                reverseLayout = isRtl xor isRtlLayout,
+                userScrollEnabled = canScroll && !slideshow && transitionModifier.type == 0,
+                key = { if (dualPage) dualFirstPageIndex(it, landscapeCover) else it },
+            ) { index ->
+                if (transitionModifier.outgoingPage != index) SpreadOrPage(index)
+            }
         }
-    } else {
-        val isRtlLayout = LocalLayoutDirection.current == LayoutDirection.Rtl
-        HorizontalPager(
-            state = pagerState,
-            modifier = modifier.then(transitionModifier.modifier).readerDiscretePageSwipes(
-                enabled = canScroll && (slideshow || transitionModifier.type != 0),
-                vertical = isVertical,
-                rtl = isRtl,
-                pager = pagerState,
-                scope = scope,
-            ),
-            beyondViewportPageCount = 1,
-            reverseLayout = isRtl xor isRtlLayout,
-            userScrollEnabled = canScroll && !slideshow && transitionModifier.type == 0,
-            key = { if (dualPage) dualFirstPageIndex(it, landscapeCover) else it },
-        ) { index ->
-            SpreadOrPage(index)
+        transitionModifier.outgoingPage?.let { outgoing ->
+            Box(
+                modifier = Modifier.matchParentSize().then(transitionModifier.outgoingModifier).background(background),
+            ) {
+                SpreadOrPage(outgoing)
+            }
         }
     }
 }

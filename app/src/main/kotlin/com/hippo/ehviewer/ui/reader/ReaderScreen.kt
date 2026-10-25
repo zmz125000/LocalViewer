@@ -1805,7 +1805,7 @@ suspend inline fun <T> usePageLoader(args: ReaderScreenArgs, crossinline block: 
 }
 
 @Composable
-private fun collectBackgroundColorAsState(): State<Color> {
+internal fun collectBackgroundColorAsState(): State<Color> {
     val grey = colorResource(com.hippo.ehviewer.R.color.reader_background_dark)
     val dark = isSystemInDarkTheme()
     return Settings.readerTheme.collectAsState { theme ->

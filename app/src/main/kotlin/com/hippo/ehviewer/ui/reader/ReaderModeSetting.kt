@@ -23,6 +23,7 @@ import com.hippo.ehviewer.asMutableState
 import com.hippo.ehviewer.library.document.EBOOK_FONT_SIZE_MAX
 import com.hippo.ehviewer.library.document.EBOOK_FONT_SIZE_MIN
 import eu.kanade.tachiyomi.ui.reader.setting.OrientationType
+import eu.kanade.tachiyomi.ui.reader.setting.PageTransitionType
 import eu.kanade.tachiyomi.ui.reader.setting.ReadingModeType
 
 @Composable
@@ -43,12 +44,8 @@ fun ReaderModeSetting(
     )
     SpinnerChoice(
         title = stringResource(R.string.pref_reader_page_transition),
-        entries = arrayOf(
-            stringResource(R.string.label_default),
-            stringResource(R.string.pref_reader_transition_fade),
-            stringResource(R.string.pref_reader_transition_none),
-        ),
-        values = listOf(0, 1, 2),
+        entries = PageTransitionType.entries.map { stringResource(it.stringRes) }.toTypedArray(),
+        values = PageTransitionType.entries.map { it.prefValue },
         field = Settings.pageTransition.asMutableState(),
     )
     val dualPageLandscape = Settings.dualPageLandscape.asMutableState()
@@ -434,13 +431,11 @@ private fun SlideshowSetting() = Column {
     )
     SpinnerChoice(
         title = stringResource(R.string.pref_slideshow_transition_override),
-        entries = arrayOf(
-            stringResource(R.string.pref_reader_transition_inherit),
-            stringResource(R.string.label_default),
-            stringResource(R.string.pref_reader_transition_fade),
-            stringResource(R.string.pref_reader_transition_none),
-        ),
-        values = listOf(-1, 0, 1, 2),
+        entries = (
+            listOf(stringResource(R.string.pref_reader_transition_inherit)) +
+                PageTransitionType.entries.map { stringResource(it.stringRes) }
+            ).toTypedArray(),
+        values = listOf(-1) + PageTransitionType.entries.map { it.prefValue },
         field = Settings.slideshowPageTransition.asMutableState(),
     )
 }

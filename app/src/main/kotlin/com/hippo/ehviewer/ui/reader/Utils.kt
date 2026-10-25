@@ -2,6 +2,7 @@ package com.hippo.ehviewer.ui.reader
 
 import android.app.Activity
 import android.view.WindowManager
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.lazy.LazyListState
@@ -15,6 +16,7 @@ import androidx.compose.ui.layout.FixedScale
 import androidx.compose.ui.layout.times
 import com.hippo.ehviewer.Settings
 import eu.kanade.tachiyomi.ui.reader.setting.OrientationType
+import eu.kanade.tachiyomi.ui.reader.setting.PageTransitionType
 import me.saket.telephoto.zoomable.ZoomableState
 
 /**
@@ -94,10 +96,12 @@ suspend fun PagerState.performScrollToPage(page: Int) {
     val handler = PagerTransitionHandlers[this]
     if (handler != null) {
         handler(page)
-    } else if (Settings.effectivePageTransition() == 0) {
-        animateScrollToPage(page)
     } else {
-        scrollToPage(page)
+        when (PageTransitionType.fromPreference(Settings.effectivePageTransition())) {
+            PageTransitionType.DEFAULT -> animateScrollToPage(page)
+            PageTransitionType.SLIDE -> animateScrollToPage(page, animationSpec = tween(450, easing = PageTransitionEaseOut))
+            else -> scrollToPage(page)
+        }
     }
 }
 
@@ -116,10 +120,10 @@ suspend fun PagerState.moveToNext() {
 }
 
 suspend fun LazyListState.performScrollBy(value: Float) {
-    if (Settings.effectivePageTransition() != 2) {
-        animateScrollBy(value)
-    } else {
-        scrollBy(value)
+    when (PageTransitionType.fromPreference(Settings.effectivePageTransition())) {
+        PageTransitionType.NONE -> scrollBy(value)
+        PageTransitionType.SLIDE -> animateScrollBy(value, animationSpec = tween(450, easing = PageTransitionEaseOut))
+        else -> animateScrollBy(value)
     }
 }
 
