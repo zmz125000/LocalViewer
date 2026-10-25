@@ -1162,4 +1162,6 @@
     <string name="pref_reader_transition_slide">滑动</string>
     <string name="pref_reader_transition_fade_blend">淡入淡出（混合）</string>
     <string name="pref_slideshow_dual_pages_override">双页覆盖</string>
+    <string name="pref_slideshow_playback_mode">幻灯片播放模式</string>
+    <string name="pref_slideshow_play_once">播放一次</string>
 </resources>

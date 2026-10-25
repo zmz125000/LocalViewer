@@ -25,6 +25,7 @@ import com.hippo.ehviewer.library.document.EBOOK_FONT_SIZE_MIN
 import eu.kanade.tachiyomi.ui.reader.setting.OrientationType
 import eu.kanade.tachiyomi.ui.reader.setting.PageTransitionType
 import eu.kanade.tachiyomi.ui.reader.setting.ReadingModeType
+import eu.kanade.tachiyomi.ui.reader.setting.SlideshowPlaybackMode
 
 @Composable
 fun ReaderModeSetting(
@@ -399,18 +400,10 @@ private fun SlideshowSetting() = Column {
         field = duration,
     )
     SpinnerChoice(
-        title = stringResource(R.string.pref_slideshow_repeat),
-        entries = arrayOf(
-            stringResource(R.string.pref_slideshow_off),
-            stringResource(R.string.pref_slideshow_shuffle),
-            stringResource(R.string.pref_slideshow_loop),
-        ),
-        values = listOf(0, 1, 2),
-        field = Settings.slideshowRepeat.asMutableState(),
-    )
-    SwitchChoice(
-        title = stringResource(R.string.pref_slideshow_next_gallery),
-        field = Settings.slideshowAutoNextGallery.asMutableState(),
+        title = stringResource(R.string.pref_slideshow_playback_mode),
+        entries = SlideshowPlaybackMode.entries.map { stringResource(it.stringRes) }.toTypedArray(),
+        values = SlideshowPlaybackMode.entries.map { it.prefValue },
+        field = Settings.slideshowPlaybackMode.asMutableState(),
     )
     SwitchChoice(
         title = stringResource(R.string.pref_keep_screen_on),

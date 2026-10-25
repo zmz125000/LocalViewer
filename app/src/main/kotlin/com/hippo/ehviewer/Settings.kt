@@ -15,6 +15,7 @@ import com.ehviewer.core.preferences.edit
 import eu.kanade.tachiyomi.ui.reader.setting.OrientationType
 import eu.kanade.tachiyomi.ui.reader.setting.PageTransitionType
 import eu.kanade.tachiyomi.ui.reader.setting.ReadingModeType
+import eu.kanade.tachiyomi.ui.reader.setting.SlideshowPlaybackMode
 import java.util.Locale
 import kotlin.reflect.KProperty
 import kotlinx.coroutines.flow.Flow
@@ -1218,8 +1219,7 @@ object Settings : DataStorePreferences(null) {
     val slideshowPageTransition = intPref("slideshow_page_transition", PageTransitionType.FADE_BLEND.prefValue)
     val slideshowKeepScreenOn = boolPref("slideshow_keep_screen_on_override", true)
     val slideshowDisplaySeconds = intPref("slideshow_display_seconds", 5)
-    val slideshowRepeat = intPref("slideshow_repeat", 0)
-    val slideshowAutoNextGallery = boolPref("slideshow_auto_next_gallery", false)
+    val slideshowPlaybackMode = intPref("slideshow_playback_mode", SlideshowPlaybackMode.REPEAT.prefValue)
     private val slideshowDisableDualPagesLegacy = boolPref("slideshow_dual_override", true)
     val slideshowDualPages = boolPref("slideshow_dual_pages_enabled", false)
     val slideshowFillScreen = boolPref("slideshow_scale_override", false)

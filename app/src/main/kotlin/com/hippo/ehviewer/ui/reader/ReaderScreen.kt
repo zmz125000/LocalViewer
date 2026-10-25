@@ -154,6 +154,7 @@ import eu.kanade.tachiyomi.ui.reader.ReaderAppBars
 import eu.kanade.tachiyomi.ui.reader.ReaderPageSheetMeta
 import eu.kanade.tachiyomi.ui.reader.setting.DecodeSizeType
 import eu.kanade.tachiyomi.ui.reader.setting.ReadingModeType
+import eu.kanade.tachiyomi.ui.reader.setting.SlideshowPlaybackMode
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.coroutines.resume
 import kotlinx.coroutines.CancellationException
@@ -593,8 +594,7 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
     val keepScreenOn = keepScreenOnPref || (slideshow && slideshowKeepScreenOn)
     val slideshowDualPages by Settings.slideshowDualPages.collectAsState()
     val slideshowSeconds by Settings.slideshowDisplaySeconds.collectAsState()
-    val slideshowRepeat by Settings.slideshowRepeat.collectAsState()
-    val slideshowAutoNext by Settings.slideshowAutoNextGallery.collectAsState()
+    val slideshowPlayback by Settings.slideshowPlaybackMode.collectAsState { SlideshowPlaybackMode.fromPreference(it) }
     val effectiveDualPages = if (slideshow) slideshowDualPages else dualPagePref
     val dualActive = dualPageActive(effectiveDualPages, isLandscape)
     val pagerDual = isPagerDual(dualActive, readingMode)
@@ -1138,9 +1138,9 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
                 runCatching { GallerySiblingNavigator.sibling(args, next = true) }.getOrNull() != null
             }
         }
-        LaunchedEffect(pageLoader, slideshow, slideshowRepeat, pagerDual, landscapeCover) {
+        LaunchedEffect(pageLoader, slideshow, slideshowPlayback, pagerDual, landscapeCover) {
             pageLoader.setSlideshowShuffle(
-                enabled = slideshow && slideshowRepeat == 1,
+                enabled = slideshow && slideshowPlayback == SlideshowPlaybackMode.SHUFFLE,
                 pagesPerSlide = if (pagerDual) 2 else 1,
                 firstPageAlone = landscapeCover,
             )
@@ -1149,8 +1149,7 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
             pageLoader,
             slideshow,
             slideshowSeconds,
-            slideshowRepeat,
-            slideshowAutoNext,
+            slideshowPlayback,
             pagerDual,
             landscapeCover,
             lifecycleOwner,
@@ -1169,18 +1168,18 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
                 ) { page ->
                     val count = pagerState.pageCount
                     val realPage = if (pagerDual) dualFirstPageIndex(page, landscapeCover) else page
-                    val shuffledNext = if (slideshowRepeat == 1) pageLoader.nextSlideshowPage(realPage) else null
-                    val atEnd = if (slideshowRepeat == 1) shuffledNext == null else page >= count - 1
-                    if (atEnd && slideshowAutoNext && hasNextGallery) {
+                    val shuffledNext = if (slideshowPlayback == SlideshowPlaybackMode.SHUFFLE) pageLoader.nextSlideshowPage(realPage) else null
+                    val atEnd = if (slideshowPlayback == SlideshowPlaybackMode.SHUFFLE) shuffledNext == null else page >= count - 1
+                    if (atEnd && slideshowPlayback == SlideshowPlaybackMode.NEXT_GALLERY && hasNextGallery) {
                         goFolder(next = true)
-                    } else if (slideshowRepeat == 1) {
+                    } else if (slideshowPlayback == SlideshowPlaybackMode.SHUFFLE) {
                         val target = shuffledNext ?: pageLoader.nextSlideshowPage(realPage, repeat = true)
                         if (target != null) {
                             pagerState.performScrollToPage(if (pagerDual) dualSpreadIndex(target, landscapeCover) else target)
                         }
                     } else if (!atEnd) {
                         pagerState.moveToNext()
-                    } else if (slideshowRepeat == 2) {
+                    } else if (slideshowPlayback == SlideshowPlaybackMode.REPEAT) {
                         pagerState.performScrollToPage(0)
                     }
                 }
