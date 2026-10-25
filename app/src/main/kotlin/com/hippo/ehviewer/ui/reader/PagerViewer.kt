@@ -178,7 +178,7 @@ fun PagerViewer(
                 pager = pagerState,
                 scope = scope,
             ),
-            beyondViewportPageCount = if (slideshow) 0 else 1,
+            beyondViewportPageCount = 1,
             userScrollEnabled = canScroll && !slideshow && transitionModifier.type == 0,
             key = { if (dualPage) dualFirstPageIndex(it, landscapeCover) else it },
         ) { index ->
@@ -195,7 +195,7 @@ fun PagerViewer(
                 pager = pagerState,
                 scope = scope,
             ),
-            beyondViewportPageCount = if (slideshow) 0 else 1,
+            beyondViewportPageCount = 1,
             reverseLayout = isRtl xor isRtlLayout,
             userScrollEnabled = canScroll && !slideshow && transitionModifier.type == 0,
             key = { if (dualPage) dualFirstPageIndex(it, landscapeCover) else it },

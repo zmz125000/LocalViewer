@@ -564,11 +564,6 @@ abstract class PageLoader(
     }
 
     override fun retainHiResFull(index: Int) {
-        if (Settings.readingMode.value == ReadingModeType.SLIDESHOW.prefValue &&
-            lastNavigation?.visiblePages?.contains(index) != true
-        ) {
-            return
-        }
         if (index !in 0 until size || !Settings.readerHiResOptimize.value) return
         if (hiResFull.containsKey(index)) return
         // One decode per page. Zooming in again reuses the bitmap until release.
@@ -900,7 +895,7 @@ abstract class PageLoader(
 
         onNavigation(demand)
         prioritizeDecode(demand.decodedPages)
-        dropUndemandedDecodedPages(demand.decodedPages, slideshow)
+        dropUndemandedDecodedPages(demand.decodedPages)
         // Interactive viewport first, then nearest decoded neighbors.
         demand.visibleDecode.forEach(::requestDecode)
         demand.decodeAhead.forEach(::requestDecode)
@@ -911,18 +906,16 @@ abstract class PageLoader(
      * Ready pages pin bitmaps / animated decoders until status changes. Local zip
      * always extracts to RAM, so this is not cache-off-only. Keep ±1 so webtoon
      * reverse scroll does not collapse item height and fight the same page.
-     * Slideshow retains only the viewport, one forward decode, and an active transition.
      */
-    private fun dropUndemandedDecodedPages(desired: Set<Int>, slideshow: Boolean) {
+    private fun dropUndemandedDecodedPages(desired: Set<Int>) {
         val n = size
         if (n <= 0) return
         val visible = lastNavigation?.visiblePages
         val keepMin = ((if (slideshowShuffle != null) visible?.first else desired.minOrNull()) ?: 0) - 1
         val keepMax = ((if (slideshowShuffle != null) visible?.last else desired.maxOrNull()) ?: 0) + 1
-        fun keep(i: Int) = i in desired || (!slideshow && i in keepMin..keepMax)
+        fun keep(i: Int) = i in desired || i in keepMin..keepMax
         for (i in 0 until n) {
             if (keep(i)) continue
-            if (slideshow && (hiResWant.containsKey(i) || hiResFull.containsKey(i))) releaseHiResFull(i)
             releaseRamPage(i)
             val page = pages.getOrNull(i) ?: continue
             when (page.status) {

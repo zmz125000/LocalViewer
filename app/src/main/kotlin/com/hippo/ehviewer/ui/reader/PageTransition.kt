@@ -126,9 +126,6 @@ internal fun pagerTransitionModifier(
                                     if (currentReady) alpha.animateTo(0f, tween(150)) else alpha.snapTo(0f)
                                 }
                                 pager.scrollToPage(target)
-                                // The outgoing page is no longer visible; retain only the
-                                // destination while its painter is installed and faded in.
-                                loader.setTransitionPages(destination.map { it.index }.toSet())
                                 if (ready) {
                                     // Never fade in a placeholder, even if the outgoing page
                                     // was itself still loading when navigation was requested.
