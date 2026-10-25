@@ -25,6 +25,11 @@ abstract class DataStorePreferences(private val dataStore: DataStore<Preferences
 
     suspend fun snapshot(): Snapshot = data.first()
 
+    /** Remove saved overrides atomically so every preference uses its declared default. */
+    suspend fun resetToDefaults() {
+        dataStore.edit { it.clear() }
+    }
+
     suspend fun withMutableSnapshot(block: (MutableSnapshot) -> Unit) {
         dataStore.edit {
             block(MutableSnapshot(it))

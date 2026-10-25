@@ -10,6 +10,9 @@ class Page(
     val index: Int,
     val statusFlow: MutableStateFlow<PageStatus> = MutableStateFlow(PageStatus.Queued),
 ) {
+    /** True while a composed reader item has a painter ready to draw this page. */
+    val displayReadyFlow = MutableStateFlow(false)
+
     /** Last decoded pixel size; [reset] does not clear this so placeholders keep list height. */
     var layoutWidth: Int = 0
         private set
@@ -39,7 +42,10 @@ fun Page.unblock() = statusFlow.update { status ->
     }
 }
 
-fun Page.reset() = statusFlow.update { PageStatus.Queued }
+fun Page.reset() {
+    displayReadyFlow.value = false
+    statusFlow.update { PageStatus.Queued }
+}
 
 val Page.status
     get() = statusFlow.value

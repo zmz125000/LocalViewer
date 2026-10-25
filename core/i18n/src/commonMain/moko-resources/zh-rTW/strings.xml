@@ -310,6 +310,8 @@
     <string name="settings_archive_extract_slots_summary">最多同時進行 %s 個壓縮檔縮圖擷取。</string>
     <string name="settings_thumbnail_memory_budget">縮圖記憶體預算限制</string>
     <string name="settings_thumbnail_memory_budget_summary">依記憶體使用量限制並行工作。關閉後可能導致記憶體不足。</string>
+    <string name="settings_prefer_native_heif_avif">優先使用 HEIF 和 AVIF 原生解碼器</string>
+    <string name="settings_prefer_native_heif_avif_summary">在閱讀器和縮圖中使用內建解碼器處理 HEIF/AVIF 靜態影像。</string>
     <string name="settings_advanced_read_cache_size_summary">SMB 頁面快取（及舊版線上圖片快取）的最大容量</string>
     <string name="insufficient_gp">GP 不足，無法下載原圖</string>
     <string name="settings_privacy_save_history">儲存歷史</string>
@@ -1117,4 +1119,16 @@
     <string name="dark_theme_on">總是開啟</string>
     <string name="pref_crop_borders">邊緣裁剪</string>
     <!-- Tachiyomi Reader End-->
+    <string name="settings_reset_to_defaults">將所有設定恢復為預設值</string>
+    <string name="settings_reset_to_defaults_done">所有設定已恢復為預設值</string>
+    <string name="pref_reader_page_transition">翻頁轉場</string>
+    <string name="pref_reader_transition_fade">淡入淡出</string>
+    <string name="pref_reader_transition_none">無</string>
+    <string name="pref_reader_transition_inherit">使用閱讀模式設定</string>
+    <string name="pref_slideshow_transition_override">覆寫翻頁轉場</string>
+    <string name="pref_reader_transition_slide">滑動</string>
+    <string name="pref_reader_transition_fade_blend">淡入淡出（混合）</string>
+    <string name="pref_slideshow_dual_pages_override">覆寫雙頁模式</string>
+    <string name="pref_slideshow_playback_mode">幻燈片播放模式</string>
+    <string name="pref_slideshow_play_once">播放一次</string>
 </resources>

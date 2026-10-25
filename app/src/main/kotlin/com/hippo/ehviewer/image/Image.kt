@@ -860,14 +860,22 @@ class Image private constructor(
          * Experimental lib-direct present: [LibDirectResult.bitmap] already decoded
          * (no Coil / UHDR JPEG). Closes [src] when the image is retained.
          */
-        fun fromLibDirect(result: LibDirectResult, src: ImageSource): Image {
+        fun fromLibDirect(result: LibDirectResult, src: ImageSource, attachHeifGainMap: Boolean = false): Image {
             val shown = result.bitmap.presentForReader()
-            val coil = shown.asImage()
+            var coil: CoilImage = shown.asImage()
+            if (attachHeifGainMap && !result.isHdrContent) {
+                val source = when (src) {
+                    is PathSource -> src.right()
+                    is ByteBufferSource -> src.left()
+                }
+                coil = tryAttachOppoProxdr(source, coil)
+                coil = tryAttachAppleHdr(source, coil)
+            }
             return Image(
                 image = coil,
                 src = src,
                 isHdrContentDirect = result.isHdrContent,
-                contentHdrBoostOverride = result.contentHdrBoost,
+                contentHdrBoostOverride = if (coil is BitmapImageWithExtraInfo && coil.hasGainmap) null else result.contentHdrBoost,
                 isWideGamutDirect = result.isWideGamutSource,
             ).also { it.prepareToDraw() }
         }

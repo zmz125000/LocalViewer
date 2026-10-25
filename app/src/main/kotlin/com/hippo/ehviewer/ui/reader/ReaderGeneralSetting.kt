@@ -183,10 +183,6 @@ fun ReaderGeneralSetting(
         title = stringResource(id = R.string.pref_read_with_long_tap),
         field = Settings.readerLongTapAction.asMutableState(),
     )
-    SwitchChoice(
-        title = stringResource(id = R.string.pref_page_transitions),
-        field = Settings.pageTransitions.asMutableState(),
-    )
     val volume = Settings.readWithVolumeKeys.asMutableState()
     SwitchChoice(
         title = stringResource(id = R.string.settings_read_volume_page),

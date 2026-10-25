@@ -241,6 +241,10 @@ fun AnimatedVisibilityScope.AdvancedScreen(navigator: DestinationsNavigator) = S
                 title = stringResource(R.string.settings_thumbnail_memory_budget),
                 state = Settings.thumbnailMemoryBudget.asMutableState(),
             )
+            SwitchPreference(
+                title = stringResource(R.string.settings_prefer_native_heif_avif),
+                state = Settings.preferNativeHeifAvif.asMutableState(),
+            )
             val smbConnections = Settings.multiThreadDownload.asMutableState()
             SimpleMenuPreferenceInt(
                 title = stringResource(id = R.string.settings_smb_concurrency),
@@ -400,6 +404,16 @@ fun AnimatedVisibilityScope.AdvancedScreen(navigator: DestinationsNavigator) = S
             }
             Preference(title = stringResource(id = R.string.open_by_default)) {
                 openByDefaultSettings()
+            }
+            val settingsReset = stringResource(R.string.settings_reset_to_defaults_done)
+            Preference(
+                title = stringResource(R.string.settings_reset_to_defaults),
+            ) {
+                launch {
+                    Settings.resetToDefaults()
+                    launchSnackbar(settingsReset)
+                    setAppLanguage("system")
+                }
             }
         }
     }

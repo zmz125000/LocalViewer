@@ -296,6 +296,8 @@
     <string name="settings_archive_extract_slots_summary">同时进行 %s 个压缩包缩略图提取。</string>
     <string name="settings_thumbnail_memory_budget">缩略图内存预算限制</string>
     <string name="settings_thumbnail_memory_budget_summary">根据内存使用量限制并发任务。关闭后可能导致内存不足。</string>
+    <string name="settings_prefer_native_heif_avif">优先使用 HEIF 和 AVIF 原生解码器</string>
+    <string name="settings_prefer_native_heif_avif_summary">在阅读器和缩略图中使用内置解码器处理 HEIF/AVIF 静态图像。</string>
     <string name="settings_advanced_read_cache_size_summary">SMB 页面缓存（及旧版在线图片缓存）的最大容量</string>
     <!-- Theme -->
     <string name="homepage">主页</string>
@@ -1238,4 +1240,16 @@
     <string name="easytier_nat_symmetric_easy_dec">对称型 Easy Dec</string>
     <string name="easytier_summary">用于访问局域网 / 虚拟 SMB 主机的组网 VPN</string>
     <string name="easytier_vpn_note">仅为本应用分流（非全局隧道）。无法与其他 VPN 应用同时运行。</string>
+    <string name="settings_reset_to_defaults">将所有设置恢复为默认值</string>
+    <string name="settings_reset_to_defaults_done">所有设置已恢复为默认值</string>
+    <string name="pref_reader_page_transition">翻页过渡</string>
+    <string name="pref_reader_transition_fade">淡入淡出</string>
+    <string name="pref_reader_transition_none">无</string>
+    <string name="pref_reader_transition_inherit">使用阅读模式设置</string>
+    <string name="pref_slideshow_transition_override">覆盖翻页过渡</string>
+    <string name="pref_reader_transition_slide">滑动</string>
+    <string name="pref_reader_transition_fade_blend">淡入淡出（混合）</string>
+    <string name="pref_slideshow_dual_pages_override">双页覆盖</string>
+    <string name="pref_slideshow_playback_mode">幻灯片播放模式</string>
+    <string name="pref_slideshow_play_once">播放一次</string>
 </resources>

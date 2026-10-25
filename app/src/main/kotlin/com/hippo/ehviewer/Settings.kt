@@ -13,7 +13,9 @@ import com.ehviewer.core.preferences.DataStorePreferences
 import com.ehviewer.core.preferences.PrefDelegate
 import com.ehviewer.core.preferences.edit
 import eu.kanade.tachiyomi.ui.reader.setting.OrientationType
+import eu.kanade.tachiyomi.ui.reader.setting.PageTransitionType
 import eu.kanade.tachiyomi.ui.reader.setting.ReadingModeType
+import eu.kanade.tachiyomi.ui.reader.setting.SlideshowPlaybackMode
 import java.util.Locale
 import kotlin.reflect.KProperty
 import kotlinx.coroutines.flow.Flow
@@ -776,6 +778,7 @@ object Settings : DataStorePreferences(null) {
     /** Image/PDF thumbnail conversion and encoding jobs. */
     val thumbnailConvertSlots = intPref("thumbnail_convert_slots", 3)
     val archiveExtractSlots = intPref("archive_extract_slots", 3)
+    val preferNativeHeifAvif = boolPref("prefer_native_heif_avif", false)
     val thumbnailMemoryBudget = boolPref("thumbnail_memory_budget", false)
     val animateItems = boolPref("animate_items", true)
     val desktopSite = boolPref("desktop_site", true)
@@ -953,7 +956,7 @@ object Settings : DataStorePreferences(null) {
      * Ebook page + reader backdrop. Same values as [readerTheme]
      * (0 white, 1 black, 2 gray, 3 auto). Image/PDF reader keep [readerTheme].
      */
-    val ebookTheme = intPref("pref_ebook_theme_key", 1)
+    val ebookTheme = intPref("pref_ebook_theme_key", 3)
 
     /** Off = double-tap prev/next gallery (folder mode). Default: off. */
     val doubleTapToZoom = boolPref("pref_double_tap_to_zoom", false)
@@ -1196,7 +1199,10 @@ object Settings : DataStorePreferences(null) {
     val cutoutShort = boolPref("cutout_short", true)
     val keepScreenOn = boolPref("pref_keep_screen_on_key", true)
     val readerLongTapAction = boolPref("reader_long_tap", true)
-    val pageTransitions = boolPref("pref_enable_transitions_key", true)
+    private val pageTransitionsLegacy = boolPref("pref_enable_transitions_key", true)
+    val pageTransition = intPref("reader_page_transition", 0)
+
+    fun effectivePageTransition(slideshow: Boolean = readingMode.value == ReadingModeType.SLIDESHOW.prefValue): Int = PageTransitionType.resolve(pageTransition.value, slideshowPageTransition.value, slideshow).prefValue
     val readWithVolumeKeys = boolPref("reader_volume_keys", false)
     val readWithVolumeKeysInverted = boolPref("reader_volume_keys_inverted", false)
     val grayScale = boolPref("pref_grayscale", false)
@@ -1207,6 +1213,19 @@ object Settings : DataStorePreferences(null) {
     val readerWebtoonNavInverted = intPref("reader_tapping_inverted_webtoon_2", 0)
     val webtoonSidePadding = intPref("webtoon_side_padding", 0)
     val navigateToPan = boolPref("navigate_pan", true)
+    val slideshowCustomBrightness = boolPref("slideshow_custom_brightness", false)
+    val slideshowCustomBrightnessValue = intPref("slideshow_custom_brightness_value", 0)
+
+    // -1 inherits the general reading-mode transition.
+    val slideshowPageTransition = intPref("slideshow_page_transition", PageTransitionType.FADE_BLEND.prefValue)
+    val slideshowKeepScreenOn = boolPref("slideshow_keep_screen_on_override", true)
+    val slideshowDisplaySeconds = intPref("slideshow_display_seconds", 5)
+    val slideshowPlaybackMode = intPref("slideshow_playback_mode", SlideshowPlaybackMode.REPEAT.prefValue)
+    private val slideshowDisableDualPagesLegacy = boolPref("slideshow_dual_override", true)
+    val slideshowDualPages = boolPref("slideshow_dual_pages_enabled", false)
+    val slideshowFillScreen = boolPref("slideshow_scale_override", false)
+    val slideshowDisableAutoRotate = boolPref("slideshow_rotate_override", false)
+
     val imageScaleType = intPref("pref_image_scale_type_key", 1)
     val landscapeZoom = boolPref("landscape_zoom", false)
 
@@ -1265,6 +1284,14 @@ object Settings : DataStorePreferences(null) {
             if ("CN" == Locale.getDefault().country) {
                 if (showTagTranslations !in pref) pref[showTagTranslations] = true
             }
+            if (pageTransition !in pref && pageTransitionsLegacy in pref) {
+                pref[pageTransition] = if (pref[pageTransitionsLegacy]) 0 else 2
+                pref.remove(pageTransitionsLegacy)
+            }
+            if (slideshowDualPages !in pref && slideshowDisableDualPagesLegacy in pref) {
+                pref[slideshowDualPages] = pref[dualPageLandscape] && !pref[slideshowDisableDualPagesLegacy]
+            }
+            pref.remove(slideshowDisableDualPagesLegacy)
             val orientation = pref[orientationMode]
             if (OrientationType.entries.none { it.prefValue == orientation }) {
                 pref.remove(orientationMode)

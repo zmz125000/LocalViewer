@@ -1472,9 +1472,7 @@ private fun ebookOpenPageWidthDp(context: Context, pageAspect: Float): Float {
     )
 }
 
-private fun ebookReadingMode(): ReadingModeType = ReadingModeType.fromPreference(Settings.readingMode.value).let {
-    if (it == ReadingModeType.DEFAULT) ReadingModeType.RIGHT_TO_LEFT else it
-}
+private fun ebookReadingMode(): ReadingModeType = ReadingModeType.fromPdfPreference(Settings.readingMode.value)
 
 private fun ebookStyleFromSettings(
     pageWidthDp: Float,
@@ -2014,10 +2012,7 @@ private fun PdfReaderScreen(
         }
     }
     val readingMode by Settings.readingMode.collectAsState {
-        when (val mode = ReadingModeType.fromPreference(it)) {
-            ReadingModeType.DEFAULT -> ReadingModeType.RIGHT_TO_LEFT
-            else -> mode
-        }
+        ReadingModeType.fromPdfPreference(it)
     }
     val isWebtoon = ReadingModeType.isWebtoon(readingMode)
     val dualPagePref by Settings.dualPageLandscape.collectAsState()
@@ -2705,7 +2700,7 @@ private fun PdfReaderScreen(
                 }
             }
         }
-        ReaderFilterOverlay()
+        ReaderFilterOverlay(supportsSlideshow = false)
         ReaderAppBars(
             visible = appbarVisible,
             onNavigateUp = onClose,
@@ -2739,12 +2734,14 @@ private fun PdfReaderScreen(
                         ) {
                             Box(Modifier.readerSheetBox(GalleryGridDefaults.capReaderSheet())) {
                                 val sheetMode by Settings.readingMode.collectAsState {
-                                    ReadingModeType.fromPreference(it)
+                                    ReadingModeType.fromPdfPreference(it)
                                 }
                                 SettingsPager(
                                     isWebtoon = ReadingModeType.isWebtoon(sheetMode),
                                     isDocument = isEbook,
                                     showImageScaler = false,
+                                    supportsSlideshow = false,
+                                    supportsPageTransitions = false,
                                     showDirectImage = true,
                                     modifier = Modifier.fillMaxSize(),
                                 )

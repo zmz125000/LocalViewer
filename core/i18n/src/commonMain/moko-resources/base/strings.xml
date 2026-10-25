@@ -669,6 +669,8 @@
     <string name="settings_archive_extract_slots_summary">Up to %s archive thumb extraction jobs.</string>
     <string name="settings_thumbnail_memory_budget">Thumbnail memory budget limit</string>
     <string name="settings_thumbnail_memory_budget_summary">Limit parallel jobs by memory use. Disabling may exhaust memory.</string>
+    <string name="settings_prefer_native_heif_avif">Prefer native decoder for HEIF and AVIF</string>
+    <string name="settings_prefer_native_heif_avif_summary">Use bundled decoders for HEIF/AVIF still images in the reader and thumbnails.</string>
     <string name="settings_download_download_delay">Download delay</string>
     <string name="settings_download_download_delay_summary">Delay %s ms per download</string>
     <string name="settings_download_timeout_speed">Minimum download speed (in KB/s)</string>
@@ -1274,4 +1276,26 @@
     <string name="easytier_nat_symmetric_easy_dec">Symmetric Easy Dec</string>
     <string name="easytier_summary">Mesh VPN for reaching LAN / virtual SMB hosts</string>
     <string name="easytier_vpn_note">Uses Android VPN for this app only (split tunnel). Cannot run with another VPN app at the same time.</string>
+    <string name="slideshow_viewer">Slideshow</string>
+    <string name="pref_slideshow_display_time">Photo display time</string>
+    <string name="pref_slideshow_seconds">%1$d s</string>
+    <string name="pref_slideshow_repeat">Repeat</string>
+    <string name="pref_slideshow_off">Off</string>
+    <string name="pref_slideshow_shuffle">Shuffle</string>
+    <string name="pref_slideshow_loop">Repeat</string>
+    <string name="pref_slideshow_next_gallery">Auto next gallery</string>
+    <string name="pref_slideshow_dual_pages_override">Dual pages override</string>
+    <string name="pref_slideshow_disable_auto_rotate">Disable auto rotate to fit</string>
+    <string name="scale_type_fill_screen">Fill screen</string>
+    <string name="settings_reset_to_defaults">Reset all settings to default</string>
+    <string name="settings_reset_to_defaults_done">All settings reset to default</string>
+    <string name="pref_reader_page_transition">Page transition</string>
+    <string name="pref_reader_transition_fade">Fade</string>
+    <string name="pref_reader_transition_none">None</string>
+    <string name="pref_reader_transition_inherit">Use reading mode setting</string>
+    <string name="pref_slideshow_transition_override">Page transition override</string>
+    <string name="pref_reader_transition_slide">Slide</string>
+    <string name="pref_reader_transition_fade_blend">Fade (blend)</string>
+    <string name="pref_slideshow_playback_mode">Slideshow playback mode</string>
+    <string name="pref_slideshow_play_once">Play once</string>
 </resources>

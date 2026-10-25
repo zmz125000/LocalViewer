@@ -13,9 +13,11 @@ import coil3.key.Keyer
 import coil3.request.Options
 import coil3.toUri as toCoilUri
 import com.ehviewer.core.files.toUri
+import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.image.hdr.HdrConvertCache
 import com.hippo.ehviewer.image.hdr.RawPreviewCache
 import com.hippo.ehviewer.image.hdr.isHdrConvertCandidateExtension
+import com.hippo.ehviewer.image.hdr.isHeicImageExtension
 import com.hippo.ehviewer.image.hdr.isRawStillExtension
 import com.hippo.ehviewer.image.hdr.needsGeneratedPageThumb
 import com.hippo.ehviewer.library.LandscapeCoverMarks
@@ -65,7 +67,11 @@ class CoverPathFetcher(
             isRawStillExtension(ext) -> RawPreviewCache.ensureJpeg(resolved, demosaicFallback = false)
                 ?: throw FileNotFoundException("RAW preview missing: ${data.path}")
             needsGeneratedPageThumb(ext) -> ReaderPageThumb.ensureFromFile(thumbIdentity, resolved, hint)
-                ?: HdrConvertCache.ensureCoilReady(resolved, hint)
+                ?: if (Settings.preferNativeHeifAvif.value && (ext == "avif" || isHeicImageExtension(ext))) {
+                    throw FileNotFoundException("Native HEIF/AVIF thumbnail failed: ${data.path}")
+                } else {
+                    HdrConvertCache.ensureCoilReady(resolved, hint)
+                }
             isHdrConvertCandidateExtension(ext) -> HdrConvertCache.ensureCoilReady(resolved, hint)
             else -> resolved
         }
