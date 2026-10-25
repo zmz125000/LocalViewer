@@ -71,16 +71,17 @@ object HdrConvertCache {
     /**
      * Full-page UHDR (reader / page cache, [maxEdge] = 0).
      * One full-res JXR/JXL/PQ-AVIF holds multi‑MB compressed + F16 RGBA + encode
-     * scratch — keep serial so mid-range heaps do not thrash with blocking GC Alloc.
+     * scratch — keep concurrency bounded to avoid blocking GC Alloc.
      * **Not shared with thumbs** so library scroll MaxEdge work cannot starve the reader.
      */
     private val fullConvertSlots = Semaphore(2)
 
     /**
-     * Browse / cover MaxEdge thumbs. Separate pool from [fullConvertSlots]: thumbs are
-     * still heavy (AV1 reconstruct is full-frame; color runs at the thumb edge) but must not block reader pages.
+     * Browse / cover MaxEdge thumbs. Allow two native conversions in parallel,
+     * including JXR's reduced-resolution decode. Keep this separate from reader
+     * pages and bounded: AVIF reconstruction still holds the full source frame.
      */
-    private val thumbConvertSlots = Semaphore(1)
+    private val thumbConvertSlots = Semaphore(3)
 
     /**
      * Exts that *can* use the RAM → classify → UHDR convert pipeline on network download
