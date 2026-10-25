@@ -47,7 +47,7 @@ internal object ThumbnailMemory {
                 }
             } ?: 0L
         }.getOrDefault(0L)
-        return withEstimate(sourceBytes, size, codec, edge, work)
+        return withEstimate(sourceBytes, size, codec, edge, mapped = true, work = work)
     }
 
     suspend fun <T> withBytes(bytes: ByteArray, codec: LibCodec?, edge: Int, work: suspend () -> T): T {
@@ -68,13 +68,12 @@ internal object ThumbnailMemory {
                 pack(bounds.outWidth, bounds.outHeight)
             }
         }.getOrDefault(0L)
-        return withEstimate(bytes.size.toLong(), size, codec, edge, work)
+        return withEstimate(bytes.size.toLong(), size, codec, edge, mapped = false, work = work)
     }
 
-    private fun pack(width: Int, height: Int): Long =
-        if (width > 0 && height > 0) (width.toLong() shl 32) or height.toLong() else 0L
+    private fun pack(width: Int, height: Int): Long = if (width > 0 && height > 0) (width.toLong() shl 32) or height.toLong() else 0L
 
-    private suspend fun <T> withEstimate(sourceBytes: Long, size: Long, codec: LibCodec?, edge: Int, work: suspend () -> T): T {
+    private suspend fun <T> withEstimate(sourceBytes: Long, size: Long, codec: LibCodec?, edge: Int, mapped: Boolean, work: suspend () -> T): T {
         val w = size ushr 32
         val h = size and 0xffffffffL
         val pixels = if (w in 1..65536 && h in 1..65536) w * h else 0L
@@ -84,7 +83,7 @@ internal object ThumbnailMemory {
         // planes even when progressive thumbnail output is requested. Account for
         // full source planes conservatively for all native thumbnail decoders.
         // Bitmap pixel planes live on the native heap on supported Android versions.
-        val heapBytes = compressed + MIB
+        val heapBytes = (if (mapped) 0 else compressed) + MIB
         val nativeBytes = if (codec != LibCodec.Raw) {
             if (pixels == 0L) Long.MAX_VALUE else pixels * (if (codec == null) 8 else 64) + thumb + compressed
         } else {

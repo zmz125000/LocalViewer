@@ -9,6 +9,7 @@
  */
 #include <android/log.h>
 #include <jni.h>
+#include "thumbnail_mapped_input.h"
 
 #include <algorithm>
 #include <atomic>
@@ -498,6 +499,42 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_convertJxlBytesToUltraHdrMaxEdge(
     env->ReleaseStringUTFChars(jOutput, out_path);
     env->ReleaseByteArrayElements(jInput, bytes, JNI_ABORT);
     return rc;
+}
+
+/** File-backed thumbnail input avoids Java arrays and JNI compressed copies. */
+extern "C" JNIEXPORT jint JNICALL
+Java_com_hippo_ehviewer_jni_HdrConvertKt_convertJxlFdToUltraHdrMaxEdge(
+        JNIEnv* env, jclass, jint fd, jstring jOutput, jint maxEdge) try {
+    if (!jOutput || maxEdge <= 0) return -10;
+    ThumbnailMappedInput input(fd);
+    if (!input.data) return -101;  // Non-regular/unmappable provider: stage to a file.
+    ThumbnailOutputPath outputPath(env, jOutput);
+    const char* out_path = outputPath.get();
+    if (!out_path) {
+        return -14;
+    }
+
+    std::vector<uint16_t> rgba;
+    unsigned w = 0, h = 0;
+    uhdr_color_gamut_t cg = UHDR_CG_BT_709;
+    bool force_hdr = false;
+    int rc = decode_jxl_to_linear_f16(input.data,
+                                      input.size, rgba, w, h, &cg, &force_hdr, nullptr,
+                                      true, maxEdge > 0 ? static_cast<unsigned>(maxEdge) : 0);
+    input.reset();
+    if (rc != 0) {
+        return -20 + rc;
+    }
+    if (maxEdge > 0) {
+        scale_rgba_f16_max_edge(rgba, w, h, static_cast<unsigned>(maxEdge));
+    }
+    // Thumbs: known TF only — 203 nits SDR / 1000 nits HDR; no peak scan.
+    rc = encode_linear_rgba_f16_to_uhdr(w, h, rgba.data(), out_path, cg,
+                                       thumb_fixed_peak_nits(force_hdr), force_hdr);
+    return rc;
+} catch (...) {
+    // In particular, do not let std::bad_alloc terminate the process at JNI.
+    return -30;
 }
 
 /**

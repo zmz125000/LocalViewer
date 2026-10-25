@@ -5,17 +5,22 @@ import android.graphics.BitmapFactory
 import android.graphics.ImageDecoder
 import android.util.Log
 import com.ehviewer.core.files.metadataOrNull
+import com.ehviewer.core.files.openFileDescriptor
 import com.ehviewer.core.files.read
 import com.ehviewer.core.files.toUri
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.jni.convertAvifBytesToUltraHdr
 import com.hippo.ehviewer.jni.convertAvifBytesToUltraHdrMaxEdge
+import com.hippo.ehviewer.jni.convertAvifFdToUltraHdrMaxEdge
 import com.hippo.ehviewer.jni.convertJpeg2000BytesToUltraHdr
 import com.hippo.ehviewer.jni.convertJpeg2000BytesToUltraHdrMaxEdge
+import com.hippo.ehviewer.jni.convertJpeg2000FdToUltraHdrMaxEdge
 import com.hippo.ehviewer.jni.convertJxlBytesToUltraHdr
 import com.hippo.ehviewer.jni.convertJxlBytesToUltraHdrMaxEdge
+import com.hippo.ehviewer.jni.convertJxlFdToUltraHdrMaxEdge
 import com.hippo.ehviewer.jni.convertJxrBytesToUltraHdr
 import com.hippo.ehviewer.jni.convertJxrBytesToUltraHdrMaxEdge
+import com.hippo.ehviewer.jni.convertJxrFdToUltraHdrMaxEdge
 import com.hippo.ehviewer.jni.convertJxrToUltraHdr
 import com.hippo.ehviewer.jni.decodeJpeg2000Bitmap
 import com.hippo.ehviewer.jni.extractRawPreviewBytes
@@ -30,6 +35,7 @@ import java.nio.file.Files
 import java.nio.file.StandardCopyOption
 import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
@@ -720,12 +726,63 @@ object HdrConvertCache {
         fileNameHint: String,
         codec: LibCodec,
     ): Boolean {
-        val bytes = runCatching { source.read { readByteArray() } }.getOrNull()
-        if (bytes == null || bytes.isEmpty()) {
-            Log.e(TAG, "writeConvertThumb: unreadable $fileNameHint")
-            return false
+        val output = OriginDiskCache.jpegSibling(dest)
+        val mutex = pathLocks.getOrPut(output.absolutePath) { Mutex() }
+        return mutex.withLock {
+            if (output.isFile && output.length() > 0L) return@withLock true
+            output.parentFile?.mkdirs()
+            val tmp = File("${output.absolutePath}.tmp.${System.nanoTime()}")
+            try {
+                var code = convertThumbDescriptor(source, tmp, maxEdge, codec)
+                if (code == -101) {
+                    // Some SAF providers expose pipes. Stage them with bounded copy buffers,
+                    // then map the temporary regular file; never materialize a Java array.
+                    val staged = File.createTempFile("thumb-input", ".bin", appCtx.cacheDir)
+                    try {
+                        appCtx.contentResolver.openInputStream(source.toUri()).use { input ->
+                            checkNotNull(input) { "Unreadable thumbnail source: $fileNameHint" }
+                            staged.outputStream().use { input.copyTo(it) }
+                        }
+                        code = convertThumbDescriptor(staged.toOkioPath(), tmp, maxEdge, codec)
+                    } finally {
+                        staged.delete()
+                    }
+                }
+                if (code == -100 && codec == LibCodec.Jpeg2000) {
+                    // The 32-bit OpenJPEG bitmap fallback predates the HDR codec suite.
+                    // Keep its existing behavior on ABIs without the native HDR encoder.
+                    val bytes = source.read { readByteArray() }
+                    code = convertJpeg2000ToJpeg(bytes, tmp, maxEdge)
+                }
+                if (code != 0 || !tmp.isFile || tmp.length() <= 0L) {
+                    Log.e(TAG, "Native file thumb failed codec=$codec code=$code source=$fileNameHint")
+                    false
+                } else {
+                    commitTmp(tmp, output)
+                    true
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.e(TAG, "Native file thumb failed: $fileNameHint", e)
+                false
+            } finally {
+                tmp.delete()
+            }
         }
-        return writeConvertThumbBytes(bytes, dest, maxEdge, codec)
+    }
+
+    private fun convertThumbDescriptor(source: Path, dest: File, maxEdge: Int, codec: LibCodec): Int {
+        val opened = runCatching { source.openFileDescriptor("r") }.getOrNull() ?: return -101
+        return opened.use { descriptor ->
+            when (codec) {
+                LibCodec.Jxr -> convertJxrFdToUltraHdrMaxEdge(descriptor.fd, dest.absolutePath, maxEdge)
+                LibCodec.Jxl -> convertJxlFdToUltraHdrMaxEdge(descriptor.fd, dest.absolutePath, maxEdge)
+                LibCodec.AvifPq -> convertAvifFdToUltraHdrMaxEdge(descriptor.fd, dest.absolutePath, maxEdge)
+                LibCodec.Jpeg2000 -> convertJpeg2000FdToUltraHdrMaxEdge(descriptor.fd, dest.absolutePath, maxEdge)
+                LibCodec.Raw, LibCodec.HevcHdr -> -1
+            }
+        }
     }
 
     /** Native MaxEdge Ultra HDR JPEG on the `.jpg` sibling — no second encode. */

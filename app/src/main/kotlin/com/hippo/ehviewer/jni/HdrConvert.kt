@@ -273,3 +273,9 @@ external fun probeStillExportSize(path: String, kind: Int): Long
 
 /** JPEG coefficients + reconstruction metadata → JXL; bypasses pixel decoding. */
 internal external fun transcodeJpegToJxl(jpeg: ByteArray, outPath: String): Int
+
+// Borrowed descriptor remains open until the native thumbnail call returns.
+external fun convertJxrFdToUltraHdrMaxEdge(fd: Int, outputPath: String, maxEdge: Int): Int
+external fun convertJxlFdToUltraHdrMaxEdge(fd: Int, outputPath: String, maxEdge: Int): Int
+external fun convertAvifFdToUltraHdrMaxEdge(fd: Int, outputPath: String, maxEdge: Int): Int
+external fun convertJpeg2000FdToUltraHdrMaxEdge(fd: Int, outputPath: String, maxEdge: Int): Int

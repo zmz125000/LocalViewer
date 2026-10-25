@@ -35,7 +35,9 @@ internal suspend fun writeDownloadedThumbnail(
             (disk ?: buffer).write(bytes, offset, length)
         }
 
-        override fun flush() { disk?.flush() }
+        override fun flush() {
+            disk?.flush()
+        }
     }
     try {
         download(output)

@@ -5,6 +5,7 @@
 #include <android/bitmap.h>
 #include <android/log.h>
 #include <jni.h>
+#include "thumbnail_mapped_input.h"
 #include <openjpeg.h>
 
 #include <pthread.h>
@@ -639,6 +640,37 @@ extern "C" JNIEXPORT jint JNICALL
 Java_com_hippo_ehviewer_jni_HdrConvertKt_convertJpeg2000BytesToUltraHdrMaxEdge(
         JNIEnv* env, jclass, jbyteArray input, jstring output, jint maxEdge) {
     return encode_jpeg2000(env, input, output, maxEdge);
+}
+
+extern "C" JNIEXPORT jint JNICALL
+Java_com_hippo_ehviewer_jni_HdrConvertKt_convertJpeg2000FdToUltraHdrMaxEdge(
+        JNIEnv* env, jclass, jint fd, jstring output, jint maxEdge) try {
+    if (!output || maxEdge <= 0) return -10;
+    ThumbnailMappedInput input(fd);
+    if (!input.data) return -101;
+    ThumbnailOutputPath outputPath(env, output);
+    const char* path = outputPath.get();
+    if (!path) {
+        return -14;
+    }
+    std::vector<uint16_t> rgba;
+    unsigned w = 0, h = 0;
+    uhdr_color_gamut_t cg = UHDR_CG_BT_709;
+    bool hdr = false;
+    int tf = 0;
+    const bool ok = decode_linear(input.data, input.size, maxEdge, rgba, w, h,
+                                  cg, hdr, tf, true);
+    input.reset();
+    if (!ok) {
+        return -20;
+    }
+    (void)tf;
+    const float peak = maxEdge > 0 ? thumb_fixed_peak_nits(hdr) : 0.f;
+    const int rc = encode_linear_rgba_f16_to_uhdr(w, h, rgba.data(), path, cg, peak, hdr);
+    return rc;
+} catch (...) {
+    // In particular, do not let std::bad_alloc terminate the process at JNI.
+    return -30;
 }
 
 #endif

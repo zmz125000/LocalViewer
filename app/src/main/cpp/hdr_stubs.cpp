@@ -132,3 +132,27 @@ extern "C" JNIEXPORT jint JNICALL
 Java_com_hippo_ehviewer_jni_HdrConvertKt_transcodeJpegToJxl(JNIEnv*, jclass, jbyteArray, jstring) {
     return -100;
 }
+
+extern "C" JNIEXPORT jint JNICALL
+Java_com_hippo_ehviewer_jni_HdrConvertKt_convertJxrFdToUltraHdrMaxEdge(
+        JNIEnv*, jclass, jint, jstring, jint) {
+    return kUnsupportedAbi;
+}
+
+extern "C" JNIEXPORT jint JNICALL
+Java_com_hippo_ehviewer_jni_HdrConvertKt_convertJxlFdToUltraHdrMaxEdge(
+        JNIEnv*, jclass, jint, jstring, jint) {
+    return kUnsupportedAbi;
+}
+
+extern "C" JNIEXPORT jint JNICALL
+Java_com_hippo_ehviewer_jni_HdrConvertKt_convertAvifFdToUltraHdrMaxEdge(
+        JNIEnv*, jclass, jint, jstring, jint) {
+    return kUnsupportedAbi;
+}
+
+extern "C" JNIEXPORT jint JNICALL
+Java_com_hippo_ehviewer_jni_HdrConvertKt_convertJpeg2000FdToUltraHdrMaxEdge(
+        JNIEnv*, jclass, jint, jstring, jint) {
+    return kUnsupportedAbi;
+}

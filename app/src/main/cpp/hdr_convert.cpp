@@ -4,6 +4,7 @@
  */
 #include <android/log.h>
 #include <jni.h>
+#include "thumbnail_mapped_input.h"
 
 #include <algorithm>
 #include <array>
@@ -376,7 +377,7 @@ bool setup_full_frame(PKImageDecode* dec, PKPixelFormatGUID* fmt, unsigned max_e
 /**
  * Decode JXR from an in-memory buffer (no temp file).
  * Same approach as branch `hdr` HdrJxr: CreateStreamFromMemory + native pixel format.
- * SAF/local paths: Kotlin reads via Okio → bytes → this (skips copy-to-temp.jxr).
+ * Input can be backed by a Java byte array or a read-only mapped file.
  *
  * @param composite_alpha_on_black true for JPEG/UHDR (no alpha plane) — flatten
  *   straight alpha onto black. false for direct Bitmap display — keep A.
@@ -1834,6 +1835,44 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_convertJxrBytesToUltraHdrMaxEdge(
 
     env->ReleaseStringUTFChars(jOutput, out_path);
     return rc;
+}
+
+/** File-backed thumbnail input avoids Java arrays and JNI compressed copies. */
+extern "C" JNIEXPORT jint JNICALL
+Java_com_hippo_ehviewer_jni_HdrConvertKt_convertJxrFdToUltraHdrMaxEdge(
+        JNIEnv* env, jclass, jint fd, jstring jOutput, jint maxEdge) try {
+    if (!jOutput || maxEdge <= 0) return -10;
+    ThumbnailMappedInput input(fd);
+    if (!input.data) return -101;  // Non-regular/unmappable provider: stage to a file.
+    ThumbnailOutputPath outputPath(env, jOutput);
+    const char* out_path = outputPath.get();
+    if (!out_path) return -14;
+
+    std::vector<uint16_t> rgba;
+    unsigned w = 0, h = 0;
+    int rc = -20;
+    uhdr_color_gamut_t cg = UHDR_CG_BT_709;
+    bool untagged_linear = false;
+    if (decode_jxr_from_memory(input.data, input.size, rgba, w, h, true,
+                               &untagged_linear, &cg, maxEdge > 0 ? static_cast<unsigned>(maxEdge) : 0)) {
+        if (untagged_linear) rebase_untagged_scrgb(rgba, w, h);
+        input.reset();
+        if (maxEdge > 0) {
+            scale_rgba_f16_max_edge(rgba, w, h, static_cast<unsigned>(maxEdge));
+        }
+        // JXR thumbs: HDR from scanned peak (not format); capacity = content peak nits.
+        const float peak = scan_scrgb_peak(rgba.data(), static_cast<size_t>(w) * h);
+        const bool force_hdr = peak > 1.25f;
+        rc = encode_linear_rgba_f16_to_uhdr(w, h, rgba.data(), out_path, cg,
+                                           thumb_peak_nits_from_linear(peak), force_hdr);
+    } else {
+        rc = -21;
+    }
+
+    return rc;
+} catch (...) {
+    // In particular, do not let std::bad_alloc terminate the process at JNI.
+    return -30;
 }
 
 /**
