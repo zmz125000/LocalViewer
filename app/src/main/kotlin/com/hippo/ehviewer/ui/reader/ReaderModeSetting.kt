@@ -417,7 +417,7 @@ private fun SlideshowSetting() = Column {
         field = Settings.slideshowKeepScreenOn.asMutableState(),
     )
     SwitchChoice(
-        title = stringResource(R.string.pref_dual_page_landscape),
+        title = stringResource(R.string.pref_slideshow_dual_pages_override),
         field = Settings.slideshowDualPages.asMutableState(),
     )
     SwitchChoice(

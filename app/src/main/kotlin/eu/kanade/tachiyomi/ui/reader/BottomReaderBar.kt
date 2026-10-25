@@ -97,17 +97,16 @@ fun BottomReaderBar(
     }
     // Dual pages: landscape only. Portrait keeps the preference but never shows two pages.
     if (LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE) {
-        val dualPagePref = if (readingMode == ReadingModeType.SLIDESHOW && onClickContents == null) {
-            Settings.slideshowDualPages
-        } else {
-            Settings.dualPageLandscape
-        }
+        val slideshowOverride = readingMode == ReadingModeType.SLIDESHOW && onClickContents == null
+        val dualPagePref = if (slideshowOverride) Settings.slideshowDualPages else Settings.dualPageLandscape
         key(dualPagePref) {
             val dualPage by dualPagePref.collectAsState()
             ActionButton(
                 onClick = { dualPagePref.value = !dualPage },
                 imageVector = Icons.Outlined.ViewColumn,
-                contentDescription = stringResource(R.string.pref_dual_page_landscape),
+                contentDescription = stringResource(
+                    if (slideshowOverride) R.string.pref_slideshow_dual_pages_override else R.string.pref_dual_page_landscape,
+                ),
             )
         }
     }
