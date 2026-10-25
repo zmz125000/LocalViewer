@@ -383,6 +383,7 @@ private fun WebtoonSetting() = Column {
 
 @Composable
 private fun SlideshowSetting() = Column {
+    Spacer(modifier = Modifier.size(16.dp))
     Text(
         text = stringResource(R.string.slideshow_viewer),
         modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
