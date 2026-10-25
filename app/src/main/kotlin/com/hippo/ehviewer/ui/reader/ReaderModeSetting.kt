@@ -32,6 +32,9 @@ fun ReaderModeSetting(
     supportsSlideshow: Boolean = true,
 ) = Column(modifier = Modifier.verticalScroll(rememberScrollState()).navigationBarsPadding()) {
     val readingMode = Settings.readingMode.asMutableState()
+    AnimatedVisibility(supportsSlideshow && readingMode.value == ReadingModeType.SLIDESHOW.prefValue) {
+        SlideshowSetting()
+    }
     SpinnerChoice(
         title = stringResource(id = R.string.pref_category_reading_mode),
         entries = stringArrayResource(id = com.hippo.ehviewer.R.array.viewers_selector),
@@ -88,9 +91,6 @@ fun ReaderModeSetting(
         DocumentStyleSetting()
     }
     Spacer(modifier = Modifier.size(16.dp))
-    AnimatedVisibility(supportsSlideshow && readingMode.value == ReadingModeType.SLIDESHOW.prefValue) {
-        SlideshowSetting()
-    }
     Crossfade(targetState = isWebtoon, label = "Setting") { webtoon ->
         if (webtoon) {
             WebtoonSetting()
@@ -390,7 +390,7 @@ private fun SlideshowSetting() = Column {
     )
     SwitchChoice(
         title = stringResource(R.string.pref_keep_screen_on),
-        field = Settings.keepScreenOn.asMutableState(),
+        field = Settings.slideshowKeepScreenOn.asMutableState(),
     )
     SpinnerChoice(
         title = stringResource(R.string.pref_slideshow_repeat),

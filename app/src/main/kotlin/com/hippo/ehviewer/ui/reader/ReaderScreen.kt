@@ -584,11 +584,13 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
     val volumeKeysInverted by Settings.readWithVolumeKeysInverted.collectAsState()
     val fullscreen by Settings.fullscreen.collectAsState()
     val cutoutShort by Settings.cutoutShort.collectAsState()
-    val keepScreenOn by Settings.keepScreenOn.collectAsState()
+    val keepScreenOnPref by Settings.keepScreenOn.collectAsState()
     val dualPagePref by Settings.dualPageLandscape.collectAsState()
     val dualPageGap by Settings.dualPageGap.collectAsState()
     val isLandscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
     val slideshow = readingMode == ReadingModeType.SLIDESHOW
+    val slideshowKeepScreenOn by Settings.slideshowKeepScreenOn.collectAsState()
+    val keepScreenOn = keepScreenOnPref || (slideshow && slideshowKeepScreenOn)
     val disableDualPages by Settings.slideshowDisableDualPages.collectAsState()
     val slideshowSeconds by Settings.slideshowDisplaySeconds.collectAsState()
     val slideshowRepeat by Settings.slideshowRepeat.collectAsState()

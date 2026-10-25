@@ -1207,6 +1207,7 @@ object Settings : DataStorePreferences(null) {
     val readerWebtoonNavInverted = intPref("reader_tapping_inverted_webtoon_2", 0)
     val webtoonSidePadding = intPref("webtoon_side_padding", 0)
     val navigateToPan = boolPref("navigate_pan", true)
+    val slideshowKeepScreenOn = boolPref("slideshow_keep_screen_on_override", true)
     val slideshowDisplaySeconds = intPref("slideshow_display_seconds", 5)
     val slideshowRepeat = intPref("slideshow_repeat", 0)
     val slideshowAutoNextGallery = boolPref("slideshow_auto_next_gallery", false)
