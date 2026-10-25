@@ -27,6 +27,17 @@ internal class SmbConnectGuard(
     @Synchronized
     fun isCoolingDown(host: String): Boolean = hosts[host]?.let { nowMs() < it.untilMs } == true
 
+    /**
+     * How long an automatic probe should wait before dialing again.
+     * A rejected login has no expiry; callers must not poll it.
+     */
+    @Synchronized
+    fun remainingMs(host: String, credential: String): Long {
+        if (credential in rejectedCredentials) return REJECTED_LOGIN_HOLD_MS
+        val until = hosts[host]?.untilMs ?: return 0L
+        return (until - nowMs()).coerceAtLeast(0L)
+    }
+
     @Synchronized
     fun failed(host: String, credential: String, authentication: Boolean, transient: Boolean) {
         if (authentication) rejectedCredentials.add(credential)
@@ -46,6 +57,10 @@ internal class SmbConnectGuard(
     @Synchronized
     fun retryCredentials(credential: String) {
         rejectedCredentials.remove(credential)
+    }
+
+    private companion object {
+        const val REJECTED_LOGIN_HOLD_MS = 60_000L
     }
 }
 

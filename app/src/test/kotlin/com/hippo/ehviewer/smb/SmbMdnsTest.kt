@@ -50,6 +50,23 @@ class SmbMdnsTest {
     }
 
     @Test
+    fun failedConnectDropsOnlyThatHostLookup() {
+        SmbMdns.clear()
+        val gen = SmbMdns.generationNow()
+        val nas = InetAddress.getByAddress(byteArrayOf(192.toByte(), 168.toByte(), 1, 20))
+        val other = InetAddress.getByAddress(byteArrayOf(192.toByte(), 168.toByte(), 1, 30))
+        SmbMdns.rememberDial("nas", nas, gen)
+        SmbMdns.rememberDial("other", other, gen)
+        SmbMdns.addCandidate("nas", other, gen)
+        SmbMdns.forgetLookup("nas")
+        assertEquals(gen, SmbMdns.generationNow())
+        assertTrue(SmbMdns.dialTargets("nas").isEmpty())
+        assertTrue(SmbMdns.peekCandidates("nas").isEmpty())
+        assertEquals(listOf(other), SmbMdns.dialTargets("other"))
+        SmbMdns.clear()
+    }
+
+    @Test
     fun lateDifferentAddressIsDialed() {
         val dns = InetAddress.getByAddress(byteArrayOf(192.toByte(), 168.toByte(), 1, 20))
         val mdns = InetAddress.getByAddress(byteArrayOf(192.toByte(), 168.toByte(), 1, 50))

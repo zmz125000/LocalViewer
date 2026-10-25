@@ -672,8 +672,10 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
     /*
      * A failed foreground SMB connection used to get only one passive probe. The circuit
      * cooldown was at most 3s, but nothing scheduled the next attempt, so cached folders
-     * could remain disconnected until the screen resumed. Retry sequentially (never overlap)
-     * with a 5s gap between attempts. Leaving or pausing the screen cancels the loop.
+     * could remain disconnected until the screen resumed. Retry sequentially (never overlap).
+     * The gap is 3s, or longer while the connect guard is backing off, so a down host
+     * does not open a TCP or send another mDNS query on every pass. Leaving or pausing
+     * the screen cancels the loop.
      */
     LaunchedEffect(
         screenResumed,
@@ -689,10 +691,11 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
         val password = withIOContext { SmbPasswordStore.get(src.id) }
         var attempt = 0
         while (!SmbGateway.isSourceConnected(src)) {
-            delay(smbReconnectProbeDelayMs(attempt, SMB_RECONNECT_RETRY_DELAY_MS))
+            val cooldown = SmbGateway.connectBackoffRemainingMs(src, password)
+            delay(smbReconnectProbeDelayMs(attempt, SMB_RECONNECT_RETRY_DELAY_MS, cooldown))
+            if (SmbGateway.isSourceConnected(src)) return@LaunchedEffect
             attempt++
             SmbGateway.refreshConnectionSignal(src, password)
-            if (SmbGateway.isSourceConnected(src)) return@LaunchedEffect
         }
     }
 

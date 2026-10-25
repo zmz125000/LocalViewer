@@ -3,6 +3,7 @@ package com.hippo.ehviewer.smb
 import com.hierynomus.mssmb2.SMB2MessageCommandCode
 import com.hierynomus.mssmb2.SMBApiException
 import java.io.IOException
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
@@ -49,6 +50,30 @@ class SmbConnectGuardTest {
         guard.failed("host", "user", authentication = false, transient = true)
         now += 2_000
         assertFalse(guard.isCoolingDown("host"))
+    }
+
+    @Test
+    fun probeWaitsOutHostBackoffAndRejectedLogin() {
+        var now = 0L
+        val guard = SmbConnectGuard { now }
+        assertEquals(0L, guard.remainingMs("host", "user"))
+        guard.failed("host", "user", authentication = false, transient = true)
+        assertEquals(2_000L, guard.remainingMs("host", "other"))
+        now += 500
+        assertEquals(1_500L, guard.remainingMs("host", "other"))
+        guard.failed("host", "bad", authentication = true, transient = false)
+        assertEquals(60_000L, guard.remainingMs("host", "bad"))
+        guard.retryCredentials("bad")
+        assertEquals(1_500L, guard.remainingMs("host", "bad"))
+    }
+
+    @Test
+    fun connectTimeoutAndCancelledDialArmBackoffButFileAccessDoesNot() {
+        assertTrue(isSmbTransientConnectFailure(IOException("SMB connect timed out: nas:445")))
+        assertTrue(isSmbTransientConnectFailure(IOException("SMB connect cancelled: nas")))
+        assertTrue(isSmbTransientConnectFailure(IOException("SMB connect failed: nas:445")))
+        val denied = SMBApiException(0xC0000022L, SMB2MessageCommandCode.SMB2_CREATE, "file", null)
+        assertFalse(isSmbTransientConnectFailure(denied))
     }
 
     @Test

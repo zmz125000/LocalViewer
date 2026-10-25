@@ -68,6 +68,14 @@ class SmbHostPoolPolicyTest {
     }
 
     @Test
+    fun reconnectProbeWaitsForConnectBackoffBeforeAnotherMdnsDial() {
+        assertEquals(0L, smbReconnectProbeDelayMs(0, 3_000L, cooldownRemainingMs = 0L))
+        assertEquals(8_000L, smbReconnectProbeDelayMs(0, 3_000L, cooldownRemainingMs = 8_000L))
+        assertEquals(8_000L, smbReconnectProbeDelayMs(1, 3_000L, cooldownRemainingMs = 8_000L))
+        assertEquals(3_000L, smbReconnectProbeDelayMs(1, 3_000L, cooldownRemainingMs = 1_000L))
+    }
+
+    @Test
     fun concurrentFilesSpreadAcrossConnectionBudget() {
         // Fill-first (take any free multiplex slot) packed this as [3] on one TCP.
         assertEquals(listOf(1, 1, 1), smbSpreadDataOps(opCount = 3, maxConnections = 3, opsPerSession = 3))
