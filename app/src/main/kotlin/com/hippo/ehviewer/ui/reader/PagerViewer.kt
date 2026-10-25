@@ -172,14 +172,14 @@ fun PagerViewer(
         VerticalPager(
             state = pagerState,
             modifier = modifier.then(transitionModifier.modifier).readerDiscretePageSwipes(
-                enabled = canScroll && transitionModifier.type != 0,
+                enabled = canScroll && (slideshow || transitionModifier.type != 0),
                 vertical = isVertical,
                 rtl = isRtl,
                 pager = pagerState,
                 scope = scope,
             ),
             beyondViewportPageCount = if (slideshow) 0 else 1,
-            userScrollEnabled = canScroll && transitionModifier.type == 0,
+            userScrollEnabled = canScroll && !slideshow && transitionModifier.type == 0,
             key = { if (dualPage) dualFirstPageIndex(it, landscapeCover) else it },
         ) { index ->
             SpreadOrPage(index)
@@ -189,7 +189,7 @@ fun PagerViewer(
         HorizontalPager(
             state = pagerState,
             modifier = modifier.then(transitionModifier.modifier).readerDiscretePageSwipes(
-                enabled = canScroll && transitionModifier.type != 0,
+                enabled = canScroll && (slideshow || transitionModifier.type != 0),
                 vertical = isVertical,
                 rtl = isRtl,
                 pager = pagerState,
@@ -197,7 +197,7 @@ fun PagerViewer(
             ),
             beyondViewportPageCount = if (slideshow) 0 else 1,
             reverseLayout = isRtl xor isRtlLayout,
-            userScrollEnabled = canScroll && transitionModifier.type == 0,
+            userScrollEnabled = canScroll && !slideshow && transitionModifier.type == 0,
             key = { if (dualPage) dualFirstPageIndex(it, landscapeCover) else it },
         ) { index ->
             SpreadOrPage(index)

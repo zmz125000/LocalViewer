@@ -81,10 +81,11 @@ internal fun pagerTransitionModifier(
     val readingMode by Settings.readingMode.collectAsState()
     val general by Settings.pageTransition.collectAsState()
     val override by Settings.slideshowPageTransition.collectAsState()
-    val transition = if (readingMode == ReadingModeType.SLIDESHOW.prefValue && override in 0..2) override else general
+    val slideshow = readingMode == ReadingModeType.SLIDESHOW.prefValue
+    val transition = if (slideshow && override in 0..2) override else general
     val alpha = remember(pager, loader, transition) { Animatable(1f) }
     LaunchedEffect(loader, transition) { loader.replan() }
-    DisposableEffect(pager, loader, transition, dualPage, landscapeCover) {
+    DisposableEffect(pager, loader, transition, slideshow, dualPage, landscapeCover) {
         val mutex = MutatorMutex()
         var running: Job? = null
         var disposed = false
@@ -101,24 +102,36 @@ internal fun pagerTransitionModifier(
                 running = currentCoroutineContext()[Job]
                 try {
                     if (target in 0 until pager.pageCount && target != pager.currentPage) {
+                        val destination = realPages(target)
+                        val current = realPages(pager.currentPage)
+                        // Fade always waits, and slideshow waits for every transition type.
+                        // Hold the current image while the destination is being decoded.
+                        val waitForReady = transition == 1 || slideshow
+                        val ready = if (waitForReady) {
+                            val preparing = if (transition == 1) destination + current else destination
+                            loader.setTransitionPages(preparing.map { it.index }.toSet())
+                            awaitTransitionImages(destination)
+                        } else {
+                            true
+                        }
                         when (transition) {
-                            0 -> pager.animateScrollToPage(target)
+                            0 -> {
+                                if (ready) pager.animateScrollToPage(target) else pager.scrollToPage(target)
+                            }
                             1 -> {
-                                val destination = realPages(target)
-                                val current = realPages(pager.currentPage)
-                                loader.setTransitionPages((destination + current).map { it.index }.toSet())
-                                val ready = awaitTransitionImages(destination)
                                 val currentReady = current.all {
                                     it.status is PageStatus.Ready && it.displayReadyFlow.value
                                 }
-                                if (ready && currentReady) alpha.animateTo(0f, tween(150))
+                                if (ready) {
+                                    if (currentReady) alpha.animateTo(0f, tween(150)) else alpha.snapTo(0f)
+                                }
                                 pager.scrollToPage(target)
                                 // The outgoing page is no longer visible; retain only the
                                 // destination while its painter is installed and faded in.
                                 loader.setTransitionPages(destination.map { it.index }.toSet())
-                                if (ready && currentReady) {
-                                    // Compose the destination while hidden; the decoder being ready
-                                    // alone does not guarantee that its painter has been installed.
+                                if (ready) {
+                                    // Never fade in a placeholder, even if the outgoing page
+                                    // was itself still loading when navigation was requested.
                                     val displayed = awaitTransitionDisplay(destination)
                                     withFrameNanos { }
                                     withFrameNanos { }
