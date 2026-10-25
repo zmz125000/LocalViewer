@@ -1199,7 +1199,6 @@ object Settings : DataStorePreferences(null) {
     val cutoutShort = boolPref("cutout_short", true)
     val keepScreenOn = boolPref("pref_keep_screen_on_key", true)
     val readerLongTapAction = boolPref("reader_long_tap", true)
-    private val pageTransitionsLegacy = boolPref("pref_enable_transitions_key", true)
     val pageTransition = intPref("reader_page_transition", 0)
 
     fun effectivePageTransition(slideshow: Boolean = readingMode.value == ReadingModeType.SLIDESHOW.prefValue): Int = PageTransitionType.resolve(pageTransition.value, slideshowPageTransition.value, slideshow).prefValue
@@ -1221,7 +1220,6 @@ object Settings : DataStorePreferences(null) {
     val slideshowKeepScreenOn = boolPref("slideshow_keep_screen_on_override", true)
     val slideshowDisplaySeconds = intPref("slideshow_display_seconds", 5)
     val slideshowPlaybackMode = intPref("slideshow_playback_mode", SlideshowPlaybackMode.REPEAT.prefValue)
-    private val slideshowDisableDualPagesLegacy = boolPref("slideshow_dual_override", true)
     val slideshowDualPages = boolPref("slideshow_dual_pages_enabled", false)
     val slideshowFillScreen = boolPref("slideshow_scale_override", false)
     val slideshowDisableAutoRotate = boolPref("slideshow_rotate_override", false)
@@ -1249,9 +1247,6 @@ object Settings : DataStorePreferences(null) {
      * The mark is written whenever page 0 is decoded (cover thumb or reader), in every mode.
      */
     val landscapeCover = intPref("pref_landscape_cover_mode", LANDSCAPE_COVER_OFF)
-
-    /** Previous on/off switch. True migrates to [LANDSCAPE_COVER_AUTO]. */
-    private val landscapeCoverLegacy = boolPref("pref_landscape_cover", false)
 
     /**
      * Pager dual (LTR / RTL / vertical): when on, each page occupies half the
@@ -1284,25 +1279,9 @@ object Settings : DataStorePreferences(null) {
             if ("CN" == Locale.getDefault().country) {
                 if (showTagTranslations !in pref) pref[showTagTranslations] = true
             }
-            if (pageTransition !in pref && pageTransitionsLegacy in pref) {
-                pref[pageTransition] = if (pref[pageTransitionsLegacy]) 0 else 2
-                pref.remove(pageTransitionsLegacy)
-            }
-            if (slideshowDualPages !in pref && slideshowDisableDualPagesLegacy in pref) {
-                pref[slideshowDualPages] = pref[dualPageLandscape] && !pref[slideshowDisableDualPagesLegacy]
-            }
-            pref.remove(slideshowDisableDualPagesLegacy)
             val orientation = pref[orientationMode]
             if (OrientationType.entries.none { it.prefValue == orientation }) {
                 pref.remove(orientationMode)
-            }
-            if (landscapeCover !in pref && landscapeCoverLegacy in pref) {
-                pref[landscapeCover] = if (pref[landscapeCoverLegacy]) {
-                    LANDSCAPE_COVER_AUTO
-                } else {
-                    LANDSCAPE_COVER_OFF
-                }
-                pref.remove(landscapeCoverLegacy)
             }
         }
     }
