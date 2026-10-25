@@ -1199,4 +1199,6 @@
     <string name="pref_slideshow_disable_dual_pages">Disable dual pages mode</string>
     <string name="pref_slideshow_disable_auto_rotate">Disable auto rotate to fit</string>
     <string name="scale_type_fill_screen">Fill screen</string>
+    <string name="settings_reset_to_defaults">Reset all settings to default</string>
+    <string name="settings_reset_to_defaults_done">All settings reset to default</string>
 </resources>

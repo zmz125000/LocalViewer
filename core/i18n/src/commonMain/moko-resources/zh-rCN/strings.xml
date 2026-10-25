@@ -1152,4 +1152,6 @@
     <string name="blocked_image">已屏蔽的图片</string>
     <string name="show_blocked_image">显示已屏蔽的图片</string>
     <!-- Tachiyomi Reader End-->
+    <string name="settings_reset_to_defaults">将所有设置恢复为默认值</string>
+    <string name="settings_reset_to_defaults_done">所有设置已恢复为默认值</string>
 </resources>

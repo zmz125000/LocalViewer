@@ -1117,4 +1117,6 @@
     <string name="dark_theme_on">總是開啟</string>
     <string name="pref_crop_borders">邊緣裁剪</string>
     <!-- Tachiyomi Reader End-->
+    <string name="settings_reset_to_defaults">將所有設定恢復為預設值</string>
+    <string name="settings_reset_to_defaults_done">所有設定已恢復為預設值</string>
 </resources>
