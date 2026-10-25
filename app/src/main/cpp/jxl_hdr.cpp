@@ -186,7 +186,7 @@ bool is_linear_working_encoding(const JxlColorEncoding& src, uhdr_color_gamut_t 
 int decode_jxl_to_linear_f16(const uint8_t* data, size_t len, std::vector<uint16_t>& out_rgba,
                              unsigned& w, unsigned& h, uhdr_color_gamut_t* out_cg,
                              bool* out_force_hdr = nullptr, int* out_transfer_cicp = nullptr,
-                             bool composite_alpha_on_black = true) {
+                             bool composite_alpha_on_black = true, unsigned thumbnail_edge = 0) {
     if (out_cg) *out_cg = UHDR_CG_BT_709;
     if (out_force_hdr) *out_force_hdr = false;
     if (out_transfer_cicp) *out_transfer_cicp = 0;
@@ -207,11 +207,14 @@ int decode_jxl_to_linear_f16(const uint8_t* data, size_t len, std::vector<uint16
     }
     (void)JxlDecoderSetUnpremultiplyAlpha(dec.get(), JXL_TRUE);
 
-    if (JxlDecoderSubscribeEvents(dec.get(),
-                                  JXL_DEC_BASIC_INFO | JXL_DEC_COLOR_ENCODING | JXL_DEC_FULL_IMAGE) !=
+    const int events = JXL_DEC_BASIC_INFO | JXL_DEC_COLOR_ENCODING | JXL_DEC_FULL_IMAGE |
+        (thumbnail_edge > 0 ? JXL_DEC_FRAME_PROGRESSION : 0);
+    if (JxlDecoderSubscribeEvents(dec.get(), events) !=
         JXL_DEC_SUCCESS) {
         return -4;
     }
+    if (thumbnail_edge > 0 &&
+        JxlDecoderSetProgressiveDetail(dec.get(), kLastPasses) != JXL_DEC_SUCCESS) return -4;
     JxlDecoderSetParallelRunner(dec.get(), JxlResizableParallelRunner, runner.get());
 
     JxlDecoderSetInput(dec.get(), data, len);
@@ -289,6 +292,12 @@ int decode_jxl_to_linear_f16(const uint8_t* data, size_t len, std::vector<uint16
                 JXL_DEC_SUCCESS) {
                 return -11;
             }
+        } else if (status == JXL_DEC_FRAME_PROGRESSION && thumbnail_edge > 0) {
+            const size_t ratio = JxlDecoderGetIntendedDownsamplingRatio(dec.get());
+            // Finish the first progressive rendition with enough source detail.
+            // Files without suitable steps simply continue to the complete frame.
+            if (ratio > 0 && (std::max(w, h) + ratio - 1) / ratio >= thumbnail_edge &&
+                JxlDecoderFlushImage(dec.get()) == JXL_DEC_SUCCESS) break;
         } else if (status == JXL_DEC_FULL_IMAGE) {
             break;
         } else if (status == JXL_DEC_SUCCESS) {
@@ -325,8 +334,6 @@ int decode_jxl_to_linear_f16(const uint8_t* data, size_t len, std::vector<uint16
         }
     }
 
-    out_rgba.resize(pixels_n * 4);
-
     // CMS output is normalized linear RGB. Preserve absolute HDR headroom using
     // the codestream intensity target; SDR's common 255-nit metadata stays 1.0.
     float scale = 1.f;
@@ -338,39 +345,76 @@ int decode_jxl_to_linear_f16(const uint8_t* data, size_t len, std::vector<uint16
         scale = std::clamp(peak_nits / kSdrWhiteNits, 1.f, kMaxLinear);
     }
 
-    hdr_parallel_pixels(pixels_n, hdr_pixel_jobs(pixels_n), [&](size_t begin, size_t end, unsigned) {
-        for (size_t i = begin; i < end; i++) {
-            float r = pixels[i * 4 + 0];
-            float g = pixels[i * 4 + 1];
-            float b = pixels[i * 4 + 2];
-            float a = pixels[i * 4 + 3];
+    const auto converted_sample = [&](size_t i, float* sample) {
+        float r = pixels[i * 4 + 0];
+        float g = pixels[i * 4 + 1];
+        float b = pixels[i * 4 + 2];
+        float a = pixels[i * 4 + 3];
 
-            float rl = r * scale;
-            float gl = g * scale;
-            float bl = b * scale;
-            if (!std::isfinite(a) || a < 0.f) a = 0.f;
-            if (a > 1.f) a = 1.f;
-            if (composite_alpha_on_black && a < 1.f) {
-                rl *= a;
-                gl *= a;
-                bl *= a;
-                a = 1.f;
-            }
-
-            auto clamp_hf = [](float v) {
-                if (!std::isfinite(v) || v < 0.f) return 0.f;
-                if (v > kMaxLinear) return kMaxLinear;
-                return v;
-            };
-            rl = clamp_hf(rl);
-            gl = clamp_hf(gl);
-            bl = clamp_hf(bl);
-            out_rgba[i * 4 + 0] = float_to_half(rl);
-            out_rgba[i * 4 + 1] = float_to_half(gl);
-            out_rgba[i * 4 + 2] = float_to_half(bl);
-            out_rgba[i * 4 + 3] = float_to_half(a);
+        float rl = r * scale;
+        float gl = g * scale;
+        float bl = b * scale;
+        if (!std::isfinite(a) || a < 0.f) a = 0.f;
+        if (a > 1.f) a = 1.f;
+        if (composite_alpha_on_black && a < 1.f) {
+            rl *= a;
+            gl *= a;
+            bl *= a;
+            a = 1.f;
         }
-    });
+
+        auto clamp_hf = [](float v) {
+            if (!std::isfinite(v) || v < 0.f) return 0.f;
+            if (v > kMaxLinear) return kMaxLinear;
+            return v;
+        };
+        rl = clamp_hf(rl);
+        gl = clamp_hf(gl);
+        bl = clamp_hf(bl);
+        sample[0] = rl;
+        sample[1] = gl;
+        sample[2] = bl;
+        sample[3] = a;
+    };
+    if (thumbnail_edge > 0 && std::max(w, h) > thumbnail_edge) {
+        // Box-filter CMS-converted linear floats straight into the thumbnail.
+        // Avoid a full-resolution F16 allocation, conversion and second read.
+        // Alpha/compositing runs before averaging, as in the full-frame path.
+        const unsigned edge = std::max(w, h);
+        const unsigned nw = std::max(1u, static_cast<unsigned>(static_cast<uint64_t>(w) * thumbnail_edge / edge));
+        const unsigned nh = std::max(1u, static_cast<unsigned>(static_cast<uint64_t>(h) * thumbnail_edge / edge));
+        out_rgba.resize(static_cast<size_t>(nw) * nh * 4);
+        hdr_parallel_pixels(nh, hdr_pixel_jobs(pixels_n), [&](size_t begin, size_t end, unsigned) {
+            for (unsigned y = begin; y < end; ++y) {
+                const unsigned sy0 = y * h / nh, sy1 = (y + 1) * h / nh;
+                for (unsigned x = 0; x < nw; ++x) {
+                    const unsigned sx0 = x * w / nw, sx1 = (x + 1) * w / nw;
+                    float sum[4]{};
+                    for (unsigned sy = sy0; sy < sy1; ++sy) {
+                        for (unsigned sx = sx0; sx < sx1; ++sx) {
+                            float sample[4];
+                            converted_sample(static_cast<size_t>(sy) * w + sx, sample);
+                            for (unsigned c = 0; c < 4; ++c) sum[c] += sample[c];
+                        }
+                    }
+                    const float count = static_cast<float>((sy1 - sy0) * (sx1 - sx0));
+                    const size_t offset = (static_cast<size_t>(y) * nw + x) * 4;
+                    for (unsigned c = 0; c < 4; ++c) out_rgba[offset + c] = float_to_half(sum[c] / count);
+                }
+            }
+        });
+        w = nw;
+        h = nh;
+    } else {
+        out_rgba.resize(pixels_n * 4);
+        hdr_parallel_pixels(pixels_n, hdr_pixel_jobs(pixels_n), [&](size_t begin, size_t end, unsigned) {
+            for (size_t i = begin; i < end; ++i) {
+                float sample[4];
+                converted_sample(i, sample);
+                for (unsigned c = 0; c < 4; ++c) out_rgba[i * 4 + c] = float_to_half(sample[c]);
+            }
+        });
+    }
 
     ALOGI("JXL CMS %ux%u cg=%d pq=%d hlg=%d original=%d intensity=%.1f scale=%.3f hdr=%d "
           "composite=%d",
@@ -438,7 +482,8 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_convertJxlBytesToUltraHdrMaxEdge(
     uhdr_color_gamut_t cg = UHDR_CG_BT_709;
     bool force_hdr = false;
     int rc = decode_jxl_to_linear_f16(reinterpret_cast<const uint8_t*>(bytes),
-                                      static_cast<size_t>(len), rgba, w, h, &cg, &force_hdr);
+                                      static_cast<size_t>(len), rgba, w, h, &cg, &force_hdr, nullptr,
+                                      true, maxEdge > 0 ? static_cast<unsigned>(maxEdge) : 0);
     if (rc != 0) {
         env->ReleaseStringUTFChars(jOutput, out_path);
         env->ReleaseByteArrayElements(jInput, bytes, JNI_ABORT);

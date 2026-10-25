@@ -324,11 +324,11 @@ inline float fixed13_3_to_float(int16_t v) {
 }
 
 /**
- * Configure decoder for full-frame decode in the given (native) pixel format.
+ * Configure decoder in the given native pixel format, optionally at thumbnail scale.
  * Ported from branch `hdr` jxr_hdr.c — never force half→float via jxrlib Convert
  * (that path produces vertical stripe garbage).
  */
-bool setup_full_frame(PKImageDecode* dec, PKPixelFormatGUID* fmt) {
+bool setup_full_frame(PKImageDecode* dec, PKPixelFormatGUID* fmt, unsigned max_edge = 0) {
     PKPixelInfo pi{};
     pi.pGUIDPixFmt = fmt;
     if (PixelFormatLookup(&pi, LOOKUP_FORWARD) != WMP_errSuccess) return false;
@@ -344,9 +344,27 @@ bool setup_full_frame(PKImageDecode* dec, PKPixelFormatGUID* fmt) {
     dec->WMP.wmiI.cBitsPerUnit = pi.cbitUnit;
     dec->WMP.wmiI.bRGB = !(pi.grBit & PK_pixfmtBGR);
 
-    dec->WMP.wmiI.cThumbnailWidth = dec->WMP.wmiI.cWidth;
-    dec->WMP.wmiI.cThumbnailHeight = dec->WMP.wmiI.cHeight;
-    dec->WMP.wmiI.bSkipFlexbits = FALSE;
+    // jxrlib supports power-of-two transform-domain reduction. Pick the largest
+    // reduction that still supplies at least the requested edge, then let the
+    // existing linear resampler finish the fit. Copy_WMP divides a 16-line
+    // macroblock by this scale, so never request a scale greater than 16.
+    const size_t width = dec->WMP.wmiI.cWidth;
+    const size_t height = dec->WMP.wmiI.cHeight;
+    const size_t long_edge = std::max(width, height);
+    unsigned scale = 1;
+    while (max_edge > 0 && scale < 16 &&
+           (long_edge + scale * 2 - 1) / (scale * 2) >= max_edge &&
+           // Both axes must shrink at each step: jxrlib infers one scale
+           // from the requested dimensions, including on very thin images.
+           (width + scale * 2 - 1) / (scale * 2) < (width + scale - 1) / scale &&
+           (height + scale * 2 - 1) / (scale * 2) < (height + scale - 1) / scale) {
+        scale *= 2;
+    }
+    dec->WMP.wmiI.cThumbnailWidth = (width + scale - 1) / scale;
+    dec->WMP.wmiI.cThumbnailHeight = (height + scale - 1) / scale;
+    // The decoder honors this only on frequency-organized streams, where the
+    // discarded refinement bits cannot contribute useful thumbnail detail.
+    dec->WMP.wmiI.bSkipFlexbits = scale > 1 ? TRUE : FALSE;
     dec->WMP.wmiI.cROILeftX = 0;
     dec->WMP.wmiI.cROITopY = 0;
     dec->WMP.wmiI.cROIWidth = dec->WMP.wmiI.cThumbnailWidth;
@@ -366,7 +384,8 @@ bool setup_full_frame(PKImageDecode* dec, PKPixelFormatGUID* fmt) {
  */
 bool decode_jxr_from_memory(const uint8_t* data, size_t len, std::vector<uint16_t>& out_rgba,
                             unsigned& w, unsigned& h, bool composite_alpha_on_black = true,
-                            bool* out_untagged_linear = nullptr, uhdr_color_gamut_t* out_cg = nullptr) {
+                            bool* out_untagged_linear = nullptr, uhdr_color_gamut_t* out_cg = nullptr,
+                            unsigned thumbnail_edge = 0) {
     if (out_untagged_linear) *out_untagged_linear = false;
     if (out_cg) *out_cg = UHDR_CG_BT_709;
     if (!data || len == 0) return false;
@@ -483,7 +502,7 @@ bool decode_jxr_from_memory(const uint8_t* data, size_t len, std::vector<uint16_
 
     /* Decode in native format — no jxrlib format conversion (half→float Convert
      * produces vertical stripe garbage). Integer SDR expands below with sRGB EOTF. */
-    if (!setup_full_frame(decoder, &guid)) {
+    if (!setup_full_frame(decoder, &guid, thumbnail_edge)) {
         ALOGE("setup_full_frame failed");
         release_all();
         return false;
@@ -1793,7 +1812,8 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_convertJxrBytesToUltraHdrMaxEdge(
     int rc = -20;
     uhdr_color_gamut_t cg = UHDR_CG_BT_709;
     bool untagged_linear = false;
-    if (decode_jxr_from_memory(compressed.data(), compressed.size(), rgba, w, h, true, &untagged_linear, &cg)) {
+    if (decode_jxr_from_memory(compressed.data(), compressed.size(), rgba, w, h, true,
+                               &untagged_linear, &cg, maxEdge > 0 ? static_cast<unsigned>(maxEdge) : 0)) {
         if (untagged_linear) rebase_untagged_scrgb(rgba, w, h);
         compressed.clear();
         compressed.shrink_to_fit();
