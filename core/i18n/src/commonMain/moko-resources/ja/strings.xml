@@ -274,6 +274,8 @@
     <string name="settings_thumbnail_convert_slots_summary">サムネイル変換ジョブは最大 %s 件まで実行します。</string>
     <string name="settings_archive_extract_slots">アーカイブ展開の並列数</string>
     <string name="settings_archive_extract_slots_summary">アーカイブのサムネイル抽出ジョブを最大 %s 件実行します。</string>
+    <string name="settings_thumbnail_memory_budget">サムネイルのメモリ使用量制限</string>
+    <string name="settings_thumbnail_memory_budget_summary">メモリ使用量に応じて並列数を制限します。無効にするとメモリ不足になる場合があります。</string>
     <string name="settings_advanced_read_cache_size_summary">SMB ページキャッシュ（および旧オンライン画像キャッシュ）の最大サイズ</string>
     <string name="insufficient_gp">オリジナル画像をダウンロードする GP が不足しています</string>
     <string name="settings_privacy_save_history">履歴を保存</string>

@@ -308,6 +308,8 @@
     <string name="settings_thumbnail_convert_slots_summary">最多同時進行 %s 個縮圖轉換。</string>
     <string name="settings_archive_extract_slots">壓縮檔擷取並行數</string>
     <string name="settings_archive_extract_slots_summary">最多同時進行 %s 個壓縮檔縮圖擷取。</string>
+    <string name="settings_thumbnail_memory_budget">縮圖記憶體預算限制</string>
+    <string name="settings_thumbnail_memory_budget_summary">依記憶體使用量限制並行工作。關閉後可能導致記憶體不足。</string>
     <string name="settings_advanced_read_cache_size_summary">SMB 頁面快取（及舊版線上圖片快取）的最大容量</string>
     <string name="insufficient_gp">GP 不足，無法下載原圖</string>
     <string name="settings_privacy_save_history">儲存歷史</string>
