@@ -440,6 +440,31 @@ abstract class PageLoader(
     }
 
     private val demandPlanner = ReaderDemandPlanner()
+    private var slideshowShuffle: SlideshowShuffle? = null
+    private var slideshowPagesPerSlide = 1
+    private var slideshowFirstPageAlone = false
+
+    @Synchronized
+    override fun setSlideshowShuffle(enabled: Boolean, pagesPerSlide: Int, firstPageAlone: Boolean) {
+        require(pagesPerSlide in 1..2)
+        if ((slideshowShuffle != null) == enabled &&
+            slideshowPagesPerSlide == pagesPerSlide && slideshowFirstPageAlone == firstPageAlone
+        ) {
+            return
+        }
+        slideshowPagesPerSlide = pagesPerSlide
+        slideshowFirstPageAlone = firstPageAlone
+        slideshowShuffle = if (enabled) SlideshowShuffle(pagesPerSlide, firstPageAlone) else null
+        replan()
+    }
+
+    @Synchronized
+    override fun nextSlideshowPage(currentPage: Int, repeat: Boolean): Int? {
+        val next = slideshowShuffle?.next(currentPage, size, repeat)
+        // A new shuffled pass changes speculative loading even before the viewport moves.
+        replan()
+        return next
+    }
 
     @Volatile
     private var lastNavigation: ReaderNavigation? = null
@@ -837,7 +862,8 @@ abstract class PageLoader(
             sourceAhead = Settings.preloadImage.value.coerceIn(0, 6),
             decodeAhead = Settings.readerDecodeAhead.value.coerceAtLeast(0),
         )
-        val demand = demandPlanner.plan(navigation, size, policy)
+        val sequential = demandPlanner.plan(navigation, size, policy)
+        val demand = slideshowShuffle?.plan(sequential, size, policy) ?: sequential
         lastNavigation = demand.navigation
         desiredDecodedPages = demand.decodedPages
         orderedDecodePages = demand.visibleDecode + demand.decodeAhead
@@ -861,8 +887,9 @@ abstract class PageLoader(
     private fun dropUndemandedDecodedPages(desired: Set<Int>) {
         val n = size
         if (n <= 0) return
-        val keepMin = (desired.minOrNull() ?: 0) - 1
-        val keepMax = (desired.maxOrNull() ?: 0) + 1
+        val visible = lastNavigation?.visiblePages
+        val keepMin = ((if (slideshowShuffle != null) visible?.first else desired.minOrNull()) ?: 0) - 1
+        val keepMax = ((if (slideshowShuffle != null) visible?.last else desired.maxOrNull()) ?: 0) + 1
         fun keep(i: Int) = i in desired || i in keepMin..keepMax
         for (i in 0 until n) {
             if (keep(i)) continue

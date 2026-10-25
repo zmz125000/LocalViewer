@@ -68,7 +68,7 @@ fun BottomReaderBar(
         },
         minMenuWidth = 192.dp,
     )
-    val slideshow = readingMode == ReadingModeType.SLIDESHOW
+    val slideshow = onClickContents == null && readingMode == ReadingModeType.SLIDESHOW
     val rotateOverride by Settings.slideshowRotateOverride.collectAsState()
     val scaleOverride by Settings.slideshowScaleOverride.collectAsState()
     val dualOverride by Settings.slideshowDualOverride.collectAsState()

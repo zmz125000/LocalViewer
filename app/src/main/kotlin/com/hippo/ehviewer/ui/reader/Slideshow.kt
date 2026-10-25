@@ -23,24 +23,3 @@ fun slideshowScaleType(): Int {
     val scale by Settings.imageScaleType.collectAsState()
     return if (mode == ReadingModeType.SLIDESHOW.prefValue && override) slideshowScale else scale
 }
-
-/** One shuffled pass through pager slots, excluding the slot already being displayed. */
-internal class SlideshowShuffle {
-    private val remaining = mutableListOf<Int>()
-    private var pageCount = -1
-
-    fun next(current: Int, count: Int): Int? {
-        if (count != pageCount) {
-            pageCount = count
-            reset(current, count)
-        }
-        remaining.remove(current)
-        return if (remaining.isEmpty()) null else remaining.removeAt(remaining.lastIndex)
-    }
-
-    fun reset(current: Int, count: Int) {
-        pageCount = count
-        remaining.clear()
-        remaining.addAll((0 until count).filter { it != current }.shuffled())
-    }
-}

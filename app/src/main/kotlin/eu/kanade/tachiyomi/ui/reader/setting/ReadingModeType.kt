@@ -40,6 +40,12 @@ enum class ReadingModeType(
             VERTICAL, WEBTOON, CONTINUOUS_VERTICAL -> true
         }
 
+        /** PDF and ebook readers use their default pager for image-only slideshow mode. */
+        fun fromPdfPreference(preference: Int): ReadingModeType = when (val mode = fromPreference(preference)) {
+            DEFAULT, SLIDESHOW -> RIGHT_TO_LEFT
+            else -> mode
+        }
+
         fun fromPreference(preference: Int): ReadingModeType = entries.find { it.prefValue == preference } ?: DEFAULT
     }
 }

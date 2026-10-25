@@ -1138,10 +1138,16 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
                 runCatching { GallerySiblingNavigator.sibling(args, next = true) }.getOrNull() != null
             }
         }
-        val shuffle = remember(pageLoader, slideshow, slideshowRepeat, pagerDual, landscapeCover) { SlideshowShuffle() }
+        LaunchedEffect(pageLoader, slideshow, slideshowRepeat, pagerDual, landscapeCover) {
+            pageLoader.setSlideshowShuffle(
+                enabled = slideshow && slideshowRepeat == 1,
+                pagesPerSlide = if (pagerDual) 2 else 1,
+                firstPageAlone = landscapeCover,
+            )
+        }
         LaunchedEffect(
             slideshow, slideshowSeconds, slideshowRepeat, slideshowAutoNext,
-            appbarVisible, photoGridOpen, settingsOpen, hasNextGallery, shuffle, lifecycleOwner,
+            appbarVisible, photoGridOpen, settingsOpen, hasNextGallery, pagerDual, landscapeCover, lifecycleOwner,
         ) {
             if (!slideshow || appbarVisible || photoGridOpen || settingsOpen) return@LaunchedEffect
             lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
@@ -1151,18 +1157,18 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
                     if (scrolling || count <= 0) return@collectLatest
                     while (true) {
                         delay(slideshowSeconds.coerceIn(3, 200) * 1000L)
-                        val shuffledNext = if (slideshowRepeat == 1) shuffle.next(page, count) else null
+                        val realPage = if (pagerDual) dualFirstPageIndex(page, landscapeCover) else page
+                        val shuffledNext = if (slideshowRepeat == 1) pageLoader.nextSlideshowPage(realPage) else null
                         val atEnd = if (slideshowRepeat == 1) shuffledNext == null else page >= count - 1
                         if (atEnd && slideshowAutoNext && hasNextGallery) {
                             goFolder(next = true)
                             return@collectLatest
                         }
                         if (slideshowRepeat == 1) {
-                            val target = shuffledNext ?: run {
-                                shuffle.reset(page, count)
-                                shuffle.next(page, count)
+                            val target = shuffledNext ?: pageLoader.nextSlideshowPage(realPage, repeat = true)
+                            if (target != null) {
+                                pagerState.performScrollToPage(if (pagerDual) dualSpreadIndex(target, landscapeCover) else target)
                             }
-                            if (target != null) pagerState.performScrollToPage(target)
                         } else if (!atEnd) {
                             // Use the same next-page action as manual reader navigation.
                             pagerState.moveToNext()

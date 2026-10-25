@@ -21,6 +21,12 @@ interface ReaderSession : AutoCloseable {
     fun replan()
     fun restart()
 
+    /** Configure loader-owned slide traversal and matching decode/source lookahead. */
+    fun setSlideshowShuffle(enabled: Boolean, pagesPerSlide: Int = 1, firstPageAlone: Boolean = false)
+
+    /** Real page index of the next shuffled slide, or null at the end of this pass. */
+    fun nextSlideshowPage(currentPage: Int, repeat: Boolean = false): Int?
+
     /** Camera RAW pages reload when HDR display changes, because the bitmap itself changes. */
     fun containsRawStill(): Boolean = false
 
