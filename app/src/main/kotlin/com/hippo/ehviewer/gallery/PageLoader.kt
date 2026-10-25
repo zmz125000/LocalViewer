@@ -307,7 +307,7 @@ abstract class PageLoader(
             if (rawStill) {
                 error("RAW decode failed: $nameHint")
             }
-            if (avifDirect && route is StillRoute.Lib && route.forceDirect) error("Native AVIF decode failed: $nameHint")
+            if (avifDirect && route.forceDirect) error("Native AVIF decode failed: $nameHint")
             if (deepHeif || avifDirect) error("High-bit-depth image decode failed: $nameHint")
             return null
         }
