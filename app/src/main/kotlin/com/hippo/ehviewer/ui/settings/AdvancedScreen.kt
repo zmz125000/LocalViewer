@@ -237,6 +237,10 @@ fun AnimatedVisibilityScope.AdvancedScreen(navigator: DestinationsNavigator) = S
                 entryValueRes = com.hippo.ehviewer.R.array.archive_extract_slots_entry_values,
                 state = archiveExtractSlots,
             )
+            SwitchPreference(
+                title = stringResource(R.string.settings_thumbnail_memory_budget),
+                state = Settings.thumbnailMemoryBudget.asMutableState(),
+            )
             val smbConnections = Settings.multiThreadDownload.asMutableState()
             SimpleMenuPreferenceInt(
                 title = stringResource(id = R.string.settings_smb_concurrency),

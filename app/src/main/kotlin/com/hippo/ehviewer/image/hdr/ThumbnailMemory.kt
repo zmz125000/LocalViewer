@@ -4,6 +4,7 @@ import android.app.ActivityManager
 import android.graphics.BitmapFactory
 import com.ehviewer.core.files.metadataOrNull
 import com.ehviewer.core.files.openFileDescriptor
+import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.jni.mapStillInput
 import com.hippo.ehviewer.jni.probeStillExportSize
 import com.hippo.ehviewer.jni.unmapStillInput
@@ -36,6 +37,7 @@ internal object ThumbnailMemory {
     }
 
     suspend fun <T> withPath(source: Path, codec: LibCodec?, edge: Int, work: suspend () -> T): T {
+        if (!Settings.thumbnailMemoryBudget.value) return work()
         // Header-only probes happen before reading the full compressed source into RAM.
         var sourceBytes = runCatching { source.metadataOrNull()?.size }.getOrNull() ?: -1L
         var avifMemory: HeifThumbnailMemory? = null
@@ -67,6 +69,7 @@ internal object ThumbnailMemory {
     }
 
     suspend fun <T> withBytes(bytes: ByteArray, codec: LibCodec?, edge: Int, work: suspend () -> T): T {
+        if (!Settings.thumbnailMemoryBudget.value) return work()
         var avifMemory: HeifThumbnailMemory? = null
         val size = runCatching {
             if (codec == LibCodec.AvifPq) {
@@ -93,6 +96,7 @@ internal object ThumbnailMemory {
 
     /** PDF Flate/predictor buffers are allocated before the encoded thumb reaches writeThumb. */
     suspend fun <T> withPdfCover(width: Int, height: Int, streamBytes: Long, rawSamples: Boolean, edge: Int, work: suspend () -> T): T {
+        if (!Settings.thumbnailMemoryBudget.value) return work()
         val pixels = if (width in 1..65536 && height in 1..65536) width.toLong() * height else 0L
         val compressed = if (streamBytes > 0) streamBytes.coerceAtMost(Long.MAX_VALUE / 4) * 2 else Long.MAX_VALUE / 4
         // Inflate, undo prediction and unpack can overlap several sample arrays.

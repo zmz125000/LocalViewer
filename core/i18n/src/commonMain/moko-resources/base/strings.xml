@@ -665,6 +665,8 @@
     <string name="settings_thumbnail_convert_slots_summary">Up to %s thumbnail conversion jobs.</string>
     <string name="settings_archive_extract_slots">Archive Thumb extraction slots</string>
     <string name="settings_archive_extract_slots_summary">Up to %s archive thumb extraction jobs.</string>
+    <string name="settings_thumbnail_memory_budget">Thumbnail memory budget limit</string>
+    <string name="settings_thumbnail_memory_budget_summary">Limit parallel jobs by memory use. Disabling may exhaust memory.</string>
     <string name="settings_download_download_delay">Download delay</string>
     <string name="settings_download_download_delay_summary">Delay %s ms per download</string>
     <string name="settings_download_timeout_speed">Minimum download speed (in KB/s)</string>
