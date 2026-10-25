@@ -953,7 +953,7 @@ object Settings : DataStorePreferences(null) {
      * Ebook page + reader backdrop. Same values as [readerTheme]
      * (0 white, 1 black, 2 gray, 3 auto). Image/PDF reader keep [readerTheme].
      */
-    val ebookTheme = intPref("pref_ebook_theme_key", 1)
+    val ebookTheme = intPref("pref_ebook_theme_key", 3)
 
     /** Off = double-tap prev/next gallery (folder mode). Default: off. */
     val doubleTapToZoom = boolPref("pref_double_tap_to_zoom", false)
