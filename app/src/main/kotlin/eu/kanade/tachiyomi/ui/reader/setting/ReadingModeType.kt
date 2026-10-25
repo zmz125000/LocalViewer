@@ -1,5 +1,7 @@
 package eu.kanade.tachiyomi.ui.reader.setting
 
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Slideshow
 import androidx.compose.runtime.Stable
 import androidx.compose.ui.graphics.vector.ImageVector
 import com.ehviewer.core.i18n.R
@@ -23,17 +25,18 @@ enum class ReadingModeType(
     VERTICAL(3, R.string.vertical_viewer, EhIcons.Reader.Vertical),
     WEBTOON(4, R.string.webtoon_viewer, EhIcons.Reader.Webtoon),
     CONTINUOUS_VERTICAL(5, R.string.vertical_plus_viewer, EhIcons.Reader.ContinuousVertical),
+    SLIDESHOW(6, R.string.slideshow_viewer, Icons.Filled.Slideshow),
     ;
 
     companion object {
         @Stable
         fun isWebtoon(type: ReadingModeType) = when (type) {
-            DEFAULT, LEFT_TO_RIGHT, RIGHT_TO_LEFT, VERTICAL -> false
+            DEFAULT, LEFT_TO_RIGHT, RIGHT_TO_LEFT, VERTICAL, SLIDESHOW -> false
             WEBTOON, CONTINUOUS_VERTICAL -> true
         }
 
         fun isVertical(type: ReadingModeType) = when (type) {
-            DEFAULT, LEFT_TO_RIGHT, RIGHT_TO_LEFT -> false
+            DEFAULT, LEFT_TO_RIGHT, RIGHT_TO_LEFT, SLIDESHOW -> false
             VERTICAL, WEBTOON, CONTINUOUS_VERTICAL -> true
         }
 

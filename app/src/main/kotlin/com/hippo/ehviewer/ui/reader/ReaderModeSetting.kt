@@ -86,6 +86,7 @@ fun ReaderModeSetting(
         DocumentStyleSetting()
     }
     Spacer(modifier = Modifier.size(16.dp))
+    SlideshowSetting()
     Crossfade(targetState = isWebtoon, label = "Setting") { webtoon ->
         if (webtoon) {
             WebtoonSetting()
@@ -268,7 +269,7 @@ private fun PagerSetting() = Column {
     SpinnerChoice(
         title = stringResource(id = R.string.pref_image_scale_type),
         entries = stringArrayResource(id = com.hippo.ehviewer.R.array.image_scale_type),
-        values = listOf(1, 2, 3, 4, 5, 6),
+        values = listOf(1, 2, 3, 4, 5, 6, 7),
         field = scaleType,
     )
     AnimatedVisibility(visible = scaleType.value == 1) {
@@ -363,4 +364,74 @@ private fun WebtoonSetting() = Column {
         title = stringResource(id = R.string.pref_crop_borders),
         field = Settings.cropBorder.asMutableState(),
     )
+}
+
+@Composable
+private fun SlideshowSetting() = Column {
+    Text(
+        text = stringResource(R.string.slideshow_viewer),
+        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    val duration = Settings.slideshowDisplaySeconds.asMutableState()
+    Text(
+        text = stringResource(R.string.pref_slideshow_display_time),
+        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+    )
+    SliderChoice(
+        startSlot = {},
+        endSlot = { Text(stringResource(R.string.pref_slideshow_seconds, duration.value)) },
+        range = 3..200,
+        field = duration,
+    )
+    SwitchChoice(
+        title = stringResource(R.string.pref_keep_screen_on),
+        field = Settings.keepScreenOn.asMutableState(),
+    )
+    SpinnerChoice(
+        title = stringResource(R.string.pref_slideshow_repeat),
+        entries = arrayOf(
+            stringResource(R.string.pref_slideshow_off),
+            stringResource(R.string.pref_slideshow_shuffle),
+            stringResource(R.string.pref_slideshow_loop),
+        ),
+        values = listOf(0, 1, 2),
+        field = Settings.slideshowRepeat.asMutableState(),
+    )
+    SwitchChoice(
+        title = stringResource(R.string.pref_slideshow_next_gallery),
+        field = Settings.slideshowAutoNextGallery.asMutableState(),
+    )
+    val dualOverride = Settings.slideshowDualOverride.asMutableState()
+    SwitchChoice(title = stringResource(R.string.pref_slideshow_dual_override), field = dualOverride)
+    AnimatedVisibility(dualOverride.value) {
+        SwitchChoice(
+            title = stringResource(R.string.pref_dual_page_landscape),
+            field = Settings.slideshowDualPages.asMutableState(),
+        )
+    }
+    val scaleOverride = Settings.slideshowScaleOverride.asMutableState()
+    SwitchChoice(title = stringResource(R.string.pref_slideshow_scale_override), field = scaleOverride)
+    AnimatedVisibility(scaleOverride.value) {
+        SpinnerChoice(
+            title = stringResource(R.string.pref_image_scale_type),
+            entries = stringArrayResource(com.hippo.ehviewer.R.array.image_scale_type),
+            values = listOf(1, 2, 3, 4, 5, 6, 7),
+            field = Settings.slideshowScaleType.asMutableState(),
+        )
+    }
+    val rotateOverride = Settings.slideshowRotateOverride.asMutableState()
+    SwitchChoice(title = stringResource(R.string.pref_slideshow_rotate_override), field = rotateOverride)
+    AnimatedVisibility(rotateOverride.value) {
+        SpinnerChoice(
+            title = stringResource(R.string.pref_auto_rotate_mode),
+            entries = arrayOf(
+                stringResource(R.string.pref_auto_rotate_off),
+                stringResource(R.string.pref_auto_rotate_cw),
+                stringResource(R.string.pref_auto_rotate_ccw),
+            ),
+            values = listOf(0, 1, 2),
+            field = Settings.slideshowAutoRotateMode.asMutableState(),
+        )
+    }
 }

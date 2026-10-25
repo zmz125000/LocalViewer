@@ -86,6 +86,7 @@ fun ContentScale.Companion.fromPreferences(value: Int, srcSize: Size, dstSize: S
     4 -> FillHeight
     5 -> FixedScale(1 / Inside.computeScaleFactor(srcSize, dstSize).scaleX)
     6 -> if (srcSize.width > srcSize.height) FillHeight else FillWidth
+    7 -> if (dstSize.width > dstSize.height) FillHeight else FillWidth
     else -> Fit
 }
 

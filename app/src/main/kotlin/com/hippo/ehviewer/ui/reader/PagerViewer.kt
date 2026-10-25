@@ -84,10 +84,10 @@ fun PagerViewer(
     // Real page count for content; pager pageCount (spread or page) comes from [pagerState].
     val realPageCount = pageLoader.size
     val items = pageLoader.pages
-    val scaleType by Settings.imageScaleType.collectAsState()
+    val scaleType = slideshowScaleType()
     val dualPageGap by Settings.dualPageGap.collectAsState()
     val landscapeZoom by Settings.landscapeZoom.collectAsState()
-    val autoRotateMode by Settings.autoRotateMode.collectAsState()
+    val autoRotateMode = slideshowAutoRotateMode()
     val zoomStart by Settings.zoomStart.collectAsState()
     val alignment = Alignment.fromPreferences(zoomStart, isRtl, isVertical)
     val layoutSize by remember(pagerState) {

@@ -260,7 +260,7 @@ fun PagerItem(
             }
             painter?.let { painter ->
                 val drawable = (painter as? DrawablePainter)?.drawable
-                val autoRotateMode by Settings.autoRotateMode.collectAsState()
+                val autoRotateMode = slideshowAutoRotateMode()
                 val imgSize = image.intrinsicSize
                 val rotate = shouldAutoRotate(imgSize, viewportSize, autoRotateMode)
                 val clockwise = isAutoRotateClockwise(autoRotateMode)

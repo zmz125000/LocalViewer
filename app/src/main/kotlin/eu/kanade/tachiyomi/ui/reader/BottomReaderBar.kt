@@ -21,6 +21,7 @@ import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -67,6 +68,10 @@ fun BottomReaderBar(
         },
         minMenuWidth = 192.dp,
     )
+    val slideshow = readingMode == ReadingModeType.SLIDESHOW
+    val rotateOverride by Settings.slideshowRotateOverride.collectAsState()
+    val scaleOverride by Settings.slideshowScaleOverride.collectAsState()
+    val dualOverride by Settings.slideshowDualOverride.collectAsState()
     if (onClickContents != null) {
         ActionButton(
             onClick = onClickContents,
@@ -74,34 +79,43 @@ fun BottomReaderBar(
             contentDescription = stringResource(R.string.pdf_reader_contents),
         )
     } else {
-        val autoRotate by Settings.autoRotateMode.collectAsState { AutoRotateMode.fromPreference(it) }
-        ActionButton(
-            onClick = {
-                val modes = AutoRotateMode.entries
-                val next = modes[(modes.indexOf(autoRotate) + 1) % modes.size]
-                Settings.autoRotateMode.value = next.prefValue
-            },
-            imageVector = autoRotate.icon,
-            contentDescription = stringResource(autoRotate.stringRes),
-        )
+        val rotationPref = if (slideshow && rotateOverride) Settings.slideshowAutoRotateMode else Settings.autoRotateMode
+        key(rotationPref) {
+            val autoRotate by rotationPref.collectAsState { AutoRotateMode.fromPreference(it) }
+            ActionButton(
+                onClick = {
+                    val modes = AutoRotateMode.entries
+                    val next = modes[(modes.indexOf(autoRotate) + 1) % modes.size]
+                    rotationPref.value = next.prefValue
+                },
+                imageVector = autoRotate.icon,
+                contentDescription = stringResource(autoRotate.stringRes),
+            )
+        }
     }
     // 3. Fit width / height / screen — single page and dual no-gap
     if (showScaleFitCycle) {
-        val scaleFit by Settings.imageScaleType.collectAsState { ScaleFitCycle.fromPreference(it) }
-        ActionButton(
-            onClick = { Settings.imageScaleType.value = ScaleFitCycle.next(scaleFit.prefValue).prefValue },
-            imageVector = scaleFit.icon,
-            contentDescription = stringResource(scaleFit.stringRes),
-        )
+        val scalePref = if (slideshow && scaleOverride) Settings.slideshowScaleType else Settings.imageScaleType
+        key(scalePref) {
+            val scaleFit by scalePref.collectAsState { ScaleFitCycle.fromPreference(it) }
+            ActionButton(
+                onClick = { scalePref.value = ScaleFitCycle.next(scaleFit.prefValue).prefValue },
+                imageVector = scaleFit.icon,
+                contentDescription = stringResource(scaleFit.stringRes),
+            )
+        }
     }
     // Dual pages: landscape only. Portrait keeps the preference but never shows two pages.
     if (LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE) {
-        val dualPage by Settings.dualPageLandscape.collectAsState()
-        ActionButton(
-            onClick = { Settings.dualPageLandscape.value = !dualPage },
-            imageVector = Icons.Outlined.ViewColumn,
-            contentDescription = stringResource(R.string.pref_dual_page_landscape),
-        )
+        val dualPref = if (slideshow && dualOverride) Settings.slideshowDualPages else Settings.dualPageLandscape
+        key(dualPref) {
+            val dualPage by dualPref.collectAsState()
+            ActionButton(
+                onClick = { dualPref.value = !dualPage },
+                imageVector = Icons.Outlined.ViewColumn,
+                contentDescription = stringResource(R.string.pref_dual_page_landscape),
+            )
+        }
     }
     if (showLandscapeCover) {
         val cover by Settings.landscapeCover.collectAsState { LandscapeCoverCycle.fromPreference(it) }
