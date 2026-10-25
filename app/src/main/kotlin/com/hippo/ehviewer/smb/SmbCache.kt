@@ -3,6 +3,7 @@ package com.hippo.ehviewer.smb
 import android.os.Looper
 import com.ehviewer.core.files.mkdirs
 import com.hippo.ehviewer.image.hdr.HdrConvertCache
+import com.hippo.ehviewer.image.hdr.writeDownloadedThumbnail
 import com.hippo.ehviewer.image.hdr.browseEmbeddedRawJpeg
 import com.hippo.ehviewer.library.OriginDiskCache
 import com.hippo.ehviewer.util.FileUtils
@@ -278,14 +279,12 @@ object SmbCache {
                         }
                     } else {
                         // No page cache: MaxEdge-only thumb (no full-page UHDR from grid browse).
-                        val bos = ByteArrayOutputStream(256 * 1024)
-                        download(bos)
-                        val ok = HdrConvertCache.writeThumbFromBytes(
-                            bytes = bos.toByteArray(),
-                            destJpeg = dest,
-                            maxEdge = THUMB_DISK_EDGE,
+                        val ok = writeDownloadedThumbnail(
+                            dest = dest,
+                            edge = THUMB_DISK_EDGE,
                             quality = THUMB_WEBP_QUALITY,
-                            fileNameHint = pageName,
+                            name = pageName,
+                            download = download,
                         )
                         if (!ok) {
                             error("SMB browse thumb failed for $remoteRelativeFile")

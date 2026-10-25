@@ -289,28 +289,30 @@ object HdrConvertCache {
         withThumbConvertSlot {
             val edge = maxEdge.coerceIn(64, 2048)
             val route = classifyPath(source, fileNameHint)
-            if (route is StillRoute.Lib && route.codec == LibCodec.Raw) {
-                val preview = RawPreviewCache.ensureJpeg(source, demosaicFallback = false) ?: return@withThumbConvertSlot false
-                val rawOk = writePlatformThumb(preview, dest, edge, quality)
-                if (rawOk && OriginDiskCache.existingThumb(dest) != null) {
+            ThumbnailMemory.withPath(source, (route as? StillRoute.Lib)?.codec, edge) {
+                if (route is StillRoute.Lib && route.codec == LibCodec.Raw) {
+                    val preview = RawPreviewCache.ensureJpeg(source, demosaicFallback = false) ?: return@withPath false
+                    val rawOk = writePlatformThumb(preview, dest, edge, quality)
+                    if (rawOk && OriginDiskCache.existingThumb(dest) != null) {
+                        onDecoded?.let { reportThumbSize(dest, it) }
+                        OriginDiskCache.scheduleTrim()
+                        return@withPath true
+                    }
+                    return@withPath false
+                }
+                val ok = if (route.needsUhdr) {
+                    val lib = route as StillRoute.Lib
+                    writeConvertThumb(source, dest, edge, fileNameHint, lib.codec)
+                } else {
+                    writePlatformThumb(source, dest, edge, quality)
+                }
+                if (ok && OriginDiskCache.existingThumb(dest) != null) {
                     onDecoded?.let { reportThumbSize(dest, it) }
                     OriginDiskCache.scheduleTrim()
-                    return@withThumbConvertSlot true
+                    true
+                } else {
+                    false
                 }
-                return@withThumbConvertSlot false
-            }
-            val ok = if (route.needsUhdr) {
-                val lib = route as StillRoute.Lib
-                writeConvertThumb(source, dest, edge, fileNameHint, lib.codec)
-            } else {
-                writePlatformThumb(source, dest, edge, quality)
-            }
-            if (ok && OriginDiskCache.existingThumb(dest) != null) {
-                onDecoded?.let { reportThumbSize(dest, it) }
-                OriginDiskCache.scheduleTrim()
-                true
-            } else {
-                false
             }
         }
     }
@@ -447,36 +449,38 @@ object HdrConvertCache {
         withThumbConvertSlot {
             val edge = maxEdge.coerceIn(64, 2048)
             val route = classify(bytes, bytes.size, fileNameHint)
-            if (route is StillRoute.Lib && route.codec == LibCodec.Raw) {
-                val preview = File.createTempFile("rawprev", ".jpg", appCtx.cacheDir)
-                val rawOk = try {
-                    (
-                        writeLocatedRawJpeg(bytes, preview) ||
-                            extractRawPreviewBytes(bytes, preview.absolutePath, false) == 0
-                        ) &&
-                        writePlatformThumb(preview.toOkioPath(), destJpeg, edge, quality)
-                } finally {
-                    preview.delete()
+            ThumbnailMemory.withBytes(bytes, (route as? StillRoute.Lib)?.codec, edge) {
+                if (route is StillRoute.Lib && route.codec == LibCodec.Raw) {
+                    val preview = File.createTempFile("rawprev", ".jpg", appCtx.cacheDir)
+                    val rawOk = try {
+                        (
+                            writeLocatedRawJpeg(bytes, preview) ||
+                                extractRawPreviewBytes(bytes, preview.absolutePath, false) == 0
+                            ) &&
+                            writePlatformThumb(preview.toOkioPath(), destJpeg, edge, quality)
+                    } finally {
+                        preview.delete()
+                    }
+                    if (rawOk && OriginDiskCache.existingThumb(destJpeg) != null) {
+                        onDecoded?.let { reportThumbSize(destJpeg, it) }
+                        OriginDiskCache.scheduleTrim()
+                        return@withBytes true
+                    }
+                    return@withBytes false
                 }
-                if (rawOk && OriginDiskCache.existingThumb(destJpeg) != null) {
+                val ok = if (route.needsUhdr) {
+                    val lib = route as StillRoute.Lib
+                    writeConvertThumbBytes(bytes, destJpeg, edge, lib.codec)
+                } else {
+                    writePlatformThumbBytes(bytes, destJpeg, edge, quality)
+                }
+                if (ok && OriginDiskCache.existingThumb(destJpeg) != null) {
                     onDecoded?.let { reportThumbSize(destJpeg, it) }
                     OriginDiskCache.scheduleTrim()
-                    return@withThumbConvertSlot true
+                    true
+                } else {
+                    false
                 }
-                return@withThumbConvertSlot false
-            }
-            val ok = if (route.needsUhdr) {
-                val lib = route as StillRoute.Lib
-                writeConvertThumbBytes(bytes, destJpeg, edge, lib.codec)
-            } else {
-                writePlatformThumbBytes(bytes, destJpeg, edge, quality)
-            }
-            if (ok && OriginDiskCache.existingThumb(destJpeg) != null) {
-                onDecoded?.let { reportThumbSize(destJpeg, it) }
-                OriginDiskCache.scheduleTrim()
-                true
-            } else {
-                false
             }
         }
     }
