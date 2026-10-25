@@ -14,3 +14,8 @@ extern "C" JNIEXPORT jint JNICALL
 Java_com_hippo_ehviewer_jni_HdrConvertKt_transcodeJpegToJxl(JNIEnv*, jclass, jbyteArray, jstring) {
     return -100;
 }
+
+extern "C" JNIEXPORT jint JNICALL
+Java_com_hippo_ehviewer_jni_HdrConvertKt_transcodeJpegBufferToJxl(JNIEnv*, jclass, jobject, jstring) {
+    return -100;
+}

@@ -23,19 +23,23 @@ import com.hippo.ehviewer.image.tryHardwareF16FromPixels
 import com.hippo.ehviewer.jni.beginNativeExportPixels
 import com.hippo.ehviewer.jni.beginNativeReaderPixels
 import com.hippo.ehviewer.jni.captureExportBitmap
+import com.hippo.ehviewer.jni.captureStillBitmap
 import com.hippo.ehviewer.jni.decodeAvifBufferToDirect
 import com.hippo.ehviewer.jni.decodeAvifBytesToDirect
 import com.hippo.ehviewer.jni.decodeJpeg2000Bitmap
+import com.hippo.ehviewer.jni.decodeJpeg2000BufferBitmap
 import com.hippo.ehviewer.jni.decodeJpeg2000BufferToDirect
 import com.hippo.ehviewer.jni.decodeJpeg2000BytesToDirect
 import com.hippo.ehviewer.jni.decodeJxlBufferToDirect
 import com.hippo.ehviewer.jni.decodeJxlBytesToDirect
 import com.hippo.ehviewer.jni.decodeJxrBufferToDirect
 import com.hippo.ehviewer.jni.decodeJxrBytesToDirect
+import com.hippo.ehviewer.jni.decodeRawBufferToDirect
 import com.hippo.ehviewer.jni.decodeRawBytesToDirect
 import com.hippo.ehviewer.jni.decodeRawFdToDirect
 import com.hippo.ehviewer.jni.decodeRawFileToDirect
 import com.hippo.ehviewer.jni.endNativeReaderPixels
+import com.hippo.ehviewer.jni.extractRawPreviewBuffer
 import com.hippo.ehviewer.jni.extractRawPreviewBytes
 import com.hippo.ehviewer.jni.extractRawPreviewFd
 import com.hippo.ehviewer.jni.extractRawPreviewFile
@@ -328,7 +332,7 @@ object LibDirectDecode {
                 LibCodec.Jxr -> decodeJxrBufferToDirect(buffer, maxEdge, advanced, panelBoost, outInfo, outBoost)
                 LibCodec.AvifPq -> decodeAvifBufferToDirect(buffer, maxEdge, advanced, outInfo, outBoost)
                 LibCodec.Jpeg2000 -> decodeJpeg2000BufferToDirect(buffer, maxEdge, advanced, outInfo, outBoost)
-                    ?: packJpeg2000(bytes, maxEdge, outInfo, outBoost)
+                    ?: packJpeg2000(buffer, maxEdge, outInfo, outBoost)
                 else -> null
             }
         } else {
@@ -490,9 +494,12 @@ object LibDirectDecode {
     private fun decodeHevcHdrPacked(bytes: ByteBuffer, maxEdge: Int, advanced: Boolean, export: Boolean = false): PackedPixels? {
         if (!export && !Settings.readerHdrDisplay.value && HeifContainer.parse(bytes)?.absoluteHdr() != null) return null
         val frame = HevcHdrDecode.decode(bytes, maxEdge, advanced) ?: return null
-        val outInfo = intArrayOf(frame.width, frame.height, 1, if (frame.isHdr) 1 else 0, frame.gamut, frame.transfer)
-        val outBoost = floatArrayOf(frame.boost)
-        return PackedPixels(frame.pixels, outInfo, outBoost, advanced = true, premultiplied = true)
+        frame.use {
+            val outInfo = intArrayOf(frame.width, frame.height, 1, if (frame.isHdr) 1 else 0, frame.gamut, frame.transfer)
+            val outBoost = floatArrayOf(frame.boost)
+            val pixels = frame.pixels.capture() ?: return null
+            return PackedPixels(pixels, outInfo, outBoost, advanced = true, premultiplied = true)
+        }
     }
 
     /**
@@ -623,25 +630,46 @@ object LibDirectDecode {
                 outBoost,
             )
             src is ByteBufferSource -> {
-                val bytes = readBytes(src) ?: return null
-                decodeRawBytesToDirect(
-                    bytes,
-                    edge,
-                    present,
-                    panelBoost,
-                    exposureEv,
-                    whiteBalance,
-                    kelvin,
-                    highlightStops,
-                    controls.linearHdr && mode == RawPresent.Hdr,
-                    controls.cameraLook,
-                    shoulder,
-                    shadows,
-                    midtones,
-                    highlights,
-                    outInfo,
-                    outBoost,
-                )
+                if (src.source.isDirect) {
+                    decodeRawBufferToDirect(
+                        src.source.slice(),
+                        edge,
+                        present,
+                        panelBoost,
+                        exposureEv,
+                        whiteBalance,
+                        kelvin,
+                        highlightStops,
+                        controls.linearHdr && mode == RawPresent.Hdr,
+                        controls.cameraLook,
+                        shoulder,
+                        shadows,
+                        midtones,
+                        highlights,
+                        outInfo,
+                        outBoost,
+                    )
+                } else {
+                    val bytes = readBytes(src) ?: return null
+                    decodeRawBytesToDirect(
+                        bytes,
+                        edge,
+                        present,
+                        panelBoost,
+                        exposureEv,
+                        whiteBalance,
+                        kelvin,
+                        highlightStops,
+                        controls.linearHdr && mode == RawPresent.Hdr,
+                        controls.cameraLook,
+                        shoulder,
+                        shadows,
+                        midtones,
+                        highlights,
+                        outInfo,
+                        outBoost,
+                    )
+                }
             }
             else -> null
         } ?: return null
@@ -670,9 +698,14 @@ object LibDirectDecode {
                                 extractRawPreviewFile(src.source.toString(), jpeg.absolutePath, false) == 0
                         }
                         is ByteBufferSource -> {
-                            val bytes = readBytes(src) ?: return null
-                            writeLocatedRawJpeg(bytes, jpeg) ||
-                                extractRawPreviewBytes(bytes, jpeg.absolutePath, false) == 0
+                            if (src.source.isDirect) {
+                                writeLocatedRawJpeg(src.source, jpeg) ||
+                                    extractRawPreviewBuffer(src.source.slice(), jpeg.absolutePath, false) == 0
+                            } else {
+                                val bytes = readBytes(src) ?: return null
+                                writeLocatedRawJpeg(bytes, jpeg) ||
+                                    extractRawPreviewBytes(bytes, jpeg.absolutePath, false) == 0
+                            }
                         }
                     }
                 }
@@ -680,7 +713,13 @@ object LibDirectDecode {
                 false
             }
             if (!wrote || jpeg.length() <= 0L) return null
-            val bitmap = BitmapFactory.decodeFile(jpeg.absolutePath) ?: return null
+            val bitmap = BitmapFactory.decodeFile(
+                jpeg.absolutePath,
+                BitmapFactory.Options().apply {
+                    inPreferredConfig = Bitmap.Config.ARGB_8888
+                    inPreferredColorSpace = ColorSpace.get(ColorSpace.Named.SRGB)
+                },
+            ) ?: return null
             try {
                 straightRgbaPacked(bitmap)
             } finally {
@@ -691,21 +730,12 @@ object LibDirectDecode {
         }
     }
 
-    /** [Bitmap.getPixels] is straight alpha. Opaque embedded JPEGs stay unchanged. */
+    /** Opaque embedded previews are decoded into sRGB before their pixels are captured. */
     private fun straightRgbaPacked(bitmap: Bitmap): PackedPixels? {
         val w = bitmap.width
         val h = bitmap.height
         if (w <= 0 || h <= 0) return null
-        val argb = IntArray(w * h)
-        bitmap.getPixels(argb, 0, w, 0, 0, w, h)
-        val packed = ByteArray(w * h * 4)
-        var i = 0
-        for (p in argb) {
-            packed[i++] = ((p shr 16) and 0xff).toByte()
-            packed[i++] = ((p shr 8) and 0xff).toByte()
-            packed[i++] = (p and 0xff).toByte()
-            packed[i++] = ((p ushr 24) and 0xff).toByte()
-        }
+        val packed = captureStillBitmap(bitmap) ?: return null
         return PackedPixels(
             pixels = packed,
             outInfo = intArrayOf(w, h, 0, 0, 0, 0),
@@ -781,35 +811,22 @@ object LibDirectDecode {
         )
     }
 
-    private fun packJpeg2000(
-        bytes: ByteArray,
-        maxEdge: Int,
-        outInfo: IntArray,
-        outBoost: FloatArray,
-    ): ByteArray? {
-        val bmp = runCatching { decodeJpeg2000Bitmap(bytes, maxEdge) }.getOrNull() ?: return null
+    private fun packJpeg2000(buffer: ByteBuffer, maxEdge: Int, outInfo: IntArray, outBoost: FloatArray): ByteArray? = packJpeg2000Bitmap(decodeJpeg2000BufferBitmap(buffer, maxEdge), outInfo, outBoost)
+
+    private fun packJpeg2000(bytes: ByteArray, maxEdge: Int, outInfo: IntArray, outBoost: FloatArray): ByteArray? = packJpeg2000Bitmap(decodeJpeg2000Bitmap(bytes, maxEdge), outInfo, outBoost)
+
+    private fun packJpeg2000Bitmap(bitmap: Bitmap?, outInfo: IntArray, outBoost: FloatArray): ByteArray? {
+        val bmp = bitmap ?: return null
         return try {
-            val w = bmp.width
-            val h = bmp.height
-            if (w <= 0 || h <= 0) return null
-            val argb = IntArray(w * h)
-            bmp.getPixels(argb, 0, w, 0, 0, w, h)
-            val packed = ByteArray(w * h * 4)
-            var i = 0
-            for (p in argb) {
-                packed[i++] = ((p shr 16) and 0xff).toByte()
-                packed[i++] = ((p shr 8) and 0xff).toByte()
-                packed[i++] = (p and 0xff).toByte()
-                packed[i++] = ((p ushr 24) and 0xff).toByte()
-            }
-            outInfo[0] = w
-            outInfo[1] = h
+            val pixels = captureStillBitmap(bmp) ?: return null
+            outInfo[0] = bmp.width
+            outInfo[1] = bmp.height
             outInfo[2] = 0
             outInfo[3] = 0
             outInfo[4] = 0
             outInfo[5] = 0
             if (outBoost.isNotEmpty()) outBoost[0] = 1f
-            packed
+            pixels
         } finally {
             bmp.recycle()
         }

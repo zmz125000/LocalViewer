@@ -250,22 +250,7 @@ opj_image_t* decode_on_worker(const uint8_t* data, int n, int maxEdge) {
 
 }  // namespace
 
-extern "C" JNIEXPORT jobject JNICALL
-Java_com_hippo_ehviewer_jni_Jpeg2000Kt_decodeJpeg2000Bitmap(
-        JNIEnv* env, jclass, jbyteArray input, jint maxEdge) {
-    if (!input) return nullptr;
-    const jsize n = env->GetArrayLength(input);
-    if (n < 8) return nullptr;
-
-    Session session;
-    session.env = env;
-    session.input = input;
-    session.bytes = env->GetByteArrayElements(input, nullptr);
-    if (!session.bytes) return nullptr;
-    const auto* data = reinterpret_cast<const uint8_t*>(session.bytes);
-
-    session.image = decode_on_worker(data, static_cast<int>(n), maxEdge);
-    session.releaseInput();
+static jobject bitmap_from_jpeg2000(JNIEnv* env, Session& session) {
     if (!session.image || session.image->numcomps < 1) return nullptr;
 
     // x1/y1 stay at the reference grid. A resolution factor only shrinks comps[].w/h.
@@ -350,6 +335,31 @@ Java_com_hippo_ehviewer_jni_Jpeg2000Kt_decodeJpeg2000Bitmap(
     AndroidBitmap_unlockPixels(env, bitmap);
     return bitmap;
 }
+
+extern "C" JNIEXPORT jobject JNICALL
+Java_com_hippo_ehviewer_jni_Jpeg2000Kt_decodeJpeg2000Bitmap(JNIEnv* env, jclass, jbyteArray input, jint maxEdge) {
+    if (!input) return nullptr;
+    const jsize n = env->GetArrayLength(input);
+    if (n < 8) return nullptr;
+    ThumbnailJniBytes bytes(env, input);
+    if (!bytes.data()) return nullptr;
+    Session session;
+    session.image = decode_on_worker(bytes.data(), n, maxEdge);
+    bytes.reset();
+    return bitmap_from_jpeg2000(env, session);
+}
+
+extern "C" JNIEXPORT jobject JNICALL
+Java_com_hippo_ehviewer_jni_Jpeg2000Kt_decodeJpeg2000BufferBitmap(JNIEnv* env, jclass, jobject input, jint maxEdge) {
+    if (!input) return nullptr;
+    const jlong n = env->GetDirectBufferCapacity(input);
+    const auto* data = static_cast<const uint8_t*>(env->GetDirectBufferAddress(input));
+    if (!data || n < 8 || n > INT32_MAX) return nullptr;
+    Session session;
+    session.image = decode_on_worker(data, static_cast<int>(n), maxEdge);
+    return bitmap_from_jpeg2000(env, session);
+}
+
 
 #if defined(EHVIEWER_HDR_CODECS)
 // Same contract as jxl_hdr.cpp: linear straight-alpha half in a tagged gamut,

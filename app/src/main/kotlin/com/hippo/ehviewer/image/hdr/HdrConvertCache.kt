@@ -6,7 +6,6 @@ import android.graphics.ImageDecoder
 import android.util.Log
 import com.ehviewer.core.files.metadataOrNull
 import com.ehviewer.core.files.openFileDescriptor
-import com.ehviewer.core.files.read
 import com.ehviewer.core.files.toUri
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.jni.convertAvifBufferToUltraHdr
@@ -26,6 +25,7 @@ import com.hippo.ehviewer.jni.convertJxrBytesToUltraHdr
 import com.hippo.ehviewer.jni.convertJxrBytesToUltraHdrMaxEdge
 import com.hippo.ehviewer.jni.convertJxrFdToUltraHdrMaxEdge
 import com.hippo.ehviewer.jni.decodeJpeg2000Bitmap
+import com.hippo.ehviewer.jni.decodeJpeg2000BufferBitmap
 import com.hippo.ehviewer.jni.extractRawPreviewBytes
 import com.hippo.ehviewer.jni.probeAvifBufferHdrKind
 import com.hippo.ehviewer.jni.probeAvifHdrKind
@@ -46,7 +46,6 @@ import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
-import kotlinx.io.readByteArray
 import okio.Path
 import okio.Path.Companion.toOkioPath
 import splitties.init.appCtx
@@ -528,7 +527,65 @@ object HdrConvertCache {
         error("HDR file convert failed: $fileNameHint")
     }
 
-    private suspend fun convertFileToUhdr(source: Path, output: File, codec: LibCodec): Boolean = withContext(Dispatchers.IO) {
+    private suspend fun convertFileToUhdr(source: Path, output: File, codec: LibCodec): Boolean = convertCapturedUhdr(output, codec) { tmp ->
+        withStillInput(source) { encodeBufferUhdr(it, tmp, codec) } ?: -1
+    }
+
+    private fun encodeBufferUhdr(buffer: ByteBuffer, output: File, codec: LibCodec): Int {
+        if (codec == LibCodec.AvifPq && probeAvifBufferHdrKind(buffer) == 1) return -1
+        return when (codec) {
+            LibCodec.Jxr -> convertJxrBufferToUltraHdr(buffer, output.absolutePath)
+            LibCodec.Jxl -> convertJxlBufferToUltraHdr(buffer, output.absolutePath)
+            LibCodec.AvifPq -> convertAvifBufferToUltraHdr(buffer, output.absolutePath)
+            LibCodec.Jpeg2000 -> convertJpeg2000BufferToUltraHdr(buffer, output.absolutePath).let { result ->
+                if (result == -100) convertJpeg2000ToJpeg(buffer, output, 0) else result
+            }
+            LibCodec.Raw, LibCodec.HevcHdr -> -1
+        }
+    }
+
+    /** Archive mappings remain borrowed until conversion and atomic cache publication finish. */
+    internal suspend fun ensureCoilReadyFromBuffer(input: ByteBuffer, fileNameHint: String, persistTo: Path?): Path = withContext(Dispatchers.IO) {
+        val buffer = input.slice()
+        check(buffer.isDirect && buffer.hasRemaining())
+        val route = classify(buffer, fileNameHint)
+        val original = persistTo != null && (keepOriginalOnNetwork(fileNameHint) || !route.needsUhdr || (route is StillRoute.Lib && route.forceDirect))
+        if (original) {
+            writeBufferAtomic(buffer, File(persistTo.toString()))
+            return@withContext checkNotNull(persistTo)
+        }
+        val codec = (route as? StillRoute.Lib)?.codec ?: error("Not native image data: $fileNameHint")
+        ensureLocalRoot()
+        val output = if (persistTo != null) {
+            uhdrSiblingOf(persistTo)
+        } else {
+            val digest = MessageDigest.getInstance("SHA-256").apply { update(buffer.duplicate()) }.digest()
+            val hash = digest.joinToString("") { "%02x".format(it.toInt() and 255) }
+            localRoot / "$COLOR_PIPELINE_REVISION-$hash.jpg"
+        }
+        if (convertCapturedUhdr(File(output.toString()), codec) { encodeBufferUhdr(buffer, it, codec) }) return@withContext output
+        if (codec == LibCodec.AvifPq && persistTo != null) {
+            writeBufferAtomic(buffer, File(persistTo.toString()))
+            return@withContext persistTo
+        }
+        error("Native archive convert failed: $fileNameHint")
+    }
+
+    private fun writeBufferAtomic(buffer: ByteBuffer, output: File) {
+        output.parentFile?.mkdirs()
+        val tmp = File("${output.absolutePath}.tmp.${System.nanoTime()}")
+        try {
+            FileOutputStream(tmp).channel.use { channel ->
+                val source = buffer.duplicate()
+                while (source.hasRemaining()) check(channel.write(source) > 0)
+            }
+            commitTmp(tmp, output)
+        } finally {
+            tmp.delete()
+        }
+    }
+
+    private suspend fun convertCapturedUhdr(output: File, codec: LibCodec, encode: (File) -> Int): Boolean = withContext(Dispatchers.IO) {
         if (output.isFile && output.length() > 0L) return@withContext true
         fullConvertSlots.withPermit {
             pathLocks.getOrPut(output.absolutePath) { Mutex() }.withLock {
@@ -536,22 +593,9 @@ object HdrConvertCache {
                 output.parentFile?.mkdirs()
                 val tmp = File("${output.absolutePath}.tmp.${System.nanoTime()}")
                 try {
-                    val code = withStillInput(source) { buffer ->
-                        if (codec == LibCodec.AvifPq && probeAvifBufferHdrKind(buffer) == 1) {
-                            return@withStillInput -1
-                        }
-                        when (codec) {
-                            LibCodec.Jxr -> convertJxrBufferToUltraHdr(buffer, tmp.absolutePath)
-                            LibCodec.Jxl -> convertJxlBufferToUltraHdr(buffer, tmp.absolutePath)
-                            LibCodec.AvifPq -> convertAvifBufferToUltraHdr(buffer, tmp.absolutePath)
-                            LibCodec.Jpeg2000 -> convertJpeg2000BufferToUltraHdr(buffer, tmp.absolutePath).let { result ->
-                                if (result == -100) convertJpeg2000ToJpeg(buffer.heapBytesForConvert(), tmp, 0) else result
-                            }
-                            LibCodec.Raw, LibCodec.HevcHdr -> -1
-                        }
-                    } ?: -1
+                    val code = encode(tmp)
                     if (code != 0 || !tmp.isFile || tmp.length() <= 0L) {
-                        Log.e(TAG, "File convert failed codec=$codec code=$code source=$source")
+                        Log.e(TAG, "File convert failed codec=$codec code=$code output=$output")
                         false
                     } else {
                         commitTmp(tmp, output)
@@ -561,7 +605,7 @@ object HdrConvertCache {
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Exception) {
-                    Log.e(TAG, "File convert failed: $source", e)
+                    Log.e(TAG, "Native convert failed: $output", e)
                     false
                 } finally {
                     tmp.delete()
@@ -649,8 +693,12 @@ object HdrConvertCache {
     }
 
     /** OpenJPEG → baseline JPEG. SDR only; the convert cache is always `.jpg`. */
-    private fun convertJpeg2000ToJpeg(input: ByteArray, dest: File, maxEdge: Int): Int {
-        val bmp = runCatching { decodeJpeg2000Bitmap(input, maxEdge) }.getOrNull() ?: return -1
+    private fun convertJpeg2000ToJpeg(input: ByteArray, dest: File, maxEdge: Int): Int = compressJpeg2000Bitmap(runCatching { decodeJpeg2000Bitmap(input, maxEdge) }.getOrNull(), dest)
+
+    private fun convertJpeg2000ToJpeg(input: ByteBuffer, dest: File, maxEdge: Int): Int = compressJpeg2000Bitmap(runCatching { decodeJpeg2000BufferBitmap(input, maxEdge) }.getOrNull(), dest)
+
+    private fun compressJpeg2000Bitmap(bitmap: Bitmap?, dest: File): Int {
+        val bmp = bitmap ?: return -1
         return try {
             FileOutputStream(dest).use { out ->
                 if (bmp.compress(Bitmap.CompressFormat.JPEG, 95, out)) 0 else -2
@@ -751,8 +799,7 @@ object HdrConvertCache {
                 if (code == -100 && codec == LibCodec.Jpeg2000) {
                     // The 32-bit OpenJPEG bitmap fallback predates the HDR codec suite.
                     // Keep its existing behavior on ABIs without the native HDR encoder.
-                    val bytes = source.read { readByteArray() }
-                    code = convertJpeg2000ToJpeg(bytes, tmp, maxEdge)
+                    code = withStillInput(source) { convertJpeg2000ToJpeg(it, tmp, maxEdge) } ?: -1
                 }
                 if (code != 0 || !tmp.isFile || tmp.length() <= 0L) {
                     Log.e(TAG, "Native file thumb failed codec=$codec code=$code source=$fileNameHint")

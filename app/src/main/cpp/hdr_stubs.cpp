@@ -203,3 +203,13 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_convertJpeg2000BufferToUltraHdr(JNIEnv*
 
 extern "C" JNIEXPORT jint JNICALL
 Java_com_hippo_ehviewer_jni_HdrConvertKt_probeAvifBufferHdrKind(JNIEnv*, jclass, jobject) { return 0; }
+
+extern "C" JNIEXPORT jint JNICALL
+Java_com_hippo_ehviewer_jni_HdrConvertKt_transcodeJpegBufferToJxl(JNIEnv*, jclass, jobject, jstring) {
+    return -100;
+}
+
+extern "C" JNIEXPORT jobject JNICALL
+Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeHevcAnnexBBuffer(JNIEnv*, jclass, jbyteArray, jbyteArray, jintArray) { return nullptr; }
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_hippo_ehviewer_jni_HdrConvertKt_linearizeHeifIccBuffer(JNIEnv*, jclass, jobject, jbyteArray, jboolean) { return JNI_FALSE; }

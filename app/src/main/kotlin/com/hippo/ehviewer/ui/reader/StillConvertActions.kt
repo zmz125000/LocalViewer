@@ -10,7 +10,6 @@ import android.system.OsConstants
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.material3.SnackbarHostState
 import com.ehviewer.core.files.openFileDescriptor
-import com.ehviewer.core.files.read
 import com.ehviewer.core.files.sendTo
 import com.ehviewer.core.files.toOkioPath
 import com.ehviewer.core.files.toUri
@@ -28,8 +27,9 @@ import com.hippo.ehviewer.image.hdr.StillExportWork
 import com.hippo.ehviewer.image.hdr.mimeType
 import com.hippo.ehviewer.image.hdr.stillExportFileName
 import com.hippo.ehviewer.image.hdr.withRawExportControls
+import com.hippo.ehviewer.image.hdr.withStillInput
 import com.hippo.ehviewer.image.hdr.writeResolved
-import com.hippo.ehviewer.jni.transcodeJpegToJxl
+import com.hippo.ehviewer.jni.transcodeJpegBufferToJxl
 import com.hippo.ehviewer.ui.main.BrowseSaveAs
 import com.hippo.ehviewer.ui.main.enqueueSingleConvert
 import com.hippo.ehviewer.util.awaitActivityResult
@@ -37,7 +37,6 @@ import com.hippo.ehviewer.util.displayPath
 import java.io.File
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.currentCoroutineContext
-import kotlinx.io.readByteArray
 import moe.tarsin.coroutines.runSuspendCatching
 import moe.tarsin.snackbar
 import moe.tarsin.string
@@ -221,8 +220,7 @@ private suspend fun encodeStagedCaptured(leaf: String, target: StillExportTarget
                 val out = File.createTempFile("still-out", null, appCtx.cacheDir)
                 var success = false
                 try {
-                    val jpeg = decodeSource.read { readByteArray() }
-                    val rc = transcodeJpegToJxl(jpeg, out.absolutePath)
+                    val rc = withStillInput(decodeSource) { transcodeJpegBufferToJxl(it, out.absolutePath) } ?: -60
                     success = rc == 0 && out.length() > 0L
                     if (!success) {
                         android.util.Log.e("StillConvert", "Lossless JPEG transcoding failed: $leaf rc=$rc")

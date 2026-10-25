@@ -66,9 +66,13 @@ object DisplaySource {
     ): ImageSource {
         val route = classify(src.source, fileNameHint)
         if (!route.needsUhdr) return src
-        val bytes = src.source.heapBytesForConvert()
-        check(bytes.isNotEmpty()) { "empty image buffer" }
-        val ready = convertLibBytes(bytes, fileNameHint, persistTo)
+        val ready = if (src.source.isDirect) {
+            HdrConvertCache.ensureCoilReadyFromBuffer(src.source, fileNameHint, persistTo)
+        } else {
+            val bytes = src.source.heapBytesForConvert()
+            check(bytes.isNotEmpty()) { "empty image buffer" }
+            convertLibBytes(bytes, fileNameHint, persistTo)
+        }
         src.close()
         return object : PathSource {
             override val source: Path = ready

@@ -1,10 +1,12 @@
 #include "hevc_decode.h"
+#include "thumbnail_mapped_input.h"
 
 #include <jni.h>
 #include <libde265/de265.h>
 
 #include <algorithm>
 #include <cstring>
+#include <cstdlib>
 #include <memory>
 #include <thread>
 #include "skcms.h"
@@ -115,6 +117,38 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeHevcAnnexB(
     return result;
 }
 
+extern "C" JNIEXPORT jobject JNICALL
+Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeHevcAnnexBBuffer(
+        JNIEnv* env, jclass, jbyteArray jCsd, jbyteArray jPicture, jintArray jInfo) try {
+    if (!jCsd || !jPicture || !jInfo || env->GetArrayLength(jInfo) < 5) return nullptr;
+    const jsize csd_size = env->GetArrayLength(jCsd), picture_size = env->GetArrayLength(jPicture);
+    if (csd_size <= 0 || picture_size <= 0 || size_t(csd_size) > kMaxInput || size_t(picture_size) > kMaxInput) return nullptr;
+    ThumbnailJniBytes csd(env, jCsd);
+    if (!csd.data()) return nullptr;
+    ThumbnailJniBytes picture(env, jPicture);
+    if (!picture.data()) return nullptr;
+    HevcPlanes planes;
+    const bool ok = decode_hevc_annex_b(csd.data(), csd_size, picture.data(), picture_size, planes);
+    csd.reset();
+    picture.reset();
+    if (!ok) return nullptr;
+    const jint info[]{planes.width, planes.height, planes.depth, planes.chroma_width, planes.chroma_height};
+    env->SetIntArrayRegion(jInfo, 0, 5, info);
+    if (env->GetArrayLength(jInfo) >= 7) {
+        const jint color[]{planes.full_range, planes.matrix};
+        env->SetIntArrayRegion(jInfo, 5, 2, color);
+    }
+    const size_t bytes = planes.samples.size() * sizeof(uint16_t);
+    void* data = malloc(bytes);
+    if (!data) return nullptr;
+    memcpy(data, planes.samples.data(), bytes);
+    jobject result = env->NewDirectByteBuffer(data, static_cast<jlong>(bytes));
+    if (!result) free(data);
+    return result;
+} catch (...) {
+    return nullptr;
+}
+
 // ICC-tagged HEIF uses the profile's full TRC and matrix. Transform straight
 // encoded RGBA half in place; the caller applies auxiliary alpha afterwards.
 extern "C" JNIEXPORT jboolean JNICALL
@@ -140,6 +174,33 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_linearizeHeifIcc(JNIEnv* env, jclass,
                                             pixels, skcms_PixelFormat_RGBA_hhhh, skcms_AlphaFormat_Unpremul, &dest,
                                             size / 8);
     if (pixels) env->ReleaseByteArrayElements(jPixels, pixels, 0);
+    env->ReleaseByteArrayElements(jIcc, icc, JNI_ABORT);
+    return ok ? JNI_TRUE : JNI_FALSE;
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_hippo_ehviewer_jni_HdrConvertKt_linearizeHeifIccBuffer(JNIEnv* env, jclass,
+                                                        jobject jPixels, jbyteArray jIcc,
+                                                        jboolean wideGamut) {
+    if (!jPixels || !jIcc) return JNI_FALSE;
+    const jlong size = env->GetDirectBufferCapacity(jPixels);
+    const jsize icc_size = env->GetArrayLength(jIcc);
+    if (size <= 0 || size % 8 || icc_size < 128 || icc_size > 16 * 1024 * 1024) return JNI_FALSE;
+    auto* icc = env->GetByteArrayElements(jIcc, nullptr);
+    if (!icc) return JNI_FALSE;
+    skcms_ICCProfile source{}, dest{};
+    bool usable = skcms_Parse(icc, icc_size, &source);
+    if (wideGamut == JNI_TRUE) {
+        usable = usable && make_linear_bt2020_profile(&dest);
+    } else {
+        dest = *skcms_sRGB_profile();
+        skcms_SetTransferFunction(&dest, skcms_Identity_TransferFunction());
+        usable = usable && skcms_MakeUsableAsDestination(&dest);
+    }
+    void* pixels = usable ? env->GetDirectBufferAddress(jPixels) : nullptr;
+    const bool ok = pixels && skcms_Transform(pixels, skcms_PixelFormat_RGBA_hhhh, skcms_AlphaFormat_Unpremul, &source,
+                                            pixels, skcms_PixelFormat_RGBA_hhhh, skcms_AlphaFormat_Unpremul, &dest,
+                                            size / 8);
     env->ReleaseByteArrayElements(jIcc, icc, JNI_ABORT);
     return ok ? JNI_TRUE : JNI_FALSE;
 }

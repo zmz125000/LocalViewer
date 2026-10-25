@@ -292,3 +292,32 @@ internal external fun convertJxlBufferToUltraHdr(input: java.nio.ByteBuffer, out
 internal external fun convertAvifBufferToUltraHdr(input: java.nio.ByteBuffer, outputPath: String): Int
 internal external fun convertJpeg2000BufferToUltraHdr(input: java.nio.ByteBuffer, outputPath: String): Int
 internal external fun probeAvifBufferHdrKind(input: java.nio.ByteBuffer): Int
+
+internal external fun decodeRawBufferToDirect(
+    input: java.nio.ByteBuffer,
+    maxEdge: Int,
+    present: Int,
+    panelBoost: Float,
+    exposureEv: Float,
+    whiteBalance: Int,
+    kelvin: Int,
+    highlightStops: Float,
+    hdrLinear: Boolean,
+    cameraLook: Boolean,
+    shoulder: Float,
+    shadows: Float,
+    midtones: Float,
+    highlights: Float,
+    outInfo: IntArray,
+    outBoost: FloatArray,
+): ByteArray?
+internal external fun extractRawPreviewBuffer(input: java.nio.ByteBuffer, outPath: String, demosaic: Boolean): Int
+internal external fun transcodeJpegBufferToJxl(input: java.nio.ByteBuffer, outPath: String): Int
+
+internal external fun allocateStillBuffer(size: Int): java.nio.ByteBuffer?
+internal external fun releaseStillBuffer(buffer: java.nio.ByteBuffer)
+internal external fun captureStillPixels(buffer: java.nio.ByteBuffer): ByteArray?
+internal external fun decodeHevcAnnexBBuffer(csd: ByteArray, picture: ByteArray, info: IntArray): java.nio.ByteBuffer?
+internal external fun linearizeHeifIccBuffer(pixels: java.nio.ByteBuffer, icc: ByteArray, wideGamut: Boolean): Boolean
+
+internal external fun captureStillBitmap(bitmap: android.graphics.Bitmap): ByteArray?

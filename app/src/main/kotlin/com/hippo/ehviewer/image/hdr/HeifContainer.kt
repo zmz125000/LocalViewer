@@ -113,7 +113,7 @@ internal object HeifContainer {
 
         private fun appleHeadroom(): Float? {
             val payload = items.values.firstOrNull { it.type == "Exif" }?.bytes ?: return null
-            return appleHeadroomFromExif(payload)
+            return appleHeadroomFromExif(payload.copyOfRange(0, payload.remaining()))
         }
 
         private fun layout(item: Item): Laid? {
@@ -146,7 +146,7 @@ internal object HeifContainer {
         val items = LinkedHashMap<Int, Item>()
         val refs = ArrayList<Ref>()
         var primary = 0
-        val idat = ArrayList<ByteArray>()
+        val idat = ArrayList<ByteBuffer>()
         walk(file, 0, file.limit()) { type, start, size ->
             val payload = start + 8
             val end = start + size
@@ -156,7 +156,7 @@ internal object HeifContainer {
                         onMetaChild(file, child, childStart, childSize, items, refs, idat) { primary = it }
                     }
                 }
-                "idat" -> if (end > payload) idat += file.copyOfRange(payload, end)
+                "idat" -> if (end > payload) idat += file.view(payload, end)
             }
         }
         for (item in items.values) item.bytes = readExtents(file, item, idat)
@@ -170,13 +170,13 @@ internal object HeifContainer {
         size: Int,
         items: MutableMap<Int, Item>,
         refs: MutableList<Ref>,
-        idat: MutableList<ByteArray>,
+        idat: MutableList<ByteBuffer>,
         onPrimary: (Int) -> Unit,
     ) {
         val payload = start + 8
         val end = start + size
         when (type) {
-            "idat" -> if (end > payload) idat += file.copyOfRange(payload, end)
+            "idat" -> if (end > payload) idat += file.view(payload, end)
             "pitm" -> readPrimary(file, payload, end)?.let(onPrimary)
             "iloc" -> readIloc(file, payload, end, items)
             "iinf" -> readIinf(file, payload, end, items)
@@ -190,7 +190,7 @@ internal object HeifContainer {
         var urn: String? = null
         var construction: Int = 0
         var extents: List<Extent> = emptyList()
-        var bytes: ByteArray? = null
+        var bytes: ByteBuffer? = null
         var width: Int = 0
         var height: Int = 0
         var rotation: Int = 0
@@ -213,41 +213,37 @@ internal object HeifContainer {
     )
     private class HevcSplit(val bitDepth: Int, val csd: ByteArray, val picture: ByteArray)
 
-    private fun readExtents(file: ByteBuffer, item: Item, idat: List<ByteArray>): ByteArray? {
+    private fun readExtents(file: ByteBuffer, item: Item, idat: List<ByteBuffer>): ByteBuffer? {
         if (item.extents.isEmpty()) return null
-        val parts = ArrayList<ByteArray>(item.extents.size)
+        val parts = ArrayList<ByteBuffer>(item.extents.size)
         for (extent in item.extents) {
             val chunk = when (item.construction) {
                 0 -> slice(file, extent.offset, extent.length)
-                1 -> idat.firstOrNull()?.let { slice(ByteBuffer.wrap(it), extent.offset, extent.length) }
+                1 -> idat.firstOrNull()?.let { slice(it, extent.offset, extent.length) }
                 else -> null
             } ?: return null
             parts += chunk
         }
         if (parts.size == 1) return parts[0]
-        val all = ByteArray(parts.sumOf { it.size })
-        var at = 0
-        for (part in parts) {
-            part.copyInto(all, at)
-            at += part.size
-        }
-        return all
+        val all = ByteBuffer.allocate(parts.sumOf { it.remaining() })
+        for (part in parts) all.put(part.duplicate())
+        return all.apply { flip() }
     }
 
-    private fun slice(file: ByteBuffer, offset: Long, length: Long): ByteArray? {
+    private fun slice(file: ByteBuffer, offset: Long, length: Long): ByteBuffer? {
         if (offset < 0 || offset > file.limit()) return null
         val from = offset.toInt()
         val to = if (length <= 0L) file.limit() else (offset + length).toInt()
         if (to < from || to > file.limit()) return null
-        return file.copyOfRange(from, to)
+        return file.view(from, to)
     }
 
-    private fun readGrid(raw: ByteArray): Grid? {
-        if (raw.size < 8 || raw[0].toInt() != 0) return null
+    private fun readGrid(raw: ByteBuffer): Grid? {
+        if (raw.remaining() < 8 || raw[0].toInt() != 0) return null
         val rows = (raw[2].toInt() and 0xff) + 1
         val columns = (raw[3].toInt() and 0xff) + 1
         val wide = raw[1].toInt() and 1 != 0
-        if (wide && raw.size < 12) return null
+        if (wide && raw.remaining() < 12) return null
         val width = if (wide) u32(raw, 4) else u16(raw, 4)
         val height = if (wide) u32(raw, 8) else u16(raw, 6)
         if (rows !in 1..256 || columns !in 1..256 || width <= 0 || height <= 0) return null
@@ -518,7 +514,7 @@ internal object HeifContainer {
         )
     }
 
-    private fun splitHevc(hvcC: ByteArray, sample: ByteArray): HevcSplit? {
+    private fun splitHevc(hvcC: ByteArray, sample: ByteBuffer): HevcSplit? {
         if (hvcC.size < 23) return null
         val lengthSize = (hvcC[21].toInt() and 3) + 1
         val bitDepth = (hvcC[17].toInt() and 7) + 8
@@ -526,7 +522,7 @@ internal object HeifContainer {
         val arrays = hvcC[p].toInt() and 0xff
         p++
         val parameter = ArrayList<ByteArray>()
-        val picture = ArrayList<ByteArray>()
+        val picture = ArrayList<ByteBuffer>()
         repeat(arrays) {
             if (p + 3 > hvcC.size) return null
             val nalType = hvcC[p].toInt() and 0x3f
@@ -540,22 +536,34 @@ internal object HeifContainer {
                 if (nalLen <= 0 || p + nalLen > hvcC.size) return null
                 val nal = hvcC.copyOfRange(p, p + nalLen)
                 p += nalLen
-                if (nalType == 32 || nalType == 33 || nalType == 34) parameter += nal else picture += nal
+                if (nalType == 32 || nalType == 33 || nalType == 34) parameter += nal else picture += ByteBuffer.wrap(nal)
             }
         }
         var s = 0
-        while (s + lengthSize <= sample.size) {
+        while (s + lengthSize <= sample.remaining()) {
             var nalLen = 0
             for (i in 0 until lengthSize) nalLen = (nalLen shl 8) or (sample[s + i].toInt() and 0xff)
             s += lengthSize
-            if (nalLen <= 0 || s + nalLen > sample.size) break
-            val nal = sample.copyOfRange(s, s + nalLen)
+            if (nalLen <= 0 || s + nalLen > sample.remaining()) break
+            val nal = sample.view(s, s + nalLen)
             s += nalLen
-            val nalType = if (nal.size >= 2) (nal[0].toInt() shr 1) and 0x3f else -1
-            if (nalType == 32 || nalType == 33 || nalType == 34) parameter += nal else picture += nal
+            val nalType = if (nal.remaining() >= 2) (nal[0].toInt() shr 1) and 0x3f else -1
+            if (nalType == 32 || nalType == 33 || nalType == 34) parameter += nal.copyOfRange(0, nal.remaining()) else picture += nal
         }
         if (picture.isEmpty()) return null
-        return HevcSplit(bitDepth, annexB(parameter), annexB(picture))
+        return HevcSplit(bitDepth, annexB(parameter), annexBPicture(picture))
+    }
+
+    private fun annexBPicture(nals: List<ByteBuffer>): ByteArray {
+        val out = ByteArray(nals.sumOf { it.remaining() + 4 })
+        var at = 0
+        for (nal in nals) {
+            out[at + 3] = 1
+            val size = nal.remaining()
+            nal.duplicate().get(out, at + 4, size)
+            at += size + 4
+        }
+        return out
     }
 
     private fun annexB(nals: List<ByteArray>): ByteArray {
@@ -762,3 +770,8 @@ private fun ByteBuffer.copyOfRange(from: Int, to: Int): ByteArray = ByteArray(to
 }
 
 private fun walk(file: ByteArray, start: Int, end: Int, onBox: (String, Int, Int) -> Unit) = walk(ByteBuffer.wrap(file), start, end, onBox)
+
+private fun ByteBuffer.view(from: Int, to: Int): ByteBuffer = duplicate().apply {
+    position(from)
+    limit(to)
+}.slice()

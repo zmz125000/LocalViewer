@@ -1,5 +1,6 @@
 #include "hdr_encode.h"
 #include "hdr_parallel.h"
+#include "thumbnail_mapped_input.h"
 
 #include <algorithm>
 #include <array>
@@ -162,4 +163,33 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_transcodeJpegToJxl(
     const int result = write_jxl_output(encoder.get(), path);
     env->ReleaseStringUTFChars(output, path);
     return result;
+}
+
+extern "C" JNIEXPORT jint JNICALL
+Java_com_hippo_ehviewer_jni_HdrConvertKt_transcodeJpegBufferToJxl(
+        JNIEnv* env, jclass, jobject input, jstring output) try {
+    if (!input || !output) return -60;
+    const jlong length = env->GetDirectBufferCapacity(input);
+    if (length <= 0) return -60;
+    auto encoder = JxlEncoderMake(nullptr);
+    const unsigned threads = std::min(4u, std::max(1u, std::thread::hardware_concurrency()));
+    auto runner = JxlThreadParallelRunnerMake(nullptr, threads);
+    if (!encoder || !runner ||
+        JxlEncoderSetParallelRunner(encoder.get(), JxlThreadParallelRunner, runner.get()) != JXL_ENC_SUCCESS ||
+        JxlEncoderStoreJPEGMetadata(encoder.get(), JXL_TRUE) != JXL_ENC_SUCCESS) return -61;
+    auto* frame = JxlEncoderFrameSettingsCreate(encoder.get(), nullptr);
+    if (!frame || JxlEncoderFrameSettingsSetOption(frame, JXL_ENC_FRAME_SETTING_EFFORT, 5) != JXL_ENC_SUCCESS) return -63;
+    const auto* jpeg = static_cast<const uint8_t*>(env->GetDirectBufferAddress(input));
+    if (!jpeg) return -60;
+    // AddJPEGFrame owns the required reconstruction data; input is borrowed.
+    const auto added = JxlEncoderAddJPEGFrame(frame, jpeg, static_cast<size_t>(length));
+    if (added != JXL_ENC_SUCCESS) return -68;
+    ThumbnailOutputPath outputPath(env, output);
+    const char* path = outputPath.get();
+    if (!path) return -65;
+    JxlEncoderCloseInput(encoder.get());
+    const int result = write_jxl_output(encoder.get(), path);
+    return result;
+} catch (...) {
+    return -69;
 }

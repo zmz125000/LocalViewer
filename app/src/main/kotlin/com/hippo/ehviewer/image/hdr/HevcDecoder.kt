@@ -6,7 +6,8 @@ import android.media.MediaCodec
 import android.media.MediaCodecInfo
 import android.media.MediaFormat
 import android.util.Log
-import com.hippo.ehviewer.jni.decodeHevcAnnexB
+import com.hippo.ehviewer.jni.decodeHevcAnnexBBuffer
+import java.nio.ShortBuffer
 
 /**
  * One HEVC access unit from a HEIF item. Absolute HDR prefers bundled libde265
@@ -21,14 +22,19 @@ internal object HevcDecoder {
         val height: Int,
         /** Actual sample precision (8–16 for software, 8/10 for MediaCodec). */
         val bitDepth: Int,
-        val y: ShortArray,
-        val cb: ShortArray,
-        val cr: ShortArray,
+        val y: ShortBuffer,
+        val cb: ShortBuffer,
+        val cr: ShortBuffer,
         val chromaWidth: Int,
         val chromaHeight: Int,
         val fullRange: Boolean? = null,
         val matrix: Int? = null,
-    )
+        private val owner: NativeStillBuffer? = null,
+    ) : AutoCloseable {
+        override fun close() {
+            owner?.close()
+        }
+    }
 
     fun decode(unit: HeifContainer.AccessUnit, preferSoftware: Boolean = false): Picture? {
         if (preferSoftware) decodeSoftware(unit)?.let { return it }
@@ -41,26 +47,32 @@ internal object HevcDecoder {
 
     private fun decodeSoftware(unit: HeifContainer.AccessUnit): Picture? = runCatching {
         val info = IntArray(7)
-        val samples = decodeHevcAnnexB(unit.csd, unit.picture, info) ?: return null
-        val (width, height, depth, cw, ch) = info
-        if (width <= 0 || height <= 0 || cw <= 0 || ch <= 0 || depth !in unit.bitDepth..16) return null
-        val ySize = width.toLong() * height
-        val cSize = cw.toLong() * ch
-        if (ySize + 2 * cSize != samples.size.toLong()) return null
-        val yEnd = ySize.toInt()
-        val cbEnd = (ySize + cSize).toInt()
-        Picture(
-            width,
-            height,
-            depth,
-            samples.copyOfRange(0, yEnd),
-            samples.copyOfRange(yEnd, cbEnd),
-            samples.copyOfRange(cbEnd, samples.size),
-            cw,
-            ch,
-            fullRange = info[5] != 0,
-            matrix = info[6].takeIf { it != 2 },
-        )
+        val buffer = decodeHevcAnnexBBuffer(unit.csd, unit.picture, info) ?: return null
+        val owner = NativeStillBuffer.own(buffer)
+        var transferred = false
+        try {
+            val samples = owner.buffer.asShortBuffer()
+            val (width, height, depth, cw, ch) = info
+            if (width <= 0 || height <= 0 || cw <= 0 || ch <= 0 || depth !in unit.bitDepth..16) return null
+            val ySize = width.toLong() * height
+            val cSize = cw.toLong() * ch
+            if (ySize + 2 * cSize != samples.remaining().toLong()) return null
+            val yEnd = ySize.toInt()
+            val cbEnd = (ySize + cSize).toInt()
+            fun plane(start: Int, end: Int) = samples.duplicate().apply {
+                position(start)
+                limit(end)
+            }.slice()
+            Picture(
+                width, height, depth,
+                plane(0, yEnd), plane(yEnd, cbEnd), plane(cbEnd, samples.limit()), cw, ch,
+                fullRange = info[5] != 0,
+                matrix = info[6].takeIf { it != 2 },
+                owner = owner,
+            ).also { transferred = true }
+        } finally {
+            if (!transferred) owner.close()
+        }
     }.onFailure { Log.e(TAG, "Software HEVC decode failed ${unit.width}x${unit.height}", it) }.getOrNull()
 
     private fun decodePlatform(unit: HeifContainer.AccessUnit, p010: Boolean): Picture? = runCatching {
@@ -94,8 +106,7 @@ internal object HevcDecoder {
                 if (out < 0) continue
                 val image = codec.getOutputImage(out)
                 if (image != null && info.size > 0) {
-                    picture = readImage(image)
-                    image.close()
+                    image.use { picture = readImage(it) }
                 }
                 val end = info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0
                 codec.releaseOutputBuffer(out, false)
@@ -116,21 +127,36 @@ internal object HevcDecoder {
         val height = crop.height()
         if (width <= 0 || height <= 0) return null
         val tenBit = image.format == ImageFormat.YCBCR_P010
-        val y = readPlane(planes[0], crop.left, crop.top, width, height, tenBit) ?: return null
         val chromaWidth = (width + 1) / 2
         val chromaHeight = (height + 1) / 2
-        val mid = if (tenBit) 512 else 128
-        val cb = if (planes.size >= 3) {
-            readPlane(planes[1], crop.left / 2, crop.top / 2, chromaWidth, chromaHeight, tenBit)
-        } else {
-            null
-        } ?: ShortArray(chromaWidth * chromaHeight) { mid.toShort() }
-        val cr = if (planes.size >= 3) {
-            readPlane(planes[2], crop.left / 2, crop.top / 2, chromaWidth, chromaHeight, tenBit)
-        } else {
-            null
-        } ?: ShortArray(chromaWidth * chromaHeight) { mid.toShort() }
-        return Picture(width, height, if (tenBit) 10 else 8, y, cb, cr, chromaWidth, chromaHeight)
+        val ySize = width.toLong() * height
+        val cSize = chromaWidth.toLong() * chromaHeight
+        val owner = NativeStillBuffer.allocate((ySize + 2 * cSize) * 2)
+        var transferred = false
+        try {
+            val samples = owner.buffer.asShortBuffer()
+            fun plane(start: Int, end: Int) = samples.duplicate().apply {
+                position(start)
+                limit(end)
+            }.slice()
+            val yEnd = ySize.toInt()
+            val cbEnd = (ySize + cSize).toInt()
+            val y = plane(0, yEnd)
+            val cb = plane(yEnd, cbEnd)
+            val cr = plane(cbEnd, samples.limit())
+            if (!readPlane(planes[0], crop.left, crop.top, width, height, tenBit, y)) return null
+            val mid = (if (tenBit) 512 else 128).toShort()
+            if (planes.size < 3 || !readPlane(planes[1], crop.left / 2, crop.top / 2, chromaWidth, chromaHeight, tenBit, cb)) {
+                for (i in 0 until cb.limit()) cb.put(i, mid)
+            }
+            if (planes.size < 3 || !readPlane(planes[2], crop.left / 2, crop.top / 2, chromaWidth, chromaHeight, tenBit, cr)) {
+                for (i in 0 until cr.limit()) cr.put(i, mid)
+            }
+            return Picture(width, height, if (tenBit) 10 else 8, y, cb, cr, chromaWidth, chromaHeight, owner = owner)
+                .also { transferred = true }
+        } finally {
+            if (!transferred) owner.close()
+        }
     }
 
     private fun readPlane(
@@ -140,18 +166,18 @@ internal object HevcDecoder {
         width: Int,
         height: Int,
         tenBit: Boolean,
-    ): ShortArray? {
+        out: ShortBuffer,
+    ): Boolean {
         val buffer = plane.buffer.duplicate()
         val row = plane.rowStride
         val pix = plane.pixelStride
-        if (row <= 0 || pix <= 0) return null
-        val out = ShortArray(width * height)
+        if (row <= 0 || pix <= 0) return false
         val sample = if (tenBit) 2 else 1
         for (y in 0 until height) {
             val rowStart = (top + y) * row
             for (x in 0 until width) {
                 val at = rowStart + (left + x) * pix
-                if (at < 0 || at + sample > buffer.capacity()) return null
+                if (at < 0 || at + sample > buffer.capacity()) return false
                 val value = if (tenBit) {
                     val lo = buffer.get(at).toInt() and 0xff
                     val hi = buffer.get(at + 1).toInt() and 0xff
@@ -159,9 +185,9 @@ internal object HevcDecoder {
                 } else {
                     buffer.get(at).toInt() and 0xff
                 }
-                out[y * width + x] = value.toShort()
+                out.put(y * width + x, value.toShort())
             }
         }
-        return out
+        return true
     }
 }

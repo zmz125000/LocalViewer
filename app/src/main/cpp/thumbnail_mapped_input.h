@@ -46,3 +46,20 @@ public:
     ThumbnailOutputPath(const ThumbnailOutputPath&) = delete;
     ThumbnailOutputPath& operator=(const ThumbnailOutputPath&) = delete;
 };
+
+class ThumbnailJniBytes {
+    JNIEnv* env_;
+    jbyteArray array_;
+    jbyte* bytes_;
+public:
+    ThumbnailJniBytes(JNIEnv* env, jbyteArray array)
+        : env_(env), array_(array), bytes_(env->GetByteArrayElements(array, nullptr)) {}
+    ~ThumbnailJniBytes() { reset(); }
+    const uint8_t* data() const { return reinterpret_cast<const uint8_t*>(bytes_); }
+    void reset() {
+        if (bytes_) env_->ReleaseByteArrayElements(array_, bytes_, JNI_ABORT);
+        bytes_ = nullptr;
+    }
+    ThumbnailJniBytes(const ThumbnailJniBytes&) = delete;
+    ThumbnailJniBytes& operator=(const ThumbnailJniBytes&) = delete;
+};
