@@ -36,7 +36,7 @@ internal object ThumbnailMemory {
         // Header-only probes happen before reading the full compressed source into RAM.
         var sourceBytes = runCatching { source.metadataOrNull()?.size }.getOrNull() ?: -1L
         val size = runCatching {
-            source.openFileDescriptor("r")?.use { descriptor ->
+            source.openFileDescriptor("r").use { descriptor ->
                 if (sourceBytes < 0) sourceBytes = descriptor.statSize
                 if (kind(codec) >= 0) {
                     probeStillExportSize("/proc/self/fd/${descriptor.fd}", kind(codec))
@@ -45,7 +45,7 @@ internal object ThumbnailMemory {
                     BitmapFactory.decodeFileDescriptor(descriptor.fileDescriptor, null, bounds)
                     pack(bounds.outWidth, bounds.outHeight)
                 }
-            } ?: 0L
+            }
         }.getOrDefault(0L)
         return withEstimate(sourceBytes, size, codec, edge, mapped = true, work = work)
     }
@@ -69,6 +69,18 @@ internal object ThumbnailMemory {
             }
         }.getOrDefault(0L)
         return withEstimate(bytes.size.toLong(), size, codec, edge, mapped = false, work = work)
+    }
+
+    /** PDF Flate/predictor buffers are allocated before the encoded thumb reaches writeThumb. */
+    suspend fun <T> withPdfCover(width: Int, height: Int, streamBytes: Long, rawSamples: Boolean, edge: Int, work: suspend () -> T): T {
+        val pixels = if (width in 1..65536 && height in 1..65536) width.toLong() * height else 0L
+        val compressed = if (streamBytes > 0) streamBytes.coerceAtMost(Long.MAX_VALUE / 4) * 2 else Long.MAX_VALUE / 4
+        // Inflate, undo prediction and unpack can overlap several sample arrays.
+        // JPEG streams only need the compressed payload and reduced decoder output.
+        val heapBytes = if (rawSamples && pixels == 0L) Long.MAX_VALUE else compressed + (if (rawSamples) pixels * 16 else 0) + MIB
+        val thumb = edge.coerceIn(64, 2048).toLong().let { it * it * 24 }
+        val nativeBytes = if (pixels == 0L) Long.MAX_VALUE else pixels * 8 + thumb
+        return heap.withBytes(heapBytes) { native.withBytes(nativeBytes, work) }
     }
 
     private fun pack(width: Int, height: Int): Long = if (width > 0 && height > 0) (width.toLong() shl 32) or height.toLong() else 0L

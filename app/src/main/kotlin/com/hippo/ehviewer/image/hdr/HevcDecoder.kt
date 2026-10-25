@@ -39,9 +39,15 @@ internal object HevcDecoder {
     fun decode(unit: HeifContainer.AccessUnit, preferSoftware: Boolean = false): Picture? {
         if (preferSoftware) decodeSoftware(unit)?.let { return it }
         if (unit.bitDepth >= 10) {
-            decodePlatform(unit, p010 = true)?.takeIf { it.bitDepth >= unit.bitDepth }?.let { return it }
+            decodePlatform(unit, p010 = true)?.let { picture ->
+                if (picture.bitDepth >= unit.bitDepth) return picture
+                picture.close()
+            }
         }
-        decodePlatform(unit, p010 = false)?.takeIf { it.bitDepth >= unit.bitDepth }?.let { return it }
+        decodePlatform(unit, p010 = false)?.let { picture ->
+            if (picture.bitDepth >= unit.bitDepth) return picture
+            picture.close()
+        }
         return if (preferSoftware) null else decodeSoftware(unit)
     }
 
@@ -85,6 +91,8 @@ internal object HevcDecoder {
             )
         }
         val codec = MediaCodec.createDecoderByType(MediaFormat.MIMETYPE_VIDEO_HEVC)
+        var picture: Picture? = null
+        var transferred = false
         try {
             codec.configure(format, null, null, 0)
             codec.start()
@@ -99,7 +107,6 @@ internal object HevcDecoder {
             if (eos >= 0) codec.queueInputBuffer(eos, 0, 0, 0L, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
             val info = MediaCodec.BufferInfo()
             val deadline = System.nanoTime() + 3_000_000_000L
-            var picture: Picture? = null
             while (System.nanoTime() < deadline) {
                 val out = codec.dequeueOutputBuffer(info, 20_000)
                 if (out == MediaCodec.INFO_TRY_AGAIN_LATER || out == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) continue
@@ -112,8 +119,9 @@ internal object HevcDecoder {
                 codec.releaseOutputBuffer(out, false)
                 if (picture != null || end) break
             }
-            picture
+            picture.also { transferred = true }
         } finally {
+            if (!transferred) picture?.close()
             runCatching { codec.stop() }
             runCatching { codec.release() }
         }

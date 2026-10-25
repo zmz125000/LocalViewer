@@ -3,6 +3,7 @@ package com.hippo.ehviewer.library.document
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import com.ehviewer.core.util.logcat
+import com.hippo.ehviewer.image.hdr.ThumbnailMemory
 import com.hippo.ehviewer.image.presentForReader
 import com.hippo.ehviewer.jni.decodeJpeg2000Bitmap
 import com.hippo.ehviewer.library.ArchiveByteSource
@@ -236,7 +237,18 @@ class PdfImageEngine private constructor(
     override fun extractBytes(index: Int): ByteArray? = extractBytes(index, null)
 
     /** Folder covers decode at the grid-thumb size without creating a full reader page. */
-    fun extractCoverThumb(index: Int): ByteArray? = extractBytes(index, null, OriginDiskCache.THUMB_EDGE)
+    suspend fun extractCoverThumb(index: Int): ByteArray? {
+        val ref = synchronized(pagesLock) { pages.getOrNull(index) } ?: return null
+        return ThumbnailMemory.withPdfCover(
+            ref.width,
+            ref.height,
+            ref.streamLen,
+            rawSamples = ref.ext != "jpg",
+            edge = OriginDiskCache.THUMB_EDGE,
+        ) {
+            extractBytes(index, null, OriginDiskCache.THUMB_EDGE)
+        }
+    }
 
     fun extractBytes(index: Int, onIndexedBitmap: ((Bitmap) -> Boolean)?): ByteArray? = extractBytes(index, onIndexedBitmap, thumbEdge = 0)
 

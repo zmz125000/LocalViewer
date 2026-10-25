@@ -48,12 +48,25 @@ object CachePagePublish {
             true
         }.getOrDefault(false)
         if (replaced) return dest.isFile
-        // 3) Byte copy fallback — only if tmp still present (no File.copyTo throw).
+        // 3) Cross-device copy: stage beside dest so failed reads/writes never
+        // truncate an existing index or expose a partial file at the final path.
         if (tmp.isFile) {
-            runCatching {
-                tmp.inputStream().use { input ->
-                    dest.outputStream().use { output -> input.copyTo(output) }
+            val staged = File("${dest.path}.tmp.publish.${System.nanoTime()}")
+            try {
+                val expected = tmp.length()
+                val copied = tmp.inputStream().use { input ->
+                    staged.outputStream().use { output -> input.copyTo(output) }
                 }
+                if (copied != expected || staged.length() != expected) return dest.isFile
+                val published = runCatching {
+                    Files.move(staged.toPath(), dest.toPath(), StandardCopyOption.REPLACE_EXISTING)
+                    true
+                }.getOrDefault(false)
+                if (!published) staged.renameTo(dest)
+            } catch (_: Exception) {
+                // A concurrent publisher may already have moved tmp. Keep its result.
+            } finally {
+                staged.delete()
             }
         }
         return dest.isFile

@@ -137,7 +137,7 @@
     <string name="image_conversion_quality_mid">Mid</string>
     <string name="image_conversion_quality_low">Low</string>
     <string name="image_conversion_quality_custom">Custom</string>
-    <string name="image_conversion_jxl_jpeg_transcoding">JXL Lossless JPEG Transcoding</string>
+    <string name="image_conversion_jxl_jpeg_transcoding">JXL lossless JPEG transcoding</string>
     <string name="image_conversion_jxl_jpeg_transcoding_summary">Preserve original JPEG data when converting JPEG to JPEG XL, regardless of distance.</string>
     <string name="image_conversion_jxl_distance">JPEG XL distance</string>
     <string name="image_conversion_jxl_distance_summary">Lower distance means higher quality; 0 is lossless.</string>
@@ -666,7 +666,7 @@
     <string name="settings_thumbnail_convert_slots">Thumbnail conversion slots</string>
     <string name="settings_thumbnail_convert_slots_summary">Up to %s thumbnail conversion jobs.</string>
     <string name="settings_archive_extract_slots">Archive Thumb extraction slots</string>
-    <string name="settings_archive_extract_slots_summary">Up to %s archive thumbextraction jobs.</string>
+    <string name="settings_archive_extract_slots_summary">Up to %s archive thumb extraction jobs.</string>
     <string name="settings_download_download_delay">Download delay</string>
     <string name="settings_download_download_delay_summary">Delay %s ms per download</string>
     <string name="settings_download_timeout_speed">Minimum download speed (in KB/s)</string>
