@@ -663,7 +663,7 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
             val count = pageLoader.size
             if (count <= 0) return@snapshotFlow null
             val last = count - 1
-            syncState.pendingJumpPage?.let { pending ->
+            syncState.pendingJumpPage?.takeIf { isWebtoon }?.let { pending ->
                 val target = pending.coerceIn(0, last)
                 val visible = if (pagerDual) {
                     val spread = dualSpreadIndex(target, cover)
@@ -1157,41 +1157,31 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
         ) {
             if (!slideshow) return@LaunchedEffect
             lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
-                snapshotFlow {
-                    Triple(pagerState.settledPage, pagerState.isScrollInProgress, pageLoader.size > 0)
-                }.collectLatest { (page, scrolling, hasPages) ->
-                    if (scrolling || !hasPages) return@collectLatest
-                    while (true) {
-                        delay(slideshowSeconds.coerceIn(3, 200) * 1000L)
-                        val count = pagerState.pageCount
-                        val realPage = if (pagerDual) dualFirstPageIndex(page, landscapeCover) else page
-                        val shuffledNext = if (slideshowRepeat == 1) pageLoader.nextSlideshowPage(realPage) else null
-                        val atEnd = if (slideshowRepeat == 1) shuffledNext == null else page >= count - 1
-                        if (atEnd && slideshowAutoNext && hasNextGallery) {
-                            goFolder(next = true)
-                            return@collectLatest
+                runSlideshowTimer(
+                    viewports = snapshotFlow {
+                        SlideshowViewport(
+                            page = pagerState.settledPage,
+                            blocked = pagerState.isScrollInProgress || PagerTransitionHandlers.isRunning(pagerState),
+                            hasPages = pageLoader.size > 0,
+                        )
+                    },
+                    awaitInterval = { delay(slideshowSeconds.coerceIn(3, 200) * 1000L) },
+                ) { page ->
+                    val count = pagerState.pageCount
+                    val realPage = if (pagerDual) dualFirstPageIndex(page, landscapeCover) else page
+                    val shuffledNext = if (slideshowRepeat == 1) pageLoader.nextSlideshowPage(realPage) else null
+                    val atEnd = if (slideshowRepeat == 1) shuffledNext == null else page >= count - 1
+                    if (atEnd && slideshowAutoNext && hasNextGallery) {
+                        goFolder(next = true)
+                    } else if (slideshowRepeat == 1) {
+                        val target = shuffledNext ?: pageLoader.nextSlideshowPage(realPage, repeat = true)
+                        if (target != null) {
+                            pagerState.performScrollToPage(if (pagerDual) dualSpreadIndex(target, landscapeCover) else target)
                         }
-                        if (slideshowRepeat == 1) {
-                            val target = shuffledNext ?: pageLoader.nextSlideshowPage(realPage, repeat = true)
-                            if (target != null) {
-                                launch {
-                                    pagerState.performScrollToPage(if (pagerDual) dualSpreadIndex(target, landscapeCover) else target)
-                                }
-                                awaitCancellation()
-                            }
-                        } else if (!atEnd) {
-                            // Keep the transition outside collectLatest: scrolling resets the
-                            // countdown and must not cancel the animation that triggered it.
-                            launch { pagerState.moveToNext() }
-                            awaitCancellation()
-                        } else if (slideshowRepeat == 2) {
-                            launch { pagerState.performScrollToPage(0) }
-                            if (page != 0) awaitCancellation()
-                        } else {
-                            // Stay on the last page, but allow a growing catalog or a late
-                            // gallery-hop lookup to make forward progress on a later tick.
-                            continue
-                        }
+                    } else if (!atEnd) {
+                        pagerState.moveToNext()
+                    } else if (slideshowRepeat == 2) {
+                        pagerState.performScrollToPage(0)
                     }
                 }
             }

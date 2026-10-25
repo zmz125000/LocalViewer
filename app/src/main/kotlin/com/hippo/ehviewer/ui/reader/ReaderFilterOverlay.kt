@@ -13,6 +13,9 @@ import com.hippo.ehviewer.collectAsState
 import com.hippo.ehviewer.util.findActivity
 import eu.kanade.tachiyomi.ui.reader.ReaderContentOverlay
 import eu.kanade.tachiyomi.ui.reader.setting.ReadingModeType
+import java.util.WeakHashMap
+
+private val brightnessRequests = WeakHashMap<Activity, ReaderBrightnessRequests>()
 
 /** Shared image/PDF reader controls, drawn below reader chrome and settings sheets. */
 @Composable
@@ -43,10 +46,17 @@ fun ReaderFilterOverlay(supportsSlideshow: Boolean = true) {
         color = { color }.takeIf { colorEnabled },
         colorBlendMode = blendMode,
     )
-    LaunchedEffect(activity, brightness, brightnessValue) {
-        activity.setCustomBrightnessValue(if (brightness) brightnessValue else 0)
+    val owner = remember(activity) { Any() }
+    LaunchedEffect(activity, owner, brightness, brightnessValue) {
+        val requests = brightnessRequests.getOrPut(activity) { ReaderBrightnessRequests() }
+        activity.setCustomBrightnessValue(requests.set(owner, if (brightness) brightnessValue else 0))
     }
-    DisposableEffect(activity) {
-        onDispose { activity.setCustomBrightnessValue(0) }
+    DisposableEffect(activity, owner) {
+        onDispose {
+            brightnessRequests[activity]?.let { requests ->
+                activity.setCustomBrightnessValue(requests.remove(owner))
+                if (requests.isEmpty) brightnessRequests.remove(activity)
+            }
+        }
     }
 }

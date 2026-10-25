@@ -9,6 +9,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.withFrameNanos
@@ -33,12 +34,18 @@ import kotlinx.coroutines.withContext
 /** Shared by taps, volume keys, mouse wheel, seek bar, and slideshow page advances. */
 internal object PagerTransitionHandlers {
     private val handlers = mutableMapOf<PagerState, suspend (Int) -> Unit>()
+    private val active = mutableStateMapOf<PagerState, Boolean>()
+    fun isRunning(pager: PagerState): Boolean = active[pager] == true
+    fun setRunning(pager: PagerState, running: Boolean) {
+        if (running) active[pager] = true else active.remove(pager)
+    }
     operator fun get(pager: PagerState) = handlers[pager]
     operator fun set(pager: PagerState, handler: suspend (Int) -> Unit) {
         handlers[pager] = handler
     }
     fun remove(pager: PagerState) {
         handlers.remove(pager)
+        active.remove(pager)
     }
 }
 
@@ -119,13 +126,15 @@ internal fun pagerTransitionModifier(
         PagerTransitionHandlers[pager] = { target ->
             mutex.mutate {
                 running = currentCoroutineContext()[Job]
+                PagerTransitionHandlers.setRunning(pager, true)
                 try {
                     if (target in 0 until pager.pageCount && target != pager.currentPage) {
                         val destination = realPages(target)
                         val current = realPages(pager.currentPage)
-                        val ready = if (transition.needsPageReady(slideshow)) {
-                            val preparing = if (transition.isFade) destination + current else destination
-                            loader.setTransitionPages(preparing.map { it.index }.toSet())
+                        // Actual viewport demand must remain independent of a requested seek.
+                        loader.setTransitionPages((destination + current).map { it.index }.toSet())
+                        val waitForReady = transition.needsPageReady(slideshow)
+                        val ready = if (waitForReady) {
                             awaitTransitionImages(destination)
                         } else {
                             true
@@ -180,6 +189,7 @@ internal fun pagerTransitionModifier(
                             }
                             PageTransitionType.NONE -> pager.scrollToPage(target)
                         }
+                        if (ready && waitForReady && !transition.isFade) awaitPaint(destination)
                     }
                 } finally {
                     if (!disposed) {
@@ -187,6 +197,7 @@ internal fun pagerTransitionModifier(
                             outgoingPage.value = null
                             alpha.snapTo(1f)
                             loader.setTransitionPages(emptySet())
+                            PagerTransitionHandlers.setRunning(pager, false)
                         }
                     }
                     running = null

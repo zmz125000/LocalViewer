@@ -31,6 +31,7 @@ fun ReaderModeSetting(
     isWebtoon: Boolean,
     isDocument: Boolean = false,
     supportsSlideshow: Boolean = true,
+    supportsPageTransitions: Boolean = true,
 ) = Column(modifier = Modifier.verticalScroll(rememberScrollState()).navigationBarsPadding()) {
     val readingMode = Settings.readingMode.asMutableState()
     AnimatedVisibility(supportsSlideshow && readingMode.value == ReadingModeType.SLIDESHOW.prefValue) {
@@ -42,12 +43,14 @@ fun ReaderModeSetting(
         values = ReadingModeType.entries.map { it.prefValue },
         field = readingMode,
     )
-    SpinnerChoice(
-        title = stringResource(R.string.pref_reader_page_transition),
-        entries = PageTransitionType.entries.map { stringResource(it.stringRes) }.toTypedArray(),
-        values = PageTransitionType.entries.map { it.prefValue },
-        field = Settings.pageTransition.asMutableState(),
-    )
+    if (supportsPageTransitions) {
+        SpinnerChoice(
+            title = stringResource(R.string.pref_reader_page_transition),
+            entries = PageTransitionType.entries.map { stringResource(it.stringRes) }.toTypedArray(),
+            values = PageTransitionType.entries.map { it.prefValue },
+            field = Settings.pageTransition.asMutableState(),
+        )
+    }
     val dualPageLandscape = Settings.dualPageLandscape.asMutableState()
     SwitchChoice(
         title = stringResource(id = R.string.pref_dual_page_landscape),

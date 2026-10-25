@@ -75,4 +75,30 @@ class SlideshowShuffleTest {
         }
         assertEquals(ahead.first(), shuffle.next(0, 7))
     }
+
+    @Test
+    fun progressiveCatalogGrowthPreservesVisitedPagesAndPrefetchedNextSlide() {
+        val shuffle = SlideshowShuffle()
+        val visited = mutableSetOf(0)
+        var current = requireNotNull(shuffle.next(0, 5))
+        visited += current
+        val prefetched = requireNotNull(shuffle.next(current, 5))
+        assertEquals(prefetched, shuffle.next(current, 8))
+        val remaining = mutableListOf<Int>()
+        while (true) {
+            val next = shuffle.next(current, 8) ?: break
+            remaining += next
+            current = next
+        }
+        assertEquals((0 until 8).toSet() - visited, remaining.toSet())
+        assertEquals(remaining.size, remaining.toSet().size)
+    }
+
+    @Test
+    fun newMateOfPreviouslySoloSpreadIsNotSkippedWhenCatalogGrows() {
+        val shuffle = SlideshowShuffle(pagesPerSlide = 2)
+        assertEquals(2, shuffle.next(0, 3))
+        assertNull(shuffle.next(2, 3))
+        assertEquals(2, shuffle.next(0, 4))
+    }
 }

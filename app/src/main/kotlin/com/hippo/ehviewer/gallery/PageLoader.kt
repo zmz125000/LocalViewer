@@ -442,12 +442,29 @@ abstract class PageLoader(
     }
 
     private var transitionPages: Set<Int> = emptySet()
+    private val transitionPins = TransitionImagePins<Image>({ it.pin() }, { it.unpin() })
 
     @Synchronized
     override fun setTransitionPages(indices: Set<Int>) {
         val valid = indices.filter { it in 0 until size }.toSet()
         if (transitionPages == valid) return
         transitionPages = valid
+        val stale = transitionPins.setWanted(valid) { index ->
+            when (val status = pages.getOrNull(index)?.status) {
+                is PageStatus.Ready -> status.image
+                is PageStatus.Blocked -> status.ad
+                else -> null
+            }
+        }
+        stale.forEach { (index, image) ->
+            val page = pages.getOrNull(index) ?: return@forEach
+            val status = page.status
+            if (status is PageStatus.Ready && status.image === image &&
+                page.statusFlow.compareAndSet(status, PageStatus.Queued)
+            ) {
+                page.displayReadyFlow.value = false
+            }
+        }
         if (lastNavigation == null && size > 0) {
             navigate(ReaderNavigation(startPage, startPage..startPage, NavigationKind.Settled))
         } else {
@@ -501,6 +518,7 @@ abstract class PageLoader(
 
     override fun restart() {
         cancelDecodeJobs()
+        transitionPins.releaseImages()
         releaseAllHiResFull()
         exportFiles.clear()
         sourceReady.clear()
@@ -690,33 +708,35 @@ abstract class PageLoader(
     }
 
     private fun publishPageSucceed(index: Int, image: Image, replaceCache: Boolean) {
-        if (replaceCache) {
-            lock.write {
-                try {
-                    val existing = cache.get(index)
-                    if (existing !== image) {
-                        // Replace any prior entry first so put() doesn't sum two huge weights.
-                        if (existing != null) cache.remove(index)
-                        // Construction refcnt=1 is the cache ownership; do not pin again.
-                        cache.put(index, image)
+        transitionPins.publish(index, image) {
+            if (replaceCache) {
+                lock.write {
+                    try {
+                        val existing = cache.get(index)
+                        if (existing !== image) {
+                            // Replace any prior entry first so put() doesn't sum two huge weights.
+                            if (existing != null) cache.remove(index)
+                            // Construction refcnt=1 is the cache ownership; do not pin again.
+                            cache.put(index, image)
+                        }
+                    } catch (e: Throwable) {
+                        logcat(e)
                     }
-                } catch (e: Throwable) {
-                    logcat(e)
                 }
             }
-        }
-        pages[index].rememberLayout(image.intrinsicSize.width, image.intrinsicSize.height)
-        if (index == 0) {
-            val gid = info?.gid ?: 0L
-            if (gid != 0L) {
-                com.hippo.ehviewer.library.LandscapeCoverMarks.note(
-                    gid,
-                    image.intrinsicSize.width,
-                    image.intrinsicSize.height,
-                )
+            pages[index].rememberLayout(image.intrinsicSize.width, image.intrinsicSize.height)
+            if (index == 0) {
+                val gid = info?.gid ?: 0L
+                if (gid != 0L) {
+                    com.hippo.ehviewer.library.LandscapeCoverMarks.note(
+                        gid,
+                        image.intrinsicSize.width,
+                        image.intrinsicSize.height,
+                    )
+                }
             }
+            pages[index].statusFlow.update { if (image.hasQrCode) PageStatus.Blocked(image) else PageStatus.Ready(image) }
         }
-        pages[index].statusFlow.update { if (image.hasQrCode) PageStatus.Blocked(image) else PageStatus.Ready(image) }
     }
 
     private fun notifyPageSucceed(index: Int, image: Image, replaceCache: Boolean = true) {
@@ -742,6 +762,8 @@ abstract class PageLoader(
 
     override fun close() {
         cancelDecodeJobs()
+        transitionPins.clear()
+        transitionPages = emptySet()
         releaseAllHiResFull()
         exportFiles.clear()
         sourceReady.clear()
