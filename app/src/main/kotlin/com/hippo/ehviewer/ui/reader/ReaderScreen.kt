@@ -71,6 +71,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.repeatOnLifecycle
 import arrow.core.Either
 import arrow.core.Either.Companion.catch
 import arrow.core.raise.ensure
@@ -153,11 +154,13 @@ import eu.kanade.tachiyomi.ui.reader.ReaderAppBars
 import eu.kanade.tachiyomi.ui.reader.ReaderPageSheetMeta
 import eu.kanade.tachiyomi.ui.reader.setting.DecodeSizeType
 import eu.kanade.tachiyomi.ui.reader.setting.ReadingModeType
+import eu.kanade.tachiyomi.ui.reader.setting.SlideshowPlaybackMode
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.coroutines.resume
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filter
@@ -582,11 +585,18 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
     val volumeKeysInverted by Settings.readWithVolumeKeysInverted.collectAsState()
     val fullscreen by Settings.fullscreen.collectAsState()
     val cutoutShort by Settings.cutoutShort.collectAsState()
-    val keepScreenOn by Settings.keepScreenOn.collectAsState()
+    val keepScreenOnPref by Settings.keepScreenOn.collectAsState()
     val dualPagePref by Settings.dualPageLandscape.collectAsState()
     val dualPageGap by Settings.dualPageGap.collectAsState()
     val isLandscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
-    val dualActive = dualPageActive(dualPagePref, isLandscape)
+    val slideshow = readingMode == ReadingModeType.SLIDESHOW
+    val slideshowKeepScreenOn by Settings.slideshowKeepScreenOn.collectAsState()
+    val keepScreenOn = keepScreenOnPref || (slideshow && slideshowKeepScreenOn)
+    val slideshowDualPages by Settings.slideshowDualPages.collectAsState()
+    val slideshowSeconds by Settings.slideshowDisplaySeconds.collectAsState()
+    val slideshowPlayback by Settings.slideshowPlaybackMode.collectAsState { SlideshowPlaybackMode.fromPreference(it) }
+    val effectiveDualPages = if (slideshow) slideshowDualPages else dualPagePref
+    val dualActive = dualPageActive(effectiveDualPages, isLandscape)
     val pagerDual = isPagerDual(dualActive, readingMode)
     val webtoonHorizontal = isWebtoonHorizontal(dualActive, readingMode)
     val landscapeCoverMode by Settings.landscapeCover.collectAsState()
@@ -653,7 +663,7 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
             val count = pageLoader.size
             if (count <= 0) return@snapshotFlow null
             val last = count - 1
-            syncState.pendingJumpPage?.let { pending ->
+            syncState.pendingJumpPage?.takeIf { isWebtoon }?.let { pending ->
                 val target = pending.coerceIn(0, last)
                 val visible = if (pagerDual) {
                     val spread = dualSpreadIndex(target, cover)
@@ -1128,6 +1138,53 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
                 runCatching { GallerySiblingNavigator.sibling(args, next = true) }.getOrNull() != null
             }
         }
+        LaunchedEffect(pageLoader, slideshow, slideshowPlayback, pagerDual, landscapeCover) {
+            pageLoader.setSlideshowShuffle(
+                enabled = slideshow && slideshowPlayback == SlideshowPlaybackMode.SHUFFLE,
+                pagesPerSlide = if (pagerDual) 2 else 1,
+                firstPageAlone = landscapeCover,
+            )
+        }
+        LaunchedEffect(
+            pageLoader,
+            slideshow,
+            slideshowSeconds,
+            slideshowPlayback,
+            pagerDual,
+            landscapeCover,
+            lifecycleOwner,
+        ) {
+            if (!slideshow) return@LaunchedEffect
+            lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+                runSlideshowTimer(
+                    viewports = snapshotFlow {
+                        SlideshowViewport(
+                            page = pagerState.settledPage,
+                            blocked = pagerState.isScrollInProgress || PagerTransitionHandlers.isRunning(pagerState),
+                            hasPages = pageLoader.size > 0,
+                        )
+                    },
+                    awaitInterval = { delay(slideshowSeconds.coerceIn(3, 200) * 1000L) },
+                ) { page ->
+                    val count = pagerState.pageCount
+                    val realPage = if (pagerDual) dualFirstPageIndex(page, landscapeCover) else page
+                    val shuffledNext = if (slideshowPlayback == SlideshowPlaybackMode.SHUFFLE) pageLoader.nextSlideshowPage(realPage) else null
+                    val atEnd = if (slideshowPlayback == SlideshowPlaybackMode.SHUFFLE) shuffledNext == null else page >= count - 1
+                    if (atEnd && slideshowPlayback == SlideshowPlaybackMode.NEXT_GALLERY && hasNextGallery) {
+                        goFolder(next = true)
+                    } else if (slideshowPlayback == SlideshowPlaybackMode.SHUFFLE) {
+                        val target = shuffledNext ?: pageLoader.nextSlideshowPage(realPage, repeat = true)
+                        if (target != null) {
+                            pagerState.performScrollToPage(if (pagerDual) dualSpreadIndex(target, landscapeCover) else target)
+                        }
+                    } else if (!atEnd) {
+                        pagerState.moveToNext()
+                    } else if (slideshowPlayback == SlideshowPlaybackMode.REPEAT) {
+                        pagerState.performScrollToPage(0)
+                    }
+                }
+            }
+        }
         LaunchedEffect(Unit) {
             snapshotFlow {
                 Triple(syncState.sliderValue, pageLoader.size, hasNextGallery)
@@ -1167,7 +1224,7 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
             .navigationBarsPadding()
             .padding(end = 16.dp, bottom = 16.dp)
         AnimatedVisibility(
-            visible = showNextGalleryFab &&
+            visible = !slideshow && showNextGalleryFab &&
                 pageLoader.size > 0 &&
                 syncState.sliderValue >= pageLoader.size,
             modifier = fabPad,
@@ -1182,7 +1239,7 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
             }
         }
         AnimatedVisibility(
-            visible = showGoFirstFab && syncState.sliderValue > 1 && !showNextGalleryFab,
+            visible = !slideshow && showGoFirstFab && syncState.sliderValue > 1 && !showNextGalleryFab,
             modifier = fabPad,
             enter = fadeIn() + scaleIn(),
             exit = fadeOut() + scaleOut(),
@@ -1737,7 +1794,7 @@ suspend inline fun <T> usePageLoader(args: ReaderScreenArgs, crossinline block: 
 }
 
 @Composable
-private fun collectBackgroundColorAsState(): State<Color> {
+internal fun collectBackgroundColorAsState(): State<Color> {
     val grey = colorResource(com.hippo.ehviewer.R.color.reader_background_dark)
     val dark = isSystemInDarkTheme()
     return Settings.readerTheme.collectAsState { theme ->

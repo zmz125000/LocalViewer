@@ -15,6 +15,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -42,20 +43,7 @@ fun ColorFilterSetting(
         }
     }
     if (showImageScaler) ImageScalerChoice()
-    val customBrightness = Settings.customBrightness.asMutableState()
-    SwitchChoice(
-        title = stringResource(id = R.string.pref_custom_brightness),
-        field = customBrightness,
-    )
-    AnimatedVisibility(visible = customBrightness.value) {
-        val brightness = Settings.customBrightnessValue.asMutableState()
-        SliderChoice(
-            startSlot = { Icon(imageVector = Icons.Default.Brightness5, contentDescription = null) },
-            endSlot = { RollingNumber(number = brightness.value, length = 3) },
-            range = -75..100,
-            field = brightness,
-        )
-    }
+    CustomBrightnessSetting(Settings.customBrightness.asMutableState(), Settings.customBrightnessValue.asMutableState())
     var comicFilter by Settings.comicColorFilter.asMutableState()
     SwitchChoice(
         title = stringResource(id = R.string.pref_comic_filter_contrast),
@@ -248,4 +236,20 @@ private fun ImageScalerChoice() {
         title = stringResource(id = R.string.pref_image_scaler_up_limit),
         field = Settings.readerUpscaleLimit.asMutableState(),
     )
+}
+
+@Composable
+internal fun CustomBrightnessSetting(customBrightness: MutableState<Boolean>, brightness: MutableState<Int>) = Column {
+    SwitchChoice(
+        title = stringResource(id = R.string.pref_custom_brightness),
+        field = customBrightness,
+    )
+    AnimatedVisibility(visible = customBrightness.value) {
+        SliderChoice(
+            startSlot = { Icon(imageVector = Icons.Default.Brightness5, contentDescription = null) },
+            endSlot = { RollingNumber(number = brightness.value, length = 3) },
+            range = -75..100,
+            field = brightness,
+        )
+    }
 }

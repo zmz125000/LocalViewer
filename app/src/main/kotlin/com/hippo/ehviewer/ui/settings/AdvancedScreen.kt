@@ -405,6 +405,16 @@ fun AnimatedVisibilityScope.AdvancedScreen(navigator: DestinationsNavigator) = S
             Preference(title = stringResource(id = R.string.open_by_default)) {
                 openByDefaultSettings()
             }
+            val settingsReset = stringResource(R.string.settings_reset_to_defaults_done)
+            Preference(
+                title = stringResource(R.string.settings_reset_to_defaults),
+            ) {
+                launch {
+                    Settings.resetToDefaults()
+                    launchSnackbar(settingsReset)
+                    setAppLanguage("system")
+                }
+            }
         }
     }
 }

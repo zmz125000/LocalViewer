@@ -23,19 +23,35 @@ import com.hippo.ehviewer.asMutableState
 import com.hippo.ehviewer.library.document.EBOOK_FONT_SIZE_MAX
 import com.hippo.ehviewer.library.document.EBOOK_FONT_SIZE_MIN
 import eu.kanade.tachiyomi.ui.reader.setting.OrientationType
+import eu.kanade.tachiyomi.ui.reader.setting.PageTransitionType
 import eu.kanade.tachiyomi.ui.reader.setting.ReadingModeType
+import eu.kanade.tachiyomi.ui.reader.setting.SlideshowPlaybackMode
 
 @Composable
 fun ReaderModeSetting(
     isWebtoon: Boolean,
     isDocument: Boolean = false,
+    supportsSlideshow: Boolean = true,
+    supportsPageTransitions: Boolean = true,
 ) = Column(modifier = Modifier.verticalScroll(rememberScrollState()).navigationBarsPadding()) {
+    val readingMode = Settings.readingMode.asMutableState()
+    AnimatedVisibility(supportsSlideshow && readingMode.value == ReadingModeType.SLIDESHOW.prefValue) {
+        SlideshowSetting()
+    }
     SpinnerChoice(
         title = stringResource(id = R.string.pref_category_reading_mode),
         entries = stringArrayResource(id = com.hippo.ehviewer.R.array.viewers_selector),
         values = ReadingModeType.entries.map { it.prefValue },
-        field = Settings.readingMode.asMutableState(),
+        field = readingMode,
     )
+    if (supportsPageTransitions) {
+        SpinnerChoice(
+            title = stringResource(R.string.pref_reader_page_transition),
+            entries = PageTransitionType.entries.map { stringResource(it.stringRes) }.toTypedArray(),
+            values = PageTransitionType.entries.map { it.prefValue },
+            field = Settings.pageTransition.asMutableState(),
+        )
+    }
     val dualPageLandscape = Settings.dualPageLandscape.asMutableState()
     SwitchChoice(
         title = stringResource(id = R.string.pref_dual_page_landscape),
@@ -268,7 +284,7 @@ private fun PagerSetting() = Column {
     SpinnerChoice(
         title = stringResource(id = R.string.pref_image_scale_type),
         entries = stringArrayResource(id = com.hippo.ehviewer.R.array.image_scale_type),
-        values = listOf(1, 2, 3, 4, 5, 6),
+        values = listOf(1, 2, 3, 4, 5, 6, 7),
         field = scaleType,
     )
     AnimatedVisibility(visible = scaleType.value == 1) {
@@ -362,5 +378,60 @@ private fun WebtoonSetting() = Column {
     SwitchChoice(
         title = stringResource(id = R.string.pref_crop_borders),
         field = Settings.cropBorder.asMutableState(),
+    )
+}
+
+@Composable
+private fun SlideshowSetting() = Column {
+    Text(
+        text = stringResource(R.string.slideshow_viewer),
+        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    val duration = Settings.slideshowDisplaySeconds.asMutableState()
+    Text(
+        text = stringResource(R.string.pref_slideshow_display_time),
+        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+    )
+    SliderChoice(
+        startSlot = {},
+        endSlot = { Text(stringResource(R.string.pref_slideshow_seconds, duration.value)) },
+        range = 3..200,
+        field = duration,
+    )
+    SpinnerChoice(
+        title = stringResource(R.string.pref_slideshow_playback_mode),
+        entries = SlideshowPlaybackMode.entries.map { stringResource(it.stringRes) }.toTypedArray(),
+        values = SlideshowPlaybackMode.entries.map { it.prefValue },
+        field = Settings.slideshowPlaybackMode.asMutableState(),
+    )
+    SwitchChoice(
+        title = stringResource(R.string.pref_keep_screen_on),
+        field = Settings.slideshowKeepScreenOn.asMutableState(),
+    )
+    SwitchChoice(
+        title = stringResource(R.string.pref_slideshow_dual_pages_override),
+        field = Settings.slideshowDualPages.asMutableState(),
+    )
+    SwitchChoice(
+        title = stringResource(R.string.scale_type_fill_screen),
+        field = Settings.slideshowFillScreen.asMutableState(),
+    )
+    SwitchChoice(
+        title = stringResource(R.string.pref_slideshow_disable_auto_rotate),
+        field = Settings.slideshowDisableAutoRotate.asMutableState(),
+    )
+    CustomBrightnessSetting(
+        Settings.slideshowCustomBrightness.asMutableState(),
+        Settings.slideshowCustomBrightnessValue.asMutableState(),
+    )
+    SpinnerChoice(
+        title = stringResource(R.string.pref_slideshow_transition_override),
+        entries = (
+            listOf(stringResource(R.string.pref_reader_transition_inherit)) +
+                PageTransitionType.entries.map { stringResource(it.stringRes) }
+            ).toTypedArray(),
+        values = listOf(-1) + PageTransitionType.entries.map { it.prefValue },
+        field = Settings.slideshowPageTransition.asMutableState(),
     )
 }

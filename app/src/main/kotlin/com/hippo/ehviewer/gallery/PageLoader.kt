@@ -38,6 +38,8 @@ import com.hippo.ehviewer.util.FileUtils
 import com.hippo.ehviewer.util.OSUtils
 import com.hippo.ehviewer.util.detectAds
 import com.hippo.ehviewer.util.displayString
+import eu.kanade.tachiyomi.ui.reader.setting.PageTransitionType
+import eu.kanade.tachiyomi.ui.reader.setting.ReadingModeType
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.locks.ReentrantReadWriteLock
 import kotlin.concurrent.read
@@ -439,7 +441,63 @@ abstract class PageLoader(
         }
     }
 
+    private var transitionPages: Set<Int> = emptySet()
+    private val transitionPins = TransitionImagePins<Image>({ it.pin() }, { it.unpin() })
+
+    @Synchronized
+    override fun setTransitionPages(indices: Set<Int>) {
+        val valid = indices.filter { it in 0 until size }.toSet()
+        if (transitionPages == valid) return
+        transitionPages = valid
+        val stale = transitionPins.setWanted(valid) { index ->
+            when (val status = pages.getOrNull(index)?.status) {
+                is PageStatus.Ready -> status.image
+                is PageStatus.Blocked -> status.ad
+                else -> null
+            }
+        }
+        stale.forEach { (index, image) ->
+            val page = pages.getOrNull(index) ?: return@forEach
+            val status = page.status
+            if (status is PageStatus.Ready && status.image === image &&
+                page.statusFlow.compareAndSet(status, PageStatus.Queued)
+            ) {
+                page.displayReadyFlow.value = false
+            }
+        }
+        if (lastNavigation == null && size > 0) {
+            navigate(ReaderNavigation(startPage, startPage..startPage, NavigationKind.Settled))
+        } else {
+            replan()
+        }
+    }
+
     private val demandPlanner = ReaderDemandPlanner()
+    private var slideshowShuffle: SlideshowShuffle? = null
+    private var slideshowPagesPerSlide = 1
+    private var slideshowFirstPageAlone = false
+
+    @Synchronized
+    override fun setSlideshowShuffle(enabled: Boolean, pagesPerSlide: Int, firstPageAlone: Boolean) {
+        require(pagesPerSlide in 1..2)
+        if ((slideshowShuffle != null) == enabled &&
+            slideshowPagesPerSlide == pagesPerSlide && slideshowFirstPageAlone == firstPageAlone
+        ) {
+            return
+        }
+        slideshowPagesPerSlide = pagesPerSlide
+        slideshowFirstPageAlone = firstPageAlone
+        slideshowShuffle = if (enabled) SlideshowShuffle(pagesPerSlide, firstPageAlone) else null
+        replan()
+    }
+
+    @Synchronized
+    override fun nextSlideshowPage(currentPage: Int, repeat: Boolean): Int? {
+        val next = slideshowShuffle?.next(currentPage, size, repeat)
+        // A new shuffled pass changes speculative loading even before the viewport moves.
+        replan()
+        return next
+    }
 
     @Volatile
     private var lastNavigation: ReaderNavigation? = null
@@ -460,6 +518,7 @@ abstract class PageLoader(
 
     override fun restart() {
         cancelDecodeJobs()
+        transitionPins.releaseImages()
         releaseAllHiResFull()
         exportFiles.clear()
         sourceReady.clear()
@@ -649,33 +708,35 @@ abstract class PageLoader(
     }
 
     private fun publishPageSucceed(index: Int, image: Image, replaceCache: Boolean) {
-        if (replaceCache) {
-            lock.write {
-                try {
-                    val existing = cache.get(index)
-                    if (existing !== image) {
-                        // Replace any prior entry first so put() doesn't sum two huge weights.
-                        if (existing != null) cache.remove(index)
-                        // Construction refcnt=1 is the cache ownership; do not pin again.
-                        cache.put(index, image)
+        transitionPins.publish(index, image) {
+            if (replaceCache) {
+                lock.write {
+                    try {
+                        val existing = cache.get(index)
+                        if (existing !== image) {
+                            // Replace any prior entry first so put() doesn't sum two huge weights.
+                            if (existing != null) cache.remove(index)
+                            // Construction refcnt=1 is the cache ownership; do not pin again.
+                            cache.put(index, image)
+                        }
+                    } catch (e: Throwable) {
+                        logcat(e)
                     }
-                } catch (e: Throwable) {
-                    logcat(e)
                 }
             }
-        }
-        pages[index].rememberLayout(image.intrinsicSize.width, image.intrinsicSize.height)
-        if (index == 0) {
-            val gid = info?.gid ?: 0L
-            if (gid != 0L) {
-                com.hippo.ehviewer.library.LandscapeCoverMarks.note(
-                    gid,
-                    image.intrinsicSize.width,
-                    image.intrinsicSize.height,
-                )
+            pages[index].rememberLayout(image.intrinsicSize.width, image.intrinsicSize.height)
+            if (index == 0) {
+                val gid = info?.gid ?: 0L
+                if (gid != 0L) {
+                    com.hippo.ehviewer.library.LandscapeCoverMarks.note(
+                        gid,
+                        image.intrinsicSize.width,
+                        image.intrinsicSize.height,
+                    )
+                }
             }
+            pages[index].statusFlow.update { if (image.hasQrCode) PageStatus.Blocked(image) else PageStatus.Ready(image) }
         }
-        pages[index].statusFlow.update { if (image.hasQrCode) PageStatus.Blocked(image) else PageStatus.Ready(image) }
     }
 
     private fun notifyPageSucceed(index: Int, image: Image, replaceCache: Boolean = true) {
@@ -701,6 +762,8 @@ abstract class PageLoader(
 
     override fun close() {
         cancelDecodeJobs()
+        transitionPins.clear()
+        transitionPages = emptySet()
         releaseAllHiResFull()
         exportFiles.clear()
         sourceReady.clear()
@@ -833,11 +896,20 @@ abstract class PageLoader(
     @Synchronized
     override fun navigate(navigation: ReaderNavigation) {
         if (size <= 0) return
+        val slideshow = Settings.readingMode.value == ReadingModeType.SLIDESHOW.prefValue
         val policy = ReaderLoadPolicy(
             sourceAhead = Settings.preloadImage.value.coerceIn(0, 6),
-            decodeAhead = Settings.readerDecodeAhead.value.coerceAtLeast(0),
+            decodeAhead = if (slideshow) {
+                1
+            } else {
+                Settings.readerDecodeAhead.value.coerceAtLeast(
+                    if (PageTransitionType.fromPreference(Settings.effectivePageTransition()).isFade) slideshowPagesPerSlide else 0,
+                )
+            },
         )
-        val demand = demandPlanner.plan(navigation, size, policy)
+        val sequential = demandPlanner.plan(navigation, size, policy, forceForward = slideshow)
+        val demand = (slideshowShuffle?.plan(sequential, size, policy) ?: sequential)
+            .withTransitionPages(transitionPages, replaceLookahead = slideshow && transitionPages.isNotEmpty())
         lastNavigation = demand.navigation
         desiredDecodedPages = demand.decodedPages
         orderedDecodePages = demand.visibleDecode + demand.decodeAhead
@@ -861,8 +933,9 @@ abstract class PageLoader(
     private fun dropUndemandedDecodedPages(desired: Set<Int>) {
         val n = size
         if (n <= 0) return
-        val keepMin = (desired.minOrNull() ?: 0) - 1
-        val keepMax = (desired.maxOrNull() ?: 0) + 1
+        val visible = lastNavigation?.visiblePages
+        val keepMin = ((if (slideshowShuffle != null) visible?.first else desired.minOrNull()) ?: 0) - 1
+        val keepMax = ((if (slideshowShuffle != null) visible?.last else desired.maxOrNull()) ?: 0) + 1
         fun keep(i: Int) = i in desired || i in keepMin..keepMax
         for (i in 0 until n) {
             if (keep(i)) continue

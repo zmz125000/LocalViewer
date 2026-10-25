@@ -1190,4 +1190,26 @@
     <string name="blocked_image">Blocked image</string>
     <string name="show_blocked_image">Show blocked image</string>
     <!-- Tachiyomi Reader End-->
+    <string name="slideshow_viewer">Slideshow</string>
+    <string name="pref_slideshow_display_time">Photo display time</string>
+    <string name="pref_slideshow_seconds">%1$d s</string>
+    <string name="pref_slideshow_repeat">Repeat</string>
+    <string name="pref_slideshow_off">Off</string>
+    <string name="pref_slideshow_shuffle">Shuffle</string>
+    <string name="pref_slideshow_loop">Repeat</string>
+    <string name="pref_slideshow_next_gallery">Auto next gallery</string>
+    <string name="pref_slideshow_dual_pages_override">Dual pages override</string>
+    <string name="pref_slideshow_disable_auto_rotate">Disable auto rotate to fit</string>
+    <string name="scale_type_fill_screen">Fill screen</string>
+    <string name="settings_reset_to_defaults">Reset all settings to default</string>
+    <string name="settings_reset_to_defaults_done">All settings reset to default</string>
+    <string name="pref_reader_page_transition">Page transition</string>
+    <string name="pref_reader_transition_fade">Fade</string>
+    <string name="pref_reader_transition_none">None</string>
+    <string name="pref_reader_transition_inherit">Use reading mode setting</string>
+    <string name="pref_slideshow_transition_override">Page transition override</string>
+    <string name="pref_reader_transition_slide">Slide</string>
+    <string name="pref_reader_transition_fade_blend">Fade (blend)</string>
+    <string name="pref_slideshow_playback_mode">Slideshow playback mode</string>
+    <string name="pref_slideshow_play_once">Play once</string>
 </resources>

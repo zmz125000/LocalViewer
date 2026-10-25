@@ -21,6 +21,15 @@ interface ReaderSession : AutoCloseable {
     fun replan()
     fun restart()
 
+    /** Additional decode demand held while preparing a page transition. */
+    fun setTransitionPages(indices: Set<Int>)
+
+    /** Configure loader-owned slide traversal and matching decode/source lookahead. */
+    fun setSlideshowShuffle(enabled: Boolean, pagesPerSlide: Int = 1, firstPageAlone: Boolean = false)
+
+    /** Real page index of the next shuffled slide, or null at the end of this pass. */
+    fun nextSlideshowPage(currentPage: Int, repeat: Boolean = false): Int?
+
     /** Camera RAW pages reload when HDR display changes, because the bitmap itself changes. */
     fun containsRawStill(): Boolean = false
 
@@ -153,6 +162,7 @@ class ReaderDemandPlanner(
         navigation: ReaderNavigation,
         pageCount: Int,
         policy: ReaderLoadPolicy,
+        forceForward: Boolean = false,
     ): ReaderDemand {
         if (pageCount <= 0) {
             return ReaderDemand(
@@ -175,6 +185,7 @@ class ReaderDemandPlanner(
             }
         }
         previousAnchor = anchor
+        if (forceForward) direction = ReadingDirection.Forward
 
         val visibleStart = navigation.visiblePages.first.coerceIn(0, lastPage)
         val visibleEnd = navigation.visiblePages.last.coerceIn(visibleStart, lastPage)
@@ -203,4 +214,12 @@ class ReaderDemandPlanner(
             sourceOnly = sourceOnly,
         )
     }
+}
+
+/** Keep the current viewport and transition destination decoded together. */
+internal fun ReaderDemand.withTransitionPages(indices: Set<Int>, replaceLookahead: Boolean = false): ReaderDemand {
+    val lookahead = if (replaceLookahead) emptyList() else decodeAhead
+    val decode = indices.filterNot(visibleDecode::contains) + lookahead.filterNot(indices::contains)
+    val decoded = (visibleDecode + decode).toSet()
+    return copy(decodeAhead = decode, sourceOnly = sourceOnly.filterNot(decoded::contains))
 }

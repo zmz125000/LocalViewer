@@ -2,6 +2,7 @@ package com.hippo.ehviewer.ui.reader
 
 import android.app.Activity
 import android.view.WindowManager
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.lazy.LazyListState
@@ -15,6 +16,7 @@ import androidx.compose.ui.layout.FixedScale
 import androidx.compose.ui.layout.times
 import com.hippo.ehviewer.Settings
 import eu.kanade.tachiyomi.ui.reader.setting.OrientationType
+import eu.kanade.tachiyomi.ui.reader.setting.PageTransitionType
 import me.saket.telephoto.zoomable.ZoomableState
 
 /**
@@ -86,36 +88,42 @@ fun ContentScale.Companion.fromPreferences(value: Int, srcSize: Size, dstSize: S
     4 -> FillHeight
     5 -> FixedScale(1 / Inside.computeScaleFactor(srcSize, dstSize).scaleX)
     6 -> if (srcSize.width > srcSize.height) FillHeight else FillWidth
+    7 -> Crop
     else -> Fit
 }
 
 suspend fun PagerState.performScrollToPage(page: Int) {
-    if (Settings.pageTransitions.value) {
-        animateScrollToPage(page)
+    val handler = PagerTransitionHandlers[this]
+    if (handler != null) {
+        handler(page)
     } else {
-        scrollToPage(page)
+        when (PageTransitionType.fromPreference(Settings.effectivePageTransition())) {
+            PageTransitionType.DEFAULT -> animateScrollToPage(page)
+            PageTransitionType.SLIDE -> animateScrollToPage(page, animationSpec = tween(450, easing = PageTransitionEaseOut))
+            else -> scrollToPage(page)
+        }
     }
 }
 
 suspend fun PagerState.moveToPrevious() {
-    val target = currentPage - 1
+    val target = PagerTransitionHandlers.navigationPage(this) - 1
     if (target >= 0) {
         performScrollToPage(target)
     }
 }
 
 suspend fun PagerState.moveToNext() {
-    val target = currentPage + 1
+    val target = PagerTransitionHandlers.navigationPage(this) + 1
     if (target < pageCount) {
         performScrollToPage(target)
     }
 }
 
 suspend fun LazyListState.performScrollBy(value: Float) {
-    if (Settings.pageTransitions.value) {
-        animateScrollBy(value)
-    } else {
-        scrollBy(value)
+    when (PageTransitionType.fromPreference(Settings.effectivePageTransition())) {
+        PageTransitionType.NONE -> scrollBy(value)
+        PageTransitionType.SLIDE -> animateScrollBy(value, animationSpec = tween(450, easing = PageTransitionEaseOut))
+        else -> animateScrollBy(value)
     }
 }
 
