@@ -86,6 +86,12 @@ suspend inline fun <T> useWebDavFolderPageLoader(
                     if (remoteDir.isEmpty()) name else "$remoteDir/$name"
                 }
 
+                // Called only on IO/decode threads; reuse existing ZIP cache paths directly.
+                private fun cachedZipMember(index: Int): Path? {
+                    val (zip, member) = ZipAsDirListing.zipMemberPath(relativeFile(index)) ?: return null
+                    return ZipMemberCover.cachedPath("webdav:${source.id}:$zip", member)
+                }
+
                 override fun originalFile(index: Int): ReaderOriginalFile = ReaderOriginalFile.WebDav(
                     source.id,
                     relativeFile(index),
@@ -98,7 +104,8 @@ suspend inline fun <T> useWebDavFolderPageLoader(
                         return@runCatching true
                     }
                     val primary = WebDavCache.cachePath(source.id, remoteDir, imageFileNames[index])
-                    val cached = WebDavCache.resolveReaderPath(primary)
+                    val resolved = WebDavCache.resolveReaderPath(primary)
+                    val cached = if (WebDavCache.isCachedOnDisk(resolved)) resolved else cachedZipMember(index) ?: resolved
                     check(WebDavCache.isCachedOnDisk(cached)) { "Not cached" }
                     cached sendTo file
                     true
@@ -110,7 +117,8 @@ suspend inline fun <T> useWebDavFolderPageLoader(
                     }
                     val name = imageFileNames[index]
                     val primary = WebDavCache.cachePath(source.id, remoteDir, name)
-                    val path = WebDavCache.resolveReaderPath(primary)
+                    val resolved = WebDavCache.resolveReaderPath(primary)
+                    val path = if (WebDavCache.isCachedOnDisk(resolved)) resolved else cachedZipMember(index) ?: resolved
                     check(WebDavCache.isCachedOnDisk(path)) { "WebDAV page $index not downloaded" }
                     return object : PathSource {
                         override val source = path
@@ -241,12 +249,12 @@ suspend inline fun <T> useWebDavFolderPageLoader(
                                 prefetchPermitCount = prefetchPermitCount,
                             ) {
                                 if (skipDisk) {
-                                    if (ramPages.containsKey(index) || WebDavCache.isPageCachedOnDisk(cache)) {
+                                    if (ramPages.containsKey(index) || WebDavCache.isPageCachedOnDisk(cache) || cachedZipMember(index) != null) {
                                         dispatchReady(index)
                                         return@withFolderNetworkPermit
                                     }
                                     downloadToRam(index)
-                                    if (ramPages.containsKey(index) || WebDavCache.isPageCachedOnDisk(cache)) {
+                                    if (ramPages.containsKey(index) || WebDavCache.isPageCachedOnDisk(cache) || cachedZipMember(index) != null) {
                                         dispatchReady(index)
                                     } else if (readyWaiters.containsKey(index)) {
                                         notifyPageFailed(index, "WebDAV download incomplete")
@@ -303,6 +311,7 @@ suspend inline fun <T> useWebDavFolderPageLoader(
                     val name = imageFileNames[index]
                     val cache = WebDavCache.cachePath(source.id, remoteDir, name)
                     if (WebDavCache.isPageCachedOnDisk(cache)) return
+                    if (cachedZipMember(index) != null) return
                     val remote = relativeFile(index)
                     ZipAsDirListing.zipMemberPath(remote)?.let { (zipRel, member) ->
                         val bytes = ZipMemberCover.extractBytes(

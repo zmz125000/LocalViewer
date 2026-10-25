@@ -103,6 +103,12 @@ suspend inline fun <T> useSmbFolderPageLoader(
                     if (remoteDir.isEmpty()) name else "$remoteDir/$name"
                 }
 
+                // Called only on IO/decode threads; avoid loading existing ZIP cache files into RAM.
+                private fun cachedZipMember(index: Int): Path? {
+                    val (zip, member) = ZipAsDirListing.zipMemberPath(relativeFile(index)) ?: return null
+                    return ZipMemberCover.cachedPath("smb:${source.id}:$zip", member)
+                }
+
                 override fun originalFile(index: Int): ReaderOriginalFile = ReaderOriginalFile.Smb(
                     source.id,
                     relativeFile(index),
@@ -115,7 +121,8 @@ suspend inline fun <T> useSmbFolderPageLoader(
                         return@runCatching true
                     }
                     val primary = SmbCache.cachePath(source.id, remoteDir, imageFileNames[index])
-                    val cached = SmbCache.resolveReaderPath(primary)
+                    val resolved = SmbCache.resolveReaderPath(primary)
+                    val cached = if (SmbCache.isCachedOnDisk(resolved)) resolved else cachedZipMember(index) ?: resolved
                     check(SmbCache.isCachedOnDisk(cached)) { "Not cached" }
                     cached sendTo file
                     true
@@ -127,7 +134,8 @@ suspend inline fun <T> useSmbFolderPageLoader(
                     }
                     val name = imageFileNames[index]
                     val primary = SmbCache.cachePath(source.id, remoteDir, name)
-                    val path = SmbCache.resolveReaderPath(primary)
+                    val resolved = SmbCache.resolveReaderPath(primary)
+                    val path = if (SmbCache.isCachedOnDisk(resolved)) resolved else cachedZipMember(index) ?: resolved
                     // Always re-probe disk: knownPresent can outlive LRU eviction of cover pages.
                     check(SmbCache.isCachedOnDisk(path)) { "SMB page $index not downloaded" }
                     return object : PathSource {
@@ -296,7 +304,7 @@ suspend inline fun <T> useSmbFolderPageLoader(
                                 }
                             }
                             val ready = if (skipDisk) {
-                                ramPages.containsKey(index) || SmbCache.isPageCachedOnDisk(cache)
+                                ramPages.containsKey(index) || SmbCache.isPageCachedOnDisk(cache) || cachedZipMember(index) != null
                             } else {
                                 SmbCache.isPageCachedOnDisk(cache)
                             }
@@ -351,6 +359,7 @@ suspend inline fun <T> useSmbFolderPageLoader(
                     val name = imageFileNames[index]
                     val cache = SmbCache.cachePath(source.id, remoteDir, name)
                     if (SmbCache.isPageCachedOnDisk(cache)) return
+                    if (cachedZipMember(index) != null) return
                     val rel = relativeFile(index)
                     ZipAsDirListing.zipMemberPath(rel)?.let { (zipRel, member) ->
                         val bytes = ZipMemberCover.extractBytes(

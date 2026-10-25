@@ -493,12 +493,11 @@ object BrowseSaveAs {
 
     private suspend fun writeLocalBytes(path: Path, out: OutputStream) {
         ZipPaths.parse(path)?.let { (zipAbs, member) ->
-            val bytes = withLocalZipCentralDirectory(zipAbs.toPath()) { cd ->
+            val extracted = withLocalZipCentralDirectory(zipAbs.toPath()) { cd ->
                 val entry = cd.find(member) ?: error("Missing ZIP member $member")
-                cd.extract(entry, SAVE_EXTRACT_MAX_BYTES)
-                    ?: error("Cannot extract $member")
+                cd.extractToStream(entry, out, SAVE_EXTRACT_MAX_BYTES)
             } ?: error("Cannot read ZIP")
-            out.write(bytes)
+            check(extracted) { "Cannot extract $member" }
             return
         }
         copyCounted(path, out)
@@ -795,9 +794,7 @@ object BrowseSaveAs {
         openSource().use { src ->
             val cd = ZipCentralDirectory.open(src) ?: error("Cannot read ZIP")
             val entry = cd.find(member) ?: error("Missing ZIP member $member")
-            val bytes = cd.extract(entry, SAVE_EXTRACT_MAX_BYTES)
-                ?: error("Cannot extract $member")
-            out.write(bytes)
+            check(cd.extractToStream(entry, out, SAVE_EXTRACT_MAX_BYTES)) { "Cannot extract $member" }
         }
     }
 

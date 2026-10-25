@@ -266,7 +266,7 @@ private suspend fun <T> withExportSource(
         descriptor?.use { opened ->
             val regular = runCatching { OsConstants.S_ISREG(Os.fstat(opened.fileDescriptor).st_mode) }.getOrDefault(false)
             // The descriptor alias is only a header-probe hint. Decode the original
-            // SAF path: RAW maps its FD directly; other codecs read its stream.
+            // SAF path: native codecs map it; platform codecs use their file decoder.
             if (regular) return work(File("/proc/self/fd/${opened.fd}"), localSource)
         }
     }

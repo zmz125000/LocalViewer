@@ -4,10 +4,10 @@ import android.os.Looper
 import com.ehviewer.core.files.mkdirs
 import com.hippo.ehviewer.image.hdr.HdrConvertCache
 import com.hippo.ehviewer.image.hdr.browseEmbeddedRawJpeg
+import com.hippo.ehviewer.image.hdr.withBufferedImageDownload
 import com.hippo.ehviewer.image.hdr.writeDownloadedThumbnail
 import com.hippo.ehviewer.library.OriginDiskCache
 import com.hippo.ehviewer.util.FileUtils
-import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileOutputStream
 import java.io.OutputStream
@@ -258,9 +258,11 @@ object WebDavCache {
             val nameHint = originalFileName ?: path.name
             try {
                 if (HdrConvertCache.usesNetworkLibConvert(nameHint)) {
-                    val bos = ByteArrayOutputStream(1024 * 1024)
-                    write(bos)
-                    val finalPath = HdrConvertCache.finalizeNetworkBytes(bos.toByteArray(), path, nameHint)
+                    val finalPath = withBufferedImageDownload(
+                        download = write,
+                        fromBytes = { HdrConvertCache.finalizeNetworkBytes(it, path, nameHint) },
+                        fromFile = { HdrConvertCache.finalizeNetworkDownload(it, path, nameHint) },
+                    )
                     markPresent(finalPath)
                     touch(finalPath)
                 } else {
