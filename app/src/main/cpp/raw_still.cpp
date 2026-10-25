@@ -1172,6 +1172,45 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeRawBytesToDirect(JNIEnv* env, jcl
 #endif
 }
 
+extern "C" JNIEXPORT jbyteArray JNICALL
+Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeRawBufferToDirect(JNIEnv* env, jclass, jobject j_input,
+                                                                jint max_edge, jint present, jfloat panel_boost,
+                                                                jfloat exposure_ev, jint wb_mode, jint kelvin,
+                                                                jfloat highlight_stops, jboolean hdr_linear, jboolean camera_look,
+                                                                jfloat shoulder, jfloat shadows, jfloat midtones,
+                                                                jfloat highlights, jintArray j_info, jfloatArray j_boost) {
+#if !defined(EHVIEWER_HDR_CODECS)
+    (void)env;
+    (void)j_input;
+    (void)max_edge;
+    (void)present;
+    (void)panel_boost;
+    (void)exposure_ev;
+    (void)wb_mode;
+    (void)kelvin;
+    (void)highlight_stops;
+    (void)hdr_linear;
+    (void)camera_look;
+    (void)shoulder;
+    (void)shadows;
+    (void)midtones;
+    (void)highlights;
+    (void)j_info;
+    (void)j_boost;
+    return nullptr;
+#else
+    if (!j_input || !j_info || !j_boost) return nullptr;
+    const jlong len = env->GetDirectBufferCapacity(j_input);
+    const auto* bytes = static_cast<const uint8_t*>(env->GetDirectBufferAddress(j_input));
+    if (!bytes || len <= 0) return nullptr;
+    jbyteArray result = decode_raw_buffer(env, reinterpret_cast<const uint8_t*>(bytes), static_cast<size_t>(len),
+                                          max_edge, present, panel_boost, exposure_ev, wb_mode, kelvin,
+                                          highlight_stops, hdr_linear, camera_look, shoulder, shadows, midtones,
+                                          highlights, j_info, j_boost);
+    return result;
+#endif
+}
+
 extern "C" JNIEXPORT jint JNICALL
 Java_com_hippo_ehviewer_jni_HdrConvertKt_extractRawPreviewFile(JNIEnv* env, jclass, jstring j_path, jstring j_out,
                                                                jboolean demosaic) {
@@ -1249,5 +1288,19 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_extractRawPreviewFd(JNIEnv* env, jclass
     if (!out) return -1;
     int rc = extract_preview(nullptr, file.data, file.size, out, demosaic == JNI_TRUE);
     env->ReleaseStringUTFChars(j_out, out);
+    return rc;
+}
+
+extern "C" JNIEXPORT jint JNICALL
+Java_com_hippo_ehviewer_jni_HdrConvertKt_extractRawPreviewBuffer(JNIEnv* env, jclass, jobject input, jstring output,
+                                                               jboolean demosaic) {
+    if (!input || !output) return -1;
+    const auto* bytes = static_cast<const uint8_t*>(env->GetDirectBufferAddress(input));
+    const jlong length = env->GetDirectBufferCapacity(input);
+    if (!bytes || length <= 0) return -1;
+    const char* path = env->GetStringUTFChars(output, nullptr);
+    if (!path) return -1;
+    const int rc = extract_preview(nullptr, bytes, static_cast<size_t>(length), path, demosaic == JNI_TRUE);
+    env->ReleaseStringUTFChars(output, path);
     return rc;
 }

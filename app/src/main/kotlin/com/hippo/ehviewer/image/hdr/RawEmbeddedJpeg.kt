@@ -82,6 +82,22 @@ internal fun writeLocatedRawJpeg(descriptor: FileDescriptor, dest: File): Boolea
 }
 
 /** [writeLocatedRawJpeg] for a RAW container that is already in memory. */
+internal fun writeLocatedRawJpeg(input: ByteBuffer, dest: File): Boolean {
+    val buffer = input.slice()
+    val jpeg = readLocatedRawJpeg(buffer.remaining().toLong()) { off, len ->
+        if (off < 0 || len <= 0 || off >= buffer.limit()) return@readLocatedRawJpeg null
+        val start = off.toInt()
+        val size = minOf(len, buffer.limit() - start)
+        ByteArray(size).also {
+            buffer.duplicate().apply {
+                position(start)
+                limit(start + size)
+            }.get(it)
+        }
+    } ?: return false
+    return writeJpegFile(dest, jpeg)
+}
+
 internal fun writeLocatedRawJpeg(bytes: ByteArray, dest: File): Boolean {
     val jpeg = readLocatedRawJpeg(bytes.size.toLong()) { off, len ->
         if (off < 0L || len <= 0 || off > bytes.size) return@readLocatedRawJpeg null

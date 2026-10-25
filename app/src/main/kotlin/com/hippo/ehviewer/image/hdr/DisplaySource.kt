@@ -1,12 +1,10 @@
 package com.hippo.ehviewer.image.hdr
 
-import com.ehviewer.core.files.read
 import com.hippo.ehviewer.image.ByteBufferSource
 import com.hippo.ehviewer.image.ImageSource
 import com.hippo.ehviewer.image.PathSource
 import com.hippo.ehviewer.util.FileUtils
 import java.nio.ByteBuffer
-import kotlinx.io.readByteArray
 import okio.Path
 
 /**
@@ -68,9 +66,13 @@ object DisplaySource {
     ): ImageSource {
         val route = classify(src.source, fileNameHint)
         if (!route.needsUhdr) return src
-        val bytes = src.source.heapBytesForConvert()
-        check(bytes.isNotEmpty()) { "empty image buffer" }
-        val ready = convertLibBytes(bytes, fileNameHint, persistTo)
+        val ready = if (src.source.isDirect) {
+            HdrConvertCache.ensureCoilReadyFromBuffer(src.source, fileNameHint, persistTo)
+        } else {
+            val bytes = src.source.heapBytesForConvert()
+            check(bytes.isNotEmpty()) { "empty image buffer" }
+            convertLibBytes(bytes, fileNameHint, persistTo)
+        }
         src.close()
         return object : PathSource {
             override val source: Path = ready
@@ -84,9 +86,7 @@ object DisplaySource {
         if (persistTo == null) return HdrConvertCache.ensureCoilReady(source, hint)
         val route = classifyPath(source, hint)
         if (!route.needsUhdr) return source
-        val bytes = source.read { readByteArray() }
-        check(bytes.isNotEmpty()) { "empty image file: $hint" }
-        return convertLibBytes(bytes, hint, persistTo)
+        return HdrConvertCache.finalizeFileSource(source, persistTo, hint)
     }
 
     private suspend fun convertLibBytes(bytes: ByteArray, fileNameHint: String, persistTo: Path?): Path = if (persistTo != null) {

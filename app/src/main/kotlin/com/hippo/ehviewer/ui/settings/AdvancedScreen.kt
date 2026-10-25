@@ -218,17 +218,24 @@ fun AnimatedVisibilityScope.AdvancedScreen(navigator: DestinationsNavigator) = S
             }
             SimpleMenuPreferenceInt(
                 title = stringResource(R.string.settings_thumbnail_convert_slots),
-                summary = stringResource(R.string.settings_thumbnail_convert_slots_summary),
+                summary = stringResource(
+                    R.string.settings_thumbnail_convert_slots_summary,
+                    thumbnailConvertSlots.value,
+                ),
                 entry = com.hippo.ehviewer.R.array.thumbnail_convert_slots_entries,
                 entryValueRes = com.hippo.ehviewer.R.array.thumbnail_convert_slots_entry_values,
                 state = thumbnailConvertSlots,
             )
+            val archiveExtractSlots = Settings.archiveExtractSlots.asMutableState()
             SimpleMenuPreferenceInt(
                 title = stringResource(R.string.settings_archive_extract_slots),
-                summary = stringResource(R.string.settings_archive_extract_slots_summary),
+                summary = stringResource(
+                    R.string.settings_archive_extract_slots_summary,
+                    archiveExtractSlots.value,
+                ),
                 entry = com.hippo.ehviewer.R.array.archive_extract_slots_entries,
                 entryValueRes = com.hippo.ehviewer.R.array.archive_extract_slots_entry_values,
-                state = Settings.archiveExtractSlots.asMutableState(),
+                state = archiveExtractSlots,
             )
             val smbConnections = Settings.multiThreadDownload.asMutableState()
             SimpleMenuPreferenceInt(

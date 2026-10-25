@@ -4,6 +4,7 @@
  */
 #include <android/log.h>
 #include <jni.h>
+#include "thumbnail_mapped_input.h"
 
 #include <algorithm>
 #include <array>
@@ -376,7 +377,7 @@ bool setup_full_frame(PKImageDecode* dec, PKPixelFormatGUID* fmt, unsigned max_e
 /**
  * Decode JXR from an in-memory buffer (no temp file).
  * Same approach as branch `hdr` HdrJxr: CreateStreamFromMemory + native pixel format.
- * SAF/local paths: Kotlin reads via Okio → bytes → this (skips copy-to-temp.jxr).
+ * Input can be backed by a Java byte array or a read-only mapped file.
  *
  * @param composite_alpha_on_black true for JPEG/UHDR (no alpha plane) — flatten
  *   straight alpha onto black. false for direct Bitmap display — keep A.
@@ -1794,6 +1795,38 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_convertJxrBytesToUltraHdr(JNIEnv* env, 
     return rc;
 }
 
+/** Full-resolution convert with borrowed mapped/direct input. */
+extern "C" JNIEXPORT jint JNICALL
+Java_com_hippo_ehviewer_jni_HdrConvertKt_convertJxrBufferToUltraHdr(JNIEnv* env, jclass,
+                                                                   jobject jInput,
+                                                                   jstring jOutput) try {
+    if (!jInput || !jOutput) return -10;
+    const jlong len = env->GetDirectBufferCapacity(jInput);
+    const auto* bytes = static_cast<const uint8_t*>(env->GetDirectBufferAddress(jInput));
+    if (!bytes || len <= 0) return -12;
+
+    ThumbnailOutputPath outputPath(env, jOutput);
+    const char* out_path = outputPath.get();
+    if (!out_path) return -14;
+
+    std::vector<uint16_t> rgba;
+    unsigned w = 0, h = 0;
+    int rc = -20;
+    uhdr_color_gamut_t cg = UHDR_CG_BT_709;
+    bool untagged_linear = false;
+    if (decode_jxr_from_memory(bytes, static_cast<size_t>(len), rgba, w, h, true, &untagged_linear, &cg)) {
+        if (untagged_linear) rebase_untagged_scrgb(rgba, w, h);
+        // The reported gamut matches the applied ICC or untagged scRGB.
+        rc = encode_linear_rgba_f16_to_uhdr(w, h, rgba.data(), out_path, cg, 0.f);
+    } else {
+        rc = -21;
+    }
+
+    return rc;
+} catch (...) {
+    return -30;
+}
+
 /** JXR → Ultra HDR with optional long-edge cap (0 = full res). Used for thumbs. */
 extern "C" JNIEXPORT jint JNICALL
 Java_com_hippo_ehviewer_jni_HdrConvertKt_convertJxrBytesToUltraHdrMaxEdge(
@@ -1834,6 +1867,44 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_convertJxrBytesToUltraHdrMaxEdge(
 
     env->ReleaseStringUTFChars(jOutput, out_path);
     return rc;
+}
+
+/** File-backed thumbnail input avoids Java arrays and JNI compressed copies. */
+extern "C" JNIEXPORT jint JNICALL
+Java_com_hippo_ehviewer_jni_HdrConvertKt_convertJxrFdToUltraHdrMaxEdge(
+        JNIEnv* env, jclass, jint fd, jstring jOutput, jint maxEdge) try {
+    if (!jOutput || maxEdge <= 0) return -10;
+    ThumbnailMappedInput input(fd);
+    if (!input.data) return -101;  // Non-regular/unmappable provider: stage to a file.
+    ThumbnailOutputPath outputPath(env, jOutput);
+    const char* out_path = outputPath.get();
+    if (!out_path) return -14;
+
+    std::vector<uint16_t> rgba;
+    unsigned w = 0, h = 0;
+    int rc = -20;
+    uhdr_color_gamut_t cg = UHDR_CG_BT_709;
+    bool untagged_linear = false;
+    if (decode_jxr_from_memory(input.data, input.size, rgba, w, h, true,
+                               &untagged_linear, &cg, maxEdge > 0 ? static_cast<unsigned>(maxEdge) : 0)) {
+        if (untagged_linear) rebase_untagged_scrgb(rgba, w, h);
+        input.reset();
+        if (maxEdge > 0) {
+            scale_rgba_f16_max_edge(rgba, w, h, static_cast<unsigned>(maxEdge));
+        }
+        // JXR thumbs: HDR from scanned peak (not format); capacity = content peak nits.
+        const float peak = scan_scrgb_peak(rgba.data(), static_cast<size_t>(w) * h);
+        const bool force_hdr = peak > 1.25f;
+        rc = encode_linear_rgba_f16_to_uhdr(w, h, rgba.data(), out_path, cg,
+                                           thumb_peak_nits_from_linear(peak), force_hdr);
+    } else {
+        rc = -21;
+    }
+
+    return rc;
+} catch (...) {
+    // In particular, do not let std::bad_alloc terminate the process at JNI.
+    return -30;
 }
 
 /**
@@ -1934,4 +2005,45 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeJxrBytesToDirect(JNIEnv* env, jcl
     }
     env->ReleaseByteArrayElements(jInput, bytes, JNI_ABORT);
     return result;
+}
+
+/** Direct/mapped compressed input; the caller owns its lifetime. */
+extern "C" JNIEXPORT jbyteArray JNICALL
+Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeJxrBufferToDirect(JNIEnv* env, jclass,
+                                                                jobject jInput, jint maxEdge,
+                                                                jboolean advancedColor,
+                                                                jfloat panelBoost,
+                                                                jintArray jOutInfo,
+                                                                jfloatArray jOutBoost) try {
+    if (!jInput || !jOutInfo || !jOutBoost) return nullptr;
+    if (env->GetArrayLength(jOutInfo) < 6 || env->GetArrayLength(jOutBoost) < 1) return nullptr;
+    const jlong len = env->GetDirectBufferCapacity(jInput);
+    const auto* bytes = static_cast<const uint8_t*>(env->GetDirectBufferAddress(jInput));
+    if (!bytes || len <= 0) return nullptr;
+
+    std::vector<uint16_t> rgba;
+    unsigned w = 0, h = 0;
+    jbyteArray result = nullptr;
+    // Preserve transparency: do not composite onto black (UHDR convert paths do).
+    bool untagged_linear = false;
+    uhdr_color_gamut_t cg = UHDR_CG_BT_709;
+    if (decode_jxr_from_memory(reinterpret_cast<const uint8_t*>(bytes), static_cast<size_t>(len),
+                               rgba, w, h, /*composite_alpha_on_black=*/false, &untagged_linear, &cg)) {
+        if (maxEdge > 0) {
+            scale_rgba_f16_max_edge(rgba, w, h, static_cast<unsigned>(maxEdge));
+        }
+        // Rebase before the fit so the shoulder sees 203-nit units.
+        if (untagged_linear) {
+            rebase_untagged_scrgb(rgba, w, h);
+            fit_untagged_jxr_highlights(rgba, w, h, panelBoost);
+        }
+        // Peak (and optional force) decides 8888 vs F16; float JXR often peaks > 1.25.
+        // Embedded ICC has been transformed to the reported working gamut.
+        result = pack_direct_to_jbyte_array(env, rgba, w, h, /*force_hdr=*/false, cg,
+                                            advancedColor == JNI_TRUE, /*transfer_cicp=*/0, jOutInfo,
+                                            jOutBoost);
+    }
+    return result;
+} catch (...) {
+    return nullptr;
 }

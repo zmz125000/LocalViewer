@@ -51,7 +51,9 @@ object CachePagePublish {
         // 3) Byte copy fallback — only if tmp still present (no File.copyTo throw).
         if (tmp.isFile) {
             runCatching {
-                dest.writeBytes(tmp.readBytes())
+                tmp.inputStream().use { input ->
+                    dest.outputStream().use { output -> input.copyTo(output) }
+                }
             }
         }
         return dest.isFile

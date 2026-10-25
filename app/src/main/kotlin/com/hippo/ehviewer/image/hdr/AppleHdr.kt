@@ -5,6 +5,8 @@ import android.graphics.Gainmap
 import android.os.Build
 import android.util.Log
 import androidx.annotation.RequiresApi
+import java.nio.ByteBuffer
+import okio.Path
 
 /**
  * Apple HEIC gain map (`urn:com:apple:photo:2020:aux:hdrgainmap`) attached as a
@@ -32,12 +34,26 @@ internal object AppleHdr {
         return false
     }
 
-    fun attachOrCopy(base: Bitmap, heic: ByteArray): Bitmap? {
+    fun looksLike(buffer: ByteBuffer): Boolean {
+        val bytes = buffer.slice()
+        val urn = HeifContainer.APPLE_GAIN_MAP_URN
+        outer@ for (i in 0..bytes.remaining() - urn.length) {
+            for (j in urn.indices) if (bytes[i + j] != urn[j].code.toByte()) continue@outer
+            return true
+        }
+        return false
+    }
+
+    fun attachOrCopy(base: Bitmap, heic: ByteArray): Bitmap? = attachOrCopy(base, ByteBuffer.wrap(heic))
+
+    fun attachOrCopy(base: Bitmap, path: Path): Bitmap? = withStillInput(path) { attachOrCopy(base, it) }
+
+    fun attachOrCopy(base: Bitmap, input: ByteBuffer): Bitmap? {
+        val heic = input.slice()
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.UPSIDE_DOWN_CAKE) return null
         if (base.isRecycled || !looksLike(heic)) return null
         val gain = HeifContainer.parse(heic)?.appleGainMap() ?: return null
-        val decoded = AppleGainMapDecode.decode(gain) ?: return null
-        val gray = Bitmap.createBitmap(decoded.pixels, decoded.width, decoded.height, Bitmap.Config.ARGB_8888)
+        val gray = AppleGainMapDecode.decode(gain) ?: return null
         return runCatching { attach(base, gray, gain.headroom) }
             .onFailure {
                 gray.recycle()

@@ -8,6 +8,7 @@ import com.hippo.ehviewer.image.hdr.HdrConvertCache
 import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
+import java.io.OutputStream
 import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.Dispatchers
@@ -182,6 +183,28 @@ object ZipMemberCover {
         val source = openSource() ?: return null
         return try {
             ZipCentralDirectory.open(source)?.find(memberRel)?.uncompressedSize?.takeIf { it >= 0L }
+        } finally {
+            runCatching { source.close() }
+        }
+    }
+
+    /** Existing member files stay on disk; readers can hand this path to their decoder. */
+    fun cachedPath(zipKey: String, memberRel: String): Path? = destFile(zipKey, memberRel)
+        .takeIf { it.isFile && it.length() > 0L }?.absolutePath?.toPath()
+
+    /** Stream a cached or remote member without building a full compressed/uncompressed array. */
+    fun copyTo(zipKey: String, memberRel: String, output: OutputStream, openSource: () -> ArchiveByteSource?): Boolean {
+        if (!isZipMemberCoverExtractAllowed(memberRel)) return false
+        cachedPath(zipKey, memberRel)?.let { path ->
+            File(path.toString()).inputStream().use { it.copyTo(output) }
+            return true
+        }
+        val source = openSource() ?: return false
+        return try {
+            val cd = ZipCentralDirectory.open(source) ?: return false
+            val entry = cd.find(memberRel) ?: return false
+            if (rejectIfTooLarge(entry, notify = true)) return false
+            cd.extractToStream(entry, output, MAX_CACHE_BYTES)
         } finally {
             runCatching { source.close() }
         }

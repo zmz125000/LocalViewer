@@ -271,9 +271,9 @@
     <string name="settings_heavy_decode">ヘビーデコード</string>
     <string name="settings_heavy_decode_summary">同時に行うフルサイズデコード数: %s</string>
     <string name="settings_thumbnail_convert_slots">サムネイル変換の並列数</string>
-    <string name="settings_thumbnail_convert_slots_summary">画像とPDFのサムネイル変換の最大並列処理数。</string>
+    <string name="settings_thumbnail_convert_slots_summary">サムネイル変換ジョブは最大 %s 件まで実行します。</string>
     <string name="settings_archive_extract_slots">アーカイブ展開の並列数</string>
-    <string name="settings_archive_extract_slots_summary">アーカイブの表紙展開の最大並列処理数。</string>
+    <string name="settings_archive_extract_slots_summary">アーカイブのサムネイル抽出ジョブを最大 %s 件実行します。</string>
     <string name="settings_advanced_read_cache_size_summary">SMB ページキャッシュ（および旧オンライン画像キャッシュ）の最大サイズ</string>
     <string name="insufficient_gp">オリジナル画像をダウンロードする GP が不足しています</string>
     <string name="settings_privacy_save_history">履歴を保存</string>

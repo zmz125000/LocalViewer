@@ -60,7 +60,10 @@ internal fun exportWorkingBytes(width: Long, height: Long, sourceBytes: Long, ra
 }
 
 /** Native exports keep pixel planes outside the Java heap; fallbacks retain their previous budget. */
-internal fun exportHeapBytes(width: Long, height: Long, sourceBytes: Long, raw: Boolean, nativePixels: Boolean = false): Long {
+internal fun exportHeapBytes(width: Long, height: Long, sourceBytes: Long, raw: Boolean, nativePixels: Boolean = false, mappedInput: Boolean = false): Long {
+    // File/FD exports borrow mapped compressed input and retain native pixel
+    // buffers through encode. Only small probes/metadata live on the Java heap.
+    if (mappedInput && nativePixels) return 8L * 1024 * 1024
     if (width <= 0 || height <= 0 || width > 65536 || height > 65536) return Long.MAX_VALUE
     return width * height * (
         if (nativePixels) {
@@ -115,8 +118,7 @@ internal object StillExportWork {
         val sourceBytes = file.length()
         // Codec working buffers live on the native heap, not inside the JVM's
         // maxMemory allowance. Keep both leases through encode, with separate limits.
-        val nativePixels = !isJpeg2000Extension(ext) && !isHeicImageExtension(ext)
-        return heapBudget.withBytes(exportHeapBytes(width, height, sourceBytes, raw, nativePixels)) {
+        return heapBudget.withBytes(exportHeapBytes(width, height, sourceBytes, raw, nativePixels = true, mappedInput = true)) {
             nativeBudget.withBytes(exportWorkingBytes(width, height, sourceBytes, raw), work)
         }
     }

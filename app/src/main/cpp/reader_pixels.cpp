@@ -1,9 +1,12 @@
 #include "reader_pixels.h"
 
 #include <jni.h>
+#include <sys/mman.h>
+#include <sys/stat.h>
 #include <android/hardware_buffer_jni.h>
 #include <android/bitmap.h>
 #include <cstring>
+#include <cstdlib>
 #include <limits>
 #include <new>
 #include <utility>
@@ -15,8 +18,12 @@ struct ReaderPixels {
     ReaderPixels* previous = nullptr;
     bool exporting = false;
     bool keep_sdr = true;
-    void* data() { return halves.empty() ? static_cast<void*>(bytes.data()) : halves.data(); }
-    size_t size() const { return halves.empty() ? bytes.size() : halves.size() * sizeof(uint16_t); }
+    void* owned = nullptr;
+    size_t owned_size = 0;
+    void drop_owned() { free(owned); owned = nullptr; owned_size = 0; }
+    ~ReaderPixels() { drop_owned(); }
+    void* data() { return owned ? owned : halves.empty() ? static_cast<void*>(bytes.data()) : halves.data(); }
+    size_t size() const { return owned ? owned_size : halves.empty() ? bytes.size() : halves.size() * sizeof(uint16_t); }
 };
 
 // decodePacked is synchronous and never suspends or switches threads. Separate
@@ -30,6 +37,7 @@ void throw_argument(JNIEnv* env, const char* message) {
 
 bool retain_reader_pixels(std::vector<uint8_t>& pixels) {
     if (!active) return false;
+    active->drop_owned();
     active->bytes = std::move(pixels);
     active->halves.clear();
     return true;
@@ -37,6 +45,7 @@ bool retain_reader_pixels(std::vector<uint8_t>& pixels) {
 
 bool retain_reader_pixels(std::vector<uint16_t>& pixels) {
     if (!active) return false;
+    active->drop_owned();
     active->halves = std::move(pixels);
     active->bytes.clear();
     return true;
@@ -45,9 +54,8 @@ bool retain_reader_pixels(std::vector<uint16_t>& pixels) {
 bool export_pixels_capture() { return active && active->exporting; }
 bool export_pixels_keep_sdr() { return !active || !active->exporting || active->keep_sdr; }
 
-extern "C" JNIEXPORT jbyteArray JNICALL
-Java_com_hippo_ehviewer_jni_HdrConvertKt_captureExportBitmap(JNIEnv* env, jclass, jobject bitmap) {
-    if (!bitmap || !export_pixels_capture()) return nullptr;
+static jbyteArray capture_bitmap(JNIEnv* env, jobject bitmap) {
+    if (!bitmap || !active) return nullptr;
     AndroidBitmapInfo info{};
     if (AndroidBitmap_getInfo(env, bitmap, &info) != ANDROID_BITMAP_RESULT_SUCCESS) return nullptr;
     const size_t bpp = info.format == ANDROID_BITMAP_FORMAT_RGBA_F16 ? 8 :
@@ -70,9 +78,19 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_captureExportBitmap(JNIEnv* env, jclass
         retain_reader_pixels(pixels);
         return env->NewByteArray(0);
     } catch (const std::bad_alloc&) {
-        env->ThrowNew(env->FindClass("java/lang/OutOfMemoryError"), "Native SDR export pixels");
+        env->ThrowNew(env->FindClass("java/lang/OutOfMemoryError"), "Native bitmap capture");
         return nullptr;
     }
+}
+
+extern "C" JNIEXPORT jbyteArray JNICALL
+Java_com_hippo_ehviewer_jni_HdrConvertKt_captureExportBitmap(JNIEnv* env, jclass, jobject bitmap) {
+    return export_pixels_capture() ? capture_bitmap(env, bitmap) : nullptr;
+}
+
+extern "C" JNIEXPORT jbyteArray JNICALL
+Java_com_hippo_ehviewer_jni_HdrConvertKt_captureStillBitmap(JNIEnv* env, jclass, jobject bitmap) {
+    return capture_bitmap(env, bitmap);
 }
 
 extern "C" JNIEXPORT jlong JNICALL
@@ -158,4 +176,58 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_copyNativeReaderPixelsToAHB(
     if (AHardwareBuffer_unlock(buffer, nullptr) != 0) {
         env->ThrowNew(env->FindClass("java/lang/IllegalStateException"), "HardwareBuffer unlock failed");
     }
+}
+
+// Borrow the descriptor; Kotlin keeps it open for this synchronous decode scope.
+extern "C" JNIEXPORT jobject JNICALL
+Java_com_hippo_ehviewer_jni_HdrConvertKt_mapStillInput(JNIEnv* env, jclass, jint fd) {
+    struct stat st{};
+    if (fstat(fd, &st) != 0 || !S_ISREG(st.st_mode) || st.st_size <= 0 ||
+        st.st_size > std::numeric_limits<int32_t>::max()) return nullptr;
+    const size_t size = static_cast<size_t>(st.st_size);
+    void* data = mmap(nullptr, size, PROT_READ, MAP_PRIVATE, fd, 0);
+    if (data == MAP_FAILED) return nullptr;
+    jobject buffer = env->NewDirectByteBuffer(data, static_cast<jlong>(size));
+    if (!buffer) munmap(data, size);
+    return buffer;
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_hippo_ehviewer_jni_HdrConvertKt_unmapStillInput(JNIEnv* env, jclass, jobject buffer) {
+    void* data = env->GetDirectBufferAddress(buffer);
+    const jlong size = env->GetDirectBufferCapacity(buffer);
+    if (data && size > 0) munmap(data, static_cast<size_t>(size));
+}
+
+// Scratch buffers are explicitly released, independent of Java GC scheduling.
+extern "C" JNIEXPORT jobject JNICALL
+Java_com_hippo_ehviewer_jni_HdrConvertKt_allocateStillBuffer(JNIEnv* env, jclass, jint size) {
+    if (size <= 0) return nullptr;
+    void* data = calloc(1, static_cast<size_t>(size));
+    if (!data) return nullptr;
+    jobject buffer = env->NewDirectByteBuffer(data, size);
+    if (!buffer) free(data);
+    return buffer;
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_hippo_ehviewer_jni_HdrConvertKt_releaseStillBuffer(JNIEnv* env, jclass, jobject buffer) {
+    free(env->GetDirectBufferAddress(buffer));
+}
+
+extern "C" JNIEXPORT jbyteArray JNICALL
+Java_com_hippo_ehviewer_jni_HdrConvertKt_captureStillPixels(JNIEnv* env, jclass, jobject buffer) {
+    if (!active || !buffer) return nullptr;
+    void* data = env->GetDirectBufferAddress(buffer);
+    const jlong size = env->GetDirectBufferCapacity(buffer);
+    if (!data || size <= 0) return nullptr;
+    // Allocate the success token before adopting; failure leaves ownership with Kotlin.
+    jbyteArray token = env->NewByteArray(0);
+    if (!token) return nullptr;
+    active->drop_owned();
+    active->bytes.clear();
+    active->halves.clear();
+    active->owned = data;
+    active->owned_size = static_cast<size_t>(size);
+    return token;
 }

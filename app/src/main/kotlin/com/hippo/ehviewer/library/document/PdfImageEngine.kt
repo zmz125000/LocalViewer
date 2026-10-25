@@ -235,13 +235,18 @@ class PdfImageEngine private constructor(
 
     override fun extractBytes(index: Int): ByteArray? = extractBytes(index, null)
 
-    fun extractBytes(index: Int, onIndexedBitmap: ((Bitmap) -> Boolean)?): ByteArray? {
+    /** Folder covers decode at the grid-thumb size without creating a full reader page. */
+    fun extractCoverThumb(index: Int): ByteArray? = extractBytes(index, null, OriginDiskCache.THUMB_EDGE)
+
+    fun extractBytes(index: Int, onIndexedBitmap: ((Bitmap) -> Boolean)?): ByteArray? = extractBytes(index, onIndexedBitmap, thumbEdge = 0)
+
+    private fun extractBytes(index: Int, onIndexedBitmap: ((Bitmap) -> Boolean)?, thumbEdge: Int): ByteArray? {
         val ref = synchronized(pagesLock) { pages.getOrNull(index) } ?: return null
         return synchronized(parserLock) {
             var lastIo: IOException? = null
             repeat(EXTRACT_IO_ATTEMPTS) { attempt ->
                 try {
-                    return@synchronized extractBytesLocked(ref, index, onIndexedBitmap)
+                    return@synchronized extractBytesLocked(ref, index, onIndexedBitmap, thumbEdge)
                 } catch (e: IOException) {
                     lastIo = e
                     logcat("PdfImage", e)
@@ -256,6 +261,7 @@ class PdfImageEngine private constructor(
         ref: ImageRef,
         index: Int,
         onIndexedBitmap: ((Bitmap) -> Boolean)?,
+        thumbEdge: Int,
     ): ByteArray? {
         val effectiveRef = if (!ref.hasSeek) {
             val offset = parser.locateStreamDataOffset(ref.objNum) ?: -1L
@@ -281,6 +287,7 @@ class PdfImageEngine private constructor(
                     effectiveRef.objNum,
                     effectiveRef.gen,
                     onIndexedBitmap,
+                    thumbEdge,
                 )
             ) {
                 is PdfParser.DirectExtractResult.Success -> direct.bytes
@@ -288,7 +295,7 @@ class PdfImageEngine private constructor(
                     // A stale/old index may lack enough object metadata. Rebuild once;
                     // transport failures deliberately do not trigger a duplicate fetch.
                     if (parser.bootstrap()) {
-                        parser.extractImageBytes(effectiveRef.objNum, effectiveRef.gen, onIndexedBitmap)
+                        parser.extractImageBytes(effectiveRef.objNum, effectiveRef.gen, onIndexedBitmap, thumbEdge)
                     } else {
                         null
                     }
@@ -297,7 +304,7 @@ class PdfImageEngine private constructor(
             }
         } else {
             if (parser.bootstrap()) {
-                parser.extractImageBytes(effectiveRef.objNum, effectiveRef.gen, onIndexedBitmap)
+                parser.extractImageBytes(effectiveRef.objNum, effectiveRef.gen, onIndexedBitmap, thumbEdge)
             } else {
                 null
             }
@@ -1050,9 +1057,10 @@ internal class PdfParser(
         objNum: Int,
         gen: Int,
         onIndexedBitmap: ((Bitmap) -> Boolean)? = null,
+        thumbEdge: Int = 0,
     ): ByteArray? {
         val stream = loadStreamObject(objNum, gen) ?: return null
-        return decodeImageStream(stream, onIndexedBitmap)
+        return decodeImageStream(stream, onIndexedBitmap, thumbEdge)
     }
 
     /**
@@ -1065,6 +1073,7 @@ internal class PdfParser(
         objNum: Int,
         gen: Int,
         onIndexedBitmap: ((Bitmap) -> Boolean)? = null,
+        thumbEdge: Int = 0,
     ): DirectExtractResult {
         if (streamOffset < 0L || streamLen <= 0L || streamLen > MAX_IMAGE_STREAM_BYTES) {
             return DirectExtractResult.RetryWithXref
@@ -1087,7 +1096,7 @@ internal class PdfParser(
         // fall through into a second full-object network request.
         val data = readBytes(streamOffset, streamLen.toInt(), requireFull = true)
             ?: return DirectExtractResult.Failed
-        val decoded = decodeImageStream(StreamObj(dict, data), onIndexedBitmap)
+        val decoded = decodeImageStream(StreamObj(dict, data), onIndexedBitmap, thumbEdge)
             ?: return DirectExtractResult.Failed
         return DirectExtractResult.Success(decoded)
     }
@@ -1159,7 +1168,7 @@ internal class PdfParser(
         for (f in filters) {
             data = when (f) {
                 "/DCTDecode", "/DCT" -> return data
-                "/JPXDecode" -> return encodeJpeg2000(data)
+                "/JPXDecode" -> return encodeJpeg2000(data, thumbEdge)
                 "/FlateDecode", "/Fl" -> inflate(data) ?: return null
                 "/ASCII85Decode", "/A85" -> ascii85Decode(data) ?: return null
                 "/ASCIIHexDecode", "/AHx" -> asciiHexDecode(data) ?: return null
@@ -1225,49 +1234,7 @@ internal class PdfParser(
         val expected = w.toLong() * h * channels
         if (samples.size.toLong() < expected) return null
         if (thumbEdge > 0) {
-            if (!stillWanted()) return null
-            val step = PdfRawSamples.thumbStep(w, h, thumbEdge)
-            val (tw, th) = PdfRawSamples.thumbSize(w, h, step)
-            val pixels = if (indexed != null) {
-                PdfRawSamples.argbSubsampledIndexed(
-                    samples,
-                    w,
-                    h,
-                    step,
-                    indexed.palette,
-                    indexed.baseChannels,
-                )
-            } else {
-                when (channels) {
-                    1 -> PdfRawSamples.argbSubsampled(samples, w, h, 1, step) { off ->
-                        PdfRawSamples.packGray(samples[off].toInt())
-                    }
-                    3 -> PdfRawSamples.argbSubsampled(samples, w, h, 3, step) { off ->
-                        PdfRawSamples.packRgb(
-                            samples[off].toInt(),
-                            samples[off + 1].toInt(),
-                            samples[off + 2].toInt(),
-                        )
-                    }
-                    4 -> PdfRawSamples.argbSubsampled(samples, w, h, 4, step) { off ->
-                        PdfRawSamples.packCmyk(
-                            samples[off].toInt(),
-                            samples[off + 1].toInt(),
-                            samples[off + 2].toInt(),
-                            samples[off + 3].toInt(),
-                        )
-                    }
-                    else -> return null
-                }
-            }
-            if (!stillWanted()) return null
-            val bmp = Bitmap.createBitmap(tw, th, Bitmap.Config.ARGB_8888)
-            return try {
-                bmp.setPixels(pixels, 0, tw, 0, 0, tw, th)
-                encodeLossyThumb(bmp)
-            } finally {
-                bmp.recycle()
-            }
+            return encodeSampleThumb(samples, w, h, channels, indexed, thumbEdge, stillWanted)
         }
         val pixelCount = w * h
         val pixels = if (indexed != null) {
@@ -1290,6 +1257,54 @@ internal class PdfParser(
             } finally {
                 bmp.recycle()
             }
+        }
+    }
+
+    /** Shared by grid and folder covers; only the sampled pixels become ARGB. */
+    private fun encodeSampleThumb(
+        samples: ByteArray,
+        w: Int,
+        h: Int,
+        channels: Int,
+        indexed: InlineIndexed?,
+        edge: Int,
+        stillWanted: () -> Boolean = { true },
+    ): ByteArray? {
+        if (!stillWanted()) return null
+        val step = PdfRawSamples.thumbStep(w, h, edge)
+        val (tw, th) = PdfRawSamples.thumbSize(w, h, step)
+        val pixels = if (indexed != null) {
+            PdfRawSamples.argbSubsampledIndexed(samples, w, h, step, indexed.palette, indexed.baseChannels)
+        } else {
+            when (channels) {
+                1 -> PdfRawSamples.argbSubsampled(samples, w, h, 1, step) { off ->
+                    PdfRawSamples.packGray(samples[off].toInt())
+                }
+                3 -> PdfRawSamples.argbSubsampled(samples, w, h, 3, step) { off ->
+                    PdfRawSamples.packRgb(
+                        samples[off].toInt(),
+                        samples[off + 1].toInt(),
+                        samples[off + 2].toInt(),
+                    )
+                }
+                4 -> PdfRawSamples.argbSubsampled(samples, w, h, 4, step) { off ->
+                    PdfRawSamples.packCmyk(
+                        samples[off].toInt(),
+                        samples[off + 1].toInt(),
+                        samples[off + 2].toInt(),
+                        samples[off + 3].toInt(),
+                    )
+                }
+                else -> return null
+            }
+        }
+        if (!stillWanted()) return null
+        val bmp = Bitmap.createBitmap(tw, th, Bitmap.Config.ARGB_8888)
+        return try {
+            bmp.setPixels(pixels, 0, tw, 0, 0, tw, th)
+            encodeLossyThumb(bmp)
+        } finally {
+            bmp.recycle()
         }
     }
 
@@ -1590,6 +1605,7 @@ internal class PdfParser(
     private fun decodeImageStream(
         stream: StreamObj,
         onIndexedBitmap: ((Bitmap) -> Boolean)? = null,
+        thumbEdge: Int = 0,
     ): ByteArray? {
         val dict = stream.dict
         val filters = filterNames(dict["/Filter"])
@@ -1597,8 +1613,8 @@ internal class PdfParser(
         // Apply filters in order
         for (f in filters) {
             data = when (f) {
-                "/DCTDecode", "/DCT" -> return data // JPEG payload as-is
-                "/JPXDecode" -> return encodeJpeg2000(data)
+                "/DCTDecode", "/DCT" -> return if (thumbEdge > 0) subsampleJpeg(data, thumbEdge) else data
+                "/JPXDecode" -> return encodeJpeg2000(data, thumbEdge)
                 "/FlateDecode", "/Fl" -> inflate(data) ?: return null
                 "/ASCII85Decode", "/A85" -> ascii85Decode(data) ?: return null
                 "/ASCIIHexDecode", "/AHx" -> asciiHexDecode(data) ?: return null
@@ -1606,13 +1622,14 @@ internal class PdfParser(
             }
         }
         // No filter or after Flate: raw samples → lossless WebP.
-        return encodeRawSamples(dict, data, onIndexedBitmap)
+        return encodeRawSamples(dict, data, onIndexedBitmap, thumbEdge)
     }
 
     private fun encodeRawSamples(
         dict: PdfDict,
         data: ByteArray,
         onIndexedBitmap: ((Bitmap) -> Boolean)? = null,
+        thumbEdge: Int = 0,
     ): ByteArray? {
         val w = dict.intValue("/Width") ?: return null
         val h = dict.intValue("/Height") ?: return null
@@ -1655,7 +1672,11 @@ internal class PdfParser(
                 d.objNum?.let { PdfRef(it, d.gen) }
             }
             when {
-                lookupRef != null -> loadStreamPayload(lookupRef.num, lookupRef.gen)
+                lookupRef != null -> if (thumbEdge > 0) {
+                    loadSmallPayload(lookupRef.num, lookupRef.gen, MAX_GRID_PALETTE_BYTES)
+                } else {
+                    loadStreamPayload(lookupRef.num, lookupRef.gen)
+                }
                 lookupItem is PdfString -> lookupItem.bytes
                 else -> (lookupItem?.let { resolveValue(it) } as? PdfString)?.bytes
             }
@@ -1664,6 +1685,12 @@ internal class PdfParser(
         }
 
         if (bits < 8 && (!isIndexed || indexedPalette == null)) return null
+        if (thumbEdge > 0) {
+            // An unresolved indexed palette must not be interpreted as grayscale.
+            if (isIndexed && indexedPalette == null) return null
+            val indexed = indexedPalette?.let { InlineIndexed(indexedBaseCs, it) }
+            return encodeSampleThumb(samples, w, h, cs, indexed, thumbEdge)
+        }
         val pixelCount = w * h
         val pixels = if (isIndexed && indexedPalette != null) {
             PdfRawSamples.argbFromIndexed(samples, pixelCount, indexedPalette, indexedBaseCs)
@@ -1711,10 +1738,10 @@ internal class PdfParser(
     }
 
     /** JP2 / J2K → WebP. ImageDecoder cannot open JPEG 2000. */
-    private fun encodeJpeg2000(data: ByteArray): ByteArray? {
-        val bmp = runCatching { decodeJpeg2000Bitmap(data, 0) }.getOrNull() ?: return null
+    private fun encodeJpeg2000(data: ByteArray, thumbEdge: Int = 0): ByteArray? {
+        val bmp = runCatching { decodeJpeg2000Bitmap(data, thumbEdge) }.getOrNull() ?: return null
         return try {
-            encodeExtractedBitmap(bmp)
+            if (thumbEdge > 0) encodeLossyThumb(bmp) else encodeExtractedBitmap(bmp)
         } finally {
             bmp.recycle()
         }

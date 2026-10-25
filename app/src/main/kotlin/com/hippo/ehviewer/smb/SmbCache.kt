@@ -4,9 +4,10 @@ import android.os.Looper
 import com.ehviewer.core.files.mkdirs
 import com.hippo.ehviewer.image.hdr.HdrConvertCache
 import com.hippo.ehviewer.image.hdr.browseEmbeddedRawJpeg
+import com.hippo.ehviewer.image.hdr.withBufferedImageDownload
+import com.hippo.ehviewer.image.hdr.writeDownloadedThumbnail
 import com.hippo.ehviewer.library.OriginDiskCache
 import com.hippo.ehviewer.util.FileUtils
-import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileOutputStream
 import java.io.OutputStream
@@ -278,14 +279,12 @@ object SmbCache {
                         }
                     } else {
                         // No page cache: MaxEdge-only thumb (no full-page UHDR from grid browse).
-                        val bos = ByteArrayOutputStream(256 * 1024)
-                        download(bos)
-                        val ok = HdrConvertCache.writeThumbFromBytes(
-                            bytes = bos.toByteArray(),
-                            destJpeg = dest,
-                            maxEdge = THUMB_DISK_EDGE,
+                        val ok = writeDownloadedThumbnail(
+                            dest = dest,
+                            edge = THUMB_DISK_EDGE,
                             quality = THUMB_WEBP_QUALITY,
-                            fileNameHint = pageName,
+                            name = pageName,
+                            download = download,
                         )
                         if (!ok) {
                             error("SMB browse thumb failed for $remoteRelativeFile")
@@ -303,7 +302,7 @@ object SmbCache {
      * Download full file into [path] if missing (reader pages).
      * Do **not** use for browse covers — use [ensureBrowseThumb].
      *
-     * Lib/avif + convert mode (B1): download to RAM → classify → UHDR `.jpg` only.
+     * Lib/avif + convert mode (B1): small downloads in RAM / large downloads mapped from temp → classify → UHDR `.jpg` only.
      * [Settings.readerLibDirectBitmap]: same as non-lib — stream original to page cache
      * (reader [LibDirectDecode] presents Bitmap; no UHDR encode on download).
      *
@@ -333,9 +332,11 @@ object SmbCache {
             val nameHint = originalFileName ?: path.name
             try {
                 if (HdrConvertCache.usesNetworkLibConvert(nameHint)) {
-                    val bos = ByteArrayOutputStream(1024 * 1024)
-                    write(bos)
-                    val finalPath = HdrConvertCache.finalizeNetworkBytes(bos.toByteArray(), path, nameHint)
+                    val finalPath = withBufferedImageDownload(
+                        download = write,
+                        fromBytes = { HdrConvertCache.finalizeNetworkBytes(it, path, nameHint) },
+                        fromFile = { HdrConvertCache.finalizeNetworkDownload(it, path, nameHint) },
+                    )
                     markPresent(finalPath)
                     touch(finalPath)
                 } else {

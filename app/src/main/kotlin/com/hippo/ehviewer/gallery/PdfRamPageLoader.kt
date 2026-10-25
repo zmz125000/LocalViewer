@@ -3,6 +3,7 @@ package com.hippo.ehviewer.gallery
 import android.os.SystemClock
 import com.ehviewer.core.util.logcat
 import com.hippo.ehviewer.image.ImageSource
+import com.hippo.ehviewer.image.PathSource
 import com.hippo.ehviewer.image.byteBufferSource
 import com.hippo.ehviewer.library.ArchiveByteSource
 import com.hippo.ehviewer.library.DocumentExtractCache
@@ -55,6 +56,8 @@ internal class PdfRamPageLoader(
     override val title = titleHint
 
     private val ramPages = ConcurrentHashMap<Int, ByteArray>()
+    private val cachedPages = ConcurrentHashMap<Int, Path>()
+    private fun hasPage(index: Int) = ramPages.containsKey(index) || cachedPages.containsKey(index)
     private val extractPool = openExtractSource?.let { PdfExtractPool(it) }
     private val serialExtractSlots = Semaphore(1)
     private val parallelExtractSlots = Semaphore((PDF_EXTRACT_SLOTS - 1).coerceAtLeast(1))
@@ -89,15 +92,32 @@ internal class PdfRamPageLoader(
     }
 
     override fun savePage(index: Int, file: Path): Boolean = runCatching {
-        val bytes = ramPages[index] ?: return@runCatching false
-        File(file.toString()).writeBytes(bytes)
-        true
+        ramPages[index]?.let { bytes ->
+            File(file.toString()).writeBytes(bytes)
+            return@runCatching true
+        }
+        val cached = cachedPages[index]?.let { File(it.toString()) } ?: return@runCatching false
+        val destination = File(file.toString())
+        if (cached.absolutePath != destination.absolutePath) {
+            cached.inputStream().use { input -> destination.outputStream().use { input.copyTo(it) } }
+        }
+        cached.isFile
     }.getOrDefault(false)
 
     override fun openSource(index: Int): ImageSource {
-        val bytes = ramPages[index]
-            ?: throw FileNotFoundException("PDF page $index not in RAM")
-        return byteBufferSource(ByteBuffer.wrap(bytes)) {}
+        ramPages[index]?.let { return byteBufferSource(ByteBuffer.wrap(it)) {} }
+        cachedPages[index]?.let { path ->
+            val file = File(path.toString())
+            if (file.isFile && file.length() > 0L) {
+                return object : PathSource {
+                    override val source = path
+                    override val type = path.name.substringAfterLast('.', "webp")
+                    override fun close() = Unit
+                }
+            }
+            cachedPages.remove(index, path)
+        }
+        throw FileNotFoundException("PDF page $index not available")
     }
 
     override fun prefetchPages(pages: List<Int>, bounds: IntRange) {
@@ -117,9 +137,10 @@ internal class PdfRamPageLoader(
         readyWaiters.forEach { idx, _ ->
             if (idx !in demand.decodedPages) readyWaiters.remove(idx)
         }
-        ramPages.keys.toList().forEach { idx ->
+        (ramPages.keys + cachedPages.keys).toSet().forEach { idx ->
             if (idx !in demand.decodedPages) {
                 ramPages.remove(idx)
+                cachedPages.remove(idx)
                 clearSourceReady(idx)
             }
         }
@@ -130,7 +151,7 @@ internal class PdfRamPageLoader(
             val alreadyVisible = running != null &&
                 running.isActive &&
                 !backgroundJobs.contains(index)
-            if (alreadyVisible || ramPages.containsKey(index)) return@forEach
+            if (alreadyVisible || hasPage(index)) return@forEach
             if (wasDeferred || readyWaiters.containsKey(index)) {
                 ensureExtract(index, interactive = true)
             }
@@ -140,6 +161,7 @@ internal class PdfRamPageLoader(
 
     override fun releaseRamPage(index: Int) {
         ramPages.remove(index)
+        cachedPages.remove(index)
         if (!isDecodedDemand(index)) clearSourceReady(index)
     }
 
@@ -152,6 +174,7 @@ internal class PdfRamPageLoader(
         extractPool?.close()
         readyWaiters.clear()
         ramPages.clear()
+        cachedPages.clear()
         persistIndex()
         cacheKey?.let { DocumentExtractCache.unpin(it) }
         super.close()
@@ -172,11 +195,11 @@ internal class PdfRamPageLoader(
         if (sessionClosed.get() || index !in 0 until size) return
         if (onReady != null) {
             readyWaiters.getOrPut(index) { CopyOnWriteArrayList() }.add(onReady)
-            if (ramPages.containsKey(index)) {
+            if (hasPage(index)) {
                 dispatchReady(index)
                 return
             }
-        } else if (ramPages.containsKey(index)) {
+        } else if (hasPage(index)) {
             return
         }
         // Incomplete index: only the pages on screen. Prefetch and decode-ahead wait.
@@ -208,12 +231,12 @@ internal class PdfRamPageLoader(
         val job = scope.launch(Dispatchers.IO, start = CoroutineStart.LAZY) {
             try {
                 ensureActive()
-                if (ramPages.containsKey(index)) {
+                if (hasPage(index)) {
                     dispatchReady(index)
                     return@launch
                 }
                 extractToRam(index, interactive)
-                if (ramPages.containsKey(index)) {
+                if (hasPage(index)) {
                     dispatchReady(index)
                 } else {
                     val waiters = takeReadyWaiters(index)
@@ -253,7 +276,7 @@ internal class PdfRamPageLoader(
     }
 
     private suspend fun extractToRam(index: Int, interactive: Boolean) {
-        if (ramPages.containsKey(index)) return
+        if (hasPage(index)) return
         if (!interactive && deferDocumentBackgroundWork(engine.structureComplete)) return
         if (index >= engine.pageCount) {
             if (!interactive && !engine.structureComplete) return
@@ -270,7 +293,7 @@ internal class PdfRamPageLoader(
                 }
             }
         }
-        if (index >= engine.pageCount || ramPages.containsKey(index)) return
+        if (index >= engine.pageCount || hasPage(index)) return
         // Same stall as cache-off SMB: sourceReady outlives the RAM copy, so a
         // non-visible re-extract polls outside the ordered window.
         clearSourceReady(index)
@@ -280,19 +303,17 @@ internal class PdfRamPageLoader(
             fallbackSlots = parallelExtractSlots,
             fallbackPermits = PDF_EXTRACT_SLOTS - 1,
         ) {
-            if (ramPages.containsKey(index)) {
+            if (hasPage(index)) {
                 markSourceReady(index)
                 return@withOrderedPermits
             }
             val webpKey = cacheKey?.takeIf { engine.persistsExtract(index) }
             val cachedWebp = webpKey?.let { key ->
-                DocumentExtractCache.findCachedPage(key, index)?.let { path ->
-                    runCatching { File(path.toString()).readBytes() }.getOrNull()
-                }
+                DocumentExtractCache.findCachedPage(key, index)
             }
             if (cachedWebp != null) {
-                if (isDecodedDemand(index)) ramPages[index] = cachedWebp
-                if (ramPages.containsKey(index)) markSourceReady(index)
+                if (isDecodedDemand(index)) cachedPages[index] = cachedWebp
+                if (hasPage(index)) markSourceReady(index)
                 return@withOrderedPermits
             }
             val pool = extractPool
@@ -313,7 +334,7 @@ internal class PdfRamPageLoader(
                     .onFailure { logcat("PdfRamLoader", it) }
             }
             if (isDecodedDemand(index)) ramPages[index] = bytes
-            if (ramPages.containsKey(index)) markSourceReady(index)
+            if (hasPage(index)) markSourceReady(index)
         }
     }
 

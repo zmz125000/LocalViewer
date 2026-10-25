@@ -8,13 +8,11 @@ import android.system.Os
 import android.util.Log
 import com.ehviewer.core.files.metadataOrNull
 import com.ehviewer.core.files.openFileDescriptor
-import com.ehviewer.core.files.read
 import com.ehviewer.core.util.isAtLeastU
 import java.io.File
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import kotlin.math.max
-import kotlinx.io.readByteArray
 import okio.Path
 import okio.Path.Companion.toPath
 
@@ -51,7 +49,7 @@ object OppoProxdr {
     private const val DEFAULT_DISPLAY_RATIO = 1000f / 203f
 
     data class Payload(
-        val maskJpeg: ByteArray,
+        val maskJpeg: ByteBuffer,
         val maxContentBoost: Float,
         val displayRatioForFullHdr: Float,
         val maskWidth: Int,
@@ -107,7 +105,10 @@ object OppoProxdr {
         return looksLike(file.absolutePath.toPath())
     }
 
-    fun parse(bytes: ByteArray): Payload? {
+    fun parse(bytes: ByteArray): Payload? = parse(ByteBuffer.wrap(bytes))
+
+    fun parse(input: ByteBuffer): Payload? {
+        val bytes = input.slice()
         if (!looksLike(bytes)) return null
         val jxrs = lastIndexOf(bytes, MAGIC_JXRS)
         if (jxrs < 0) return null
@@ -120,9 +121,12 @@ object OppoProxdr {
         if (soi < 0 || soi < HEADER_TO_JPEG) return null
 
         val trailerStart = soi - HEADER_TO_JPEG
-        if (trailerStart < 0 || trailerStart + 8 > bytes.size) return null
+        if (trailerStart < 0 || trailerStart + 8 > bytes.limit()) return null
 
-        val maskJpeg = bytes.copyOfRange(soi, eoi + 2)
+        val maskJpeg = bytes.duplicate().apply {
+            position(soi)
+            limit(eoi + 2)
+        }.slice()
         val metaStart = eoi + 2 + META_PAD
         if (metaStart + META_SIZE > catalog) {
             Log.e(TAG, "meta does not fit before catalog")
@@ -152,7 +156,7 @@ object OppoProxdr {
 
         Log.i(
             TAG,
-            "parsed ProXDR mask=${maskW}x$maskH jpeg=${maskJpeg.size}b " +
+            "parsed ProXDR mask=${maskW}x$maskH jpeg=${maskJpeg.remaining()}b " +
                 "maxBoost=$maxBoost displayRatio=$displayRatio",
         )
         return Payload(
@@ -172,20 +176,20 @@ object OppoProxdr {
     /** Reject ordinary files using a small tail read before loading the HEIC. */
     fun attachOrCopy(base: Bitmap, path: Path): Bitmap? {
         if (!isAtLeastU || base.isRecycled || probeTrailer(path) == false) return null
-        val bytes = runCatching { path.read { readByteArray() } }.getOrNull() ?: return null
-        return attachOrCopy(base, bytes)
+        return runCatching { withStillInput(path) { attachOrCopy(base, it) } }.getOrNull()
     }
 
-    fun attachOrCopy(base: Bitmap, heicBytes: ByteArray): Bitmap? {
+    fun attachOrCopy(base: Bitmap, heicBytes: ByteArray): Bitmap? = attachOrCopy(base, ByteBuffer.wrap(heicBytes))
+
+    fun attachOrCopy(base: Bitmap, heicBytes: ByteBuffer): Bitmap? {
         if (!isAtLeastU || base.isRecycled) return null
         val payload = parse(heicBytes) ?: return null
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.UPSIDE_DOWN_CAKE) return null
         var ownedMap: Bitmap? = null
         return runCatching {
-            val map = BitmapFactory.decodeByteArray(
-                payload.maskJpeg,
-                0,
-                payload.maskJpeg.size,
+            val map = BitmapFactory.decodeStream(
+                StillBufferInputStream(payload.maskJpeg.slice()),
+                null,
                 BitmapFactory.Options().apply {
                     inPreferredConfig = Bitmap.Config.ARGB_8888
                     inScaled = false
@@ -235,9 +239,9 @@ object OppoProxdr {
         }
     }
 
-    private fun jpegSofSize(jpeg: ByteArray): Pair<Int, Int>? {
+    private fun jpegSofSize(jpeg: ByteBuffer): Pair<Int, Int>? {
         var i = 2
-        while (i + 9 < jpeg.size) {
+        while (i + 9 < jpeg.remaining()) {
             if (jpeg[i] != 0xff.toByte()) {
                 i++
                 continue
@@ -247,7 +251,7 @@ object OppoProxdr {
                 i += 2
                 continue
             }
-            if (i + 4 >= jpeg.size) break
+            if (i + 4 >= jpeg.remaining()) break
             val seglen = ((jpeg[i + 2].toInt() and 0xff) shl 8) or (jpeg[i + 3].toInt() and 0xff)
             if (marker == 0xc0 || marker == 0xc2) {
                 val h = ((jpeg[i + 5].toInt() and 0xff) shl 8) or (jpeg[i + 6].toInt() and 0xff)
@@ -297,5 +301,28 @@ object OppoProxdr {
         val n = ByteArray(needle.length) { needle[it].code.toByte() }
         if (end <= start) return -1
         return lastIndexOf(hay, n, minOf(end, hay.size))
+    }
+    private fun lastIndexOf(hay: ByteBuffer, needle: ByteArray, endExclusive: Int = hay.limit()): Int {
+        if (needle.isEmpty() || endExclusive < needle.size) return -1
+        val end = minOf(endExclusive, hay.limit())
+        outer@ for (i in end - needle.size downTo 0) {
+            for (j in needle.indices) {
+                if (hay[i + j] != needle[j]) continue@outer
+            }
+            return i
+        }
+        return -1
+    }
+
+    private fun lastIndexOfAscii(hay: ByteBuffer, start: Int, end: Int, needle: String): Int {
+        val n = ByteArray(needle.length) { needle[it].code.toByte() }
+        if (end <= start) return -1
+        return lastIndexOf(hay, n, minOf(end, hay.limit()))
+    }
+    private fun ByteBuffer.copyOfRange(from: Int, to: Int): ByteArray = ByteArray(to - from).also {
+        duplicate().apply {
+            position(from)
+            limit(to)
+        }.get(it)
     }
 }

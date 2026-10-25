@@ -1,7 +1,8 @@
 package com.hippo.ehviewer.image.hdr
 
 import android.util.Log
-import com.hippo.ehviewer.jni.linearizeHeifIcc
+import com.hippo.ehviewer.jni.linearizeHeifIccBuffer
+import java.nio.ByteBuffer
 import kotlin.math.max
 import kotlin.math.pow
 import kotlin.math.roundToInt
@@ -20,7 +21,7 @@ internal object HevcHdrDecode {
     private const val FULL_EDGE = 8192
 
     class Frame(
-        val pixels: ByteArray,
+        val pixels: NativeStillBuffer,
         val width: Int,
         val height: Int,
         /** 0 = linear scRGB, 1 = linear Display P3, 2 = linear BT.2020. */
@@ -28,9 +29,13 @@ internal object HevcHdrDecode {
         val boost: Float,
         val isHdr: Boolean,
         val transfer: Int,
-    )
+    ) : AutoCloseable {
+        override fun close() = pixels.close()
+    }
 
-    fun decode(bytes: ByteArray, maxEdge: Int, advancedColor: Boolean): Frame? {
+    fun decode(bytes: ByteArray, maxEdge: Int, advancedColor: Boolean): Frame? = decode(ByteBuffer.wrap(bytes), maxEdge, advancedColor)
+
+    fun decode(bytes: ByteBuffer, maxEdge: Int, advancedColor: Boolean): Frame? {
         val parsed = HeifContainer.parse(bytes) ?: return null
         val hdr = parsed.primaryImage() ?: return null
         val isHdr = hdr.transfer == 16 || hdr.transfer == 18
@@ -51,98 +56,105 @@ internal object HevcHdrDecode {
         val bt2020 = hdr.primaries == 9 || hdr.matrix == 9
         val transfer = HdrTransferLut(if (icc != null) 8 else hdr.transfer)
         val rgb = FloatArray(3)
-        val pixels = ByteArray(outW * outH * 8)
-        val cellW = hdr.tiles.first().width
-        val cellH = hdr.tiles.first().height
-        var peak = 1f
-        for ((index, tile) in hdr.tiles.withIndex()) {
-            val picture = HevcDecoder.decode(tile, preferSoftware = true) ?: return null
-            if (picture.bitDepth < tile.bitDepth) {
-                Log.w(TAG, "HEVC decoder returned ${picture.bitDepth}-bit for a ${tile.bitDepth}-bit stream")
-                return null
-            }
-            val col = index % hdr.columns
-            val row = index / hdr.columns
-            val x0 = col * cellW
-            val y0 = row * cellH
-            val copyW = minOf(picture.width, hdr.width - x0)
-            val copyH = minOf(picture.height, hdr.height - y0)
-            if (copyW <= 0 || copyH <= 0) return null
-            val chromaXShift = if (picture.chromaWidth == picture.width) 0 else 1
-            val chromaYShift = if (picture.chromaHeight == picture.height) 0 else 1
-            for (y in 0 until copyH) {
-                val oy = ((y0 + y).toLong() * outH / hdr.height).toInt().coerceIn(0, outH - 1)
-                for (x in 0 until copyW) {
-                    val ox = ((x0 + x).toLong() * outW / hdr.width).toInt().coerceIn(0, outW - 1)
-                    val yCode = picture.y[y * picture.width + x].toInt() and 0xffff
-                    val cx = minOf(x shr chromaXShift, picture.chromaWidth - 1)
-                    val cy = minOf(y shr chromaYShift, picture.chromaHeight - 1)
-                    val cAt = cy * picture.chromaWidth + cx
-                    val cb = picture.cb[cAt].toInt() and 0xffff
-                    val cr = picture.cr[cAt].toInt() and 0xffff
-                    yuvToLinear(
-                        yCode, cb, cr, picture.bitDepth,
-                        if (hdr.hasNclx) hdr.fullRange else picture.fullRange ?: hdr.fullRange,
-                        if (hdr.hasNclx) hdr.matrix else picture.matrix ?: hdr.matrix,
-                        hdr.primaries, transfer, rgb,
-                    )
-                    if (hdr.transfer == 18) {
-                        // HLG LUT is 12 * scene RGB. Apply BT.2100's reference
-                        // 1000-nit display OOTF, then express light in 203-nit units.
-                        val yr = when (hdr.primaries) {
-                            9 -> 0.2627f
-                            12 -> 0.2289746f
-                            else -> 0.2126f
-                        }
-                        val yb = when (hdr.primaries) {
-                            9 -> 0.0593f
-                            12 -> 0.0792869f
-                            else -> 0.0722f
-                        }
-                        val sceneY = (yr * rgb[0] + (1f - yr - yb) * rgb[1] + yb * rgb[2]) / 12f
-                        val displayScale = sceneY.coerceAtLeast(0f).pow(0.2f) * (1000f / (12f * 203f))
-                        for (channel in 0..2) rgb[channel] *= displayScale
+        val pixels = NativeStillBuffer.allocate(outW.toLong() * outH * 8)
+        var result: Frame? = null
+        try {
+            val cellW = hdr.tiles.first().width
+            val cellH = hdr.tiles.first().height
+            var peak = 1f
+            for ((index, tile) in hdr.tiles.withIndex()) {
+                val picture = HevcDecoder.decode(tile, preferSoftware = true) ?: return null
+                picture.use {
+                    if (picture.bitDepth < tile.bitDepth) {
+                        Log.w(TAG, "HEVC decoder returned ${picture.bitDepth}-bit for a ${tile.bitDepth}-bit stream")
+                        return null
                     }
-                    val r: Float
-                    val g: Float
-                    val b: Float
-                    if (icc != null) {
-                        r = rgb[0]
-                        g = rgb[1]
-                        b = rgb[2]
-                    } else if (gamut != 0) {
-                        r = rgb[0].coerceAtLeast(0f)
-                        g = rgb[1].coerceAtLeast(0f)
-                        b = rgb[2].coerceAtLeast(0f)
-                    } else if (bt2020) {
-                        r = 1.6604910021f * rgb[0] - 0.5876411388f * rgb[1] - 0.0728498633f * rgb[2]
-                        g = -0.1245504745f * rgb[0] + 1.1328998971f * rgb[1] - 0.0083494226f * rgb[2]
-                        b = -0.0181507634f * rgb[0] - 0.1005788980f * rgb[1] + 1.1187296614f * rgb[2]
-                    } else if (hdr.primaries == 12) {
-                        r = 1.2249401763f * rgb[0] - 0.2249401763f * rgb[1]
-                        g = -0.0420569547f * rgb[0] + 1.0420569547f * rgb[1]
-                        b = -0.0196375546f * rgb[0] - 0.0786360456f * rgb[1] + 1.0982736001f * rgb[2]
-                    } else {
-                        r = rgb[0]
-                        g = rgb[1]
-                        b = rgb[2]
+                    val col = index % hdr.columns
+                    val row = index / hdr.columns
+                    val x0 = col * cellW
+                    val y0 = row * cellH
+                    val copyW = minOf(picture.width, hdr.width - x0)
+                    val copyH = minOf(picture.height, hdr.height - y0)
+                    if (copyW <= 0 || copyH <= 0) return null
+                    val chromaXShift = if (picture.chromaWidth == picture.width) 0 else 1
+                    val chromaYShift = if (picture.chromaHeight == picture.height) 0 else 1
+                    for (y in 0 until copyH) {
+                        val oy = ((y0 + y).toLong() * outH / hdr.height).toInt().coerceIn(0, outH - 1)
+                        for (x in 0 until copyW) {
+                            val ox = ((x0 + x).toLong() * outW / hdr.width).toInt().coerceIn(0, outW - 1)
+                            val yCode = picture.y[y * picture.width + x].toInt() and 0xffff
+                            val cx = minOf(x shr chromaXShift, picture.chromaWidth - 1)
+                            val cy = minOf(y shr chromaYShift, picture.chromaHeight - 1)
+                            val cAt = cy * picture.chromaWidth + cx
+                            val cb = picture.cb[cAt].toInt() and 0xffff
+                            val cr = picture.cr[cAt].toInt() and 0xffff
+                            yuvToLinear(
+                                yCode, cb, cr, picture.bitDepth,
+                                if (hdr.hasNclx) hdr.fullRange else picture.fullRange ?: hdr.fullRange,
+                                if (hdr.hasNclx) hdr.matrix else picture.matrix ?: hdr.matrix,
+                                hdr.primaries, transfer, rgb,
+                            )
+                            if (hdr.transfer == 18) {
+                                // HLG LUT is 12 * scene RGB. Apply BT.2100's reference
+                                // 1000-nit display OOTF, then express light in 203-nit units.
+                                val yr = when (hdr.primaries) {
+                                    9 -> 0.2627f
+                                    12 -> 0.2289746f
+                                    else -> 0.2126f
+                                }
+                                val yb = when (hdr.primaries) {
+                                    9 -> 0.0593f
+                                    12 -> 0.0792869f
+                                    else -> 0.0722f
+                                }
+                                val sceneY = (yr * rgb[0] + (1f - yr - yb) * rgb[1] + yb * rgb[2]) / 12f
+                                val displayScale = sceneY.coerceAtLeast(0f).pow(0.2f) * (1000f / (12f * 203f))
+                                for (channel in 0..2) rgb[channel] *= displayScale
+                            }
+                            val r: Float
+                            val g: Float
+                            val b: Float
+                            if (icc != null) {
+                                r = rgb[0]
+                                g = rgb[1]
+                                b = rgb[2]
+                            } else if (gamut != 0) {
+                                r = rgb[0].coerceAtLeast(0f)
+                                g = rgb[1].coerceAtLeast(0f)
+                                b = rgb[2].coerceAtLeast(0f)
+                            } else if (bt2020) {
+                                r = 1.6604910021f * rgb[0] - 0.5876411388f * rgb[1] - 0.0728498633f * rgb[2]
+                                g = -0.1245504745f * rgb[0] + 1.1328998971f * rgb[1] - 0.0083494226f * rgb[2]
+                                b = -0.0181507634f * rgb[0] - 0.1005788980f * rgb[1] + 1.1187296614f * rgb[2]
+                            } else if (hdr.primaries == 12) {
+                                r = 1.2249401763f * rgb[0] - 0.2249401763f * rgb[1]
+                                g = -0.0420569547f * rgb[0] + 1.0420569547f * rgb[1]
+                                b = -0.0196375546f * rgb[0] - 0.0786360456f * rgb[1] + 1.0982736001f * rgb[2]
+                            } else {
+                                r = rgb[0]
+                                g = rgb[1]
+                                b = rgb[2]
+                            }
+                            peak = max(peak, max(r, max(g, b)))
+                            writePixel(pixels, oy * outW + ox, r, g, b)
+                        }
                     }
-                    peak = max(peak, max(r, max(g, b)))
-                    writePixel(pixels, oy * outW + ox, r, g, b)
                 }
             }
+            if (icc != null && !linearizeHeifIccBuffer(pixels.buffer, icc, advancedColor)) return null
+            val alpha = parsed.alphaImage()
+            if (alpha != null && !applyAlpha(pixels, outW, outH, hdr, alpha)) return null
+            if (hdr.rotationDegreesCcw % 360 != 0) {
+                val turned = rotateHalf(pixels, outW, outH, hdr.rotationDegreesCcw)
+                outW = turned.width
+                outH = turned.height
+                return Frame(turned.pixels, outW, outH, gamut, peak.coerceIn(1f, 64f), isHdr, hdr.transfer).also { result = it }
+            }
+            Log.i(TAG, "HEIC F16 ${outW}x$outH transfer=${hdr.transfer} boost=$peak tiles=${hdr.tiles.size}")
+            return Frame(pixels, outW, outH, gamut, peak.coerceIn(1f, 64f), isHdr, hdr.transfer).also { result = it }
+        } finally {
+            if (result?.pixels !== pixels) pixels.close()
         }
-        if (icc != null && !linearizeHeifIcc(pixels, icc, advancedColor)) return null
-        val alpha = parsed.alphaImage()
-        if (alpha != null && !applyAlpha(pixels, outW, outH, hdr, alpha)) return null
-        if (hdr.rotationDegreesCcw % 360 != 0) {
-            val turned = rotateHalf(pixels, outW, outH, hdr.rotationDegreesCcw)
-            outW = turned.width
-            outH = turned.height
-            return Frame(turned.pixels, outW, outH, gamut, peak.coerceIn(1f, 64f), isHdr, hdr.transfer)
-        }
-        Log.i(TAG, "HEIC F16 ${outW}x$outH transfer=${hdr.transfer} boost=$peak tiles=${hdr.tiles.size}")
-        return Frame(pixels, outW, outH, gamut, peak.coerceIn(1f, 64f), isHdr, hdr.transfer)
     }
 
     private fun yuvToLinear(
@@ -202,7 +214,7 @@ internal object HevcHdrDecode {
 
     /** Auxiliary alpha codes are linear coverage, independent of the RGB ICC. */
     private fun applyAlpha(
-        pixels: ByteArray,
+        pixels: NativeStillBuffer,
         outW: Int,
         outH: Int,
         primary: HeifContainer.PrimaryImage,
@@ -214,27 +226,29 @@ internal object HevcHdrDecode {
         val cellH = alpha.tiles.first().height
         for ((index, tile) in alpha.tiles.withIndex()) {
             val picture = HevcDecoder.decode(tile, preferSoftware = true) ?: return false
-            val x0 = (index % alpha.columns) * cellW
-            val y0 = (index / alpha.columns) * cellH
-            val copyW = minOf(picture.width, alpha.width - x0)
-            val copyH = minOf(picture.height, alpha.height - y0)
-            if (copyW <= 0 || copyH <= 0) return false
-            val maxCode = ((1 shl picture.bitDepth) - 1).toFloat()
-            for (y in 0 until copyH) {
-                val oy = ((y0 + y).toLong() * outH / alpha.height).toInt().coerceIn(0, outH - 1)
-                // Match the color loop's final sample when downscaling, and apply
-                // alpha once per destination pixel rather than multiplying repeatedly.
-                if (y0 + y + 1 < alpha.height && (y0 + y + 1).toLong() * outH / alpha.height == oy.toLong()) continue
-                for (x in 0 until copyW) {
-                    val ox = ((x0 + x).toLong() * outW / alpha.width).toInt().coerceIn(0, outW - 1)
-                    if (x0 + x + 1 < alpha.width && (x0 + x + 1).toLong() * outW / alpha.width == ox.toLong()) continue
-                    val a = (picture.y[y * picture.width + x].toInt() and 0xffff) / maxCode
-                    val at = (oy * outW + ox) * 8
-                    for (c in 0..2) {
-                        val code = (pixels[at + c * 2].toInt() and 255) or ((pixels[at + c * 2 + 1].toInt() and 255) shl 8)
-                        putHalf(pixels, at + c * 2, halfBitsToFloat(code) * a)
+            picture.use {
+                val x0 = (index % alpha.columns) * cellW
+                val y0 = (index / alpha.columns) * cellH
+                val copyW = minOf(picture.width, alpha.width - x0)
+                val copyH = minOf(picture.height, alpha.height - y0)
+                if (copyW <= 0 || copyH <= 0) return false
+                val maxCode = ((1 shl picture.bitDepth) - 1).toFloat()
+                for (y in 0 until copyH) {
+                    val oy = ((y0 + y).toLong() * outH / alpha.height).toInt().coerceIn(0, outH - 1)
+                    // Match the color loop's final sample when downscaling, and apply
+                    // alpha once per destination pixel rather than multiplying repeatedly.
+                    if (y0 + y + 1 < alpha.height && (y0 + y + 1).toLong() * outH / alpha.height == oy.toLong()) continue
+                    for (x in 0 until copyW) {
+                        val ox = ((x0 + x).toLong() * outW / alpha.width).toInt().coerceIn(0, outW - 1)
+                        if (x0 + x + 1 < alpha.width && (x0 + x + 1).toLong() * outW / alpha.width == ox.toLong()) continue
+                        val a = (picture.y[y * picture.width + x].toInt() and 0xffff) / maxCode
+                        val at = (oy * outW + ox) * 8
+                        for (c in 0..2) {
+                            val code = pixels.buffer.getShort(at + c * 2).toInt() and 65535
+                            putHalf(pixels, at + c * 2, halfBitsToFloat(code) * a)
+                        }
+                        putHalf(pixels, at + 6, a)
                     }
-                    putHalf(pixels, at + 6, a)
                 }
             }
         }
@@ -253,7 +267,7 @@ private fun halfBitsToFloat(bits: Int): Float {
     }
 }
 
-private fun writePixel(dst: ByteArray, pixel: Int, r: Float, g: Float, b: Float) {
+private fun writePixel(dst: NativeStillBuffer, pixel: Int, r: Float, g: Float, b: Float) {
     val o = pixel * 8
     if (o < 0 || o + 8 > dst.size) return
     putHalf(dst, o, r)
@@ -262,10 +276,9 @@ private fun writePixel(dst: ByteArray, pixel: Int, r: Float, g: Float, b: Float)
     putHalf(dst, o + 6, 1f)
 }
 
-private fun putHalf(dst: ByteArray, offset: Int, value: Float) {
+private fun putHalf(dst: NativeStillBuffer, offset: Int, value: Float) {
     val h = floatToHalfBits(value)
-    dst[offset] = (h and 0xff).toByte()
-    dst[offset + 1] = (h ushr 8).toByte()
+    dst.buffer.putShort(offset, h.toShort())
 }
 
 private fun floatToHalfBits(value: Float): Int {
@@ -287,34 +300,39 @@ private fun floatToHalfBits(value: Float): Int {
     return half and 0xffff
 }
 
-private class Turned(val pixels: ByteArray, val width: Int, val height: Int)
+private class Turned(val pixels: NativeStillBuffer, val width: Int, val height: Int)
 
-private fun rotateHalf(src: ByteArray, width: Int, height: Int, degreesCcw: Int): Turned {
+private fun rotateHalf(src: NativeStillBuffer, width: Int, height: Int, degreesCcw: Int): Turned {
     val turns = ((degreesCcw % 360) + 360) % 360
     if (turns == 0) return Turned(src, width, height)
     val dstW = if (turns == 180) width else height
     val dstH = if (turns == 180) height else width
-    val dst = ByteArray(dstW * dstH * 8)
-    for (y in 0 until height) {
-        for (x in 0 until width) {
-            val dx: Int
-            val dy: Int
-            when (turns) {
-                90 -> {
-                    dx = y
-                    dy = width - 1 - x
+    val dst = NativeStillBuffer.allocate(dstW.toLong() * dstH * 8)
+    try {
+        for (y in 0 until height) {
+            for (x in 0 until width) {
+                val dx: Int
+                val dy: Int
+                when (turns) {
+                    90 -> {
+                        dx = y
+                        dy = width - 1 - x
+                    }
+                    180 -> {
+                        dx = width - 1 - x
+                        dy = height - 1 - y
+                    }
+                    else -> {
+                        dx = height - 1 - y
+                        dy = x
+                    }
                 }
-                180 -> {
-                    dx = width - 1 - x
-                    dy = height - 1 - y
-                }
-                else -> {
-                    dx = height - 1 - y
-                    dy = x
-                }
+                dst.buffer.putLong((dy * dstW + dx) * 8, src.buffer.getLong((y * width + x) * 8))
             }
-            System.arraycopy(src, (y * width + x) * 8, dst, (dy * dstW + dx) * 8, 8)
         }
+        return Turned(dst, dstW, dstH)
+    } catch (error: Throwable) {
+        dst.close()
+        throw error
     }
-    return Turned(dst, dstW, dstH)
 }

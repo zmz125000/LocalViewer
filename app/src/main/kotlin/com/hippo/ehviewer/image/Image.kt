@@ -81,7 +81,6 @@ import kotlin.concurrent.atomics.AtomicInt
 import kotlin.concurrent.atomics.decrementAndFetch
 import kotlin.concurrent.atomics.updateAndFetch
 import kotlin.math.roundToInt
-import kotlinx.io.readByteArray
 import okio.Path
 import splitties.init.appCtx
 
@@ -344,9 +343,7 @@ class Image private constructor(
                     if (!OppoProxdr.looksLike(dup)) {
                         null
                     } else {
-                        val bytes = ByteArray(dup.remaining())
-                        dup.get(bytes)
-                        OppoProxdr.attachOrCopy(base, bytes)
+                        OppoProxdr.attachOrCopy(base, dup)
                     }
                 }
             } ?: return image
@@ -364,25 +361,10 @@ class Image private constructor(
             if (!isAtLeastU || !Settings.readerHdrDisplay.value) return image
             val bi = image.asBitmapImage() ?: return image
             if (bi.detectGainmap()) return image
-            val bytes = appleHeicBytes(src) ?: return image
-            val withMap = AppleHdr.attachOrCopy(bi.bitmap, bytes) ?: return image
-            withMap.prepareToDraw()
-            return BitmapImageWithExtraInfo(image = withMap.asImage(), hasGainmap = true)
-        }
-
-        private fun appleHeicBytes(src: Either<ByteBufferSource, PathSource>): ByteArray? {
-            return when (src) {
+            val withMap = when (src) {
                 is Either.Left -> {
-                    val dup = src.value.source.asReadOnlyBuffer()
-                    val n = dup.remaining()
-                    if (n <= 0) return null
-                    val sniffN = minOf(n, GAINMAP_SNIFF_BYTES)
-                    val sniff = ByteArray(sniffN)
-                    val mark = dup.position()
-                    dup.get(sniff)
-                    if (!AppleHdr.looksLike(sniff, sniffN)) return null
-                    dup.position(mark)
-                    ByteArray(n).also { dup.get(it) }
+                    val sniff = src.value.source.slice().apply { limit(minOf(remaining(), GAINMAP_SNIFF_BYTES)) }
+                    if (AppleHdr.looksLike(sniff)) AppleHdr.attachOrCopy(bi.bitmap, src.value.source) else null
                 }
                 is Either.Right -> {
                     val path = src.value.source
@@ -393,9 +375,11 @@ class Image private constructor(
                             got > 0 && AppleHdr.looksLike(sniff, got)
                         }
                     }.getOrDefault(false)
-                    if (!urn) null else runCatching { path.read { readByteArray() } }.getOrNull()
+                    if (urn) AppleHdr.attachOrCopy(bi.bitmap, path) else null
                 }
-            }
+            } ?: return image
+            withMap.prepareToDraw()
+            return BitmapImageWithExtraInfo(image = withMap.asImage(), hasGainmap = true)
         }
 
         private fun CoilImage.asBitmapImage(): BitmapImage? = when (this) {

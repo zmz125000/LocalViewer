@@ -82,9 +82,7 @@ suspend inline fun <T> useZipFolderPageLoader(
                         RawNetworkPageCache.note(imageNames[index], src)
                         File(src.toString()).copyTo(File(file.toString()), overwrite = true)
                     } else {
-                        File(file.toString()).writeBytes(
-                            session.pageBytes(zipKey, prefix, imageNames, index),
-                        )
+                        session.copyPageTo(zipKey, prefix, imageNames, index, File(file.toString()))
                     }
                     true
                 }.getOrDefault(false)
@@ -229,6 +227,19 @@ internal class ZipFolderExtractSession(
         }
         OriginDiskCache.scheduleTrim()
         return dest.absolutePath.toPath()
+    }
+
+    fun copyPageTo(zipKey: String, prefix: String, imageNames: List<String>, index: Int, destination: File) {
+        val member = zipFolderMember(prefix, imageNames[index])
+        val cached = ZipMemberCover.destFile(zipKey, member)
+        if (cached.isFile && cached.length() > 0L) {
+            if (cached.absolutePath != destination.absolutePath) cached.copyTo(destination, overwrite = true)
+            return
+        }
+        val cd = cd() ?: error("Cannot read ZIP: $zipKey")
+        val entry = cd.find(member) ?: error("Missing ZIP member: $member")
+        check(!ZipMemberCover.rejectIfTooLarge(entry, notify = true)) { "ZIP member too large" }
+        check(cd.extractToFile(entry, destination, ZipMemberCover.MAX_CACHE_BYTES)) { "Extract failed: $member" }
     }
 
     fun pageBytes(

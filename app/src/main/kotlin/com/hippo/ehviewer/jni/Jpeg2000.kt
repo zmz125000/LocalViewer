@@ -11,3 +11,5 @@ import android.graphics.Bitmap
  * until both edges fit. Android ImageDecoder cannot open what this returns null for.
  */
 external fun decodeJpeg2000Bitmap(input: ByteArray, maxEdge: Int): Bitmap?
+
+internal external fun decodeJpeg2000BufferBitmap(input: java.nio.ByteBuffer, maxEdge: Int): Bitmap?

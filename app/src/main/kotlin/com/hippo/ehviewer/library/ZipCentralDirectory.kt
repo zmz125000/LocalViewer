@@ -3,6 +3,8 @@ package com.hippo.ehviewer.library
 import com.ehviewer.core.util.logcat
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
+import java.io.InputStream
+import java.io.OutputStream
 import java.util.zip.Inflater
 import java.util.zip.InflaterInputStream
 
@@ -92,19 +94,73 @@ class ZipCentralDirectory private constructor(
         }.onFailure { logcat("ZipCD", it) }.getOrNull()
     }
 
+    /** Bounded-memory extraction for cache files and conversion staging. Does not close [output]. */
+    fun extractToStream(entry: Entry, output: OutputStream, maxBytes: Long = MAX_EXTRACT_BYTES): Boolean {
+        if (entry.isDirectory || entry.isEncrypted || entry.uncompressedSize !in 0..maxBytes || entry.compressedSize !in 0..maxBytes) return false
+        if (entry.method != METHOD_STORE && entry.method != METHOD_DEFLATE) return false
+        if (entry.method == METHOD_STORE && entry.compressedSize != entry.uncompressedSize) return false
+        return try {
+            val header = ByteArray(30)
+            if (readFully(source, entry.localHeaderOffset, header) != header.size ||
+                header[0] != 'P'.code.toByte() || header[1] != 'K'.code.toByte() ||
+                header[2] != 3.toByte() || header[3] != 4.toByte()
+            ) {
+                return false
+            }
+            val start = entry.localHeaderOffset + 30 + u16(header, 26) + u16(header, 28)
+            if (start < 0 || start > source.size || entry.compressedSize > source.size - start) return false
+            val range = object : InputStream() {
+                private var position = 0L
+                private val one = ByteArray(1)
+                override fun read(): Int = if (read(one, 0, 1) < 0) -1 else one[0].toInt() and 255
+                override fun read(bytes: ByteArray, offset: Int, length: Int): Int {
+                    if (length == 0) return 0
+                    val count = minOf(length.toLong(), entry.compressedSize - position).toInt()
+                    if (count <= 0) return -1
+                    val got = source.readAt(start + position, bytes, offset, count)
+                    if (got <= 0) return -1
+                    position += got
+                    return got
+                }
+            }
+            val inflater = if (entry.method == METHOD_DEFLATE) Inflater(true) else null
+            try {
+                val input = if (inflater != null) InflaterInputStream(range, inflater, entry.compressedSize.coerceIn(1, 1024 * 1024).toInt()) else range
+                input.use {
+                    val chunk = ByteArray(entry.uncompressedSize.coerceIn(1, 1024 * 1024).toInt())
+                    var total = 0L
+                    while (true) {
+                        val count = it.read(chunk)
+                        if (count < 0) break
+                        if (count > entry.uncompressedSize - total) return false
+                        output.write(chunk, 0, count)
+                        total += count
+                    }
+                    total == entry.uncompressedSize
+                }
+            } finally {
+                inflater?.end()
+            }
+        } catch (error: Exception) {
+            if (error is kotlinx.coroutines.CancellationException) throw error
+            logcat("ZipCD", error)
+            false
+        }
+    }
+
     fun extractToFile(entry: Entry, dest: java.io.File, maxBytes: Long = MAX_EXTRACT_BYTES): Boolean {
-        val bytes = extract(entry, maxBytes) ?: return false
         dest.parentFile?.mkdirs()
         val tmp = java.io.File("${dest.path}.tmp.${System.nanoTime()}")
         return try {
-            tmp.writeBytes(bytes)
+            val complete = tmp.outputStream().use { extractToStream(entry, it, maxBytes) }
+            if (!complete) return false
             if (!tmp.renameTo(dest)) {
                 tmp.copyTo(dest, overwrite = true)
                 tmp.delete()
             }
             dest.isFile && dest.length() > 0L
         } finally {
-            if (tmp.exists()) tmp.delete()
+            tmp.delete()
         }
     }
 
