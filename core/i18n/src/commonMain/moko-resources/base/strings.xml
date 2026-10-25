@@ -1201,4 +1201,9 @@
     <string name="scale_type_fill_screen">Fill screen</string>
     <string name="settings_reset_to_defaults">Reset all settings to default</string>
     <string name="settings_reset_to_defaults_done">All settings reset to default</string>
+    <string name="pref_reader_page_transition">Page transition</string>
+    <string name="pref_reader_transition_fade">Fade</string>
+    <string name="pref_reader_transition_none">None</string>
+    <string name="pref_reader_transition_inherit">Use reading mode setting</string>
+    <string name="pref_slideshow_transition_override">Page transition override</string>
 </resources>

@@ -2700,7 +2700,7 @@ private fun PdfReaderScreen(
                 }
             }
         }
-        ReaderFilterOverlay()
+        ReaderFilterOverlay(supportsSlideshow = false)
         ReaderAppBars(
             visible = appbarVisible,
             onNavigateUp = onClose,

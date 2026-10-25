@@ -91,7 +91,10 @@ fun ContentScale.Companion.fromPreferences(value: Int, srcSize: Size, dstSize: S
 }
 
 suspend fun PagerState.performScrollToPage(page: Int) {
-    if (Settings.pageTransitions.value) {
+    val handler = PagerTransitionHandlers[this]
+    if (handler != null) {
+        handler(page)
+    } else if (Settings.effectivePageTransition() == 0) {
         animateScrollToPage(page)
     } else {
         scrollToPage(page)
@@ -113,7 +116,7 @@ suspend fun PagerState.moveToNext() {
 }
 
 suspend fun LazyListState.performScrollBy(value: Float) {
-    if (Settings.pageTransitions.value) {
+    if (Settings.effectivePageTransition() != 2) {
         animateScrollBy(value)
     } else {
         scrollBy(value)

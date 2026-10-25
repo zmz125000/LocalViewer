@@ -439,6 +439,20 @@ abstract class PageLoader(
         }
     }
 
+    private var transitionPages: Set<Int> = emptySet()
+
+    @Synchronized
+    override fun setTransitionPages(indices: Set<Int>) {
+        val valid = indices.filter { it in 0 until size }.toSet()
+        if (transitionPages == valid) return
+        transitionPages = valid
+        if (lastNavigation == null && size > 0) {
+            navigate(ReaderNavigation(startPage, startPage..startPage, NavigationKind.Settled))
+        } else {
+            replan()
+        }
+    }
+
     private val demandPlanner = ReaderDemandPlanner()
     private var slideshowShuffle: SlideshowShuffle? = null
     private var slideshowPagesPerSlide = 1
@@ -860,10 +874,13 @@ abstract class PageLoader(
         if (size <= 0) return
         val policy = ReaderLoadPolicy(
             sourceAhead = Settings.preloadImage.value.coerceIn(0, 6),
-            decodeAhead = Settings.readerDecodeAhead.value.coerceAtLeast(0),
+            decodeAhead = Settings.readerDecodeAhead.value.coerceAtLeast(
+                if (Settings.effectivePageTransition() == 1) slideshowPagesPerSlide else 0,
+            ),
         )
         val sequential = demandPlanner.plan(navigation, size, policy)
-        val demand = slideshowShuffle?.plan(sequential, size, policy) ?: sequential
+        val demand = (slideshowShuffle?.plan(sequential, size, policy) ?: sequential)
+            .withTransitionPages(transitionPages)
         lastNavigation = demand.navigation
         desiredDecodedPages = demand.decodedPages
         orderedDecodePages = demand.visibleDecode + demand.decodeAhead

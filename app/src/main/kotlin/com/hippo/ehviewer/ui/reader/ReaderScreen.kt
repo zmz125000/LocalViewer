@@ -1177,15 +1177,20 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
                                 launch {
                                     pagerState.performScrollToPage(if (pagerDual) dualSpreadIndex(target, landscapeCover) else target)
                                 }
+                                awaitCancellation()
                             }
                         } else if (!atEnd) {
                             // Keep the transition outside collectLatest: scrolling resets the
                             // countdown and must not cancel the animation that triggered it.
                             launch { pagerState.moveToNext() }
+                            awaitCancellation()
                         } else if (slideshowRepeat == 2) {
                             launch { pagerState.performScrollToPage(0) }
+                            if (page != 0) awaitCancellation()
                         } else {
-                            return@collectLatest
+                            // Stay on the last page, but allow a growing catalog or a late
+                            // gallery-hop lookup to make forward progress on a later tick.
+                            continue
                         }
                     }
                 }

@@ -258,6 +258,10 @@ fun PagerItem(
                     onDispose { pageLoader.releaseHiResFull(page.index) }
                 }
             }
+            DisposableEffect(page, painter) {
+                page.displayReadyFlow.value = painter != null
+                onDispose { page.displayReadyFlow.value = false }
+            }
             painter?.let { painter ->
                 val drawable = (painter as? DrawablePainter)?.drawable
                 val autoRotateMode = slideshowAutoRotateMode()

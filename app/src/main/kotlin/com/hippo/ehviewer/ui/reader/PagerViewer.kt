@@ -1,5 +1,7 @@
 package com.hippo.ehviewer.ui.reader
 
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
@@ -25,7 +27,9 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.geometry.toRect
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.positionChangeIgnoreConsumed
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.LocalLayoutDirection
@@ -43,6 +47,7 @@ import eu.kanade.tachiyomi.ui.reader.viewer.NavigationRegions
 import eu.kanade.tachiyomi.ui.reader.viewer.ViewerNavigation.NavigationRegion
 import eu.kanade.tachiyomi.ui.reader.viewer.getAction
 import kotlin.contracts.contract
+import kotlin.math.abs
 import kotlin.math.roundToInt
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
@@ -159,12 +164,19 @@ fun PagerViewer(
         }
     }
 
+    val transitionModifier = pagerTransitionModifier(pagerState, pageLoader, dualPage, landscapeCover)
     if (isVertical) {
         VerticalPager(
             state = pagerState,
-            modifier = modifier,
+            modifier = modifier.then(transitionModifier.modifier).readerDiscretePageSwipes(
+                enabled = canScroll && transitionModifier.type != 0,
+                vertical = isVertical,
+                rtl = isRtl,
+                pager = pagerState,
+                scope = scope,
+            ),
             beyondViewportPageCount = 1,
-            userScrollEnabled = canScroll,
+            userScrollEnabled = canScroll && transitionModifier.type == 0,
             key = { if (dualPage) dualFirstPageIndex(it, landscapeCover) else it },
         ) { index ->
             SpreadOrPage(index)
@@ -173,10 +185,16 @@ fun PagerViewer(
         val isRtlLayout = LocalLayoutDirection.current == LayoutDirection.Rtl
         HorizontalPager(
             state = pagerState,
-            modifier = modifier,
+            modifier = modifier.then(transitionModifier.modifier).readerDiscretePageSwipes(
+                enabled = canScroll && transitionModifier.type != 0,
+                vertical = isVertical,
+                rtl = isRtl,
+                pager = pagerState,
+                scope = scope,
+            ),
             beyondViewportPageCount = 1,
             reverseLayout = isRtl xor isRtlLayout,
-            userScrollEnabled = canScroll,
+            userScrollEnabled = canScroll && transitionModifier.type == 0,
             key = { if (dualPage) dualFirstPageIndex(it, landscapeCover) else it },
         ) { index ->
             SpreadOrPage(index)
@@ -621,4 +639,39 @@ private fun spreadAspect(page: Page?): Float {
     }
     if (page == null) return 0f
     return page.layoutAspect.takeIf { it > 0f } ?: DUAL_PAGE_DEFAULT_ASPECT
+}
+
+/** Fade/None turn pages on a completed swipe, so readiness checks also cover touch navigation. */
+private fun Modifier.readerDiscretePageSwipes(
+    enabled: Boolean,
+    vertical: Boolean,
+    rtl: Boolean,
+    pager: PagerState,
+    scope: CoroutineScope,
+): Modifier = if (!enabled) {
+    this
+} else {
+    pointerInput(vertical, rtl, pager) {
+        awaitEachGesture {
+            val down = awaitFirstDown(requireUnconsumed = false)
+            var distance = 0f
+            var cancelled = false
+            do {
+                val event = awaitPointerEvent(PointerEventPass.Final)
+                val change = event.changes.firstOrNull { it.id == down.id }
+                if (event.changes.size > 1) cancelled = true
+                if (change != null) {
+                    val delta = change.positionChangeIgnoreConsumed()
+                    // Leave pinch/pan to the image's zoom gesture handler.
+                    if (delta != Offset.Zero && change.isConsumed) cancelled = true
+                    distance += if (vertical) delta.y else delta.x
+                }
+            } while (event.changes.any { it.pressed })
+            val threshold = maxOf(viewConfiguration.touchSlop * 2, (if (vertical) size.height else size.width) * 0.12f)
+            if (!cancelled && abs(distance) >= threshold) {
+                val forward = if (!vertical && rtl) distance > 0 else distance < 0
+                scope.launch { if (forward) pager.moveToNext() else pager.moveToPrevious() }
+            }
+        }
+    }
 }

@@ -41,6 +41,16 @@ fun ReaderModeSetting(
         values = ReadingModeType.entries.map { it.prefValue },
         field = readingMode,
     )
+    SpinnerChoice(
+        title = stringResource(R.string.pref_reader_page_transition),
+        entries = arrayOf(
+            stringResource(R.string.label_default),
+            stringResource(R.string.pref_reader_transition_fade),
+            stringResource(R.string.pref_reader_transition_none),
+        ),
+        values = listOf(0, 1, 2),
+        field = Settings.pageTransition.asMutableState(),
+    )
     val dualPageLandscape = Settings.dualPageLandscape.asMutableState()
     SwitchChoice(
         title = stringResource(id = R.string.pref_dual_page_landscape),
@@ -391,6 +401,21 @@ private fun SlideshowSetting() = Column {
     SwitchChoice(
         title = stringResource(R.string.pref_keep_screen_on),
         field = Settings.slideshowKeepScreenOn.asMutableState(),
+    )
+    CustomBrightnessSetting(
+        Settings.slideshowCustomBrightness.asMutableState(),
+        Settings.slideshowCustomBrightnessValue.asMutableState(),
+    )
+    SpinnerChoice(
+        title = stringResource(R.string.pref_slideshow_transition_override),
+        entries = arrayOf(
+            stringResource(R.string.pref_reader_transition_inherit),
+            stringResource(R.string.label_default),
+            stringResource(R.string.pref_reader_transition_fade),
+            stringResource(R.string.pref_reader_transition_none),
+        ),
+        values = listOf(-1, 0, 1, 2),
+        field = Settings.slideshowPageTransition.asMutableState(),
     )
     SpinnerChoice(
         title = stringResource(R.string.pref_slideshow_repeat),

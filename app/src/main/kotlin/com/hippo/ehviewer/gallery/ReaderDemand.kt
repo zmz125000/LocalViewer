@@ -21,6 +21,9 @@ interface ReaderSession : AutoCloseable {
     fun replan()
     fun restart()
 
+    /** Additional decode demand held while preparing a page transition. */
+    fun setTransitionPages(indices: Set<Int>)
+
     /** Configure loader-owned slide traversal and matching decode/source lookahead. */
     fun setSlideshowShuffle(enabled: Boolean, pagesPerSlide: Int = 1, firstPageAlone: Boolean = false)
 
@@ -209,4 +212,11 @@ class ReaderDemandPlanner(
             sourceOnly = sourceOnly,
         )
     }
+}
+
+/** Keep the current viewport and transition destination decoded together. */
+internal fun ReaderDemand.withTransitionPages(indices: Set<Int>): ReaderDemand {
+    val decode = indices.filterNot(visibleDecode::contains) + decodeAhead.filterNot(indices::contains)
+    val decoded = (visibleDecode + decode).toSet()
+    return copy(decodeAhead = decode, sourceOnly = sourceOnly.filterNot(decoded::contains))
 }

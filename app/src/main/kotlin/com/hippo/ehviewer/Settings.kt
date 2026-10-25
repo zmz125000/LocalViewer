@@ -1196,7 +1196,13 @@ object Settings : DataStorePreferences(null) {
     val cutoutShort = boolPref("cutout_short", true)
     val keepScreenOn = boolPref("pref_keep_screen_on_key", true)
     val readerLongTapAction = boolPref("reader_long_tap", true)
-    val pageTransitions = boolPref("pref_enable_transitions_key", true)
+    private val pageTransitionsLegacy = boolPref("pref_enable_transitions_key", true)
+    val pageTransition = intPref("reader_page_transition", 0)
+
+    fun effectivePageTransition(slideshow: Boolean = readingMode.value == ReadingModeType.SLIDESHOW.prefValue): Int {
+        val override = slideshowPageTransition.value
+        return if (slideshow && override in 0..2) override else pageTransition.value
+    }
     val readWithVolumeKeys = boolPref("reader_volume_keys", false)
     val readWithVolumeKeysInverted = boolPref("reader_volume_keys_inverted", false)
     val grayScale = boolPref("pref_grayscale", false)
@@ -1207,6 +1213,11 @@ object Settings : DataStorePreferences(null) {
     val readerWebtoonNavInverted = intPref("reader_tapping_inverted_webtoon_2", 0)
     val webtoonSidePadding = intPref("webtoon_side_padding", 0)
     val navigateToPan = boolPref("navigate_pan", true)
+    val slideshowCustomBrightness = boolPref("slideshow_custom_brightness", false)
+    val slideshowCustomBrightnessValue = intPref("slideshow_custom_brightness_value", 0)
+
+    // -1 inherits the general reading-mode transition.
+    val slideshowPageTransition = intPref("slideshow_page_transition", -1)
     val slideshowKeepScreenOn = boolPref("slideshow_keep_screen_on_override", true)
     val slideshowDisplaySeconds = intPref("slideshow_display_seconds", 5)
     val slideshowRepeat = intPref("slideshow_repeat", 0)
@@ -1272,6 +1283,10 @@ object Settings : DataStorePreferences(null) {
         edit { pref ->
             if ("CN" == Locale.getDefault().country) {
                 if (showTagTranslations !in pref) pref[showTagTranslations] = true
+            }
+            if (pageTransition !in pref && pageTransitionsLegacy in pref) {
+                pref[pageTransition] = if (pref[pageTransitionsLegacy]) 0 else 2
+                pref.remove(pageTransitionsLegacy)
             }
             val orientation = pref[orientationMode]
             if (OrientationType.entries.none { it.prefValue == orientation }) {

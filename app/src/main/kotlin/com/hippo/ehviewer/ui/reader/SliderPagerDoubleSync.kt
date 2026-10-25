@@ -120,11 +120,11 @@ class SliderPagerDoubleSync(
                     if (webtoon) {
                         lazyListState.scrollToItem(safe)
                     } else if (pagerDual) {
-                        pagerState.animateScrollToPage(
+                        pagerState.performScrollToPage(
                             dualSpreadIndex(safe, this@SliderPagerDoubleSync.landscapeCover),
                         )
                     } else {
-                        pagerState.animateScrollToPage(safe)
+                        pagerState.performScrollToPage(safe)
                     }
                     pageLoader.startPage = safe
                     pendingJumpIndex = -1
