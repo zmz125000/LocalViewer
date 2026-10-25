@@ -36,7 +36,7 @@ internal object ThumbnailMemory {
         // Header-only probes happen before reading the full compressed source into RAM.
         var sourceBytes = runCatching { source.metadataOrNull()?.size }.getOrNull() ?: -1L
         val size = runCatching {
-            source.openFileDescriptor("r")?.use { descriptor ->
+            source.openFileDescriptor("r").use { descriptor ->
                 if (sourceBytes < 0) sourceBytes = descriptor.statSize
                 if (kind(codec) >= 0) {
                     probeStillExportSize("/proc/self/fd/${descriptor.fd}", kind(codec))
@@ -45,7 +45,7 @@ internal object ThumbnailMemory {
                     BitmapFactory.decodeFileDescriptor(descriptor.fileDescriptor, null, bounds)
                     pack(bounds.outWidth, bounds.outHeight)
                 }
-            } ?: 0L
+            }
         }.getOrDefault(0L)
         return withEstimate(sourceBytes, size, codec, edge, mapped = true, work = work)
     }
