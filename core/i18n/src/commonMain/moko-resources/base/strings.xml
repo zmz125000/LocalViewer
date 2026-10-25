@@ -137,7 +137,7 @@
     <string name="image_conversion_quality_mid">Mid</string>
     <string name="image_conversion_quality_low">Low</string>
     <string name="image_conversion_quality_custom">Custom</string>
-    <string name="image_conversion_jxl_jpeg_transcoding">JXL Lossless JPEG Transcoding</string>
+    <string name="image_conversion_jxl_jpeg_transcoding">JXL lossless JPEG transcoding</string>
     <string name="image_conversion_jxl_jpeg_transcoding_summary">Preserve original JPEG data when converting JPEG to JPEG XL, regardless of distance.</string>
     <string name="image_conversion_jxl_distance">JPEG XL distance</string>
     <string name="image_conversion_jxl_distance_summary">Lower distance means higher quality; 0 is lossless.</string>

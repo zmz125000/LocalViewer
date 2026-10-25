@@ -6,6 +6,7 @@ import com.hippo.ehviewer.image.hdr.HdrConvertCache
 import com.hippo.ehviewer.image.hdr.browseEmbeddedRawJpeg
 import com.hippo.ehviewer.image.hdr.withBufferedImageDownload
 import com.hippo.ehviewer.image.hdr.writeDownloadedThumbnail
+import com.hippo.ehviewer.library.CachePagePublish
 import com.hippo.ehviewer.library.OriginDiskCache
 import com.hippo.ehviewer.util.FileUtils
 import java.io.File
@@ -219,12 +220,12 @@ object SmbCache {
      * 2. If page cache already has the file (reader opened first) → MaxEdge/subsample offline
      * 3. Camera RAW with no page cache: [readEmbeddedJpeg] (range read). A JPEG skips the
      *    full container, including when [cacheOriginal] is set.
-     * 4. Else download to **RAM** → [HdrConvertCache.writeThumbFromBytes] (HDR = MaxEdge only)
+     * 4. Else buffered download (large sources spill to a temporary file) → MaxEdge-only thumb.
      *
      * New platform thumbs land as WebP; lib/HDR thumbs stay Ultra HDR JPEG on the
      * same-hash `.jpg` sibling. Leftover JPEGs are reused until LRU.
-     * When [cacheOriginal] is true and page cache is missing, download via [downloadIfNeeded]
-     * (same path + HDR convert as the reader), then encode the thumb from that page file.
+     * When [cacheOriginal] is true, cache the unconverted original, then generate
+     * the thumbnail directly. Browsing must not trigger a full reader conversion.
      */
     suspend fun ensureBrowseThumb(
         sourceId: Long,
@@ -260,8 +261,7 @@ object SmbCache {
                     fileNameHint = HdrConvertCache.EMBEDDED_JPEG_NAME,
                 )
                 if (!fromEmbedded && !isCachedOnDisk(pageForThumb) && cacheOriginal) {
-                    // Same path + convert pipeline as the folder-gallery reader.
-                    downloadIfNeeded(pagePath, originalFileName = pageName, write = download)
+                    downloadIfNeeded(pagePath, originalFileName = pageName, preserveOriginal = true, write = download)
                 }
                 if (!fromEmbedded) {
                     val pageAfter = resolveReaderPath(pagePath)
@@ -307,10 +307,12 @@ object SmbCache {
      * (reader [LibDirectDecode] presents Bitmap; no UHDR encode on download).
      *
      * @param originalFileName remote base name for sniff / pipeline routing.
+     * @param preserveOriginal Cache the source without full HDR conversion for thumbnail callers.
      */
     suspend fun downloadIfNeeded(
         path: Path,
         originalFileName: String? = null,
+        preserveOriginal: Boolean = false,
         write: suspend (OutputStream) -> Unit,
     ) {
         val resolved = HdrConvertCache.resolvePagePath(path)
@@ -331,7 +333,7 @@ object SmbCache {
             path.parent?.let { File(it.toString()).mkdirs() }
             val nameHint = originalFileName ?: path.name
             try {
-                if (HdrConvertCache.usesNetworkLibConvert(nameHint)) {
+                if (!preserveOriginal && HdrConvertCache.usesNetworkLibConvert(nameHint)) {
                     val finalPath = withBufferedImageDownload(
                         download = write,
                         fromBytes = { HdrConvertCache.finalizeNetworkBytes(it, path, nameHint) },
@@ -343,7 +345,14 @@ object SmbCache {
                     val tmp = File("$key.tmp.${System.nanoTime()}")
                     try {
                         FileOutputStream(tmp).use { out -> write(out) }
-                        val finalPath = maybeConvertHdrDownload(tmp, path, nameHint)
+                        val finalPath = if (preserveOriginal) {
+                            check(tmp.length() > 0L && CachePagePublish.atomicReplaceFile(tmp, File(key))) {
+                                "Cannot cache original: $nameHint"
+                            }
+                            path
+                        } else {
+                            maybeConvertHdrDownload(tmp, path, nameHint)
+                        }
                         markPresent(finalPath)
                         touch(finalPath)
                     } finally {

@@ -6,6 +6,7 @@ import com.hippo.ehviewer.image.hdr.HdrConvertCache
 import com.hippo.ehviewer.image.hdr.browseEmbeddedRawJpeg
 import com.hippo.ehviewer.image.hdr.withBufferedImageDownload
 import com.hippo.ehviewer.image.hdr.writeDownloadedThumbnail
+import com.hippo.ehviewer.library.CachePagePublish
 import com.hippo.ehviewer.library.OriginDiskCache
 import com.hippo.ehviewer.util.FileUtils
 import java.io.File
@@ -154,13 +155,12 @@ object WebDavCache {
     }
 
     /**
-     * Browse thumb: reuse page cache if present; else RAM download → MaxEdge-only thumb.
+     * Browse thumb: reuse page cache if present; else buffered download → MaxEdge-only thumb.
      * Camera RAW with no page cache uses [readEmbeddedJpeg] (range read) and skips the
      * full container, including when [cacheOriginal] is set.
      * New platform thumbs land as WebP; lib/HDR thumbs stay Ultra HDR JPEG. Leftover JPEGs
-     * are reused until LRU. When [cacheOriginal] is true and page cache is missing, download
-     * via [downloadIfNeeded] (same path + HDR convert as the reader), then encode the thumb
-     * from that page file.
+     * are reused until LRU. When [cacheOriginal] is true, cache the unconverted original
+     * and generate the thumbnail directly, without a full reader conversion.
      */
     suspend fun ensureBrowseThumb(
         sourceId: Long,
@@ -192,8 +192,7 @@ object WebDavCache {
                     fileNameHint = HdrConvertCache.EMBEDDED_JPEG_NAME,
                 )
                 if (!fromEmbedded && !probeDisk(pageForThumb) && cacheOriginal) {
-                    // Same path + convert pipeline as the folder-gallery reader.
-                    downloadIfNeeded(pagePath, originalFileName = name, write = download)
+                    downloadIfNeeded(pagePath, originalFileName = name, preserveOriginal = true, write = download)
                 }
                 if (!fromEmbedded) {
                     val pageAfter = resolveReaderPath(pagePath)
@@ -234,10 +233,12 @@ object WebDavCache {
      * Reader page download.
      * Convert mode + lib/avif: RAM → [HdrConvertCache.finalizeNetworkBytes] (B1).
      * [Settings.readerLibDirectBitmap]: stream original like non-lib (no UHDR on download).
+     * [preserveOriginal] bypasses full conversion for thumbnail callers saving source bytes.
      */
     suspend fun downloadIfNeeded(
         path: Path,
         originalFileName: String? = null,
+        preserveOriginal: Boolean = false,
         write: suspend (OutputStream) -> Unit,
     ) {
         val resolved = resolveReaderPath(path)
@@ -257,7 +258,7 @@ object WebDavCache {
             path.parent?.let { File(it.toString()).mkdirs() }
             val nameHint = originalFileName ?: path.name
             try {
-                if (HdrConvertCache.usesNetworkLibConvert(nameHint)) {
+                if (!preserveOriginal && HdrConvertCache.usesNetworkLibConvert(nameHint)) {
                     val finalPath = withBufferedImageDownload(
                         download = write,
                         fromBytes = { HdrConvertCache.finalizeNetworkBytes(it, path, nameHint) },
@@ -269,7 +270,14 @@ object WebDavCache {
                     val tmp = File("$key.tmp.${System.nanoTime()}")
                     try {
                         FileOutputStream(tmp).use { out -> write(out) }
-                        val finalPath = maybeConvertHdrDownload(tmp, path, nameHint)
+                        val finalPath = if (preserveOriginal) {
+                            check(tmp.length() > 0L && CachePagePublish.atomicReplaceFile(tmp, File(key))) {
+                                "Cannot cache original: $nameHint"
+                            }
+                            path
+                        } else {
+                            maybeConvertHdrDownload(tmp, path, nameHint)
+                        }
                         markPresent(finalPath)
                         touch(finalPath)
                     } finally {
