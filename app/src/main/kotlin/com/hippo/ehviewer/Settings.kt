@@ -772,8 +772,10 @@ object Settings : DataStorePreferences(null) {
 
     val hardwareBitmapThreshold = intPref("hardware_bitmap_threshold", 16384)
     val preloadThumbAggressively = boolPref("preload_thumb_aggressively", false)
-    /** Shared image/PDF/archive thumbnail extraction, conversion and encoding jobs. */
+
+    /** Image/PDF thumbnail conversion and encoding jobs. */
     val thumbnailConvertSlots = intPref("thumbnail_convert_slots", 3)
+    val archiveExtractSlots = intPref("archive_extract_slots", 3)
     val animateItems = boolPref("animate_items", true)
     val desktopSite = boolPref("desktop_site", true)
 

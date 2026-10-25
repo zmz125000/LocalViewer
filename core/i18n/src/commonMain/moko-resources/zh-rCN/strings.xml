@@ -290,8 +290,10 @@
     <string name="settings_reader_decode_ahead_summary">保持阅读方向上后续 %s 页处于已解码状态</string>
     <string name="settings_heavy_decode">重度解码</string>
     <string name="settings_heavy_decode_summary">同时进行的全尺寸解码数：%s</string>
-    <string name="settings_thumbnail_convert_slots">缩略图处理并发数</string>
-    <string name="settings_thumbnail_convert_slots_summary">图像、PDF 和压缩包缩略图共用的最大并发任务数。</string>
+    <string name="settings_thumbnail_convert_slots">缩略图转换并发数</string>
+    <string name="settings_thumbnail_convert_slots_summary">图像和 PDF 缩略图转换的最大并发任务数。</string>
+    <string name="settings_archive_extract_slots">压缩包提取并发数</string>
+    <string name="settings_archive_extract_slots_summary">压缩包封面提取的最大并发任务数。</string>
     <string name="settings_advanced_read_cache_size_summary">SMB 页面缓存（及旧版在线图片缓存）的最大容量</string>
     <!-- Theme -->
     <string name="homepage">主页</string>

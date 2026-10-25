@@ -84,8 +84,7 @@ object HdrConvertCache {
 
     suspend fun <T> withThumbConvertSlot(block: suspend () -> T): T = thumbConvertSlots.run(block)
 
-    private suspend fun <T> withConvertSlot(maxEdge: Int, block: suspend () -> T): T =
-        if (maxEdge > 0) withThumbConvertSlot(block) else fullConvertSlots.withPermit { block() }
+    private suspend fun <T> withConvertSlot(maxEdge: Int, block: suspend () -> T): T = if (maxEdge > 0) withThumbConvertSlot(block) else fullConvertSlots.withPermit { block() }
 
     /**
      * Exts that *can* use the RAM → classify → UHDR convert pipeline on network download

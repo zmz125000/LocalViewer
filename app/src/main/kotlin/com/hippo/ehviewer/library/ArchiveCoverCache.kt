@@ -5,7 +5,9 @@ import android.os.ParcelFileDescriptor
 import com.ehviewer.core.files.openFileDescriptor
 import com.ehviewer.core.util.logcat
 import com.ehviewer.core.util.withIOContext
+import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.image.hdr.HdrConvertCache
+import com.hippo.ehviewer.image.hdr.ThumbnailWorkGate
 import com.hippo.ehviewer.jni.closeArchive
 import com.hippo.ehviewer.jni.extractToByteBuffer
 import com.hippo.ehviewer.jni.getExtension
@@ -94,15 +96,16 @@ object ArchiveCoverCache {
     /** One comic page read for a MOBI/AZW3 cover. Larger records stay a placeholder. */
     private const val MAX_MOBI_COVER_BYTES = 32 * 1024 * 1024
 
-    // Native libarchive has one global parser. Queue cover users before the
-    // shared thumbnail gate so they neither drop each other on tryWithArchive
-    // nor occupy thumbnail capacity while waiting for that parser.
-    private val nativeExtractMutex = Mutex()
+    private val extractSlots = ThumbnailWorkGate(Settings.archiveExtractSlots, maxSlots = 5)
 
+    // Native libarchive has one global parser. Queue cover users before the
+    // extraction gate so they neither drop each other on tryWithArchive
+    // nor occupy extraction capacity while waiting for that parser.
+    private val nativeExtractMutex = Mutex()
 
     /**
      * Browse folder identity. [onBrowseFolderChanged] cancels cover jobs from the previous
-     * folder so a RAR/7z page-0 extract (shared thumbnail gate + [ArchiveAccess]) cannot block the
+     * folder so a RAR/7z page-0 extract (extraction gate + [ArchiveAccess]) cannot block the
      * next folder's archives — same idea as [VideoThumbnail.onBrowseFolderChanged].
      */
     private val browseFolderKey = AtomicReference<String?>(null)
@@ -146,7 +149,7 @@ object ArchiveCoverCache {
     }
 
     /**
-     * Shared-capacity cover extract. Folder change cancels waiters and holders so the
+     * Independently limited cover extract. Folder change cancels waiters and holders so the
      * next listing is not stuck behind a leftover RAR/ZIP page-0.
      */
     private suspend fun <T> withCoverExtractSlot(nativeArchive: Boolean = false, block: suspend () -> T): T {
@@ -159,7 +162,7 @@ object ArchiveCoverCache {
                 throw CancellationException("archive cover folder changed")
             }
             val extract: suspend () -> T = {
-                HdrConvertCache.withThumbConvertSlot {
+                extractSlots.run {
                     currentCoroutineContext().ensureActive()
                     if (browseGeneration.get() != gen) {
                         throw CancellationException("archive cover folder changed")
