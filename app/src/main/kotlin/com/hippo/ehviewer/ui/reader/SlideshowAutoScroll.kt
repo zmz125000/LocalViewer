@@ -1,7 +1,7 @@
 package com.hippo.ehviewer.ui.reader
 
 import android.os.SystemClock
-import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.pager.PagerState
 import androidx.compose.runtime.Composable
@@ -49,6 +49,8 @@ class SlideshowAutoScrollState {
 }
 
 data class SlideshowScrollInterval(val page: Int, val startedAt: Long, val durationMillis: Int)
+
+private val SlideshowScrollEasing = CubicBezierEasing(0.42f, 0f, 0.58f, 1f)
 
 private object SlideshowScrollDurationScale : MotionDurationScale {
     override val scaleFactor: Float get() = 1f
@@ -118,7 +120,7 @@ internal fun SlideshowAutoScroll(
             if (remaining > 0 && delta.getDistance() > 0.5f) {
                 // Match the photo's wall-clock duration regardless of the system animation scale.
                 withContext(SlideshowScrollDurationScale) {
-                    zoomableState.panBy(delta, tween(remaining, easing = LinearEasing))
+                    zoomableState.panBy(delta, tween(remaining, easing = SlideshowScrollEasing))
                 }
             }
         }
