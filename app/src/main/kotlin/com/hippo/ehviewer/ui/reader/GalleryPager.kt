@@ -40,6 +40,7 @@ fun GalleryPager(
     /** First page is a persisted landscape cover (solo slot). */
     landscapeCover: Boolean = false,
     modifier: Modifier = Modifier,
+    slideshowAutoScroll: SlideshowAutoScrollState? = null,
 ) {
     val isPagerType = !ReadingModeType.isWebtoon(type)
     val pagerDual = isPagerDual(dualActive, type)
@@ -82,6 +83,7 @@ fun GalleryPager(
             isRtl = type == RIGHT_TO_LEFT,
             isVertical = type == VERTICAL,
             pageLoader = pageLoader,
+            slideshowAutoScroll = slideshowAutoScroll,
             navigator = { navigator },
             onSelectPage = onSelectPage,
             onMenuRegionClick = onMenuRegionClick,

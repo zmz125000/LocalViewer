@@ -1226,6 +1226,10 @@ object Settings : DataStorePreferences(null) {
     val slideshowPlaybackMode = intPref("slideshow_playback_mode", SlideshowPlaybackMode.REPEAT.prefValue)
     val slideshowDualPages = boolPref("slideshow_dual_pages_enabled", false)
     val slideshowFillScreen = boolPref("slideshow_scale_override", false)
+    val slideshowAutoScroll = boolPref("slideshow_auto_scroll", false)
+
+    // 0=off, 1=top left, 2=top right, 3=bottom left, 4=bottom right, 5=random.
+    val slideshowClockPosition = intPref("slideshow_clock_position", 0)
 
     // -1 inherits the general auto-rotate mode; 0=off, 1=CW, 2=CCW.
     val slideshowAutoRotateOverride = intPref("slideshow_auto_rotate_override", -1)

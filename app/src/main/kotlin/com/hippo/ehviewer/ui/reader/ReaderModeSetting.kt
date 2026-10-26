@@ -425,6 +425,30 @@ private fun SlideshowSetting() = Column {
         values = listOf(-1) + AutoRotateMode.entries.map { it.prefValue },
         field = Settings.slideshowAutoRotateOverride.asMutableState(),
     )
+    SpinnerChoice(
+        title = stringResource(R.string.pref_slideshow_clock),
+        entries = arrayOf(
+            stringResource(R.string.pref_slideshow_off),
+            stringResource(R.string.pref_slideshow_top_left),
+            stringResource(R.string.pref_slideshow_top_right),
+            stringResource(R.string.pref_slideshow_bottom_left),
+            stringResource(R.string.pref_slideshow_bottom_right),
+            stringResource(R.string.pref_slideshow_random),
+        ),
+        values = listOf(0, 1, 2, 3, 4, 5),
+        field = Settings.slideshowClockPosition.asMutableState(),
+    )
+    val autoScroll = Settings.slideshowAutoScroll.asMutableState()
+    SwitchChoice(
+        title = stringResource(R.string.pref_slideshow_auto_scroll),
+        field = autoScroll,
+    )
+    AnimatedVisibility(visible = !autoScroll.value) {
+        SwitchChoice(
+            title = stringResource(R.string.scale_type_fill_screen),
+            field = Settings.slideshowFillScreen.asMutableState(),
+        )
+    }
     CustomBrightnessSetting(
         Settings.slideshowCustomBrightness.asMutableState(),
         Settings.slideshowCustomBrightnessValue.asMutableState(),
@@ -436,9 +460,5 @@ private fun SlideshowSetting() = Column {
     SwitchChoice(
         title = stringResource(R.string.pref_slideshow_dual_pages_override),
         field = Settings.slideshowDualPages.asMutableState(),
-    )
-    SwitchChoice(
-        title = stringResource(R.string.scale_type_fill_screen),
-        field = Settings.slideshowFillScreen.asMutableState(),
     )
 }

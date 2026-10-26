@@ -1137,4 +1137,11 @@
     <string name="pref_slideshow_play_once">播放一次</string>
     <string name="pref_slideshow_auto_rotate_override">自動旋轉覆寫</string>
     <string name="pref_slideshow_use_general_setting">使用一般設定</string>
+    <string name="pref_slideshow_clock">時鐘疊加</string>
+    <string name="pref_slideshow_top_left">左上角</string>
+    <string name="pref_slideshow_top_right">右上角</string>
+    <string name="pref_slideshow_bottom_left">左下角</string>
+    <string name="pref_slideshow_bottom_right">右下角</string>
+    <string name="pref_slideshow_random">隨機</string>
+    <string name="pref_slideshow_auto_scroll">自動捲動</string>
 </resources>

@@ -22,6 +22,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.AbsoluteAlignment
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -83,6 +84,7 @@ fun PagerViewer(
     /** Persisted landscape first page: slot 0 is that page alone. */
     landscapeCover: Boolean = false,
     modifier: Modifier = Modifier,
+    slideshowAutoScroll: SlideshowAutoScrollState? = null,
 ) {
     val scope = rememberCoroutineScope()
     // Real page count for content; pager pageCount (spread or page) comes from [pagerState].
@@ -95,7 +97,7 @@ fun PagerViewer(
     val landscapeZoom by Settings.landscapeZoom.collectAsState()
     val autoRotateMode = slideshowAutoRotateMode()
     val zoomStart by Settings.zoomStart.collectAsState()
-    val alignment = Alignment.fromPreferences(zoomStart, isRtl, isVertical)
+    val alignment = if (slideshowAutoScroll != null) AbsoluteAlignment.Left else Alignment.fromPreferences(zoomStart, isRtl, isVertical)
     val layoutSize by remember(pagerState) {
         derivedStateOf {
             pagerState.layoutInfo.viewportSize.toSize()
@@ -131,7 +133,8 @@ fun PagerViewer(
                 rightPage = right,
                 pageLoader = pageLoader,
                 isRtl = dualRtl,
-                gap = dualPageGap,
+                // Pan the full spread; separate cropped cells cannot share a scroll path.
+                gap = dualPageGap && slideshowAutoScroll == null,
                 scaleType = scaleType,
                 landscapeZoom = landscapeZoom,
                 autoRotateMode = autoRotateMode,
@@ -139,6 +142,8 @@ fun PagerViewer(
                 layoutSize = layoutSize,
                 navigator = navigator,
                 pagerState = pagerState,
+                slot = index,
+                slideshowAutoScroll = slideshowAutoScroll,
                 onSelectPage = onSelectPage,
                 onMenuRegionClick = onMenuRegionClick,
                 onDoubleClick = doubleTap,
@@ -157,6 +162,8 @@ fun PagerViewer(
                 layoutSize = layoutSize,
                 navigator = navigator,
                 pagerState = pagerState,
+                slot = index,
+                slideshowAutoScroll = slideshowAutoScroll,
                 onSelectPage = onSelectPage,
                 onMenuRegionClick = onMenuRegionClick,
                 onDoubleClick = doubleTap,
@@ -235,6 +242,8 @@ private fun DualPageContainer(
     layoutSize: Size,
     navigator: () -> NavigationRegions,
     pagerState: PagerState,
+    slot: Int,
+    slideshowAutoScroll: SlideshowAutoScrollState?,
     onSelectPage: (Page) -> Unit,
     onMenuRegionClick: () -> Unit,
     onDoubleClick: DoubleClickToZoomListener,
@@ -246,6 +255,7 @@ private fun DualPageContainer(
     @Suppress("NAME_SHADOWING")
     val onMenuRegionClick by rememberUpdatedState(onMenuRegionClick)
     val zoomableState = rememberZoomableState(zoomSpec = PagerZoomSpec)
+    var zoomConfigured by remember { mutableStateOf(false) }
     val solo = leftPage != null && rightPage == null || leftPage == null && rightPage != null
     val halfSize = if (layoutSize == Size.Zero) {
         Size.Zero
@@ -283,7 +293,9 @@ private fun DualPageContainer(
         if (gap) {
             zoomableState.contentScale = ContentScale.Fit
             LaunchedEffect(layoutSize, alignment) {
+                zoomConfigured = false
                 zoomableState.configurePagerZoom(layoutSize, layoutSize, ContentScale.Fit, alignment, autoLandscapeZoom = false)
+                zoomConfigured = true
             }
         } else {
             val rotate = solo && run {
@@ -292,17 +304,21 @@ private fun DualPageContainer(
             }
             val contentScale = ContentScale.fromPreferences(scaleType, zoomSpread, layoutSize)
             zoomableState.contentScale = contentScale
-            LaunchedEffect(zoomSpread, contentScale, alignment, layoutSize, landscapeZoom, rotate) {
+            LaunchedEffect(zoomSpread, contentScale, alignment, layoutSize, landscapeZoom, rotate, slideshowAutoScroll) {
+                zoomConfigured = false
                 zoomableState.configurePagerZoom(
                     size = zoomSpread,
                     viewport = layoutSize,
                     scale = contentScale,
                     alignment = alignment,
-                    autoLandscapeZoom = landscapeZoom && !rotate && contentScale == ContentScale.Fit && zoomSpread.width > zoomSpread.height,
+                    autoLandscapeZoom = slideshowAutoScroll == null && landscapeZoom && !rotate && contentScale == ContentScale.Fit && zoomSpread.width > zoomSpread.height,
                 )
+                zoomConfigured = true
             }
         }
     }
+
+    SlideshowAutoScroll(slideshowAutoScroll, slot, pagerState, listOfNotNull(leftPage, rightPage), zoomableState, layoutSize, zoomConfigured)
 
     val onLongClick: (Offset) -> Unit = { offset ->
         val page = when {
@@ -468,6 +484,8 @@ private fun PageContainer(
     layoutSize: Size,
     navigator: () -> NavigationRegions,
     pagerState: PagerState,
+    slot: Int,
+    slideshowAutoScroll: SlideshowAutoScrollState?,
     onSelectPage: (Page) -> Unit,
     onMenuRegionClick: () -> Unit,
     onDoubleClick: DoubleClickToZoomListener,
@@ -479,6 +497,7 @@ private fun PageContainer(
     @Suppress("NAME_SHADOWING")
     val onMenuRegionClick by rememberUpdatedState(onMenuRegionClick)
     val zoomableState = rememberZoomableState(zoomSpec = PagerZoomSpec)
+    var zoomConfigured by remember { mutableStateOf(false) }
     val status = page.statusObserved
     if (status is PageStatus.Ready && layoutSize != Size.Zero) {
         val raw = status.image.intrinsicSize.toSize()
@@ -487,16 +506,20 @@ private fun PageContainer(
         val size = rememberStableZoomSize(fitDisplaySize(raw, rotate))
         val contentScale = ContentScale.fromPreferences(scaleType, size, layoutSize)
         zoomableState.contentScale = contentScale
-        LaunchedEffect(size, contentScale, alignment, layoutSize, landscapeZoom, rotate) {
+        LaunchedEffect(size, contentScale, alignment, layoutSize, landscapeZoom, rotate, slideshowAutoScroll) {
+            zoomConfigured = false
             zoomableState.configurePagerZoom(
                 size = size,
                 viewport = layoutSize,
                 scale = contentScale,
                 alignment = alignment,
-                autoLandscapeZoom = landscapeZoom && !rotate && contentScale == ContentScale.Fit && raw.width > raw.height,
+                autoLandscapeZoom = slideshowAutoScroll == null && landscapeZoom && !rotate && contentScale == ContentScale.Fit && raw.width > raw.height,
             )
+            zoomConfigured = true
         }
     }
+    SlideshowAutoScroll(slideshowAutoScroll, slot, pagerState, listOf(page), zoomableState, layoutSize, zoomConfigured)
+
     val onLongClick = { _: Offset -> onSelectPage(page) }
     val onTap: ZoomableState?.(Offset) -> Unit = { offset ->
         scope.launch {

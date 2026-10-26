@@ -594,6 +594,7 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
     val keepScreenOn = keepScreenOnPref || (slideshow && slideshowKeepScreenOn)
     val slideshowDualPages by Settings.slideshowDualPages.collectAsState()
     val slideshowSeconds by Settings.slideshowDisplaySeconds.collectAsState()
+    val slideshowAutoScroll by Settings.slideshowAutoScroll.collectAsState()
     val slideshowPlayback by Settings.slideshowPlaybackMode.collectAsState { SlideshowPlaybackMode.fromPreference(it) }
     val effectiveDualPages = if (slideshow) slideshowDualPages else dualPagePref
     val dualActive = dualPageActive(effectiveDualPages, isLandscape)
@@ -637,6 +638,9 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
         } else {
             pageLoader.size.coerceAtLeast(1)
         }
+    }
+    val autoScrollState = remember(pagerState, pageLoader, slideshow, slideshowAutoScroll, slideshowPlayback, pagerDual, landscapeCover) {
+        SlideshowAutoScrollState()
     }
     val syncState = rememberSliderPagerDoubleSyncState(lazyListState, pagerState, pageLoader)
     var appbarVisible by remember { mutableStateOf(false) }
@@ -1091,6 +1095,7 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
                 pagerState = pagerState,
                 lazyListState = lazyListState,
                 pageLoader = pageLoader,
+                slideshowAutoScroll = autoScrollState.takeIf { slideshow && slideshowAutoScroll },
                 showNavigationOverlay = showNavigationOverlay,
                 onNavigationModeChange = { showNavigationOverlay = true },
                 onSelectPage = onSelectPage,
@@ -1128,6 +1133,9 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
             )
         }
         ReaderFilterOverlay()
+        if (slideshow && !appbarVisible) {
+            SlideshowClockOverlay(page = pagerState.settledPage)
+        }
         val showPageNumber by Settings.showPageNumber.collectAsState()
         if (showPageNumber && !appbarVisible) {
             CompositionLocalProvider(LocalTextStyle provides MaterialTheme.typography.bodySmall) {
@@ -1162,6 +1170,8 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
             pageLoader,
             slideshow,
             slideshowSeconds,
+            slideshowAutoScroll,
+            autoScrollState,
             slideshowPlayback,
             pagerDual,
             landscapeCover,
@@ -1173,11 +1183,15 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
                     viewports = snapshotFlow {
                         SlideshowViewport(
                             page = pagerState.settledPage,
-                            blocked = pagerState.isScrollInProgress || PagerTransitionHandlers.isRunning(pagerState),
+                            blocked = pagerState.isScrollInProgress || PagerTransitionHandlers.isRunning(pagerState) ||
+                                (slideshowAutoScroll && autoScrollState.readyPage != pagerState.settledPage),
                             hasPages = pageLoader.size > 0,
                         )
                     },
-                    awaitInterval = { delay(slideshowSeconds.coerceIn(3, 200) * 1000L) },
+                    awaitInterval = {
+                        if (slideshowAutoScroll) autoScrollState.startInterval(pagerState.settledPage, slideshowSeconds)
+                        delay(slideshowSeconds.coerceIn(3, 200) * 1000L)
+                    },
                 ) { page ->
                     val count = pagerState.pageCount
                     val realPage = if (pagerDual) dualFirstPageIndex(page, landscapeCover) else page
@@ -1201,6 +1215,8 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
                         pagerState.moveToNext()
                     } else if (slideshowPlayback == SlideshowPlaybackMode.REPEAT) {
                         pagerState.performScrollToPage(0)
+                    } else {
+                        autoScrollState.finishPlayback(page)
                     }
                 }
             }
