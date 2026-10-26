@@ -13,6 +13,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.AbsoluteAlignment
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
@@ -20,6 +21,7 @@ import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
@@ -43,7 +45,6 @@ internal fun BoxScope.SlideshowClockOverlay(page: Int) {
         3 -> AbsoluteAlignment.BottomLeft
         else -> AbsoluteAlignment.BottomRight
     }
-    val horizontal = if (corner == 1 || corner == 3) AbsoluteAlignment.Left else AbsoluteAlignment.Right
     val context = LocalContext.current
     val locale = LocalConfiguration.current.locales[0]
     val dateFormat = remember(locale) { SimpleDateFormat(DateFormat.getBestDateTimePattern(locale, "EEE MMM d"), locale) }
@@ -57,10 +58,10 @@ internal fun BoxScope.SlideshowClockOverlay(page: Int) {
             }
         }
     }
-    val style = TextStyle(color = Color.White, shadow = Shadow(Color.Black, Offset(1f, 2f), 6f))
+    val style = TextStyle(color = Color.White, shadow = Shadow(Color.Black, Offset(1f, 2f), 6f), textAlign = TextAlign.Center)
     Column(
         modifier = Modifier.align(alignment).safeDrawingPadding().padding(24.dp),
-        horizontalAlignment = horizontal,
+        horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Text(DateFormat.getTimeFormat(context).format(now), style = style, fontSize = 52.sp, lineHeight = 60.sp)
         Text(dateFormat.format(now), style = style, fontSize = 20.sp, lineHeight = 26.sp)
