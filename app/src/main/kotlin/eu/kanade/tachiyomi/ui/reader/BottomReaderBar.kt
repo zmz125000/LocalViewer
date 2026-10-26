@@ -75,12 +75,23 @@ fun BottomReaderBar(
             contentDescription = stringResource(R.string.pdf_reader_contents),
         )
     } else {
-        val autoRotate by Settings.autoRotateMode.collectAsState { AutoRotateMode.fromPreference(it) }
+        val generalAutoRotate by Settings.autoRotateMode.collectAsState { AutoRotateMode.fromPreference(it) }
+        val slideshowAutoRotate by Settings.slideshowAutoRotateOverride.collectAsState()
+        val slideshow = readingMode == ReadingModeType.SLIDESHOW
+        val autoRotate = if (slideshow && slideshowAutoRotate >= 0) {
+            AutoRotateMode.fromPreference(slideshowAutoRotate)
+        } else {
+            generalAutoRotate
+        }
         ActionButton(
             onClick = {
                 val modes = AutoRotateMode.entries
                 val next = modes[(modes.indexOf(autoRotate) + 1) % modes.size]
-                Settings.autoRotateMode.value = next.prefValue
+                if (slideshow) {
+                    Settings.slideshowAutoRotateOverride.value = next.prefValue
+                } else {
+                    Settings.autoRotateMode.value = next.prefValue
+                }
             },
             imageVector = autoRotate.icon,
             contentDescription = stringResource(autoRotate.stringRes),
