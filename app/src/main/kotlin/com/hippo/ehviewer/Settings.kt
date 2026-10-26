@@ -1241,6 +1241,7 @@ object Settings : DataStorePreferences(null) {
     }
 
     val slideshowKeepScreenOn = boolPref("slideshow_keep_screen_on_override", true)
+    val slideshowShowPageNumber = boolPref("slideshow_show_page_number_override", false)
     val slideshowDisplaySeconds = intPref("slideshow_display_seconds", 5)
     val slideshowPlaybackMode = intPref("slideshow_playback_mode", SlideshowPlaybackMode.REPEAT.prefValue)
     val slideshowDualPages = boolPref("slideshow_dual_pages_enabled", false)

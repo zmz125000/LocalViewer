@@ -1312,4 +1312,5 @@
     <string name="pref_slideshow_random">Random</string>
     <string name="pref_slideshow_auto_scroll">Auto scroll</string>
     <string name="pref_slideshow_decode_size_override">Decode size override</string>
+    <string name="pref_slideshow_page_number_override">Page number override</string>
 </resources>

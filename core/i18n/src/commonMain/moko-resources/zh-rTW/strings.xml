@@ -1145,4 +1145,5 @@
     <string name="pref_slideshow_random">隨機</string>
     <string name="pref_slideshow_auto_scroll">自動捲動</string>
     <string name="pref_slideshow_decode_size_override">解碼尺寸覆寫</string>
+    <string name="pref_slideshow_page_number_override">頁碼覆寫</string>
 </resources>

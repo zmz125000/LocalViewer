@@ -1266,4 +1266,5 @@
     <string name="pref_slideshow_random">随机</string>
     <string name="pref_slideshow_auto_scroll">自动滚动</string>
     <string name="pref_slideshow_decode_size_override">解码尺寸覆盖</string>
+    <string name="pref_slideshow_page_number_override">页码覆盖</string>
 </resources>
