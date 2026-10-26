@@ -583,7 +583,7 @@ abstract class PageLoader(
     }
 
     override fun retainHiResFull(index: Int) {
-        if (index !in 0 until size || !Settings.readerHiResOptimize.value) return
+        if (index !in 0 until size || !Settings.effectiveReaderHiResOptimize()) return
         if (hiResFull.containsKey(index)) return
         // One decode per page. Zooming in again reuses the bitmap until release.
         if (hiResWant.put(index, true) == true) return

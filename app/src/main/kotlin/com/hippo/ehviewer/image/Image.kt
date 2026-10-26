@@ -74,6 +74,7 @@ import com.hippo.ehviewer.ktbuilder.execute
 import com.hippo.ehviewer.ktbuilder.imageRequest
 import com.hippo.ehviewer.util.FileUtils
 import eu.kanade.tachiyomi.ui.reader.setting.DecodeSizeType
+import eu.kanade.tachiyomi.ui.reader.setting.ReadingModeType
 import java.io.File
 import java.io.InputStream
 import java.nio.ByteBuffer
@@ -278,9 +279,9 @@ class Image private constructor(
         }
 
         private fun decodeMode(forceOriginal: Boolean): DecodeSizeType {
-            // Hi-res optimize always starts from the file, then caps the first decode at 4096 px.
-            if (forceOriginal || Settings.readerHiResOptimize.value) return DecodeSizeType.ORIGIN
-            return DecodeSizeType.fromPreference(Settings.readerDecodeSize.value)
+            if (forceOriginal) return DecodeSizeType.ORIGIN
+            // An explicit slideshow size takes priority over the general hi-res pipeline.
+            return Settings.effectiveReaderDecodeSize()
         }
 
         /**
@@ -740,7 +741,10 @@ class Image private constructor(
             val hdrSafe = looksHdr
             // APNG must not take the still PNG F16 BitmapFactory path.
             val platformHbd = !looksAnimated && resolvePlatformHbd(gainMap = looksHdr)
+            // Slideshow keeps the optimized hi-res preview instead of the screen-fit
+            // comic preview, which Fill screen would immediately promote to full size.
             val comicRendering = Settings.readerHiResOptimize.value &&
+                Settings.readingMode.value != ReadingModeType.SLIDESHOW.prefValue &&
                 Settings.readerComicRendering.value && !forceOriginal &&
                 !looksHdr && !looksAnimated && !platformHbd
             // Gain-map JPEG/HEIC/AVIF stay on Coil. hdrSafe skips the software kernel,
@@ -911,7 +915,7 @@ class Image private constructor(
          * means original.
          */
         fun hiResPreviewCapEdge(forceOriginal: Boolean): Int {
-            if (forceOriginal || !Settings.readerHiResOptimize.value) return 0
+            if (forceOriginal || !Settings.effectiveReaderHiResOptimize()) return 0
             val requested = requestedDecodeEdge(false)
             return if (requested <= 0 || requested > HI_RES_PREVIEW_EDGE) HI_RES_PREVIEW_EDGE else 0
         }

@@ -1144,4 +1144,5 @@
     <string name="pref_slideshow_bottom_right">右下角</string>
     <string name="pref_slideshow_random">隨機</string>
     <string name="pref_slideshow_auto_scroll">自動捲動</string>
+    <string name="pref_slideshow_decode_size_override">解碼尺寸覆寫</string>
 </resources>

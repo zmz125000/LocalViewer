@@ -13,6 +13,7 @@ import com.ehviewer.core.preferences.DataStorePreferences
 import com.ehviewer.core.preferences.PrefDelegate
 import com.ehviewer.core.preferences.edit
 import eu.kanade.tachiyomi.ui.reader.setting.AutoRotateMode
+import eu.kanade.tachiyomi.ui.reader.setting.DecodeSizeType
 import eu.kanade.tachiyomi.ui.reader.setting.OrientationType
 import eu.kanade.tachiyomi.ui.reader.setting.PageTransitionType
 import eu.kanade.tachiyomi.ui.reader.setting.ReadingModeType
@@ -1221,6 +1222,24 @@ object Settings : DataStorePreferences(null) {
 
     // -1 inherits the general reading-mode transition.
     val slideshowPageTransition = intPref("slideshow_page_transition", PageTransitionType.FADE_BLEND.prefValue)
+
+    // -1 inherits general rendering settings; explicit sizes bypass hi-res optimization.
+    val slideshowDecodeSizeOverride = intPref("slideshow_decode_size_override", DecodeSizeType.SCALE_2.prefValue)
+
+    private fun slideshowDecodeSize(): DecodeSizeType? {
+        if (readingMode.value != ReadingModeType.SLIDESHOW.prefValue) return null
+        val override = slideshowDecodeSizeOverride.value
+        return DecodeSizeType.entries.find { it.prefValue == override }
+    }
+
+    fun effectiveReaderHiResOptimize(): Boolean = readerHiResOptimize.value && slideshowDecodeSize() == null
+
+    fun effectiveReaderDecodeSize(): DecodeSizeType = slideshowDecodeSize() ?: if (readerHiResOptimize.value) {
+        DecodeSizeType.ORIGIN
+    } else {
+        DecodeSizeType.fromPreference(readerDecodeSize.value)
+    }
+
     val slideshowKeepScreenOn = boolPref("slideshow_keep_screen_on_override", true)
     val slideshowDisplaySeconds = intPref("slideshow_display_seconds", 5)
     val slideshowPlaybackMode = intPref("slideshow_playback_mode", SlideshowPlaybackMode.REPEAT.prefValue)
