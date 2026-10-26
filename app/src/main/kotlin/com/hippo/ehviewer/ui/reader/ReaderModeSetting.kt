@@ -22,6 +22,7 @@ import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.asMutableState
 import com.hippo.ehviewer.library.document.EBOOK_FONT_SIZE_MAX
 import com.hippo.ehviewer.library.document.EBOOK_FONT_SIZE_MIN
+import eu.kanade.tachiyomi.ui.reader.setting.AutoRotateMode
 import eu.kanade.tachiyomi.ui.reader.setting.OrientationType
 import eu.kanade.tachiyomi.ui.reader.setting.PageTransitionType
 import eu.kanade.tachiyomi.ui.reader.setting.ReadingModeType
@@ -415,6 +416,19 @@ private fun SlideshowSetting() = Column {
         values = listOf(-1) + PageTransitionType.entries.map { it.prefValue },
         field = Settings.slideshowPageTransition.asMutableState(),
     )
+    SpinnerChoice(
+        title = stringResource(R.string.pref_slideshow_auto_rotate_override),
+        entries = (
+            listOf(stringResource(R.string.pref_slideshow_use_general_setting)) +
+                AutoRotateMode.entries.map { stringResource(it.stringRes) }
+            ).toTypedArray(),
+        values = listOf(-1) + AutoRotateMode.entries.map { it.prefValue },
+        field = Settings.slideshowAutoRotateOverride.asMutableState(),
+    )
+    CustomBrightnessSetting(
+        Settings.slideshowCustomBrightness.asMutableState(),
+        Settings.slideshowCustomBrightnessValue.asMutableState(),
+    )
     SwitchChoice(
         title = stringResource(R.string.pref_keep_screen_on),
         field = Settings.slideshowKeepScreenOn.asMutableState(),
@@ -426,13 +440,5 @@ private fun SlideshowSetting() = Column {
     SwitchChoice(
         title = stringResource(R.string.scale_type_fill_screen),
         field = Settings.slideshowFillScreen.asMutableState(),
-    )
-    SwitchChoice(
-        title = stringResource(R.string.pref_slideshow_disable_auto_rotate),
-        field = Settings.slideshowDisableAutoRotate.asMutableState(),
-    )
-    CustomBrightnessSetting(
-        Settings.slideshowCustomBrightness.asMutableState(),
-        Settings.slideshowCustomBrightnessValue.asMutableState(),
     )
 }

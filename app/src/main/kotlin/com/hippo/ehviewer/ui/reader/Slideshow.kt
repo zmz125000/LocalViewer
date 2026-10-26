@@ -11,9 +11,9 @@ import kotlinx.coroutines.launch
 @Composable
 fun slideshowAutoRotateMode(): Int {
     val mode by Settings.readingMode.collectAsState()
-    val disable by Settings.slideshowDisableAutoRotate.collectAsState()
+    val override by Settings.slideshowAutoRotateOverride.collectAsState()
     val rotation by Settings.autoRotateMode.collectAsState()
-    return if (mode == ReadingModeType.SLIDESHOW.prefValue && disable) AUTO_ROTATE_OFF else rotation
+    return if (mode == ReadingModeType.SLIDESHOW.prefValue && override >= 0) override else rotation
 }
 
 @Composable

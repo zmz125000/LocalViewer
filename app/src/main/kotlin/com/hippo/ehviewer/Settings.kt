@@ -12,6 +12,7 @@ import androidx.compose.runtime.remember
 import com.ehviewer.core.preferences.DataStorePreferences
 import com.ehviewer.core.preferences.PrefDelegate
 import com.ehviewer.core.preferences.edit
+import eu.kanade.tachiyomi.ui.reader.setting.AutoRotateMode
 import eu.kanade.tachiyomi.ui.reader.setting.OrientationType
 import eu.kanade.tachiyomi.ui.reader.setting.PageTransitionType
 import eu.kanade.tachiyomi.ui.reader.setting.ReadingModeType
@@ -1222,7 +1223,9 @@ object Settings : DataStorePreferences(null) {
     val slideshowPlaybackMode = intPref("slideshow_playback_mode", SlideshowPlaybackMode.REPEAT.prefValue)
     val slideshowDualPages = boolPref("slideshow_dual_pages_enabled", false)
     val slideshowFillScreen = boolPref("slideshow_scale_override", false)
-    val slideshowDisableAutoRotate = boolPref("slideshow_rotate_override", false)
+
+    // -1 inherits the general auto-rotate mode; 0=off, 1=CW, 2=CCW.
+    val slideshowAutoRotateOverride = intPref("slideshow_auto_rotate_override", -1)
 
     val imageScaleType = intPref("pref_image_scale_type_key", 1)
     val landscapeZoom = boolPref("landscape_zoom", false)

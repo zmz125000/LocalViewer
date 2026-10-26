@@ -1131,4 +1131,6 @@
     <string name="pref_slideshow_dual_pages_override">覆寫雙頁模式</string>
     <string name="pref_slideshow_playback_mode">幻燈片播放模式</string>
     <string name="pref_slideshow_play_once">播放一次</string>
+    <string name="pref_slideshow_auto_rotate_override">自動旋轉覆寫</string>
+    <string name="pref_slideshow_use_general_setting">使用一般設定</string>
 </resources>

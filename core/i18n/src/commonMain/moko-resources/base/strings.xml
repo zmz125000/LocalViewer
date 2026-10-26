@@ -1212,4 +1212,6 @@
     <string name="pref_reader_transition_fade_blend">Fade (blend)</string>
     <string name="pref_slideshow_playback_mode">Slideshow playback</string>
     <string name="pref_slideshow_play_once">Play once</string>
+    <string name="pref_slideshow_auto_rotate_override">Auto-rotate override</string>
+    <string name="pref_slideshow_use_general_setting">Use general setting</string>
 </resources>
