@@ -410,6 +410,7 @@ fun AnimatedVisibilityScope.AdvancedScreen(navigator: DestinationsNavigator) = S
                 title = stringResource(R.string.settings_reset_to_defaults),
             ) {
                 launch {
+                    withIOContext { EhDB.clearHistoryHiddenByFolderMarks() }
                     Settings.resetToDefaults()
                     launchSnackbar(settingsReset)
                     setAppLanguage("system")
