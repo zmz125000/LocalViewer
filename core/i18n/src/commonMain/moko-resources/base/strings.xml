@@ -651,6 +651,10 @@
     <string name="settings_smb_async_transport_summary">Share small NIO pools instead of one Packet Reader thread per TCP.</string>
     <string name="settings_smb_mdns">SMB mDNS</string>
     <string name="settings_smb_mdns_summary">Resolve .local and single-label SMB hosts on the LAN. IP addresses and other names still use system DNS.</string>
+    <string name="settings_smb_connection_notices">SMB connection notices</string>
+    <string name="settings_smb_connection_notices_summary">Show the connected server IP and a reason when a connection fails.</string>
+    <string name="settings_smb_connection_connected">SMB connected: %1$s</string>
+    <string name="settings_smb_connection_failed">SMB connection to %1$s failed: %2$s</string>
     <string name="settings_reader_preload_image">Source prefetch ahead</string>
     <string name="settings_reader_preload_image_summary">Download or extract the next %s pages in the reading direction</string>
     <string name="settings_advanced_disable_reader_network_cache">Disable reader network cache</string>

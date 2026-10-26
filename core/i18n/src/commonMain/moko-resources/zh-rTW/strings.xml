@@ -294,6 +294,10 @@
     <string name="settings_smb_async_transport_summary">用少量 NIO 執行緒池代替每條 TCP 一個 Packet Reader。</string>
     <string name="settings_smb_mdns">SMB mDNS</string>
     <string name="settings_smb_mdns_summary">用多播 DNS 解析區域網路中的 .local 與單標籤 SMB 主機名稱。IP 和其他網域名稱仍走系統 DNS。</string>
+    <string name="settings_smb_connection_notices">SMB 連線通知</string>
+    <string name="settings_smb_connection_notices_summary">顯示已連線伺服器的 IP，以及連線失敗原因。</string>
+    <string name="settings_smb_connection_connected">已連線至 SMB：%1$s</string>
+    <string name="settings_smb_connection_failed">無法連線至 SMB %1$s：%2$s</string>
     <string name="settings_reader_preload_image">閱讀器預載</string>
     <string name="settings_reader_preload_image_summary">預取後續 %s 頁（SMB 會提前下載；本機按需開啟）</string>
     <string name="settings_advanced_disable_reader_network_cache">停用閱讀器網路快取</string>

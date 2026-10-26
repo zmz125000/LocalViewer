@@ -276,6 +276,10 @@ fun AnimatedVisibilityScope.AdvancedScreen(navigator: DestinationsNavigator) = S
                 title = stringResource(id = R.string.settings_smb_mdns),
                 state = Settings.smbMdns.asMutableState(),
             )
+            SwitchPreference(
+                title = stringResource(id = R.string.settings_smb_connection_notices),
+                state = Settings.smbConnectionNotices.asMutableState(),
+            )
             SimpleMenuPreferenceInt(
                 title = stringResource(id = R.string.settings_advanced_read_cache_size),
                 summary = stringResource(id = R.string.settings_advanced_read_cache_size_summary),

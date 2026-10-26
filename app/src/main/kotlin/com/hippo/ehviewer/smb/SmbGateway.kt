@@ -1441,7 +1441,10 @@ object SmbGateway {
         val credential = credKey(source, password)
         connectGuard.checkAllowed(key, credential)
         try {
-            return block().also { connectGuard.connected(key) }
+            return block().also {
+                connectGuard.connected(key)
+                SmbConnectionNotices.connected(endpointHost(source))
+            }
         } catch (error: Throwable) {
             if (error !is CancellationException) {
                 connectGuard.failed(
@@ -1450,6 +1453,7 @@ object SmbGateway {
                     authentication = isSmbAuthenticationFailure(error),
                     transient = isSmbTransientConnectFailure(error),
                 )
+                SmbConnectionNotices.failed(endpointHost(source), error)
             }
             throw error
         }

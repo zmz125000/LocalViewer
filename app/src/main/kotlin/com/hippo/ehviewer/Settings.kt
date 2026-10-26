@@ -495,6 +495,9 @@ object Settings : DataStorePreferences(null) {
         com.hippo.ehviewer.smb.SmbMdns.clear()
         com.hippo.ehviewer.smb.SmbGateway.onProtocolSettingsChanged()
     }
+
+    /** Show the connected SMB address and a short reason when a connection fails. */
+    val smbConnectionNotices = boolPref("smb_connection_notices", false)
     val downloadDelay = intPref("download_delay_3", 1000)
     val timeoutSpeed = intPref("timeout_speed_level", 6)
 
@@ -1064,7 +1067,7 @@ object Settings : DataStorePreferences(null) {
      * Network/SMB/WebDAV keep original when on. Browse covers still convert to small JPEG.
      * Camera RAW always uses the direct bitmap, whether this is on or off.
      */
-    val readerLibDirectBitmap = boolPref("pref_reader_lib_direct_bitmap", true)
+    val readerLibDirectBitmap = boolPref("pref_reader_lib_direct_bitmap_v2", true)
 
     /**
      * Window HDR presentation only: when a composed page has a gain map and the
