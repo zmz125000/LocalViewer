@@ -23,6 +23,7 @@ import com.hippo.ehviewer.asMutableState
 import com.hippo.ehviewer.library.document.EBOOK_FONT_SIZE_MAX
 import com.hippo.ehviewer.library.document.EBOOK_FONT_SIZE_MIN
 import eu.kanade.tachiyomi.ui.reader.setting.AutoRotateMode
+import eu.kanade.tachiyomi.ui.reader.setting.DecodeSizeType
 import eu.kanade.tachiyomi.ui.reader.setting.OrientationType
 import eu.kanade.tachiyomi.ui.reader.setting.PageTransitionType
 import eu.kanade.tachiyomi.ui.reader.setting.ReadingModeType
@@ -415,6 +416,15 @@ private fun SlideshowSetting() = Column {
             ).toTypedArray(),
         values = listOf(-1) + PageTransitionType.entries.map { it.prefValue },
         field = Settings.slideshowPageTransition.asMutableState(),
+    )
+    SpinnerChoice(
+        title = stringResource(R.string.pref_slideshow_decode_size_override),
+        entries = (
+            listOf(stringResource(R.string.pref_slideshow_use_general_setting)) +
+                DecodeSizeType.entries.map { stringResource(it.stringRes) }
+            ).toTypedArray(),
+        values = listOf(-1) + DecodeSizeType.entries.map { it.prefValue },
+        field = Settings.slideshowDecodeSizeOverride.asMutableState(),
     )
     SpinnerChoice(
         title = stringResource(R.string.pref_slideshow_auto_rotate_override),

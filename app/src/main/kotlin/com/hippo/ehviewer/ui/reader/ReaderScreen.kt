@@ -152,7 +152,6 @@ import com.ramcosta.composedestinations.navigation.DestinationsNavigator
 import eu.kanade.tachiyomi.ui.reader.PageIndicatorText
 import eu.kanade.tachiyomi.ui.reader.ReaderAppBars
 import eu.kanade.tachiyomi.ui.reader.ReaderPageSheetMeta
-import eu.kanade.tachiyomi.ui.reader.setting.DecodeSizeType
 import eu.kanade.tachiyomi.ui.reader.setting.ReadingModeType
 import eu.kanade.tachiyomi.ui.reader.setting.SlideshowPlaybackMode
 import java.util.concurrent.atomic.AtomicInteger
@@ -163,7 +162,9 @@ import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.flow.onCompletion
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -516,6 +517,14 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
                 readerDecodeScaler.changesFlow(),
                 readerHiResOptimize.changesFlow(),
                 readerComicRendering.changesFlow(),
+                slideshowDecodeSizeOverride.changesFlow().filter { readingMode.value == ReadingModeType.SLIDESHOW.prefValue },
+                // Entering/leaving slideshow changes its decode override and comic bypass.
+                readingMode.valueFlow()
+                    .map { it == ReadingModeType.SLIDESHOW.prefValue }
+                    .distinctUntilChanged()
+                    .drop(1)
+                    .filter { slideshowDecodeSizeOverride.value >= 0 || (readerHiResOptimize.value && readerComicRendering.value) }
+                    .map {},
                 readerHiResSoftwareDownscale.changesFlow(),
                 // Advanced color changes F16 pack / CS for lib-direct — re-decode.
                 readerAdvancedColor.changesFlow(),
@@ -529,8 +538,7 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
                 // so those galleries reload at any decode size.
                 readerHdrDisplay.changesFlow().filter {
                     pageLoader.containsRawStill() || (
-                        !readerHiResOptimize.value &&
-                            !DecodeSizeType.fromPreference(readerDecodeSize.value).isOriginal
+                        !effectiveReaderHiResOptimize() && !effectiveReaderDecodeSize().isOriginal
                         )
                 },
                 // Camera RAW decode, exposure, white balance, and highlights change the bitmap.
