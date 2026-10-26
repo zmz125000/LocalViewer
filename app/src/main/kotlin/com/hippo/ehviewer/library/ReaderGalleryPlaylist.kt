@@ -396,4 +396,34 @@ object ReaderGalleryPlaylist {
         val target = list.getOrNull(if (next) idx + 1 else idx - 1) ?: return null
         return target.toArgs()
     }
+
+    /**
+     * Slideshow next gallery inside this playlist.
+     * Ebooks are skipped. The list wraps when more than one gallery remains.
+     * [SlideshowHop.RepeatSelf] when this gallery is the only one left.
+     * [SlideshowHop.Unresolved] when the playlist does not contain [args].
+     */
+    internal fun slideshowHop(args: ReaderScreenArgs): SlideshowHop {
+        val list = items
+        if (list.isEmpty()) return SlideshowHop.Unresolved
+        val key = keyOf(args) ?: return SlideshowHop.Unresolved
+        val idx = list.indexOfFirst { keyOf(it) == key }
+        if (idx < 0) return SlideshowHop.Unresolved
+        val target = pickSlideshowSiblingIndex(list.size, idx, next = true) { isSlideshowEbook(list[it]) }
+            ?: return SlideshowHop.RepeatSelf
+        return SlideshowHop.Open(list[target].toArgs().startingAtFirstPage())
+    }
+
+    private fun isSlideshowEbook(item: Item): Boolean = when (item) {
+        is Item.Archive -> isEbookFileName(item.path)
+        is Item.SmbStreamArchive -> isEbookFileName(item.remotePath)
+        is Item.WebDavStreamArchive -> isEbookFileName(item.remotePath)
+        else -> false
+    }
+}
+
+internal sealed interface SlideshowHop {
+    data class Open(val args: ReaderScreenArgs) : SlideshowHop
+    data object RepeatSelf : SlideshowHop
+    data object Unresolved : SlideshowHop
 }

@@ -34,7 +34,7 @@ internal fun readerZoomStartPan(bounds: Rect, viewport: Size, alignment: Alignme
     return Offset(left - bounds.left, top - bounds.top)
 }
 
-private suspend fun ZoomableState.panToReadingStart(viewport: Size, alignment: Alignment.Horizontal) {
+internal suspend fun ZoomableState.panToReadingStart(viewport: Size, alignment: Alignment.Horizontal) {
     snapshotFlow { contentTransformation.isSpecified }.first { it }
     // Content and viewport measurements must settle before reading their transformed bounds.
     withFrameNanos { }

@@ -260,6 +260,10 @@
     <string name="settings_smb_async_transport_summary">TCP ごとに Packet Reader を立てず、小さな NIO プールを共有します。</string>
     <string name="settings_smb_mdns">SMB mDNS</string>
     <string name="settings_smb_mdns_summary">LAN 上の .local と単一ラベルの SMB ホスト名をマルチキャスト DNS で解決します。IP とその他の名前はシステム DNS のままです。</string>
+    <string name="settings_smb_connection_notices">SMB 接続通知</string>
+    <string name="settings_smb_connection_notices_summary">接続先サーバーの IP と、接続失敗の理由を表示します。</string>
+    <string name="settings_smb_connection_connected">SMB に接続しました：%1$s</string>
+    <string name="settings_smb_connection_failed">SMB %1$s への接続に失敗：%2$s</string>
     <string name="settings_reader_preload_image">リーダー先読み</string>
     <string name="settings_reader_preload_image_summary">次の %s ページを先読み（SMB は先行ダウンロード、ローカルは必要時に開く）</string>
     <string name="settings_advanced_disable_reader_network_cache">リーダーのネットワークキャッシュを無効化</string>

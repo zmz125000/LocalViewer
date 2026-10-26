@@ -301,11 +301,10 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
     val networkFolderIndexCacheEnabled by Settings.networkFolderIndexCache.collectAsState()
     val networkFolderIndexQuickScanEnabled by Settings.networkFolderIndexQuickScan.collectAsState()
     val smbConnectionRevision by SmbGateway.connectionRevision.collectAsState()
+    // Disabled while the cached folder has no live SMB session: the icon is the connection indicator.
+    // Pull-to-refresh is the retry.
     val refreshEnabled = remember(source, networkFolderIndexCacheEnabled, smbConnectionRevision) {
-        !networkFolderIndexCacheEnabled || source?.let {
-            // Live connect host (EasyTier virtual host when tunnel is up), not identity host.
-            SmbGateway.isSourceConnected(it)
-        } == true
+        !networkFolderIndexCacheEnabled || source?.let { SmbGateway.isSourceConnected(it) } == true
     }
     var connectionProbeToken by remember { mutableStateOf(0) }
     val sourceConnectionKey = source?.let { SmbGateway.sourceConfigKey(it) }
@@ -672,8 +671,10 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
     /*
      * A failed foreground SMB connection used to get only one passive probe. The circuit
      * cooldown was at most 3s, but nothing scheduled the next attempt, so cached folders
-     * could remain disconnected until the screen resumed. Retry sequentially (never overlap)
-     * with a 5s gap between attempts. Leaving or pausing the screen cancels the loop.
+     * could remain disconnected until the screen resumed. Retry sequentially (never overlap).
+     * The gap is 3s, or longer while the connect guard is backing off, so a down host
+     * does not open a TCP or send another mDNS query on every pass. Leaving or pausing
+     * the screen cancels the loop.
      */
     LaunchedEffect(
         screenResumed,
@@ -689,10 +690,11 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
         val password = withIOContext { SmbPasswordStore.get(src.id) }
         var attempt = 0
         while (!SmbGateway.isSourceConnected(src)) {
-            delay(smbReconnectProbeDelayMs(attempt, SMB_RECONNECT_RETRY_DELAY_MS))
+            val cooldown = SmbGateway.connectBackoffRemainingMs(src, password)
+            delay(smbReconnectProbeDelayMs(attempt, SMB_RECONNECT_RETRY_DELAY_MS, cooldown))
+            if (SmbGateway.isSourceConnected(src)) return@LaunchedEffect
             attempt++
             SmbGateway.refreshConnectionSignal(src, password)
-            if (SmbGateway.isSourceConnected(src)) return@LaunchedEffect
         }
     }
 
@@ -2424,7 +2426,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
             isRefreshing = refreshing || loading,
             onRefresh = {
                 refreshing = true
-                source?.let { SmbGateway.refreshNameLookup(it) }
+                source?.let { SmbGateway.prepareUserRefresh(it) }
                 requestForceReload()
             },
             modifier = Modifier

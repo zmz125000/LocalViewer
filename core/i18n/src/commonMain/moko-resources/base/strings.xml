@@ -653,6 +653,10 @@
     <string name="settings_smb_async_transport_summary">Share small NIO pools instead of one Packet Reader thread per TCP.</string>
     <string name="settings_smb_mdns">SMB mDNS</string>
     <string name="settings_smb_mdns_summary">Resolve .local and single-label SMB hosts on the LAN. IP addresses and other names still use system DNS.</string>
+    <string name="settings_smb_connection_notices">SMB connection notices</string>
+    <string name="settings_smb_connection_notices_summary">Show the connected server IP and a reason when a connection fails.</string>
+    <string name="settings_smb_connection_connected">SMB connected: %1$s</string>
+    <string name="settings_smb_connection_failed">SMB connection to %1$s failed: %2$s</string>
     <string name="settings_reader_preload_image">Source prefetch ahead</string>
     <string name="settings_reader_preload_image_summary">Download or extract the next %s pages in the reading direction</string>
     <string name="settings_advanced_disable_reader_network_cache">Disable reader network cache</string>
@@ -1298,4 +1302,13 @@
     <string name="pref_reader_transition_fade_blend">Fade (blend)</string>
     <string name="pref_slideshow_playback_mode">Slideshow playback</string>
     <string name="pref_slideshow_play_once">Play once</string>
+    <string name="pref_slideshow_auto_rotate_override">Auto-rotate override</string>
+    <string name="pref_slideshow_use_general_setting">Use general setting</string>
+    <string name="pref_slideshow_clock">Clock overlay</string>
+    <string name="pref_slideshow_top_left">Top left</string>
+    <string name="pref_slideshow_top_right">Top right</string>
+    <string name="pref_slideshow_bottom_left">Bottom left</string>
+    <string name="pref_slideshow_bottom_right">Bottom right</string>
+    <string name="pref_slideshow_random">Random</string>
+    <string name="pref_slideshow_auto_scroll">Auto scroll</string>
 </resources>

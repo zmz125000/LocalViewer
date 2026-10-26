@@ -1442,15 +1442,19 @@ object SmbGateway {
         val credential = credKey(source, password)
         connectGuard.checkAllowed(key, credential)
         try {
-            return block().also { connectGuard.connected(key) }
+            return block().also {
+                connectGuard.connected(key)
+                SmbConnectionNotices.connected(endpointHost(source))
+            }
         } catch (error: Throwable) {
             if (error !is CancellationException) {
                 connectGuard.failed(
                     key,
                     credential,
                     authentication = isSmbAuthenticationFailure(error),
-                    transient = isHostCapacityError(error) || isTransportError(error) || isNetworkUnreachable(error),
+                    transient = isSmbTransientConnectFailure(error),
                 )
+                SmbConnectionNotices.failed(endpointHost(source), error)
             }
             throw error
         }
@@ -1470,8 +1474,7 @@ object SmbGateway {
      */
     private fun endpointHost(source: SmbSourceEntity): String = EasyTierPath.smbConnectHost(source)
 
-    private fun credKey(source: SmbSourceEntity, password: String): String = buildString {
-        // Pool/session identity follows the live endpoint, not the cache identity host.
+    private fun credPrefix(source: SmbSourceEntity): String = buildString {
         append(endpointHost(source).trim().lowercase(Locale.US))
         append('|')
         append(source.port)
@@ -1480,8 +1483,9 @@ object SmbGateway {
         append('|')
         append(source.domain)
         append('|')
-        append(password)
     }
+
+    private fun credKey(source: SmbSourceEntity, password: String): String = credPrefix(source) + password
 
     /** Configured share on the source (empty = server root: list shares via MS-SRVS). */
     private fun fixedShare(source: SmbSourceEntity): String = source.share.trim().trim('/')
@@ -1578,7 +1582,7 @@ object SmbGateway {
                 }
             } catch (e: Throwable) {
                 if (e is CancellationException) throw e
-                noteConnectFailure(e)
+                noteConnectFailure(host, e)
                 logcat {
                     "SmbGateway: share-enum failed host=$host ${elapsedMs()}ms: ${e.message}"
                 }
@@ -1748,6 +1752,17 @@ object SmbGateway {
     }
 
     /**
+     * Pull-to-refresh. A live pool just re-reads the folder. A disconnected host drops
+     * its backoff (and a rejected login for this account) so the reload dials now.
+     * The toolbar button stays a connection indicator and does not call this.
+     */
+    fun prepareUserRefresh(source: SmbSourceEntity) {
+        refreshNameLookup(source)
+        if (isSourceConnected(source)) return
+        connectGuard.allowManual(hostKey(endpointHost(source), source.port), credPrefix(source))
+    }
+
+    /**
      * Path change (Wi‑Fi/cell/VPN/EasyTier stop). Safe to call from **main**, binder, or
      * EasyTier UI stop — pool maps are cleared immediately; socket teardown is async.
      *
@@ -1768,7 +1783,13 @@ object SmbGateway {
             hasBrowseWork = hasBrowse,
             hasStickyWork = hasSticky,
         )
-        if (plan.clearCircuits) hostCircuits.clear()
+        if (plan.clearCircuits) {
+            hostCircuits.clear()
+            connectGuard.clearHostBackoffs()
+            // Wake a probe that is already sleeping on the old backoff. Session drops
+            // bump this too when the flag changes; a host that was already down would not.
+            _connectionRevision.update { it + 1L }
+        }
         if (plan.dropSticky) dropStickySessions(reason)
         if (plan.dropBrowse) {
             logcat { "SmbGateway: network path changed ($reason) — dropping SMB sessions + lists (async close)" }
@@ -1870,8 +1891,14 @@ object SmbGateway {
                 clearHostCircuit(host, source.port)
                 Unit
             }
-        }.onFailure { noteConnectFailure(it) }
+        }.onFailure { noteConnectFailure(endpointHost(source), it) }
     }
+
+    /** Milliseconds an automatic reconnect probe should sleep before dialing this source again. */
+    fun connectBackoffRemainingMs(source: SmbSourceEntity, password: String): Long = connectGuard.remainingMs(
+        hostKey(endpointHost(source), source.port),
+        credKey(source, password),
+    )
 
     /**
      * Cheap pool-backed signal refresh used only by the cached-folder toolbar state.
@@ -3585,6 +3612,7 @@ object SmbGateway {
             smbClient.connectSmb(host, source.port)
         } catch (error: Throwable) {
             runCatching { smbClient.close() }
+            noteConnectFailure(host, error)
             throw error
         }
         stickyConnections.add(connection)
@@ -3648,6 +3676,7 @@ object SmbGateway {
             }
             runCatching { connection.close() }
             runCatching { smbClient.close() }
+            noteConnectFailure(host, e)
             throw e
         }
         // File close and worker cancel end this open only. The TCP stays for the
@@ -3977,7 +4006,7 @@ object SmbGateway {
 
             // Only wipe the host pool for true path/network loss — not every transport blip.
             if (isNetworkUnreachable(first)) {
-                noteConnectFailure(first)
+                noteConnectFailure(host, first)
                 disconnectHost(host, source.port)
                 tripHostCircuit(host, source.port, first)
                 throw first
@@ -4013,7 +4042,7 @@ object SmbGateway {
                 }
                 if (isHostCapacityError(second)) throw second
                 if (isNetworkUnreachable(second)) {
-                    noteConnectFailure(second)
+                    noteConnectFailure(host, second)
                     disconnectHost(host, source.port)
                     tripHostCircuit(host, source.port, second)
                 }
@@ -4090,7 +4119,7 @@ object SmbGateway {
                     }
                 } catch (e: Throwable) {
                     runCatching { smbClient.close() }
-                    noteConnectFailure(e)
+                    noteConnectFailure(host, e)
                     connectContext.ensureActive()
                     throw e
                 } finally {
@@ -4197,8 +4226,19 @@ internal fun smbCountsTowardDataCap(
  */
 internal fun smbUiHostConnected(liveSessionCount: Int): Boolean = liveSessionCount > 0
 
-/** First reconnect probe after resume is immediate; later attempts wait [gapMs]. */
-internal fun smbReconnectProbeDelayMs(attemptIndex: Int, gapMs: Long): Long = if (attemptIndex <= 0) 0L else gapMs
+/**
+ * First reconnect probe after resume is immediate; later attempts wait [gapMs].
+ * A connect-guard cooldown longer than [gapMs] wins, so the probe does not dial
+ * again (and does not send another mDNS query) while the host is backing off.
+ */
+internal fun smbReconnectProbeDelayMs(
+    attemptIndex: Int,
+    gapMs: Long,
+    cooldownRemainingMs: Long = 0L,
+): Long {
+    val gap = if (attemptIndex <= 0) 0L else gapMs
+    return maxOf(gap, cooldownRemainingMs.coerceAtLeast(0L))
+}
 
 /**
  * Wi-Fi / VPN identity change. Browse pools used to be the only work considered, so an
@@ -4320,6 +4360,7 @@ private fun isNameLookupFailure(t: Throwable): Boolean {
         val msg = cur.message.orEmpty()
         if (msg.contains("SMB connect timed out", ignoreCase = true) ||
             msg.contains("SMB connect failed", ignoreCase = true) ||
+            msg.contains("SMB connect cancelled", ignoreCase = true) ||
             msg.contains("failed to connect", ignoreCase = true) ||
             msg.contains("Network is unreachable", ignoreCase = true) ||
             msg.contains("No route to host", ignoreCase = true)
@@ -4331,11 +4372,19 @@ private fun isNameLookupFailure(t: Throwable): Boolean {
     return false
 }
 
-private fun noteConnectFailure(error: Throwable) {
+private fun noteConnectFailure(host: String, error: Throwable) {
     if (error is CancellationException) return
     if (!isNameLookupFailure(error) && !isNetworkUnreachable(error)) return
-    SmbMdns.clear()
+    // One host's dead path must not bump the global mDNS generation. That
+    // cancelled every other in-flight dial and made each of them query again.
+    SmbMdns.forgetLookup(host)
 }
+
+/** Connect/lookup/capacity failures arm host backoff. A file-access error does not. */
+internal fun isSmbTransientConnectFailure(error: Throwable): Boolean = isHostCapacityError(error) ||
+    isTransportError(error) ||
+    isNetworkUnreachable(error) ||
+    isNameLookupFailure(error)
 
 private fun isTransportError(t: Throwable): Boolean {
     if (isShareClosedError(t)) return true
@@ -4364,6 +4413,9 @@ private fun isTransportError(t: Throwable): Boolean {
             msg.contains("ENETUNREACH", ignoreCase = true) ||
             msg.contains("EHOSTUNREACH", ignoreCase = true) ||
             msg.contains("Network is unreachable", ignoreCase = true) ||
+            msg.contains("SMB connect timed out", ignoreCase = true) ||
+            msg.contains("SMB connect failed", ignoreCase = true) ||
+            msg.contains("SMB connect cancelled", ignoreCase = true) ||
             msg.contains("transport is disconnected", ignoreCase = true) ||
             msg.contains("Transport is closed", ignoreCase = true)
         ) {

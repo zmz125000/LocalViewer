@@ -594,6 +594,7 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
     val keepScreenOn = keepScreenOnPref || (slideshow && slideshowKeepScreenOn)
     val slideshowDualPages by Settings.slideshowDualPages.collectAsState()
     val slideshowSeconds by Settings.slideshowDisplaySeconds.collectAsState()
+    val slideshowAutoScroll by Settings.slideshowAutoScroll.collectAsState()
     val slideshowPlayback by Settings.slideshowPlaybackMode.collectAsState { SlideshowPlaybackMode.fromPreference(it) }
     val effectiveDualPages = if (slideshow) slideshowDualPages else dualPagePref
     val dualActive = dualPageActive(effectiveDualPages, isLandscape)
@@ -637,6 +638,9 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
         } else {
             pageLoader.size.coerceAtLeast(1)
         }
+    }
+    val autoScrollState = remember(pagerState, pageLoader, slideshow, slideshowAutoScroll, slideshowPlayback, pagerDual, landscapeCover) {
+        SlideshowAutoScrollState()
     }
     val syncState = rememberSliderPagerDoubleSyncState(lazyListState, pagerState, pageLoader)
     var appbarVisible by remember { mutableStateOf(false) }
@@ -951,6 +955,104 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
         }
         // Same path as double-tap prev/next gallery (folder mode); shared by gesture + FABs.
         val folderNavBusy = remember { java.util.concurrent.atomic.AtomicBoolean(false) }
+        suspend fun openSiblingGallery(sibling: ReaderScreenArgs) {
+            // Progress FK for sibling gallery + bump History (library gallery or browse path).
+            sibling.let { s ->
+                withIOContext {
+                    when (s) {
+                        is ReaderScreenArgs.LocalFolder -> LocalHistory.recordLocalFolderReader(
+                            path = s.path,
+                            info = s.info,
+                            pages = s.info?.pages ?: 0,
+                        )
+                        is ReaderScreenArgs.WebDavFolder -> {
+                            LocalHistory.recordWebDavFolderGallery(
+                                sourceId = s.sourceId,
+                                remoteDir = s.remoteDir,
+                                title = s.info?.title
+                                    ?: s.remoteDir.substringAfterLast('/').ifEmpty { "WebDAV" },
+                                thumbKey = s.info?.thumbKey,
+                                pages = s.info?.pages ?: 0,
+                                info = s.info,
+                            )
+                        }
+                        is ReaderScreenArgs.SmbFolder -> {
+                            LocalHistory.recordSmbFolderGallery(
+                                sourceId = s.sourceId,
+                                remoteDir = s.remoteDir,
+                                title = s.info?.title
+                                    ?: s.remoteDir.substringAfterLast('/').ifEmpty { "Share" },
+                                thumbKey = s.info?.thumbKey,
+                                pages = s.info?.pages ?: 0,
+                                info = s.info,
+                            )
+                        }
+                        is ReaderScreenArgs.SmbStreamArchive -> {
+                            s.info?.let { LocalHistory.ensureGalleryForProgress(it) }
+                            LocalHistory.recordSmbStreamArchive(
+                                sourceId = s.sourceId,
+                                remotePath = s.remotePath,
+                                title = s.info?.title,
+                                pages = s.info?.pages ?: 0,
+                                info = s.info,
+                            )
+                        }
+                        is ReaderScreenArgs.WebDavStreamArchive -> {
+                            s.info?.let { LocalHistory.ensureGalleryForProgress(it) }
+                            LocalHistory.recordWebDavStreamArchive(
+                                sourceId = s.sourceId,
+                                remotePath = s.remotePath,
+                                title = s.info?.title,
+                                pages = s.info?.pages ?: 0,
+                                info = s.info,
+                            )
+                        }
+                        is ReaderScreenArgs.Archive -> {
+                            LocalHistory.recordLocalArchive(s.path)
+                        }
+                        is ReaderScreenArgs.LocalZipFolder -> LocalHistory.recordLocalZipFolderReader(
+                            zipPath = s.zipPath,
+                            innerRel = s.innerRel,
+                            info = s.info,
+                            pages = s.imageNames.size,
+                        )
+                        is ReaderScreenArgs.LocalImageList -> Unit
+                    }
+                }
+            }
+            // Stop this archive extract before replace so the next reader can
+            // preempt ArchiveAccess without waiting on solid decompress.
+            if (OpenPdfBySettings.shouldRedirect(sibling)) {
+                val outcome = runCatching { OpenPdfBySettings.open(activity, sibling) }
+                    .getOrElse { e ->
+                        snackbar(
+                            activity.getString(
+                                R.string.pdf_reader_open_failed,
+                                e.message ?: e.toString(),
+                            ),
+                        )
+                        return
+                    }
+                runCatching { pageLoader.close() }
+                when (outcome) {
+                    is OpenPdfBySettings.Outcome.Gallery -> {
+                        nav.navigate(ReaderScreenDestination(outcome.args)) {
+                            launchSingleTop = true
+                            popUpTo(ReaderScreenDestination) { inclusive = true }
+                        }
+                    }
+                    OpenPdfBySettings.Outcome.Handled -> nav.popBackStack()
+                }
+            } else {
+                runCatching { pageLoader.close() }
+                nav.navigate(ReaderScreenDestination(sibling)) {
+                    launchSingleTop = true
+                    popUpTo(ReaderScreenDestination) {
+                        inclusive = true
+                    }
+                }
+            }
+        }
         fun goFolder(next: Boolean) {
             if (!folderNavBusy.compareAndSet(false, true)) return
             // Navigate on Main after the gesture/input frame finishes — avoids
@@ -960,102 +1062,17 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
                     val sibling = withIOContext {
                         runCatching { GallerySiblingNavigator.sibling(args, next) }.getOrNull()
                     } ?: return@launch
-                    // Progress FK for sibling gallery + bump History (library gallery or browse path).
-                    sibling.let { s ->
-                        withIOContext {
-                            when (s) {
-                                is ReaderScreenArgs.LocalFolder -> LocalHistory.recordLocalFolderReader(
-                                    path = s.path,
-                                    info = s.info,
-                                    pages = s.info?.pages ?: 0,
-                                )
-                                is ReaderScreenArgs.WebDavFolder -> {
-                                    LocalHistory.recordWebDavFolderGallery(
-                                        sourceId = s.sourceId,
-                                        remoteDir = s.remoteDir,
-                                        title = s.info?.title
-                                            ?: s.remoteDir.substringAfterLast('/').ifEmpty { "WebDAV" },
-                                        thumbKey = s.info?.thumbKey,
-                                        pages = s.info?.pages ?: 0,
-                                        info = s.info,
-                                    )
-                                }
-                                is ReaderScreenArgs.SmbFolder -> {
-                                    LocalHistory.recordSmbFolderGallery(
-                                        sourceId = s.sourceId,
-                                        remoteDir = s.remoteDir,
-                                        title = s.info?.title
-                                            ?: s.remoteDir.substringAfterLast('/').ifEmpty { "Share" },
-                                        thumbKey = s.info?.thumbKey,
-                                        pages = s.info?.pages ?: 0,
-                                        info = s.info,
-                                    )
-                                }
-                                is ReaderScreenArgs.SmbStreamArchive -> {
-                                    s.info?.let { LocalHistory.ensureGalleryForProgress(it) }
-                                    LocalHistory.recordSmbStreamArchive(
-                                        sourceId = s.sourceId,
-                                        remotePath = s.remotePath,
-                                        title = s.info?.title,
-                                        pages = s.info?.pages ?: 0,
-                                        info = s.info,
-                                    )
-                                }
-                                is ReaderScreenArgs.WebDavStreamArchive -> {
-                                    s.info?.let { LocalHistory.ensureGalleryForProgress(it) }
-                                    LocalHistory.recordWebDavStreamArchive(
-                                        sourceId = s.sourceId,
-                                        remotePath = s.remotePath,
-                                        title = s.info?.title,
-                                        pages = s.info?.pages ?: 0,
-                                        info = s.info,
-                                    )
-                                }
-                                is ReaderScreenArgs.Archive -> {
-                                    LocalHistory.recordLocalArchive(s.path)
-                                }
-                                is ReaderScreenArgs.LocalZipFolder -> LocalHistory.recordLocalZipFolderReader(
-                                    zipPath = s.zipPath,
-                                    innerRel = s.innerRel,
-                                    info = s.info,
-                                    pages = s.imageNames.size,
-                                )
-                                is ReaderScreenArgs.LocalImageList -> Unit
-                            }
-                        }
-                    }
-                    // Stop this archive extract before replace so the next reader can
-                    // preempt ArchiveAccess without waiting on solid decompress.
-                    if (OpenPdfBySettings.shouldRedirect(sibling)) {
-                        val outcome = runCatching { OpenPdfBySettings.open(activity, sibling) }
-                            .getOrElse { e ->
-                                snackbar(
-                                    activity.getString(
-                                        R.string.pdf_reader_open_failed,
-                                        e.message ?: e.toString(),
-                                    ),
-                                )
-                                return@launch
-                            }
-                        runCatching { pageLoader.close() }
-                        when (outcome) {
-                            is OpenPdfBySettings.Outcome.Gallery -> {
-                                nav.navigate(ReaderScreenDestination(outcome.args)) {
-                                    launchSingleTop = true
-                                    popUpTo(ReaderScreenDestination) { inclusive = true }
-                                }
-                            }
-                            OpenPdfBySettings.Outcome.Handled -> nav.popBackStack()
-                        }
-                    } else {
-                        runCatching { pageLoader.close() }
-                        nav.navigate(ReaderScreenDestination(sibling)) {
-                            launchSingleTop = true
-                            popUpTo(ReaderScreenDestination) {
-                                inclusive = true
-                            }
-                        }
-                    }
+                    openSiblingGallery(sibling)
+                } finally {
+                    folderNavBusy.set(false)
+                }
+            }
+        }
+        fun goFolder(sibling: ReaderScreenArgs) {
+            if (!folderNavBusy.compareAndSet(false, true)) return
+            launch {
+                try {
+                    openSiblingGallery(sibling)
                 } finally {
                     folderNavBusy.set(false)
                 }
@@ -1078,6 +1095,7 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
                 pagerState = pagerState,
                 lazyListState = lazyListState,
                 pageLoader = pageLoader,
+                slideshowAutoScroll = autoScrollState.takeIf { slideshow && slideshowAutoScroll },
                 showNavigationOverlay = showNavigationOverlay,
                 onNavigationModeChange = { showNavigationOverlay = true },
                 onSelectPage = onSelectPage,
@@ -1115,6 +1133,9 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
             )
         }
         ReaderFilterOverlay()
+        if (slideshow && !appbarVisible) {
+            SlideshowClockOverlay(page = pagerState.settledPage)
+        }
         val showPageNumber by Settings.showPageNumber.collectAsState()
         if (showPageNumber && !appbarVisible) {
             CompositionLocalProvider(LocalTextStyle provides MaterialTheme.typography.bodySmall) {
@@ -1149,6 +1170,8 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
             pageLoader,
             slideshow,
             slideshowSeconds,
+            slideshowAutoScroll,
+            autoScrollState,
             slideshowPlayback,
             pagerDual,
             landscapeCover,
@@ -1160,18 +1183,29 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
                     viewports = snapshotFlow {
                         SlideshowViewport(
                             page = pagerState.settledPage,
-                            blocked = pagerState.isScrollInProgress || PagerTransitionHandlers.isRunning(pagerState),
+                            blocked = pagerState.isScrollInProgress || PagerTransitionHandlers.isRunning(pagerState) ||
+                                (slideshowAutoScroll && autoScrollState.readyPage != pagerState.settledPage),
                             hasPages = pageLoader.size > 0,
                         )
                     },
-                    awaitInterval = { delay(slideshowSeconds.coerceIn(3, 200) * 1000L) },
+                    awaitInterval = {
+                        if (slideshowAutoScroll) autoScrollState.startInterval(pagerState.settledPage, slideshowSeconds)
+                        delay(slideshowSeconds.coerceIn(3, 200) * 1000L)
+                    },
                 ) { page ->
                     val count = pagerState.pageCount
                     val realPage = if (pagerDual) dualFirstPageIndex(page, landscapeCover) else page
                     val shuffledNext = if (slideshowPlayback == SlideshowPlaybackMode.SHUFFLE) pageLoader.nextSlideshowPage(realPage) else null
                     val atEnd = if (slideshowPlayback == SlideshowPlaybackMode.SHUFFLE) shuffledNext == null else page >= count - 1
-                    if (atEnd && slideshowPlayback == SlideshowPlaybackMode.NEXT_GALLERY && hasNextGallery) {
-                        goFolder(next = true)
+                    if (atEnd && slideshowPlayback == SlideshowPlaybackMode.NEXT_GALLERY) {
+                        val sibling = withIOContext {
+                            runCatching { GallerySiblingNavigator.slideshowNext(args) }.getOrNull()
+                        }
+                        if (sibling != null) {
+                            goFolder(sibling)
+                        } else {
+                            pagerState.performScrollToPage(0)
+                        }
                     } else if (slideshowPlayback == SlideshowPlaybackMode.SHUFFLE) {
                         val target = shuffledNext ?: pageLoader.nextSlideshowPage(realPage, repeat = true)
                         if (target != null) {
@@ -1181,6 +1215,8 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
                         pagerState.moveToNext()
                     } else if (slideshowPlayback == SlideshowPlaybackMode.REPEAT) {
                         pagerState.performScrollToPage(0)
+                    } else {
+                        autoScrollState.finishPlayback(page)
                     }
                 }
             }

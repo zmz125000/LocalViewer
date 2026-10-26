@@ -30,11 +30,13 @@ import splitties.init.appCtx
  * socket used for that connection. A success is stored per family, so the cache
  * can hold both an IPv4 and an IPv6 address. Later sockets use that cache.
  * [SmbMdns.clear] drops the packet cache, both proven addresses, and staged
- * candidates when mDNS is toggled, on a failed connect, on a network change, and
- * on process exit. The same generation bump makes a lookup that started before
- * the toggle discard its answers, so an mDNS address cannot become the next
- * proven IP after the toggle is off. With the toggle off, only system DNS runs:
- * every A and AAAA is still dialed together, and the first success in each family
+ * candidates when mDNS is toggled, on a network change, and on process exit.
+ * A failed connect drops only that host ([SmbMdns.forgetLookup]): the global
+ * generation stays put, so another server's in-flight dial is not cancelled
+ * into a fresh multicast query. The same generation bump makes a lookup that
+ * started before the toggle discard its answers, so an mDNS address cannot
+ * become the next proven IP after the toggle is off. With the toggle off, only
+ * system DNS runs: every A and AAAA is still dialed together, and the first success in each family
  * fills the cache again. A folder refresh only publishes addresses. The
  * browse-pool socket is the connection that tries them.
  *
@@ -282,6 +284,9 @@ internal object SmbMdns {
     private val offered = ConcurrentHashMap<String, SmbAddressOffers>()
     private val inflight = ConcurrentHashMap<String, CompletableFuture<List<InetAddress>>>()
     private val generation = AtomicInteger()
+    private val queryLocks = ConcurrentHashMap<String, Any>()
+    private val lastQueryMs = ConcurrentHashMap<String, Long>()
+    private val lastLookup = ConcurrentHashMap<String, MdnsLookup>()
 
     init {
         runCatching {
@@ -357,11 +362,30 @@ internal object SmbMdns {
         synchronized(entry) { entry.drop(address) }
     }
 
+    /**
+     * Drop this host's proven addresses, candidates, and packet-cache entry.
+     * Does not bump [generation], so other hosts keep their in-flight lookups.
+     */
+    fun forgetLookup(host: String) {
+        val key = dialKey(host)
+        dialCaches.remove(key)
+        offered.remove(key)
+        val qname = smbMdnsQueryName(host) ?: return
+        val lock = queryLocks.computeIfAbsent(qname) { Any() }
+        synchronized(lock) {
+            cache.remove(qname)
+            lastQueryMs.remove(qname)
+            lastLookup.remove(qname)
+        }
+    }
+
     fun clear() {
         generation.incrementAndGet()
         cache.clear()
         dialCaches.clear()
         offered.clear()
+        lastQueryMs.clear()
+        lastLookup.clear()
     }
 
     private fun dialKey(host: String) = host.trim().lowercase()
@@ -410,7 +434,31 @@ internal object SmbMdns {
         }
     }
 
+    /**
+     * One datagram exchange per name per [NEGATIVE_CACHE_MS]. Connect prefetch,
+     * the happy-eyeballs resolver, and a folder-refresh probe share that exchange
+     * instead of each sending a multicast question.
+     */
     private fun query(qname: String): MdnsLookup {
+        val lock = queryLocks.computeIfAbsent(qname) { Any() }
+        synchronized(lock) {
+            val now = System.currentTimeMillis()
+            val previousAt = lastQueryMs[qname]
+            val previous = lastLookup[qname]
+            if (previousAt != null && previous != null && now - previousAt < NEGATIVE_CACHE_MS) {
+                return previous
+            }
+            val gen = generation.get()
+            val found = queryNetwork(qname)
+            if (generation.get() == gen) {
+                lastQueryMs[qname] = System.currentTimeMillis()
+                lastLookup[qname] = found
+            }
+            return found
+        }
+    }
+
+    private fun queryNetwork(qname: String): MdnsLookup {
         val bytes = encodeMdnsQuery(qname) ?: return MdnsLookup.EMPTY
         val lock = acquireMulticastLock()
         val previousTag = TrafficStats.getThreadStatsTag()

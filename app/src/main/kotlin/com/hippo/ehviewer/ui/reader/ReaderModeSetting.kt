@@ -22,6 +22,7 @@ import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.asMutableState
 import com.hippo.ehviewer.library.document.EBOOK_FONT_SIZE_MAX
 import com.hippo.ehviewer.library.document.EBOOK_FONT_SIZE_MIN
+import eu.kanade.tachiyomi.ui.reader.setting.AutoRotateMode
 import eu.kanade.tachiyomi.ui.reader.setting.OrientationType
 import eu.kanade.tachiyomi.ui.reader.setting.PageTransitionType
 import eu.kanade.tachiyomi.ui.reader.setting.ReadingModeType
@@ -383,6 +384,7 @@ private fun WebtoonSetting() = Column {
 
 @Composable
 private fun SlideshowSetting() = Column {
+    Spacer(modifier = Modifier.size(16.dp))
     Text(
         text = stringResource(R.string.slideshow_viewer),
         modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
@@ -405,26 +407,6 @@ private fun SlideshowSetting() = Column {
         values = SlideshowPlaybackMode.entries.map { it.prefValue },
         field = Settings.slideshowPlaybackMode.asMutableState(),
     )
-    SwitchChoice(
-        title = stringResource(R.string.pref_keep_screen_on),
-        field = Settings.slideshowKeepScreenOn.asMutableState(),
-    )
-    SwitchChoice(
-        title = stringResource(R.string.pref_slideshow_dual_pages_override),
-        field = Settings.slideshowDualPages.asMutableState(),
-    )
-    SwitchChoice(
-        title = stringResource(R.string.scale_type_fill_screen),
-        field = Settings.slideshowFillScreen.asMutableState(),
-    )
-    SwitchChoice(
-        title = stringResource(R.string.pref_slideshow_disable_auto_rotate),
-        field = Settings.slideshowDisableAutoRotate.asMutableState(),
-    )
-    CustomBrightnessSetting(
-        Settings.slideshowCustomBrightness.asMutableState(),
-        Settings.slideshowCustomBrightnessValue.asMutableState(),
-    )
     SpinnerChoice(
         title = stringResource(R.string.pref_slideshow_transition_override),
         entries = (
@@ -433,5 +415,50 @@ private fun SlideshowSetting() = Column {
             ).toTypedArray(),
         values = listOf(-1) + PageTransitionType.entries.map { it.prefValue },
         field = Settings.slideshowPageTransition.asMutableState(),
+    )
+    SpinnerChoice(
+        title = stringResource(R.string.pref_slideshow_auto_rotate_override),
+        entries = (
+            listOf(stringResource(R.string.pref_slideshow_use_general_setting)) +
+                AutoRotateMode.entries.map { stringResource(it.stringRes) }
+            ).toTypedArray(),
+        values = listOf(-1) + AutoRotateMode.entries.map { it.prefValue },
+        field = Settings.slideshowAutoRotateOverride.asMutableState(),
+    )
+    SpinnerChoice(
+        title = stringResource(R.string.pref_slideshow_clock),
+        entries = arrayOf(
+            stringResource(R.string.pref_slideshow_off),
+            stringResource(R.string.pref_slideshow_top_left),
+            stringResource(R.string.pref_slideshow_top_right),
+            stringResource(R.string.pref_slideshow_bottom_left),
+            stringResource(R.string.pref_slideshow_bottom_right),
+            stringResource(R.string.pref_slideshow_random),
+        ),
+        values = listOf(0, 1, 2, 3, 4, 5),
+        field = Settings.slideshowClockPosition.asMutableState(),
+    )
+    val autoScroll = Settings.slideshowAutoScroll.asMutableState()
+    SwitchChoice(
+        title = stringResource(R.string.pref_slideshow_auto_scroll),
+        field = autoScroll,
+    )
+    AnimatedVisibility(visible = !autoScroll.value) {
+        SwitchChoice(
+            title = stringResource(R.string.scale_type_fill_screen),
+            field = Settings.slideshowFillScreen.asMutableState(),
+        )
+    }
+    CustomBrightnessSetting(
+        Settings.slideshowCustomBrightness.asMutableState(),
+        Settings.slideshowCustomBrightnessValue.asMutableState(),
+    )
+    SwitchChoice(
+        title = stringResource(R.string.pref_keep_screen_on),
+        field = Settings.slideshowKeepScreenOn.asMutableState(),
+    )
+    SwitchChoice(
+        title = stringResource(R.string.pref_slideshow_dual_pages_override),
+        field = Settings.slideshowDualPages.asMutableState(),
     )
 }

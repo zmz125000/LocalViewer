@@ -28,16 +28,38 @@ object GallerySiblingNavigator {
      */
     suspend fun sibling(args: ReaderScreenArgs, next: Boolean): ReaderScreenArgs? {
         ReaderGalleryPlaylist.sibling(args, next)?.let { return it }
-        return when (args) {
-            is ReaderScreenArgs.LocalFolder -> localPathSibling(args.path, next)
-            is ReaderScreenArgs.LocalZipFolder -> localPathSibling(args.zipPath, next)
-            is ReaderScreenArgs.Archive -> localPathSibling(args.path, next)
-            is ReaderScreenArgs.SmbFolder -> smbPathSibling(args.sourceId, args.remoteDir, next)
-            is ReaderScreenArgs.SmbStreamArchive -> smbPathSibling(args.sourceId, args.remotePath, next)
-            is ReaderScreenArgs.WebDavFolder -> webDavPathSibling(args.sourceId, args.remoteDir, next)
-            is ReaderScreenArgs.WebDavStreamArchive -> webDavPathSibling(args.sourceId, args.remotePath, next)
-            is ReaderScreenArgs.LocalImageList -> null
+        return filesystemSibling(args, next, slideshow = false)
+    }
+
+    /**
+     * Slideshow "next gallery".
+     *
+     * Ebooks are left out of the sibling list. Several remaining galleries wrap
+     * to the first when the list ends. One remaining gallery returns null so the
+     * reader repeats that gallery's pages. The opened gallery starts at page 0.
+     */
+    suspend fun slideshowNext(args: ReaderScreenArgs): ReaderScreenArgs? {
+        when (val hop = ReaderGalleryPlaylist.slideshowHop(args)) {
+            is SlideshowHop.Open -> return hop.args
+            SlideshowHop.RepeatSelf -> return null
+            SlideshowHop.Unresolved -> Unit
         }
+        return filesystemSibling(args, next = true, slideshow = true)?.startingAtFirstPage()
+    }
+
+    private suspend fun filesystemSibling(
+        args: ReaderScreenArgs,
+        next: Boolean,
+        slideshow: Boolean,
+    ): ReaderScreenArgs? = when (args) {
+        is ReaderScreenArgs.LocalFolder -> localPathSibling(args.path, next, slideshow)
+        is ReaderScreenArgs.LocalZipFolder -> localPathSibling(args.zipPath, next, slideshow)
+        is ReaderScreenArgs.Archive -> localPathSibling(args.path, next, slideshow)
+        is ReaderScreenArgs.SmbFolder -> smbPathSibling(args.sourceId, args.remoteDir, next, slideshow)
+        is ReaderScreenArgs.SmbStreamArchive -> smbPathSibling(args.sourceId, args.remotePath, next, slideshow)
+        is ReaderScreenArgs.WebDavFolder -> webDavPathSibling(args.sourceId, args.remoteDir, next, slideshow)
+        is ReaderScreenArgs.WebDavStreamArchive -> webDavPathSibling(args.sourceId, args.remotePath, next, slideshow)
+        is ReaderScreenArgs.LocalImageList -> null
     }
 
     private fun zipAsDirSiblingArgs(
@@ -72,7 +94,11 @@ object GallerySiblingNavigator {
     }
 
     /** Local folder gallery or archive file in the same parent listing. */
-    private suspend fun localPathSibling(currentPath: String, next: Boolean): ReaderScreenArgs? {
+    private suspend fun localPathSibling(
+        currentPath: String,
+        next: Boolean,
+        slideshow: Boolean = false,
+    ): ReaderScreenArgs? {
         val path = currentPath.toPath()
         val parent = path.parent ?: return null
         // Prefer the browse listing for the current stack frame when it matches this parent
@@ -108,7 +134,7 @@ object GallerySiblingNavigator {
             }
         }
         if (idx < 0) return null
-        val target = openable.getOrNull(if (next) idx + 1 else idx - 1) ?: return null
+        val target = selectOpenable(openable, idx, next, slideshow, BrowseEntry::isSlideshowEbook) ?: return null
         return when (target) {
             is BrowseEntry.ArchiveGallery -> ReaderScreenArgs.Archive(target.path.toString())
             is BrowseEntry.FolderGallery -> {
@@ -167,6 +193,7 @@ object GallerySiblingNavigator {
         sourceId: Long,
         currentRemote: String,
         next: Boolean,
+        slideshow: Boolean = false,
     ): ReaderScreenArgs? {
         val source = SmbRepository.load(sourceId) ?: return null
         val password = SmbPasswordStore.get(source.id)
@@ -212,7 +239,7 @@ object GallerySiblingNavigator {
 
         val idx = openable.indexOfFirst { remoteOf(it).trim('/') == galleryPath }
         if (idx < 0) return null
-        val target = openable.getOrNull(if (next) idx + 1 else idx - 1) ?: return null
+        val target = selectOpenable(openable, idx, next, slideshow, BrowseEntryRemote::isSlideshowEbook) ?: return null
         return when (target) {
             is BrowseEntryRemote.ArchiveGallery -> {
                 val remote = remoteOf(target).trim('/')
@@ -276,6 +303,7 @@ object GallerySiblingNavigator {
         sourceId: Long,
         currentRemote: String,
         next: Boolean,
+        slideshow: Boolean = false,
     ): ReaderScreenArgs? {
         val source = WebDavRepository.load(sourceId) ?: return null
         val password = WebDavPasswordStore.get(source.id)
@@ -321,7 +349,7 @@ object GallerySiblingNavigator {
 
         val idx = openable.indexOfFirst { remoteOf(it).trim('/') == galleryPath }
         if (idx < 0) return null
-        val target = openable.getOrNull(if (next) idx + 1 else idx - 1) ?: return null
+        val target = selectOpenable(openable, idx, next, slideshow, BrowseEntryRemote::isSlideshowEbook) ?: return null
         return when (target) {
             is BrowseEntryRemote.ArchiveGallery -> {
                 val remote = remoteOf(target).trim('/')
@@ -410,6 +438,77 @@ object GallerySiblingNavigator {
 }
 
 internal fun normalizeBrowseRel(relativePath: String): String = relativePath.trim('/').let { if (it == "." || it.isEmpty()) "" else it }
+
+/**
+ * Slideshow sibling index.
+ *
+ * [isEbook] entries are skipped. Two or more remaining entries wrap. Fewer than
+ * two returns null (repeat the current gallery).
+ */
+internal fun pickSlideshowSiblingIndex(
+    size: Int,
+    current: Int,
+    next: Boolean,
+    isEbook: (Int) -> Boolean,
+): Int? {
+    if (size <= 0 || current !in 0 until size) return null
+    val eligible = ArrayList<Int>(size)
+    for (i in 0 until size) {
+        if (!isEbook(i)) eligible.add(i)
+    }
+    if (eligible.size < 2) return null
+    val pos = eligible.indexOf(current)
+    val target = if (pos < 0) {
+        if (next) {
+            eligible.firstOrNull { it > current } ?: eligible.first()
+        } else {
+            eligible.lastOrNull { it < current } ?: eligible.last()
+        }
+    } else {
+        val targetPos = if (next) {
+            (pos + 1) % eligible.size
+        } else {
+            (pos - 1 + eligible.size) % eligible.size
+        }
+        eligible[targetPos]
+    }
+    return target.takeIf { it != current }
+}
+
+private fun <T> selectOpenable(
+    openable: List<T>,
+    idx: Int,
+    next: Boolean,
+    slideshow: Boolean,
+    isEbook: (T) -> Boolean,
+): T? {
+    if (!slideshow) return openable.getOrNull(if (next) idx + 1 else idx - 1)
+    val picked = pickSlideshowSiblingIndex(openable.size, idx, next) { isEbook(openable[it]) }
+    return picked?.let { openable[it] }
+}
+
+private fun BrowseEntry.isSlideshowEbook(): Boolean = when (this) {
+    is BrowseEntry.ArchiveGallery -> isEbookFileName(name) || isEbookFileName(path.name)
+    is BrowseEntry.RegularFile -> isEbookFileName(name) || isEbookFileName(path.name)
+    else -> false
+}
+
+private fun BrowseEntryRemote.isSlideshowEbook(): Boolean = when (this) {
+    is BrowseEntryRemote.ArchiveGallery -> isEbookFileName(fileName) || isEbookFileName(name)
+    is BrowseEntryRemote.RegularFile -> isEbookFileName(fileName) || isEbookFileName(name)
+    else -> false
+}
+
+internal fun ReaderScreenArgs.startingAtFirstPage(): ReaderScreenArgs = when (this) {
+    is ReaderScreenArgs.Archive -> copy(page = 0)
+    is ReaderScreenArgs.LocalFolder -> copy(page = 0)
+    is ReaderScreenArgs.LocalZipFolder -> copy(page = 0)
+    is ReaderScreenArgs.SmbFolder -> copy(page = 0)
+    is ReaderScreenArgs.WebDavFolder -> copy(page = 0)
+    is ReaderScreenArgs.SmbStreamArchive -> copy(page = 0)
+    is ReaderScreenArgs.WebDavStreamArchive -> copy(page = 0)
+    is ReaderScreenArgs.LocalImageList -> copy(page = 0)
+}
 
 /**
  * Relative path of the directory that contains [galleryPath].
