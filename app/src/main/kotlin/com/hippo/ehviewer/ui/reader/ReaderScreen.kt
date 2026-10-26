@@ -1144,7 +1144,9 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
         if (slideshow && !appbarVisible) {
             SlideshowClockOverlay(page = pagerState.settledPage)
         }
-        val showPageNumber by Settings.showPageNumber.collectAsState()
+        val generalShowPageNumber by Settings.showPageNumber.collectAsState()
+        val slideshowShowPageNumber by Settings.slideshowShowPageNumber.collectAsState()
+        val showPageNumber = if (slideshow) slideshowShowPageNumber else generalShowPageNumber
         if (showPageNumber && !appbarVisible) {
             CompositionLocalProvider(LocalTextStyle provides MaterialTheme.typography.bodySmall) {
                 PageIndicatorText(
