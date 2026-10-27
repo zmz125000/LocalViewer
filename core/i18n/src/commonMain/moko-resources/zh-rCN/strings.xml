@@ -1167,12 +1167,11 @@
     <string name="pref_slideshow_transition_override">覆盖翻页过渡</string>
     <string name="pref_reader_transition_slide">滑动</string>
     <string name="pref_reader_transition_fade_blend">淡入淡出（混合）</string>
-    <string name="pref_slideshow_dual_pages_override">双页覆盖</string>
     <string name="pref_slideshow_playback_mode">幻灯片播放模式</string>
     <string name="pref_slideshow_play_once">播放一次</string>
     <string name="pref_slideshow_auto_rotate_override">自动旋转覆盖</string>
     <string name="pref_slideshow_use_general_setting">使用通用设置</string>
-    <string name="pref_slideshow_clock">时钟叠加</string>
+    <string name="pref_slideshow_clock">时钟</string>
     <string name="pref_slideshow_top_left">左上角</string>
     <string name="pref_slideshow_top_right">右上角</string>
     <string name="pref_slideshow_bottom_left">左下角</string>
@@ -1180,5 +1179,8 @@
     <string name="pref_slideshow_random">随机</string>
     <string name="pref_slideshow_auto_scroll">自动滚动</string>
     <string name="pref_slideshow_decode_size_override">解码尺寸覆盖</string>
-    <string name="pref_slideshow_page_number_override">页码覆盖</string>
+    <string name="slideshow_viewer">幻灯片</string>
+    <string name="scale_type_fill_screen">填满屏幕</string>
+    <string name="pref_slideshow_display_time">照片显示时间</string>
+    <string name="pref_slideshow_seconds">%1$d 秒</string>
 </resources>

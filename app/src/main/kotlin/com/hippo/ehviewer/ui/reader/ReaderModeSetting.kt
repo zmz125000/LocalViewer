@@ -468,11 +468,11 @@ private fun SlideshowSetting() = Column {
         field = Settings.slideshowKeepScreenOn.asMutableState(),
     )
     SwitchChoice(
-        title = stringResource(R.string.pref_slideshow_page_number_override),
+        title = stringResource(R.string.pref_show_page_number),
         field = Settings.slideshowShowPageNumber.asMutableState(),
     )
     SwitchChoice(
-        title = stringResource(R.string.pref_slideshow_dual_pages_override),
+        title = stringResource(R.string.pref_dual_page_landscape),
         field = Settings.slideshowDualPages.asMutableState(),
     )
 }

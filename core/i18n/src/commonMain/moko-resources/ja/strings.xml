@@ -1100,4 +1100,9 @@
     <string name="blocked_image">ブロックされた画像</string>
     <string name="show_blocked_image">ブロックされた画像を表示</string>
     <!-- Tachiyomi Reader End-->
+    <string name="slideshow_viewer">スライドショー</string>
+    <string name="scale_type_fill_screen">画面いっぱいに表示</string>
+    <string name="pref_slideshow_display_time">写真の表示時間</string>
+    <string name="pref_slideshow_seconds">%1$d 秒</string>
+    <string name="pref_dual_page_landscape">横画面で見開き表示</string>
 </resources>
