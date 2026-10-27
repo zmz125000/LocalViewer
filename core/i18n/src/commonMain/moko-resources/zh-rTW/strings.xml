@@ -1149,6 +1149,7 @@
     <string name="pref_slideshow_display_time">相片顯示時間</string>
     <string name="pref_slideshow_seconds">%1$d 秒</string>
     <string name="pref_dual_page_landscape">橫向雙頁</string>
+    <string name="pref_dual_page_slideshow">雙頁（幻燈片）</string>
     <string name="pref_slideshow_screen_widget">螢幕小工具</string>
     <string name="pref_screen_widget_options">小工具選項</string>
     <string name="pref_screen_widget_none">無</string>

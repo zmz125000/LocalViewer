@@ -1254,18 +1254,18 @@ object Settings : DataStorePreferences(null) {
 
     val readerScreenWidgetPosition = intPref("reader_screen_widget_position", 0)
     val readerShowClock = boolPref("reader_show_clock", true)
-    val readerUseExifDate = boolPref("reader_use_exif_date", false)
-    val readerShowImageInfo = boolPref("reader_show_image_info", false)
-    val readerShowColorSpace = boolPref("reader_show_color_space", false)
-    val readerShowExifInfo = boolPref("reader_show_exif_info", false)
+    val readerUseExifDate = boolPref("reader_use_exif_date", true)
+    val readerShowImageInfo = boolPref("reader_show_image_info", true)
+    val readerShowColorSpace = boolPref("reader_show_color_space", true)
+    val readerShowExifInfo = boolPref("reader_show_exif_info", true)
     val readerShowLensModel = boolPref("reader_show_lens_model", false)
 
     // 0=off, 1=top left, 2=top right, 3=bottom left, 4=bottom right, 5=random.
     // Keep the stored position when upgrading from the clock-only widget.
     val slideshowScreenWidgetPosition = intPref("slideshow_clock_position", 5)
     val slideshowShowClock = boolPref("slideshow_show_clock", true)
-    val slideshowUseExifDate = boolPref("slideshow_use_exif_date", false)
-    val slideshowShowImageInfo = boolPref("slideshow_show_image_info", true)
+    val slideshowUseExifDate = boolPref("slideshow_use_exif_date", true)
+    val slideshowShowImageInfo = boolPref("slideshow_show_image_info", false)
     val slideshowShowColorSpace = boolPref("slideshow_show_color_space", false)
     val slideshowShowExifInfo = boolPref("slideshow_show_exif_info", false)
     val slideshowShowLensModel = boolPref("slideshow_show_lens_model", false)
