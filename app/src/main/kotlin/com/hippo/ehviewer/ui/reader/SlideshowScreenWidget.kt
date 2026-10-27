@@ -51,6 +51,7 @@ internal fun BoxScope.SlideshowScreenWidget(page: Page?) {
     if (!showClock && !showImageInfo && !showExifInfo) return
     val status = page?.statusObserved
     val metadata = (status as? PageStatus.Ready)?.image?.metadata
+    val photoDate = if (useExifDate) metadata?.date?.let(::Date) else null
     val corner = remember(position, page) { if (position == 5) Random.nextInt(1, 5) else position }
     val alignment = when (corner) {
         1 -> AbsoluteAlignment.TopLeft
@@ -60,13 +61,13 @@ internal fun BoxScope.SlideshowScreenWidget(page: Page?) {
     }
     val context = LocalContext.current
     val locale = LocalConfiguration.current.locales[0]
-    val dateFormat = remember(locale, useExifDate) {
-        SimpleDateFormat(DateFormat.getBestDateTimePattern(locale, if (useExifDate) "yEEE MMM d" else "EEE MMM d"), locale)
+    val dateFormat = remember(locale, photoDate != null) {
+        SimpleDateFormat(DateFormat.getBestDateTimePattern(locale, if (photoDate != null) "yEEE MMM d" else "EEE MMM d"), locale)
     }
     val lifecycleOwner = LocalLifecycleOwner.current
     var now by remember { mutableStateOf(Date()) }
-    LaunchedEffect(lifecycleOwner, showClock, useExifDate) {
-        if (!showClock || useExifDate) return@LaunchedEffect
+    LaunchedEffect(lifecycleOwner, showClock, photoDate != null) {
+        if (!showClock || photoDate != null) return@LaunchedEffect
         lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
             while (true) {
                 now = Date()
@@ -80,25 +81,18 @@ internal fun BoxScope.SlideshowScreenWidget(page: Page?) {
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         if (showClock) {
-            val date = if (useExifDate) metadata?.date?.let(::Date) else now
-            if (date != null) {
-                Text(DateFormat.getTimeFormat(context).format(date), style = style, fontSize = 52.sp, lineHeight = 60.sp)
-                Text(dateFormat.format(date), style = style, fontSize = 20.sp, lineHeight = 26.sp)
-            } else {
-                Text(stringResource(R.string.slideshow_date_unavailable), style = style, fontSize = 20.sp, lineHeight = 26.sp)
-            }
+            val date = photoDate ?: now
+            Text(DateFormat.getTimeFormat(context).format(date), style = style, fontSize = 52.sp, lineHeight = 60.sp)
+            Text(dateFormat.format(date), style = style, fontSize = 20.sp, lineHeight = 26.sp)
         }
         if (showImageInfo && metadata != null) {
-            val unknown = stringResource(R.string.slideshow_info_unknown)
-            val dimensions = if (metadata.width != null && metadata.height != null) "${metadata.width} × ${metadata.height}" else unknown
-            val depth = metadata.bitDepth?.let { stringResource(R.string.slideshow_info_bit_depth, it) } ?: unknown
-            Text("$dimensions · $depth", style = style, fontSize = 16.sp, lineHeight = 22.sp)
-            val hdr = when (metadata.hdr) {
-                true -> "HDR"
-                false -> "SDR"
-                null -> unknown
+            val dimensions = if (metadata.width != null && metadata.height != null) "${metadata.width} × ${metadata.height}" else null
+            val depth = metadata.bitDepth?.let { stringResource(R.string.slideshow_info_bit_depth, it) }
+            val imageInfo = listOfNotNull(dimensions, depth).joinToString(" · ")
+            if (imageInfo.isNotEmpty()) Text(imageInfo, style = style, fontSize = 16.sp, lineHeight = 22.sp)
+            metadata.hdr?.let { hdr ->
+                Text(if (hdr) "HDR" else "SDR", style = style, fontSize = 16.sp, lineHeight = 22.sp)
             }
-            Text("${metadata.colorSpace ?: unknown} · $hdr", style = style, fontSize = 16.sp, lineHeight = 22.sp)
         }
         if (showExifInfo && metadata != null) {
             metadata.cameraModel?.let { Text(it, style = style, fontSize = 16.sp, lineHeight = 22.sp) }
