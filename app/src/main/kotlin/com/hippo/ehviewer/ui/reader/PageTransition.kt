@@ -105,7 +105,7 @@ internal class SlideshowMotionDurationScale(
     private val parent: MotionDurationScale?,
     private val transition: PageTransitionType = PageTransitionType.DEFAULT,
 ) : MotionDurationScale {
-    override val scaleFactor: Float get() = (parent?.scaleFactor ?: 1f) * (if (transition.isFade) 5f else 3f)
+    override val scaleFactor: Float get() = (parent?.scaleFactor ?: 1f) * (if (transition.isFade) 4f else 3f)
 }
 
 /** Finish each fade before resolving the next relative destination. */

@@ -97,10 +97,11 @@ internal fun BoxScope.ReaderScreenWidget(page: Page?, slideshow: Boolean, source
             val extension = sourceName?.substringAfterLast('.', "")?.takeIf { it.isNotBlank() }?.uppercase(Locale.ROOT)
             val colorInfo = colorSpace?.let { space ->
                 val dynamicRange = metadata.hdr?.let { if (it) "HDR" else "SDR" }
-                listOfNotNull(space, dynamicRange).joinToString(" ")
+                listOfNotNull(space, dynamicRange).joinToString(" · ")
             }
-            val imageInfo = listOfNotNull(dimensions, depth, extension, colorInfo).joinToString(" · ")
+            val imageInfo = listOfNotNull(dimensions, depth, extension).joinToString(" · ")
             if (imageInfo.isNotEmpty()) Text(imageInfo, style = style, fontSize = 16.sp, lineHeight = 22.sp)
+            colorInfo?.let { Text(it, style = style, fontSize = 16.sp, lineHeight = 22.sp) }
         }
         if (showExifInfo && metadata != null) {
             metadata.cameraModel?.let { Text(it, style = style, fontSize = 16.sp, lineHeight = 22.sp) }
