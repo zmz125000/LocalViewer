@@ -1155,11 +1155,12 @@
     <string name="pref_screen_widget_clock">時鐘</string>
     <string name="pref_screen_widget_exif">EXIF</string>
     <string name="pref_screen_widget_clock_and_exif">時鐘與 EXIF</string>
-    <string name="pref_slideshow_show_clock">顯示時鐘</string>
+    <string name="pref_slideshow_show_clock">時鐘</string>
     <string name="pref_slideshow_use_exif_date">使用 EXIF 日期</string>
-    <string name="pref_slideshow_show_image_info">顯示影像資訊</string>
-    <string name="pref_slideshow_show_exif_info">顯示 EXIF 資訊</string>
-    <string name="pref_slideshow_show_lens_model">顯示鏡頭型號</string>
+    <string name="pref_slideshow_show_image_info">影像資訊</string>
+    <string name="pref_slideshow_show_color_space">色彩空間</string>
+    <string name="pref_slideshow_show_exif_info">EXIF 資訊</string>
+    <string name="pref_slideshow_show_lens_model">鏡頭型號</string>
     <string name="slideshow_info_bit_depth">%1$d 位元</string>
     <string name="slideshow_info_focal_length">%1$s mm</string>
     <string name="pref_slideshow_scroll_speed">捲動速度</string>

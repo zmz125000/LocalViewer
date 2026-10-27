@@ -49,9 +49,10 @@ internal fun BoxScope.ReaderScreenWidget(page: Page?, slideshow: Boolean, source
     val showClock by (if (slideshow) Settings.slideshowShowClock else Settings.readerShowClock).collectAsState()
     val useExifDate by (if (slideshow) Settings.slideshowUseExifDate else Settings.readerUseExifDate).collectAsState()
     val showImageInfo by (if (slideshow) Settings.slideshowShowImageInfo else Settings.readerShowImageInfo).collectAsState()
+    val showColorSpace by (if (slideshow) Settings.slideshowShowColorSpace else Settings.readerShowColorSpace).collectAsState()
     val showExifInfo by (if (slideshow) Settings.slideshowShowExifInfo else Settings.readerShowExifInfo).collectAsState()
     val showLensModel by (if (slideshow) Settings.slideshowShowLensModel else Settings.readerShowLensModel).collectAsState()
-    if (!showClock && !showImageInfo && !showExifInfo) return
+    if (!showClock && !showImageInfo && !showExifInfo && !showColorSpace) return
     val status = page?.statusObserved
     val metadata = (status as? PageStatus.Ready)?.image?.metadata
     val photoDate = if (useExifDate) metadata?.date?.let(::Date) else null
@@ -115,9 +116,13 @@ internal fun BoxScope.ReaderScreenWidget(page: Page?, slideshow: Boolean, source
             ).joinToString(" · ")
             if (camera.isNotEmpty()) Text(camera, style = style, fontSize = 16.sp, lineHeight = 22.sp)
         }
-        if (showImageInfo && metadata != null) {
+        if (showColorSpace && metadata != null) {
             val colorSpace = metadata.colorSpace?.trim()?.takeUnless { it.isEmpty() || it.equals("Unknown", ignoreCase = true) }?.let {
-                if (it.startsWith("sRGB IEC61966-2.1", ignoreCase = true)) "sRGB" else it
+                when {
+                    it.startsWith("sRGB IEC61966-2.1", ignoreCase = true) -> "sRGB"
+                    it.startsWith("scRGB", ignoreCase = true) -> "scRGB"
+                    else -> it
+                }
             }
             val colorInfo = colorSpace?.let { space ->
                 val dynamicRange = metadata.hdr?.let { if (it) "HDR" else "SDR" }

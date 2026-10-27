@@ -1231,11 +1231,12 @@
     <string name="pref_screen_widget_clock">Clock</string>
     <string name="pref_screen_widget_exif">EXIF</string>
     <string name="pref_screen_widget_clock_and_exif">Clock and EXIF</string>
-    <string name="pref_slideshow_show_clock">Show clock</string>
+    <string name="pref_slideshow_show_clock">Clock</string>
     <string name="pref_slideshow_use_exif_date">Use EXIF date</string>
-    <string name="pref_slideshow_show_image_info">Show image info</string>
-    <string name="pref_slideshow_show_exif_info">Show EXIF info</string>
-    <string name="pref_slideshow_show_lens_model">Show lens model</string>
+    <string name="pref_slideshow_show_image_info">Image info</string>
+    <string name="pref_slideshow_show_color_space">Color space</string>
+    <string name="pref_slideshow_show_exif_info">EXIF info</string>
+    <string name="pref_slideshow_show_lens_model">Lens model</string>
     <string name="slideshow_info_bit_depth">%1$d-bit</string>
     <string name="slideshow_info_focal_length">%1$s mm</string>
     <string name="pref_slideshow_scroll_speed">Scroll speed</string>

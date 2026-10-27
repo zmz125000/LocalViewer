@@ -1256,6 +1256,7 @@ object Settings : DataStorePreferences(null) {
     val readerShowClock = boolPref("reader_show_clock", true)
     val readerUseExifDate = boolPref("reader_use_exif_date", false)
     val readerShowImageInfo = boolPref("reader_show_image_info", false)
+    val readerShowColorSpace = boolPref("reader_show_color_space", false)
     val readerShowExifInfo = boolPref("reader_show_exif_info", false)
     val readerShowLensModel = boolPref("reader_show_lens_model", false)
 
@@ -1265,6 +1266,7 @@ object Settings : DataStorePreferences(null) {
     val slideshowShowClock = boolPref("slideshow_show_clock", true)
     val slideshowUseExifDate = boolPref("slideshow_use_exif_date", false)
     val slideshowShowImageInfo = boolPref("slideshow_show_image_info", false)
+    val slideshowShowColorSpace = boolPref("slideshow_show_color_space", false)
     val slideshowShowExifInfo = boolPref("slideshow_show_exif_info", false)
     val slideshowShowLensModel = boolPref("slideshow_show_lens_model", false)
 

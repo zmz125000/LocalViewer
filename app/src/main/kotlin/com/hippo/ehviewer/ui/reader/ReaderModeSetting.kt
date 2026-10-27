@@ -520,15 +520,16 @@ private fun ScreenWidgetSetting(slideshow: Boolean) = Column {
         val showClock = (if (slideshow) Settings.slideshowShowClock else Settings.readerShowClock).asMutableState()
         val useExifDate = (if (slideshow) Settings.slideshowUseExifDate else Settings.readerUseExifDate).asMutableState()
         val showImageInfo = (if (slideshow) Settings.slideshowShowImageInfo else Settings.readerShowImageInfo).asMutableState()
+        val showColorSpace = (if (slideshow) Settings.slideshowShowColorSpace else Settings.readerShowColorSpace).asMutableState()
         val showExifInfo = (if (slideshow) Settings.slideshowShowExifInfo else Settings.readerShowExifInfo).asMutableState()
         val showLensModel = (if (slideshow) Settings.slideshowShowLensModel else Settings.readerShowLensModel).asMutableState()
         ToggleMenuChoice(
             title = stringResource(R.string.pref_screen_widget_options),
             selectedValue = stringResource(
                 when {
-                    showClock.value && (showExifInfo.value || showImageInfo.value) -> R.string.pref_screen_widget_clock_and_exif
+                    showClock.value && (showExifInfo.value || showImageInfo.value || showColorSpace.value) -> R.string.pref_screen_widget_clock_and_exif
                     showClock.value -> R.string.pref_screen_widget_clock
-                    showExifInfo.value || showImageInfo.value -> R.string.pref_screen_widget_exif
+                    showExifInfo.value || showImageInfo.value || showColorSpace.value -> R.string.pref_screen_widget_exif
                     else -> R.string.pref_screen_widget_none
                 },
             ),
@@ -536,6 +537,7 @@ private fun ScreenWidgetSetting(slideshow: Boolean) = Column {
                 add(stringResource(R.string.pref_slideshow_show_clock) to showClock)
                 if (showClock.value) add(stringResource(R.string.pref_slideshow_use_exif_date) to useExifDate)
                 add(stringResource(R.string.pref_slideshow_show_image_info) to showImageInfo)
+                add(stringResource(R.string.pref_slideshow_show_color_space) to showColorSpace)
                 add(stringResource(R.string.pref_slideshow_show_exif_info) to showExifInfo)
                 if (showExifInfo.value) add(stringResource(R.string.pref_slideshow_show_lens_model) to showLensModel)
             },
