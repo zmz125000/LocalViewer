@@ -117,6 +117,11 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_encodeStillExport(JNIEnv*, jclass, jbyt
     return kUnsupportedAbi;
 }
 
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_hippo_ehviewer_jni_HdrConvertKt_convertExportGamut(JNIEnv*, jclass, jobject, jint) {
+    return JNI_FALSE;
+}
+
 extern "C" JNIEXPORT jlong JNICALL
 Java_com_hippo_ehviewer_jni_HdrConvertKt_probeStillExportSize(JNIEnv*, jclass, jstring, jint) {
     return 0;

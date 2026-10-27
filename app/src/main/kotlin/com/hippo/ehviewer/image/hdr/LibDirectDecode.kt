@@ -2,7 +2,6 @@ package com.hippo.ehviewer.image.hdr
 
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
-import android.graphics.Canvas
 import android.graphics.ColorSpace
 import android.graphics.ImageDecoder
 import android.hardware.display.DisplayManager
@@ -24,6 +23,7 @@ import com.hippo.ehviewer.jni.beginNativeExportPixels
 import com.hippo.ehviewer.jni.beginNativeReaderPixels
 import com.hippo.ehviewer.jni.captureExportBitmap
 import com.hippo.ehviewer.jni.captureStillBitmap
+import com.hippo.ehviewer.jni.convertExportGamut
 import com.hippo.ehviewer.jni.decodeAvifBufferToDirect
 import com.hippo.ehviewer.jni.decodeAvifBytesToDirect
 import com.hippo.ehviewer.jni.decodeJpeg2000Bitmap
@@ -253,6 +253,10 @@ object LibDirectDecode {
         val w = packed.outInfo.getOrNull(0) ?: 0
         val h = packed.outInfo.getOrNull(1) ?: 0
         if (w <= 0 || h <= 0 || (nativePixels == null && packed.pixels.isEmpty())) return null
+        if (packed.convertLinearSrgb && (nativePixels == null || !convertExportGamut(nativePixels, packed.outInfo[4]))) {
+            android.util.Log.e("StillConvert", "In-place export gamut conversion failed: ${w}x$h gamut=${packed.outInfo[4]}")
+            return null
+        }
         return DirectPixels(
             pixels = packed.pixels,
             width = w,
@@ -387,7 +391,7 @@ object LibDirectDecode {
         val deep = png && PlatformBitDepth.probe(header ?: byteArrayOf(), fileNameHint = fileNameHint) != BitDepthClass.EIGHT
         if (heif) {
             val precision = header?.let { HeifPrecisionProbe.probe(it) }
-            if (ext == "avif" || precision == null || precision.highDepth || precision.needsSoftware) {
+            if (ext == "avif" || precision == null || precision.highDepth || precision.needsSoftware || precision.transfer in listOf(16, 18)) {
                 return decodeNativePacked(src, if (ext == "avif") LibCodec.AvifPq else LibCodec.HevcHdr, maxEdge, advanced = true, export = true)
             }
         }
@@ -448,26 +452,16 @@ object LibDirectDecode {
         try {
             check(!(deep || gamut != 0) || bitmap.config == Bitmap.Config.RGBA_F16) { "Platform decoder did not retain F16 export precision: $fileNameHint" }
             val linearSpace = exportLinearSpace(gamut)
-            if (bitmap.config == Bitmap.Config.RGBA_F16 && bitmap.colorSpace != linearSpace) {
-                // F16 encoders expect linear samples in the reported gamut.
-                // Convert the extended-linear decode to that gamut while still
-                // in F16, then quantize only if the final output requires it.
-                val linear = Bitmap.createBitmap(
-                    bitmap.width,
-                    bitmap.height,
-                    Bitmap.Config.RGBA_F16,
-                    bitmap.hasAlpha(),
-                    linearSpace,
-                )
-                try {
-                    Canvas(linear).drawBitmap(bitmap, 0f, 0f, null)
-                } catch (error: Throwable) {
-                    linear.recycle()
-                    throw error
+            val convertLinearSrgb = gamut != 0 && bitmap.config == Bitmap.Config.RGBA_F16 && bitmap.colorSpace != linearSpace
+            if (convertLinearSrgb) {
+                check(
+                    bitmap.colorSpace == ColorSpace.get(ColorSpace.Named.LINEAR_EXTENDED_SRGB) ||
+                        bitmap.colorSpace == ColorSpace.get(ColorSpace.Named.LINEAR_SRGB),
+                ) {
+                    "Platform decoder returned unexpected export color space: ${bitmap.colorSpace}"
                 }
-                bitmap.recycle()
-                bitmap = linear
-            } else if (bitmap.config != Bitmap.Config.ARGB_8888 && bitmap.config != Bitmap.Config.RGBA_F16) {
+            }
+            if (bitmap.config != Bitmap.Config.ARGB_8888 && bitmap.config != Bitmap.Config.RGBA_F16) {
                 val converted = bitmap.copy(Bitmap.Config.ARGB_8888, false) ?: return null
                 bitmap.recycle()
                 bitmap = converted
@@ -478,6 +472,7 @@ object LibDirectDecode {
                 intArrayOf(bitmap.width, bitmap.height, if (bitmap.config == Bitmap.Config.RGBA_F16) 1 else 0, 0, gamut, 0),
                 floatArrayOf(1f),
                 premultiplied = bitmap.isPremultiplied,
+                convertLinearSrgb = convertLinearSrgb,
             )
         } finally {
             bitmap.recycle()
@@ -869,6 +864,7 @@ object LibDirectDecode {
         val outBoost: FloatArray,
         val premultiplied: Boolean,
         val sdrOffset: Int = 0,
+        val convertLinearSrgb: Boolean = false,
     )
 
     private fun decodePlatformBitmap(src: ImageSource, options: BitmapFactory.Options): Bitmap? = when (src) {
