@@ -37,6 +37,7 @@ import com.hippo.ehviewer.gallery.statusObserved
 import java.text.DecimalFormat
 import java.text.SimpleDateFormat
 import java.util.Date
+import kotlin.math.ceil
 import kotlin.random.Random
 import kotlinx.coroutines.delay
 
@@ -48,6 +49,7 @@ internal fun BoxScope.ReaderScreenWidget(page: Page?, slideshow: Boolean) {
     val useExifDate by (if (slideshow) Settings.slideshowUseExifDate else Settings.readerUseExifDate).collectAsState()
     val showImageInfo by (if (slideshow) Settings.slideshowShowImageInfo else Settings.readerShowImageInfo).collectAsState()
     val showExifInfo by (if (slideshow) Settings.slideshowShowExifInfo else Settings.readerShowExifInfo).collectAsState()
+    val showLensModel by (if (slideshow) Settings.slideshowShowLensModel else Settings.readerShowLensModel).collectAsState()
     if (!showClock && !showImageInfo && !showExifInfo) return
     val status = page?.statusObserved
     val metadata = (status as? PageStatus.Ready)?.image?.metadata
@@ -88,27 +90,27 @@ internal fun BoxScope.ReaderScreenWidget(page: Page?, slideshow: Boolean) {
         if (showImageInfo && metadata != null) {
             val dimensions = if (metadata.width != null && metadata.height != null) "${metadata.width} × ${metadata.height}" else null
             val depth = metadata.bitDepth?.let { stringResource(R.string.slideshow_info_bit_depth, it) }
-            val hdr = metadata.hdr?.let { if (it) "HDR" else "SDR" }
-            val imageInfo = listOfNotNull(dimensions, depth, hdr).joinToString(" · ")
-            if (imageInfo.isNotEmpty()) Text(imageInfo, style = style, fontSize = 16.sp, lineHeight = 22.sp)
             val colorSpace = metadata.colorSpace?.trim()?.takeUnless { it.isEmpty() || it.equals("Unknown", ignoreCase = true) }?.let {
                 if (it.startsWith("sRGB IEC61966-2.1", ignoreCase = true)) "sRGB" else it
             }
-            colorSpace?.let {
-                Text(it, style = style, fontSize = 16.sp, lineHeight = 22.sp)
-            }
+            val imageInfo = listOfNotNull(dimensions, depth, colorSpace).joinToString(" · ")
+            if (imageInfo.isNotEmpty()) Text(imageInfo, style = style, fontSize = 16.sp, lineHeight = 22.sp)
         }
         if (showExifInfo && metadata != null) {
             metadata.cameraModel?.let { Text(it, style = style, fontSize = 16.sp, lineHeight = 22.sp) }
+            if (showLensModel) {
+                metadata.lensModel?.let { Text(it, style = style, fontSize = 16.sp, lineHeight = 22.sp) }
+            }
             val number = remember(locale) { DecimalFormat("0.####") }
             val camera = listOfNotNull(
                 metadata.aperture?.let { "f/${number.format(it)}" },
                 metadata.exposureSeconds?.let {
-                    if (it < 0.5) "1/${number.format(1.0 / it)} s" else "${number.format(it)} s"
+                    if (it < 0.5) "1/${number.format(ceil(1.0 / it))} s" else "${number.format(it)} s"
                 },
                 metadata.iso?.let { stringResource(R.string.slideshow_info_iso, it) },
-                metadata.focalLength35mm?.let { stringResource(R.string.slideshow_info_focal_length, it) }
-                    ?: metadata.focalLength?.let { stringResource(R.string.slideshow_info_actual_focal_length, number.format(it)) },
+                (metadata.focalLength35mm?.toDouble() ?: metadata.focalLength)?.let {
+                    stringResource(R.string.slideshow_info_focal_length, number.format(it))
+                },
             ).joinToString(" · ")
             if (camera.isNotEmpty()) Text(camera, style = style, fontSize = 16.sp, lineHeight = 22.sp)
             if (metadata.whiteBalanceAuto == false) {

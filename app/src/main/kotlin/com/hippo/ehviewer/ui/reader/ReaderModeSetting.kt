@@ -527,10 +527,17 @@ private fun ScreenWidgetSetting(slideshow: Boolean) = Column {
                 title = stringResource(R.string.pref_slideshow_show_image_info),
                 field = (if (slideshow) Settings.slideshowShowImageInfo else Settings.readerShowImageInfo).asMutableState(),
             )
+            val showExifInfo = (if (slideshow) Settings.slideshowShowExifInfo else Settings.readerShowExifInfo).asMutableState()
             SwitchChoice(
                 title = stringResource(R.string.pref_slideshow_show_exif_info),
-                field = (if (slideshow) Settings.slideshowShowExifInfo else Settings.readerShowExifInfo).asMutableState(),
+                field = showExifInfo,
             )
+            AnimatedVisibility(visible = showExifInfo.value) {
+                SwitchChoice(
+                    title = stringResource(R.string.pref_slideshow_show_lens_model),
+                    field = (if (slideshow) Settings.slideshowShowLensModel else Settings.readerShowLensModel).asMutableState(),
+                )
+            }
         }
     }
 }

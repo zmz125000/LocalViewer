@@ -1256,6 +1256,7 @@ object Settings : DataStorePreferences(null) {
     val readerUseExifDate = boolPref("reader_use_exif_date", false)
     val readerShowImageInfo = boolPref("reader_show_image_info", false)
     val readerShowExifInfo = boolPref("reader_show_exif_info", false)
+    val readerShowLensModel = boolPref("reader_show_lens_model", false)
 
     // 0=off, 1=top left, 2=top right, 3=bottom left, 4=bottom right, 5=random.
     // Keep the stored position when upgrading from the clock-only widget.
@@ -1264,6 +1265,7 @@ object Settings : DataStorePreferences(null) {
     val slideshowUseExifDate = boolPref("slideshow_use_exif_date", false)
     val slideshowShowImageInfo = boolPref("slideshow_show_image_info", false)
     val slideshowShowExifInfo = boolPref("slideshow_show_exif_info", false)
+    val slideshowShowLensModel = boolPref("slideshow_show_lens_model", false)
 
     // -1 inherits the general auto-rotate mode; 0=off, 1=CW, 2=CCW.
     val slideshowAutoRotateOverride = intPref("slideshow_auto_rotate_override", -1)

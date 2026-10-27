@@ -1110,8 +1110,9 @@
     <string name="pref_slideshow_use_exif_date">EXIF の日時を使用</string>
     <string name="pref_slideshow_show_image_info">画像情報を表示</string>
     <string name="pref_slideshow_show_exif_info">EXIF 情報を表示</string>
+    <string name="pref_slideshow_show_lens_model">レンズモデルを表示</string>
     <string name="slideshow_info_bit_depth">%1$d ビット</string>
-    <string name="slideshow_info_focal_length">%1$d mm（35 mm 換算）</string>
+    <string name="slideshow_info_focal_length">%1$s mm</string>
     <string name="pref_slideshow_scroll_speed">スクロール速度</string>
     <string name="pref_slideshow_scroll_speed_photo_time">自動</string>
     <string name="pref_slideshow_pixels_per_second">%1$d</string>
@@ -1121,7 +1122,6 @@
     <string name="pref_slideshow_loop">リピート</string>
     <string name="pref_slideshow_next_gallery">次のギャラリー</string>
     <string name="slideshow_info_iso">ISO %1$d</string>
-    <string name="slideshow_info_actual_focal_length">%1$s mm</string>
     <string name="slideshow_info_white_balance_auto">ホワイトバランス：オート</string>
     <string name="slideshow_info_white_balance_manual">ホワイトバランス：マニュアル</string>
 </resources>

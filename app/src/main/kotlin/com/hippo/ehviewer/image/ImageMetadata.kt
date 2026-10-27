@@ -30,6 +30,7 @@ data class ImageMetadata(
     val focalLength: Double? = null,
     val iso: Int? = null,
     val whiteBalanceAuto: Boolean? = null,
+    val lensModel: String? = null,
 )
 
 /** Header/EXIF reads only: never decodes pixels or retains the compressed source. */
@@ -90,6 +91,7 @@ internal fun ImageSource.readMetadata(fileDate: Long? = null, fileName: String? 
         },
         date = exif?.photoDate() ?: fileDate?.takeIf { it > 0 },
         cameraModel = exif?.getAttribute(ExifInterface.TAG_MODEL)?.trim()?.takeIf { it.isNotEmpty() },
+        lensModel = exif?.getAttribute(ExifInterface.TAG_LENS_MODEL)?.trim()?.takeIf { it.isNotEmpty() },
         exposureSeconds = attributeDouble(ExifInterface.TAG_EXPOSURE_TIME),
         aperture = attributeDouble(ExifInterface.TAG_F_NUMBER),
         focalLength35mm = attributeInt(ExifInterface.TAG_FOCAL_LENGTH_IN_35MM_FILM),
@@ -97,8 +99,8 @@ internal fun ImageSource.readMetadata(fileDate: Long? = null, fileName: String? 
         iso = attributeInt(ExifInterface.TAG_PHOTOGRAPHIC_SENSITIVITY)?.takeUnless { it == 65535 }
             ?: attributeInt(ExifInterface.TAG_ISO_SPEED),
         whiteBalanceAuto = when (exif?.getAttributeInt(ExifInterface.TAG_WHITE_BALANCE, -1)) {
-            ExifInterface.WHITE_BALANCE_AUTO -> true
-            ExifInterface.WHITE_BALANCE_MANUAL -> false
+            ExifInterface.WHITE_BALANCE_AUTO.toInt() -> true
+            ExifInterface.WHITE_BALANCE_MANUAL.toInt() -> false
             else -> null
         },
     )

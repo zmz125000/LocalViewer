@@ -66,7 +66,7 @@ class SlideshowScrollInterval(
     val scrollFinished = CompletableDeferred<Unit>()
 }
 
-private val SlideshowScrollEasing = CubicBezierEasing(0.42f, 0f, 0.58f, 1f)
+private val SlideshowScrollEasing = CubicBezierEasing(0.65f, 0f, 0.35f, 1f)
 
 private object SlideshowScrollDurationScale : MotionDurationScale {
     override val scaleFactor: Float get() = 1f
