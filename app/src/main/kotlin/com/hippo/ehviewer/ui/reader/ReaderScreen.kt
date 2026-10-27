@@ -152,6 +152,7 @@ import com.ramcosta.composedestinations.navigation.DestinationsNavigator
 import eu.kanade.tachiyomi.ui.reader.PageIndicatorText
 import eu.kanade.tachiyomi.ui.reader.ReaderAppBars
 import eu.kanade.tachiyomi.ui.reader.ReaderPageSheetMeta
+import eu.kanade.tachiyomi.ui.reader.setting.PageTransitionType
 import eu.kanade.tachiyomi.ui.reader.setting.ReadingModeType
 import eu.kanade.tachiyomi.ui.reader.setting.SlideshowPlaybackMode
 import java.util.concurrent.atomic.AtomicInteger
@@ -1221,6 +1222,15 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
                             interval.scrollFinished.await()
                         } else {
                             delay(interval?.durationMillis?.toLong() ?: (slideshowSeconds.coerceIn(3, 200) * 1000L))
+                        }
+                        val fade = PageTransitionType.resolve(
+                            Settings.pageTransition.value,
+                            Settings.slideshowPageTransition.value,
+                            slideshow = true,
+                        ).isFade
+                        if (slideshowAutoScroll && fade) {
+                            // Hold the final image before fading; page input cancels this pause.
+                            delay(550L)
                         }
                     },
                 ) { page ->

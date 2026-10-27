@@ -11,6 +11,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.AbsoluteAlignment
@@ -20,13 +21,17 @@ import androidx.compose.ui.geometry.Size
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.repeatOnLifecycle
+import com.hippo.ehviewer.Settings
+import com.hippo.ehviewer.collectAsState
 import com.hippo.ehviewer.gallery.Page
 import com.hippo.ehviewer.gallery.PageStatus
 import com.hippo.ehviewer.gallery.status
 import com.hippo.ehviewer.gallery.statusObserved
+import eu.kanade.tachiyomi.ui.reader.setting.PageTransitionType
 import kotlin.math.ceil
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import me.saket.telephoto.zoomable.Viewport
@@ -135,14 +140,23 @@ internal fun SlideshowAutoScroll(
     val active = pager.settledPage == slot && !pager.isScrollInProgress && !PagerTransitionHandlers.isRunning(pager)
     val failed = pages.any { it.status is PageStatus.Error || it.status is PageStatus.Blocked }
     val ready = active && displayed && (configured || failed)
-    LaunchedEffect(state, slot, ready, viewport) {
+    val generalTransition by Settings.pageTransition.collectAsState()
+    val slideshowTransition by Settings.slideshowPageTransition.collectAsState()
+    val fade = PageTransitionType.resolve(generalTransition, slideshowTransition, slideshow = true).isFade
+    var startReady by remember(state, slot, ready, viewport, fade) { mutableStateOf(false) }
+    LaunchedEffect(state, slot, ready, viewport, fade) {
         if (ready) {
+            if (state.readyPage == slot) state.readyPage = null
+            // Active becomes true only after the outgoing fade has fully finished.
+            // Hold the countdown too, so this pause does not shorten timed scrolling.
+            if (fade && !failed) delay(550L)
             state.scrollFactors = if (state.relativeSpeed && configured && !failed) {
                 val bounds = with(zoomableState.coordinateSystem) { contentBounds(false).rectIn(CoordinateSpace.Viewport) }
                 slideshowScrollFactors(bounds.size, viewport)
             } else {
                 SlideshowScrollFactors()
             }
+            startReady = true
             state.readyPage = slot
         } else if (state.readyPage == slot) {
             state.readyPage = null
@@ -157,8 +171,8 @@ internal fun SlideshowAutoScroll(
     }
     val interval = state.interval
     val lifecycleOwner = LocalLifecycleOwner.current
-    LaunchedEffect(state, interval, ready, configured, failed, viewport, lifecycleOwner) {
-        if (!ready || interval == null || interval.page != slot || (!configured && !failed)) return@LaunchedEffect
+    LaunchedEffect(state, interval, ready, startReady, configured, failed, viewport, lifecycleOwner) {
+        if (!ready || !startReady || interval == null || interval.page != slot || (!configured && !failed)) return@LaunchedEffect
         lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
             val speed = interval.pixelsPerSecond
             if (speed == 0 && SystemClock.elapsedRealtime() - interval.startedAt >= interval.durationMillis) return@repeatOnLifecycle
