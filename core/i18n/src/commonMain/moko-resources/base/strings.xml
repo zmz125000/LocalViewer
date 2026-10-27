@@ -1211,12 +1211,10 @@
     <string name="pref_reader_transition_fade">Fade</string>
     <string name="pref_reader_transition_none">None</string>
     <string name="pref_reader_transition_inherit">Use reading mode setting</string>
-    <string name="pref_slideshow_transition_override">Page transition override</string>
     <string name="pref_reader_transition_slide">Slide</string>
     <string name="pref_reader_transition_fade_blend">Fade (blend)</string>
     <string name="pref_slideshow_playback_mode">Slideshow playback</string>
     <string name="pref_slideshow_play_once">Play once</string>
-    <string name="pref_slideshow_auto_rotate_override">Auto-rotate override</string>
     <string name="pref_slideshow_use_general_setting">Use general setting</string>
     <string name="pref_slideshow_top_left">Top left</string>
     <string name="pref_slideshow_top_right">Top right</string>
@@ -1225,7 +1223,6 @@
     <string name="pref_slideshow_random">Random</string>
     <string name="pref_slideshow_auto_scroll">Auto scroll</string>
     <string name="pref_slideshow_relative_scroll_speed">Relative scroll speed</string>
-    <string name="pref_slideshow_decode_size_override">Decode size override</string>
     <string name="pref_slideshow_screen_widget">Screen widget</string>
     <string name="pref_screen_widget_options">Widget options</string>
     <string name="pref_screen_widget_none">None</string>

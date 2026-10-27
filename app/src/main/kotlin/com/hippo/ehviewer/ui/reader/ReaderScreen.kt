@@ -1079,14 +1079,12 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
                 }
             }
         }
-        fun goFolder(sibling: ReaderScreenArgs) {
+        suspend fun goFolder(sibling: ReaderScreenArgs) {
             if (!folderNavBusy.compareAndSet(false, true)) return
-            launch {
-                try {
-                    openSiblingGallery(sibling)
-                } finally {
-                    folderNavBusy.set(false)
-                }
+            try {
+                openSiblingGallery(sibling)
+            } finally {
+                folderNavBusy.set(false)
             }
         }
         EhTheme(useDarkTheme = bgColor != Color.White, applySystemBarAppearance = false) {
@@ -1226,13 +1224,28 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
                         }
                     },
                 ) { page ->
+                    // A queued automatic action must not overtake a manual page turn.
+                    if (pagerState.settledPage != page || pagerState.isScrollInProgress || PagerTransitionHandlers.isRunning(pagerState)) {
+                        return@runSlideshowTimer
+                    }
                     val count = pagerState.pageCount
                     val realPage = if (pagerDual) dualFirstPageIndex(page, landscapeCover) else page
                     val shuffledNext = if (slideshowPlayback == SlideshowPlaybackMode.SHUFFLE) pageLoader.nextSlideshowPage(realPage) else null
                     val atEnd = if (slideshowPlayback == SlideshowPlaybackMode.SHUFFLE) shuffledNext == null else page >= count - 1
                     if (atEnd && slideshowPlayback == SlideshowPlaybackMode.NEXT_GALLERY) {
-                        val sibling = withIOContext {
-                            runCatching { GallerySiblingNavigator.slideshowNext(args) }.getOrNull()
+                        val sibling = try {
+                            withIOContext { GallerySiblingNavigator.slideshowNext(args) }
+                        } catch (e: CancellationException) {
+                            throw e
+                        } catch (e: Exception) {
+                            // Lookup failure is not an empty hop list: retry after another interval.
+                            android.util.Log.w("Slideshow", "Cannot resolve the next gallery", e)
+                            return@runSlideshowTimer
+                        }
+                        // Parent listing may require network I/O. User navigation wins if
+                        // the reader moved away from the last page while resolving it.
+                        if (pagerState.settledPage != page || pagerState.isScrollInProgress || PagerTransitionHandlers.isRunning(pagerState)) {
+                            return@runSlideshowTimer
                         }
                         if (sibling != null) {
                             goFolder(sibling)
