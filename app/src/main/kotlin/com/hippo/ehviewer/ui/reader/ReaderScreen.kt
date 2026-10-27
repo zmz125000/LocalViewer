@@ -1147,7 +1147,12 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
             val widgetPage = if (pagerDual) dualFirstPageIndex(pagerState.settledPage, landscapeCover) else pagerState.settledPage
             // Preference collectors remember their source; recreate them when overrides change.
             key(slideshow) {
-                ReaderScreenWidget(page = pageLoader.pages.getOrNull(widgetPage), slideshow = slideshow)
+                val page = pageLoader.pages.getOrNull(widgetPage)
+                ReaderScreenWidget(
+                    page = page,
+                    slideshow = slideshow,
+                    sourceName = page?.let { pageLoader.sourceLeafName(it.index) },
+                )
             }
         }
         val generalShowPageNumber by Settings.showPageNumber.collectAsState()

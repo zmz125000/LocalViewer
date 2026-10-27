@@ -37,12 +37,13 @@ import com.hippo.ehviewer.gallery.statusObserved
 import java.text.DecimalFormat
 import java.text.SimpleDateFormat
 import java.util.Date
+import java.util.Locale
 import kotlin.math.ceil
 import kotlin.random.Random
 import kotlinx.coroutines.delay
 
 @Composable
-internal fun BoxScope.ReaderScreenWidget(page: Page?, slideshow: Boolean) {
+internal fun BoxScope.ReaderScreenWidget(page: Page?, slideshow: Boolean, sourceName: String?) {
     val position by (if (slideshow) Settings.slideshowScreenWidgetPosition else Settings.readerScreenWidgetPosition).collectAsState()
     if (position !in 1..5) return
     val showClock by (if (slideshow) Settings.slideshowShowClock else Settings.readerShowClock).collectAsState()
@@ -93,7 +94,12 @@ internal fun BoxScope.ReaderScreenWidget(page: Page?, slideshow: Boolean) {
             val colorSpace = metadata.colorSpace?.trim()?.takeUnless { it.isEmpty() || it.equals("Unknown", ignoreCase = true) }?.let {
                 if (it.startsWith("sRGB IEC61966-2.1", ignoreCase = true)) "sRGB" else it
             }
-            val imageInfo = listOfNotNull(dimensions, depth, colorSpace).joinToString(" · ")
+            val extension = sourceName?.substringAfterLast('.', "")?.takeIf { it.isNotBlank() }?.uppercase(Locale.ROOT)
+            val colorInfo = colorSpace?.let { space ->
+                val dynamicRange = metadata.hdr?.let { if (it) "HDR" else "SDR" }
+                listOfNotNull(space, dynamicRange).joinToString(" ")
+            }
+            val imageInfo = listOfNotNull(dimensions, depth, extension, colorInfo).joinToString(" · ")
             if (imageInfo.isNotEmpty()) Text(imageInfo, style = style, fontSize = 16.sp, lineHeight = 22.sp)
         }
         if (showExifInfo && metadata != null) {

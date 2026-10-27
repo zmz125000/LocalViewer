@@ -1235,7 +1235,7 @@
     <string name="pref_slideshow_scroll_speed">Scroll speed</string>
     <string name="pref_slideshow_scroll_speed_photo_time">Auto</string>
     <string name="pref_slideshow_pixels_per_second">%1$d</string>
-    <string name="slideshow_info_iso">ISO %1$d</string>
+    <string name="slideshow_info_iso">%1$d</string>
     <string name="slideshow_info_white_balance_auto">White balance: Auto</string>
     <string name="slideshow_info_white_balance_manual">White balance: Manual</string>
 </resources>
