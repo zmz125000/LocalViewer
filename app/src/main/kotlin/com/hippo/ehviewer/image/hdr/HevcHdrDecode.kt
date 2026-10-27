@@ -1,6 +1,8 @@
 package com.hippo.ehviewer.image.hdr
 
 import android.util.Log
+import com.ehviewer.core.util.isAtLeastU
+import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.jni.linearizeHeifIccBuffer
 import java.nio.ByteBuffer
 import kotlin.math.max
@@ -12,9 +14,9 @@ import kotlin.math.roundToInt
  * 1.0 is SDR white (203 nits). Bundled libde265 preserves the encoded precision;
  * MediaCodec remains a fallback on ABIs without the bundled HDR codecs.
  *
- * Stored as BT.2020 when the source is BT.2020 and advanced color is on (same
- * as PQ AVIF). Otherwise the samples are linear scRGB, which is what the HDR
- * window composites.
+ * HDR retains the source working gamut in F16 independently of advanced color.
+ * SDR retains it when advanced color is on or an HDR gain map will be attached;
+ * otherwise SDR is converted to linear sRGB.
  */
 internal object HevcHdrDecode {
     private const val TAG = "HevcHdrDecode"
@@ -43,6 +45,8 @@ internal object HevcHdrDecode {
         // The caller used to parse and assemble the access units a second time.
         if (isHdr && !allowHdr) return null
         val icc = hdr.icc.takeUnless { isHdr }
+        val preserveColor = advancedColor || isHdr ||
+            (isAtLeastU && Settings.readerHdrDisplay.value && parsed.hasAppleGainMap())
         if (hdr.tiles.isEmpty()) return null
         val cap = if (maxEdge > 0) maxEdge else FULL_EDGE
         val longEdge = max(hdr.width, hdr.height)
@@ -50,7 +54,7 @@ internal object HevcHdrDecode {
         var outW = max(1, (hdr.width * scale).roundToInt())
         var outH = max(1, (hdr.height * scale).roundToInt())
         val gamut = when {
-            !advancedColor -> 0
+            !preserveColor -> 0
             icc != null -> 2 // Full ICC transform produces linear BT.2020, retaining wide colors.
             hdr.primaries == 9 -> 2
             hdr.primaries == 12 -> 1
@@ -144,7 +148,7 @@ internal object HevcHdrDecode {
                     }
                 }
             }
-            if (icc != null && !linearizeHeifIccBuffer(pixels.buffer, icc, advancedColor)) return null
+            if (icc != null && !linearizeHeifIccBuffer(pixels.buffer, icc, preserveColor)) return null
             val alpha = parsed.alphaImage()
             if (alpha != null && !applyAlpha(pixels, outW, outH, hdr, alpha)) return null
             if (hdr.rotationDegreesCcw % 360 != 0) {

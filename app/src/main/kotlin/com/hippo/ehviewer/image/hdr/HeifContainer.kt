@@ -60,6 +60,11 @@ internal object HeifContainer {
         private val refs: List<Ref>,
         private val primaryId: Int,
     ) {
+        fun hasAppleGainMap(): Boolean = refs.any { ref ->
+            ref.type == "auxl" && primaryId in ref.to &&
+                items[ref.from]?.urn?.contains(APPLE_GAIN_MAP_URN) == true
+        }
+
         fun appleGainMap(): AppleGainMap? {
             val aux = refs.firstOrNull { ref ->
                 ref.type == "auxl" && items[ref.from]?.urn?.contains(APPLE_GAIN_MAP_URN) == true

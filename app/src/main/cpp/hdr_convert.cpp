@@ -1232,10 +1232,11 @@ int pack_linear_f16_for_direct(std::vector<uint16_t>& rgba, unsigned w, unsigned
     if (peak > kMaxLinear) peak = kMaxLinear;
 
     const bool is_hdr = force_hdr || peak > 1.25f;
-    // Advanced color preserves the decoded working gamut at every precision/DR.
-    // Kotlin tags the Bitmap with the matching linear ColorSpace.
-    const bool preserve_p3 = advanced_color && cg == UHDR_CG_DISPLAY_P3;
-    const bool preserve_bt2100 = advanced_color && cg == UHDR_CG_BT_2100;
+    // HDR always preserves its working gamut and F16 precision. The optional
+    // advanced-color setting only controls SDR. Kotlin tags the matching space.
+    const bool preserve_color = advanced_color || is_hdr;
+    const bool preserve_p3 = preserve_color && cg == UHDR_CG_DISPLAY_P3;
+    const bool preserve_bt2100 = preserve_color && cg == UHDR_CG_BT_2100;
     const bool need_rematrix = (cg == UHDR_CG_DISPLAY_P3 || cg == UHDR_CG_BT_2100) &&
         !preserve_p3 && !preserve_bt2100;
 

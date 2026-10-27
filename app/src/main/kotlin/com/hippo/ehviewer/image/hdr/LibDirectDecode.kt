@@ -103,7 +103,7 @@ data class DirectPixels(
  * - **SDR BT.709:** F16 [LINEAR_EXTENDED_SRGB] (high bit depth)
  * - Optional [HardwareBuffer] wrap for F16 (GPU-sampled)
  *
- * Advanced off: rematrix wide → scRGB/sRGB (safe default).
+ * HDR always retains deep precision and gamut. Advanced off rematrixes SDR to sRGB.
  */
 object LibDirectDecode {
     /** Second RAW decode (view original) stops here instead of a full-sensor float16. */
@@ -515,7 +515,10 @@ object LibDirectDecode {
      */
     private fun decodeHevcHdrPacked(bytes: ByteBuffer, maxEdge: Int, advanced: Boolean, export: Boolean = false): PackedPixels? {
         val allowHdr = export || Settings.preferNativeHeifAvif.value || Settings.readerHdrDisplay.value
-        val frame = HevcHdrDecode.decode(bytes, maxEdge, advanced, allowHdr) ?: return null
+        // ProXDR attaches its gain map after decoding this SDR base. Preserve the
+        // base gamut too; the trailer probe reads only a small tail of the buffer.
+        val preserveColor = advanced || (Settings.readerHdrDisplay.value && OppoProxdr.looksLike(bytes))
+        val frame = HevcHdrDecode.decode(bytes, maxEdge, preserveColor, allowHdr) ?: return null
         frame.use {
             val outInfo = intArrayOf(frame.width, frame.height, 1, if (frame.isHdr) 1 else 0, frame.gamut, frame.transfer)
             val outBoost = floatArrayOf(frame.boost)
