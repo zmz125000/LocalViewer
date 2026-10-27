@@ -1143,9 +1143,12 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
             )
         }
         ReaderFilterOverlay()
-        if (slideshow && !appbarVisible) {
+        if (!isWebtoon && !appbarVisible) {
             val widgetPage = if (pagerDual) dualFirstPageIndex(pagerState.settledPage, landscapeCover) else pagerState.settledPage
-            SlideshowScreenWidget(page = pageLoader.pages.getOrNull(widgetPage))
+            // Preference collectors remember their source; recreate them when overrides change.
+            key(slideshow) {
+                ReaderScreenWidget(page = pageLoader.pages.getOrNull(widgetPage), slideshow = slideshow)
+            }
         }
         val generalShowPageNumber by Settings.showPageNumber.collectAsState()
         val slideshowShowPageNumber by Settings.slideshowShowPageNumber.collectAsState()

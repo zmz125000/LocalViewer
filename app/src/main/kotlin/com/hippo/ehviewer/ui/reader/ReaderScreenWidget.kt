@@ -41,18 +41,18 @@ import kotlin.random.Random
 import kotlinx.coroutines.delay
 
 @Composable
-internal fun BoxScope.SlideshowScreenWidget(page: Page?) {
-    val position by Settings.slideshowScreenWidgetPosition.collectAsState()
+internal fun BoxScope.ReaderScreenWidget(page: Page?, slideshow: Boolean) {
+    val position by (if (slideshow) Settings.slideshowScreenWidgetPosition else Settings.readerScreenWidgetPosition).collectAsState()
     if (position !in 1..5) return
-    val showClock by Settings.slideshowShowClock.collectAsState()
-    val useExifDate by Settings.slideshowUseExifDate.collectAsState()
-    val showImageInfo by Settings.slideshowShowImageInfo.collectAsState()
-    val showExifInfo by Settings.slideshowShowExifInfo.collectAsState()
+    val showClock by (if (slideshow) Settings.slideshowShowClock else Settings.readerShowClock).collectAsState()
+    val useExifDate by (if (slideshow) Settings.slideshowUseExifDate else Settings.readerUseExifDate).collectAsState()
+    val showImageInfo by (if (slideshow) Settings.slideshowShowImageInfo else Settings.readerShowImageInfo).collectAsState()
+    val showExifInfo by (if (slideshow) Settings.slideshowShowExifInfo else Settings.readerShowExifInfo).collectAsState()
     if (!showClock && !showImageInfo && !showExifInfo) return
     val status = page?.statusObserved
     val metadata = (status as? PageStatus.Ready)?.image?.metadata
     val photoDate = if (useExifDate) metadata?.date?.let(::Date) else null
-    val corner = remember(position, page) { if (position == 5) Random.nextInt(1, 5) else position }
+    val corner = remember(position, page, slideshow) { if (position == 5) Random.nextInt(1, 5) else position }
     val alignment = when (corner) {
         1 -> AbsoluteAlignment.TopLeft
         2 -> AbsoluteAlignment.TopRight
