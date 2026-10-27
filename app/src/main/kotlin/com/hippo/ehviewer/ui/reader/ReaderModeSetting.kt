@@ -524,6 +524,14 @@ private fun ScreenWidgetSetting(slideshow: Boolean) = Column {
         val showLensModel = (if (slideshow) Settings.slideshowShowLensModel else Settings.readerShowLensModel).asMutableState()
         ToggleMenuChoice(
             title = stringResource(R.string.pref_screen_widget_options),
+            selectedValue = stringResource(
+                when {
+                    showClock.value && (showExifInfo.value || showImageInfo.value) -> R.string.pref_screen_widget_clock_and_exif
+                    showClock.value -> R.string.pref_screen_widget_clock
+                    showExifInfo.value || showImageInfo.value -> R.string.pref_screen_widget_exif
+                    else -> R.string.pref_screen_widget_none
+                },
+            ),
             options = buildList {
                 add(stringResource(R.string.pref_slideshow_show_clock) to showClock)
                 if (showClock.value) add(stringResource(R.string.pref_slideshow_use_exif_date) to useExifDate)

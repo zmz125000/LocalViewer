@@ -71,13 +71,14 @@ fun SpinnerChoice(title: String, entries: Array<String>, values: List<Int>, fiel
 
 /** Multiple checked options; keep the menu open while changing selections. */
 @Composable
-fun ToggleMenuChoice(title: String, options: List<Pair<String, MutableState<Boolean>>>) {
+fun ToggleMenuChoice(title: String, selectedValue: String, options: List<Pair<String, MutableState<Boolean>>>) {
     var expanded by remember { mutableStateOf(false) }
     Row(
         modifier = Modifier.fillMaxWidth().height(48.dp).clickable { expanded = true }.padding(horizontal = 16.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(title, modifier = Modifier.weight(1f), color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(selectedValue, modifier = Modifier.weight(1f))
         Box {
             Icon(Icons.Default.KeyboardArrowDown, contentDescription = null, modifier = Modifier.size(24.dp))
             DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
