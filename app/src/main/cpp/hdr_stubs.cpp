@@ -175,6 +175,12 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeAvifBufferToDirect(
     return nullptr;
 }
 
+extern "C" JNIEXPORT jobjectArray JNICALL
+Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeAvifGainmap(
+        JNIEnv*, jclass, jobject, jbyteArray, jint, jboolean, jintArray, jfloatArray) {
+    return nullptr;
+}
+
 extern "C" JNIEXPORT jbyteArray JNICALL
 Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeJpeg2000BufferToDirect(
         JNIEnv*, jclass, jobject, jint, jboolean, jintArray, jfloatArray) {

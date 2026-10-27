@@ -870,6 +870,12 @@ class Image private constructor(
         fun fromLibDirect(result: LibDirectResult, src: ImageSource, attachHeifGainMap: Boolean = false): Image {
             val shown = result.bitmap.presentForReader()
             var coil: CoilImage = shown.asImage()
+            // Native ISO AVIF can now retain its base + Gainmap instead of a
+            // baked HDR bitmap. Let gain-map metadata control window headroom.
+            val bitmapImage = coil as? BitmapImage
+            if (bitmapImage?.detectGainmap() == true) {
+                coil = BitmapImageWithExtraInfo(image = bitmapImage, hasGainmap = true)
+            }
             if (attachHeifGainMap && !result.isHdrContent) {
                 val source = when (src) {
                     is PathSource -> src.right()

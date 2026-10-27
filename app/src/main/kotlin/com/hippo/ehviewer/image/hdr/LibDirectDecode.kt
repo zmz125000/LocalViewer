@@ -272,12 +272,19 @@ object LibDirectDecode {
         maxEdge: Int,
         knownRoute: StillRoute?,
     ): LibDirectResult? {
+        val route = knownRoute ?: when (src) {
+            is PathSource -> classifyPath(src.source, fileNameHint)
+            is ByteBufferSource -> classify(src.source, fileNameHint)
+        }
+        if (route is StillRoute.Lib && route.codec == LibCodec.AvifPq) {
+            AvifGainmapDecode.decode(src, maxEdge)?.let { return it }
+        }
         // This entire scope is synchronous on the same decode thread. Native
         // packers move their final vector into the capture instead of a Java array.
         // Exports use their own capture and keep straight alpha through encoding.
         val handle = beginNativeReaderPixels()
         try {
-            val packed = decodePacked(src, fileNameHint, maxEdge, knownRoute = knownRoute)
+            val packed = decodePacked(src, fileNameHint, maxEdge, knownRoute = route)
             val nativePixels = endNativeReaderPixels(handle)
             if (packed == null) return null
             return bitmapFromPacked(
