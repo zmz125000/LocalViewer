@@ -1200,6 +1200,43 @@ inline float clamp_nonneg(float v) {
 
 }  // namespace
 
+// Platform decoders produce extended-linear sRGB F16. Convert the captured
+// buffer directly instead of allocating a second Bitmap and drawing with Canvas.
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_hippo_ehviewer_jni_HdrConvertKt_convertExportGamut(
+        JNIEnv* env, jclass, jobject jPixels, jint gamut) try {
+    if (!jPixels || (gamut != 1 && gamut != 2)) return JNI_FALSE;
+    const jlong bytes = env->GetDirectBufferCapacity(jPixels);
+    auto* pixels = static_cast<uint8_t*>(env->GetDirectBufferAddress(jPixels));
+    if (!pixels || bytes <= 0 || bytes % 8) return JNI_FALSE;
+    skcms_ICCProfile source = *skcms_sRGB_profile(), destination{};
+    skcms_SetTransferFunction(&source, skcms_Identity_TransferFunction());
+    if (gamut == 2) {
+        if (!make_linear_bt2020_profile(&destination)) return JNI_FALSE;
+    } else {
+        skcms_Init(&destination);
+        skcms_SetTransferFunction(&destination, skcms_Identity_TransferFunction());
+        skcms_Matrix3x3 matrix{};
+        if (!skcms_PrimariesToXYZD50(0.680f, 0.320f, 0.265f, 0.690f, 0.150f,
+                                    0.060f, 0.3127f, 0.3290f, &matrix)) return JNI_FALSE;
+        skcms_SetXYZD50(&destination, &matrix);
+        if (!skcms_MakeUsableAsDestination(&destination)) return JNI_FALSE;
+    }
+    const size_t count = static_cast<size_t>(bytes / 8);
+    std::array<bool, 8> success{};
+    const unsigned jobs = hdr_pixel_jobs(count);
+    hdr_parallel_pixels(count, jobs, [&](size_t begin, size_t end, unsigned job) {
+        // Both profiles are linear: the matrix commutes with premultiplication.
+        // Transform associated RGB directly, preserving alpha without a divide.
+        success[job] = skcms_Transform(pixels + begin * 8, skcms_PixelFormat_RGBA_hhhh,
+            skcms_AlphaFormat_Unpremul, &source, pixels + begin * 8,
+            skcms_PixelFormat_RGBA_hhhh, skcms_AlphaFormat_Unpremul, &destination, end - begin);
+    });
+    return std::all_of(success.begin(), success.begin() + jobs, [](bool ok) { return ok; }) ? JNI_TRUE : JNI_FALSE;
+} catch (...) {
+    return JNI_FALSE;
+}
+
 int pack_linear_f16_for_direct(std::vector<uint16_t>& rgba, unsigned w, unsigned h, bool force_hdr,
                                uhdr_color_gamut_t cg, bool advanced_color, int transfer_cicp,
                                std::vector<uint8_t>& out_pixels, int* out_format, int* out_is_hdr,
@@ -1232,10 +1269,11 @@ int pack_linear_f16_for_direct(std::vector<uint16_t>& rgba, unsigned w, unsigned
     if (peak > kMaxLinear) peak = kMaxLinear;
 
     const bool is_hdr = force_hdr || peak > 1.25f;
-    // Advanced color preserves the decoded working gamut at every precision/DR.
-    // Kotlin tags the Bitmap with the matching linear ColorSpace.
-    const bool preserve_p3 = advanced_color && cg == UHDR_CG_DISPLAY_P3;
-    const bool preserve_bt2100 = advanced_color && cg == UHDR_CG_BT_2100;
+    // HDR always preserves its working gamut and F16 precision. The optional
+    // advanced-color setting only controls SDR. Kotlin tags the matching space.
+    const bool preserve_color = advanced_color || is_hdr;
+    const bool preserve_p3 = preserve_color && cg == UHDR_CG_DISPLAY_P3;
+    const bool preserve_bt2100 = preserve_color && cg == UHDR_CG_BT_2100;
     const bool need_rematrix = (cg == UHDR_CG_DISPLAY_P3 || cg == UHDR_CG_BT_2100) &&
         !preserve_p3 && !preserve_bt2100;
 

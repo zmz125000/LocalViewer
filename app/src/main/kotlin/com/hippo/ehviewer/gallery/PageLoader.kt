@@ -309,7 +309,7 @@ abstract class PageLoader(
         if (!route.needsLibDecode && !rawStill && !deepHeif) return null
         val maxEdge = Image.maxEdgeForReader(forceOriginal)
         val direct = (if (deepHeif) PlatformHeifDecode.decode(raw, precision, maxEdge) else null)
-            ?: LibDirectDecode.decode(raw, nameHint, maxEdge)
+            ?: LibDirectDecode.decode(raw, nameHint, maxEdge, knownRoute = route)
         if (direct == null) {
             if (rawStill) {
                 error("RAW decode failed: $nameHint")
