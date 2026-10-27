@@ -1120,4 +1120,8 @@
     <string name="pref_slideshow_shuffle">シャッフル</string>
     <string name="pref_slideshow_loop">リピート</string>
     <string name="pref_slideshow_next_gallery">次のギャラリー</string>
+    <string name="slideshow_info_iso">ISO %1$d</string>
+    <string name="slideshow_info_actual_focal_length">%1$s mm</string>
+    <string name="slideshow_info_white_balance_auto">ホワイトバランス：オート</string>
+    <string name="slideshow_info_white_balance_manual">ホワイトバランス：マニュアル</string>
 </resources>

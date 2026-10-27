@@ -1195,4 +1195,8 @@
     <string name="pref_slideshow_shuffle">随机播放</string>
     <string name="pref_slideshow_loop">重复播放</string>
     <string name="pref_slideshow_next_gallery">播放下一个图集</string>
+    <string name="slideshow_info_iso">ISO %1$d</string>
+    <string name="slideshow_info_actual_focal_length">%1$s mm</string>
+    <string name="slideshow_info_white_balance_auto">白平衡：自动</string>
+    <string name="slideshow_info_white_balance_manual">白平衡：手动</string>
 </resources>

@@ -106,9 +106,19 @@ internal fun BoxScope.SlideshowScreenWidget(page: Page?) {
                 metadata.exposureSeconds?.let {
                     if (it < 0.5) "1/${number.format(1.0 / it)} s" else "${number.format(it)} s"
                 },
-                metadata.focalLength35mm?.let { stringResource(R.string.slideshow_info_focal_length, it) },
+                metadata.iso?.let { stringResource(R.string.slideshow_info_iso, it) },
+                metadata.focalLength35mm?.let { stringResource(R.string.slideshow_info_focal_length, it) }
+                    ?: metadata.focalLength?.let { stringResource(R.string.slideshow_info_actual_focal_length, number.format(it)) },
             ).joinToString(" · ")
             if (camera.isNotEmpty()) Text(camera, style = style, fontSize = 16.sp, lineHeight = 22.sp)
+            if (metadata.whiteBalanceAuto == false) {
+                Text(
+                    stringResource(R.string.slideshow_info_white_balance_manual),
+                    style = style,
+                    fontSize = 16.sp,
+                    lineHeight = 22.sp,
+                )
+            }
         }
     }
 }
