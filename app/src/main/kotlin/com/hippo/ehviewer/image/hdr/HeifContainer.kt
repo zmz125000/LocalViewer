@@ -306,7 +306,8 @@ internal object HeifContainer {
             }
             if (p + 2 > end) return
             p += 2
-            if (p + baseSize > end) return
+            val baseOffset = readBits(file, p, end, baseSize) ?: return
+            if (baseOffset < 0) return
             p += baseSize
             if (p + 2 > end) return
             val extentCount = u16(file, p)
@@ -322,7 +323,10 @@ internal object HeifContainer {
                 p += offsetSize
                 val length = readBits(file, p, end, lengthSize) ?: return
                 p += lengthSize
-                extents += Extent(offset, length)
+                // iloc extents are relative to the item's base_offset, for
+                // both file-backed data and construction_method 1 (idat).
+                if (offset < 0 || offset > Long.MAX_VALUE - baseOffset) return
+                extents += Extent(baseOffset + offset, length)
             }
             val item = items.getOrPut(id) { Item(id) }
             item.construction = construction
