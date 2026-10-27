@@ -11,6 +11,8 @@ import com.hippo.ehviewer.image.byteBufferSource
 import com.hippo.ehviewer.image.hdr.HdrConvertCache
 import com.hippo.ehviewer.image.hdr.isRawStillExtension
 import com.hippo.ehviewer.image.hdr.readEmbeddedRawJpeg
+import com.hippo.ehviewer.library.BrowseEntryRemote
+import com.hippo.ehviewer.library.BrowseSession
 import com.hippo.ehviewer.library.ZipAsDirListing
 import com.hippo.ehviewer.library.ZipMemberCover
 import com.hippo.ehviewer.smb.SmbArchiveByteSource
@@ -98,6 +100,10 @@ suspend inline fun <T> useSmbFolderPageLoader(
                 }
 
                 override fun getOriginalImageFileName(index: Int) = imageFileNames[index]
+
+                override fun getOriginalImageDate(index: Int): Long? = BrowseSession.getSmbListing(source.id, remoteDir)
+                    ?.filterIsInstance<BrowseEntryRemote.RegularFile>()
+                    ?.firstOrNull { it.fileName == imageFileNames[index] }?.lastModifiedMs?.takeIf { it > 0 }
 
                 private fun relativeFile(index: Int): String = imageFileNames[index].let { name ->
                     if (remoteDir.isEmpty()) name else "$remoteDir/$name"

@@ -436,7 +436,7 @@ private fun SlideshowSetting() = Column {
         field = Settings.slideshowAutoRotateOverride.asMutableState(),
     )
     SpinnerChoice(
-        title = stringResource(R.string.pref_slideshow_clock),
+        title = stringResource(R.string.pref_slideshow_screen_widget),
         entries = arrayOf(
             stringResource(R.string.pref_slideshow_off),
             stringResource(R.string.pref_slideshow_top_left),
@@ -446,7 +446,26 @@ private fun SlideshowSetting() = Column {
             stringResource(R.string.pref_slideshow_random),
         ),
         values = listOf(0, 1, 2, 3, 4, 5),
-        field = Settings.slideshowClockPosition.asMutableState(),
+        field = Settings.slideshowScreenWidgetPosition.asMutableState(),
+    )
+    val showClock = Settings.slideshowShowClock.asMutableState()
+    SwitchChoice(
+        title = stringResource(R.string.pref_slideshow_show_clock),
+        field = showClock,
+    )
+    AnimatedVisibility(visible = showClock.value) {
+        SwitchChoice(
+            title = stringResource(R.string.pref_slideshow_use_exif_date),
+            field = Settings.slideshowUseExifDate.asMutableState(),
+        )
+    }
+    SwitchChoice(
+        title = stringResource(R.string.pref_slideshow_show_image_info),
+        field = Settings.slideshowShowImageInfo.asMutableState(),
+    )
+    SwitchChoice(
+        title = stringResource(R.string.pref_slideshow_show_exif_info),
+        field = Settings.slideshowShowExifInfo.asMutableState(),
     )
     val autoScroll = Settings.slideshowAutoScroll.asMutableState()
     SwitchChoice(

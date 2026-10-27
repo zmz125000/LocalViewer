@@ -1217,7 +1217,6 @@
     <string name="pref_slideshow_play_once">Play once</string>
     <string name="pref_slideshow_auto_rotate_override">Auto-rotate override</string>
     <string name="pref_slideshow_use_general_setting">Use general setting</string>
-    <string name="pref_slideshow_clock">Clock</string>
     <string name="pref_slideshow_top_left">Top left</string>
     <string name="pref_slideshow_top_right">Top right</string>
     <string name="pref_slideshow_bottom_left">Bottom left</string>
@@ -1225,4 +1224,13 @@
     <string name="pref_slideshow_random">Random</string>
     <string name="pref_slideshow_auto_scroll">Auto scroll</string>
     <string name="pref_slideshow_decode_size_override">Decode size override</string>
+    <string name="pref_slideshow_screen_widget">Screen widget</string>
+    <string name="pref_slideshow_show_clock">Show clock</string>
+    <string name="pref_slideshow_use_exif_date">Use EXIF/file date</string>
+    <string name="pref_slideshow_show_image_info">Show image info</string>
+    <string name="pref_slideshow_show_exif_info">Show EXIF info</string>
+    <string name="slideshow_date_unavailable">Date unavailable</string>
+    <string name="slideshow_info_unknown">Unknown</string>
+    <string name="slideshow_info_bit_depth">%1$d-bit</string>
+    <string name="slideshow_info_focal_length">%1$d mm (35 mm equiv.)</string>
 </resources>

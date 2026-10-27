@@ -18,6 +18,7 @@ import com.hippo.ehviewer.image.ByteBufferSource
 import com.hippo.ehviewer.image.HI_RES_PREVIEW_EDGE
 import com.hippo.ehviewer.image.HiResTier
 import com.hippo.ehviewer.image.Image
+import com.hippo.ehviewer.image.ImageMetadata
 import com.hippo.ehviewer.image.ImageSource
 import com.hippo.ehviewer.image.PathSource
 import com.hippo.ehviewer.image.byteBufferSource
@@ -33,6 +34,7 @@ import com.hippo.ehviewer.image.hdr.exportImageExtension
 import com.hippo.ehviewer.image.hdr.isRawStillExtension
 import com.hippo.ehviewer.image.hdr.needsGeneratedPageThumb
 import com.hippo.ehviewer.image.hdr.needsLibDecode
+import com.hippo.ehviewer.image.readMetadata
 import com.hippo.ehviewer.library.ReaderPageThumb
 import com.hippo.ehviewer.util.FileUtils
 import com.hippo.ehviewer.util.OSUtils
@@ -235,6 +237,9 @@ abstract class PageLoader(
     }
 
     private suspend fun decodeOpened(index: Int, raw: ImageSource, forceOriginal: Boolean): Image {
+        val metadata = runCatching {
+            raw.readMetadata(runCatching { getOriginalImageDate(index) }.getOrNull(), sourceLeafName(index))
+        }.getOrDefault(ImageMetadata())
         val checkAds = hasAds && detectAds(index, size)
         val hint = getImageExtension(index)?.let { "page.$it" } ?: "page.bin"
         val persistTo = if (Settings.disableReaderNetworkCache.value) {
@@ -257,6 +262,7 @@ abstract class PageLoader(
                     forceOriginal = forceOriginal,
                 )
             }
+        image.metadata = metadata.copy(hdr = if (image.isHdrContent) true else metadata.hdr)
         // Compressed ramPages are only needed until decode. Keep them while this
         // index is still demanded (save / retry); drop as soon as the bitmap exists
         // if navigation already moved on.
@@ -832,6 +838,9 @@ abstract class PageLoader(
      * instead of `Album - 1.jpg`.
      */
     protected open fun getOriginalImageFileName(index: Int): String? = null
+
+    /** Original modification date, never the download/conversion cache timestamp. */
+    protected open fun getOriginalImageDate(index: Int): Long? = null
 
     override fun getImageFilename(index: Int): String? {
         val originalExt = getImageExtension(index) ?: return null

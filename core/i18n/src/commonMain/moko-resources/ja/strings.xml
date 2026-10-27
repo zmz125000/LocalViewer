@@ -1105,4 +1105,13 @@
     <string name="pref_slideshow_display_time">写真の表示時間</string>
     <string name="pref_slideshow_seconds">%1$d 秒</string>
     <string name="pref_dual_page_landscape">横画面で見開き表示</string>
+    <string name="pref_slideshow_screen_widget">画面ウィジェット</string>
+    <string name="pref_slideshow_show_clock">時計を表示</string>
+    <string name="pref_slideshow_use_exif_date">EXIF／ファイルの日時を使用</string>
+    <string name="pref_slideshow_show_image_info">画像情報を表示</string>
+    <string name="pref_slideshow_show_exif_info">EXIF 情報を表示</string>
+    <string name="slideshow_date_unavailable">日時情報なし</string>
+    <string name="slideshow_info_unknown">不明</string>
+    <string name="slideshow_info_bit_depth">%1$d ビット</string>
+    <string name="slideshow_info_focal_length">%1$d mm（35 mm 換算）</string>
 </resources>

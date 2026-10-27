@@ -1171,7 +1171,6 @@
     <string name="pref_slideshow_play_once">播放一次</string>
     <string name="pref_slideshow_auto_rotate_override">自动旋转覆盖</string>
     <string name="pref_slideshow_use_general_setting">使用通用设置</string>
-    <string name="pref_slideshow_clock">时钟</string>
     <string name="pref_slideshow_top_left">左上角</string>
     <string name="pref_slideshow_top_right">右上角</string>
     <string name="pref_slideshow_bottom_left">左下角</string>
@@ -1183,4 +1182,13 @@
     <string name="scale_type_fill_screen">填满屏幕</string>
     <string name="pref_slideshow_display_time">照片显示时间</string>
     <string name="pref_slideshow_seconds">%1$d 秒</string>
+    <string name="pref_slideshow_screen_widget">屏幕小组件</string>
+    <string name="pref_slideshow_show_clock">显示时钟</string>
+    <string name="pref_slideshow_use_exif_date">使用 EXIF／文件日期</string>
+    <string name="pref_slideshow_show_image_info">显示图像信息</string>
+    <string name="pref_slideshow_show_exif_info">显示 EXIF 信息</string>
+    <string name="slideshow_date_unavailable">无日期信息</string>
+    <string name="slideshow_info_unknown">未知</string>
+    <string name="slideshow_info_bit_depth">%1$d 位</string>
+    <string name="slideshow_info_focal_length">%1$d mm（35 mm 等效）</string>
 </resources>

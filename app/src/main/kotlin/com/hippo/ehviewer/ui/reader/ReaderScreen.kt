@@ -1142,7 +1142,8 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
         }
         ReaderFilterOverlay()
         if (slideshow && !appbarVisible) {
-            SlideshowClockOverlay(page = pagerState.settledPage)
+            val widgetPage = if (pagerDual) dualFirstPageIndex(pagerState.settledPage, landscapeCover) else pagerState.settledPage
+            SlideshowScreenWidget(page = pageLoader.pages.getOrNull(widgetPage))
         }
         val generalShowPageNumber by Settings.showPageNumber.collectAsState()
         val slideshowShowPageNumber by Settings.slideshowShowPageNumber.collectAsState()

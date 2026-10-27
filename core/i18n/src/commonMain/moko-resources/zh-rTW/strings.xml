@@ -1136,7 +1136,6 @@
     <string name="pref_slideshow_play_once">播放一次</string>
     <string name="pref_slideshow_auto_rotate_override">自動旋轉覆寫</string>
     <string name="pref_slideshow_use_general_setting">使用一般設定</string>
-    <string name="pref_slideshow_clock">時鐘</string>
     <string name="pref_slideshow_top_left">左上角</string>
     <string name="pref_slideshow_top_right">右上角</string>
     <string name="pref_slideshow_bottom_left">左下角</string>
@@ -1149,4 +1148,13 @@
     <string name="pref_slideshow_display_time">相片顯示時間</string>
     <string name="pref_slideshow_seconds">%1$d 秒</string>
     <string name="pref_dual_page_landscape">橫向雙頁</string>
+    <string name="pref_slideshow_screen_widget">螢幕小工具</string>
+    <string name="pref_slideshow_show_clock">顯示時鐘</string>
+    <string name="pref_slideshow_use_exif_date">使用 EXIF／檔案日期</string>
+    <string name="pref_slideshow_show_image_info">顯示影像資訊</string>
+    <string name="pref_slideshow_show_exif_info">顯示 EXIF 資訊</string>
+    <string name="slideshow_date_unavailable">無日期資訊</string>
+    <string name="slideshow_info_unknown">未知</string>
+    <string name="slideshow_info_bit_depth">%1$d 位元</string>
+    <string name="slideshow_info_focal_length">%1$d mm（35 mm 等效）</string>
 </resources>
