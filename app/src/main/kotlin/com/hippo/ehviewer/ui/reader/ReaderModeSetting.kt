@@ -511,33 +511,20 @@ private fun ScreenWidgetSetting(slideshow: Boolean) = Column {
         field = widgetPosition,
     )
     AnimatedVisibility(visible = widgetPosition.value != 0) {
-        Column {
-            val showClock = (if (slideshow) Settings.slideshowShowClock else Settings.readerShowClock).asMutableState()
-            SwitchChoice(
-                title = stringResource(R.string.pref_slideshow_show_clock),
-                field = showClock,
-            )
-            AnimatedVisibility(visible = showClock.value) {
-                SwitchChoice(
-                    title = stringResource(R.string.pref_slideshow_use_exif_date),
-                    field = (if (slideshow) Settings.slideshowUseExifDate else Settings.readerUseExifDate).asMutableState(),
-                )
-            }
-            SwitchChoice(
-                title = stringResource(R.string.pref_slideshow_show_image_info),
-                field = (if (slideshow) Settings.slideshowShowImageInfo else Settings.readerShowImageInfo).asMutableState(),
-            )
-            val showExifInfo = (if (slideshow) Settings.slideshowShowExifInfo else Settings.readerShowExifInfo).asMutableState()
-            SwitchChoice(
-                title = stringResource(R.string.pref_slideshow_show_exif_info),
-                field = showExifInfo,
-            )
-            AnimatedVisibility(visible = showExifInfo.value) {
-                SwitchChoice(
-                    title = stringResource(R.string.pref_slideshow_show_lens_model),
-                    field = (if (slideshow) Settings.slideshowShowLensModel else Settings.readerShowLensModel).asMutableState(),
-                )
-            }
-        }
+        val showClock = (if (slideshow) Settings.slideshowShowClock else Settings.readerShowClock).asMutableState()
+        val useExifDate = (if (slideshow) Settings.slideshowUseExifDate else Settings.readerUseExifDate).asMutableState()
+        val showImageInfo = (if (slideshow) Settings.slideshowShowImageInfo else Settings.readerShowImageInfo).asMutableState()
+        val showExifInfo = (if (slideshow) Settings.slideshowShowExifInfo else Settings.readerShowExifInfo).asMutableState()
+        val showLensModel = (if (slideshow) Settings.slideshowShowLensModel else Settings.readerShowLensModel).asMutableState()
+        ToggleMenuChoice(
+            title = stringResource(R.string.pref_screen_widget_options),
+            options = buildList {
+                add(stringResource(R.string.pref_slideshow_show_clock) to showClock)
+                if (showClock.value) add(stringResource(R.string.pref_slideshow_use_exif_date) to useExifDate)
+                add(stringResource(R.string.pref_slideshow_show_image_info) to showImageInfo)
+                add(stringResource(R.string.pref_slideshow_show_exif_info) to showExifInfo)
+                if (showExifInfo.value) add(stringResource(R.string.pref_slideshow_show_lens_model) to showLensModel)
+            },
+        )
     }
 }

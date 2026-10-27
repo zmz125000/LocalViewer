@@ -1106,6 +1106,7 @@
     <string name="pref_slideshow_seconds">%1$d 秒</string>
     <string name="pref_dual_page_landscape">横画面で見開き表示</string>
     <string name="pref_slideshow_screen_widget">画面ウィジェット</string>
+    <string name="pref_screen_widget_options">ウィジェットのオプション</string>
     <string name="pref_slideshow_show_clock">時計を表示</string>
     <string name="pref_slideshow_use_exif_date">EXIF の日時を使用</string>
     <string name="pref_slideshow_show_image_info">画像情報を表示</string>

@@ -1183,6 +1183,7 @@
     <string name="pref_slideshow_display_time">照片显示时间</string>
     <string name="pref_slideshow_seconds">%1$d 秒</string>
     <string name="pref_slideshow_screen_widget">屏幕小组件</string>
+    <string name="pref_screen_widget_options">小组件选项</string>
     <string name="pref_slideshow_show_clock">显示时钟</string>
     <string name="pref_slideshow_use_exif_date">使用 EXIF 日期</string>
     <string name="pref_slideshow_show_image_info">显示图像信息</string>

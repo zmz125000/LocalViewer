@@ -88,26 +88,20 @@ internal fun BoxScope.ReaderScreenWidget(page: Page?, slideshow: Boolean, source
             Text(DateFormat.getTimeFormat(context).format(date), style = style, fontSize = 52.sp, lineHeight = 60.sp)
             Text(dateFormat.format(date), style = style, fontSize = 20.sp, lineHeight = 26.sp)
         }
-        if (showImageInfo && metadata != null) {
-            val dimensions = if (metadata.width != null && metadata.height != null) "${metadata.width} × ${metadata.height}" else null
-            val depth = metadata.bitDepth?.let { stringResource(R.string.slideshow_info_bit_depth, it) }
-            val colorSpace = metadata.colorSpace?.trim()?.takeUnless { it.isEmpty() || it.equals("Unknown", ignoreCase = true) }?.let {
-                if (it.startsWith("sRGB IEC61966-2.1", ignoreCase = true)) "sRGB" else it
-            }
-            val extension = sourceName?.substringAfterLast('.', "")?.takeIf { it.isNotBlank() }?.uppercase(Locale.ROOT)
-            val colorInfo = colorSpace?.let { space ->
-                val dynamicRange = metadata.hdr?.let { if (it) "HDR" else "SDR" }
-                listOfNotNull(space, dynamicRange).joinToString(" · ")
-            }
-            val imageInfo = listOfNotNull(dimensions, depth, extension).joinToString(" · ")
-            if (imageInfo.isNotEmpty()) Text(imageInfo, style = style, fontSize = 16.sp, lineHeight = 22.sp)
-            colorInfo?.let { Text(it, style = style, fontSize = 16.sp, lineHeight = 22.sp) }
-        }
         if (showExifInfo && metadata != null) {
             metadata.cameraModel?.let { Text(it, style = style, fontSize = 16.sp, lineHeight = 22.sp) }
             if (showLensModel) {
                 metadata.lensModel?.let { Text(it, style = style, fontSize = 16.sp, lineHeight = 22.sp) }
             }
+        }
+        if (showImageInfo && metadata != null) {
+            val dimensions = if (metadata.width != null && metadata.height != null) "${metadata.width} × ${metadata.height}" else null
+            val depth = metadata.bitDepth?.let { stringResource(R.string.slideshow_info_bit_depth, it) }
+            val extension = sourceName?.substringAfterLast('.', "")?.takeIf { it.isNotBlank() }?.uppercase(Locale.ROOT)
+            val imageInfo = listOfNotNull(dimensions, depth, extension).joinToString(" · ")
+            if (imageInfo.isNotEmpty()) Text(imageInfo, style = style, fontSize = 16.sp, lineHeight = 22.sp)
+        }
+        if (showExifInfo && metadata != null) {
             val number = remember(locale) { DecimalFormat("0.####") }
             val camera = listOfNotNull(
                 metadata.aperture?.let { "f/${number.format(it)}" },
@@ -120,6 +114,16 @@ internal fun BoxScope.ReaderScreenWidget(page: Page?, slideshow: Boolean, source
                 },
             ).joinToString(" · ")
             if (camera.isNotEmpty()) Text(camera, style = style, fontSize = 16.sp, lineHeight = 22.sp)
+        }
+        if (showImageInfo && metadata != null) {
+            val colorSpace = metadata.colorSpace?.trim()?.takeUnless { it.isEmpty() || it.equals("Unknown", ignoreCase = true) }?.let {
+                if (it.startsWith("sRGB IEC61966-2.1", ignoreCase = true)) "sRGB" else it
+            }
+            val colorInfo = colorSpace?.let { space ->
+                val dynamicRange = metadata.hdr?.let { if (it) "HDR" else "SDR" }
+                listOfNotNull(space, dynamicRange).joinToString(" · ")
+            }
+            colorInfo?.let { Text(it, style = style, fontSize = 16.sp, lineHeight = 22.sp) }
         }
     }
 }
