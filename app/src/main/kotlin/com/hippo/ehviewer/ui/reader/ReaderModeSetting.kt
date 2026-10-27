@@ -429,6 +429,7 @@ private fun SlideshowSetting() = Column {
                 },
                 range = 0..1000,
                 field = scrollSpeed,
+                steps = 99,
             )
         }
     }
@@ -495,7 +496,7 @@ private fun SlideshowSetting() = Column {
         field = Settings.slideshowShowPageNumber.asMutableState(),
     )
     SwitchChoice(
-        title = stringResource(R.string.pref_dual_page_landscape),
+        title = stringResource(R.string.pref_dual_page_slideshow),
         field = Settings.slideshowDualPages.asMutableState(),
     )
 }

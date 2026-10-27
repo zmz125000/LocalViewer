@@ -1105,6 +1105,7 @@
     <string name="pref_slideshow_display_time">写真の表示時間</string>
     <string name="pref_slideshow_seconds">%1$d 秒</string>
     <string name="pref_dual_page_landscape">横画面で見開き表示</string>
+    <string name="pref_dual_page_slideshow">見開き表示（スライドショー）</string>
     <string name="pref_slideshow_screen_widget">画面ウィジェット</string>
     <string name="pref_screen_widget_options">ウィジェットのオプション</string>
     <string name="pref_screen_widget_none">なし</string>
