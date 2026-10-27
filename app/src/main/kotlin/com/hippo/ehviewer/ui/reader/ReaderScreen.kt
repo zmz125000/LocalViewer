@@ -603,6 +603,8 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
     val slideshowDualPages by Settings.slideshowDualPages.collectAsState()
     val slideshowSeconds by Settings.slideshowDisplaySeconds.collectAsState()
     val slideshowAutoScroll by Settings.slideshowAutoScroll.collectAsState()
+    val slideshowScrollSpeed by Settings.slideshowAutoScrollSpeed.collectAsState()
+    val effectiveSlideshowScrollSpeed = if (slideshowAutoScroll) slideshowScrollSpeed.coerceIn(0, 1000) else 0
     val slideshowPlayback by Settings.slideshowPlaybackMode.collectAsState { SlideshowPlaybackMode.fromPreference(it) }
     val effectiveDualPages = if (slideshow) slideshowDualPages else dualPagePref
     val dualActive = dualPageActive(effectiveDualPages, isLandscape)
@@ -647,7 +649,7 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
             pageLoader.size.coerceAtLeast(1)
         }
     }
-    val autoScrollState = remember(pagerState, pageLoader, slideshow, slideshowAutoScroll, slideshowPlayback, pagerDual, landscapeCover) {
+    val autoScrollState = remember(pagerState, pageLoader, slideshow, slideshowAutoScroll, effectiveSlideshowScrollSpeed, slideshowPlayback, pagerDual, landscapeCover) {
         SlideshowAutoScrollState()
     }
     val syncState = rememberSliderPagerDoubleSyncState(lazyListState, pagerState, pageLoader)
@@ -1182,6 +1184,7 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
             slideshow,
             slideshowSeconds,
             slideshowAutoScroll,
+            effectiveSlideshowScrollSpeed,
             autoScrollState,
             slideshowPlayback,
             pagerDual,
@@ -1200,8 +1203,18 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
                         )
                     },
                     awaitInterval = {
-                        if (slideshowAutoScroll) autoScrollState.startInterval(pagerState.settledPage, slideshowSeconds)
-                        delay(slideshowSeconds.coerceIn(3, 200) * 1000L)
+                        val interval = if (slideshowAutoScroll) {
+                            autoScrollState.startInterval(pagerState.settledPage, slideshowSeconds, effectiveSlideshowScrollSpeed)
+                        } else {
+                            null
+                        }
+                        if (effectiveSlideshowScrollSpeed > 0) {
+                            // No photo countdown in speed mode; the active pan releases playback.
+                            if (interval == null) awaitCancellation()
+                            interval.scrollFinished.await()
+                        } else {
+                            delay(slideshowSeconds.coerceIn(3, 200) * 1000L)
+                        }
                     },
                 ) { page ->
                     val count = pagerState.pageCount

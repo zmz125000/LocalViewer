@@ -1201,7 +1201,7 @@
     <string name="pref_slideshow_off">Off</string>
     <string name="pref_slideshow_shuffle">Shuffle</string>
     <string name="pref_slideshow_loop">Repeat</string>
-    <string name="pref_slideshow_next_gallery">Auto next gallery</string>
+    <string name="pref_slideshow_next_gallery">next gallery</string>
     <string name="pref_slideshow_disable_auto_rotate">Disable auto rotate to fit</string>
     <string name="scale_type_fill_screen">Fill screen</string>
     <string name="settings_reset_to_defaults">Reset all settings to default</string>
@@ -1226,11 +1226,14 @@
     <string name="pref_slideshow_decode_size_override">Decode size override</string>
     <string name="pref_slideshow_screen_widget">Screen widget</string>
     <string name="pref_slideshow_show_clock">Show clock</string>
-    <string name="pref_slideshow_use_exif_date">Use EXIF/file date</string>
+    <string name="pref_slideshow_use_exif_date">Use EXIF date</string>
     <string name="pref_slideshow_show_image_info">Show image info</string>
     <string name="pref_slideshow_show_exif_info">Show EXIF info</string>
     <string name="slideshow_date_unavailable">Date unavailable</string>
     <string name="slideshow_info_unknown">Unknown</string>
     <string name="slideshow_info_bit_depth">%1$d-bit</string>
     <string name="slideshow_info_focal_length">%1$d mm (35 mm equiv.)</string>
+    <string name="pref_slideshow_scroll_speed">Scroll speed</string>
+    <string name="pref_slideshow_scroll_speed_photo_time">Auto</string>
+    <string name="pref_slideshow_pixels_per_second">%1$d</string>
 </resources>

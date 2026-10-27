@@ -24,12 +24,16 @@ import com.hippo.ehviewer.gallery.Page
 import com.hippo.ehviewer.gallery.PageStatus
 import com.hippo.ehviewer.gallery.status
 import com.hippo.ehviewer.gallery.statusObserved
+import kotlin.math.ceil
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import me.saket.telephoto.zoomable.Viewport
 import me.saket.telephoto.zoomable.ZoomableState
 import me.saket.telephoto.zoomable.spatial.CoordinateSpace
 
-/** One clock for the photo countdown and its pan; prefetched/outgoing slots never start it. */
+/** One playback interval for countdown or scroll completion; only the active slot starts it. */
 class SlideshowAutoScrollState {
     var readyPage by mutableStateOf<Int?>(null)
     var interval by mutableStateOf<SlideshowScrollInterval?>(null)
@@ -41,14 +45,26 @@ class SlideshowAutoScrollState {
         finishedPage = page
     }
 
-    fun startInterval(page: Int, seconds: Int) {
-        if (finishedPage == page) return
+    fun startInterval(page: Int, seconds: Int, pixelsPerSecond: Int = 0): SlideshowScrollInterval? {
+        if (finishedPage == page) return null
         finishedPage = null
-        interval = SlideshowScrollInterval(page, SystemClock.elapsedRealtime(), seconds.coerceIn(3, 200) * 1000)
+        return SlideshowScrollInterval(
+            page = page,
+            startedAt = SystemClock.elapsedRealtime(),
+            durationMillis = seconds.coerceIn(3, 200) * 1000,
+            pixelsPerSecond = pixelsPerSecond.coerceIn(0, 1000),
+        ).also { interval = it }
     }
 }
 
-data class SlideshowScrollInterval(val page: Int, val startedAt: Long, val durationMillis: Int)
+class SlideshowScrollInterval(
+    val page: Int,
+    val startedAt: Long,
+    val durationMillis: Int,
+    val pixelsPerSecond: Int,
+) {
+    val scrollFinished = CompletableDeferred<Unit>()
+}
 
 private val SlideshowScrollEasing = CubicBezierEasing(0.42f, 0f, 0.58f, 1f)
 
@@ -104,25 +120,51 @@ internal fun SlideshowAutoScroll(
     val interval = state.interval
     val lifecycleOwner = LocalLifecycleOwner.current
     LaunchedEffect(state, interval, ready, configured, failed, viewport, lifecycleOwner) {
-        if (!ready || !configured || interval == null || interval.page != slot || failed) return@LaunchedEffect
+        if (!ready || interval == null || interval.page != slot || (!configured && !failed)) return@LaunchedEffect
         lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
-            if (SystemClock.elapsedRealtime() - interval.startedAt >= interval.durationMillis) return@repeatOnLifecycle
-            // A one-photo repeat and a resumed reader also start from the top/left.
-            zoomableState.panToReadingStart(viewport, AbsoluteAlignment.Left)
-            withFrameNanos { }
-            val bounds = with(zoomableState.coordinateSystem) { contentBounds(false).rectIn(CoordinateSpace.Viewport) }
-            val delta = Offset(
-                x = (viewport.width - bounds.right).coerceAtMost(0f),
-                y = (viewport.height - bounds.bottom).coerceAtMost(0f),
-            )
-            val remaining = (interval.durationMillis - (SystemClock.elapsedRealtime() - interval.startedAt))
-                .coerceIn(0L, interval.durationMillis.toLong()).toInt()
-            if (remaining > 0 && delta.getDistance() > 0.5f) {
-                // Match the photo's wall-clock duration regardless of the system animation scale.
-                withContext(SlideshowScrollDurationScale) {
-                    zoomableState.panBy(delta, tween(remaining, easing = SlideshowScrollEasing))
-                }
+            val speed = interval.pixelsPerSecond
+            if (speed == 0 && SystemClock.elapsedRealtime() - interval.startedAt >= interval.durationMillis) return@repeatOnLifecycle
+            if (failed) {
+                // Terminal errors cannot pan, but must not stall scroll-driven playback.
+                withFrameNanos { }
+                interval.scrollFinished.complete(Unit)
+                return@repeatOnLifecycle
             }
+            // A one-photo repeat and a resumed reader also start from the top/left.
+            coroutineScope {
+                launch { zoomableState.panToReadingStart(viewport, AbsoluteAlignment.Left) }.join()
+            }
+            withFrameNanos { }
+            do {
+                val bounds = with(zoomableState.coordinateSystem) { contentBounds(false).rectIn(CoordinateSpace.Viewport) }
+                val delta = Offset(
+                    x = (viewport.width - bounds.right).coerceAtMost(0f),
+                    y = (viewport.height - bounds.bottom).coerceAtMost(0f),
+                )
+                if (delta.getDistance() <= 0.5f) break
+                val duration = if (speed > 0) {
+                    // Average rendered-pixel speed, retaining gentle acceleration/deceleration.
+                    ceil(delta.getDistance().toDouble() * 1000.0 / speed).coerceIn(1.0, Int.MAX_VALUE.toDouble()).toInt()
+                } else {
+                    (interval.durationMillis - (SystemClock.elapsedRealtime() - interval.startedAt))
+                        .coerceIn(0L, interval.durationMillis.toLong()).toInt()
+                }
+                if (duration <= 0) break
+                // A gesture may cancel this child pan. Keep completion pending and resume from
+                // the user's position once the gesture releases, unless playback itself stopped.
+                coroutineScope {
+                    val pan = launch {
+                        withContext(SlideshowScrollDurationScale) {
+                            zoomableState.panBy(delta, tween(duration, easing = SlideshowScrollEasing))
+                        }
+                    }
+                    pan.join()
+                }
+                if (speed == 0) break
+                // Recheck actual bounds: interruption must never count as reaching the end.
+                withFrameNanos { }
+            } while (true)
+            interval.scrollFinished.complete(Unit)
         }
     }
 }
