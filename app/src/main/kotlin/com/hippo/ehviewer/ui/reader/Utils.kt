@@ -95,7 +95,7 @@ fun ContentScale.Companion.fromPreferences(value: Int, srcSize: Size, dstSize: S
 suspend fun PagerState.performScrollToPage(page: Int) {
     val handler = PagerTransitionHandlers[this]
     if (handler != null) {
-        handler(page)
+        handler { page }
     } else {
         when (PageTransitionType.fromPreference(Settings.effectivePageTransition())) {
             PageTransitionType.DEFAULT -> animateScrollToPage(page)
@@ -105,19 +105,20 @@ suspend fun PagerState.performScrollToPage(page: Int) {
     }
 }
 
-suspend fun PagerState.moveToPrevious() {
-    val target = PagerTransitionHandlers.navigationPage(this) - 1
-    if (target >= 0) {
-        performScrollToPage(target)
+private suspend fun PagerState.moveByPage(offset: Int) {
+    val target = { PagerTransitionHandlers.navigationPage(this) + offset }
+    val handler = PagerTransitionHandlers[this]
+    if (handler != null) {
+        handler(target)
+    } else {
+        val page = target()
+        if (page in 0 until pageCount) performScrollToPage(page)
     }
 }
 
-suspend fun PagerState.moveToNext() {
-    val target = PagerTransitionHandlers.navigationPage(this) + 1
-    if (target < pageCount) {
-        performScrollToPage(target)
-    }
-}
+suspend fun PagerState.moveToPrevious() = moveByPage(-1)
+
+suspend fun PagerState.moveToNext() = moveByPage(1)
 
 suspend fun LazyListState.performScrollBy(value: Float) {
     when (PageTransitionType.fromPreference(Settings.effectivePageTransition())) {

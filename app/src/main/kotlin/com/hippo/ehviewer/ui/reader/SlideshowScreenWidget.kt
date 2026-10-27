@@ -88,20 +88,24 @@ internal fun BoxScope.SlideshowScreenWidget(page: Page?) {
         if (showImageInfo && metadata != null) {
             val dimensions = if (metadata.width != null && metadata.height != null) "${metadata.width} × ${metadata.height}" else null
             val depth = metadata.bitDepth?.let { stringResource(R.string.slideshow_info_bit_depth, it) }
-            val imageInfo = listOfNotNull(dimensions, depth).joinToString(" · ")
+            val hdr = metadata.hdr?.let { if (it) "HDR" else "SDR" }
+            val imageInfo = listOfNotNull(dimensions, depth, hdr).joinToString(" · ")
             if (imageInfo.isNotEmpty()) Text(imageInfo, style = style, fontSize = 16.sp, lineHeight = 22.sp)
-            metadata.hdr?.let { hdr ->
-                Text(if (hdr) "HDR" else "SDR", style = style, fontSize = 16.sp, lineHeight = 22.sp)
+            val colorSpace = metadata.colorSpace?.trim()?.takeUnless { it.isEmpty() || it.equals("Unknown", ignoreCase = true) }?.let {
+                if (it.startsWith("sRGB IEC61966-2.1", ignoreCase = true)) "sRGB" else it
+            }
+            colorSpace?.let {
+                Text(it, style = style, fontSize = 16.sp, lineHeight = 22.sp)
             }
         }
         if (showExifInfo && metadata != null) {
             metadata.cameraModel?.let { Text(it, style = style, fontSize = 16.sp, lineHeight = 22.sp) }
             val number = remember(locale) { DecimalFormat("0.####") }
             val camera = listOfNotNull(
+                metadata.aperture?.let { "f/${number.format(it)}" },
                 metadata.exposureSeconds?.let {
                     if (it < 0.5) "1/${number.format(1.0 / it)} s" else "${number.format(it)} s"
                 },
-                metadata.aperture?.let { "f/${number.format(it)}" },
                 metadata.focalLength35mm?.let { stringResource(R.string.slideshow_info_focal_length, it) },
             ).joinToString(" · ")
             if (camera.isNotEmpty()) Text(camera, style = style, fontSize = 16.sp, lineHeight = 22.sp)
