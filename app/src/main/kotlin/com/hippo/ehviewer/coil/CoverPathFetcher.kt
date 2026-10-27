@@ -15,7 +15,10 @@ import coil3.toUri as toCoilUri
 import com.ehviewer.core.files.toUri
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.image.hdr.HdrConvertCache
+import com.hippo.ehviewer.image.hdr.LibCodec
 import com.hippo.ehviewer.image.hdr.RawPreviewCache
+import com.hippo.ehviewer.image.hdr.StillRoute
+import com.hippo.ehviewer.image.hdr.classifyPath
 import com.hippo.ehviewer.image.hdr.isHdrConvertCandidateExtension
 import com.hippo.ehviewer.image.hdr.isHeicImageExtension
 import com.hippo.ehviewer.image.hdr.isRawStillExtension
@@ -63,11 +66,15 @@ class CoverPathFetcher(
         val hint = coverConvertHint(data.path, resolved.name)
         val ext = FileUtils.getExtensionFromFilename(hint)?.lowercase()
             ?: FileUtils.getExtensionFromFilename(resolved.name)?.lowercase()
+        // Unsupported HEVC stills (for example 4:4:4) need the native thumb
+        // even when the preference leaves ordinary HEIC on the system decoder.
+        val nativeHeifThumb = isHeicImageExtension(ext) &&
+            (Settings.preferNativeHeifAvif.value || (classifyPath(resolved, hint) as? StillRoute.Lib)?.codec == LibCodec.HevcHdr)
         val openPath = when {
             isRawStillExtension(ext) -> RawPreviewCache.ensureJpeg(resolved, demosaicFallback = false)
                 ?: throw FileNotFoundException("RAW preview missing: ${data.path}")
-            needsGeneratedPageThumb(ext) -> ReaderPageThumb.ensureFromFile(thumbIdentity, resolved, hint)
-                ?: if (Settings.preferNativeHeifAvif.value && (ext == "avif" || isHeicImageExtension(ext))) {
+            nativeHeifThumb || needsGeneratedPageThumb(ext) -> ReaderPageThumb.ensureFromFile(thumbIdentity, resolved, hint)
+                ?: if (nativeHeifThumb || (Settings.preferNativeHeifAvif.value && ext == "avif")) {
                     throw FileNotFoundException("Native HEIF/AVIF thumbnail failed: ${data.path}")
                 } else {
                     HdrConvertCache.ensureCoilReady(resolved, hint)

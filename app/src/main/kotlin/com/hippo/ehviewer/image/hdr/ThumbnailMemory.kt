@@ -44,7 +44,7 @@ internal object ThumbnailMemory {
         val size = runCatching {
             source.openFileDescriptor("r").use { descriptor ->
                 if (sourceBytes < 0) sourceBytes = descriptor.statSize
-                if (codec == LibCodec.AvifPq || (codec == LibCodec.HevcHdr && Settings.preferNativeHeifAvif.value)) {
+                if (codec == LibCodec.AvifPq || codec == LibCodec.HevcHdr) {
                     // Do not stage a pipe just for admission; the decode stage
                     // handles it once. Unknown metadata keeps the exclusive budget.
                     val buffer = mapStillInput(descriptor.fd)
@@ -72,7 +72,7 @@ internal object ThumbnailMemory {
         if (!Settings.thumbnailMemoryBudget.value) return work()
         var heifMemory: HeifThumbnailMemory? = null
         val size = runCatching {
-            if (codec == LibCodec.AvifPq || (codec == LibCodec.HevcHdr && Settings.preferNativeHeifAvif.value)) {
+            if (codec == LibCodec.AvifPq || codec == LibCodec.HevcHdr) {
                 heifMemory = HeifPrecisionProbe.thumbnailMemory(ByteBuffer.wrap(bytes))
                 heifMemory?.dimensions ?: 0L
             } else if (kind(codec) >= 0) {
@@ -121,7 +121,7 @@ internal object ThumbnailMemory {
         // full source planes conservatively when a codec-specific estimate is absent.
         // Bitmap pixel planes live on the native heap on supported Android versions.
         // HEVC assembles Annex-B access units for libde265 even from mapped HEIF.
-        val hevcNative = codec == LibCodec.HevcHdr && Settings.preferNativeHeifAvif.value
+        val hevcNative = codec == LibCodec.HevcHdr
         val heapBytes = (if (mapped && !hevcNative) 0 else compressed) + MIB
         val nativeBytes = when {
             codec == LibCodec.Raw -> thumb + compressed
