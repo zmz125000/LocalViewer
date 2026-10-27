@@ -1142,6 +1142,7 @@
     <string name="pref_slideshow_bottom_right">右下角</string>
     <string name="pref_slideshow_random">隨機</string>
     <string name="pref_slideshow_auto_scroll">自動捲動</string>
+    <string name="pref_slideshow_relative_scroll_speed">相對捲動速度</string>
     <string name="pref_slideshow_decode_size_override">解碼尺寸覆寫</string>
     <string name="slideshow_viewer">幻燈片</string>
     <string name="scale_type_fill_screen">填滿螢幕</string>
@@ -1149,6 +1150,7 @@
     <string name="pref_slideshow_seconds">%1$d 秒</string>
     <string name="pref_dual_page_landscape">橫向雙頁</string>
     <string name="pref_slideshow_screen_widget">螢幕小工具</string>
+    <string name="pref_screen_widget_options">小工具選項</string>
     <string name="pref_slideshow_show_clock">顯示時鐘</string>
     <string name="pref_slideshow_use_exif_date">使用 EXIF 日期</string>
     <string name="pref_slideshow_show_image_info">顯示影像資訊</string>

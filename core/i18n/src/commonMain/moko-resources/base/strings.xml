@@ -1223,8 +1223,10 @@
     <string name="pref_slideshow_bottom_right">Bottom right</string>
     <string name="pref_slideshow_random">Random</string>
     <string name="pref_slideshow_auto_scroll">Auto scroll</string>
+    <string name="pref_slideshow_relative_scroll_speed">Relative scroll speed</string>
     <string name="pref_slideshow_decode_size_override">Decode size override</string>
     <string name="pref_slideshow_screen_widget">Screen widget</string>
+    <string name="pref_screen_widget_options">Widget options</string>
     <string name="pref_slideshow_show_clock">Show clock</string>
     <string name="pref_slideshow_use_exif_date">Use EXIF date</string>
     <string name="pref_slideshow_show_image_info">Show image info</string>
