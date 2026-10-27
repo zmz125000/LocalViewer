@@ -112,7 +112,7 @@ internal fun BoxScope.ReaderScreenWidget(page: Page?, slideshow: Boolean, source
             val camera = listOfNotNull(
                 metadata.aperture?.let { "f/${number.format(it)}" },
                 metadata.exposureSeconds?.let {
-                    if (it < 0.5) "1/${number.format(ceil(1.0 / it))} s" else "${number.format(it)} s"
+                    if (it < 0.5) "1/${number.format(ceil(1.0 / it))}" else number.format(it)
                 },
                 metadata.iso?.let { stringResource(R.string.slideshow_info_iso, it) },
                 (metadata.focalLength35mm?.toDouble() ?: metadata.focalLength)?.let {
@@ -120,14 +120,6 @@ internal fun BoxScope.ReaderScreenWidget(page: Page?, slideshow: Boolean, source
                 },
             ).joinToString(" · ")
             if (camera.isNotEmpty()) Text(camera, style = style, fontSize = 16.sp, lineHeight = 22.sp)
-            if (metadata.whiteBalanceAuto == false) {
-                Text(
-                    stringResource(R.string.slideshow_info_white_balance_manual),
-                    style = style,
-                    fontSize = 16.sp,
-                    lineHeight = 22.sp,
-                )
-            }
         }
     }
 }

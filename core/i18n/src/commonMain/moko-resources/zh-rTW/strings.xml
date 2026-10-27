@@ -1163,6 +1163,4 @@
     <string name="pref_slideshow_loop">重複播放</string>
     <string name="pref_slideshow_next_gallery">播放下一個圖集</string>
     <string name="slideshow_info_iso">%1$d</string>
-    <string name="slideshow_info_white_balance_auto">白平衡：自動</string>
-    <string name="slideshow_info_white_balance_manual">白平衡：手動</string>
 </resources>
