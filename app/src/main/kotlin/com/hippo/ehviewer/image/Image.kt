@@ -107,6 +107,9 @@ class Image private constructor(
      */
     val displayScaler: Boolean = false,
 ) {
+    var metadata: ImageMetadata = ImageMetadata()
+        internal set
+
     val refcnt = AtomicInt(1)
 
     /**

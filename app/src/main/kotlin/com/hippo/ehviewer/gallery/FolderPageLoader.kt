@@ -1,9 +1,12 @@
 package com.hippo.ehviewer.gallery
 
+import android.provider.MediaStore
 import arrow.autoCloseScope
 import com.ehviewer.core.files.isFile
 import com.ehviewer.core.files.list
+import com.ehviewer.core.files.metadataOrNull
 import com.ehviewer.core.files.sendTo
+import com.ehviewer.core.files.toUri
 import com.ehviewer.core.model.GalleryInfo
 import com.hippo.ehviewer.image.ImageSource
 import com.hippo.ehviewer.image.PathSource
@@ -14,6 +17,7 @@ import com.hippo.ehviewer.util.displayName
 import kotlinx.coroutines.coroutineScope
 import moe.tarsin.kt.install
 import okio.Path
+import splitties.init.appCtx
 
 suspend inline fun <T> useFolderPageLoader(
     dir: Path,
@@ -63,6 +67,17 @@ suspend inline fun <T> useFolderPageLoader(
                 }
 
                 override fun getOriginalImageFileName(index: Int) = files.getOrNull(index)?.name
+
+                override fun getOriginalImageDate(index: Int): Long? {
+                    val path = files.getOrNull(index) ?: return null
+                    path.metadataOrNull()?.lastModifiedAtMillis?.takeIf { it > 0 }?.let { return it }
+                    // Synthetic MediaStore paths have no timestamp in filesystem metadata.
+                    return runCatching {
+                        appCtx.contentResolver.query(path.toUri(), arrayOf(MediaStore.MediaColumns.DATE_MODIFIED), null, null, null)?.use {
+                            if (it.moveToFirst() && !it.isNull(0)) it.getLong(0).takeIf { seconds -> seconds > 0 }?.times(1000L) else null
+                        }
+                    }.getOrNull()
+                }
 
                 override fun savePage(index: Int, file: Path): Boolean = runCatching {
                     val src = files.getOrNull(index) ?: return false

@@ -115,9 +115,7 @@ fun BottomReaderBar(
             ActionButton(
                 onClick = { dualPagePref.value = !dualPage },
                 imageVector = Icons.Outlined.ViewColumn,
-                contentDescription = stringResource(
-                    if (slideshowOverride) R.string.pref_slideshow_dual_pages_override else R.string.pref_dual_page_landscape,
-                ),
+                contentDescription = stringResource(R.string.pref_dual_page_landscape),
             )
         }
     }

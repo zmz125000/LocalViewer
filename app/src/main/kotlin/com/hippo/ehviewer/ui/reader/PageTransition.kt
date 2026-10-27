@@ -31,11 +31,13 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 /** Shared by taps, volume keys, mouse wheel, seek bar, and slideshow page advances. */
 internal object PagerTransitionHandlers {
-    private val handlers = mutableMapOf<PagerState, suspend (Int) -> Unit>()
+    private val handlers = mutableMapOf<PagerState, suspend (() -> Int) -> Unit>()
     private val active = mutableStateMapOf<PagerState, Boolean>()
     private val targets = mutableMapOf<PagerState, Int>()
 
@@ -55,7 +57,7 @@ internal object PagerTransitionHandlers {
         }
     }
     operator fun get(pager: PagerState) = handlers[pager]
-    operator fun set(pager: PagerState, handler: suspend (Int) -> Unit) {
+    operator fun set(pager: PagerState, handler: suspend (() -> Int) -> Unit) {
         handlers[pager] = handler
     }
     fun remove(pager: PagerState) {
@@ -99,13 +101,25 @@ private suspend fun awaitTransitionDisplay(pages: List<Page>): Boolean = combine
 internal val PageTransitionEaseOut = CubicBezierEasing(0.16f, 1f, 0.3f, 1f)
 
 /** Preserve the system animator scale, including disabled animations, while slowing slideshow turns. */
-internal class SlideshowMotionDurationScale(private val parent: MotionDurationScale?) : MotionDurationScale {
-    override val scaleFactor: Float get() = (parent?.scaleFactor ?: 1f) * 3f
+internal class SlideshowMotionDurationScale(
+    private val parent: MotionDurationScale?,
+    private val transition: PageTransitionType = PageTransitionType.DEFAULT,
+) : MotionDurationScale {
+    override val scaleFactor: Float get() = (parent?.scaleFactor ?: 1f) * (if (transition.isFade) 5f else 3f)
 }
 
-private suspend fun <T> withReaderTransitionDuration(slideshow: Boolean, block: suspend () -> T): T {
+/** Finish each fade before resolving the next relative destination. */
+internal class FadeTransitionQueue {
+    private val mutex = Mutex()
+
+    suspend fun navigate(target: () -> Int, perform: suspend (Int) -> Unit) = mutex.withLock {
+        perform(target())
+    }
+}
+
+private suspend fun <T> withReaderTransitionDuration(slideshow: Boolean, transition: PageTransitionType, block: suspend () -> T): T {
     val parentScale = currentCoroutineContext()[MotionDurationScale]
-    val scale = if (slideshow) SlideshowMotionDurationScale(parentScale) else EmptyCoroutineContext
+    val scale = if (slideshow) SlideshowMotionDurationScale(parentScale, transition) else EmptyCoroutineContext
     return withContext(scale) { block() }
 }
 
@@ -134,6 +148,7 @@ internal fun pagerTransitionModifier(
     LaunchedEffect(loader, transition) { loader.replan() }
     DisposableEffect(pager, loader, transition, readingMode, dualPage, landscapeCover) {
         val mutex = MutatorMutex()
+        val fadeQueue = FadeTransitionQueue()
         var running: Job? = null
         var disposed = false
         fun realPages(slot: Int): List<Page> {
@@ -150,8 +165,9 @@ internal fun pagerTransitionModifier(
             withFrameNanos { }
             return displayed
         }
-        PagerTransitionHandlers[pager] = { target ->
-            withReaderTransitionDuration(slideshow) {
+        suspend fun navigate(target: Int) {
+            if (disposed) return
+            withReaderTransitionDuration(slideshow, transition) {
                 mutex.mutate {
                     running = currentCoroutineContext()[Job]
                     PagerTransitionHandlers.setRunning(pager, true)
@@ -232,6 +248,13 @@ internal fun pagerTransitionModifier(
                         running = null
                     }
                 }
+            }
+        }
+        PagerTransitionHandlers[pager] = { target ->
+            if (transition.isFade) {
+                fadeQueue.navigate(target, ::navigate)
+            } else {
+                navigate(target())
             }
         }
         onDispose {

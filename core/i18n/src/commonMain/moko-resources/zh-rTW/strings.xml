@@ -1132,12 +1132,10 @@
     <string name="pref_slideshow_transition_override">覆寫翻頁轉場</string>
     <string name="pref_reader_transition_slide">滑動</string>
     <string name="pref_reader_transition_fade_blend">淡入淡出（混合）</string>
-    <string name="pref_slideshow_dual_pages_override">覆寫雙頁模式</string>
     <string name="pref_slideshow_playback_mode">幻燈片播放模式</string>
     <string name="pref_slideshow_play_once">播放一次</string>
     <string name="pref_slideshow_auto_rotate_override">自動旋轉覆寫</string>
     <string name="pref_slideshow_use_general_setting">使用一般設定</string>
-    <string name="pref_slideshow_clock">時鐘疊加</string>
     <string name="pref_slideshow_top_left">左上角</string>
     <string name="pref_slideshow_top_right">右上角</string>
     <string name="pref_slideshow_bottom_left">左下角</string>
@@ -1145,5 +1143,22 @@
     <string name="pref_slideshow_random">隨機</string>
     <string name="pref_slideshow_auto_scroll">自動捲動</string>
     <string name="pref_slideshow_decode_size_override">解碼尺寸覆寫</string>
-    <string name="pref_slideshow_page_number_override">頁碼覆寫</string>
+    <string name="slideshow_viewer">幻燈片</string>
+    <string name="scale_type_fill_screen">填滿螢幕</string>
+    <string name="pref_slideshow_display_time">相片顯示時間</string>
+    <string name="pref_slideshow_seconds">%1$d 秒</string>
+    <string name="pref_dual_page_landscape">橫向雙頁</string>
+    <string name="pref_slideshow_screen_widget">螢幕小工具</string>
+    <string name="pref_slideshow_show_clock">顯示時鐘</string>
+    <string name="pref_slideshow_use_exif_date">使用 EXIF 日期</string>
+    <string name="pref_slideshow_show_image_info">顯示影像資訊</string>
+    <string name="pref_slideshow_show_exif_info">顯示 EXIF 資訊</string>
+    <string name="slideshow_info_bit_depth">%1$d 位元</string>
+    <string name="slideshow_info_focal_length">%1$d mm（35 mm 等效）</string>
+    <string name="pref_slideshow_scroll_speed">捲動速度</string>
+    <string name="pref_slideshow_scroll_speed_photo_time">自動</string>
+    <string name="pref_slideshow_pixels_per_second">%1$d</string>
+    <string name="pref_slideshow_shuffle">隨機播放</string>
+    <string name="pref_slideshow_loop">重複播放</string>
+    <string name="pref_slideshow_next_gallery">播放下一個圖集</string>
 </resources>

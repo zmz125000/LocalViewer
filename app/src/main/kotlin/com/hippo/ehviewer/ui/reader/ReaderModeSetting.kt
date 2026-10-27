@@ -391,17 +391,45 @@ private fun SlideshowSetting() = Column {
         modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
+    val autoScroll = Settings.slideshowAutoScroll.asMutableState()
+    val scrollSpeed = Settings.slideshowAutoScrollSpeed.asMutableState()
     val duration = Settings.slideshowDisplaySeconds.asMutableState()
-    Text(
-        text = stringResource(R.string.pref_slideshow_display_time),
-        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-    )
-    SliderChoice(
-        startSlot = {},
-        endSlot = { Text(stringResource(R.string.pref_slideshow_seconds, duration.value)) },
-        range = 3..200,
-        field = duration,
-    )
+    AnimatedVisibility(visible = !autoScroll.value || scrollSpeed.value <= 0) {
+        Column {
+            Text(
+                text = stringResource(R.string.pref_slideshow_display_time),
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+            )
+            SliderChoice(
+                startSlot = {},
+                endSlot = { Text(stringResource(R.string.pref_slideshow_seconds, duration.value)) },
+                range = 3..200,
+                field = duration,
+            )
+        }
+    }
+    AnimatedVisibility(visible = autoScroll.value) {
+        Column {
+            Text(
+                text = stringResource(R.string.pref_slideshow_scroll_speed),
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+            )
+            SliderChoice(
+                startSlot = {},
+                endSlot = {
+                    Text(
+                        if (scrollSpeed.value == 0) {
+                            stringResource(R.string.pref_slideshow_scroll_speed_photo_time)
+                        } else {
+                            stringResource(R.string.pref_slideshow_pixels_per_second, scrollSpeed.value)
+                        },
+                    )
+                },
+                range = 0..1000,
+                field = scrollSpeed,
+            )
+        }
+    }
     SpinnerChoice(
         title = stringResource(R.string.pref_slideshow_playback_mode),
         entries = SlideshowPlaybackMode.entries.map { stringResource(it.stringRes) }.toTypedArray(),
@@ -435,8 +463,9 @@ private fun SlideshowSetting() = Column {
         values = listOf(-1) + AutoRotateMode.entries.map { it.prefValue },
         field = Settings.slideshowAutoRotateOverride.asMutableState(),
     )
+    val widgetPosition = Settings.slideshowScreenWidgetPosition.asMutableState()
     SpinnerChoice(
-        title = stringResource(R.string.pref_slideshow_clock),
+        title = stringResource(R.string.pref_slideshow_screen_widget),
         entries = arrayOf(
             stringResource(R.string.pref_slideshow_off),
             stringResource(R.string.pref_slideshow_top_left),
@@ -446,9 +475,31 @@ private fun SlideshowSetting() = Column {
             stringResource(R.string.pref_slideshow_random),
         ),
         values = listOf(0, 1, 2, 3, 4, 5),
-        field = Settings.slideshowClockPosition.asMutableState(),
+        field = widgetPosition,
     )
-    val autoScroll = Settings.slideshowAutoScroll.asMutableState()
+    AnimatedVisibility(visible = widgetPosition.value != 0) {
+        Column {
+            val showClock = Settings.slideshowShowClock.asMutableState()
+            SwitchChoice(
+                title = stringResource(R.string.pref_slideshow_show_clock),
+                field = showClock,
+            )
+            AnimatedVisibility(visible = showClock.value) {
+                SwitchChoice(
+                    title = stringResource(R.string.pref_slideshow_use_exif_date),
+                    field = Settings.slideshowUseExifDate.asMutableState(),
+                )
+            }
+            SwitchChoice(
+                title = stringResource(R.string.pref_slideshow_show_image_info),
+                field = Settings.slideshowShowImageInfo.asMutableState(),
+            )
+            SwitchChoice(
+                title = stringResource(R.string.pref_slideshow_show_exif_info),
+                field = Settings.slideshowShowExifInfo.asMutableState(),
+            )
+        }
+    }
     SwitchChoice(
         title = stringResource(R.string.pref_slideshow_auto_scroll),
         field = autoScroll,
@@ -468,11 +519,11 @@ private fun SlideshowSetting() = Column {
         field = Settings.slideshowKeepScreenOn.asMutableState(),
     )
     SwitchChoice(
-        title = stringResource(R.string.pref_slideshow_page_number_override),
+        title = stringResource(R.string.pref_show_page_number),
         field = Settings.slideshowShowPageNumber.asMutableState(),
     )
     SwitchChoice(
-        title = stringResource(R.string.pref_slideshow_dual_pages_override),
+        title = stringResource(R.string.pref_dual_page_landscape),
         field = Settings.slideshowDualPages.asMutableState(),
     )
 }

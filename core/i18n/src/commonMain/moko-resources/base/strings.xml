@@ -1287,8 +1287,7 @@
     <string name="pref_slideshow_off">Off</string>
     <string name="pref_slideshow_shuffle">Shuffle</string>
     <string name="pref_slideshow_loop">Repeat</string>
-    <string name="pref_slideshow_next_gallery">Auto next gallery</string>
-    <string name="pref_slideshow_dual_pages_override">Dual pages override</string>
+    <string name="pref_slideshow_next_gallery">next gallery</string>
     <string name="pref_slideshow_disable_auto_rotate">Disable auto rotate to fit</string>
     <string name="scale_type_fill_screen">Fill screen</string>
     <string name="settings_reset_to_defaults">Reset all settings to default</string>
@@ -1304,7 +1303,6 @@
     <string name="pref_slideshow_play_once">Play once</string>
     <string name="pref_slideshow_auto_rotate_override">Auto-rotate override</string>
     <string name="pref_slideshow_use_general_setting">Use general setting</string>
-    <string name="pref_slideshow_clock">Clock overlay</string>
     <string name="pref_slideshow_top_left">Top left</string>
     <string name="pref_slideshow_top_right">Top right</string>
     <string name="pref_slideshow_bottom_left">Bottom left</string>
@@ -1312,5 +1310,14 @@
     <string name="pref_slideshow_random">Random</string>
     <string name="pref_slideshow_auto_scroll">Auto scroll</string>
     <string name="pref_slideshow_decode_size_override">Decode size override</string>
-    <string name="pref_slideshow_page_number_override">Page number override</string>
+    <string name="pref_slideshow_screen_widget">Screen widget</string>
+    <string name="pref_slideshow_show_clock">Show clock</string>
+    <string name="pref_slideshow_use_exif_date">Use EXIF date</string>
+    <string name="pref_slideshow_show_image_info">Show image info</string>
+    <string name="pref_slideshow_show_exif_info">Show EXIF info</string>
+    <string name="slideshow_info_bit_depth">%1$d-bit</string>
+    <string name="slideshow_info_focal_length">%1$d mm (35 mm equiv.)</string>
+    <string name="pref_slideshow_scroll_speed">Scroll speed</string>
+    <string name="pref_slideshow_scroll_speed_photo_time">Auto</string>
+    <string name="pref_slideshow_pixels_per_second">%1$d</string>
 </resources>

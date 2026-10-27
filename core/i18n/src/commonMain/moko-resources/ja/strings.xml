@@ -1100,4 +1100,24 @@
     <string name="blocked_image">ブロックされた画像</string>
     <string name="show_blocked_image">ブロックされた画像を表示</string>
     <!-- Tachiyomi Reader End-->
+    <string name="slideshow_viewer">スライドショー</string>
+    <string name="scale_type_fill_screen">画面いっぱいに表示</string>
+    <string name="pref_slideshow_display_time">写真の表示時間</string>
+    <string name="pref_slideshow_seconds">%1$d 秒</string>
+    <string name="pref_dual_page_landscape">横画面で見開き表示</string>
+    <string name="pref_slideshow_screen_widget">画面ウィジェット</string>
+    <string name="pref_slideshow_show_clock">時計を表示</string>
+    <string name="pref_slideshow_use_exif_date">EXIF の日時を使用</string>
+    <string name="pref_slideshow_show_image_info">画像情報を表示</string>
+    <string name="pref_slideshow_show_exif_info">EXIF 情報を表示</string>
+    <string name="slideshow_info_bit_depth">%1$d ビット</string>
+    <string name="slideshow_info_focal_length">%1$d mm（35 mm 換算）</string>
+    <string name="pref_slideshow_scroll_speed">スクロール速度</string>
+    <string name="pref_slideshow_scroll_speed_photo_time">自動</string>
+    <string name="pref_slideshow_pixels_per_second">%1$d</string>
+    <string name="pref_slideshow_playback_mode">スライドショーの再生モード</string>
+    <string name="pref_slideshow_play_once">1 回再生</string>
+    <string name="pref_slideshow_shuffle">シャッフル</string>
+    <string name="pref_slideshow_loop">リピート</string>
+    <string name="pref_slideshow_next_gallery">次のギャラリー</string>
 </resources>

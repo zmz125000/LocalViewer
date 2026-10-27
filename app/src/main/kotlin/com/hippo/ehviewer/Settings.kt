@@ -1248,8 +1248,16 @@ object Settings : DataStorePreferences(null) {
     val slideshowFillScreen = boolPref("slideshow_scale_override", false)
     val slideshowAutoScroll = boolPref("slideshow_auto_scroll", true)
 
+    // Rendered screen pixels per second; zero uses the photo display interval.
+    val slideshowAutoScrollSpeed = intPref("slideshow_auto_scroll_speed", 0)
+
     // 0=off, 1=top left, 2=top right, 3=bottom left, 4=bottom right, 5=random.
-    val slideshowClockPosition = intPref("slideshow_clock_position", 5)
+    // Keep the stored position when upgrading from the clock-only widget.
+    val slideshowScreenWidgetPosition = intPref("slideshow_clock_position", 5)
+    val slideshowShowClock = boolPref("slideshow_show_clock", true)
+    val slideshowUseExifDate = boolPref("slideshow_use_exif_date", false)
+    val slideshowShowImageInfo = boolPref("slideshow_show_image_info", false)
+    val slideshowShowExifInfo = boolPref("slideshow_show_exif_info", false)
 
     // -1 inherits the general auto-rotate mode; 0=off, 1=CW, 2=CCW.
     val slideshowAutoRotateOverride = intPref("slideshow_auto_rotate_override", -1)

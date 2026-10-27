@@ -219,6 +219,7 @@ dependencies {
     }
 
     implementation(libs.androidx.core)
+    implementation(libs.androidx.exifinterface)
     implementation(libs.androidx.core.splashscreen)
 
     implementation(libs.androidx.datastore)
