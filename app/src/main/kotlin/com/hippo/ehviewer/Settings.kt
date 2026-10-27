@@ -1247,7 +1247,7 @@ object Settings : DataStorePreferences(null) {
     val slideshowDualPages = boolPref("slideshow_dual_pages_enabled", false)
     val slideshowFillScreen = boolPref("slideshow_scale_override", false)
     val slideshowAutoScroll = boolPref("slideshow_auto_scroll", true)
-    val slideshowRelativeScrollSpeed = boolPref("slideshow_relative_scroll_speed", false)
+    val slideshowRelativeScrollSpeed = boolPref("slideshow_relative_scroll_speed", true)
 
     // Rendered screen pixels per second; zero uses the photo display interval.
     val slideshowAutoScrollSpeed = intPref("slideshow_auto_scroll_speed", 0)
@@ -1265,7 +1265,7 @@ object Settings : DataStorePreferences(null) {
     val slideshowScreenWidgetPosition = intPref("slideshow_clock_position", 5)
     val slideshowShowClock = boolPref("slideshow_show_clock", true)
     val slideshowUseExifDate = boolPref("slideshow_use_exif_date", false)
-    val slideshowShowImageInfo = boolPref("slideshow_show_image_info", false)
+    val slideshowShowImageInfo = boolPref("slideshow_show_image_info", true)
     val slideshowShowColorSpace = boolPref("slideshow_show_color_space", false)
     val slideshowShowExifInfo = boolPref("slideshow_show_exif_info", false)
     val slideshowShowLensModel = boolPref("slideshow_show_lens_model", false)
