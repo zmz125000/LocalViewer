@@ -452,11 +452,19 @@ object LocalFolderListing {
         val children = listChildrenRemote(dir, preferMediaStore)
         val deleted = confirmedMissingLocalDirectories(dir, cached, children)
         val retained = if (deleted.isEmpty()) cached else cached.filter { browseEntryFolderRoot(it) !in deleted }
-        if (isUntrustedLocalSlimLiveListing(retained, children)) {
+        val plan = planRemoteDirectorySlimRefresh(retained, children)
+        val preserveCachedFiles = isUntrustedSlimLiveFileListing(retained, children) &&
+            plan.addedDirectories.isNotEmpty()
+        if (isUntrustedLocalSlimLiveListing(retained, children) && !preserveCachedFiles) {
             return SlimRefresh(retained, deleted, persist = deleted.isNotEmpty())
         }
+        if (preserveCachedFiles) {
+            logcat("FolderIndex") {
+                "Local slim classifying ${plan.addedDirectories.size} new folder(s) from sparse file listing " +
+                    "root=$rootId dir=$relativeDir; retaining cached files"
+            }
+        }
         val (nomediaProbed, nomediaHit) = probeLocalNomedia(dir, preferMediaStore, retained, children)
-        val plan = planRemoteDirectorySlimRefresh(retained, children)
         val zipFileNames = if (Settings.browseZipAsDir.value) {
             ZipAsDirListing.zipFileNames(children)
         } else {
@@ -519,14 +527,15 @@ object LocalFolderListing {
         } else {
             classifyDirectoryChildren(dir, preferMediaStore, toClassify, zipInteriors)
         }
-        val merged = replaceSlimDirectFilesFromLive(
-            mergeRemoteDirectorySlimRefresh(retained, effectivePlan, addedEntries),
-            children,
-            dirName,
-        )
+        val merged = mergeRemoteDirectorySlimRefresh(retained, effectivePlan, addedEntries)
+        val reconciled = if (preserveCachedFiles) {
+            merged
+        } else {
+            replaceSlimDirectFilesFromLive(merged, children, dirName)
+        }
         return SlimRefresh(
             entries = applySlimDirectoryHidden(
-                withLocalArchivePageCounts(dir, merged),
+                withLocalArchivePageCounts(dir, reconciled),
                 children,
                 nomediaProbed,
                 nomediaHit,

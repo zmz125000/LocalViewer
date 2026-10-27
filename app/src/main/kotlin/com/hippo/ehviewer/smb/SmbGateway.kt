@@ -49,6 +49,7 @@ import com.hippo.ehviewer.library.isImageFileName
 import com.hippo.ehviewer.library.isPromotableLeafDirName
 import com.hippo.ehviewer.library.isProtectedSystemName
 import com.hippo.ehviewer.library.isShallowIncompleteListing
+import com.hippo.ehviewer.library.isUntrustedSlimLiveFileListing
 import com.hippo.ehviewer.library.isUntrustedSlimLiveListing
 import com.hippo.ehviewer.library.isZipArchiveFileName
 import com.hippo.ehviewer.library.mergeRemoteDirectorySlimRefresh
@@ -2397,8 +2398,17 @@ object SmbGateway {
             pathIsMissing(source, password, joinRelative(relativeDir, name))
         }
         val retained = if (deleted.isEmpty()) cached else cached.filter { browseEntryFolderRoot(it) !in deleted }
-        if (isUntrustedSlimLiveListing(retained, children)) {
+        val plan = planRemoteDirectorySlimRefresh(retained, children)
+        val preserveCachedFiles = isUntrustedSlimLiveFileListing(retained, children) &&
+            plan.addedDirectories.isNotEmpty()
+        if (isUntrustedSlimLiveListing(retained, children) && !preserveCachedFiles) {
             return SlimDirectoryRefresh(retained, deleted, persist = deleted.isNotEmpty())
+        }
+        if (preserveCachedFiles) {
+            logcat("FolderIndex") {
+                "SMB slim classifying ${plan.addedDirectories.size} new folder(s) from sparse file listing " +
+                    "source=${source.id} dir=$relativeDir; retaining cached files"
+            }
         }
         val (nomediaProbed, nomediaHit) = probeNomediaDirectories(
             retained,
@@ -2406,7 +2416,6 @@ object SmbGateway {
         ) { name ->
             listChildrenForRelativeDir(source, password, joinRelative(relativeDir, name))
         }
-        val plan = planRemoteDirectorySlimRefresh(retained, children)
         val zipFileNames = if (Settings.browseZipAsDir.value) {
             ZipAsDirListing.zipFileNames(children)
         } else {
@@ -2463,13 +2472,14 @@ object SmbGateway {
         } else {
             classifyDirectoryChildren(source, password, relativeDir, toClassify, zipInteriors)
         }
-        val merged = replaceSlimDirectFilesFromLive(
-            mergeRemoteDirectorySlimRefresh(retained, effectivePlan, addedEntries),
-            children,
-            dirName,
-        )
+        val merged = mergeRemoteDirectorySlimRefresh(retained, effectivePlan, addedEntries)
+        val reconciled = if (preserveCachedFiles) {
+            merged
+        } else {
+            replaceSlimDirectFilesFromLive(merged, children, dirName)
+        }
         return SlimDirectoryRefresh(
-            entries = applySlimDirectoryHidden(merged, children, nomediaProbed, nomediaHit),
+            entries = applySlimDirectoryHidden(reconciled, children, nomediaProbed, nomediaHit),
             removedDirectoryNames = deleted,
             zipInteriors = zipInteriors,
         )

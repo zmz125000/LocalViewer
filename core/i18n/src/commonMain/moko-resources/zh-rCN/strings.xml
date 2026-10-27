@@ -1263,17 +1263,24 @@
     <string name="pref_slideshow_bottom_right">右下角</string>
     <string name="pref_slideshow_random">随机</string>
     <string name="pref_slideshow_auto_scroll">自动滚动</string>
+    <string name="pref_slideshow_relative_scroll_speed">相对滚动速度</string>
     <string name="pref_slideshow_decode_size_override">解码尺寸覆盖</string>
     <string name="slideshow_viewer">幻灯片</string>
     <string name="scale_type_fill_screen">填满屏幕</string>
     <string name="pref_slideshow_display_time">照片显示时间</string>
     <string name="pref_slideshow_seconds">%1$d 秒</string>
     <string name="pref_slideshow_screen_widget">屏幕小组件</string>
-    <string name="pref_slideshow_show_clock">显示时钟</string>
+    <string name="pref_screen_widget_options">小组件选项</string>
+    <string name="pref_screen_widget_none">无</string>
+    <string name="pref_screen_widget_clock">时钟</string>
+    <string name="pref_screen_widget_exif">EXIF</string>
+    <string name="pref_screen_widget_clock_and_exif">时钟和 EXIF</string>
+    <string name="pref_slideshow_show_clock">时钟</string>
     <string name="pref_slideshow_use_exif_date">使用 EXIF 日期</string>
-    <string name="pref_slideshow_show_image_info">显示图像信息</string>
-    <string name="pref_slideshow_show_exif_info">显示 EXIF 信息</string>
-    <string name="pref_slideshow_show_lens_model">显示镜头型号</string>
+    <string name="pref_slideshow_show_image_info">图像信息</string>
+    <string name="pref_slideshow_show_color_space">色彩空间</string>
+    <string name="pref_slideshow_show_exif_info">EXIF 信息</string>
+    <string name="pref_slideshow_show_lens_model">镜头型号</string>
     <string name="slideshow_info_bit_depth">%1$d 位</string>
     <string name="slideshow_info_focal_length">%1$s mm</string>
     <string name="pref_slideshow_scroll_speed">滚动速度</string>
@@ -1283,6 +1290,4 @@
     <string name="pref_slideshow_loop">重复播放</string>
     <string name="pref_slideshow_next_gallery">播放下一个图集</string>
     <string name="slideshow_info_iso">%1$d</string>
-    <string name="slideshow_info_white_balance_auto">白平衡：自动</string>
-    <string name="slideshow_info_white_balance_manual">白平衡：手动</string>
 </resources>

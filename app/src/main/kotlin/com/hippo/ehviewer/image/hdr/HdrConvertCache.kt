@@ -312,7 +312,7 @@ object HdrConvertCache {
                     }
                     return@withPath false
                 }
-                val ok = if (route is StillRoute.Lib && route.codec == LibCodec.HevcHdr && Settings.preferNativeHeifAvif.value) {
+                val ok = if (route is StillRoute.Lib && route.codec == LibCodec.HevcHdr) {
                     val input = object : PathSource {
                         override val source = source
                         override val type = FileUtils.getExtensionFromFilename(fileNameHint) ?: "heic"
@@ -482,7 +482,7 @@ object HdrConvertCache {
                     }
                     return@withBytes false
                 }
-                val ok = if (route is StillRoute.Lib && route.codec == LibCodec.HevcHdr && Settings.preferNativeHeifAvif.value) {
+                val ok = if (route is StillRoute.Lib && route.codec == LibCodec.HevcHdr) {
                     writeHeifThumb(byteBufferSource(ByteBuffer.wrap(bytes)) {}, destJpeg, edge, quality)
                 } else if (route.needsUhdr) {
                     val lib = route as StillRoute.Lib

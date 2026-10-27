@@ -604,6 +604,7 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
     val slideshowSeconds by Settings.slideshowDisplaySeconds.collectAsState()
     val slideshowAutoScroll by Settings.slideshowAutoScroll.collectAsState()
     val slideshowScrollSpeed by Settings.slideshowAutoScrollSpeed.collectAsState()
+    val slideshowRelativeScrollSpeed by Settings.slideshowRelativeScrollSpeed.collectAsState()
     val effectiveSlideshowScrollSpeed = if (slideshowAutoScroll) slideshowScrollSpeed.coerceIn(0, 1000) else 0
     val slideshowPlayback by Settings.slideshowPlaybackMode.collectAsState { SlideshowPlaybackMode.fromPreference(it) }
     val effectiveDualPages = if (slideshow) slideshowDualPages else dualPagePref
@@ -649,8 +650,8 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
             pageLoader.size.coerceAtLeast(1)
         }
     }
-    val autoScrollState = remember(pagerState, pageLoader, slideshow, slideshowAutoScroll, effectiveSlideshowScrollSpeed, slideshowPlayback, pagerDual, landscapeCover) {
-        SlideshowAutoScrollState()
+    val autoScrollState = remember(pagerState, pageLoader, slideshow, slideshowAutoScroll, effectiveSlideshowScrollSpeed, slideshowRelativeScrollSpeed, slideshowPlayback, pagerDual, landscapeCover, isLandscape) {
+        SlideshowAutoScrollState(relativeSpeed = slideshowRelativeScrollSpeed)
     }
     val syncState = rememberSliderPagerDoubleSyncState(lazyListState, pagerState, pageLoader)
     var appbarVisible by remember { mutableStateOf(false) }
@@ -1221,7 +1222,7 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
                             if (interval == null) awaitCancellation()
                             interval.scrollFinished.await()
                         } else {
-                            delay(slideshowSeconds.coerceIn(3, 200) * 1000L)
+                            delay(interval?.durationMillis?.toLong() ?: (slideshowSeconds.coerceIn(3, 200) * 1000L))
                         }
                     },
                 ) { page ->

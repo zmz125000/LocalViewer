@@ -29,7 +29,6 @@ data class ImageMetadata(
     val focalLength35mm: Int? = null,
     val focalLength: Double? = null,
     val iso: Int? = null,
-    val whiteBalanceAuto: Boolean? = null,
     val lensModel: String? = null,
 )
 
@@ -98,11 +97,6 @@ internal fun ImageSource.readMetadata(fileDate: Long? = null, fileName: String? 
         focalLength = attributeDouble(ExifInterface.TAG_FOCAL_LENGTH),
         iso = attributeInt(ExifInterface.TAG_PHOTOGRAPHIC_SENSITIVITY)?.takeUnless { it == 65535 }
             ?: attributeInt(ExifInterface.TAG_ISO_SPEED),
-        whiteBalanceAuto = when (exif?.getAttributeInt(ExifInterface.TAG_WHITE_BALANCE, -1)) {
-            ExifInterface.WHITE_BALANCE_AUTO.toInt() -> true
-            ExifInterface.WHITE_BALANCE_MANUAL.toInt() -> false
-            else -> null
-        },
     )
 }
 

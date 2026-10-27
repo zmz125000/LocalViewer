@@ -1,6 +1,7 @@
 package com.hippo.ehviewer.ui.reader
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -59,6 +60,35 @@ fun SpinnerChoice(title: String, entries: Array<String>, values: List<Int>, fiel
                         leadingIcon = {
                             if (value == v) {
                                 Icon(imageVector = Icons.Default.Check, contentDescription = null)
+                            }
+                        },
+                    )
+                }
+            }
+        }
+    }
+}
+
+/** Multiple checked options; keep the menu open while changing selections. */
+@Composable
+fun ToggleMenuChoice(title: String, selectedValue: String, options: List<Pair<String, MutableState<Boolean>>>) {
+    var expanded by remember { mutableStateOf(false) }
+    Row(
+        modifier = Modifier.fillMaxWidth().height(48.dp).clickable { expanded = true }.padding(horizontal = 16.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(title, modifier = Modifier.weight(1f), color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(selectedValue, modifier = Modifier.weight(1f))
+        Box {
+            Icon(Icons.Default.KeyboardArrowDown, contentDescription = null, modifier = Modifier.size(24.dp))
+            DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+                options.forEach { (label, field) ->
+                    DropdownMenuItem(
+                        text = { Text(label) },
+                        onClick = { field.value = !field.value },
+                        trailingIcon = {
+                            Box(modifier = Modifier.size(24.dp), contentAlignment = Alignment.Center) {
+                                if (field.value) Icon(Icons.Default.Check, contentDescription = null)
                             }
                         },
                     )
