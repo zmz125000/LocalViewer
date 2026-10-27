@@ -35,14 +35,14 @@ object GallerySiblingNavigator {
      * Slideshow "next gallery".
      *
      * Ebooks are left out of the sibling list. Several remaining galleries wrap
-     * to the first when the list ends. One remaining gallery returns null so the
-     * reader repeats that gallery's pages. The opened gallery starts at page 0.
+     * to the first when the list ends. If the playlist has no other gallery, try
+     * parent siblings just like manual navigation. With no eligible sibling,
+     * the reader repeats that gallery's pages. The opened gallery starts at page 0.
      */
     suspend fun slideshowNext(args: ReaderScreenArgs): ReaderScreenArgs? {
         when (val hop = ReaderGalleryPlaylist.slideshowHop(args)) {
             is SlideshowHop.Open -> return hop.args
-            SlideshowHop.RepeatSelf -> return null
-            SlideshowHop.Unresolved -> Unit
+            SlideshowHop.RepeatSelf, SlideshowHop.Unresolved -> Unit
         }
         return filesystemSibling(args, next = true, slideshow = true)?.startingAtFirstPage()
     }

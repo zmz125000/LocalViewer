@@ -440,7 +440,7 @@ private fun SlideshowSetting() = Column {
         field = Settings.slideshowPlaybackMode.asMutableState(),
     )
     SpinnerChoice(
-        title = stringResource(R.string.pref_slideshow_transition_override),
+        title = stringResource(R.string.pref_reader_page_transition),
         entries = (
             listOf(stringResource(R.string.pref_reader_transition_inherit)) +
                 PageTransitionType.entries.map { stringResource(it.stringRes) }
@@ -449,7 +449,7 @@ private fun SlideshowSetting() = Column {
         field = Settings.slideshowPageTransition.asMutableState(),
     )
     SpinnerChoice(
-        title = stringResource(R.string.pref_slideshow_decode_size_override),
+        title = stringResource(R.string.pref_decode_size),
         entries = (
             listOf(stringResource(R.string.pref_slideshow_use_general_setting)) +
                 DecodeSizeType.entries.map { stringResource(it.stringRes) }
@@ -458,7 +458,7 @@ private fun SlideshowSetting() = Column {
         field = Settings.slideshowDecodeSizeOverride.asMutableState(),
     )
     SpinnerChoice(
-        title = stringResource(R.string.pref_slideshow_auto_rotate_override),
+        title = stringResource(R.string.pref_auto_rotate_mode),
         entries = (
             listOf(stringResource(R.string.pref_slideshow_use_general_setting)) +
                 AutoRotateMode.entries.map { stringResource(it.stringRes) }
