@@ -100,15 +100,12 @@ private suspend fun awaitTransitionDisplay(pages: List<Page>): Boolean = combine
 /** Fast initial motion with zero speed at the final frame. */
 internal val PageTransitionEaseOut = CubicBezierEasing(0.16f, 1f, 0.3f, 1f)
 
-/** Keep opacity changing visibly until near the end, with a shorter gentle stop. */
-private val PageFadeEaseOut = CubicBezierEasing(0f, 0f, 0.58f, 1f)
-
 /** Preserve the system animator scale, including disabled animations, while slowing slideshow turns. */
 internal class SlideshowMotionDurationScale(
     private val parent: MotionDurationScale?,
     private val transition: PageTransitionType = PageTransitionType.DEFAULT,
 ) : MotionDurationScale {
-    override val scaleFactor: Float get() = (parent?.scaleFactor ?: 1f) * (if (transition.isFade) 3f else 3f)
+    override val scaleFactor: Float get() = (parent?.scaleFactor ?: 1f) * (if (transition.isFade) 5f else 3f)
 }
 
 /** Finish each fade before resolving the next relative destination. */
@@ -204,14 +201,14 @@ internal fun pagerTransitionModifier(
                                 PageTransitionType.FADE -> {
                                     if (ready) {
                                         if (currentReady) {
-                                            alpha.animateTo(0f, tween(250, easing = PageFadeEaseOut))
+                                            alpha.animateTo(0f, tween(250, easing = PageTransitionEaseOut))
                                         } else {
                                             alpha.snapTo(0f)
                                         }
                                     }
                                     pager.scrollToPage(target)
                                     if (ready && awaitPaint(destination)) {
-                                        alpha.animateTo(1f, tween(350, easing = PageFadeEaseOut))
+                                        alpha.animateTo(1f, tween(350, easing = PageTransitionEaseOut))
                                     }
                                 }
                                 PageTransitionType.FADE_BLEND -> {
@@ -225,13 +222,13 @@ internal fun pagerTransitionModifier(
                                         if (awaitPaint(destination)) {
                                             // Source-over on the fully opaque destination gives exact
                                             // complementary image weights, with no dark midpoint.
-                                            outgoingAlpha.animateTo(0f, tween(500, easing = PageFadeEaseOut))
+                                            outgoingAlpha.animateTo(0f, tween(500, easing = PageTransitionEaseOut))
                                         }
                                     } else {
                                         if (ready) alpha.snapTo(0f)
                                         pager.scrollToPage(target)
                                         if (ready && awaitPaint(destination)) {
-                                            alpha.animateTo(1f, tween(350, easing = PageFadeEaseOut))
+                                            alpha.animateTo(1f, tween(350, easing = PageTransitionEaseOut))
                                         }
                                     }
                                 }
