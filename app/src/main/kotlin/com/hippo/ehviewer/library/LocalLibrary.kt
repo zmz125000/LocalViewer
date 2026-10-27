@@ -435,14 +435,13 @@ object LocalLibrary {
             return
         }
         val toWrite = preserveArchivePageCountsIfDisabled(previous, scanned.galleries)
-        if (toWrite.isEmpty() && previous.isNotEmpty()) {
-            val stamp = pendingStamp ?: if (canMs) MediaStoreFs.imageIndexStamp(mediaRelative) else null
-            if (stamp == null || stamp.count > 0) {
-                logcat("LocalLibrary") {
-                    "Ignore empty scan for root ${root.id} (had ${previous.size} galleries, stamp=$stamp)"
-                }
-                return
+        // MediaStore scans throw on failed queries. A successful empty index is
+        // authoritative, even if the fingerprint counts unsupported media names.
+        if (toWrite.isEmpty() && previous.isNotEmpty() && !canMs) {
+            logcat("LocalLibrary") {
+                "Ignore empty scan without MediaStore for root ${root.id} (had ${previous.size} galleries)"
             }
+            return
         }
         logcat("LocalLibrary") { "Scanned root ${root.id} (${root.displayName}): ${toWrite.size} galleries" }
         val wrote = writeRootGalleries(root.id, previous, toWrite)

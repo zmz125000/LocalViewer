@@ -338,7 +338,12 @@ object MediaStoreWatch {
         }
         if (stillPending.isNotEmpty()) retryPending(stillPending)
         val generation = MediaStoreFs.volumeGeneration()
+        // A collection notification can include removals as well as recent adds.
+        // Applying those adds alone cannot remove stale folders or refresh counts.
+        val hasCollectionNotification = items.isEmpty() || items.size < batch.uris.size
+        val collectionChanged = hasCollectionNotification && (generation <= 0L || generation != generationAtArm)
         val needReconcile = deleteFlag || gone.isNotEmpty() ||
+            collectionChanged ||
             (resolved.isEmpty() && stillPending.isEmpty() && generation > 0L && generation != generationAtArm)
         if (applied > 0) generationAtArm = generation
         if (needReconcile) reconcile(if (deleteFlag || gone.isNotEmpty()) "delete" else "generation")

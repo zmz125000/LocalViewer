@@ -13,6 +13,7 @@ import android.provider.MediaStore
 import androidx.core.content.ContextCompat
 import com.ehviewer.core.files.mediaStoreParentRelativeDir
 import com.ehviewer.core.files.toUri
+import java.io.IOException
 import okio.Path
 import okio.Path.Companion.toPath
 import splitties.init.appCtx
@@ -451,10 +452,11 @@ object MediaStoreFs {
     ) {
         queryMediaPaged(
             collection = collection,
-            projection = projection,
+            projection = projection + MediaStore.MediaColumns._ID,
             selection = selection,
             selectionArgs = selectionArgs,
-            sortOrder = "${MediaStore.MediaColumns.DISPLAY_NAME} ASC",
+            sortOrder = "${MediaStore.MediaColumns._ID} ASC",
+            requireSuccess = true,
         ) { c ->
             val nameIdx = c.getColumnIndexOrThrow(MediaStore.MediaColumns.DISPLAY_NAME)
             val pathIdx = c.getColumnIndexOrThrow(MediaStore.MediaColumns.RELATIVE_PATH)
@@ -708,6 +710,8 @@ object MediaStoreFs {
      * by the ~2 MB cursor window. [onRow] returns true when the row was new.
      * Stops when a page is short, empty of new rows (OEM ignored OFFSET), or
      * the provider returned more than [MEDIA_QUERY_PAGE] (LIMIT ignored).
+     * Library scans require successful, complete queries; filtered rows still
+     * advance pagination, and provider errors must not look like deleted files.
      */
     private fun queryMediaPaged(
         collection: Uri,
@@ -715,9 +719,11 @@ object MediaStoreFs {
         selection: String?,
         selectionArgs: Array<String>?,
         sortOrder: String?,
+        requireSuccess: Boolean = false,
         onRow: (Cursor) -> Boolean,
     ) {
         var offset = 0
+        val seenIds = if (requireSuccess) HashSet<Long>() else null
         while (offset < MEDIA_QUERY_MAX_ROWS) {
             val extras = Bundle().apply {
                 if (selection != null) {
@@ -735,17 +741,34 @@ object MediaStoreFs {
             var pageRows = 0
             var newRows = 0
             runCatching {
-                appCtx.contentResolver.query(collection, projection, extras, null)?.use { c ->
+                val cursor = appCtx.contentResolver.query(collection, projection, extras, null)
+                if (cursor == null && requireSuccess) {
+                    throw IOException("MediaStore query returned no cursor: $collection")
+                }
+                cursor?.use { c ->
+                    val idIndex = if (requireSuccess) c.getColumnIndexOrThrow(MediaStore.MediaColumns._ID) else -1
                     while (c.moveToNext()) {
                         pageRows++
-                        if (onRow(c)) newRows++
+                        if (seenIds != null) {
+                            if (!seenIds.add(c.getLong(idIndex))) continue
+                            newRows++
+                            onRow(c)
+                        } else if (onRow(c)) {
+                            newRows++
+                        }
                     }
                 }
+            }.getOrElse { if (requireSuccess) throw it }
+            if (requireSuccess && pageRows > 0 && newRows == 0) {
+                throw IOException("MediaStore query did not advance: $collection")
             }
             if (pageRows == 0 || newRows == 0) break
             if (pageRows < MEDIA_QUERY_PAGE) break
             if (pageRows > MEDIA_QUERY_PAGE) break
             offset += pageRows
+        }
+        if (requireSuccess && offset >= MEDIA_QUERY_MAX_ROWS) {
+            throw IOException("MediaStore query exceeded row limit: $collection")
         }
     }
 }

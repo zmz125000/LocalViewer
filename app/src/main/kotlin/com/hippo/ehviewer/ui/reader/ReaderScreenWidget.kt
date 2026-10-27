@@ -86,7 +86,13 @@ internal fun BoxScope.ReaderScreenWidget(page: Page?, slideshow: Boolean, source
     ) {
         if (showClock) {
             val date = photoDate ?: now
-            Text(DateFormat.getTimeFormat(context).format(date), style = style, fontSize = 52.sp, lineHeight = 60.sp)
+            val compactClock = showExifInfo || showImageInfo || showColorSpace
+            Text(
+                DateFormat.getTimeFormat(context).format(date),
+                style = style,
+                fontSize = if (compactClock) 32.sp else 52.sp,
+                lineHeight = if (compactClock) 40.sp else 60.sp,
+            )
             Text(dateFormat.format(date), style = style, fontSize = 20.sp, lineHeight = 26.sp)
         }
         if (showExifInfo && metadata != null) {
