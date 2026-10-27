@@ -181,10 +181,11 @@ object LibDirectDecode {
         src: ImageSource,
         fileNameHint: String,
         maxEdge: Int = 0,
+        knownRoute: StillRoute? = null,
     ): LibDirectResult? = withContext(Dispatchers.IO) {
-        // Gate before allocating native F16 + Java byte[] + Bitmap (~one full frame each).
+        // Gate before allocating decoder scratch, packed pixels, and the GPU buffer.
         withHeavyDecode {
-            decodeUnlocked(src, fileNameHint, maxEdge)
+            decodeUnlocked(src, fileNameHint, maxEdge, knownRoute)
         }
     }
 
@@ -269,20 +270,20 @@ object LibDirectDecode {
         src: ImageSource,
         fileNameHint: String,
         maxEdge: Int,
+        knownRoute: StillRoute?,
     ): LibDirectResult? {
         // This entire scope is synchronous on the same decode thread. Native
         // packers move their final vector into the capture instead of a Java array.
         // Exports use their own capture and keep straight alpha through encoding.
         val handle = beginNativeReaderPixels()
         try {
-            val packed = decodePacked(src, fileNameHint, maxEdge)
+            val packed = decodePacked(src, fileNameHint, maxEdge, knownRoute = knownRoute)
             val nativePixels = endNativeReaderPixels(handle)
             if (packed == null) return null
             return bitmapFromPacked(
                 packed.pixels,
                 packed.outInfo,
                 packed.outBoost,
-                wrapHardware = packed.advanced,
                 nativePixels = nativePixels,
             )
         } finally {
@@ -296,6 +297,7 @@ object LibDirectDecode {
         fileNameHint: String,
         maxEdge: Int,
         exportTarget: ExportDecode? = null,
+        knownRoute: StillRoute? = null,
     ): PackedPixels? {
         val pathName = (src as? PathSource)?.source?.name
         val rawName = when {
@@ -311,7 +313,7 @@ object LibDirectDecode {
         ) {
             return decodePlatformExport(src, fileNameHint, maxEdge)
         }
-        val route = when (src) {
+        val route = knownRoute ?: when (src) {
             is PathSource -> classifyPath(src.source, fileNameHint)
             is ByteBufferSource -> classify(src.source, fileNameHint)
         }
@@ -346,7 +348,7 @@ object LibDirectDecode {
         // Existing RAM-backed pages reuse the source array; mapped archive/local
         // inputs go directly to JNI without a compressed Java-array copy.
         val bytes by lazy { buffer.heapBytesForConvert() }
-        val panelBoost = if (export) 1f else jxrHighlightCap()
+        val panelBoost = if (!export && codec == LibCodec.Jxr) jxrHighlightCap() else 1f
         val pixels = if (buffer.isDirect) {
             when (codec) {
                 LibCodec.Jxl -> decodeJxlBufferToDirect(buffer, maxEdge, advanced, outInfo, outBoost)
@@ -366,7 +368,7 @@ object LibDirectDecode {
                 else -> null
             }
         } ?: return@withStillInput null
-        PackedPixels(pixels, outInfo, outBoost, advanced, premultiplied = !export)
+        PackedPixels(pixels, outInfo, outBoost, premultiplied = !export)
     }
 
     /** SDR raster export uses the platform decoder's first frame, independent of reader filters. */
@@ -468,7 +470,6 @@ object LibDirectDecode {
                 pixels,
                 intArrayOf(bitmap.width, bitmap.height, if (bitmap.config == Bitmap.Config.RGBA_F16) 1 else 0, 0, gamut, 0),
                 floatArrayOf(1f),
-                advanced = true,
                 premultiplied = bitmap.isPremultiplied,
             )
         } finally {
@@ -513,13 +514,13 @@ object LibDirectDecode {
      * precision. Absolute HDR keeps the existing HDR-display preference.
      */
     private fun decodeHevcHdrPacked(bytes: ByteBuffer, maxEdge: Int, advanced: Boolean, export: Boolean = false): PackedPixels? {
-        if (!export && !Settings.preferNativeHeifAvif.value && !Settings.readerHdrDisplay.value && HeifContainer.parse(bytes)?.absoluteHdr() != null) return null
-        val frame = HevcHdrDecode.decode(bytes, maxEdge, advanced) ?: return null
+        val allowHdr = export || Settings.preferNativeHeifAvif.value || Settings.readerHdrDisplay.value
+        val frame = HevcHdrDecode.decode(bytes, maxEdge, advanced, allowHdr) ?: return null
         frame.use {
             val outInfo = intArrayOf(frame.width, frame.height, 1, if (frame.isHdr) 1 else 0, frame.gamut, frame.transfer)
             val outBoost = floatArrayOf(frame.boost)
             val pixels = frame.pixels.capture() ?: return null
-            return PackedPixels(pixels, outInfo, outBoost, advanced = true, premultiplied = true)
+            return PackedPixels(pixels, outInfo, outBoost, premultiplied = true)
         }
     }
 
@@ -698,7 +699,6 @@ object LibDirectDecode {
             pixels,
             outInfo,
             outBoost,
-            advanced = true,
             premultiplied = export == null,
             sdrOffset = if (present >= 3 && export?.target?.needsSdrBase() != false) outInfo[0] * outInfo[1] * 8 else 0,
         )
@@ -761,7 +761,6 @@ object LibDirectDecode {
             pixels = packed,
             outInfo = intArrayOf(w, h, 0, 0, 0, 0),
             outBoost = floatArrayOf(1f),
-            advanced = false,
             premultiplied = false,
         )
     }
@@ -795,7 +794,6 @@ object LibDirectDecode {
         pixels: ByteArray,
         outInfo: IntArray,
         outBoost: FloatArray,
-        wrapHardware: Boolean,
         nativePixels: ByteBuffer?,
     ): LibDirectResult? {
         val w = outInfo[0]
@@ -807,13 +805,15 @@ object LibDirectDecode {
         if (w <= 0 || h <= 0) return null
         val f16 = format == 1
         val colorSpace = resolveColorSpace(f16, gamut, transfer)
-        // Default advanced/F16 path: copy the JNI result straight into a HardwareBuffer.
+        // All F16 reader frames go straight into a HardwareBuffer. HDR can produce
+        // F16 with advanced color off too; a software Bitmap here would only be
+        // copied into another hardware buffer by presentForReader immediately after.
         // Captured native vectors upload without a full-frame Java array, preserving
         // the exact linear scRGB/BT.2020 ColorSpace chosen above. Fall back to software
         // when the device cannot wrap that color space.
         // RAW deep color / HDR wraps even when the advanced-color switch is off, because
         // HDR display ignores that switch and still packs float16.
-        val hardware = if (wrapHardware && f16) {
+        val hardware = if (f16) {
             tryHardwareF16FromPixels(pixels, w, h, colorSpace, nativePixels)
         } else {
             null
@@ -857,7 +857,6 @@ object LibDirectDecode {
         val pixels: ByteArray,
         val outInfo: IntArray,
         val outBoost: FloatArray,
-        val advanced: Boolean,
         val premultiplied: Boolean,
         val sdrOffset: Int = 0,
     )

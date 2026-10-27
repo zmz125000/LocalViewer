@@ -35,10 +35,13 @@ internal object HevcHdrDecode {
 
     fun decode(bytes: ByteArray, maxEdge: Int, advancedColor: Boolean): Frame? = decode(ByteBuffer.wrap(bytes), maxEdge, advancedColor)
 
-    fun decode(bytes: ByteBuffer, maxEdge: Int, advancedColor: Boolean): Frame? {
+    fun decode(bytes: ByteBuffer, maxEdge: Int, advancedColor: Boolean, allowHdr: Boolean = true): Frame? {
         val parsed = HeifContainer.parse(bytes) ?: return null
         val hdr = parsed.primaryImage() ?: return null
         val isHdr = hdr.transfer == 16 || hdr.transfer == 18
+        // Decide on the parsed primary before allocating pixels or decoding tiles.
+        // The caller used to parse and assemble the access units a second time.
+        if (isHdr && !allowHdr) return null
         val icc = hdr.icc.takeUnless { isHdr }
         if (hdr.tiles.isEmpty()) return null
         val cap = if (maxEdge > 0) maxEdge else FULL_EDGE
