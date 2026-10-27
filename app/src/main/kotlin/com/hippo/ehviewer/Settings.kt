@@ -1247,6 +1247,7 @@ object Settings : DataStorePreferences(null) {
     val slideshowDualPages = boolPref("slideshow_dual_pages_enabled", false)
     val slideshowFillScreen = boolPref("slideshow_scale_override", false)
     val slideshowAutoScroll = boolPref("slideshow_auto_scroll", true)
+    val slideshowRelativeScrollSpeed = boolPref("slideshow_relative_scroll_speed", false)
 
     // Rendered screen pixels per second; zero uses the photo display interval.
     val slideshowAutoScrollSpeed = intPref("slideshow_auto_scroll_speed", 0)

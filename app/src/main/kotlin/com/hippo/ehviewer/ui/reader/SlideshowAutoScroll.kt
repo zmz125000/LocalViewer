@@ -34,10 +34,13 @@ import me.saket.telephoto.zoomable.ZoomableState
 import me.saket.telephoto.zoomable.spatial.CoordinateSpace
 
 /** One playback interval for countdown or scroll completion; only the active slot starts it. */
-class SlideshowAutoScrollState {
+class SlideshowAutoScrollState(val relativeSpeed: Boolean = false) {
     var readyPage by mutableStateOf<Int?>(null)
     var interval by mutableStateOf<SlideshowScrollInterval?>(null)
         private set
+
+    var durationFactor by mutableStateOf(1.0)
+        internal set
 
     private var finishedPage: Int? = null
 
@@ -51,8 +54,10 @@ class SlideshowAutoScrollState {
         return SlideshowScrollInterval(
             page = page,
             startedAt = SystemClock.elapsedRealtime(),
-            durationMillis = seconds.coerceIn(3, 200) * 1000,
+            durationMillis = ceil(seconds.coerceIn(3, 200) * 1000.0 * durationFactor)
+                .coerceIn(1.0, Int.MAX_VALUE.toDouble()).toInt(),
             pixelsPerSecond = pixelsPerSecond.coerceIn(0, 1000),
+            durationFactor = durationFactor,
         ).also { interval = it }
     }
 }
@@ -62,8 +67,24 @@ class SlideshowScrollInterval(
     val startedAt: Long,
     val durationMillis: Int,
     val pixelsPerSecond: Int,
+    val durationFactor: Double,
 ) {
     val scrollFinished = CompletableDeferred<Unit>()
+}
+
+/** Matching orientations retain the base timing; mismatches use the displayed photo's long/short ratio. */
+internal fun slideshowScrollDurationFactor(content: Size, viewport: Size): Double {
+    if (content.width <= 0f || content.height <= 0f || !content.width.isFinite() || !content.height.isFinite() ||
+        viewport.width <= 0f || viewport.height <= 0f || !viewport.width.isFinite() || !viewport.height.isFinite()
+    ) {
+        return 1.0
+    }
+    if (content.width == content.height || viewport.width == viewport.height ||
+        (content.width > content.height) == (viewport.width > viewport.height)
+    ) {
+        return 1.0
+    }
+    return maxOf(content.width, content.height).toDouble() / minOf(content.width, content.height)
 }
 
 private val SlideshowScrollEasing = CubicBezierEasing(0.42f, 0f, 0.58f, 1f)
@@ -103,8 +124,14 @@ internal fun SlideshowAutoScroll(
     val active = pager.settledPage == slot && !pager.isScrollInProgress && !PagerTransitionHandlers.isRunning(pager)
     val failed = pages.any { it.status is PageStatus.Error || it.status is PageStatus.Blocked }
     val ready = active && displayed && (configured || failed)
-    LaunchedEffect(state, slot, ready) {
+    LaunchedEffect(state, slot, ready, viewport) {
         if (ready) {
+            state.durationFactor = if (state.relativeSpeed && configured && !failed) {
+                val bounds = with(zoomableState.coordinateSystem) { contentBounds(false).rectIn(CoordinateSpace.Viewport) }
+                slideshowScrollDurationFactor(bounds.size, viewport)
+            } else {
+                1.0
+            }
             state.readyPage = slot
         } else if (state.readyPage == slot) {
             state.readyPage = null
@@ -143,8 +170,8 @@ internal fun SlideshowAutoScroll(
                 )
                 if (delta.getDistance() <= 0.5f) break
                 val duration = if (speed > 0) {
-                    // Average rendered-pixel speed, retaining gentle acceleration/deceleration.
-                    ceil(delta.getDistance().toDouble() * 1000.0 / speed).coerceIn(1.0, Int.MAX_VALUE.toDouble()).toInt()
+                    // Divide pixel speed by the orientation factor, retaining the existing easing.
+                    ceil(delta.getDistance().toDouble() * 1000.0 * interval.durationFactor / speed).coerceIn(1.0, Int.MAX_VALUE.toDouble()).toInt()
                 } else {
                     (interval.durationMillis - (SystemClock.elapsedRealtime() - interval.startedAt))
                         .coerceIn(0L, interval.durationMillis.toLong()).toInt()

@@ -470,6 +470,12 @@ private fun SlideshowSetting() = Column {
         title = stringResource(R.string.pref_slideshow_auto_scroll),
         field = autoScroll,
     )
+    AnimatedVisibility(visible = autoScroll.value) {
+        SwitchChoice(
+            title = stringResource(R.string.pref_slideshow_relative_scroll_speed),
+            field = Settings.slideshowRelativeScrollSpeed.asMutableState(),
+        )
+    }
     AnimatedVisibility(visible = !autoScroll.value) {
         SwitchChoice(
             title = stringResource(R.string.scale_type_fill_screen),

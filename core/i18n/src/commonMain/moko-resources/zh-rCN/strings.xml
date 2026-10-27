@@ -1177,6 +1177,7 @@
     <string name="pref_slideshow_bottom_right">右下角</string>
     <string name="pref_slideshow_random">随机</string>
     <string name="pref_slideshow_auto_scroll">自动滚动</string>
+    <string name="pref_slideshow_relative_scroll_speed">相对滚动速度</string>
     <string name="pref_slideshow_decode_size_override">解码尺寸覆盖</string>
     <string name="slideshow_viewer">幻灯片</string>
     <string name="scale_type_fill_screen">填满屏幕</string>
