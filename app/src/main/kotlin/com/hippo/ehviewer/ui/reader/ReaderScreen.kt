@@ -1230,7 +1230,7 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
                         ).isFade
                         if (slideshowAutoScroll && fade) {
                             // Hold the final image before fading; page input cancels this pause.
-                            delay(550L)
+                            delay(700L)
                         }
                     },
                 ) { page ->

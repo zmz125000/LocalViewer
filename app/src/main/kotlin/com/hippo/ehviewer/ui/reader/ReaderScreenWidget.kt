@@ -93,7 +93,12 @@ internal fun BoxScope.ReaderScreenWidget(page: Page?, slideshow: Boolean, source
                 fontSize = if (compactClock) 32.sp else 52.sp,
                 lineHeight = if (compactClock) 40.sp else 60.sp,
             )
-            Text(dateFormat.format(date), style = style, fontSize = 20.sp, lineHeight = 26.sp)
+            Text(
+                dateFormat.format(date),
+                style = style,
+                fontSize = if (compactClock) 16.sp else 20.sp,
+                lineHeight = if (compactClock) 22.sp else 26.sp,
+            )
         }
         if (showExifInfo && metadata != null) {
             metadata.cameraModel?.let { Text(it, style = style, fontSize = 16.sp, lineHeight = 22.sp) }

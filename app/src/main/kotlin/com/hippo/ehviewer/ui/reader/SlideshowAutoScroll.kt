@@ -149,7 +149,7 @@ internal fun SlideshowAutoScroll(
             if (state.readyPage == slot) state.readyPage = null
             // Active becomes true only after the outgoing fade has fully finished.
             // Hold the countdown too, so this pause does not shorten timed scrolling.
-            if (fade && !failed) delay(550L)
+            if (fade && !failed) delay(700L)
             state.scrollFactors = if (state.relativeSpeed && configured && !failed) {
                 val bounds = with(zoomableState.coordinateSystem) { contentBounds(false).rectIn(CoordinateSpace.Viewport) }
                 slideshowScrollFactors(bounds.size, viewport)
