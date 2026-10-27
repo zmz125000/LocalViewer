@@ -35,6 +35,7 @@ fun ReaderModeSetting(
     isDocument: Boolean = false,
     supportsSlideshow: Boolean = true,
     supportsPageTransitions: Boolean = true,
+    supportsScreenWidget: Boolean = true,
 ) = Column(modifier = Modifier.verticalScroll(rememberScrollState()).navigationBarsPadding()) {
     val readingMode = Settings.readingMode.asMutableState()
     AnimatedVisibility(supportsSlideshow && readingMode.value == ReadingModeType.SLIDESHOW.prefValue) {
@@ -108,7 +109,7 @@ fun ReaderModeSetting(
         if (webtoon) {
             WebtoonSetting()
         } else {
-            PagerSetting()
+            PagerSetting(showScreenWidget = supportsScreenWidget && readingMode.value != ReadingModeType.SLIDESHOW.prefValue)
         }
     }
 }
@@ -255,7 +256,7 @@ private fun DocumentStyleSetting() = Column {
 }
 
 @Composable
-private fun PagerSetting() = Column {
+private fun PagerSetting(showScreenWidget: Boolean) = Column {
     Text(
         text = stringResource(id = R.string.pager_viewer),
         modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
@@ -347,6 +348,7 @@ private fun PagerSetting() = Column {
             )
         }
     }
+    if (showScreenWidget) ScreenWidgetSetting(slideshow = false)
 }
 
 @Composable
@@ -463,43 +465,7 @@ private fun SlideshowSetting() = Column {
         values = listOf(-1) + AutoRotateMode.entries.map { it.prefValue },
         field = Settings.slideshowAutoRotateOverride.asMutableState(),
     )
-    val widgetPosition = Settings.slideshowScreenWidgetPosition.asMutableState()
-    SpinnerChoice(
-        title = stringResource(R.string.pref_slideshow_screen_widget),
-        entries = arrayOf(
-            stringResource(R.string.pref_slideshow_off),
-            stringResource(R.string.pref_slideshow_top_left),
-            stringResource(R.string.pref_slideshow_top_right),
-            stringResource(R.string.pref_slideshow_bottom_left),
-            stringResource(R.string.pref_slideshow_bottom_right),
-            stringResource(R.string.pref_slideshow_random),
-        ),
-        values = listOf(0, 1, 2, 3, 4, 5),
-        field = widgetPosition,
-    )
-    AnimatedVisibility(visible = widgetPosition.value != 0) {
-        Column {
-            val showClock = Settings.slideshowShowClock.asMutableState()
-            SwitchChoice(
-                title = stringResource(R.string.pref_slideshow_show_clock),
-                field = showClock,
-            )
-            AnimatedVisibility(visible = showClock.value) {
-                SwitchChoice(
-                    title = stringResource(R.string.pref_slideshow_use_exif_date),
-                    field = Settings.slideshowUseExifDate.asMutableState(),
-                )
-            }
-            SwitchChoice(
-                title = stringResource(R.string.pref_slideshow_show_image_info),
-                field = Settings.slideshowShowImageInfo.asMutableState(),
-            )
-            SwitchChoice(
-                title = stringResource(R.string.pref_slideshow_show_exif_info),
-                field = Settings.slideshowShowExifInfo.asMutableState(),
-            )
-        }
-    }
+    ScreenWidgetSetting(slideshow = true)
     SwitchChoice(
         title = stringResource(R.string.pref_slideshow_auto_scroll),
         field = autoScroll,
@@ -526,4 +492,52 @@ private fun SlideshowSetting() = Column {
         title = stringResource(R.string.pref_dual_page_landscape),
         field = Settings.slideshowDualPages.asMutableState(),
     )
+}
+
+@Composable
+private fun ScreenWidgetSetting(slideshow: Boolean) = Column {
+    val widgetPosition = (if (slideshow) Settings.slideshowScreenWidgetPosition else Settings.readerScreenWidgetPosition).asMutableState()
+    SpinnerChoice(
+        title = stringResource(R.string.pref_slideshow_screen_widget),
+        entries = arrayOf(
+            stringResource(R.string.pref_slideshow_off),
+            stringResource(R.string.pref_slideshow_top_left),
+            stringResource(R.string.pref_slideshow_top_right),
+            stringResource(R.string.pref_slideshow_bottom_left),
+            stringResource(R.string.pref_slideshow_bottom_right),
+            stringResource(R.string.pref_slideshow_random),
+        ),
+        values = listOf(0, 1, 2, 3, 4, 5),
+        field = widgetPosition,
+    )
+    AnimatedVisibility(visible = widgetPosition.value != 0) {
+        Column {
+            val showClock = (if (slideshow) Settings.slideshowShowClock else Settings.readerShowClock).asMutableState()
+            SwitchChoice(
+                title = stringResource(R.string.pref_slideshow_show_clock),
+                field = showClock,
+            )
+            AnimatedVisibility(visible = showClock.value) {
+                SwitchChoice(
+                    title = stringResource(R.string.pref_slideshow_use_exif_date),
+                    field = (if (slideshow) Settings.slideshowUseExifDate else Settings.readerUseExifDate).asMutableState(),
+                )
+            }
+            SwitchChoice(
+                title = stringResource(R.string.pref_slideshow_show_image_info),
+                field = (if (slideshow) Settings.slideshowShowImageInfo else Settings.readerShowImageInfo).asMutableState(),
+            )
+            val showExifInfo = (if (slideshow) Settings.slideshowShowExifInfo else Settings.readerShowExifInfo).asMutableState()
+            SwitchChoice(
+                title = stringResource(R.string.pref_slideshow_show_exif_info),
+                field = showExifInfo,
+            )
+            AnimatedVisibility(visible = showExifInfo.value) {
+                SwitchChoice(
+                    title = stringResource(R.string.pref_slideshow_show_lens_model),
+                    field = (if (slideshow) Settings.slideshowShowLensModel else Settings.readerShowLensModel).asMutableState(),
+                )
+            }
+        }
+    }
 }

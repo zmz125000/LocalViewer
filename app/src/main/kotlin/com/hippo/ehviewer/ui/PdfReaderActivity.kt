@@ -2742,6 +2742,7 @@ private fun PdfReaderScreen(
                                     showImageScaler = false,
                                     supportsSlideshow = false,
                                     supportsPageTransitions = false,
+                                    supportsScreenWidget = false,
                                     showDirectImage = true,
                                     modifier = Modifier.fillMaxSize(),
                                 )

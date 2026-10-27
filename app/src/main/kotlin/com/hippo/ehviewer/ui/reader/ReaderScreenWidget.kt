@@ -37,22 +37,25 @@ import com.hippo.ehviewer.gallery.statusObserved
 import java.text.DecimalFormat
 import java.text.SimpleDateFormat
 import java.util.Date
+import java.util.Locale
+import kotlin.math.ceil
 import kotlin.random.Random
 import kotlinx.coroutines.delay
 
 @Composable
-internal fun BoxScope.SlideshowScreenWidget(page: Page?) {
-    val position by Settings.slideshowScreenWidgetPosition.collectAsState()
+internal fun BoxScope.ReaderScreenWidget(page: Page?, slideshow: Boolean, sourceName: String?) {
+    val position by (if (slideshow) Settings.slideshowScreenWidgetPosition else Settings.readerScreenWidgetPosition).collectAsState()
     if (position !in 1..5) return
-    val showClock by Settings.slideshowShowClock.collectAsState()
-    val useExifDate by Settings.slideshowUseExifDate.collectAsState()
-    val showImageInfo by Settings.slideshowShowImageInfo.collectAsState()
-    val showExifInfo by Settings.slideshowShowExifInfo.collectAsState()
+    val showClock by (if (slideshow) Settings.slideshowShowClock else Settings.readerShowClock).collectAsState()
+    val useExifDate by (if (slideshow) Settings.slideshowUseExifDate else Settings.readerUseExifDate).collectAsState()
+    val showImageInfo by (if (slideshow) Settings.slideshowShowImageInfo else Settings.readerShowImageInfo).collectAsState()
+    val showExifInfo by (if (slideshow) Settings.slideshowShowExifInfo else Settings.readerShowExifInfo).collectAsState()
+    val showLensModel by (if (slideshow) Settings.slideshowShowLensModel else Settings.readerShowLensModel).collectAsState()
     if (!showClock && !showImageInfo && !showExifInfo) return
     val status = page?.statusObserved
     val metadata = (status as? PageStatus.Ready)?.image?.metadata
     val photoDate = if (useExifDate) metadata?.date?.let(::Date) else null
-    val corner = remember(position, page) { if (position == 5) Random.nextInt(1, 5) else position }
+    val corner = remember(position, page, slideshow) { if (position == 5) Random.nextInt(1, 5) else position }
     val alignment = when (corner) {
         1 -> AbsoluteAlignment.TopLeft
         2 -> AbsoluteAlignment.TopRight
@@ -88,27 +91,43 @@ internal fun BoxScope.SlideshowScreenWidget(page: Page?) {
         if (showImageInfo && metadata != null) {
             val dimensions = if (metadata.width != null && metadata.height != null) "${metadata.width} × ${metadata.height}" else null
             val depth = metadata.bitDepth?.let { stringResource(R.string.slideshow_info_bit_depth, it) }
-            val hdr = metadata.hdr?.let { if (it) "HDR" else "SDR" }
-            val imageInfo = listOfNotNull(dimensions, depth, hdr).joinToString(" · ")
-            if (imageInfo.isNotEmpty()) Text(imageInfo, style = style, fontSize = 16.sp, lineHeight = 22.sp)
             val colorSpace = metadata.colorSpace?.trim()?.takeUnless { it.isEmpty() || it.equals("Unknown", ignoreCase = true) }?.let {
                 if (it.startsWith("sRGB IEC61966-2.1", ignoreCase = true)) "sRGB" else it
             }
-            colorSpace?.let {
-                Text(it, style = style, fontSize = 16.sp, lineHeight = 22.sp)
+            val extension = sourceName?.substringAfterLast('.', "")?.takeIf { it.isNotBlank() }?.uppercase(Locale.ROOT)
+            val colorInfo = colorSpace?.let { space ->
+                val dynamicRange = metadata.hdr?.let { if (it) "HDR" else "SDR" }
+                listOfNotNull(space, dynamicRange).joinToString(" · ")
             }
+            val imageInfo = listOfNotNull(dimensions, depth, extension).joinToString(" · ")
+            if (imageInfo.isNotEmpty()) Text(imageInfo, style = style, fontSize = 16.sp, lineHeight = 22.sp)
+            colorInfo?.let { Text(it, style = style, fontSize = 16.sp, lineHeight = 22.sp) }
         }
         if (showExifInfo && metadata != null) {
             metadata.cameraModel?.let { Text(it, style = style, fontSize = 16.sp, lineHeight = 22.sp) }
+            if (showLensModel) {
+                metadata.lensModel?.let { Text(it, style = style, fontSize = 16.sp, lineHeight = 22.sp) }
+            }
             val number = remember(locale) { DecimalFormat("0.####") }
             val camera = listOfNotNull(
                 metadata.aperture?.let { "f/${number.format(it)}" },
                 metadata.exposureSeconds?.let {
-                    if (it < 0.5) "1/${number.format(1.0 / it)} s" else "${number.format(it)} s"
+                    if (it < 0.5) "1/${number.format(ceil(1.0 / it))} s" else "${number.format(it)} s"
                 },
-                metadata.focalLength35mm?.let { stringResource(R.string.slideshow_info_focal_length, it) },
+                metadata.iso?.let { stringResource(R.string.slideshow_info_iso, it) },
+                (metadata.focalLength35mm?.toDouble() ?: metadata.focalLength)?.let {
+                    stringResource(R.string.slideshow_info_focal_length, number.format(it))
+                },
             ).joinToString(" · ")
             if (camera.isNotEmpty()) Text(camera, style = style, fontSize = 16.sp, lineHeight = 22.sp)
+            if (metadata.whiteBalanceAuto == false) {
+                Text(
+                    stringResource(R.string.slideshow_info_white_balance_manual),
+                    style = style,
+                    fontSize = 16.sp,
+                    lineHeight = 22.sp,
+                )
+            }
         }
     }
 }
