@@ -1156,6 +1156,7 @@
     <string name="pref_dual_page_slideshow">雙頁（幻燈片）</string>
     <string name="pref_slideshow_screen_widget">螢幕小工具</string>
     <string name="pref_screen_widget_options">小工具選項</string>
+    <string name="pref_screen_widget_auto_align">自動對齊</string>
     <string name="pref_screen_widget_raw_strings">使用原始字串</string>
     <string name="pref_screen_widget_file_name">檔案名稱</string>
     <string name="pref_screen_widget_none">無</string>

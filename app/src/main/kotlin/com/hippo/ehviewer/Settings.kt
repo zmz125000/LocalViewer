@@ -1264,6 +1264,7 @@ object Settings : DataStorePreferences(null) {
     val readerShowLensModel = boolPref("reader_show_lens_model", false)
     val readerUseRawColorStrings = boolPref("reader_use_raw_color_strings", false)
     val readerShowFileName = boolPref("reader_show_file_name", false)
+    val readerWidgetAutoAlign = boolPref("reader_widget_auto_align", false)
 
     // 0=off, 1=top left, 2=top right, 3=bottom left, 4=bottom right, 5=random.
     // Keep the stored position when upgrading from the clock-only widget.
@@ -1276,6 +1277,7 @@ object Settings : DataStorePreferences(null) {
     val slideshowShowLensModel = boolPref("slideshow_show_lens_model", false)
     val slideshowUseRawColorStrings = boolPref("slideshow_use_raw_color_strings", false)
     val slideshowShowFileName = boolPref("slideshow_show_file_name", false)
+    val slideshowWidgetAutoAlign = boolPref("slideshow_widget_auto_align", false)
 
     // -1 inherits the general auto-rotate mode; 0=off, 1=CW, 2=CCW.
     val slideshowAutoRotateOverride = intPref("slideshow_auto_rotate_override", -1)

@@ -1190,6 +1190,7 @@
     <string name="pref_slideshow_seconds">%1$d 秒</string>
     <string name="pref_slideshow_screen_widget">屏幕小组件</string>
     <string name="pref_screen_widget_options">小组件选项</string>
+    <string name="pref_screen_widget_auto_align">自动对齐</string>
     <string name="pref_screen_widget_raw_strings">使用原始字符串</string>
     <string name="pref_screen_widget_file_name">文件名</string>
     <string name="pref_screen_widget_none">无</string>

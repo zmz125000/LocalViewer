@@ -1115,6 +1115,7 @@
     <string name="pref_dual_page_slideshow">見開き表示（スライドショー）</string>
     <string name="pref_slideshow_screen_widget">画面ウィジェット</string>
     <string name="pref_screen_widget_options">ウィジェットのオプション</string>
+    <string name="pref_screen_widget_auto_align">自動配置</string>
     <string name="pref_screen_widget_raw_strings">元の文字列を使用</string>
     <string name="pref_screen_widget_file_name">ファイル名</string>
     <string name="pref_screen_widget_none">なし</string>

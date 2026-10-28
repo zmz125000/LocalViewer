@@ -55,6 +55,7 @@ internal fun BoxScope.ReaderScreenWidget(page: Page?, slideshow: Boolean, source
     val showLensModel by (if (slideshow) Settings.slideshowShowLensModel else Settings.readerShowLensModel).collectAsState()
     val useRawStrings by (if (slideshow) Settings.slideshowUseRawColorStrings else Settings.readerUseRawColorStrings).collectAsState()
     val showFileName by (if (slideshow) Settings.slideshowShowFileName else Settings.readerShowFileName).collectAsState()
+    val autoAlign by (if (slideshow) Settings.slideshowWidgetAutoAlign else Settings.readerWidgetAutoAlign).collectAsState()
     if (!showClock && !showImageInfo && !showExifInfo && !showColorSpace && !showFileName) return
     val status = page?.statusObserved
     val metadata = (status as? PageStatus.Ready)?.image?.metadata
@@ -82,10 +83,21 @@ internal fun BoxScope.ReaderScreenWidget(page: Page?, slideshow: Boolean, source
             }
         }
     }
-    val style = TextStyle(color = Color.White, shadow = Shadow(Color.Black, Offset(1f, 2f), 6f), textAlign = TextAlign.Center)
+    val leftCorner = corner == 1 || corner == 3
+    val textAlignment = when {
+        !autoAlign -> TextAlign.Center
+        leftCorner -> TextAlign.Left
+        else -> TextAlign.Right
+    }
+    val rowAlignment = when {
+        !autoAlign -> Alignment.CenterHorizontally
+        leftCorner -> AbsoluteAlignment.Left
+        else -> AbsoluteAlignment.Right
+    }
+    val style = TextStyle(color = Color.White, shadow = Shadow(Color.Black, Offset(1f, 2f), 6f), textAlign = textAlignment)
     Column(
         modifier = Modifier.align(alignment).safeDrawingPadding().padding(24.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
+        horizontalAlignment = rowAlignment,
     ) {
         if (showClock) {
             val date = photoDate ?: now

@@ -526,6 +526,7 @@ private fun ScreenWidgetSetting(slideshow: Boolean) = Column {
         val showLensModel = (if (slideshow) Settings.slideshowShowLensModel else Settings.readerShowLensModel).asMutableState()
         val useRawStrings = (if (slideshow) Settings.slideshowUseRawColorStrings else Settings.readerUseRawColorStrings).asMutableState()
         val showFileName = (if (slideshow) Settings.slideshowShowFileName else Settings.readerShowFileName).asMutableState()
+        val autoAlign = (if (slideshow) Settings.slideshowWidgetAutoAlign else Settings.readerWidgetAutoAlign).asMutableState()
         ToggleMenuChoice(
             title = stringResource(R.string.pref_screen_widget_options),
             selectedValue = stringResource(
@@ -545,6 +546,7 @@ private fun ScreenWidgetSetting(slideshow: Boolean) = Column {
                 add(stringResource(R.string.pref_slideshow_show_exif_info) to showExifInfo)
                 if (showExifInfo.value) add(stringResource(R.string.pref_slideshow_show_lens_model) to showLensModel)
                 add(stringResource(R.string.pref_screen_widget_file_name) to showFileName)
+                add(stringResource(R.string.pref_screen_widget_auto_align) to autoAlign)
             },
         )
     }
