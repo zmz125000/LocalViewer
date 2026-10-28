@@ -34,6 +34,7 @@ import com.hippo.ehviewer.collectAsState
 import com.hippo.ehviewer.gallery.Page
 import com.hippo.ehviewer.gallery.PageStatus
 import com.hippo.ehviewer.gallery.statusObserved
+import com.hippo.ehviewer.image.ImageTransfer
 import java.text.DecimalFormat
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -52,7 +53,10 @@ internal fun BoxScope.ReaderScreenWidget(page: Page?, slideshow: Boolean, source
     val showColorSpace by (if (slideshow) Settings.slideshowShowColorSpace else Settings.readerShowColorSpace).collectAsState()
     val showExifInfo by (if (slideshow) Settings.slideshowShowExifInfo else Settings.readerShowExifInfo).collectAsState()
     val showLensModel by (if (slideshow) Settings.slideshowShowLensModel else Settings.readerShowLensModel).collectAsState()
-    if (!showClock && !showImageInfo && !showExifInfo && !showColorSpace) return
+    val useRawStrings by (if (slideshow) Settings.slideshowUseRawColorStrings else Settings.readerUseRawColorStrings).collectAsState()
+    val showFileName by (if (slideshow) Settings.slideshowShowFileName else Settings.readerShowFileName).collectAsState()
+    val autoAlign by (if (slideshow) Settings.slideshowWidgetAutoAlign else Settings.readerWidgetAutoAlign).collectAsState()
+    if (!showClock && !showImageInfo && !showExifInfo && !showColorSpace && !showFileName) return
     val status = page?.statusObserved
     val metadata = (status as? PageStatus.Ready)?.image?.metadata
     val photoDate = if (useExifDate) metadata?.date?.let(::Date) else null
@@ -79,14 +83,25 @@ internal fun BoxScope.ReaderScreenWidget(page: Page?, slideshow: Boolean, source
             }
         }
     }
-    val style = TextStyle(color = Color.White, shadow = Shadow(Color.Black, Offset(1f, 2f), 6f), textAlign = TextAlign.Center)
+    val leftCorner = corner == 1 || corner == 3
+    val textAlignment = when {
+        !autoAlign -> TextAlign.Center
+        leftCorner -> TextAlign.Left
+        else -> TextAlign.Right
+    }
+    val rowAlignment = when {
+        !autoAlign -> Alignment.CenterHorizontally
+        leftCorner -> AbsoluteAlignment.Left
+        else -> AbsoluteAlignment.Right
+    }
+    val style = TextStyle(color = Color.White, shadow = Shadow(Color.Black, Offset(1f, 2f), 6f), textAlign = textAlignment)
     Column(
         modifier = Modifier.align(alignment).safeDrawingPadding().padding(24.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
+        horizontalAlignment = rowAlignment,
     ) {
         if (showClock) {
             val date = photoDate ?: now
-            val compactClock = showExifInfo || showImageInfo || showColorSpace
+            val compactClock = showExifInfo || showImageInfo || showColorSpace || showFileName
             Text(
                 DateFormat.getTimeFormat(context).format(date),
                 style = style,
@@ -130,6 +145,7 @@ internal fun BoxScope.ReaderScreenWidget(page: Page?, slideshow: Boolean, source
         if (showColorSpace && metadata != null) {
             val colorSpace = metadata.colorSpace?.trim()?.takeUnless { it.isEmpty() || it.equals("Unknown", ignoreCase = true) }?.let {
                 when {
+                    useRawStrings -> it
                     it.startsWith("sRGB IEC61966-2.1", ignoreCase = true) -> "sRGB"
                     it.startsWith("scRGB", ignoreCase = true) -> "scRGB"
                     else -> it
@@ -137,9 +153,26 @@ internal fun BoxScope.ReaderScreenWidget(page: Page?, slideshow: Boolean, source
             }
             val colorInfo = colorSpace?.let { space ->
                 val dynamicRange = metadata.hdr?.let { if (it) "HDR" else "SDR" }
-                listOfNotNull(space, dynamicRange).joinToString(" · ")
+                val transfer = if (useRawStrings) {
+                    metadata.rawTransfer ?: metadata.transfer?.name
+                } else {
+                    when (metadata.transfer) {
+                        ImageTransfer.PQ -> "PQ"
+                        ImageTransfer.HLG -> "HLG"
+                        ImageTransfer.SRGB -> "sRGB"
+                        ImageTransfer.LINEAR -> stringResource(R.string.slideshow_info_transfer_linear)
+                        ImageTransfer.GAIN_MAP -> stringResource(R.string.slideshow_info_transfer_gain_map)
+                        null -> null
+                    }
+                }
+                listOfNotNull(space, dynamicRange, transfer).joinToString(" · ")
             }
             colorInfo?.let { Text(it, style = style, fontSize = 16.sp, lineHeight = 22.sp) }
+        }
+        if (showFileName) {
+            sourceName?.replace('\\', '/')?.substringAfterLast('/')?.takeIf { it.isNotBlank() }?.let {
+                Text(it, style = style, fontSize = 16.sp, lineHeight = 22.sp)
+            }
         }
     }
 }

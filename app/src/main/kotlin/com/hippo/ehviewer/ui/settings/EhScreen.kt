@@ -238,6 +238,10 @@ fun AnimatedVisibilityScope.EhScreen(navigator: DestinationsNavigator) = Screen(
                 state = conversionQuality,
             )
             SwitchPreference(
+                title = stringResource(R.string.image_conversion_extended_srgb_bt2020),
+                state = Settings.imageConversionExtendedSrgbBt2020.asMutableState(),
+            )
+            SwitchPreference(
                 title = stringResource(R.string.image_conversion_jxl_jpeg_transcoding),
                 state = Settings.imageConversionJxlJpegTranscoding.asMutableState(),
             )
@@ -261,6 +265,14 @@ fun AnimatedVisibilityScope.EhScreen(navigator: DestinationsNavigator) = Screen(
                         minValue = 1,
                         maxValue = 100,
                         state = Settings.imageConversionCustomQuality.asMutableState(),
+                    )
+                    SwitchPreference(
+                        title = stringResource(R.string.image_conversion_avif_12_bit),
+                        state = Settings.imageConversionAvif12Bit.asMutableState(),
+                    )
+                    SwitchPreference(
+                        title = stringResource(R.string.image_conversion_downsize_gain_map),
+                        state = Settings.imageConversionDownsizeGainMap.asMutableState(),
                     )
                 }
             }

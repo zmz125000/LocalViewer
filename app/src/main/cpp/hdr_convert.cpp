@@ -788,17 +788,31 @@ bool decode_jxr_from_memory(const uint8_t* data, size_t len, std::vector<uint16_
  * so leaving the codes unchanged lifts midtones against a reference monitor.
  * Scale RGB only. Alpha stays. Integer sRGB and ICC frames must not come here.
  */
-void rebase_untagged_scrgb(std::vector<uint16_t>& rgba, unsigned w, unsigned h) {
+void rebase_untagged_scrgb(std::vector<uint16_t>& rgba, unsigned w, unsigned h, bool to_bt2020 = false) {
     constexpr float kScRgbWhiteNits = 80.f;
     const float scale = kScRgbWhiteNits / kSdrWhiteNits;
     const size_t npx = static_cast<size_t>(w) * h;
     if (w == 0 || h == 0 || rgba.size() < npx * 4) return;
-    for (size_t i = 0; i < npx; i++) {
-        rgba[i * 4 + 0] = float_to_half(half_to_float(rgba[i * 4 + 0]) * scale);
-        rgba[i * 4 + 1] = float_to_half(half_to_float(rgba[i * 4 + 1]) * scale);
-        rgba[i * 4 + 2] = float_to_half(half_to_float(rgba[i * 4 + 2]) * scale);
-    }
-    ALOGI("JXR scRGB rebase 80/203 %ux%u", w, h);
+    hdr_parallel_pixels(npx, to_bt2020 ? hdr_pixel_jobs(npx) : 1, [&](size_t begin, size_t end, unsigned) {
+        for (size_t i = begin; i < end; i++) {
+            float r = half_to_float(rgba[i * 4 + 0]);
+            float g = half_to_float(rgba[i * 4 + 1]);
+            float b = half_to_float(rgba[i * 4 + 2]);
+            if (to_bt2020) {
+                // Linear BT.709/scRGB D65 -> BT.2020 D65. Keep signed channels
+                // through the matrix: negative scRGB values can represent WCG.
+                // Fold the white-reference scale into this pass; alpha is unchanged.
+                if (!std::isfinite(r)) r = 0.f;
+                if (!std::isfinite(g)) g = 0.f;
+                if (!std::isfinite(b)) b = 0.f;
+                linear_bt709_to_bt2020(r, g, b);
+            }
+            rgba[i * 4 + 0] = float_to_half(r * scale);
+            rgba[i * 4 + 1] = float_to_half(g * scale);
+            rgba[i * 4 + 2] = float_to_half(b * scale);
+        }
+    });
+    ALOGI("JXR scRGB rebase 80/203 %ux%u bt2020=%d", w, h, to_bt2020);
 }
 
 // Path helper: load whole file into memory then decode (no jxrlib file I/O).
@@ -1074,9 +1088,9 @@ int encode_linear_rgba_f16_to_uhdr(unsigned w, unsigned h, const uint16_t* rgba,
         uhdr_release_encoder(enc);
         return -6;
     }
-    // Keep the primary rendition at full size. Low quality reduces only the
-    // RGB gain map to one quarter of each dimension (one sixteenth the pixels).
-    err = uhdr_enc_set_gainmap_scale_factor(enc, quality.preset == 3 ? 4 : 1);
+    // Keep the primary rendition at full size. Mid/Low and the custom downsize
+    // toggle halve gain-map dimensions (one quarter of the pixels).
+    err = uhdr_enc_set_gainmap_scale_factor(enc, quality.jpeg_gain_map_scale());
     if (err.error_code != UHDR_CODEC_OK) {
         ALOGE("uhdr_enc_set_gainmap_scale_factor: %s", err.has_detail ? err.detail : "error");
         uhdr_release_encoder(enc);
@@ -1716,7 +1730,9 @@ extern "C" JNIEXPORT jint JNICALL
 Java_com_hippo_ehviewer_jni_HdrConvertKt_encodeNativeStillExport(JNIEnv* env, jclass, jobject jPixels,
                                                                jint width, jint height, jboolean f16,
                                                                jint gamut, jint mode, jboolean premultiplied,
-                                                               jstring jOut, jint sdr_offset, jint quality, jfloat custom_distance, jint custom_quality) {
+                                                               jstring jOut, jint sdr_offset, jint quality, jfloat custom_distance, jint custom_quality,
+                                                               jint avif_depth, jboolean downsize_gain_map) {
+    if (avif_depth != 10 && avif_depth != 12) return -52;
     if (!jPixels || !jOut || width <= 0 || height <= 0 || sdr_offset < 0 || quality < 0 || quality > 4 ||
         (quality == 4 && (!std::isfinite(custom_distance) || custom_distance < 0.f || custom_distance > 3.f ||
                           custom_quality < 1 || custom_quality > 100))) return -52;
@@ -1729,7 +1745,8 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_encodeNativeStillExport(JNIEnv* env, jc
     const int rc = encode_still_export(pixels, static_cast<size_t>(length),
                                        static_cast<unsigned>(width), static_cast<unsigned>(height),
                                        f16 == JNI_TRUE, gamut, mode, premultiplied == JNI_TRUE,
-                                       out_path, static_cast<size_t>(sdr_offset), StillEncodeQuality(quality, custom_distance, custom_quality), true);
+                                       out_path, static_cast<size_t>(sdr_offset), StillEncodeQuality(quality, custom_distance, custom_quality, avif_depth,
+                                                          downsize_gain_map == JNI_TRUE), true);
     env->ReleaseStringUTFChars(jOut, out_path);
     return rc;
 }
@@ -1739,7 +1756,8 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_encodeStillExport(JNIEnv* env, jclass, 
                                                            jint width, jint height, jboolean f16,
                                                            jint gamut, jint mode,
                                                            jboolean premultiplied, jstring jOut, jint sdr_offset,
-                                                           jint quality, jfloat custom_distance, jint custom_quality) {
+                                                           jint quality, jfloat custom_distance, jint custom_quality, jint avif_depth, jboolean downsize_gain_map) {
+    if (avif_depth != 10 && avif_depth != 12) return -52;
     if (!jPixels || !jOut || width <= 0 || height <= 0 || sdr_offset < 0 || quality < 0 || quality > 4 ||
         (quality == 4 && (!std::isfinite(custom_distance) || custom_distance < 0.f || custom_distance > 3.f ||
                           custom_quality < 1 || custom_quality > 100))) return -52;
@@ -1756,7 +1774,8 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_encodeStillExport(JNIEnv* env, jclass, 
                                        static_cast<size_t>(len), static_cast<unsigned>(width),
                                        static_cast<unsigned>(height), f16 == JNI_TRUE, gamut, mode,
                                        premultiplied == JNI_TRUE, out_path, static_cast<size_t>(sdr_offset),
-                                       StillEncodeQuality(quality, custom_distance, custom_quality));
+                                       StillEncodeQuality(quality, custom_distance, custom_quality, avif_depth,
+                                                          downsize_gain_map == JNI_TRUE));
     env->ReleaseStringUTFChars(jOut, out_path);
     env->ReleaseByteArrayElements(jPixels, bytes, JNI_ABORT);
     return rc;
@@ -2011,7 +2030,8 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeJxrBytesToDirect(JNIEnv* env, jcl
                                                                 jboolean advancedColor,
                                                                 jfloat panelBoost,
                                                                 jintArray jOutInfo,
-                                                                jfloatArray jOutBoost) {
+                                                                jfloatArray jOutBoost,
+                                                                jboolean exportBt2020) {
     if (!jInput || !jOutInfo || !jOutBoost) return nullptr;
     if (env->GetArrayLength(jOutInfo) < 6 || env->GetArrayLength(jOutBoost) < 1) return nullptr;
     const jsize len = env->GetArrayLength(jInput);
@@ -2032,7 +2052,9 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeJxrBytesToDirect(JNIEnv* env, jcl
         }
         // Rebase before the fit so the shoulder sees 203-nit units.
         if (untagged_linear) {
-            rebase_untagged_scrgb(rgba, w, h);
+            const bool to_bt2020 = exportBt2020 == JNI_TRUE && export_pixels_capture();
+            rebase_untagged_scrgb(rgba, w, h, to_bt2020);
+            if (to_bt2020) cg = UHDR_CG_BT_2100;
             fit_untagged_jxr_highlights(rgba, w, h, panelBoost);
         }
         // Peak (and optional force) decides 8888 vs F16; float JXR often peaks > 1.25.
@@ -2052,7 +2074,8 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeJxrBufferToDirect(JNIEnv* env, jc
                                                                 jboolean advancedColor,
                                                                 jfloat panelBoost,
                                                                 jintArray jOutInfo,
-                                                                jfloatArray jOutBoost) try {
+                                                                jfloatArray jOutBoost,
+                                                                jboolean exportBt2020) try {
     if (!jInput || !jOutInfo || !jOutBoost) return nullptr;
     if (env->GetArrayLength(jOutInfo) < 6 || env->GetArrayLength(jOutBoost) < 1) return nullptr;
     const jlong len = env->GetDirectBufferCapacity(jInput);
@@ -2072,7 +2095,9 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeJxrBufferToDirect(JNIEnv* env, jc
         }
         // Rebase before the fit so the shoulder sees 203-nit units.
         if (untagged_linear) {
-            rebase_untagged_scrgb(rgba, w, h);
+            const bool to_bt2020 = exportBt2020 == JNI_TRUE && export_pixels_capture();
+            rebase_untagged_scrgb(rgba, w, h, to_bt2020);
+            if (to_bt2020) cg = UHDR_CG_BT_2100;
             fit_untagged_jxr_highlights(rgba, w, h, panelBoost);
         }
         // Peak (and optional force) decides 8888 vs F16; float JXR often peaks > 1.25.

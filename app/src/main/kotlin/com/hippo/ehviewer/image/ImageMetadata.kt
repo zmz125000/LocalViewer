@@ -1,6 +1,7 @@
 package com.hippo.ehviewer.image
 
 import android.graphics.BitmapFactory
+import android.graphics.ColorSpace
 import android.os.ParcelFileDescriptor
 import androidx.exifinterface.media.ExifInterface
 import com.ehviewer.core.files.openFileDescriptor
@@ -15,13 +16,47 @@ import java.util.Locale
 import java.util.TimeZone
 import splitties.init.appCtx
 
-/** Original encoded metadata, independent of preview resolution and display conversion. */
+enum class ImageTransfer {
+    PQ,
+    HLG,
+    LINEAR,
+    SRGB,
+    GAIN_MAP,
+    ;
+
+    companion object {
+        internal fun fromCicp(value: Int?): ImageTransfer? = when (value) {
+            16 -> PQ
+            18 -> HLG
+            8 -> LINEAR
+            13 -> SRGB
+            else -> null
+        }
+
+        internal fun fromColorSpace(colorSpace: ColorSpace?): ImageTransfer? = (colorSpace as? ColorSpace.Rgb)?.transferParameters?.let {
+            if (it.g == 1.0 && it.a == 1.0 && it.b == 0.0 && it.e == 0.0 && it.f == 0.0 && (it.d == 0.0 || it.c == 1.0)) {
+                LINEAR
+            } else {
+                null
+            }
+        }
+    }
+}
+
+/** The framework has no display string for a transfer curve; retain its actual coefficients. */
+internal fun ColorSpace?.rawTransferDescription(): String? = (this as? ColorSpace.Rgb)?.transferParameters?.let {
+    "a=${it.a}, b=${it.b}, c=${it.c}, d=${it.d}, e=${it.e}, f=${it.f}, g=${it.g}"
+}
+
+/** Original encoded metadata; color tags may fall back to the decoded bitmap when unavailable. */
 data class ImageMetadata(
     val width: Int? = null,
     val height: Int? = null,
     val bitDepth: Int? = null,
     val colorSpace: String? = null,
     val hdr: Boolean? = null,
+    val transfer: ImageTransfer? = null,
+    val rawTransfer: String? = null,
     val date: Long? = null,
     val cameraModel: String? = null,
     val exposureSeconds: Double? = null,
@@ -73,7 +108,8 @@ internal fun ImageSource.readMetadata(fileDate: Long? = null, fileName: String? 
     val depth = encodedBitDepth(header) ?: heif?.bitDepth ?: exif?.getAttribute(ExifInterface.TAG_BITS_PER_SAMPLE)
         ?.split(',')?.mapNotNull { it.trim().toIntOrNull() }?.maxOrNull()
     val headerText = header.toString(Charsets.ISO_8859_1)
-    val gainmap = listOf("hdrgm:", "HDRGainMap", "GainMap", "urn:com:apple:photo:2020:aux:hdrgainmap").any { it in headerText }
+    val gainmapMarker = listOf("hdrgm:", "HDRGainMap", "GainMap", "urn:com:apple:photo:2020:aux:hdrgainmap").firstOrNull { it in headerText }
+    val gainmap = gainmapMarker != null
     return ImageMetadata(
         width = bounds.outWidth.takeIf { it > 0 } ?: (nativeDimensions ushr 32).toInt().takeIf { it > 0 }
             ?: attributeInt(ExifInterface.TAG_PIXEL_X_DIMENSION) ?: attributeInt(ExifInterface.TAG_IMAGE_WIDTH)
@@ -82,12 +118,28 @@ internal fun ImageSource.readMetadata(fileDate: Long? = null, fileName: String? 
             ?: attributeInt(ExifInterface.TAG_PIXEL_Y_DIMENSION) ?: attributeInt(ExifInterface.TAG_IMAGE_LENGTH)
             ?: dimensions.toInt().takeIf { it > 0 },
         bitDepth = depth,
-        colorSpace = bounds.outColorSpace?.name ?: if (attributeInt(ExifInterface.TAG_COLOR_SPACE) == 1) "sRGB" else null,
+        // CICP primaries describe the source gamut independently of its transfer curve.
+        // BitmapFactory can report sRGB here for a BT.2020 AVIF with an sRGB transfer.
+        colorSpace = when (heif?.primaries) {
+            1 -> if (heif.transfer == 13) "sRGB" else "BT.709"
+            9 -> "BT.2020"
+            11 -> "DCI-P3"
+            12 -> "Display P3"
+            else -> bounds.outColorSpace?.name ?: if (attributeInt(ExifInterface.TAG_COLOR_SPACE) == 1) "sRGB" else null
+        },
         hdr = when {
             gainmap || heif?.transfer in listOf(16, 18) -> true
             heif?.transfer != null || bounds.outWidth > 0 -> false
             else -> null
         },
+        transfer = if (gainmap) {
+            ImageTransfer.GAIN_MAP
+        } else {
+            ImageTransfer.fromCicp(heif?.transfer)
+                ?: ImageTransfer.fromColorSpace(bounds.outColorSpace)
+        },
+        rawTransfer = gainmapMarker ?: heif?.transfer?.let { "CICP transfer $it" }
+            ?: bounds.outColorSpace.rawTransferDescription(),
         date = exif?.photoDate() ?: fileDate?.takeIf { it > 0 },
         cameraModel = exif?.getAttribute(ExifInterface.TAG_MODEL)?.trim()?.takeIf { it.isNotEmpty() },
         lensModel = exif?.getAttribute(ExifInterface.TAG_LENS_MODEL)?.trim()?.takeIf { it.isNotEmpty() },

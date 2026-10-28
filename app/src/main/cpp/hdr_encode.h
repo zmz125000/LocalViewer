@@ -13,11 +13,16 @@ struct StillEncodeQuality {
     int preset;
     float custom_distance;
     int custom_quality;
+    int custom_avif_depth;
+    bool custom_downsize_gain_map;
 
-    StillEncodeQuality(int p = 1, float distance = .5f, int quality = 90)
+    StillEncodeQuality(int p = 1, float distance = .5f, int quality = 90, int avif_depth = 10,
+                       bool downsize_gain_map = false)
         : preset(p < 0 ? 0 : p > 4 ? 4 : p),
           custom_distance(std::isfinite(distance) ? std::fmin(3.f, std::fmax(0.f, distance)) : .5f),
-          custom_quality(quality < 1 ? 1 : quality > 100 ? 100 : quality) {}
+          custom_quality(quality < 1 ? 1 : quality > 100 ? 100 : quality),
+          custom_avif_depth(avif_depth == 12 ? 12 : 10),
+          custom_downsize_gain_map(downsize_gain_map) {}
 
     int jpeg() const {
         constexpr int values[] = {95, 95, 90, 85};
@@ -32,6 +37,14 @@ struct StillEncodeQuality {
         return preset == 4 ? custom_distance : values[preset];
     }
     bool avif_lossless() const { return avif() == 100; }
+    unsigned avif_depth() const { return preset == 4 ? custom_avif_depth : (preset == 0 || preset == 1) ? 12 : 10; }
+    unsigned jpeg_gain_map_scale() const { return gain_map_scale(); }
+    unsigned avif_gain_map_scale() const { return gain_map_scale(); }
+
+private:
+    unsigned gain_map_scale() const {
+        return preset == 4 ? (custom_downsize_gain_map ? 2 : 1) : (preset == 2 || preset == 3) ? 2 : 1;
+    }
 };
 
 /** IEEE754 binary16 from float (round-to-nearest, portable). */
@@ -132,7 +145,7 @@ inline float half_to_float(uint16_t h) {
  * [sdr_base], when supplied, is opaque sRGB-transfer RGBA8 in the same primaries
  * and dimensions. RAW uses its camera-look render before HDR highlight expansion.
  * [quality]: 0/1/2/3 use JPEG Q95/Q95/Q90/Q85 (lossless/high/mid/low).
- * Exports use 4:4:4; low quality downsizes the gain map by 4.
+ * Exports use 4:4:4; Mid and Low halve gain-map dimensions.
  * The primary image dimensions, gamut and HDR capacity remain unchanged.
  *
  * @return 0 on success.
@@ -231,6 +244,16 @@ inline const std::vector<uint8_t>& half_srgb_u8_table() {
 
 inline uint8_t half_to_srgb_u8(uint16_t code) { return half_srgb_u8_table()[code]; }
 
+/** Linear sRGB/BT.709 D65 -> BT.2020 D65. Keep signed input until after this matrix. */
+inline void linear_bt709_to_bt2020(float& r, float& g, float& b) {
+    const float nr = 0.627403896f * r + 0.329283038f * g + 0.043313066f * b;
+    const float ng = 0.069097289f * r + 0.919540395f * g + 0.011362316f * b;
+    const float nb = 0.016391439f * r + 0.088013308f * g + 0.895595253f * b;
+    r = nr;
+    g = ng;
+    b = nb;
+}
+
 // ── Linear RGB gamut rematrix (D65, no CAT) ─────────────────────────────────
 //
 // Built as:  M = XYZ_to_linear_sRGB × source_to_XYZ
@@ -319,7 +342,7 @@ int encode_jxl_u8(unsigned w, unsigned h, const uint8_t* rgba, uhdr_color_gamut_
 
 /** AVIF: mode 0 SDR, 1 PQ, 2 ISO 21496-1 SDR base + HDR gain map.
  * F16 is linear, straight alpha, with 1.0 = 203 nits; sdr_base is optional RGBA8.
- * Deep sources use 10 bits, or 12 bits for the lossless preset, with 4:4:4 sampling.
+ * Deep sources use 12 bits for Lossless/High, 10 for Mid/Low, or the custom depth, with 4:4:4 sampling.
  */
 int encode_avif_f16(unsigned w, unsigned h, uint16_t* rgba, uhdr_color_gamut_t cg,
                     int mode, const char* path, StillEncodeQuality quality, const uint8_t* sdr_base = nullptr);

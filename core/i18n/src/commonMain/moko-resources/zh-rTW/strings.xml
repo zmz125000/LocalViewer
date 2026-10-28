@@ -122,6 +122,8 @@
     <string name="settings_open_html_in_incognito">無痕模式開啟</string>
     <string name="settings_open_html_in_incognito_summary">開啟：單擊 HTML 用 Chrome 無痕分頁開啟。關閉：使用預設瀏覽器。</string>
     <string name="image_conversion_quality">影像轉換品質</string>
+    <string name="image_conversion_extended_srgb_bt2020">將 scRGB 轉為 BT.2020</string>
+    <string name="image_conversion_extended_srgb_bt2020_summary">匯出 scRGB JXR / JXL 時保留廣色域色彩。</string>
     <string name="image_conversion_quality_lossless">無損</string>
     <string name="image_conversion_quality_high">高</string>
     <string name="image_conversion_quality_mid">中</string>
@@ -132,6 +134,10 @@
     <string name="image_conversion_jxl_distance">JPEG XL 距離</string>
     <string name="image_conversion_jxl_distance_summary">距離越低，品質越高；0 為無損。</string>
     <string name="image_conversion_custom_codec_quality">JPEG / AVIF 品質</string>
+    <string name="image_conversion_avif_12_bit">12 位元 AVIF</string>
+    <string name="image_conversion_avif_12_bit_summary">高位元深度來源使用 12 位元而非 10 位元輸出。8 位元輸出保持不變。</string>
+    <string name="image_conversion_downsize_gain_map">縮小 JPEG / AVIF 增益圖</string>
+    <string name="image_conversion_downsize_gain_map_summary">增益圖像素數為原來的 1/4（寬高各為 1/2），基礎影像保持原尺寸。</string>
     <string name="raw_hdr_conversion">RAW HDR 轉換</string>
     <string name="raw_hdr_conversion_summary">%1$s</string>
     <string name="browse_ask_where_to_save">詢問儲存位置</string>
@@ -871,6 +877,7 @@
     <string name="browse_selection">選擇</string>
     <string name="browse_task">任務</string>
     <string name="browse_task_progress_in_folder">%1$s - %2$s</string>
+    <string name="browse_task_progress_finished">%1$s 已完成</string>
     <string name="browse_tasks">任務</string>
     <string name="browse_pending">等待中</string>
     <string name="browse_finished">已完成</string>
@@ -1149,6 +1156,9 @@
     <string name="pref_dual_page_slideshow">雙頁（幻燈片）</string>
     <string name="pref_slideshow_screen_widget">螢幕小工具</string>
     <string name="pref_screen_widget_options">小工具選項</string>
+    <string name="pref_screen_widget_auto_align">自動對齊</string>
+    <string name="pref_screen_widget_raw_strings">使用原始字串</string>
+    <string name="pref_screen_widget_file_name">檔案名稱</string>
     <string name="pref_screen_widget_none">無</string>
     <string name="pref_screen_widget_clock">時鐘</string>
     <string name="pref_screen_widget_exif">EXIF</string>
@@ -1160,6 +1170,8 @@
     <string name="pref_slideshow_show_exif_info">EXIF 資訊</string>
     <string name="pref_slideshow_show_lens_model">鏡頭型號</string>
     <string name="slideshow_info_bit_depth">%1$d 位元</string>
+    <string name="slideshow_info_transfer_linear">線性</string>
+    <string name="slideshow_info_transfer_gain_map">增益圖</string>
     <string name="slideshow_info_focal_length">%1$s mm</string>
     <string name="pref_slideshow_scroll_speed">捲動速度</string>
     <string name="pref_slideshow_scroll_speed_photo_time">自動</string>

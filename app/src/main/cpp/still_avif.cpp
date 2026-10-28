@@ -1,5 +1,6 @@
 #include "hdr_encode.h"
 #include "hdr_parallel.h"
+#include "ultrahdr/icc.h"
 
 #include <android/log.h>
 #include <avif/avif.h>
@@ -22,6 +23,18 @@ struct EncodedBytes {
 avifColorPrimaries primaries(uhdr_color_gamut_t gamut) {
     return gamut == UHDR_CG_BT_2100 ? AVIF_COLOR_PRIMARIES_BT2020 :
            gamut == UHDR_CG_DISPLAY_P3 ? AVIF_COLOR_PRIMARIES_SMPTE432 : AVIF_COLOR_PRIMARIES_BT709;
+}
+
+bool set_sdr_profile(avifImage* image, uhdr_color_gamut_t gamut) {
+    // CICP alone cannot describe BT.2020 + sRGB to every platform decoder.
+    // Embed the profile of the *encoded* pixels, not the original source ICC:
+    // the source TRC has already been converted to sRGB by this encoder.
+    auto profile = ultrahdr::IccHelper::writeIccProfile(UHDR_CT_SRGB, gamut);
+    if (!profile || profile->getLength() <= ultrahdr::kICCIdentifierSize) return false;
+    // IccHelper returns a JPEG APP2 payload. AVIF needs the bare ICC profile.
+    return avifImageSetProfileICC(image,
+        static_cast<const uint8_t*>(profile->getData()) + ultrahdr::kICCIdentifierSize,
+        profile->getLength() - ultrahdr::kICCIdentifierSize) == AVIF_RESULT_OK;
 }
 
 Image make_image(unsigned w, unsigned h, unsigned depth, uhdr_color_gamut_t gamut, bool pq, StillEncodeQuality quality) {
@@ -79,6 +92,7 @@ int encode_avif_u8(unsigned w, unsigned h, const uint8_t* rgba, uhdr_color_gamut
     if (!rgba || !path || !w || !h) return -70;
     auto image = make_image(w, h, 8, gamut, false, quality);
     if (!image) return -71;
+    if (!set_sdr_profile(image.get(), gamut)) return -77;
     auto rgb = rgb_view(image.get(), const_cast<uint8_t*>(rgba), 8, 1);
     if (avifImageRGBToYUV(image.get(), &rgb) != AVIF_RESULT_OK) return -75;
     return write_avif(image.get(), path, quality);
@@ -90,10 +104,13 @@ int encode_avif_f16(unsigned w, unsigned h, uint16_t* rgba, uhdr_color_gamut_t g
     const size_t pixels = static_cast<size_t>(w) * h;
     const bool pq = mode == 1;
     const bool gain_map = mode == 2;
-    const unsigned depth = quality.avif_lossless() ? 12 : 10;
+    const unsigned depth = quality.avif_depth();
     const unsigned maximum = (1u << depth) - 1;
     auto image = make_image(w, h, depth, gamut, pq, quality);
     if (!image) return -71;
+    // PQ and ISO gain maps use their CICP/HDR metadata contracts. A base ICC
+    // would also make libavif's ISO gain-map reconstruction unsupported.
+    if (!pq && !gain_map && !set_sdr_profile(image.get(), gamut)) return -77;
 
     // Table transforms avoid per-pixel pow calls. Sanitize linear HDR for both
     // gain-map computation and luminance metadata; this buffer belongs to export.
@@ -148,8 +165,11 @@ int encode_avif_f16(unsigned w, unsigned h, uint16_t* rgba, uhdr_color_gamut_t g
     if (gain_map) {
         image->gainMap = avifGainMapCreate();
         if (!image->gainMap) return -71;
-        // Equal-sized map avoids libavif's optional libyuv scaling dependency.
-        image->gainMap->image = avifImageCreate(w, h, depth, AVIF_PIXEL_FORMAT_YUV444);
+        // Compute metadata from the full images; libavif then box-filters the
+        // map to the requested size using its bundled scaling implementation.
+        const unsigned scale = quality.avif_gain_map_scale();
+        image->gainMap->image = avifImageCreate((w + scale - 1) / scale, (h + scale - 1) / scale,
+                                               depth, AVIF_PIXEL_FORMAT_YUV444);
         if (!image->gainMap->image) return -71;
         image->gainMap->image->matrixCoefficients = quality.avif_lossless() ?
             AVIF_MATRIX_COEFFICIENTS_IDENTITY : AVIF_MATRIX_COEFFICIENTS_BT709;

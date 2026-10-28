@@ -243,6 +243,10 @@ class Image private constructor(
         bm?.prepareToDraw()
     }
 
+    /** Color tag fallback for formats without platform header metadata, including JXR/JXL. */
+    internal val decodedColorSpace: ColorSpace?
+        get() = (innerImage as? BitmapImage)?.bitmap?.colorSpace
+
     private fun bitmapIsWideGamut(image: CoilImage): Boolean {
         if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.O) return false
         val bm = when (image) {
@@ -868,6 +872,7 @@ class Image private constructor(
          * (no Coil / UHDR JPEG). Closes [src] when the image is retained.
          */
         fun fromLibDirect(result: LibDirectResult, src: ImageSource, attachHeifGainMap: Boolean = false): Image {
+            val decodedColorSpace = result.bitmap.colorSpace
             val shown = result.bitmap.presentForReader()
             var coil: CoilImage = shown.asImage()
             // Native ISO AVIF can now retain its base + Gainmap instead of a
@@ -890,7 +895,16 @@ class Image private constructor(
                 isHdrContentDirect = result.isHdrContent,
                 contentHdrBoostOverride = if (coil is BitmapImageWithExtraInfo && coil.hasGainmap) null else result.contentHdrBoost,
                 isWideGamutDirect = result.isWideGamutSource,
-            ).also { it.prepareToDraw() }
+            ).also {
+                it.metadata = ImageMetadata(
+                    colorSpace = decodedColorSpace?.name,
+                    hdr = result.isHdrContent,
+                    transfer = ImageTransfer.fromCicp(result.sourceTransfer) ?: ImageTransfer.fromColorSpace(decodedColorSpace),
+                    rawTransfer = result.sourceTransfer.takeIf { code -> code != 0 }?.let { code -> "CICP transfer $code" }
+                        ?: decodedColorSpace.rawTransferDescription(),
+                )
+                it.prepareToDraw()
+            }
         }
 
         /**

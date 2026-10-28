@@ -86,5 +86,11 @@ fun StillExportTarget.mimeType(): String = when (this) {
 fun stillExportFileName(sourceName: String, target: StillExportTarget): String {
     val leaf = sourceName.substringAfterLast('/').substringAfterLast('\\')
     val stem = FileUtils.getNameFromFilename(leaf)?.takeIf { it.isNotBlank() } ?: "image"
-    return FileUtils.sanitizeFilename("$stem.${target.fileExtension()}")
+    val type = when (target) {
+        StillExportTarget.Jpeg, StillExportTarget.Jxl, StillExportTarget.Avif -> "sdr"
+        StillExportTarget.JpegHdr, StillExportTarget.AvifGainMap -> "gainmap"
+        StillExportTarget.JxlPq, StillExportTarget.AvifPq -> "pq"
+        StillExportTarget.JxlHdr -> "linear"
+    }
+    return FileUtils.sanitizeFilename("${stem}_$type.${target.fileExtension()}")
 }

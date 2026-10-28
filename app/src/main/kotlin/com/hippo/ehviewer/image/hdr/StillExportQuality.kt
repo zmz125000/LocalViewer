@@ -10,6 +10,9 @@ internal class StillExportQuality(
     val jxlDistance: Float,
     val codecQuality: Int,
     val jpegTranscoding: Boolean,
+    val avifBitDepth: Int = 10,
+    val downsizeGainMap: Boolean = false,
+    val extendedSrgbBt2020: Boolean = true,
 ) : AbstractCoroutineContextElement(Key) {
     companion object Key : CoroutineContext.Key<StillExportQuality> {
         fun current() = StillExportQuality(
@@ -17,6 +20,9 @@ internal class StillExportQuality(
             Settings.imageConversionJxlDistance.value.coerceIn(0, 300) / 100f,
             Settings.imageConversionCustomQuality.value.coerceIn(1, 100),
             Settings.imageConversionJxlJpegTranscoding.value,
+            if (Settings.imageConversionAvif12Bit.value) 12 else 10,
+            Settings.imageConversionDownsizeGainMap.value,
+            Settings.imageConversionExtendedSrgbBt2020.value,
         )
     }
 }

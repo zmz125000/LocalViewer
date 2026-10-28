@@ -132,6 +132,8 @@
     <string name="settings_open_html_in_incognito">Open in incognito</string>
     <string name="settings_open_html_in_incognito_summary">On: tap HTML opens a Chrome incognito tab. Off: default browser.</string>
     <string name="image_conversion_quality">Image conversion quality</string>
+    <string name="image_conversion_extended_srgb_bt2020">Convert scRGB to BT.2020</string>
+    <string name="image_conversion_extended_srgb_bt2020_summary">Preserve wide-gamut colors when exporting scRGB JXR / JXL.</string>
     <string name="image_conversion_quality_lossless">Lossless</string>
     <string name="image_conversion_quality_high">High</string>
     <string name="image_conversion_quality_mid">Mid</string>
@@ -142,6 +144,10 @@
     <string name="image_conversion_jxl_distance">JPEG XL distance</string>
     <string name="image_conversion_jxl_distance_summary">Lower distance means higher quality; 0 is lossless.</string>
     <string name="image_conversion_custom_codec_quality">JPEG / AVIF quality</string>
+    <string name="image_conversion_avif_12_bit">12-bit AVIF</string>
+    <string name="image_conversion_avif_12_bit_summary">Use 12-bit instead of 10-bit for high-depth sources. 8-bit output stays unchanged.</string>
+    <string name="image_conversion_downsize_gain_map">Downsize JPEG / AVIF gain maps</string>
+    <string name="image_conversion_downsize_gain_map_summary">Use 1/4 of the gain-map pixels (half width and height). The base image stays full size.</string>
     <string name="raw_hdr_conversion">RAW HDR conversion</string>
     <string name="raw_hdr_conversion_summary">%1$s</string>
     <string name="browse_task_progress_for_item">%1$s · %2$s</string>
@@ -1165,6 +1171,7 @@
     <string name="browse_selection">Selection</string>
     <string name="browse_task">Task</string>
     <string name="browse_task_progress_in_folder">%1$s - %2$s</string>
+    <string name="browse_task_progress_finished">%1$s finished</string>
     <string name="browse_tasks">Tasks</string>
     <string name="browse_pending">Pending</string>
     <string name="browse_finished">Finished</string>
@@ -1311,6 +1318,9 @@
     <string name="pref_slideshow_relative_scroll_speed">Relative scroll speed</string>
     <string name="pref_slideshow_screen_widget">Screen widget</string>
     <string name="pref_screen_widget_options">Widget options</string>
+    <string name="pref_screen_widget_auto_align">Auto align</string>
+    <string name="pref_screen_widget_raw_strings">Use raw string</string>
+    <string name="pref_screen_widget_file_name">File name</string>
     <string name="pref_screen_widget_none">None</string>
     <string name="pref_screen_widget_clock">Clock</string>
     <string name="pref_screen_widget_exif">EXIF</string>
@@ -1322,6 +1332,8 @@
     <string name="pref_slideshow_show_exif_info">EXIF info</string>
     <string name="pref_slideshow_show_lens_model">Lens model</string>
     <string name="slideshow_info_bit_depth">%1$d-bit</string>
+    <string name="slideshow_info_transfer_linear">Linear</string>
+    <string name="slideshow_info_transfer_gain_map">Gain Map</string>
     <string name="slideshow_info_focal_length">%1$s mm</string>
     <string name="pref_slideshow_scroll_speed">Scroll speed</string>
     <string name="pref_slideshow_scroll_speed_photo_time">Auto</string>

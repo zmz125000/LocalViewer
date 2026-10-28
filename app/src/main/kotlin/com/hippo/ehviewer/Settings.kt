@@ -768,11 +768,14 @@ object Settings : DataStorePreferences(null) {
 
     /** 0 lossless (JPEG Q95), 1 high (Q95), 2 mid (Q90), 3 low (Q85), 4 custom. JPEG always uses 4:4:4. */
     val imageConversionQuality = intPref("image_conversion_quality", 2)
+    val imageConversionExtendedSrgbBt2020 = boolPref("image_conversion_scrgb_bt2020", true)
     val imageConversionJxlJpegTranscoding = boolPref("image_conversion_jxl_jpeg_transcoding", false)
 
     // JXL distance in hundredths: 0 is lossless; lower distances retain more detail.
     val imageConversionJxlDistance = intPref("image_conversion_jxl_distance", 100)
     val imageConversionCustomQuality = intPref("image_conversion_custom_quality", 90)
+    val imageConversionAvif12Bit = boolPref("image_conversion_avif_12_bit", false)
+    val imageConversionDownsizeGainMap = boolPref("image_conversion_downsize_gain_map", false)
 
     /** RAW HDR exports: 0 source headroom, 1 default controls boost, 2 current controls. */
     val rawHdrConversionMode = intPref("raw_hdr_conversion_mode", 1)
@@ -1259,6 +1262,9 @@ object Settings : DataStorePreferences(null) {
     val readerShowColorSpace = boolPref("reader_show_color_space", true)
     val readerShowExifInfo = boolPref("reader_show_exif_info", true)
     val readerShowLensModel = boolPref("reader_show_lens_model", false)
+    val readerUseRawColorStrings = boolPref("reader_use_raw_color_strings", false)
+    val readerShowFileName = boolPref("reader_show_file_name", false)
+    val readerWidgetAutoAlign = boolPref("reader_widget_auto_align", false)
 
     // 0=off, 1=top left, 2=top right, 3=bottom left, 4=bottom right, 5=random.
     // Keep the stored position when upgrading from the clock-only widget.
@@ -1269,6 +1275,9 @@ object Settings : DataStorePreferences(null) {
     val slideshowShowColorSpace = boolPref("slideshow_show_color_space", false)
     val slideshowShowExifInfo = boolPref("slideshow_show_exif_info", false)
     val slideshowShowLensModel = boolPref("slideshow_show_lens_model", false)
+    val slideshowUseRawColorStrings = boolPref("slideshow_use_raw_color_strings", false)
+    val slideshowShowFileName = boolPref("slideshow_show_file_name", false)
+    val slideshowWidgetAutoAlign = boolPref("slideshow_widget_auto_align", false)
 
     // -1 inherits the general auto-rotate mode; 0=off, 1=CW, 2=CCW.
     val slideshowAutoRotateOverride = intPref("slideshow_auto_rotate_override", -1)

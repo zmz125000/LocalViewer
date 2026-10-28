@@ -124,6 +124,8 @@
     <string name="settings_open_html_in_incognito">シークレットで開く</string>
     <string name="settings_open_html_in_incognito_summary">オン：HTML をタップすると Chrome のシークレットタブで開きます。オフ：標準ブラウザ。</string>
     <string name="image_conversion_quality">画像変換の画質</string>
+    <string name="image_conversion_extended_srgb_bt2020">scRGB を BT.2020 に変換</string>
+    <string name="image_conversion_extended_srgb_bt2020_summary">scRGB JXR / JXL の変換時に広色域の色を保持します。</string>
     <string name="image_conversion_quality_lossless">可逆圧縮</string>
     <string name="image_conversion_quality_high">高</string>
     <string name="image_conversion_quality_mid">中</string>
@@ -134,6 +136,10 @@
     <string name="image_conversion_jxl_distance">JPEG XL 距離</string>
     <string name="image_conversion_jxl_distance_summary">距離が小さいほど高画質です。0 は可逆圧縮です。</string>
     <string name="image_conversion_custom_codec_quality">JPEG / AVIF 画質</string>
+    <string name="image_conversion_avif_12_bit">12ビット AVIF</string>
+    <string name="image_conversion_avif_12_bit_summary">高ビット深度の入力を10ビットではなく12ビットで出力します。8ビット出力は変更しません。</string>
+    <string name="image_conversion_downsize_gain_map">JPEG / AVIF ゲインマップを縮小</string>
+    <string name="image_conversion_downsize_gain_map_summary">ゲインマップの画素数を1/4（幅と高さが各1/2）にします。ベース画像のサイズは維持します。</string>
     <string name="raw_hdr_conversion">RAW HDR 変換</string>
     <string name="raw_hdr_conversion_summary">%1$s</string>
     <string name="browse_ask_where_to_save">保存先を毎回確認</string>
@@ -1068,6 +1074,7 @@
     <string name="browse_selection">選択</string>
     <string name="browse_task">タスク</string>
     <string name="browse_task_progress_in_folder">%1$s - %2$s</string>
+    <string name="browse_task_progress_finished">%1$s 完了</string>
     <string name="browse_tasks">タスク</string>
     <string name="browse_pending">待機中</string>
     <string name="browse_finished">完了</string>
@@ -1108,6 +1115,9 @@
     <string name="pref_dual_page_slideshow">見開き表示（スライドショー）</string>
     <string name="pref_slideshow_screen_widget">画面ウィジェット</string>
     <string name="pref_screen_widget_options">ウィジェットのオプション</string>
+    <string name="pref_screen_widget_auto_align">自動配置</string>
+    <string name="pref_screen_widget_raw_strings">元の文字列を使用</string>
+    <string name="pref_screen_widget_file_name">ファイル名</string>
     <string name="pref_screen_widget_none">なし</string>
     <string name="pref_screen_widget_clock">時計</string>
     <string name="pref_screen_widget_exif">EXIF</string>
@@ -1119,6 +1129,8 @@
     <string name="pref_slideshow_show_exif_info">EXIF 情報</string>
     <string name="pref_slideshow_show_lens_model">レンズモデル</string>
     <string name="slideshow_info_bit_depth">%1$d ビット</string>
+    <string name="slideshow_info_transfer_linear">リニア</string>
+    <string name="slideshow_info_transfer_gain_map">ゲインマップ</string>
     <string name="slideshow_info_focal_length">%1$s mm</string>
     <string name="pref_slideshow_scroll_speed">スクロール速度</string>
     <string name="pref_slideshow_relative_scroll_speed">相対スクロール速度</string>

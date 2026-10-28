@@ -20,6 +20,7 @@ import com.hippo.ehviewer.image.HiResTier
 import com.hippo.ehviewer.image.Image
 import com.hippo.ehviewer.image.ImageMetadata
 import com.hippo.ehviewer.image.ImageSource
+import com.hippo.ehviewer.image.ImageTransfer
 import com.hippo.ehviewer.image.PathSource
 import com.hippo.ehviewer.image.byteBufferSource
 import com.hippo.ehviewer.image.hdr.DisplaySource
@@ -262,7 +263,29 @@ abstract class PageLoader(
                     forceOriginal = forceOriginal,
                 )
             }
-        image.metadata = metadata.copy(hdr = if (image.isHdrContent) true else metadata.hdr)
+        val transfer = when {
+            // A gain map describes HDR reconstruction; the base may still use sRGB.
+            image.hasGainmap || metadata.transfer == ImageTransfer.GAIN_MAP || image.metadata.transfer == ImageTransfer.GAIN_MAP -> ImageTransfer.GAIN_MAP
+            metadata.transfer == ImageTransfer.PQ || metadata.transfer == ImageTransfer.HLG -> metadata.transfer
+            image.metadata.transfer == ImageTransfer.PQ || image.metadata.transfer == ImageTransfer.HLG -> image.metadata.transfer
+            else -> metadata.transfer ?: image.metadata.transfer
+        }
+        image.metadata = metadata.copy(
+            colorSpace = metadata.colorSpace ?: image.metadata.colorSpace ?: image.decodedColorSpace?.name,
+            hdr = if (image.isHdrContent) {
+                true
+            } else {
+                metadata.hdr ?: image.metadata.hdr
+                    ?: image.decodedColorSpace?.let { false }
+            },
+            transfer = transfer,
+            rawTransfer = when {
+                transfer == ImageTransfer.GAIN_MAP -> metadata.rawTransfer.takeIf { metadata.transfer == ImageTransfer.GAIN_MAP } ?: "Gainmap"
+                transfer == metadata.transfer -> metadata.rawTransfer
+                transfer == image.metadata.transfer -> image.metadata.rawTransfer
+                else -> null
+            },
+        )
         // Compressed ramPages are only needed until decode. Keep them while this
         // index is still demanded (save / retry); drop as soon as the bitmap exists
         // if navigation already moved on.
