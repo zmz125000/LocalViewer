@@ -124,6 +124,8 @@
     <string name="settings_open_html_in_incognito">シークレットで開く</string>
     <string name="settings_open_html_in_incognito_summary">オン：HTML をタップすると Chrome のシークレットタブで開きます。オフ：標準ブラウザ。</string>
     <string name="image_conversion_quality">画像変換の画質</string>
+    <string name="image_conversion_extended_srgb_bt2020">scRGB を BT.2020 に変換</string>
+    <string name="image_conversion_extended_srgb_bt2020_summary">scRGB JXR / JXL の変換時に広色域の色を保持します。</string>
     <string name="image_conversion_quality_lossless">可逆圧縮</string>
     <string name="image_conversion_quality_high">高</string>
     <string name="image_conversion_quality_mid">中</string>

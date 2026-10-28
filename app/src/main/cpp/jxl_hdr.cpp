@@ -26,6 +26,7 @@
 
 #include "hdr_encode.h"
 #include "hdr_parallel.h"
+#include "reader_pixels.h"
 #include "skcms.h"
 #include "ultrahdr_api.h"
 #include "ultrahdr/icc.h"
@@ -187,7 +188,8 @@ bool is_linear_working_encoding(const JxlColorEncoding& src, uhdr_color_gamut_t 
 int decode_jxl_to_linear_f16(const uint8_t* data, size_t len, std::vector<uint16_t>& out_rgba,
                              unsigned& w, unsigned& h, uhdr_color_gamut_t* out_cg,
                              bool* out_force_hdr = nullptr, int* out_transfer_cicp = nullptr,
-                             bool composite_alpha_on_black = true, unsigned thumbnail_edge = 0) {
+                             bool composite_alpha_on_black = true, unsigned thumbnail_edge = 0,
+                             bool export_bt2020 = false) {
     if (out_cg) *out_cg = UHDR_CG_BT_709;
     if (out_force_hdr) *out_force_hdr = false;
     if (out_transfer_cicp) *out_transfer_cicp = 0;
@@ -320,6 +322,16 @@ int decode_jxl_to_linear_f16(const uint8_t* data, size_t len, std::vector<uint16
         return -13;
     }
 
+    // Floating-point linear sRGB can carry WCG through signed RGB, just like
+    // scRGB JXR. Convert before converted_sample clips negative channels. JXL's
+    // own intensity_target remains authoritative; do not apply JXR's 80-nit scale.
+    const bool to_bt2020 = export_bt2020 && info.exponent_bits_per_sample > 0 &&
+        cg == UHDR_CG_BT_709 && have_src && is_linear_working_encoding(src_encoding, cg);
+    if (to_bt2020) {
+        cg = UHDR_CG_BT_2100;
+        if (out_cg) *out_cg = cg;
+    }
+
     // BasicInfo.intensity_target: libjxl default for SDR is **255** nits — NOT HDR.
     const float intensity = info.intensity_target;
     const bool intensity_hdr = std::isfinite(intensity) && intensity >= 400.f;
@@ -355,6 +367,12 @@ int decode_jxl_to_linear_f16(const uint8_t* data, size_t len, std::vector<uint16
         float rl = r * scale;
         float gl = g * scale;
         float bl = b * scale;
+        if (to_bt2020) {
+            if (!std::isfinite(rl)) rl = 0.f;
+            if (!std::isfinite(gl)) gl = 0.f;
+            if (!std::isfinite(bl)) bl = 0.f;
+            linear_bt709_to_bt2020(rl, gl, bl);
+        }
         if (!std::isfinite(a) || a < 0.f) a = 0.f;
         if (a > 1.f) a = 1.f;
         if (composite_alpha_on_black && a < 1.f) {
@@ -582,7 +600,7 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeJxlBytesToDirect(JNIEnv* env, jcl
                                                                 jbyteArray jInput, jint maxEdge,
                                                                 jboolean advancedColor,
                                                                 jintArray jOutInfo,
-                                                                jfloatArray jOutBoost) {
+                                                                jfloatArray jOutBoost, jboolean exportBt2020) {
     if (!jInput || !jOutInfo || !jOutBoost) return nullptr;
     if (env->GetArrayLength(jOutInfo) < 6 || env->GetArrayLength(jOutBoost) < 1) return nullptr;
     const jsize len = env->GetArrayLength(jInput);
@@ -598,7 +616,8 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeJxlBytesToDirect(JNIEnv* env, jcl
     jbyteArray result = nullptr;
     int rc = decode_jxl_to_linear_f16(reinterpret_cast<const uint8_t*>(bytes),
                                       static_cast<size_t>(len), rgba, w, h, &cg, &force_hdr,
-                                      &transfer_cicp, /*composite_alpha_on_black=*/false);
+                                      &transfer_cicp, /*composite_alpha_on_black=*/false, 0,
+                                      exportBt2020 == JNI_TRUE && export_pixels_capture());
     if (rc == 0) {
         if (maxEdge > 0) {
             scale_rgba_f16_max_edge(rgba, w, h, static_cast<unsigned>(maxEdge));
@@ -619,7 +638,7 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeJxlBufferToDirect(JNIEnv* env, jc
                                                                 jobject jInput, jint maxEdge,
                                                                 jboolean advancedColor,
                                                                 jintArray jOutInfo,
-                                                                jfloatArray jOutBoost) try {
+                                                                jfloatArray jOutBoost, jboolean exportBt2020) try {
     if (!jInput || !jOutInfo || !jOutBoost) return nullptr;
     if (env->GetArrayLength(jOutInfo) < 6 || env->GetArrayLength(jOutBoost) < 1) return nullptr;
     const jlong len = env->GetDirectBufferCapacity(jInput);
@@ -634,7 +653,8 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeJxlBufferToDirect(JNIEnv* env, jc
     jbyteArray result = nullptr;
     int rc = decode_jxl_to_linear_f16(reinterpret_cast<const uint8_t*>(bytes),
                                       static_cast<size_t>(len), rgba, w, h, &cg, &force_hdr,
-                                      &transfer_cicp, /*composite_alpha_on_black=*/false);
+                                      &transfer_cicp, /*composite_alpha_on_black=*/false, 0,
+                                      exportBt2020 == JNI_TRUE && export_pixels_capture());
     if (rc == 0) {
         if (maxEdge > 0) {
             scale_rgba_f16_max_edge(rgba, w, h, static_cast<unsigned>(maxEdge));
