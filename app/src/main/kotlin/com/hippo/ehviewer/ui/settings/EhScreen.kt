@@ -262,6 +262,14 @@ fun AnimatedVisibilityScope.EhScreen(navigator: DestinationsNavigator) = Screen(
                         maxValue = 100,
                         state = Settings.imageConversionCustomQuality.asMutableState(),
                     )
+                    SwitchPreference(
+                        title = stringResource(R.string.image_conversion_avif_12_bit),
+                        state = Settings.imageConversionAvif12Bit.asMutableState(),
+                    )
+                    SwitchPreference(
+                        title = stringResource(R.string.image_conversion_downsize_gain_map),
+                        state = Settings.imageConversionDownsizeGainMap.asMutableState(),
+                    )
                 }
             }
             val rawHdrMode = Settings.rawHdrConversionMode.asMutableState()

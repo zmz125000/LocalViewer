@@ -773,6 +773,8 @@ object Settings : DataStorePreferences(null) {
     // JXL distance in hundredths: 0 is lossless; lower distances retain more detail.
     val imageConversionJxlDistance = intPref("image_conversion_jxl_distance", 100)
     val imageConversionCustomQuality = intPref("image_conversion_custom_quality", 90)
+    val imageConversionAvif12Bit = boolPref("image_conversion_avif_12_bit", false)
+    val imageConversionDownsizeGainMap = boolPref("image_conversion_downsize_gain_map", false)
 
     /** RAW HDR exports: 0 source headroom, 1 default controls boost, 2 current controls. */
     val rawHdrConversionMode = intPref("raw_hdr_conversion_mode", 1)

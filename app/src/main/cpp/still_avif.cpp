@@ -104,7 +104,7 @@ int encode_avif_f16(unsigned w, unsigned h, uint16_t* rgba, uhdr_color_gamut_t g
     const size_t pixels = static_cast<size_t>(w) * h;
     const bool pq = mode == 1;
     const bool gain_map = mode == 2;
-    const unsigned depth = quality.avif_lossless() ? 12 : 10;
+    const unsigned depth = quality.avif_depth();
     const unsigned maximum = (1u << depth) - 1;
     auto image = make_image(w, h, depth, gamut, pq, quality);
     if (!image) return -71;
@@ -165,8 +165,11 @@ int encode_avif_f16(unsigned w, unsigned h, uint16_t* rgba, uhdr_color_gamut_t g
     if (gain_map) {
         image->gainMap = avifGainMapCreate();
         if (!image->gainMap) return -71;
-        // Equal-sized map avoids libavif's optional libyuv scaling dependency.
-        image->gainMap->image = avifImageCreate(w, h, depth, AVIF_PIXEL_FORMAT_YUV444);
+        // Compute metadata from the full images; libavif then box-filters the
+        // map to the requested size using its bundled scaling implementation.
+        const unsigned scale = quality.avif_gain_map_scale();
+        image->gainMap->image = avifImageCreate((w + scale - 1) / scale, (h + scale - 1) / scale,
+                                               depth, AVIF_PIXEL_FORMAT_YUV444);
         if (!image->gainMap->image) return -71;
         image->gainMap->image->matrixCoefficients = quality.avif_lossless() ?
             AVIF_MATRIX_COEFFICIENTS_IDENTITY : AVIF_MATRIX_COEFFICIENTS_BT709;
