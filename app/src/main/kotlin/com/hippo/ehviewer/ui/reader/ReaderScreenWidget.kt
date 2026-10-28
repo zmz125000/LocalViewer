@@ -141,6 +141,7 @@ internal fun BoxScope.ReaderScreenWidget(page: Page?, slideshow: Boolean, source
                 val transfer = when (metadata.transfer) {
                     ImageTransfer.PQ -> "PQ"
                     ImageTransfer.HLG -> "HLG"
+                    ImageTransfer.SRGB -> "sRGB"
                     ImageTransfer.LINEAR -> stringResource(R.string.slideshow_info_transfer_linear)
                     ImageTransfer.GAIN_MAP -> stringResource(R.string.slideshow_info_transfer_gain_map)
                     null -> null

@@ -38,12 +38,13 @@ class HeifPrecisionTest {
     @Test
     fun primaryPrecisionAndTransferIgnoreTheAuxiliaryImage() {
         val bytes = container(
-            listOf(pixi(8), pixi(10), color(13), color(16)),
+            listOf(pixi(8), pixi(10), color(13, primaries = 9), color(16, primaries = 12)),
             listOf(2 to listOf(2, 4), 1 to listOf(1, 3)),
         )
         val info = HeifPrecisionProbe.probe(bytes)!!
         assertEquals(8, info.bitDepth)
         assertEquals(13, info.transfer)
+        assertEquals(9, info.primaries)
         assertFalse(info.highDepth)
         assertEquals(StillRoute.Platform, classify(bytes, fileNameHint = "photo.avif"))
     }
@@ -117,7 +118,7 @@ class HeifPrecisionTest {
     }
 
     private fun pixi(depth: Int) = box("pixi", ByteArray(4) + byteArrayOf(3, depth.toByte(), depth.toByte(), depth.toByte()))
-    private fun color(transfer: Int) = box("colr", "nclx".toByteArray() + u16(1) + u16(transfer) + u16(1) + byteArrayOf(0x80.toByte()))
+    private fun color(transfer: Int, primaries: Int = 1) = box("colr", "nclx".toByteArray() + u16(primaries) + u16(transfer) + u16(1) + byteArrayOf(0x80.toByte()))
     private fun u16(n: Int) = byteArrayOf((n ushr 8).toByte(), n.toByte())
     private fun u32(n: Int) = byteArrayOf((n ushr 24).toByte(), (n ushr 16).toByte(), (n ushr 8).toByte(), n.toByte())
     private fun box(type: String, bytes: ByteArray) = u32(bytes.size + 8) + type.toByteArray() + bytes

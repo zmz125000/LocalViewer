@@ -11,6 +11,7 @@ internal data class HeifPrecision(
     val chroma: Int? = null,
     /** AV1 seq_level_idx_0 from the primary item's av1C; 12 is Level 5.0, 16 is Level 6.0. */
     val av1Level: Int? = null,
+    val primaries: Int? = null,
 ) {
     val highDepth: Boolean get() = !animated && (bitDepth == null || bitDepth > 8)
     val needsSoftware: Boolean get() = !animated && if (avif) {
@@ -48,6 +49,7 @@ internal object HeifPrecisionProbe {
     private data class Property(
         val depth: Int? = null,
         val transfer: Int? = null,
+        val primaries: Int? = null,
         val chroma: Int? = null,
         val av1Level: Int? = null,
         val width: Int? = null,
@@ -158,7 +160,10 @@ internal object HeifPrecisionProbe {
                                             depth = 8 + maxOf(u8(s + 17) and 7, u8(s + 18) and 7),
                                             chroma = u8(s + 16) and 3,
                                         )
-                                        property == "colr" && s + 11 <= propertyStop && type(s) == "nclx" -> Property(transfer = uint(s + 6, 2))
+                                        property == "colr" && s + 11 <= propertyStop && type(s) == "nclx" -> Property(
+                                            transfer = uint(s + 6, 2),
+                                            primaries = uint(s + 4, 2),
+                                        )
                                         else -> Property()
                                     }
                                 }
@@ -231,6 +236,7 @@ internal object HeifPrecisionProbe {
                 animated,
                 attached.firstNotNullOfOrNull { it.chroma },
                 attached.firstNotNullOfOrNull { it.av1Level },
+                primaries = attached.firstNotNullOfOrNull { it.primaries },
             )
         }
     }.getOrNull()
