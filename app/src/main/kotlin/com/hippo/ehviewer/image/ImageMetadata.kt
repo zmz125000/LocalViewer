@@ -20,6 +20,7 @@ enum class ImageTransfer {
     PQ,
     HLG,
     LINEAR,
+    SRGB,
     GAIN_MAP,
     ;
 
@@ -28,6 +29,7 @@ enum class ImageTransfer {
             16 -> PQ
             18 -> HLG
             8 -> LINEAR
+            13 -> SRGB
             else -> null
         }
 
@@ -109,7 +111,15 @@ internal fun ImageSource.readMetadata(fileDate: Long? = null, fileName: String? 
             ?: attributeInt(ExifInterface.TAG_PIXEL_Y_DIMENSION) ?: attributeInt(ExifInterface.TAG_IMAGE_LENGTH)
             ?: dimensions.toInt().takeIf { it > 0 },
         bitDepth = depth,
-        colorSpace = bounds.outColorSpace?.name ?: if (attributeInt(ExifInterface.TAG_COLOR_SPACE) == 1) "sRGB" else null,
+        // CICP primaries describe the source gamut independently of its transfer curve.
+        // BitmapFactory can report sRGB here for a BT.2020 AVIF with an sRGB transfer.
+        colorSpace = when (heif?.primaries) {
+            1 -> if (heif?.transfer == 13) "sRGB" else "BT.709"
+            9 -> "BT.2020"
+            11 -> "DCI-P3"
+            12 -> "Display P3"
+            else -> bounds.outColorSpace?.name ?: if (attributeInt(ExifInterface.TAG_COLOR_SPACE) == 1) "sRGB" else null
+        },
         hdr = when {
             gainmap || heif?.transfer in listOf(16, 18) -> true
             heif?.transfer != null || bounds.outWidth > 0 -> false
