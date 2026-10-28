@@ -271,7 +271,13 @@ abstract class PageLoader(
                 metadata.hdr ?: image.metadata.hdr
                     ?: image.decodedColorSpace?.let { false }
             },
-            transfer = metadata.transfer ?: image.metadata.transfer ?: ImageTransfer.GAIN_MAP.takeIf { image.hasGainmap },
+            transfer = when {
+                // A gain map describes HDR reconstruction; the base may still use sRGB.
+                image.hasGainmap || metadata.transfer == ImageTransfer.GAIN_MAP || image.metadata.transfer == ImageTransfer.GAIN_MAP -> ImageTransfer.GAIN_MAP
+                metadata.transfer == ImageTransfer.PQ || metadata.transfer == ImageTransfer.HLG -> metadata.transfer
+                image.metadata.transfer == ImageTransfer.PQ || image.metadata.transfer == ImageTransfer.HLG -> image.metadata.transfer
+                else -> metadata.transfer ?: image.metadata.transfer
+            },
         )
         // Compressed ramPages are only needed until decode. Keep them while this
         // index is still demanded (save / retry); drop as soon as the bitmap exists
