@@ -122,6 +122,8 @@
     <string name="settings_open_html_in_incognito">無痕模式開啟</string>
     <string name="settings_open_html_in_incognito_summary">開啟：單擊 HTML 用 Chrome 無痕分頁開啟。關閉：使用預設瀏覽器。</string>
     <string name="image_conversion_quality">影像轉換品質</string>
+    <string name="image_conversion_jxr_bt2020">將 scRGB JXR 轉為 BT.2020</string>
+    <string name="image_conversion_jxr_bt2020_summary">將 scRGB JXR 匯出為 JPEG、JPEG XL 或 AVIF 時保留廣色域色彩。</string>
     <string name="image_conversion_quality_lossless">無損</string>
     <string name="image_conversion_quality_high">高</string>
     <string name="image_conversion_quality_mid">中</string>

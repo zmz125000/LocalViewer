@@ -132,6 +132,8 @@
     <string name="settings_open_html_in_incognito">Open in incognito</string>
     <string name="settings_open_html_in_incognito_summary">On: tap HTML opens a Chrome incognito tab. Off: default browser.</string>
     <string name="image_conversion_quality">Image conversion quality</string>
+    <string name="image_conversion_jxr_bt2020">Convert scRGB JXR to BT.2020</string>
+    <string name="image_conversion_jxr_bt2020_summary">Preserve wide-gamut colors when exporting scRGB JXR to JPEG, JPEG XL or AVIF.</string>
     <string name="image_conversion_quality_lossless">Lossless</string>
     <string name="image_conversion_quality_high">High</string>
     <string name="image_conversion_quality_mid">Mid</string>

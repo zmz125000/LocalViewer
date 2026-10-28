@@ -238,6 +238,10 @@ fun AnimatedVisibilityScope.EhScreen(navigator: DestinationsNavigator) = Screen(
                 state = conversionQuality,
             )
             SwitchPreference(
+                title = stringResource(R.string.image_conversion_jxr_bt2020),
+                state = Settings.imageConversionJxrBt2020.asMutableState(),
+            )
+            SwitchPreference(
                 title = stringResource(R.string.image_conversion_jxl_jpeg_transcoding),
                 state = Settings.imageConversionJxlJpegTranscoding.asMutableState(),
             )
