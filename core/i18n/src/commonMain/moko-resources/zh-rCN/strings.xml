@@ -128,6 +128,10 @@
     <string name="image_conversion_jxl_distance">JPEG XL 距离</string>
     <string name="image_conversion_jxl_distance_summary">距离越低，质量越高；0 为无损。</string>
     <string name="image_conversion_custom_codec_quality">JPEG / AVIF 质量</string>
+    <string name="image_conversion_avif_12_bit">12 位 AVIF</string>
+    <string name="image_conversion_avif_12_bit_summary">高位深来源使用 12 位而非 10 位输出。8 位输出保持不变。</string>
+    <string name="image_conversion_downsize_gain_map">缩小 JPEG / AVIF 增益图</string>
+    <string name="image_conversion_downsize_gain_map_summary">增益图像素数为原来的 1/4（宽高各为 1/2），基础图像保持原尺寸。</string>
     <string name="raw_hdr_conversion">RAW HDR 转换</string>
     <string name="raw_hdr_conversion_summary">%1$s</string>
     <string name="browse_ask_where_to_save">询问保存位置</string>

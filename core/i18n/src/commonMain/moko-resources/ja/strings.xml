@@ -134,6 +134,10 @@
     <string name="image_conversion_jxl_distance">JPEG XL 距離</string>
     <string name="image_conversion_jxl_distance_summary">距離が小さいほど高画質です。0 は可逆圧縮です。</string>
     <string name="image_conversion_custom_codec_quality">JPEG / AVIF 画質</string>
+    <string name="image_conversion_avif_12_bit">12ビット AVIF</string>
+    <string name="image_conversion_avif_12_bit_summary">高ビット深度の入力を10ビットではなく12ビットで出力します。8ビット出力は変更しません。</string>
+    <string name="image_conversion_downsize_gain_map">JPEG / AVIF ゲインマップを縮小</string>
+    <string name="image_conversion_downsize_gain_map_summary">ゲインマップの画素数を1/4（幅と高さが各1/2）にします。ベース画像のサイズは維持します。</string>
     <string name="raw_hdr_conversion">RAW HDR 変換</string>
     <string name="raw_hdr_conversion_summary">%1$s</string>
     <string name="browse_ask_where_to_save">保存先を毎回確認</string>

@@ -1078,9 +1078,9 @@ int encode_linear_rgba_f16_to_uhdr(unsigned w, unsigned h, const uint16_t* rgba,
         uhdr_release_encoder(enc);
         return -6;
     }
-    // Keep the primary rendition at full size. Low quality reduces only the
-    // RGB gain map to one quarter of each dimension (one sixteenth the pixels).
-    err = uhdr_enc_set_gainmap_scale_factor(enc, quality.preset == 3 ? 4 : 1);
+    // Keep the primary rendition at full size. Mid/Low and the custom downsize
+    // toggle halve gain-map dimensions (one quarter of the pixels).
+    err = uhdr_enc_set_gainmap_scale_factor(enc, quality.jpeg_gain_map_scale());
     if (err.error_code != UHDR_CODEC_OK) {
         ALOGE("uhdr_enc_set_gainmap_scale_factor: %s", err.has_detail ? err.detail : "error");
         uhdr_release_encoder(enc);
@@ -1724,8 +1724,8 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_encodeNativeStillExport(JNIEnv* env, jc
                                                                jint width, jint height, jboolean f16,
                                                                jint gamut, jint mode, jboolean premultiplied,
                                                                jstring jOut, jint sdr_offset, jint quality, jfloat custom_distance, jint custom_quality,
-                                                               jint sdr_white_nits) {
-    if (sdr_white_nits != 80 && sdr_white_nits != 203) return -52;
+                                                               jint sdr_white_nits, jint avif_depth, jboolean downsize_gain_map) {
+    if ((sdr_white_nits != 80 && sdr_white_nits != 203) || (avif_depth != 10 && avif_depth != 12)) return -52;
     if (!jPixels || !jOut || width <= 0 || height <= 0 || sdr_offset < 0 || quality < 0 || quality > 4 ||
         (quality == 4 && (!std::isfinite(custom_distance) || custom_distance < 0.f || custom_distance > 3.f ||
                           custom_quality < 1 || custom_quality > 100))) return -52;
@@ -1738,7 +1738,8 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_encodeNativeStillExport(JNIEnv* env, jc
     const int rc = encode_still_export(pixels, static_cast<size_t>(length),
                                        static_cast<unsigned>(width), static_cast<unsigned>(height),
                                        f16 == JNI_TRUE, gamut, mode, premultiplied == JNI_TRUE,
-                                       out_path, static_cast<size_t>(sdr_offset), StillEncodeQuality(quality, custom_distance, custom_quality), true,
+                                       out_path, static_cast<size_t>(sdr_offset), StillEncodeQuality(quality, custom_distance, custom_quality, avif_depth,
+                                                          downsize_gain_map == JNI_TRUE), true,
                                        sdr_white_nits == 80);
     env->ReleaseStringUTFChars(jOut, out_path);
     return rc;
@@ -1749,8 +1750,8 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_encodeStillExport(JNIEnv* env, jclass, 
                                                            jint width, jint height, jboolean f16,
                                                            jint gamut, jint mode,
                                                            jboolean premultiplied, jstring jOut, jint sdr_offset,
-                                                           jint quality, jfloat custom_distance, jint custom_quality, jint sdr_white_nits) {
-    if (sdr_white_nits != 80 && sdr_white_nits != 203) return -52;
+                                                           jint quality, jfloat custom_distance, jint custom_quality, jint sdr_white_nits, jint avif_depth, jboolean downsize_gain_map) {
+    if ((sdr_white_nits != 80 && sdr_white_nits != 203) || (avif_depth != 10 && avif_depth != 12)) return -52;
     if (!jPixels || !jOut || width <= 0 || height <= 0 || sdr_offset < 0 || quality < 0 || quality > 4 ||
         (quality == 4 && (!std::isfinite(custom_distance) || custom_distance < 0.f || custom_distance > 3.f ||
                           custom_quality < 1 || custom_quality > 100))) return -52;
@@ -1767,7 +1768,8 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_encodeStillExport(JNIEnv* env, jclass, 
                                        static_cast<size_t>(len), static_cast<unsigned>(width),
                                        static_cast<unsigned>(height), f16 == JNI_TRUE, gamut, mode,
                                        premultiplied == JNI_TRUE, out_path, static_cast<size_t>(sdr_offset),
-                                       StillEncodeQuality(quality, custom_distance, custom_quality), false, sdr_white_nits == 80);
+                                       StillEncodeQuality(quality, custom_distance, custom_quality, avif_depth,
+                                                          downsize_gain_map == JNI_TRUE), false, sdr_white_nits == 80);
     env->ReleaseStringUTFChars(jOut, out_path);
     env->ReleaseByteArrayElements(jPixels, bytes, JNI_ABORT);
     return rc;
