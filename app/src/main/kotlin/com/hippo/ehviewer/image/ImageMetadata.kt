@@ -114,7 +114,7 @@ internal fun ImageSource.readMetadata(fileDate: Long? = null, fileName: String? 
         // CICP primaries describe the source gamut independently of its transfer curve.
         // BitmapFactory can report sRGB here for a BT.2020 AVIF with an sRGB transfer.
         colorSpace = when (heif?.primaries) {
-            1 -> if (heif?.transfer == 13) "sRGB" else "BT.709"
+            1 -> if (heif.transfer == 13) "sRGB" else "BT.709"
             9 -> "BT.2020"
             11 -> "DCI-P3"
             12 -> "Display P3"
