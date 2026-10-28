@@ -890,7 +890,10 @@ class Image private constructor(
                 isHdrContentDirect = result.isHdrContent,
                 contentHdrBoostOverride = if (coil is BitmapImageWithExtraInfo && coil.hasGainmap) null else result.contentHdrBoost,
                 isWideGamutDirect = result.isWideGamutSource,
-            ).also { it.prepareToDraw() }
+            ).also {
+                it.metadata = ImageMetadata(transfer = ImageTransfer.fromCicp(result.sourceTransfer))
+                it.prepareToDraw()
+            }
         }
 
         /**

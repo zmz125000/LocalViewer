@@ -1198,6 +1198,8 @@
     <string name="pref_slideshow_show_exif_info">EXIF 信息</string>
     <string name="pref_slideshow_show_lens_model">镜头型号</string>
     <string name="slideshow_info_bit_depth">%1$d 位</string>
+    <string name="slideshow_info_transfer_linear">线性</string>
+    <string name="slideshow_info_transfer_gain_map">增益图</string>
     <string name="slideshow_info_focal_length">%1$s mm</string>
     <string name="pref_slideshow_scroll_speed">滚动速度</string>
     <string name="pref_slideshow_scroll_speed_photo_time">自动</string>

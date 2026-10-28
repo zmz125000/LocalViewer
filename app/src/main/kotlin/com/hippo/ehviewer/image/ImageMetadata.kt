@@ -1,6 +1,7 @@
 package com.hippo.ehviewer.image
 
 import android.graphics.BitmapFactory
+import android.graphics.ColorSpace
 import android.os.ParcelFileDescriptor
 import androidx.exifinterface.media.ExifInterface
 import com.ehviewer.core.files.openFileDescriptor
@@ -15,6 +16,19 @@ import java.util.Locale
 import java.util.TimeZone
 import splitties.init.appCtx
 
+enum class ImageTransfer {
+    PQ, HLG, LINEAR, GAIN_MAP;
+
+    companion object {
+        internal fun fromCicp(value: Int?): ImageTransfer? = when (value) {
+            16 -> PQ
+            18 -> HLG
+            8 -> LINEAR
+            else -> null
+        }
+    }
+}
+
 /** Original encoded metadata, independent of preview resolution and display conversion. */
 data class ImageMetadata(
     val width: Int? = null,
@@ -22,6 +36,7 @@ data class ImageMetadata(
     val bitDepth: Int? = null,
     val colorSpace: String? = null,
     val hdr: Boolean? = null,
+    val transfer: ImageTransfer? = null,
     val date: Long? = null,
     val cameraModel: String? = null,
     val exposureSeconds: Double? = null,
@@ -88,6 +103,15 @@ internal fun ImageSource.readMetadata(fileDate: Long? = null, fileName: String? 
             heif?.transfer != null || bounds.outWidth > 0 -> false
             else -> null
         },
+        transfer = if (gainmap) ImageTransfer.GAIN_MAP else ImageTransfer.fromCicp(heif?.transfer)
+            ?: (bounds.outColorSpace as? ColorSpace.Rgb)?.transferParameters?.let {
+                // Check the encoded color space, never an F16 working-space conversion.
+                if (it.g == 1.0 && it.a == 1.0 && it.b == 0.0 && it.e == 0.0 && it.f == 0.0 && (it.d == 0.0 || it.c == 1.0)) {
+                    ImageTransfer.LINEAR
+                } else {
+                    null
+                }
+            },
         date = exif?.photoDate() ?: fileDate?.takeIf { it > 0 },
         cameraModel = exif?.getAttribute(ExifInterface.TAG_MODEL)?.trim()?.takeIf { it.isNotEmpty() },
         lensModel = exif?.getAttribute(ExifInterface.TAG_LENS_MODEL)?.trim()?.takeIf { it.isNotEmpty() },
