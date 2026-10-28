@@ -43,6 +43,11 @@ enum class ImageTransfer {
     }
 }
 
+/** The framework has no display string for a transfer curve; retain its actual coefficients. */
+internal fun ColorSpace?.rawTransferDescription(): String? = (this as? ColorSpace.Rgb)?.transferParameters?.let {
+    "a=${it.a}, b=${it.b}, c=${it.c}, d=${it.d}, e=${it.e}, f=${it.f}, g=${it.g}"
+}
+
 /** Original encoded metadata; color tags may fall back to the decoded bitmap when unavailable. */
 data class ImageMetadata(
     val width: Int? = null,
@@ -51,6 +56,7 @@ data class ImageMetadata(
     val colorSpace: String? = null,
     val hdr: Boolean? = null,
     val transfer: ImageTransfer? = null,
+    val rawTransfer: String? = null,
     val date: Long? = null,
     val cameraModel: String? = null,
     val exposureSeconds: Double? = null,
@@ -102,7 +108,8 @@ internal fun ImageSource.readMetadata(fileDate: Long? = null, fileName: String? 
     val depth = encodedBitDepth(header) ?: heif?.bitDepth ?: exif?.getAttribute(ExifInterface.TAG_BITS_PER_SAMPLE)
         ?.split(',')?.mapNotNull { it.trim().toIntOrNull() }?.maxOrNull()
     val headerText = header.toString(Charsets.ISO_8859_1)
-    val gainmap = listOf("hdrgm:", "HDRGainMap", "GainMap", "urn:com:apple:photo:2020:aux:hdrgainmap").any { it in headerText }
+    val gainmapMarker = listOf("hdrgm:", "HDRGainMap", "GainMap", "urn:com:apple:photo:2020:aux:hdrgainmap").firstOrNull { it in headerText }
+    val gainmap = gainmapMarker != null
     return ImageMetadata(
         width = bounds.outWidth.takeIf { it > 0 } ?: (nativeDimensions ushr 32).toInt().takeIf { it > 0 }
             ?: attributeInt(ExifInterface.TAG_PIXEL_X_DIMENSION) ?: attributeInt(ExifInterface.TAG_IMAGE_WIDTH)
@@ -131,6 +138,8 @@ internal fun ImageSource.readMetadata(fileDate: Long? = null, fileName: String? 
             ImageTransfer.fromCicp(heif?.transfer)
                 ?: ImageTransfer.fromColorSpace(bounds.outColorSpace)
         },
+        rawTransfer = gainmapMarker ?: heif?.transfer?.let { "CICP transfer $it" }
+            ?: bounds.outColorSpace.rawTransferDescription(),
         date = exif?.photoDate() ?: fileDate?.takeIf { it > 0 },
         cameraModel = exif?.getAttribute(ExifInterface.TAG_MODEL)?.trim()?.takeIf { it.isNotEmpty() },
         lensModel = exif?.getAttribute(ExifInterface.TAG_LENS_MODEL)?.trim()?.takeIf { it.isNotEmpty() },

@@ -263,6 +263,13 @@ abstract class PageLoader(
                     forceOriginal = forceOriginal,
                 )
             }
+        val transfer = when {
+            // A gain map describes HDR reconstruction; the base may still use sRGB.
+            image.hasGainmap || metadata.transfer == ImageTransfer.GAIN_MAP || image.metadata.transfer == ImageTransfer.GAIN_MAP -> ImageTransfer.GAIN_MAP
+            metadata.transfer == ImageTransfer.PQ || metadata.transfer == ImageTransfer.HLG -> metadata.transfer
+            image.metadata.transfer == ImageTransfer.PQ || image.metadata.transfer == ImageTransfer.HLG -> image.metadata.transfer
+            else -> metadata.transfer ?: image.metadata.transfer
+        }
         image.metadata = metadata.copy(
             colorSpace = metadata.colorSpace ?: image.metadata.colorSpace ?: image.decodedColorSpace?.name,
             hdr = if (image.isHdrContent) {
@@ -271,12 +278,12 @@ abstract class PageLoader(
                 metadata.hdr ?: image.metadata.hdr
                     ?: image.decodedColorSpace?.let { false }
             },
-            transfer = when {
-                // A gain map describes HDR reconstruction; the base may still use sRGB.
-                image.hasGainmap || metadata.transfer == ImageTransfer.GAIN_MAP || image.metadata.transfer == ImageTransfer.GAIN_MAP -> ImageTransfer.GAIN_MAP
-                metadata.transfer == ImageTransfer.PQ || metadata.transfer == ImageTransfer.HLG -> metadata.transfer
-                image.metadata.transfer == ImageTransfer.PQ || image.metadata.transfer == ImageTransfer.HLG -> image.metadata.transfer
-                else -> metadata.transfer ?: image.metadata.transfer
+            transfer = transfer,
+            rawTransfer = when {
+                transfer == ImageTransfer.GAIN_MAP -> metadata.rawTransfer.takeIf { metadata.transfer == ImageTransfer.GAIN_MAP } ?: "Gainmap"
+                transfer == metadata.transfer -> metadata.rawTransfer
+                transfer == image.metadata.transfer -> image.metadata.rawTransfer
+                else -> null
             },
         )
         // Compressed ramPages are only needed until decode. Keep them while this

@@ -1232,6 +1232,8 @@
     <string name="pref_slideshow_relative_scroll_speed">Relative scroll speed</string>
     <string name="pref_slideshow_screen_widget">Screen widget</string>
     <string name="pref_screen_widget_options">Widget options</string>
+    <string name="pref_screen_widget_raw_strings">Use raw string</string>
+    <string name="pref_screen_widget_file_name">File name</string>
     <string name="pref_screen_widget_none">None</string>
     <string name="pref_screen_widget_clock">Clock</string>
     <string name="pref_screen_widget_exif">EXIF</string>
