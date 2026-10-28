@@ -244,6 +244,16 @@ inline const std::vector<uint8_t>& half_srgb_u8_table() {
 
 inline uint8_t half_to_srgb_u8(uint16_t code) { return half_srgb_u8_table()[code]; }
 
+/** Linear sRGB/BT.709 D65 -> BT.2020 D65. Keep signed input until after this matrix. */
+inline void linear_bt709_to_bt2020(float& r, float& g, float& b) {
+    const float nr = 0.627403896f * r + 0.329283038f * g + 0.043313066f * b;
+    const float ng = 0.069097289f * r + 0.919540395f * g + 0.011362316f * b;
+    const float nb = 0.016391439f * r + 0.088013308f * g + 0.895595253f * b;
+    r = nr;
+    g = ng;
+    b = nb;
+}
+
 // ── Linear RGB gamut rematrix (D65, no CAT) ─────────────────────────────────
 //
 // Built as:  M = XYZ_to_linear_sRGB × source_to_XYZ

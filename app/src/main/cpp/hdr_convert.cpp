@@ -805,12 +805,7 @@ void rebase_untagged_scrgb(std::vector<uint16_t>& rgba, unsigned w, unsigned h, 
                 if (!std::isfinite(r)) r = 0.f;
                 if (!std::isfinite(g)) g = 0.f;
                 if (!std::isfinite(b)) b = 0.f;
-                const float nr = 0.627403896f * r + 0.329283038f * g + 0.043313066f * b;
-                const float ng = 0.069097289f * r + 0.919540395f * g + 0.011362316f * b;
-                const float nb = 0.016391439f * r + 0.088013308f * g + 0.895595253f * b;
-                r = nr;
-                g = ng;
-                b = nb;
+                linear_bt709_to_bt2020(r, g, b);
             }
             rgba[i * 4 + 0] = float_to_half(r * scale);
             rgba[i * 4 + 1] = float_to_half(g * scale);
