@@ -208,7 +208,7 @@ object LibDirectDecode {
         // slot once pixels are ready so encoding can overlap the next decode.
         val parallel = Settings.browseTaskParallel.value || Settings.heavyDecode.value >= HEAVY_DECODE_POOL
         val quality = currentCoroutineContext()[StillExportQuality] ?: StillExportQuality.current()
-        val request = ExportDecode(target, currentCoroutineContext()[RawExportControls] ?: RawExportControls.capture(target), quality.jxrBt2020)
+        val request = ExportDecode(target, currentCoroutineContext()[RawExportControls] ?: RawExportControls.capture(target), quality.extendedSrgbBt2020)
         var handle = 0L
         try {
             val pixels = heavyDecodeGate.run(parallel) {
@@ -231,7 +231,7 @@ object LibDirectDecode {
         }
     }
 
-    private data class ExportDecode(val target: StillExportTarget, val controls: RawExportControls, val jxrBt2020: Boolean)
+    private data class ExportDecode(val target: StillExportTarget, val controls: RawExportControls, val extendedSrgbBt2020: Boolean)
 
     /** HEVC thumbnail decode/encode under the caller's thumbnail slots and memory lease. */
     internal fun writeHeifThumbnail(src: ImageSource, maxEdge: Int, output: File, quality: Int): Boolean {
@@ -349,7 +349,7 @@ object LibDirectDecode {
             precision.avif -> LibCodec.AvifPq
             else -> LibCodec.HevcHdr
         }
-        return decodeNativePacked(src, codec, maxEdge, advanced, exportTarget != null, exportTarget?.jxrBt2020 == true)
+        return decodeNativePacked(src, codec, maxEdge, advanced, exportTarget != null, exportTarget?.extendedSrgbBt2020 == true)
     }
 
     private fun decodeNativePacked(
@@ -358,7 +358,7 @@ object LibDirectDecode {
         maxEdge: Int,
         advanced: Boolean,
         export: Boolean,
-        jxrBt2020: Boolean = false,
+        extendedSrgbBt2020: Boolean = false,
     ): PackedPixels? = withStillInput(src) { buffer ->
         if (!buffer.hasRemaining()) return@withStillInput null
         if (codec == LibCodec.HevcHdr) return@withStillInput decodeHevcHdrPacked(buffer, maxEdge, advanced, export)
@@ -371,8 +371,8 @@ object LibDirectDecode {
         val panelBoost = if (!export && codec == LibCodec.Jxr) jxrHighlightCap() else 1f
         val pixels = if (buffer.isDirect) {
             when (codec) {
-                LibCodec.Jxl -> decodeJxlBufferToDirect(buffer, maxEdge, advanced, outInfo, outBoost)
-                LibCodec.Jxr -> decodeJxrBufferToDirect(buffer, maxEdge, advanced, panelBoost, outInfo, outBoost, export && jxrBt2020)
+                LibCodec.Jxl -> decodeJxlBufferToDirect(buffer, maxEdge, advanced, outInfo, outBoost, export && extendedSrgbBt2020)
+                LibCodec.Jxr -> decodeJxrBufferToDirect(buffer, maxEdge, advanced, panelBoost, outInfo, outBoost, export && extendedSrgbBt2020)
                 LibCodec.AvifPq -> decodeAvifBufferToDirect(buffer, maxEdge, advanced, outInfo, outBoost)
                 LibCodec.Jpeg2000 -> decodeJpeg2000BufferToDirect(buffer, maxEdge, advanced, outInfo, outBoost)
                     ?: packJpeg2000(buffer, maxEdge, outInfo, outBoost)
@@ -380,8 +380,8 @@ object LibDirectDecode {
             }
         } else {
             when (codec) {
-                LibCodec.Jxl -> decodeJxlBytesToDirect(bytes, maxEdge, advanced, outInfo, outBoost)
-                LibCodec.Jxr -> decodeJxrBytesToDirect(bytes, maxEdge, advanced, panelBoost, outInfo, outBoost, export && jxrBt2020)
+                LibCodec.Jxl -> decodeJxlBytesToDirect(bytes, maxEdge, advanced, outInfo, outBoost, export && extendedSrgbBt2020)
+                LibCodec.Jxr -> decodeJxrBytesToDirect(bytes, maxEdge, advanced, panelBoost, outInfo, outBoost, export && extendedSrgbBt2020)
                 LibCodec.Jpeg2000 -> decodeJpeg2000BytesToDirect(bytes, maxEdge, advanced, outInfo, outBoost)
                     ?: packJpeg2000(bytes, maxEdge, outInfo, outBoost)
                 LibCodec.AvifPq -> decodeAvifBytesToDirect(bytes, maxEdge, advanced, outInfo, outBoost)

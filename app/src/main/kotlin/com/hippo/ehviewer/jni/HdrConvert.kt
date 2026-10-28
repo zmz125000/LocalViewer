@@ -120,6 +120,7 @@ external fun decodeJxlBytesToDirect(
     advancedColor: Boolean,
     outInfo: IntArray,
     outBoost: FloatArray,
+    exportBt2020: Boolean = false,
 ): ByteArray?
 
 external fun decodeAvifBytesToDirect(
@@ -296,7 +297,7 @@ external fun convertJpeg2000FdToUltraHdrMaxEdge(fd: Int, outputPath: String, max
 internal external fun mapStillInput(fd: Int): java.nio.ByteBuffer?
 internal external fun unmapStillInput(buffer: java.nio.ByteBuffer)
 internal external fun decodeJxrBufferToDirect(input: java.nio.ByteBuffer, maxEdge: Int, advancedColor: Boolean, panelBoost: Float, outInfo: IntArray, outBoost: FloatArray, exportBt2020: Boolean = false): ByteArray?
-internal external fun decodeJxlBufferToDirect(input: java.nio.ByteBuffer, maxEdge: Int, advancedColor: Boolean, outInfo: IntArray, outBoost: FloatArray): ByteArray?
+internal external fun decodeJxlBufferToDirect(input: java.nio.ByteBuffer, maxEdge: Int, advancedColor: Boolean, outInfo: IntArray, outBoost: FloatArray, exportBt2020: Boolean = false): ByteArray?
 internal external fun decodeAvifBufferToDirect(input: java.nio.ByteBuffer, maxEdge: Int, advancedColor: Boolean, outInfo: IntArray, outBoost: FloatArray): ByteArray?
 
 /** Two malloc-owned encoded F16 planes; release both with releaseStillBuffer. Null means use the existing decoder. */

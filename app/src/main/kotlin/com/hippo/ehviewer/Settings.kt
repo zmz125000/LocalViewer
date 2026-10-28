@@ -768,7 +768,7 @@ object Settings : DataStorePreferences(null) {
 
     /** 0 lossless (JPEG Q95), 1 high (Q95), 2 mid (Q90), 3 low (Q85), 4 custom. JPEG always uses 4:4:4. */
     val imageConversionQuality = intPref("image_conversion_quality", 2)
-    val imageConversionJxrBt2020 = boolPref("image_conversion_jxr_bt2020", true)
+    val imageConversionExtendedSrgbBt2020 = boolPref("image_conversion_scrgb_bt2020", true)
     val imageConversionJxlJpegTranscoding = boolPref("image_conversion_jxl_jpeg_transcoding", false)
 
     // JXL distance in hundredths: 0 is lossless; lower distances retain more detail.

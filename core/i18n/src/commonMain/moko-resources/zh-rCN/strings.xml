@@ -118,8 +118,8 @@
     <string name="settings_open_html_in_incognito">无痕模式打开</string>
     <string name="settings_open_html_in_incognito_summary">开启：单击 HTML 用 Chrome 无痕标签打开。关闭：使用默认浏览器。</string>
     <string name="image_conversion_quality">图像转换质量</string>
-    <string name="image_conversion_jxr_bt2020">将 scRGB JXR 转为 BT.2020</string>
-    <string name="image_conversion_jxr_bt2020_summary">将 scRGB JXR 导出为 JPEG、JPEG XL 或 AVIF 时保留广色域颜色。</string>
+    <string name="image_conversion_extended_srgb_bt2020">将 scRGB 转为 BT.2020</string>
+    <string name="image_conversion_extended_srgb_bt2020_summary">导出 scRGB JXR / JXL 时保留广色域颜色。</string>
     <string name="image_conversion_quality_lossless">无损</string>
     <string name="image_conversion_quality_high">高</string>
     <string name="image_conversion_quality_mid">中</string>
