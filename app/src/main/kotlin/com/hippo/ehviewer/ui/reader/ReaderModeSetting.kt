@@ -283,6 +283,7 @@ private fun PagerSetting(showScreenWidget: Boolean) = Column {
             )
         }
     }
+    if (showScreenWidget) ScreenWidgetSetting(slideshow = false)
     val scaleType = Settings.imageScaleType.asMutableState()
     SpinnerChoice(
         title = stringResource(id = R.string.pref_image_scale_type),
@@ -348,7 +349,6 @@ private fun PagerSetting(showScreenWidget: Boolean) = Column {
             )
         }
     }
-    if (showScreenWidget) ScreenWidgetSetting(slideshow = false)
 }
 
 @Composable
