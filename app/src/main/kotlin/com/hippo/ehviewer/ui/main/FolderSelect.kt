@@ -1186,11 +1186,20 @@ private fun FolderTaskSnackbar(batch: TaskBatch) {
         containerColor = snackbarContainerColor(),
         contentColor = snackbarDismissContentColor(),
         action = {
-            TextButton(
-                onClick = { FolderSelectHost.showTaskList(batch) },
-                colors = snackbarActionButtonColors(),
-            ) {
-                Text(stringResource(R.string.browse_task))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                if (batch.finishedRun) {
+                    SelectionOverflowControl(
+                        folderKey = batch.folderKey,
+                        asText = true,
+                        selectionActions = batch.folderKey != null,
+                    )
+                }
+                TextButton(
+                    onClick = { FolderSelectHost.showTaskList(batch) },
+                    colors = snackbarActionButtonColors(),
+                ) {
+                    Text(stringResource(R.string.browse_task))
+                }
             }
         },
         dismissAction = {
@@ -1218,10 +1227,10 @@ private fun FolderTaskSnackbar(batch: TaskBatch) {
         },
     ) {
         val name = batch.folderName
-        val progress = if (batch.queued) {
-            stringResource(R.string.browse_task_status_output, stringResource(R.string.browse_task_pending), batch.progressLabel)
-        } else {
-            batch.progressLabel
+        val progress = when {
+            batch.queued -> stringResource(R.string.browse_task_status_output, stringResource(R.string.browse_task_pending), batch.progressLabel)
+            batch.finishedRun -> stringResource(R.string.browse_task_progress_finished, batch.progressLabel)
+            else -> batch.progressLabel
         }
         Text(
             text = if (name.isBlank() && batch.jobs.size == 1) {
