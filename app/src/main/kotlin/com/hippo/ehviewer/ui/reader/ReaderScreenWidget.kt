@@ -34,6 +34,7 @@ import com.hippo.ehviewer.collectAsState
 import com.hippo.ehviewer.gallery.Page
 import com.hippo.ehviewer.gallery.PageStatus
 import com.hippo.ehviewer.gallery.statusObserved
+import com.hippo.ehviewer.image.ImageTransfer
 import java.text.DecimalFormat
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -137,7 +138,14 @@ internal fun BoxScope.ReaderScreenWidget(page: Page?, slideshow: Boolean, source
             }
             val colorInfo = colorSpace?.let { space ->
                 val dynamicRange = metadata.hdr?.let { if (it) "HDR" else "SDR" }
-                listOfNotNull(space, dynamicRange).joinToString(" · ")
+                val transfer = when (metadata.transfer) {
+                    ImageTransfer.PQ -> "PQ"
+                    ImageTransfer.HLG -> "HLG"
+                    ImageTransfer.LINEAR -> stringResource(R.string.slideshow_info_transfer_linear)
+                    ImageTransfer.GAIN_MAP -> stringResource(R.string.slideshow_info_transfer_gain_map)
+                    null -> null
+                }
+                listOfNotNull(space, dynamicRange, transfer).joinToString(" · ")
             }
             colorInfo?.let { Text(it, style = style, fontSize = 16.sp, lineHeight = 22.sp) }
         }

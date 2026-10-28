@@ -70,6 +70,8 @@ data class LibDirectResult(
      * Used with advanced color for [ActivityInfo.COLOR_MODE_WIDE_COLOR_GAMUT].
      */
     val isWideGamutSource: Boolean,
+    /** Encoded source CICP transfer, before conversion to a linear working bitmap. */
+    val sourceTransfer: Int = 0,
 )
 
 /**
@@ -838,6 +840,7 @@ object LibDirectDecode {
             isHdrContent = isHdr,
             contentHdrBoost = if (isHdr) boost else 1f,
             isWideGamutSource = wide,
+            sourceTransfer = transfer,
         )
     }
 

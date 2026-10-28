@@ -19,6 +19,7 @@ import com.hippo.ehviewer.image.HI_RES_PREVIEW_EDGE
 import com.hippo.ehviewer.image.HiResTier
 import com.hippo.ehviewer.image.Image
 import com.hippo.ehviewer.image.ImageMetadata
+import com.hippo.ehviewer.image.ImageTransfer
 import com.hippo.ehviewer.image.ImageSource
 import com.hippo.ehviewer.image.PathSource
 import com.hippo.ehviewer.image.byteBufferSource
@@ -262,7 +263,10 @@ abstract class PageLoader(
                     forceOriginal = forceOriginal,
                 )
             }
-        image.metadata = metadata.copy(hdr = if (image.isHdrContent) true else metadata.hdr)
+        image.metadata = metadata.copy(
+            hdr = if (image.isHdrContent) true else metadata.hdr,
+            transfer = metadata.transfer ?: image.metadata.transfer ?: ImageTransfer.GAIN_MAP.takeIf { image.hasGainmap },
+        )
         // Compressed ramPages are only needed until decode. Keep them while this
         // index is still demanded (save / retry); drop as soon as the bitmap exists
         // if navigation already moved on.
