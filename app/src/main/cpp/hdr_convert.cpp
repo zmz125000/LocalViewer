@@ -787,6 +787,7 @@ bool decode_jxr_from_memory(const uint8_t* data, size_t len, std::vector<uint16_
  * Untagged linear scRGB uses 1.0 = 80 nits. Our shared linear working space uses 1.0 = 203 nits,
  * so leaving the codes unchanged lifts midtones against a reference monitor.
  * Scale RGB only. Alpha stays. Integer sRGB and ICC frames must not come here.
+ * Export separately retains the 80-nit SDR reference; SDR must not inherit this dimming.
  */
 void rebase_untagged_scrgb(std::vector<uint16_t>& rgba, unsigned w, unsigned h) {
     constexpr float kScRgbWhiteNits = 80.f;
@@ -804,7 +805,7 @@ void rebase_untagged_scrgb(std::vector<uint16_t>& rgba, unsigned w, unsigned h) 
 // Path helper: load whole file into memory then decode (no jxrlib file I/O).
 // Path convert is always UHDR/JPEG → composite alpha.
 bool decode_jxr_to_rgba_f16(const char* path, std::vector<uint16_t>& out_rgba, unsigned& w,
-                            unsigned& h, uhdr_color_gamut_t* out_cg) {
+                            unsigned& h, uhdr_color_gamut_t* out_cg, bool* out_untagged_linear) {
     std::ifstream in(path, std::ios::binary | std::ios::ate);
     if (!in) {
         ALOGE("open JXR failed: %s", path);
@@ -822,6 +823,7 @@ bool decode_jxr_to_rgba_f16(const char* path, std::vector<uint16_t>& out_rgba, u
     if (!decode_jxr_from_memory(buf.data(), buf.size(), out_rgba, w, h,
                                 /*composite_alpha_on_black=*/true, &untagged_linear, out_cg)) return false;
     if (untagged_linear) rebase_untagged_scrgb(out_rgba, w, h);
+    if (out_untagged_linear) *out_untagged_linear = untagged_linear;
     return true;
 }
 
@@ -872,14 +874,14 @@ void jpeg_err_exit(j_common_ptr cinfo) {
  * Quality from the selected preset, 4:4:4 chroma (no 4:2:0 color blur on 4K stills).
  */
 int encode_baseline_sdr_jpeg(unsigned w, unsigned h, const uint16_t* rgba, const char* out_path,
-                             uhdr_color_gamut_t cg, StillEncodeQuality quality = 1) {
+                             uhdr_color_gamut_t cg, StillEncodeQuality quality = 1, bool scrgb_sdr = false) {
     if (!rgba || !out_path || w == 0 || h == 0) return -30;
     const size_t pixels = static_cast<size_t>(w) * static_cast<size_t>(h);
     std::vector<uint8_t> rgb(pixels * 3);
     if (cg != UHDR_CG_BT_709 && cg != UHDR_CG_DISPLAY_P3 && cg != UHDR_CG_BT_2100) {
         cg = UHDR_CG_BT_709;
     }
-    const auto& srgb_codes = half_srgb_u8_table();
+    const auto& srgb_codes = half_srgb_u8_table(scrgb_sdr);
     hdr_parallel_pixels(pixels, hdr_pixel_jobs(pixels), [&](size_t begin, size_t end, unsigned) {
         for (size_t i = begin; i < end; ++i) {
             for (unsigned c = 0; c < 3; ++c) rgb[i * 3 + c] = srgb_codes[rgba[i * 4 + c]];
@@ -911,9 +913,10 @@ int encode_baseline_sdr_jpeg(unsigned w, unsigned h, const uint16_t* rgba, const
             if (!std::isfinite(r) || r < 0.f) r = 0.f;
             if (!std::isfinite(g) || g < 0.f) g = 0.f;
             if (!std::isfinite(b) || b < 0.f) b = 0.f;
-            rgb[i * 3 + 0] = linear_to_srgb_u8(r);
-            rgb[i * 3 + 1] = linear_to_srgb_u8(g);
-            rgb[i * 3 + 2] = linear_to_srgb_u8(b);
+            const float scale = scrgb_sdr ? kSdrWhiteNits / 80.f : 1.f;
+            rgb[i * 3 + 0] = linear_to_srgb_u8(r * scale);
+            rgb[i * 3 + 1] = linear_to_srgb_u8(g * scale);
+            rgb[i * 3 + 2] = linear_to_srgb_u8(b * scale);
         }
         icc = ultrahdr::IccHelper::writeIccProfile(UHDR_CT_SRGB, UHDR_CG_BT_709);
     }
@@ -994,7 +997,8 @@ int encode_baseline_sdr_jpeg(unsigned w, unsigned h, const uint16_t* rgba, const
  */
 int encode_linear_rgba_f16_to_uhdr(unsigned w, unsigned h, const uint16_t* rgba,
                                    const char* out_path, uhdr_color_gamut_t cg,
-                                   float fixed_peak_nits, bool force_hdr, const uint8_t* sdr_base, StillEncodeQuality quality) {
+                                   float fixed_peak_nits, bool force_hdr, const uint8_t* sdr_base, StillEncodeQuality quality,
+                                   bool scrgb_sdr) {
     if (!rgba || !out_path || w == 0 || h == 0) return -1;
 
     // Only the three gamuts libultrahdr can tag/ICC-embed.
@@ -1022,7 +1026,7 @@ int encode_linear_rgba_f16_to_uhdr(unsigned w, unsigned h, const uint16_t* rgba,
 
     // Pure SDR → baseline JPEG (no Ultra HDR gain map / no fake ratio > 1).
     if (!force_hdr && content_peak <= 1.0f) {
-        return encode_baseline_sdr_jpeg(w, h, rgba, out_path, cg, quality);
+        return encode_baseline_sdr_jpeg(w, h, rgba, out_path, cg, quality, scrgb_sdr);
     }
 
     uhdr_codec_private_t* enc = uhdr_create_encoder();
@@ -1096,7 +1100,10 @@ int encode_linear_rgba_f16_to_uhdr(unsigned w, unsigned h, const uint16_t* rgba,
     }
 
     // Hint only — API-0 one-pass may still emit ratioMax ≈ 49; capacity is set below.
-    err = uhdr_enc_set_min_max_content_boost(enc, 1.0f, content_peak);
+    // A brighter 80-nit-reference SDR base needs gains below 1 to reconstruct
+    // the original absolute HDR shadows. Let libultrahdr measure that minimum.
+    const float min_boost = scrgb_sdr ? std::numeric_limits<float>::min() : 1.f;
+    err = uhdr_enc_set_min_max_content_boost(enc, min_boost, content_peak);
     if (err.error_code != UHDR_CODEC_OK) {
         ALOGE("uhdr_enc_set_min_max_content_boost: %s", err.has_detail ? err.detail : "error");
         uhdr_release_encoder(enc);
@@ -1117,7 +1124,7 @@ int encode_linear_rgba_f16_to_uhdr(unsigned w, unsigned h, const uint16_t* rgba,
     std::vector<uint8_t> sdr_rgba;
     if (!sdr_base) {
         sdr_rgba.resize(sdr_pixels * 4);
-        const auto& srgb_codes = half_srgb_u8_table();
+        const auto& srgb_codes = half_srgb_u8_table(scrgb_sdr);
         hdr_parallel_pixels(sdr_pixels, hdr_pixel_jobs(sdr_pixels), [&](size_t begin, size_t end, unsigned) {
             for (size_t i = begin; i < end; ++i) {
                 for (unsigned c = 0; c < 3; ++c) sdr_rgba[i * 4 + c] = srgb_codes[rgba[i * 4 + c]];
@@ -1655,7 +1662,7 @@ int encode_srgb_jpeg_u8(unsigned w, unsigned h, const uint8_t* rgba, const char*
  */
 int encode_still_export(const uint8_t* src, size_t src_len, unsigned w, unsigned h, bool f16,
                         int gamut, int mode, bool premultiplied, const char* out_path, size_t sdr_offset = 0,
-                        StillEncodeQuality quality = 1, bool mutable_input = false) {
+                        StillEncodeQuality quality = 1, bool mutable_input = false, bool scrgb_sdr = false) {
     if (!src || !out_path || w == 0 || h == 0 || mode < 0 || mode > kExportJxlPq) return -50;
     const size_t pixels = static_cast<size_t>(w) * static_cast<size_t>(h);
     const size_t bpp = f16 ? 8u : 4u;
@@ -1673,16 +1680,16 @@ int encode_still_export(const uint8_t* src, size_t src_len, unsigned w, unsigned
         if (premultiplied) unpremultiply_f16(rgba, pixels);
         if (mode >= kExportAvif && mode <= kExportAvifGainMap) {
             return encode_avif_f16(w, h, rgba, cg, mode - kExportAvif, out_path, quality,
-                                   sdr_offset ? src + sdr_offset : nullptr);
+                                   sdr_offset ? src + sdr_offset : nullptr, scrgb_sdr);
         }
         if (mode == kExportJpegHdr) {
             return encode_linear_rgba_f16_to_uhdr(w, h, rgba, out_path, cg, 0.f, true,
-                                                  sdr_offset ? src + sdr_offset : nullptr, quality);
+                                                  sdr_offset ? src + sdr_offset : nullptr, quality, scrgb_sdr);
         }
         if (mode == kExportJxl || mode == kExportJxlHdr || mode == kExportJxlPq) {
-            return encode_jxl_f16(w, h, rgba, cg, mode != kExportJxl, out_path, quality, mode == kExportJxlPq);
+            return encode_jxl_f16(w, h, rgba, cg, mode != kExportJxl, out_path, quality, mode == kExportJxlPq, scrgb_sdr);
         }
-        return encode_baseline_sdr_jpeg(w, h, rgba, out_path, cg, quality);
+        return encode_baseline_sdr_jpeg(w, h, rgba, out_path, cg, quality, scrgb_sdr);
     }
     std::vector<uint8_t> rgba_storage;
     auto* rgba = const_cast<uint8_t*>(src);
@@ -1716,7 +1723,9 @@ extern "C" JNIEXPORT jint JNICALL
 Java_com_hippo_ehviewer_jni_HdrConvertKt_encodeNativeStillExport(JNIEnv* env, jclass, jobject jPixels,
                                                                jint width, jint height, jboolean f16,
                                                                jint gamut, jint mode, jboolean premultiplied,
-                                                               jstring jOut, jint sdr_offset, jint quality, jfloat custom_distance, jint custom_quality) {
+                                                               jstring jOut, jint sdr_offset, jint quality, jfloat custom_distance, jint custom_quality,
+                                                               jint sdr_white_nits) {
+    if (sdr_white_nits != 80 && sdr_white_nits != 203) return -52;
     if (!jPixels || !jOut || width <= 0 || height <= 0 || sdr_offset < 0 || quality < 0 || quality > 4 ||
         (quality == 4 && (!std::isfinite(custom_distance) || custom_distance < 0.f || custom_distance > 3.f ||
                           custom_quality < 1 || custom_quality > 100))) return -52;
@@ -1729,7 +1738,8 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_encodeNativeStillExport(JNIEnv* env, jc
     const int rc = encode_still_export(pixels, static_cast<size_t>(length),
                                        static_cast<unsigned>(width), static_cast<unsigned>(height),
                                        f16 == JNI_TRUE, gamut, mode, premultiplied == JNI_TRUE,
-                                       out_path, static_cast<size_t>(sdr_offset), StillEncodeQuality(quality, custom_distance, custom_quality), true);
+                                       out_path, static_cast<size_t>(sdr_offset), StillEncodeQuality(quality, custom_distance, custom_quality), true,
+                                       sdr_white_nits == 80);
     env->ReleaseStringUTFChars(jOut, out_path);
     return rc;
 }
@@ -1739,7 +1749,8 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_encodeStillExport(JNIEnv* env, jclass, 
                                                            jint width, jint height, jboolean f16,
                                                            jint gamut, jint mode,
                                                            jboolean premultiplied, jstring jOut, jint sdr_offset,
-                                                           jint quality, jfloat custom_distance, jint custom_quality) {
+                                                           jint quality, jfloat custom_distance, jint custom_quality, jint sdr_white_nits) {
+    if (sdr_white_nits != 80 && sdr_white_nits != 203) return -52;
     if (!jPixels || !jOut || width <= 0 || height <= 0 || sdr_offset < 0 || quality < 0 || quality > 4 ||
         (quality == 4 && (!std::isfinite(custom_distance) || custom_distance < 0.f || custom_distance > 3.f ||
                           custom_quality < 1 || custom_quality > 100))) return -52;
@@ -1756,7 +1767,7 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_encodeStillExport(JNIEnv* env, jclass, 
                                        static_cast<size_t>(len), static_cast<unsigned>(width),
                                        static_cast<unsigned>(height), f16 == JNI_TRUE, gamut, mode,
                                        premultiplied == JNI_TRUE, out_path, static_cast<size_t>(sdr_offset),
-                                       StillEncodeQuality(quality, custom_distance, custom_quality));
+                                       StillEncodeQuality(quality, custom_distance, custom_quality), false, sdr_white_nits == 80);
     env->ReleaseStringUTFChars(jOut, out_path);
     env->ReleaseByteArrayElements(jPixels, bytes, JNI_ABORT);
     return rc;
@@ -1778,9 +1789,10 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_convertJxrToUltraHdr(JNIEnv* env, jclas
     unsigned w = 0, h = 0;
     int rc = -20;
     uhdr_color_gamut_t cg = UHDR_CG_BT_709;
-    if (decode_jxr_to_rgba_f16(in_path, rgba, w, h, &cg)) {
+    bool untagged_linear = false;
+    if (decode_jxr_to_rgba_f16(in_path, rgba, w, h, &cg, &untagged_linear)) {
         // The reported gamut matches the applied ICC or untagged scRGB.
-        rc = encode_linear_rgba_f16_to_uhdr(w, h, rgba.data(), out_path, cg);
+        rc = encode_linear_rgba_f16_to_uhdr(w, h, rgba.data(), out_path, cg, 0.f, false, nullptr, 1, untagged_linear);
     } else {
         rc = -21;
     }
@@ -1824,7 +1836,7 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_convertJxrBytesToUltraHdr(JNIEnv* env, 
         compressed.clear();
         compressed.shrink_to_fit();
         // The reported gamut matches the applied ICC or untagged scRGB.
-        rc = encode_linear_rgba_f16_to_uhdr(w, h, rgba.data(), out_path, cg, 0.f);
+        rc = encode_linear_rgba_f16_to_uhdr(w, h, rgba.data(), out_path, cg, 0.f, false, nullptr, 1, untagged_linear);
     } else {
         rc = -21;
     }
@@ -1855,7 +1867,7 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_convertJxrBufferToUltraHdr(JNIEnv* env,
     if (decode_jxr_from_memory(bytes, static_cast<size_t>(len), rgba, w, h, true, &untagged_linear, &cg)) {
         if (untagged_linear) rebase_untagged_scrgb(rgba, w, h);
         // The reported gamut matches the applied ICC or untagged scRGB.
-        rc = encode_linear_rgba_f16_to_uhdr(w, h, rgba.data(), out_path, cg, 0.f);
+        rc = encode_linear_rgba_f16_to_uhdr(w, h, rgba.data(), out_path, cg, 0.f, false, nullptr, 1, untagged_linear);
     } else {
         rc = -21;
     }
@@ -1898,7 +1910,7 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_convertJxrBytesToUltraHdrMaxEdge(
         const float peak = scan_scrgb_peak(rgba.data(), static_cast<size_t>(w) * h);
         const bool force_hdr = peak > 1.25f;
         rc = encode_linear_rgba_f16_to_uhdr(w, h, rgba.data(), out_path, cg,
-                                           thumb_peak_nits_from_linear(peak), force_hdr);
+                                           thumb_peak_nits_from_linear(peak), force_hdr, nullptr, 1, untagged_linear);
     } else {
         rc = -21;
     }
@@ -1934,7 +1946,7 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_convertJxrFdToUltraHdrMaxEdge(
         const float peak = scan_scrgb_peak(rgba.data(), static_cast<size_t>(w) * h);
         const bool force_hdr = peak > 1.25f;
         rc = encode_linear_rgba_f16_to_uhdr(w, h, rgba.data(), out_path, cg,
-                                           thumb_peak_nits_from_linear(peak), force_hdr);
+                                           thumb_peak_nits_from_linear(peak), force_hdr, nullptr, 1, untagged_linear);
     } else {
         rc = -21;
     }
@@ -1999,7 +2011,8 @@ void fit_untagged_jxr_highlights(std::vector<uint16_t>& rgba, unsigned w, unsign
 
 /**
  * JXR → direct display pixels (skip UHDR JPEG).
- * outInfo int[≥6]: w, h, format, isHdr, gamut, transferCICP
+ * outInfo int[≥6]: w, h, format, isHdr, gamut, transferCICP;
+ * optional index 6: SDR reference white in nits (80 for untagged scRGB, otherwise 203).
  * outBoost float[1]: contentHdrBoost
  * advancedColor: WCG preserve + high bit depth
  * panelBoost: HDR/SDR ceiling for untagged linear highlights. ≤1 leaves them alone.
@@ -2040,6 +2053,10 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeJxrBytesToDirect(JNIEnv* env, jcl
         result = pack_direct_to_jbyte_array(env, rgba, w, h, /*force_hdr=*/false, cg,
                                             advancedColor == JNI_TRUE, /*transfer_cicp=*/0, jOutInfo,
                                             jOutBoost);
+        if (result && env->GetArrayLength(jOutInfo) >= 7) {
+            const jint sdr_white_nits = untagged_linear ? 80 : 203;
+            env->SetIntArrayRegion(jOutInfo, 6, 1, &sdr_white_nits);
+        }
     }
     env->ReleaseByteArrayElements(jInput, bytes, JNI_ABORT);
     return result;
@@ -2080,6 +2097,10 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeJxrBufferToDirect(JNIEnv* env, jc
         result = pack_direct_to_jbyte_array(env, rgba, w, h, /*force_hdr=*/false, cg,
                                             advancedColor == JNI_TRUE, /*transfer_cicp=*/0, jOutInfo,
                                             jOutBoost);
+        if (result && env->GetArrayLength(jOutInfo) >= 7) {
+            const jint sdr_white_nits = untagged_linear ? 80 : 203;
+            env->SetIntArrayRegion(jOutInfo, 6, 1, &sdr_white_nits);
+        }
     }
     return result;
 } catch (...) {

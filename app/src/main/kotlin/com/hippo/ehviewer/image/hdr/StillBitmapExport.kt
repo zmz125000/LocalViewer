@@ -12,7 +12,7 @@ internal fun DirectPixels.writeResolved(resolved: StillExportTarget, out: File, 
     val rc = nativePixels?.let { native ->
         encodeNativeStillExport(
             native, width, height, f16, gamut, resolved.exportMode(), premultiplied,
-            out.absolutePath, sdrOffset, quality.value, quality.jxlDistance, quality.codecQuality,
+            out.absolutePath, sdrOffset, quality.value, quality.jxlDistance, quality.codecQuality, sdrWhiteNits,
         )
     } ?: encodeStillExport(
         pixels,
@@ -24,7 +24,7 @@ internal fun DirectPixels.writeResolved(resolved: StillExportTarget, out: File, 
         premultiplied,
         out.absolutePath,
         sdrOffset,
-        quality.value, quality.jxlDistance, quality.codecQuality,
+        quality.value, quality.jxlDistance, quality.codecQuality, sdrWhiteNits,
     )
     if (rc != 0) {
         android.util.Log.e(

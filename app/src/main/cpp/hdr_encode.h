@@ -134,6 +134,7 @@ inline float half_to_float(uint16_t h) {
  * [quality]: 0/1/2/3 use JPEG Q95/Q95/Q90/Q85 (lossless/high/mid/low).
  * Exports use 4:4:4; low quality downsizes the gain map by 4.
  * The primary image dimensions, gamut and HDR capacity remain unchanged.
+ * scrgb_sdr restores an untagged scRGB source's 80-nit reference only for the SDR base.
  *
  * @return 0 on success.
  */
@@ -141,7 +142,8 @@ int encode_linear_rgba_f16_to_uhdr(unsigned w, unsigned h, const uint16_t* rgba,
                                    const char* out_path,
                                    uhdr_color_gamut_t cg = UHDR_CG_BT_709,
                                    float fixed_peak_nits = 0.f, bool force_hdr = false,
-                                   const uint8_t* sdr_base = nullptr, StillEncodeQuality quality = 1);
+                                   const uint8_t* sdr_base = nullptr, StillEncodeQuality quality = 1,
+                                   bool scrgb_sdr = false);
 
 /** Downscale packed RGBA F16 so long edge ≤ max_edge (box filter). max_edge 0 = no-op. */
 void scale_rgba_f16_max_edge(std::vector<uint16_t>& rgba, unsigned& w, unsigned& h,
@@ -231,6 +233,20 @@ inline const std::vector<uint8_t>& half_srgb_u8_table() {
 
 inline uint8_t half_to_srgb_u8(uint16_t code) { return half_srgb_u8_table()[code]; }
 
+// HDR working samples use 203-nit units. Untagged scRGB's SDR rendition uses
+// its original 80-nit reference instead; never apply this scale to HDR samples.
+inline const std::vector<uint8_t>& half_srgb_u8_table(bool scrgb_sdr) {
+    if (!scrgb_sdr) return half_srgb_u8_table();
+    static const std::vector<uint8_t> values = [] {
+        std::vector<uint8_t> table(65536);
+        for (size_t i = 0; i < table.size(); ++i) {
+            table[i] = linear_to_srgb_u8(half_to_float(i) * (kSdrWhiteNits / 80.f));
+        }
+        return table;
+    }();
+    return values;
+}
+
 // ── Linear RGB gamut rematrix (D65, no CAT) ─────────────────────────────────
 //
 // Built as:  M = XYZ_to_linear_sRGB × source_to_XYZ
@@ -311,7 +327,8 @@ jbyteArray pack_direct_to_jbyte_array(JNIEnv* env, std::vector<uint16_t>& rgba, 
 
 /** Straight-alpha linear F16 → JXL. PQ uses uint16 codes, linear uses F16. Mutates RGBA. */
 int encode_jxl_f16(unsigned w, unsigned h, uint16_t* rgba, uhdr_color_gamut_t cg,
-                   bool hdr, const char* path, StillEncodeQuality quality = 1, bool pq = false);
+                   bool hdr, const char* path, StillEncodeQuality quality = 1, bool pq = false,
+                   bool scrgb_sdr = false);
 
 /** Straight-alpha sRGB-curve RGBA8 → 8-bit SDR JXL. */
 int encode_jxl_u8(unsigned w, unsigned h, const uint8_t* rgba, uhdr_color_gamut_t cg,
@@ -320,8 +337,10 @@ int encode_jxl_u8(unsigned w, unsigned h, const uint8_t* rgba, uhdr_color_gamut_
 /** AVIF: mode 0 SDR, 1 PQ, 2 ISO 21496-1 SDR base + HDR gain map.
  * F16 is linear, straight alpha, with 1.0 = 203 nits; sdr_base is optional RGBA8.
  * Deep sources use 10 bits, or 12 bits for the lossless preset, with 4:4:4 sampling.
+ * scrgb_sdr affects only SDR output/the gain-map base, never absolute PQ or CLLI.
  */
 int encode_avif_f16(unsigned w, unsigned h, uint16_t* rgba, uhdr_color_gamut_t cg,
-                    int mode, const char* path, StillEncodeQuality quality, const uint8_t* sdr_base = nullptr);
+                    int mode, const char* path, StillEncodeQuality quality, const uint8_t* sdr_base = nullptr,
+                    bool scrgb_sdr = false);
 int encode_avif_u8(unsigned w, unsigned h, const uint8_t* rgba, uhdr_color_gamut_t cg,
                    const char* path, StillEncodeQuality quality);

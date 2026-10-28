@@ -237,6 +237,7 @@ external fun extractRawPreviewFd(fd: Int, outPath: String, demosaicFallback: Boo
  * AVIF modes: 4 SDR, 5 HDR PQ, 6 ISO 21496-1 gain map; JXL mode 7 is HDR PQ.
  * [quality]: 0 lossless (JPEG Q95), 1 high (JPEG Q95), 2 mid (JPEG Q90), 3 low (JPEG Q85), 4 custom.
  * JPEG exports retain 4:4:4 chroma at every quality.
+ * [sdrWhiteNits] is 80 for untagged scRGB JXR, otherwise 203; HDR luminance is preserved.
  *
  * @return 0 on success. armeabi-v7a returns -100.
  */
@@ -253,6 +254,7 @@ external fun encodeStillExport(
     quality: Int,
     customJxlDistance: Float,
     customCodecQuality: Int,
+    sdrWhiteNits: Int = 203,
 ): Int
 
 /** Consumes exclusively owned native pixels in place; the capture must outlive this call. */
@@ -269,6 +271,7 @@ internal external fun encodeNativeStillExport(
     quality: Int,
     customJxlDistance: Float,
     customCodecQuality: Int,
+    sdrWhiteNits: Int = 203,
 ): Int
 
 /** Header-only size probe. Kind: 0 JXL, 1 JXR, 2 RAW; packed width/height, or 0. */

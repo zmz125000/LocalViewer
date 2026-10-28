@@ -83,7 +83,7 @@ static int encode_jxl_pixels(unsigned w, unsigned h, const void* rgba, uhdr_colo
 // The caller owns straight-alpha linear half samples. Normalize HDR to its
 // declared luminance for linear JXL; PQ retains the absolute 10000-nit reference.
 int encode_jxl_f16(unsigned w, unsigned h, uint16_t* rgba, uhdr_color_gamut_t cg,
-                   bool hdr, const char* path, StillEncodeQuality quality, bool pq) {
+                   bool hdr, const char* path, StillEncodeQuality quality, bool pq, bool scrgb_sdr) {
     const size_t pixels = static_cast<size_t>(w) * h;
     if (!rgba || !path || !pixels) return -60;
     float peak = pq ? kMaxLinear : 1.f;
@@ -107,11 +107,12 @@ int encode_jxl_f16(unsigned w, unsigned h, uint16_t* rgba, uhdr_color_gamut_t cg
     // conversion in the image loop. Alpha stays straight; PQ converts its
     // storage to the same uint16 precision as the color channels.
     std::vector<uint16_t> table(65536);
+    const float sdr_scale = !hdr && scrgb_sdr ? kSdrWhiteNits / 80.f : 1.f;
     for (size_t code = 0; code < table.size(); ++code) {
         float v = half_to_float(static_cast<uint16_t>(code));
         if (!std::isfinite(v) || v < 0.f) v = 0.f;
         table[code] = pq ? static_cast<uint16_t>(std::lround(linear_to_pq_code(v) * 65535.f)) :
-                           float_to_half(std::min(v, peak) / peak);
+                           float_to_half(std::min(v * sdr_scale, peak) / peak);
     }
     hdr_parallel_pixels(pixels, hdr_pixel_jobs(pixels), [&](size_t begin, size_t end, unsigned) {
         for (size_t i = begin; i < end; ++i) {

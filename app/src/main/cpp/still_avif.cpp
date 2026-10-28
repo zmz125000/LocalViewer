@@ -99,7 +99,8 @@ int encode_avif_u8(unsigned w, unsigned h, const uint8_t* rgba, uhdr_color_gamut
 }
 
 int encode_avif_f16(unsigned w, unsigned h, uint16_t* rgba, uhdr_color_gamut_t gamut,
-                    int mode, const char* path, StillEncodeQuality quality, const uint8_t* sdr_base) {
+                    int mode, const char* path, StillEncodeQuality quality, const uint8_t* sdr_base,
+                    bool scrgb_sdr) {
     if (!rgba || !path || !w || !h || mode < 0 || mode > 2) return -70;
     const size_t pixels = static_cast<size_t>(w) * h;
     const bool pq = mode == 1;
@@ -123,7 +124,7 @@ int encode_avif_f16(unsigned w, unsigned h, uint16_t* rgba, uhdr_color_gamut_t g
         v = std::clamp(v, 0.f, kMaxLinear);
         sanitized[i] = float_to_half(v);
         const float hdr_code = pq || gain_map ? linear_to_pq_code(v) : 0.f;
-        const float code = pq ? hdr_code : std::clamp(srgb_oetf(std::min(v, 1.f)), 0.f, 1.f);
+        const float code = pq ? hdr_code : srgb_oetf(v * (scrgb_sdr ? kSdrWhiteNits / 80.f : 1.f));
         codes[i] = static_cast<uint16_t>(std::lround(code * maximum));
         if (gain_map) hdr_codes[i] = static_cast<uint16_t>(std::lround(hdr_code * 65535.f));
     }
