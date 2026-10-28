@@ -17,7 +17,11 @@ import java.util.TimeZone
 import splitties.init.appCtx
 
 enum class ImageTransfer {
-    PQ, HLG, LINEAR, GAIN_MAP;
+    PQ,
+    HLG,
+    LINEAR,
+    GAIN_MAP,
+    ;
 
     companion object {
         internal fun fromCicp(value: Int?): ImageTransfer? = when (value) {
@@ -26,10 +30,18 @@ enum class ImageTransfer {
             8 -> LINEAR
             else -> null
         }
+
+        internal fun fromColorSpace(colorSpace: ColorSpace?): ImageTransfer? = (colorSpace as? ColorSpace.Rgb)?.transferParameters?.let {
+            if (it.g == 1.0 && it.a == 1.0 && it.b == 0.0 && it.e == 0.0 && it.f == 0.0 && (it.d == 0.0 || it.c == 1.0)) {
+                LINEAR
+            } else {
+                null
+            }
+        }
     }
 }
 
-/** Original encoded metadata, independent of preview resolution and display conversion. */
+/** Original encoded metadata; color tags may fall back to the decoded bitmap when unavailable. */
 data class ImageMetadata(
     val width: Int? = null,
     val height: Int? = null,
@@ -103,15 +115,12 @@ internal fun ImageSource.readMetadata(fileDate: Long? = null, fileName: String? 
             heif?.transfer != null || bounds.outWidth > 0 -> false
             else -> null
         },
-        transfer = if (gainmap) ImageTransfer.GAIN_MAP else ImageTransfer.fromCicp(heif?.transfer)
-            ?: (bounds.outColorSpace as? ColorSpace.Rgb)?.transferParameters?.let {
-                // Check the encoded color space, never an F16 working-space conversion.
-                if (it.g == 1.0 && it.a == 1.0 && it.b == 0.0 && it.e == 0.0 && it.f == 0.0 && (it.d == 0.0 || it.c == 1.0)) {
-                    ImageTransfer.LINEAR
-                } else {
-                    null
-                }
-            },
+        transfer = if (gainmap) {
+            ImageTransfer.GAIN_MAP
+        } else {
+            ImageTransfer.fromCicp(heif?.transfer)
+                ?: ImageTransfer.fromColorSpace(bounds.outColorSpace)
+        },
         date = exif?.photoDate() ?: fileDate?.takeIf { it > 0 },
         cameraModel = exif?.getAttribute(ExifInterface.TAG_MODEL)?.trim()?.takeIf { it.isNotEmpty() },
         lensModel = exif?.getAttribute(ExifInterface.TAG_LENS_MODEL)?.trim()?.takeIf { it.isNotEmpty() },
