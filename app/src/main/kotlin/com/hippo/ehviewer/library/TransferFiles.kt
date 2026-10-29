@@ -58,13 +58,28 @@ object TransferFiles {
     private suspend fun smb(id: Long) = requireNotNull(SmbRepository.load(id)) { "SMB source missing" }
     private suspend fun dav(id: Long) = requireNotNull(WebDavRepository.load(id)) { "WebDAV source missing" }
 
-    suspend fun children(location: TransferLocation): List<TransferFile> = when (location.kind) {
+    /** Explicit destination lifetime: one connection for the job, closed on success, failure or stop. */
+    suspend fun <T> withUploadConnection(destination: TransferLocation, block: suspend (SmbGateway.UploadConnection?) -> T): T {
+        val connection = if (destination.kind == ExplorerWindows.Kind.Smb) {
+            val source = smb(destination.sourceId)
+            SmbGateway.uploadConnection(source, SmbPasswordStore.get(source.id))
+        } else {
+            null
+        }
+        return try {
+            block(connection)
+        } finally {
+            connection?.close()
+        }
+    }
+
+    suspend fun children(location: TransferLocation, connection: SmbGateway.UploadConnection? = null): List<TransferFile> = when (location.kind) {
         ExplorerWindows.Kind.Local -> location.path.toPath().listBrowseChildrenRaw(overlayMediaStore = false, lightSafMeta = false).map {
             TransferFile(location.copy(path = it.path.toString()), it.name, it.isDirectory, it.size, it.lastModifiedMs)
         }
         ExplorerWindows.Kind.Smb -> {
             val source = smb(location.sourceId)
-            SmbGateway.transferChildren(source, SmbPasswordStore.get(source.id), location.path).map {
+            SmbGateway.transferChildren(source, SmbPasswordStore.get(source.id), location.path, connection).map {
                 TransferFile(location.child(it.name), it.name, it.isDirectory, it.size, it.lastModifiedMs)
             }
         }
@@ -116,16 +131,16 @@ object TransferFiles {
         }
     }
 
-    suspend fun find(parent: TransferLocation, name: String): TransferFile? = children(parent).firstOrNull { it.relative == name }
+    suspend fun find(parent: TransferLocation, name: String, connection: SmbGateway.UploadConnection? = null): TransferFile? = children(parent, connection).firstOrNull { it.relative == name }
 
-    suspend fun exists(location: TransferLocation): Boolean = when (location.kind) {
+    suspend fun exists(location: TransferLocation, connection: SmbGateway.UploadConnection? = null): Boolean = when (location.kind) {
         ExplorerWindows.Kind.Local -> location.path.toPath().metadataOrNull() != null
-        ExplorerWindows.Kind.Smb -> smb(location.sourceId).let { SmbGateway.transferExists(it, SmbPasswordStore.get(it.id), location.path) }
+        ExplorerWindows.Kind.Smb -> smb(location.sourceId).let { SmbGateway.transferExists(it, SmbPasswordStore.get(it.id), location.path, connection) }
         ExplorerWindows.Kind.WebDav -> dav(location.sourceId).let { WebDavClient.transferExists(it, WebDavPasswordStore.get(it.id), location.path) }
     }
 
-    suspend fun mkdir(parent: TransferLocation, name: String): TransferLocation {
-        val existing = find(parent, name)
+    suspend fun mkdir(parent: TransferLocation, name: String, connection: SmbGateway.UploadConnection? = null): TransferLocation {
+        val existing = find(parent, name, connection)
         if (existing != null) {
             if (!existing.directory) throw TransferNameConflict(name)
             return existing.source
@@ -144,7 +159,7 @@ object TransferFiles {
                     return target.copy(path = created.toOkioPath().toString())
                 }
             }
-            ExplorerWindows.Kind.Smb -> smb(target.sourceId).let { SmbGateway.transferMkdir(it, SmbPasswordStore.get(it.id), target.path) }
+            ExplorerWindows.Kind.Smb -> smb(target.sourceId).let { SmbGateway.transferMkdir(it, SmbPasswordStore.get(it.id), target.path, connection) }
             ExplorerWindows.Kind.WebDav -> dav(target.sourceId).let { WebDavClient.transferMkdir(it, WebDavPasswordStore.get(it.id), target.path) }
         }
         return target
@@ -170,7 +185,7 @@ object TransferFiles {
     }
 
     /** Returns false only when the destination cannot preserve the source timestamp. */
-    suspend fun write(file: TransferFile, parent: TransferLocation, name: String, control: TransferControl, onServerCopy: (Boolean) -> Unit = {}, progress: (Long) -> Unit): Boolean {
+    suspend fun write(file: TransferFile, parent: TransferLocation, name: String, control: TransferControl, connection: SmbGateway.UploadConnection?, onServerCopy: (Boolean) -> Unit = {}, progress: (Long) -> Unit): Boolean {
         onServerCopy(false)
         val target = parent.child(name)
         if (target.kind == ExplorerWindows.Kind.Smb && file.source.kind == target.kind) {
@@ -179,7 +194,7 @@ object TransferFiles {
             val sourcePassword = SmbPasswordStore.get(source.id)
             val destinationPassword = SmbPasswordStore.get(destination.id)
             if (SmbGateway.canTransferCopy(source, sourcePassword, destination, destinationPassword)) {
-                SmbGateway.transferWrite(destination, destinationPassword, target.path, file.mtime, null, file.source.path, control::checkpoint, progress, copySource = source, onServerCopy = onServerCopy)
+                SmbGateway.transferWrite(destination, target.path, file.mtime, null, file.source.path, control::checkpoint, progress, copySource = source, onServerCopy = onServerCopy, connection = requireNotNull(connection))
                 return true
             }
         }
@@ -245,7 +260,7 @@ object TransferFiles {
             when (target.kind) {
                 ExplorerWindows.Kind.Smb -> {
                     val source = smb(target.sourceId)
-                    SmbGateway.transferWrite(source, SmbPasswordStore.get(source.id), target.path, file.mtime, checked, null, control::checkpoint, progress)
+                    SmbGateway.transferWrite(source, target.path, file.mtime, checked, null, control::checkpoint, progress, connection = requireNotNull(connection))
                     true
                 }
                 ExplorerWindows.Kind.WebDav -> {

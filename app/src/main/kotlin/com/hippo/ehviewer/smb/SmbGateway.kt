@@ -3899,21 +3899,21 @@ object SmbGateway {
     fun joinRelativePath(parent: String, child: String) = joinRelative(parent, child)
 
     /** Fresh, unclassified rows for a transfer manifest. */
-    suspend fun transferChildren(source: SmbSourceEntity, password: String, relative: String): List<RemoteChild> {
+    suspend fun transferChildren(source: SmbSourceEntity, password: String, relative: String, connection: UploadConnection? = null): List<RemoteChild> {
         val loc = resolveLocation(source, relative)
-        return withShare(source, password, ShareOp.List, loc.share) { listChildren(it, loc.pathInShare) }
+        return withUploadShare(source, password, loc.share, connection) { listChildren(it, loc.pathInShare) }
     }
 
-    suspend fun transferExists(source: SmbSourceEntity, password: String, relative: String): Boolean {
+    suspend fun transferExists(source: SmbSourceEntity, password: String, relative: String, connection: UploadConnection? = null): Boolean {
         val loc = resolveLocation(source, relative)
-        return withShare(source, password, ShareOp.List, loc.share) {
+        return withUploadShare(source, password, loc.share, connection) {
             it.fileExists(loc.pathInShare) || it.folderExists(loc.pathInShare)
         }
     }
 
-    suspend fun transferMkdir(source: SmbSourceEntity, password: String, relative: String) {
+    suspend fun transferMkdir(source: SmbSourceEntity, password: String, relative: String, connection: UploadConnection? = null) {
         val loc = resolveLocation(source, relative)
-        withShare(source, password, ShareOp.Data, loc.share) {
+        withUploadShare(source, password, loc.share, connection) {
             if (!it.folderExists(loc.pathInShare)) {
                 try {
                     it.mkdir(loc.pathInShare)
@@ -3931,7 +3931,6 @@ object SmbGateway {
     /** FILE_CREATE never overwrites a collision. One dedicated session avoids nested pool borrows. */
     suspend fun transferWrite(
         source: SmbSourceEntity,
-        password: String,
         destination: String,
         mtimeMs: Long,
         inputStream: java.io.InputStream?,
@@ -3940,10 +3939,11 @@ object SmbGateway {
         progress: (Long) -> Unit,
         copySource: SmbSourceEntity = source,
         onServerCopy: (Boolean) -> Unit = {},
+        connection: UploadConnection,
     ) {
         val dest = resolveLocation(source, destination)
         val origin = copyFrom?.let { resolveLocation(copySource, it) }
-        withTransferShare(source, password, dest.share) { share ->
+        connection.withShare(dest.share) { share ->
             val originShare = origin?.let {
                 if (it.share.equals(dest.share, ignoreCase = true)) {
                     share
@@ -4039,10 +4039,16 @@ object SmbGateway {
                         }
                     } else {
                         val input = requireNotNull(inputStream)
-                        target.outputStream.use { out ->
-                            com.hippo.ehviewer.library.copyTransferBlocks(input, checkpoint, progress) { buffer, count ->
-                                out.write(buffer, 0, count)
+                        var offset = 0L
+                        com.hippo.ehviewer.library.copyTransferBlocks(input, checkpoint, progress) { buffer, count ->
+                            var written = 0
+                            while (written < count) {
+                                checkpoint()
+                                val n = target.write(buffer, offset + written, written, count - written).toInt()
+                                check(n > 0) { "SMB write made no progress" }
+                                written += n
                             }
+                            offset += count
                         }
                     }
                     target.flush()
@@ -4076,23 +4082,54 @@ object SmbGateway {
 
     fun canTransferCopy(from: SmbSourceEntity, fromPassword: String, to: SmbSourceEntity, toPassword: String): Boolean = com.hippo.ehviewer.library.canCopySmbOnServer(from, fromPassword, to, toPassword)
 
-    /** Destination sessions do not compete with a streaming source for host-pool slots. */
-    private suspend fun <T> withTransferShare(
-        source: SmbSourceEntity,
-        password: String,
-        shareName: String,
-        block: suspend (DiskShare) -> T,
-    ): T = withContext(Dispatchers.IO) {
-        trackSource(source)
-        val session = openSession(source, password, credKey(source, password))
-        val cancel = coroutineContext[Job]?.closeFileOnCancelling(AtomicReference<SMBClient?>(session.client))
-        try {
-            block(session.diskShare(shareName))
-        } finally {
-            cancel?.dispose()
-            session.closeQuietly()
+    /** One explicit destination connection per upload job; source reads retain their existing pool. */
+    class UploadConnection internal constructor(
+        private val source: SmbSourceEntity,
+        private val password: String,
+    ) {
+        private val resource = SmbTransferResources<PooledSession>(
+            usable = { it.isConnected },
+            close = { closeTransferSession(it) },
+        )
+
+        internal suspend fun <T> withShare(shareName: String, block: suspend (DiskShare) -> T): T = withContext(Dispatchers.IO) {
+            trackSource(source)
+            val session = resource.get { openSession(source, password, credKey(source, password)) }
+            val abort = AutoCloseable { session.connection.close(true) }
+            val cancel = coroutineContext[Job]?.closeFileOnCancelling(AtomicReference<AutoCloseable?>(abort))
+            try {
+                coroutineContext.ensureActive()
+                block(session.diskShare(shareName))
+            } catch (error: Throwable) {
+                // Never replay a write: its input may already be consumed. Reconnect for the next file.
+                if (isTransportError(error) || isSessionRejectError(error) || !session.isConnected) resource.discard()
+                throw error
+            } finally {
+                cancel?.dispose()
+            }
+        }
+
+        suspend fun close() = withContext(kotlinx.coroutines.NonCancellable + Dispatchers.IO) {
+            resource.closeAll()
         }
     }
+
+    fun uploadConnection(source: SmbSourceEntity, password: String): UploadConnection = UploadConnection(source, password)
+
+    private fun closeTransferSession(session: PooledSession) {
+        session.retired.set(true)
+        // Handles are already closed. Skip graceful TREE_DISCONNECT/LOGOFF timeout waits.
+        runCatching { session.connection.close(true) }
+        runCatching { session.client.close() }
+    }
+
+    private suspend fun <T> withUploadShare(
+        source: SmbSourceEntity,
+        password: String,
+        share: String,
+        connection: UploadConnection?,
+        block: suspend (DiskShare) -> T,
+    ): T = if (connection != null) connection.withShare(share, block) else withShare(source, password, ShareOp.List, share, block)
 
     suspend fun <T> transferRead(
         source: SmbSourceEntity,
