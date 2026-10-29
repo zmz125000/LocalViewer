@@ -549,11 +549,9 @@ private fun ScreenWidgetSetting(slideshow: Boolean) = Column {
                 add(stringResource(R.string.pref_screen_widget_auto_align) to autoAlign)
             },
             onOptionChanged = { field ->
-                if (field === showClock || field === showImageInfo || field === showColorSpace ||
-                    field === showExifInfo || field === showFileName
-                ) {
-                    autoAlign.value = showImageInfo.value || showColorSpace.value ||
-                        showExifInfo.value || showFileName.value
+                if (field !== autoAlign) {
+                    autoAlign.value = (field !== showClock && field.value) ||
+                        showImageInfo.value || showColorSpace.value || showExifInfo.value || showFileName.value
                 }
             },
         )
