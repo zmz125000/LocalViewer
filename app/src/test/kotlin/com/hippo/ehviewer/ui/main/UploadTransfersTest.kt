@@ -16,6 +16,24 @@ import org.junit.Test
 
 class UploadTransfersTest {
     @Test
+    fun `selection submits each source once and disambiguates root names`() {
+        val first = row("photo.jpg").file
+        val other = first.copy(source = first.source.copy(path = "other/photo.jpg"))
+        val zip = row("album.zip", true).file
+        val projection = zip.copy(source = zip.source.copy(path = "album.zip/part"), relative = "part")
+        val roots = uploadSelectionRoots(listOf(first, other, first, zip, projection))
+        assertEquals(listOf("photo.jpg", "photo (2).jpg", "album.zip"), roots.map { it.relative })
+        assertFalse(roots.last().directory)
+    }
+
+    @Test
+    fun `selected items retain their transfer sources`() {
+        val source = TransferLocation(ExplorerWindows.Kind.Smb, 7, "photo.jpg")
+        val pick = BrowseOverflowActions(onUnsupported = {}).selectable("photo", "photo.jpg", uploadSource = source).toPick()
+        assertEquals(source, pick?.uploadSource)
+    }
+
+    @Test
     fun `zip folder roots upload their backing archive once`() {
         for (kind in ExplorerWindows.Kind.entries) {
             val path = if (kind == ExplorerWindows.Kind.Local) "/photos/album.zip/part" else "photos/album.zip/part"

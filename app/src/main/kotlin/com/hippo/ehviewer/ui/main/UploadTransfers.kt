@@ -84,6 +84,19 @@ internal fun uploadRoot(source: TransferLocation, title: String, directory: Bool
     }
 }
 
+/** One source appears once, including ZIP projections; root names are unique within the job. */
+internal fun uploadSelectionRoots(files: List<TransferFile>): List<TransferFile> {
+    val names = HashSet<String>()
+    return files.map { uploadRoot(it.source, it.relative, it.directory, it.size, it.mtime) }
+        .distinctBy { it.source }
+        .map { file ->
+            var name = file.relative
+            var number = 1
+            while (!names.add(name)) name = uploadCollisionName(file.relative, ++number)
+            file.copy(relative = name)
+        }
+}
+
 /** Each upload owns its manifest, controls, snackbar and panel. Navigation never cancels work. */
 internal object UploadTransfers {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -94,8 +107,12 @@ internal object UploadTransfers {
     var panelId by mutableStateOf<Long?>(null)
     var destinationJobId by mutableStateOf<Long?>(null)
 
-    fun prepare(source: TransferLocation, title: String, directory: Boolean, size: Long = 0, mtime: Long = 0, saving: Boolean = false): UploadJob {
-        val job = UploadJob(ids.getAndIncrement(), title, saving)
+    fun prepare(source: TransferLocation, title: String, directory: Boolean, size: Long = 0, mtime: Long = 0, saving: Boolean = false): UploadJob = prepare(listOf(TransferFile(source, title, directory, size, mtime)), saving)
+
+    fun prepare(files: List<TransferFile>, saving: Boolean = false): UploadJob {
+        require(files.isNotEmpty())
+        val roots = uploadSelectionRoots(files)
+        val job = UploadJob(ids.getAndIncrement(), roots.first().relative, saving)
         _jobs.update { it + job }
         job.worker = scope.launch {
             try {
@@ -114,8 +131,7 @@ internal object UploadTransfers {
                         }
                     }
                 }
-                val root = uploadRoot(source, title, directory, size, mtime)
-                walk(TransferFiles.stat(root), 0)
+                for (root in roots) walk(TransferFiles.stat(root), 0)
                 val sorted = rows.sortedWith(compareBy<UploadRow> { !it.file.directory }.thenBy { it.file.relative.count { c -> c == '/' } }.thenBy { it.file.relative.lowercase() })
                 job.state.update { it.copy(phase = UploadPhase.Ready, rows = sorted) }
             } catch (e: CancellationException) {

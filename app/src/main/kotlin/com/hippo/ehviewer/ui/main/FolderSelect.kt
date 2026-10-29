@@ -355,6 +355,7 @@ data class FolderPick(
     val saveInto: (suspend (Path) -> Boolean)?,
     /** Extension, size, and the rest of the folder-list second line. */
     val listLine: BrowseListLine? = null,
+    val uploadSource: com.hippo.ehviewer.library.TransferLocation? = null,
 )
 
 fun BrowseOverflowActions.selectable(
@@ -387,6 +388,7 @@ fun BrowseOverflowActions.toPick(): FolderPick? {
         convertStill = convertStill,
         saveInto = saveInto,
         listLine = listLine,
+        uploadSource = uploadSource,
     )
 }
 
@@ -1630,6 +1632,7 @@ private fun SelectionOverflowControl(
     val shareable = picks.count { it.shareHttp != null }
     val convertible = picks.count { it.convertStill != null }
     val savable = picks.count { it.saveInto != null }
+    val uploadable = picks.count { it.uploadSource != null }
     val canSelectAll = selectionActions &&
         folderKey != null &&
         FolderSelectHost.current?.folderKey == folderKey
@@ -1697,6 +1700,27 @@ private fun SelectionOverflowControl(
                         },
                     )
                 }
+                if (selectionActions && uploadable > 0) {
+                    DropdownMenuItem(
+                        text = { Text(stringResource(R.string.transfer_upload)) },
+                        onClick = {
+                            menu = false
+                            val files = picks.mapNotNull { pick ->
+                                pick.uploadSource?.let { source ->
+                                    com.hippo.ehviewer.library.TransferFile(
+                                        source,
+                                        pick.title,
+                                        pick.isFolder,
+                                        pick.listLine?.sizeBytes ?: 0L,
+                                        pick.listLine?.lastModifiedMs ?: 0L,
+                                    )
+                                }
+                            }
+                            UploadTransfers.prepare(files)
+                            FolderSelectHost.cancelShownSelection()
+                        },
+                    )
+                }
                 if (selectionActions && shareable > 0) {
                     DropdownMenuItem(
                         text = { Text(stringResource(R.string.browse_share_via_http)) },
@@ -1721,7 +1745,7 @@ private fun SelectionOverflowControl(
                         },
                     )
                 }
-                if (selectionActions && !canSelectAll && savable == 0 && shareable == 0 &&
+                if (selectionActions && !canSelectAll && savable == 0 && shareable == 0 && uploadable == 0 &&
                     convertible == 0 && onOpenFolder == null
                 ) {
                     DropdownMenuItem(
