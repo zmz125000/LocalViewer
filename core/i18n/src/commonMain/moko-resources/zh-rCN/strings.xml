@@ -1216,4 +1216,25 @@
     <string name="pref_slideshow_loop">重复播放</string>
     <string name="pref_slideshow_next_gallery">播放下一个图集</string>
     <string name="slideshow_info_iso">%1$d</string>
+    <string name="transfer_server_copy">服务器端复制</string>
+    <string name="transfer_share_target">上传</string>
+    <string name="transfer_upload">上传</string>
+    <string name="transfer_upload_to">上传到</string>
+    <string name="transfer_skip_existing">跳过已存在的文件</string>
+    <string name="transfer_dest">目的地</string>
+    <string name="transfer_destination">目的地</string>
+    <string name="transfer_start">开始</string>
+    <string name="transfer_stop">停止</string>
+    <string name="transfer_preparing">准备中…</string>
+    <string name="transfer_ready">等待开始</string>
+    <string name="transfer_paused">已暂停</string>
+    <string name="transfer_upload_stopped_summary">%1$d/%2$d/%3$d/%4$d 个文件已传输。上传已停止。</string>
+    <string name="transfer_stopped">已停止</string>
+    <string name="transfer_skipped">已跳过</string>
+    <string name="transfer_show">显示</string>
+    <string name="transfer_dismiss">关闭</string>
+    <string name="transfer_remove">从传输列表移除</string>
+    <string name="transfer_local_destination">本地文件夹</string>
+    <string name="transfer_counts">%1$d 个成功 · %2$d 个跳过 · %3$d 个失败</string>
+    <string name="transfer_file_count">%1$d 个文件</string>
 </resources>
