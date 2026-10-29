@@ -178,6 +178,7 @@ import com.hippo.ehviewer.ui.tools.awaitInputText
 import com.hippo.ehviewer.updater.AppUpdater
 import com.hippo.ehviewer.util.AppConfig
 import com.hippo.ehviewer.util.addTextToClipboard
+import com.hippo.ehviewer.util.displayName
 import com.hippo.ehviewer.util.displayString
 import com.hippo.ehviewer.util.ensureLocalNetworkPermission
 import com.hippo.ehviewer.util.getParcelableExtraCompat
@@ -573,14 +574,17 @@ class MainActivity : AppCompatActivity() {
                         PendingReaderOpen.ACTION -> openPendingReader()
                         Intent.ACTION_VIEW -> with(navigator) {
                             val uri = intent.data ?: return@collect
-                            when (uri.scheme) {
-                                SCHEME_FILE -> navToReader(uri.path!!)
-                                SCHEME_CONTENT -> navToReader(uri.toString())
-                                else -> {
-                                    // Non file/content schemes unsupported after EH purge
-                                    snackbarState.showSnackbar(cannotParse)
-                                }
+                            if (uri.scheme != SCHEME_FILE && uri.scheme != SCHEME_CONTENT) {
+                                snackbarState.showSnackbar(cannotParse)
+                                return@collect
                             }
+                            val path = uri.toOkioPath()
+                            val (name, image) = withIOContext {
+                                val name = path.displayName
+                                val mime = intent.type ?: runCatching { contentResolver.getType(uri) }.getOrNull()
+                                name to (mime?.startsWith("image/") == true || com.hippo.ehviewer.library.isImageFileName(name))
+                            }
+                            if (image) navToLocalImageReader(path.toString(), name) else navToReader(path.toString())
                         }
                         Intent.ACTION_SEND -> {
                             // Local viewer: only open shared files/archives if content URI present
