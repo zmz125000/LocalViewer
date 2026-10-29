@@ -52,6 +52,7 @@ Image make_image(unsigned w, unsigned h, unsigned depth, uhdr_color_gamut_t gamu
 }
 
 int write_avif(avifImage* image, const char* path, StillEncodeQuality quality) {
+    if (quality.exif_size && avifImageSetMetadataExif(image, quality.exif, quality.exif_size) != AVIF_RESULT_OK) return -78;
     Encoder encoder(avifEncoderCreate(), avifEncoderDestroy);
     if (!encoder) return -71;
 

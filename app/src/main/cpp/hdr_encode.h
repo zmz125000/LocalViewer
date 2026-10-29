@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
 #include <vector>
 
@@ -10,6 +11,9 @@
 
 /** One captured export quality selection; existing native callers default to High. */
 struct StillEncodeQuality {
+    // Borrowed TIFF EXIF for this synchronous encode; never owns image pixels.
+    const uint8_t* exif = nullptr;
+    size_t exif_size = 0;
     int preset;
     float custom_distance;
     int custom_quality;

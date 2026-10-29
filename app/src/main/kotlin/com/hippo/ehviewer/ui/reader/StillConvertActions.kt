@@ -21,6 +21,7 @@ import com.hippo.ehviewer.gallery.ReaderOriginalFile
 import com.hippo.ehviewer.gallery.ReaderSession
 import com.hippo.ehviewer.image.PathSource
 import com.hippo.ehviewer.image.hdr.LibDirectDecode
+import com.hippo.ehviewer.image.hdr.StillExportExif
 import com.hippo.ehviewer.image.hdr.StillExportQuality
 import com.hippo.ehviewer.image.hdr.StillExportTarget
 import com.hippo.ehviewer.image.hdr.StillExportWork
@@ -220,7 +221,7 @@ private suspend fun encodeStagedCaptured(leaf: String, target: StillExportTarget
                 val out = File.createTempFile("still-out", null, appCtx.cacheDir)
                 var success = false
                 try {
-                    val rc = withStillInput(decodeSource) { transcodeJpegBufferToJxl(it, out.absolutePath) } ?: -60
+                    val rc = withStillInput(decodeSource) { transcodeJpegBufferToJxl(it, out.absolutePath, quality.keepExif) } ?: -60
                     success = rc == 0 && out.length() > 0L
                     if (!success) {
                         android.util.Log.e("StillConvert", "Lossless JPEG transcoding failed: $leaf rc=$rc")
@@ -230,11 +231,12 @@ private suspend fun encodeStagedCaptured(leaf: String, target: StillExportTarget
                     if (!success) out.delete()
                 }
             }
+            val exif = if (quality.keepExif) StillExportExif.read(decodeSource, leaf) else null
             LibDirectDecode.withExportPixels(decodeSource.asPathSource(), leaf, maxEdge = 0, target = target) { pixels ->
                 val out = File.createTempFile("still-out", null, appCtx.cacheDir)
                 var success = false
                 try {
-                    success = pixels.writeResolved(target, out, quality) && out.length() > 0L
+                    success = pixels.writeResolved(target, out, quality, exif?.encode(pixels.width, pixels.height)) && out.length() > 0L
                     if (success) {
                         EncodedStill(out, target)
                     } else {
