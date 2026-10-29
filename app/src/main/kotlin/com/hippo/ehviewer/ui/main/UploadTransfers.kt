@@ -58,6 +58,23 @@ internal fun uploadCollisionName(name: String, number: Int): String {
     return "${name.take(dot)} ($number)${name.drop(dot)}"
 }
 
+/** ZIP folders are browse projections; transfer their backing archive as one file. */
+internal fun uploadRoot(source: TransferLocation, title: String, directory: Boolean, size: Long, mtime: Long): TransferFile {
+    val localZip = if (source.kind == ExplorerWindows.Kind.Local) com.hippo.ehviewer.library.ZipPaths.parse(source.path)?.first else null
+    val archive = if (localZip != null) {
+        localZip
+    } else if (directory && !source.path.startsWith("content:")) {
+        Regex("(?i)(?:^|/)[^/]+\\.(?:zip|cbz)(?=/|$)").find(source.path)?.let { source.path.take(it.range.last + 1) }
+    } else {
+        null
+    }
+    return if (archive != null) {
+        TransferFile(source.copy(path = archive), archive.substringAfterLast('/'), false, size, mtime)
+    } else {
+        TransferFile(source, title.substringAfterLast('/').ifBlank { "Upload" }, directory, size, mtime)
+    }
+}
+
 /** Each upload owns its manifest, controls, snackbar and panel. Navigation never cancels work. */
 internal object UploadTransfers {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -89,7 +106,7 @@ internal object UploadTransfers {
                         }
                     }
                 }
-                val root = TransferFile(source, title.substringAfterLast('/').ifBlank { "Upload" }, directory, size, mtime)
+                val root = uploadRoot(source, title, directory, size, mtime)
                 walk(TransferFiles.stat(root), 0)
                 val sorted = rows.sortedWith(compareBy<UploadRow> { !it.file.directory }.thenBy { it.file.relative.count { c -> c == '/' } }.thenBy { it.file.relative.lowercase() })
                 job.state.update { it.copy(phase = UploadPhase.Ready, rows = sorted) }

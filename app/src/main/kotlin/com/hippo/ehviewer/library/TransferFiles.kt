@@ -77,7 +77,19 @@ object TransferFiles {
     }
 
     suspend fun stat(file: TransferFile): TransferFile {
-        if (file.directory) return file
+        if (file.directory) {
+            if (file.source.kind == ExplorerWindows.Kind.Local) {
+                val metadata = file.source.path.toPath().metadataOrNull()
+                if (metadata != null && !metadata.isDirectory) {
+                    return file.copy(
+                        directory = false,
+                        size = metadata.size ?: file.size,
+                        mtime = metadata.lastModifiedAtMillis ?: file.mtime,
+                    )
+                }
+            }
+            return file
+        }
         return when (file.source.kind) {
             ExplorerWindows.Kind.Local -> file.source.path.toPath().metadataOrNull()?.let {
                 file.copy(size = it.size ?: file.size, mtime = it.lastModifiedAtMillis ?: file.mtime)

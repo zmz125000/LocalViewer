@@ -5,6 +5,7 @@ import android.provider.DocumentsContract
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -12,6 +13,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
@@ -40,6 +42,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -88,11 +91,23 @@ private fun UploadTransferDialog(job: UploadJob) {
     val explorer = LocalExplorerPanel.current
     var menu by remember(job.id) { mutableStateOf(false) }
     TaskStyledDialog(onDismiss = { UploadTransfers.panelId = null }) { tablet ->
+        val headerStyle = if (tablet) MaterialTheme.typography.titleLarge else MaterialTheme.typography.titleMedium
+        val headerIconSize = with(LocalDensity.current) { headerStyle.fontSize.toDp() }
+        val overflowPress = remember { MutableInteractionSource() }
         Column {
             Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp, top = 16.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text("${stringResource(R.string.transfer_upload)} #${job.id}", Modifier.weight(1f), style = if (tablet) MaterialTheme.typography.titleLarge else MaterialTheme.typography.titleMedium)
+                Text("${stringResource(R.string.transfer_upload)} #${job.id}", Modifier.weight(1f), style = headerStyle)
                 Box {
-                    IconButton(onClick = { menu = true }) { Icon(Icons.Default.MoreVert, stringResource(R.string.browse_item_more)) }
+                    Icon(
+                        Icons.Default.MoreVert,
+                        contentDescription = stringResource(R.string.browse_item_more),
+                        modifier = Modifier.padding(8.dp).size(headerIconSize).clickable(
+                            interactionSource = overflowPress,
+                            indication = null,
+                            onClick = { menu = true },
+                        ),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                     DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
                         DropdownMenuItem(
                             text = { Text(stringResource(R.string.transfer_skip_existing)) },

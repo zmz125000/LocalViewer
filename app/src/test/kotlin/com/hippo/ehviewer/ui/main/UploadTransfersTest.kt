@@ -15,6 +15,22 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class UploadTransfersTest {
+    @Test
+    fun `zip folder roots upload their backing archive once`() {
+        for (kind in ExplorerWindows.Kind.entries) {
+            val path = if (kind == ExplorerWindows.Kind.Local) "/photos/album.zip/part" else "photos/album.zip/part"
+            val file = uploadRoot(TransferLocation(kind, 7, path), "part", true, 12, 1234)
+            assertFalse(file.directory)
+            assertEquals("album.zip", file.relative)
+            assertEquals(path.substringBefore("/part"), file.source.path)
+        }
+        val member = uploadRoot(TransferLocation(ExplorerWindows.Kind.Local, 0, "zipfile:/photos/a.cbz!part"), "part", true, 0, 0)
+        assertEquals("/photos/a.cbz", member.source.path)
+        assertFalse(member.directory)
+        val folder = uploadRoot(TransferLocation(ExplorerWindows.Kind.Smb, 7, "photos/album"), "album", true, 0, 0)
+        assertTrue(folder.directory)
+    }
+
     private fun row(relative: String, directory: Boolean = false) = UploadRow(
         TransferFile(TransferLocation(ExplorerWindows.Kind.Smb, 7, relative), relative, directory, 12, 1234),
     )
