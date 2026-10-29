@@ -226,6 +226,22 @@ class LibrarySortTest {
     }
 
     @Test
+    fun photoGridSizeSortUsesBytesAndNaturalNameTies() {
+        data class File(val name: String, val size: Long)
+        val files = listOf(File("page10.jpg", 20L), File("page1.jpg", 100L), File("page2.jpg", 20L))
+        fun sorted(ascending: Boolean) = files.sortedPhotoGridPages(
+            BrowseSortMode.Size,
+            ascending,
+            nameOf = { it.name },
+            dateOf = { 0L },
+            sizeOf = { it.size },
+        ).map { it.name }
+
+        assertEquals(listOf("page2.jpg", "page10.jpg", "page1.jpg"), sorted(true))
+        assertEquals(listOf("page1.jpg", "page10.jpg", "page2.jpg"), sorted(false))
+    }
+
+    @Test
     fun libraryDateOpenOrdersFolderImagesNewestFirst() {
         data class File(val name: String, val mtime: Long)
         val files = listOf(File("a.jpg", 10L), File("b.jpg", 30L), File("c.jpg", 0L))

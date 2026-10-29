@@ -470,6 +470,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                 gridSort.ascending,
                 nameOf = { it.name },
                 dateOf = { it.lastModifiedMs },
+                sizeOf = { it.size },
             )
         }
     }

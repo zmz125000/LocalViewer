@@ -504,6 +504,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                 gridSort.ascending,
                 nameOf = { it.name },
                 dateOf = { it.lastModifiedMs },
+                sizeOf = { it.size },
             )
         }
     }

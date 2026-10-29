@@ -374,6 +374,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                 gridSort.ascending,
                 nameOf = { it.name },
                 dateOf = { it.lastModifiedMs },
+                sizeOf = { it.size },
             )
         }
     }
@@ -554,7 +555,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
     }
 
     LaunchedEffect(photoGridKey, gridSort.mode) {
-        if (photoGridKey == null || gridSort.mode != BrowseSortMode.Date) return@LaunchedEffect
+        if (photoGridKey == null || gridSort.mode == BrowseSortMode.Name) return@LaunchedEffect
         val frame = stack.lastOrNull() ?: return@LaunchedEffect
         val names = entries.map { it.name }
         val metadata = withIOContext { metadataForLibraryOpen(frame, names) }
