@@ -83,15 +83,43 @@ internal class StillExportExif private constructor(private val attributes: Map<S
             "Saturation", "Sharpness", "SubjectDistanceRange", "ImageUniqueID", "CameraOwnerName",
             "BodySerialNumber", "LensSpecification", "LensMake", "LensModel", "LensSerialNumber",
         )
-        private val tags by lazy {
-            ExifInterface::class.java.fields.mapNotNull { field ->
-                if (field.type == String::class.java && field.name.startsWith("TAG_")) {
-                    field.get(null) as? String
-                } else {
-                    null
-                }
-            }.filter { it in photoTags || it.startsWith("GPS") }.distinct()
-        }
+
+        // Explicit constants survive R8 inlining/shrinking. Reflecting TAG_* fields
+        // produces an empty list in release builds because those fields are removed.
+        private val tags = photoTags + setOf(
+            ExifInterface.TAG_GPS_VERSION_ID,
+            ExifInterface.TAG_GPS_LATITUDE_REF,
+            ExifInterface.TAG_GPS_LATITUDE,
+            ExifInterface.TAG_GPS_LONGITUDE_REF,
+            ExifInterface.TAG_GPS_LONGITUDE,
+            ExifInterface.TAG_GPS_ALTITUDE_REF,
+            ExifInterface.TAG_GPS_ALTITUDE,
+            ExifInterface.TAG_GPS_TIMESTAMP,
+            ExifInterface.TAG_GPS_SATELLITES,
+            ExifInterface.TAG_GPS_STATUS,
+            ExifInterface.TAG_GPS_MEASURE_MODE,
+            ExifInterface.TAG_GPS_DOP,
+            ExifInterface.TAG_GPS_SPEED_REF,
+            ExifInterface.TAG_GPS_SPEED,
+            ExifInterface.TAG_GPS_TRACK_REF,
+            ExifInterface.TAG_GPS_TRACK,
+            ExifInterface.TAG_GPS_IMG_DIRECTION_REF,
+            ExifInterface.TAG_GPS_IMG_DIRECTION,
+            ExifInterface.TAG_GPS_MAP_DATUM,
+            ExifInterface.TAG_GPS_DEST_LATITUDE_REF,
+            ExifInterface.TAG_GPS_DEST_LATITUDE,
+            ExifInterface.TAG_GPS_DEST_LONGITUDE_REF,
+            ExifInterface.TAG_GPS_DEST_LONGITUDE,
+            ExifInterface.TAG_GPS_DEST_BEARING_REF,
+            ExifInterface.TAG_GPS_DEST_BEARING,
+            ExifInterface.TAG_GPS_DEST_DISTANCE_REF,
+            ExifInterface.TAG_GPS_DEST_DISTANCE,
+            ExifInterface.TAG_GPS_PROCESSING_METHOD,
+            ExifInterface.TAG_GPS_AREA_INFORMATION,
+            ExifInterface.TAG_GPS_DATESTAMP,
+            ExifInterface.TAG_GPS_DIFFERENTIAL,
+            ExifInterface.TAG_GPS_H_POSITIONING_ERROR,
+        )
 
         fun read(source: Path, name: String): StillExportExif? {
             return try {
@@ -134,6 +162,7 @@ internal class StillExportExif private constructor(private val attributes: Map<S
                         put(tag, value)
                     }
                 }
+                Log.i("StillConvert", "EXIF read: $name fields=${values.size}")
                 values.takeIf { it.isNotEmpty() }?.let(::StillExportExif)
             } catch (error: Exception) {
                 Log.w("StillConvert", "Cannot read EXIF from $name", error)
