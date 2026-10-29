@@ -515,6 +515,7 @@ class MainActivity : AppCompatActivity() {
             val folderExitHistory = remember(scope) { FolderExitHistoryActions(scope) }
             val navController = rememberNavController()
             val navigator = navController.rememberDestinationsNavigator()
+            val explorerPanel = remember { ExplorerPanelActions() }
 
             val hasNetwork = remember { connectivityManager.activeNetwork != null }
             if (!AppConfig.isBenchmark) {
@@ -564,7 +565,13 @@ class MainActivity : AppCompatActivity() {
                     if (intent.isUploadShare()) {
                         try {
                             val files = withIOContext { sharedUploadFiles(this@MainActivity, intent) }
-                            if (files.isEmpty()) snackbarState.showSnackbar(cannotParse) else UploadTransfers.prepare(files)
+                            if (files.isEmpty()) {
+                                snackbarState.showSnackbar(cannotParse)
+                            } else {
+                                val job = UploadTransfers.prepare(files)
+                                UploadTransfers.chooseDestination(job)
+                                explorerPanel.open()
+                            }
                         } catch (error: Exception) {
                             if (error is kotlinx.coroutines.CancellationException) throw error
                             snackbarState.showSnackbar(error.message ?: cannotParse)
@@ -677,7 +684,6 @@ class MainActivity : AppCompatActivity() {
             val showMainNav = shouldShowMainNav(currentDestination, persistMainNav, useRail)
             // Shortcut FABs only on compact phones without persistent nav.
             val showNavShortcutFab = !useRail && !persistMainNav
-            val explorerPanel = remember { ExplorerPanelActions() }
             var previousDestination by remember { mutableStateOf<DestinationSpec?>(null) }
             LaunchedEffect(currentDestination) {
                 val previous = previousDestination
