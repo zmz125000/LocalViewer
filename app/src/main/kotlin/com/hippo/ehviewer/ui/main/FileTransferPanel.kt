@@ -38,6 +38,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -48,6 +50,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.ehviewer.core.files.toOkioPath
 import com.ehviewer.core.i18n.R
+import com.ehviewer.core.util.logcat
+import com.ehviewer.core.util.withIOContext
 import com.hippo.ehviewer.library.ExplorerWindows
 import com.hippo.ehviewer.library.TransferLocation
 import com.hippo.ehviewer.ui.screen.LocalExplorerPanel
@@ -56,6 +60,9 @@ import com.hippo.ehviewer.ui.theme.snackbarContainerColor
 import com.hippo.ehviewer.ui.theme.snackbarDismissButtonColors
 import com.hippo.ehviewer.ui.theme.snackbarDismissContentColor
 import com.hippo.ehviewer.util.FileUtils
+import com.hippo.ehviewer.util.awaitPickerReturn
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.launch
 
 @Composable
 private fun uploadSummary(state: UploadState): String = stringResource(R.string.transfer_counts, state.succeeded, state.skipped, state.failed)
@@ -171,6 +178,14 @@ private fun FileTransferPanel(job: UploadJob) {
                     )
                     DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
                         DropdownMenuItem(
+                            text = { Text(stringResource(R.string.transfer_auto_start)) },
+                            trailingIcon = { if (state.autoStart) Icon(Icons.Default.Check, null) },
+                            onClick = {
+                                UploadTransfers.toggleAutoStart(job)
+                                menu = false
+                            },
+                        )
+                        DropdownMenuItem(
                             text = { Text(stringResource(R.string.transfer_skip_existing)) },
                             enabled = state.editable,
                             trailingIcon = { if (state.skipExisting) Icon(Icons.Default.Check, null) },
@@ -265,16 +280,33 @@ private fun FileTransferPanel(job: UploadJob) {
 @Composable
 internal fun rememberUploadLocalDestinationPicker(onSelected: () -> Unit): () -> Unit {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var pendingId by rememberSaveable { mutableStateOf<Long?>(null) }
     val label = stringResource(R.string.transfer_local_destination)
     val error = remember { mutableStateOf<String?>(null) }
     val launcher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
-        if (uri != null) {
-            runCatching {
-                context.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
-                val document = DocumentsContract.buildDocumentUriUsingTree(uri, DocumentsContract.getTreeDocumentId(uri))
-                UploadTransfers.destination(TransferLocation(ExplorerWindows.Kind.Local, 0, document.toOkioPath().toString()), label)
-                onSelected()
-            }.onFailure { error.value = it.message ?: "Cannot access destination" }
+        val jobId = pendingId
+        pendingId = null
+        if (uri != null && jobId != null) {
+            scope.launch {
+                try {
+                    with(context) { awaitPickerReturn() }
+                    val location = withIOContext {
+                        context.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+                        val document = DocumentsContract.buildDocumentUriUsingTree(uri, DocumentsContract.getTreeDocumentId(uri))
+                        TransferLocation(ExplorerWindows.Kind.Local, 0, document.toOkioPath().toString())
+                    }
+                    if (UploadTransfers.job(jobId) != null) {
+                        UploadTransfers.destination(location, label, jobId)
+                        onSelected()
+                    }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    logcat("FileTransfer", e)
+                    error.value = e.message ?: "Cannot access destination"
+                }
+            }
         }
     }
     error.value?.let { message ->
@@ -282,7 +314,10 @@ internal fun rememberUploadLocalDestinationPicker(onSelected: () -> Unit): () ->
             TextButton(onClick = { error.value = null }) { Text(stringResource(android.R.string.ok)) }
         })
     }
-    return { launcher.launch(null) }
+    return {
+        pendingId = UploadTransfers.destinationJobId
+        launcher.launch(null)
+    }
 }
 
 /** Save to uses the same transfer engine, starting once the SAF destination is chosen. */

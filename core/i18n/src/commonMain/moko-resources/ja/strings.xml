@@ -1148,6 +1148,7 @@
     <string name="transfer_share_target">アップロード</string>
     <string name="transfer_upload">アップロード</string>
     <string name="transfer_upload_to">アップロード先</string>
+    <string name="transfer_auto_start">自動開始</string>
     <string name="transfer_skip_existing">既存のファイルをスキップ</string>
     <string name="transfer_dest">転送先</string>
     <string name="transfer_destination">転送先</string>

@@ -5,6 +5,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.ehviewer.core.i18n.R
+import com.ehviewer.core.util.logcat
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.library.BrowseSession
 import com.hippo.ehviewer.library.ExplorerWindows
@@ -40,6 +41,7 @@ internal data class UploadState(
     val skipExisting: Boolean = true,
     val background: Boolean = Settings.browseTaskForegroundService.value,
     val autoFinish: Boolean = Settings.browseTaskAutoFinish.value,
+    val autoStart: Boolean = Settings.uploadAutoStart.value,
     val bytesTransferred: Long = 0,
     val speedBps: Long = 0,
     val serverCopy: Boolean = false,
@@ -152,6 +154,7 @@ internal object UploadTransfers {
                 job.state.update { it.copy(phase = UploadPhase.Stopped) }
                 throw e
             } catch (e: Throwable) {
+                logcat("FileTransfer", e)
                 job.state.update { it.copy(phase = UploadPhase.Failed, error = e.message ?: "Cannot list source") }
             }
         }
@@ -173,11 +176,13 @@ internal object UploadTransfers {
         panelId = null
         destinationJobId = job.id
     }
-    fun destination(location: TransferLocation, label: String) {
-        val job = job(destinationJobId) ?: return
-        job.state.update { it.copy(destination = location, destinationLabel = label) }
+    fun destination(location: TransferLocation, label: String, jobId: Long? = destinationJobId) {
+        val job = job(jobId) ?: return
+        if (!job.state.value.editable && job.state.value.phase != UploadPhase.Preparing) return
+        job.state.update { it.copy(destination = location, destinationLabel = label, startWhenReady = it.autoStart) }
         destinationJobId = null
         panelId = job.id
+        if (job.state.value.autoStart && job.state.value.editable) start(job)
     }
     fun cancelDestination() {
         destinationJobId = null
@@ -189,6 +194,11 @@ internal object UploadTransfers {
     fun toggleAutoFinish(job: UploadJob) {
         job.state.update { it.copy(autoFinish = !it.autoFinish) }
         dismissAutoFinished(job)
+    }
+    fun toggleAutoStart(job: UploadJob) {
+        val enabled = !job.state.value.autoStart
+        Settings.uploadAutoStart.value = enabled
+        job.state.update { it.copy(autoStart = enabled, startWhenReady = if (enabled) it.startWhenReady else false) }
     }
     private fun dismissAutoFinished(job: UploadJob) {
         if (_jobs.value.none { it === job }) return
@@ -374,6 +384,7 @@ internal object UploadTransfers {
                             } catch (e: CancellationException) {
                                 throw e
                             } catch (e: Throwable) {
+                                logcat("FileTransfer", e)
                                 updateRow(job, file.relative, UploadFileStatus.Failed, e.message ?: "Transfer failed")
                             }
                         }
@@ -400,6 +411,7 @@ internal object UploadTransfers {
                 }
                 throw e
             } catch (e: Throwable) {
+                logcat("FileTransfer", e)
                 job.state.update { it.copy(phase = UploadPhase.Failed, error = e.message) }
             } finally {
                 meter.cancel()

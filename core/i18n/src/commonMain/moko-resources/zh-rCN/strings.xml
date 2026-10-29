@@ -1306,6 +1306,7 @@
     <string name="transfer_share_target">上传</string>
     <string name="transfer_upload">上传</string>
     <string name="transfer_upload_to">上传到</string>
+    <string name="transfer_auto_start">自动开始</string>
     <string name="transfer_skip_existing">跳过已存在的文件</string>
     <string name="transfer_dest">目的地</string>
     <string name="transfer_destination">目的地</string>
