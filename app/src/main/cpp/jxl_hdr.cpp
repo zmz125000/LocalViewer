@@ -10,6 +10,7 @@
 #include <android/log.h>
 #include <jni.h>
 #include "thumbnail_mapped_input.h"
+#include "still_exif_input.h"
 
 #include <algorithm>
 #include <atomic>
@@ -671,17 +672,16 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeJxlBufferToDirect(JNIEnv* env, jc
 }
 
 // Extract only the EXIF box (including Brotli-compressed boxes), not image pixels.
-extern "C" JNIEXPORT jbyteArray JNICALL
-Java_com_hippo_ehviewer_jni_HdrConvertKt_extractJxlExif(JNIEnv* env, jclass, jobject input) try {
-    if (!input) return nullptr;
-    const auto* data = static_cast<const uint8_t*>(env->GetDirectBufferAddress(input));
-    const jlong size = env->GetDirectBufferCapacity(input);
-    if (!data || size <= 0) return nullptr;
+static jbyteArray extract_jxl_exif(JNIEnv* env, const uint8_t* data, size_t size, StillExifInput* input) {
     auto decoder = JxlDecoderMake(nullptr);
     if (!decoder || JxlDecoderSubscribeEvents(decoder.get(), JXL_DEC_BOX | JXL_DEC_BOX_COMPLETE) != JXL_DEC_SUCCESS ||
         JxlDecoderSetDecompressBoxes(decoder.get(), JXL_TRUE) != JXL_DEC_SUCCESS) return nullptr;
-    JxlDecoderSetInput(decoder.get(), data, static_cast<size_t>(size));
-    JxlDecoderCloseInput(decoder.get());
+    std::vector<uint8_t> chunk;
+    uint64_t offset = 0;
+    if (!input) {
+        JxlDecoderSetInput(decoder.get(), data, size);
+        JxlDecoderCloseInput(decoder.get());
+    }
     std::vector<uint8_t> box;
     bool collecting = false;
     for (;;) {
@@ -700,9 +700,32 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_extractJxlExif(JNIEnv* env, jclass, job
             auto result = env->NewByteArray(static_cast<jsize>(count));
             if (result) env->SetByteArrayRegion(result, 0, static_cast<jsize>(count), reinterpret_cast<const jbyte*>(box.data()));
             return result;
+        } else if (status == JXL_DEC_NEED_MORE_INPUT && input) {
+            const size_t remaining = JxlDecoderReleaseInput(decoder.get());
+            if (remaining > chunk.size()) return nullptr;
+            offset += chunk.size() - remaining;
+            if (!input->read(offset, 64 * 1024, chunk) || chunk.size() <= remaining) return nullptr;
+            if (JxlDecoderSetInput(decoder.get(), chunk.data(), chunk.size()) != JXL_DEC_SUCCESS) return nullptr;
+            if (chunk.size() < 64 * 1024) JxlDecoderCloseInput(decoder.get());
         } else if (status == JXL_DEC_SUCCESS || status == JXL_DEC_ERROR ||
                    status == JXL_DEC_NEED_MORE_INPUT || status == JXL_DEC_BOX_NEED_MORE_OUTPUT) {
             return nullptr;
         }
     }
+}
+
+extern "C" JNIEXPORT jbyteArray JNICALL
+Java_com_hippo_ehviewer_jni_HdrConvertKt_extractJxlExif(JNIEnv* env, jclass, jobject input) try {
+    if (!input) return nullptr;
+    const auto* data = static_cast<const uint8_t*>(env->GetDirectBufferAddress(input));
+    const jlong size = env->GetDirectBufferCapacity(input);
+    if (!data || size <= 0) return nullptr;
+    return extract_jxl_exif(env, data, static_cast<size_t>(size), nullptr);
+} catch (...) { return nullptr; }
+
+extern "C" JNIEXPORT jbyteArray JNICALL
+Java_com_hippo_ehviewer_jni_HdrConvertKt_extractJxlExifInput(JNIEnv* env, jclass, jobject input) try {
+    if (!input) return nullptr;
+    StillExifInput reader(env, input);
+    return extract_jxl_exif(env, nullptr, 0, &reader);
 } catch (...) { return nullptr; }

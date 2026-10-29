@@ -230,3 +230,8 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_extractJxlExif(JNIEnv*, jclass, jobject
 
 extern "C" JNIEXPORT jbyteArray JNICALL
 Java_com_hippo_ehviewer_jni_HdrConvertKt_extractAvifExif(JNIEnv*, jclass, jobject) { return nullptr; }
+
+extern "C" JNIEXPORT jbyteArray JNICALL
+Java_com_hippo_ehviewer_jni_HdrConvertKt_extractJxlExifInput(JNIEnv*, jclass, jobject) { return nullptr; }
+extern "C" JNIEXPORT jbyteArray JNICALL
+Java_com_hippo_ehviewer_jni_HdrConvertKt_extractAvifExifInput(JNIEnv*, jclass, jobject) { return nullptr; }

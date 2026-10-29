@@ -342,3 +342,7 @@ internal external fun extractJxlExif(input: ByteBuffer): ByteArray?
 
 /** Read the primary image's EXIF without decoding AV1 pixels. */
 internal external fun extractAvifExif(input: ByteBuffer): ByteArray?
+
+/** Bounded reads from heap-backed RAM caches and pipe-backed SAF sources. */
+internal external fun extractJxlExifInput(input: com.hippo.ehviewer.image.EncodedExifInput): ByteArray?
+internal external fun extractAvifExifInput(input: com.hippo.ehviewer.image.EncodedExifInput): ByteArray?
