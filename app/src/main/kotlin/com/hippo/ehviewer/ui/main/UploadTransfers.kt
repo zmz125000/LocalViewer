@@ -28,6 +28,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.flow.updateAndGet
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -44,7 +45,7 @@ internal data class UploadState(
     val rows: List<UploadRow> = emptyList(),
     val destination: TransferLocation? = null,
     val destinationLabel: String = "",
-    val skipExisting: Boolean = true,
+    val skipExisting: Boolean = Settings.uploadSkipExisting.value,
     val background: Boolean = Settings.browseTaskForegroundService.value,
     val autoFinish: Boolean = Settings.browseTaskAutoFinish.value,
     val autoStart: Boolean = Settings.uploadAutoStart.value,
@@ -195,23 +196,25 @@ internal object UploadTransfers {
         destinationJobId = null
     }
     fun toggleBackground(job: UploadJob) {
-        job.state.update { it.copy(background = !it.background) }
+        val state = job.state.updateAndGet { it.copy(background = !it.background) }
+        Settings.browseTaskForegroundService.value = state.background
         syncForeground()
     }
     fun toggleAutoFinish(job: UploadJob) {
-        job.state.update { it.copy(autoFinish = !it.autoFinish) }
+        val state = job.state.updateAndGet { it.copy(autoFinish = !it.autoFinish) }
+        Settings.browseTaskAutoFinish.value = state.autoFinish
         dismissAutoFinished(job)
     }
     fun toggleAutoStart(job: UploadJob) {
         val enabled = !job.state.value.autoStart
-        Settings.uploadAutoStart.value = enabled
-        job.state.update { it.copy(autoStart = enabled, startWhenReady = if (enabled) it.startWhenReady else false) }
+        val state = job.state.updateAndGet { it.copy(autoStart = enabled, startWhenReady = if (enabled) it.startWhenReady else false) }
+        Settings.uploadAutoStart.value = state.autoStart
     }
     fun toggleParallel(job: UploadJob) {
         if (job.state.value.active) return
         val enabled = !job.state.value.parallel
-        Settings.uploadParallel.value = enabled
-        job.state.update { if (it.active) it else it.copy(parallel = enabled) }
+        val state = job.state.updateAndGet { if (it.active) it else it.copy(parallel = enabled) }
+        Settings.uploadParallel.value = state.parallel
     }
     private fun dismissAutoFinished(job: UploadJob) {
         if (_jobs.value.none { it === job }) return
@@ -219,7 +222,9 @@ internal object UploadTransfers {
         if (state.autoFinish && state.phase == UploadPhase.Finished && state.failed == 0) dismiss(job)
     }
     fun toggleSkipExisting(job: UploadJob) {
-        job.state.update { if (it.editable) it.copy(skipExisting = !it.skipExisting) else it }
+        if (!job.state.value.editable) return
+        val state = job.state.updateAndGet { if (it.editable) it.copy(skipExisting = !it.skipExisting) else it }
+        Settings.uploadSkipExisting.value = state.skipExisting
     }
     fun togglePause(job: UploadJob) {
         val paused = !job.control.paused.get()
