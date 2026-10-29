@@ -253,6 +253,7 @@ private fun FileTransferPanel(job: UploadJob) {
                     }) { Text(stringResource(R.string.transfer_destination)) }
                     TextButton(onClick = { UploadTransfers.start(job) }, enabled = state.destination != null && state.rows.isNotEmpty()) { Text(stringResource(R.string.transfer_start)) }
                 } else {
+                    TextButton(onClick = { UploadTransfers.continueTransfer(job) }) { Text(stringResource(R.string.browse_continue)) }
                     TextButton(onClick = { UploadTransfers.dismiss(job) }) { Text(stringResource(R.string.browse_task_done)) }
                 }
             }

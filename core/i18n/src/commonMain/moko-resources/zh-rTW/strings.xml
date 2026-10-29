@@ -1182,4 +1182,26 @@
     <string name="pref_slideshow_loop">重複播放</string>
     <string name="pref_slideshow_next_gallery">播放下一個圖集</string>
     <string name="slideshow_info_iso">%1$d</string>
+    <string name="transfer_server_copy">伺服器端複製</string>
+    <string name="transfer_share_target">上傳</string>
+    <string name="transfer_upload">上傳</string>
+    <string name="transfer_upload_to">上傳到</string>
+    <string name="transfer_skip_existing">略過已存在的檔案</string>
+    <string name="transfer_dest">目的地</string>
+    <string name="transfer_destination">目的地</string>
+    <string name="transfer_start">開始</string>
+    <string name="transfer_stop">停止</string>
+    <string name="transfer_preparing">準備中…</string>
+    <string name="transfer_ready">等待開始</string>
+    <string name="transfer_paused">已暫停</string>
+    <string name="transfer_upload_stopped_summary">%1$d/%2$d/%3$d/%4$d 個檔案已傳輸。上傳已停止。</string>
+    <string name="transfer_upload_finished_summary">%1$d/%2$d/%3$d/%4$d 檔案上傳已完成。</string>
+    <string name="transfer_stopped">已停止</string>
+    <string name="transfer_skipped">已略過</string>
+    <string name="transfer_show">顯示</string>
+    <string name="transfer_dismiss">關閉</string>
+    <string name="transfer_remove">從傳輸清單移除</string>
+    <string name="transfer_local_destination">本機資料夾</string>
+    <string name="transfer_counts">%1$d 個成功 · %2$d 個略過 · %3$d 個失敗</string>
+    <string name="transfer_file_count">%1$d 個檔案</string>
 </resources>

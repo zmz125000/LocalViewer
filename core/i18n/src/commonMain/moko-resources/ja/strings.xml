@@ -1144,4 +1144,26 @@
     <string name="pref_slideshow_loop">リピート</string>
     <string name="pref_slideshow_next_gallery">次のギャラリー</string>
     <string name="slideshow_info_iso">%1$d</string>
+    <string name="transfer_server_copy">サーバー側コピー</string>
+    <string name="transfer_share_target">アップロード</string>
+    <string name="transfer_upload">アップロード</string>
+    <string name="transfer_upload_to">アップロード先</string>
+    <string name="transfer_skip_existing">既存のファイルをスキップ</string>
+    <string name="transfer_dest">転送先</string>
+    <string name="transfer_destination">転送先</string>
+    <string name="transfer_start">開始</string>
+    <string name="transfer_stop">停止</string>
+    <string name="transfer_preparing">準備中…</string>
+    <string name="transfer_ready">開始待ち</string>
+    <string name="transfer_paused">一時停止中</string>
+    <string name="transfer_upload_stopped_summary">%1$d/%2$d/%3$d/%4$d ファイル転送済み。アップロードを停止しました。</string>
+    <string name="transfer_upload_finished_summary">%1$d/%2$d/%3$d/%4$d ファイルのアップロードが完了しました。</string>
+    <string name="transfer_stopped">停止済み</string>
+    <string name="transfer_skipped">スキップ済み</string>
+    <string name="transfer_show">表示</string>
+    <string name="transfer_dismiss">閉じる</string>
+    <string name="transfer_remove">転送リストから削除</string>
+    <string name="transfer_local_destination">ローカルフォルダー</string>
+    <string name="transfer_counts">成功 %1$d · スキップ %2$d · 失敗 %3$d</string>
+    <string name="transfer_file_count">%1$d 個のファイル</string>
 </resources>
