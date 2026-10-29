@@ -13,6 +13,7 @@ import com.hippo.ehviewer.image.hdr.isRawStillExtension
 import com.hippo.ehviewer.image.hdr.readEmbeddedRawJpeg
 import com.hippo.ehviewer.library.BrowseEntryRemote
 import com.hippo.ehviewer.library.BrowseSession
+import com.hippo.ehviewer.library.FolderGalleryIndex
 import com.hippo.ehviewer.library.ZipAsDirListing
 import com.hippo.ehviewer.library.ZipMemberCover
 import com.hippo.ehviewer.smb.SmbArchiveByteSource
@@ -61,6 +62,14 @@ suspend inline fun <T> useSmbFolderPageLoader(
         check(imageFileNames.isNotEmpty()) { "No images in SMB folder" }
         val password = SmbPasswordStore.get(source.id)
         val size = imageFileNames.size
+        // History/library opens may have no live listing, or only name-only photo-grid rows.
+        val originalImageDates = try {
+            FolderGalleryIndex.loadSmbDirectMtimes(source.id, SmbGateway.sourceConfigKey(source), remoteDir)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            emptyMap()
+        }
         val maxOps = SmbGateway.maxConcurrentOpsPerHost().coerceAtLeast(1)
         // One reserved slot for the next page; the rest of the pool continues in order.
         val serialPrefetchSlots = Semaphore(1)
@@ -104,6 +113,7 @@ suspend inline fun <T> useSmbFolderPageLoader(
                 override fun getOriginalImageDate(index: Int): Long? = BrowseSession.getSmbListing(source.id, remoteDir)
                     ?.filterIsInstance<BrowseEntryRemote.RegularFile>()
                     ?.firstOrNull { it.fileName == imageFileNames[index] }?.lastModifiedMs?.takeIf { it > 0 }
+                    ?: originalImageDates[imageFileNames[index]]
 
                 private fun relativeFile(index: Int): String = imageFileNames[index].let { name ->
                     if (remoteDir.isEmpty()) name else "$remoteDir/$name"

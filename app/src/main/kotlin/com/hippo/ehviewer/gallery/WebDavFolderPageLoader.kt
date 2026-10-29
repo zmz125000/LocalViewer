@@ -13,12 +13,14 @@ import com.hippo.ehviewer.image.hdr.isRawStillExtension
 import com.hippo.ehviewer.image.hdr.readEmbeddedRawJpeg
 import com.hippo.ehviewer.library.BrowseEntryRemote
 import com.hippo.ehviewer.library.BrowseSession
+import com.hippo.ehviewer.library.FolderGalleryIndex
 import com.hippo.ehviewer.library.ZipAsDirListing
 import com.hippo.ehviewer.library.ZipMemberCover
 import com.hippo.ehviewer.util.FileUtils
 import com.hippo.ehviewer.webdav.WebDavArchiveByteSource
 import com.hippo.ehviewer.webdav.WebDavCache
 import com.hippo.ehviewer.webdav.WebDavClient
+import com.hippo.ehviewer.webdav.WebDavGateway
 import com.hippo.ehviewer.webdav.WebDavPasswordStore
 import java.nio.ByteBuffer
 import java.util.concurrent.ConcurrentHashMap
@@ -56,6 +58,14 @@ suspend inline fun <T> useWebDavFolderPageLoader(
         check(imageFileNames.isNotEmpty()) { "No images in WebDAV folder" }
         val password = WebDavPasswordStore.get(source.id)
         val size = imageFileNames.size
+        // History/library opens may have no live listing, or only name-only photo-grid rows.
+        val originalImageDates = try {
+            FolderGalleryIndex.loadWebDavDirectMtimes(source.id, WebDavGateway.sourceConfigKey(source), remoteDir)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            emptyMap()
+        }
         val serialPrefetchSlots = Semaphore(1)
         val prefetchPermitCount = 3
         val prefetchSlots = Semaphore(prefetchPermitCount)
@@ -87,6 +97,7 @@ suspend inline fun <T> useWebDavFolderPageLoader(
                 override fun getOriginalImageDate(index: Int): Long? = BrowseSession.getWebDavListing(source.id, remoteDir)
                     ?.filterIsInstance<BrowseEntryRemote.RegularFile>()
                     ?.firstOrNull { it.fileName == imageFileNames[index] }?.lastModifiedMs?.takeIf { it > 0 }
+                    ?: originalImageDates[imageFileNames[index]]
 
                 private fun relativeFile(index: Int): String = imageFileNames[index].let { name ->
                     if (remoteDir.isEmpty()) name else "$remoteDir/$name"
