@@ -195,6 +195,7 @@ fun AnimatedVisibilityScope.DownloadScreen(navigator: DestinationsNavigator) = S
                 },
                 title = { Text(stringResource(R.string.browse_ask_where_to_save)) },
             )
+            ImageConversionPreferences()
             val mediaScan = Settings.mediaScan.asMutableState()
             SwitchPreference(
                 title = stringResource(id = R.string.settings_download_media_scan),

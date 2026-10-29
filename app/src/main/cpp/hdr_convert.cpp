@@ -862,6 +862,13 @@ struct JpegMemory {
     ~JpegMemory() { std::free(data); }
 };
 
+void write_export_exif(j_compress_ptr encoder, const StillEncodeQuality& quality) {
+    if (!quality.exif_size) return;
+    std::vector<uint8_t> payload{'E', 'x', 'i', 'f', 0, 0};
+    payload.insert(payload.end(), quality.exif, quality.exif + quality.exif_size);
+    jpeg_write_marker(encoder, JPEG_APP0 + 1, payload.data(), static_cast<unsigned>(payload.size()));
+}
+
 int encode_srgb_jpeg_u8(unsigned w, unsigned h, const uint8_t* rgba, const char* out_path,
                         uhdr_color_gamut_t cg, StillEncodeQuality quality = 1, JpegMemory* memory = nullptr);
 
@@ -958,6 +965,7 @@ int encode_baseline_sdr_jpeg(unsigned w, unsigned h, const uint16_t* rgba, const
     cinfo.comp_info[2].h_samp_factor = 1;
     cinfo.comp_info[2].v_samp_factor = 1;
     jpeg_start_compress(&cinfo, TRUE);
+    write_export_exif(&cinfo, quality);
     if (icc && icc->getData() && icc->getLength() > 0) {
         // Same as libultrahdr JpegEncoderHelper: APP2 + ICC_PROFILE payload.
         const auto len = static_cast<unsigned int>(icc->getLength());
@@ -1634,6 +1642,7 @@ int encode_srgb_jpeg_u8(unsigned w, unsigned h, const uint8_t* rgba, const char*
     cinfo.comp_info[2].h_samp_factor = 1;
     cinfo.comp_info[2].v_samp_factor = 1;
     jpeg_start_compress(&cinfo, TRUE);
+    write_export_exif(&cinfo, quality);
     auto icc = ultrahdr::IccHelper::writeIccProfile(UHDR_CT_SRGB, cg);
     if (!icc || !icc->getData() || icc->getLength() == 0) {
         jpeg_destroy_compress(&cinfo);
@@ -1731,7 +1740,19 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_encodeNativeStillExport(JNIEnv* env, jc
                                                                jint width, jint height, jboolean f16,
                                                                jint gamut, jint mode, jboolean premultiplied,
                                                                jstring jOut, jint sdr_offset, jint quality, jfloat custom_distance, jint custom_quality,
-                                                               jint avif_depth, jboolean downsize_gain_map) {
+                                                               jint avif_depth, jboolean downsize_gain_map, jbyteArray jExif) {
+    std::vector<uint8_t> exif;
+    if (jExif) {
+        const jsize size = env->GetArrayLength(jExif);
+        if (size <= 0 || size > 65527) return -52;
+        exif.resize(size);
+        env->GetByteArrayRegion(jExif, 0, size, reinterpret_cast<jbyte*>(exif.data()));
+        if (env->ExceptionCheck()) return -52;
+    }
+    StillEncodeQuality encode_quality(quality, custom_distance, custom_quality, avif_depth,
+                                      downsize_gain_map == JNI_TRUE);
+    encode_quality.exif = exif.data();
+    encode_quality.exif_size = exif.size();
     if (avif_depth != 10 && avif_depth != 12) return -52;
     if (!jPixels || !jOut || width <= 0 || height <= 0 || sdr_offset < 0 || quality < 0 || quality > 4 ||
         (quality == 4 && (!std::isfinite(custom_distance) || custom_distance < 0.f || custom_distance > 3.f ||
@@ -1745,8 +1766,7 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_encodeNativeStillExport(JNIEnv* env, jc
     const int rc = encode_still_export(pixels, static_cast<size_t>(length),
                                        static_cast<unsigned>(width), static_cast<unsigned>(height),
                                        f16 == JNI_TRUE, gamut, mode, premultiplied == JNI_TRUE,
-                                       out_path, static_cast<size_t>(sdr_offset), StillEncodeQuality(quality, custom_distance, custom_quality, avif_depth,
-                                                          downsize_gain_map == JNI_TRUE), true);
+                                       out_path, static_cast<size_t>(sdr_offset), encode_quality, true);
     env->ReleaseStringUTFChars(jOut, out_path);
     return rc;
 }
@@ -1756,7 +1776,19 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_encodeStillExport(JNIEnv* env, jclass, 
                                                            jint width, jint height, jboolean f16,
                                                            jint gamut, jint mode,
                                                            jboolean premultiplied, jstring jOut, jint sdr_offset,
-                                                           jint quality, jfloat custom_distance, jint custom_quality, jint avif_depth, jboolean downsize_gain_map) {
+                                                           jint quality, jfloat custom_distance, jint custom_quality, jint avif_depth, jboolean downsize_gain_map, jbyteArray jExif) {
+    std::vector<uint8_t> exif;
+    if (jExif) {
+        const jsize size = env->GetArrayLength(jExif);
+        if (size <= 0 || size > 65527) return -52;
+        exif.resize(size);
+        env->GetByteArrayRegion(jExif, 0, size, reinterpret_cast<jbyte*>(exif.data()));
+        if (env->ExceptionCheck()) return -52;
+    }
+    StillEncodeQuality encode_quality(quality, custom_distance, custom_quality, avif_depth,
+                                      downsize_gain_map == JNI_TRUE);
+    encode_quality.exif = exif.data();
+    encode_quality.exif_size = exif.size();
     if (avif_depth != 10 && avif_depth != 12) return -52;
     if (!jPixels || !jOut || width <= 0 || height <= 0 || sdr_offset < 0 || quality < 0 || quality > 4 ||
         (quality == 4 && (!std::isfinite(custom_distance) || custom_distance < 0.f || custom_distance > 3.f ||
@@ -1774,8 +1806,7 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_encodeStillExport(JNIEnv* env, jclass, 
                                        static_cast<size_t>(len), static_cast<unsigned>(width),
                                        static_cast<unsigned>(height), f16 == JNI_TRUE, gamut, mode,
                                        premultiplied == JNI_TRUE, out_path, static_cast<size_t>(sdr_offset),
-                                       StillEncodeQuality(quality, custom_distance, custom_quality, avif_depth,
-                                                          downsize_gain_map == JNI_TRUE));
+                                       encode_quality);
     env->ReleaseStringUTFChars(jOut, out_path);
     env->ReleaseByteArrayElements(jPixels, bytes, JNI_ABORT);
     return rc;

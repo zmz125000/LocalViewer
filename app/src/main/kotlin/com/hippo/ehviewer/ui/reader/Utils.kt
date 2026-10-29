@@ -48,8 +48,9 @@ fun Activity.setCustomBrightnessValue(value: Int) {
 @Stable
 fun Alignment.Companion.fromPreferences(value: Int, isRtl: Boolean, isVertical: Boolean) = when (value) {
     1 -> when {
-        isVertical -> CenterHorizontally
-        isRtl -> AbsoluteAlignment.Right
+        // Overflow, rather than pager orientation, decides which axis needs a start edge.
+        // applyPagerContentAlignment centers the horizontal axis when it fits.
+        isRtl && !isVertical -> AbsoluteAlignment.Right
         else -> AbsoluteAlignment.Left
     }
     2 -> AbsoluteAlignment.Left

@@ -113,7 +113,7 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_linearizeHeifIcc(JNIEnv*, jclass, jbyte
 
 extern "C" JNIEXPORT jint JNICALL
 Java_com_hippo_ehviewer_jni_HdrConvertKt_encodeStillExport(JNIEnv*, jclass, jbyteArray, jint, jint,
-                                                           jboolean, jint, jint, jboolean, jstring, jint, jint, jfloat, jint, jint, jboolean) {
+                                                           jboolean, jint, jint, jboolean, jstring, jint, jint, jfloat, jint, jint, jboolean, jbyteArray) {
     return kUnsupportedAbi;
 }
 
@@ -129,12 +129,12 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_probeStillExportSize(JNIEnv*, jclass, j
 
 extern "C" JNIEXPORT jint JNICALL
 Java_com_hippo_ehviewer_jni_HdrConvertKt_encodeNativeStillExport(JNIEnv*, jclass, jobject, jint, jint,
-                                                             jboolean, jint, jint, jboolean, jstring, jint, jint, jfloat, jint, jint, jboolean) {
+                                                             jboolean, jint, jint, jboolean, jstring, jint, jint, jfloat, jint, jint, jboolean, jbyteArray) {
     return kUnsupportedAbi;
 }
 
 extern "C" JNIEXPORT jint JNICALL
-Java_com_hippo_ehviewer_jni_HdrConvertKt_transcodeJpegToJxl(JNIEnv*, jclass, jbyteArray, jstring) {
+Java_com_hippo_ehviewer_jni_HdrConvertKt_transcodeJpegToJxl(JNIEnv*, jclass, jbyteArray, jstring, jboolean) {
     return -100;
 }
 
@@ -216,7 +216,7 @@ extern "C" JNIEXPORT jint JNICALL
 Java_com_hippo_ehviewer_jni_HdrConvertKt_probeAvifBufferHdrKind(JNIEnv*, jclass, jobject) { return 0; }
 
 extern "C" JNIEXPORT jint JNICALL
-Java_com_hippo_ehviewer_jni_HdrConvertKt_transcodeJpegBufferToJxl(JNIEnv*, jclass, jobject, jstring) {
+Java_com_hippo_ehviewer_jni_HdrConvertKt_transcodeJpegBufferToJxl(JNIEnv*, jclass, jobject, jstring, jboolean) {
     return -100;
 }
 
@@ -224,3 +224,14 @@ extern "C" JNIEXPORT jobject JNICALL
 Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeHevcAnnexBBuffer(JNIEnv*, jclass, jbyteArray, jbyteArray, jintArray) { return nullptr; }
 extern "C" JNIEXPORT jboolean JNICALL
 Java_com_hippo_ehviewer_jni_HdrConvertKt_linearizeHeifIccBuffer(JNIEnv*, jclass, jobject, jbyteArray, jboolean) { return JNI_FALSE; }
+
+extern "C" JNIEXPORT jbyteArray JNICALL
+Java_com_hippo_ehviewer_jni_HdrConvertKt_extractJxlExif(JNIEnv*, jclass, jobject) { return nullptr; }
+
+extern "C" JNIEXPORT jbyteArray JNICALL
+Java_com_hippo_ehviewer_jni_HdrConvertKt_extractAvifExif(JNIEnv*, jclass, jobject) { return nullptr; }
+
+extern "C" JNIEXPORT jbyteArray JNICALL
+Java_com_hippo_ehviewer_jni_HdrConvertKt_extractJxlExifInput(JNIEnv*, jclass, jobject) { return nullptr; }
+extern "C" JNIEXPORT jbyteArray JNICALL
+Java_com_hippo_ehviewer_jni_HdrConvertKt_extractAvifExifInput(JNIEnv*, jclass, jobject) { return nullptr; }

@@ -258,6 +258,7 @@ external fun encodeStillExport(
     customCodecQuality: Int,
     customAvifBitDepth: Int = 10,
     customDownsizeGainMap: Boolean = false,
+    exif: ByteArray? = null,
 ): Int
 
 /** Consumes exclusively owned native pixels in place; the capture must outlive this call. */
@@ -276,13 +277,14 @@ internal external fun encodeNativeStillExport(
     customCodecQuality: Int,
     customAvifBitDepth: Int = 10,
     customDownsizeGainMap: Boolean = false,
+    exif: ByteArray? = null,
 ): Int
 
 /** Header-only size probe. Kind: 0 JXL, 1 JXR, 2 RAW; packed width/height, or 0. */
 external fun probeStillExportSize(path: String, kind: Int): Long
 
 /** JPEG coefficients + reconstruction metadata → JXL; bypasses pixel decoding. */
-internal external fun transcodeJpegToJxl(jpeg: ByteArray, outPath: String): Int
+internal external fun transcodeJpegToJxl(jpeg: ByteArray, outPath: String, keepExif: Boolean = false): Int
 
 // Borrowed descriptor remains open until the native thumbnail call returns.
 external fun convertJxrFdToUltraHdrMaxEdge(fd: Int, outputPath: String, maxEdge: Int): Int
@@ -325,7 +327,7 @@ internal external fun decodeRawBufferToDirect(
     outBoost: FloatArray,
 ): ByteArray?
 internal external fun extractRawPreviewBuffer(input: java.nio.ByteBuffer, outPath: String, demosaic: Boolean): Int
-internal external fun transcodeJpegBufferToJxl(input: java.nio.ByteBuffer, outPath: String): Int
+internal external fun transcodeJpegBufferToJxl(input: java.nio.ByteBuffer, outPath: String, keepExif: Boolean = false): Int
 
 internal external fun allocateStillBuffer(size: Int): java.nio.ByteBuffer?
 internal external fun releaseStillBuffer(buffer: java.nio.ByteBuffer)
@@ -334,3 +336,13 @@ internal external fun decodeHevcAnnexBBuffer(csd: ByteArray, picture: ByteArray,
 internal external fun linearizeHeifIccBuffer(pixels: java.nio.ByteBuffer, icc: ByteArray, wideGamut: Boolean): Boolean
 
 internal external fun captureStillBitmap(bitmap: android.graphics.Bitmap): ByteArray?
+
+/** Read EXIF boxes without decoding image pixels. */
+internal external fun extractJxlExif(input: ByteBuffer): ByteArray?
+
+/** Read the primary image's EXIF without decoding AV1 pixels. */
+internal external fun extractAvifExif(input: ByteBuffer): ByteArray?
+
+/** Bounded reads from heap-backed RAM caches and pipe-backed SAF sources. */
+internal external fun extractJxlExifInput(input: com.hippo.ehviewer.image.EncodedExifInput): ByteArray?
+internal external fun extractAvifExifInput(input: com.hippo.ehviewer.image.EncodedExifInput): ByteArray?

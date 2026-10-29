@@ -14,6 +14,7 @@
 #include <android/log.h>
 #include <jni.h>
 #include "thumbnail_mapped_input.h"
+#include "still_exif_input.h"
 
 #include <algorithm>
 #include <cmath>
@@ -33,6 +34,61 @@
 #define LOG_TAG "AvifHdr"
 #define ALOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
 #define ALOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
+
+// Parse container metadata only, independently of platform AV1/profile support.
+static jbyteArray avif_exif_result(JNIEnv* env, const avifDecoder* decoder) {
+    const auto& exif = decoder->image->exif;
+    if (!exif.data || !exif.size || exif.size > 1024 * 1024) return nullptr;
+    size_t offset = 0;
+    if (avifGetExifTiffHeaderOffset(exif.data, exif.size, &offset) != AVIF_RESULT_OK || offset >= exif.size) return nullptr;
+    const size_t count = exif.size - offset;
+    auto result = env->NewByteArray(static_cast<jsize>(count));
+    if (result) env->SetByteArrayRegion(result, 0, static_cast<jsize>(count), reinterpret_cast<const jbyte*>(exif.data + offset));
+    return result;
+}
+
+extern "C" JNIEXPORT jbyteArray JNICALL
+Java_com_hippo_ehviewer_jni_HdrConvertKt_extractAvifExif(JNIEnv* env, jclass, jobject input) try {
+    if (!input) return nullptr;
+    const auto* data = static_cast<const uint8_t*>(env->GetDirectBufferAddress(input));
+    const jlong size = env->GetDirectBufferCapacity(input);
+    if (!data || size <= 0) return nullptr;
+    std::unique_ptr<avifDecoder, decltype(&avifDecoderDestroy)> decoder(avifDecoderCreate(), avifDecoderDestroy);
+    if (!decoder) return nullptr;
+    decoder->ignoreExif = AVIF_FALSE;
+    decoder->ignoreXMP = AVIF_TRUE;
+    if (avifDecoderSetIOMemory(decoder.get(), data, static_cast<size_t>(size)) != AVIF_RESULT_OK ||
+        avifDecoderParse(decoder.get()) != AVIF_RESULT_OK || !decoder->image) return nullptr;
+    return avif_exif_result(env, decoder.get());
+} catch (...) { return nullptr; }
+
+extern "C" JNIEXPORT jbyteArray JNICALL
+Java_com_hippo_ehviewer_jni_HdrConvertKt_extractAvifExifInput(JNIEnv* env, jclass, jobject input) try {
+    if (!input) return nullptr;
+    struct Reader {
+        StillExifInput input;
+        std::vector<uint8_t> bytes;
+        Reader(JNIEnv* env, jobject source) : input(env, source) {}
+    } reader(env, input);
+    // Declared before decoder so its storage outlives avifDecoderDestroy.
+    avifIO io{};
+    io.sizeHint = INT64_MAX;
+    io.data = &reader;
+    io.read = [](avifIO* source, uint32_t flags, uint64_t offset, size_t size, avifROData* out) -> avifResult {
+        auto* reader = static_cast<Reader*>(source->data);
+        if (flags || !reader->input.read(offset, size, reader->bytes)) return AVIF_RESULT_IO_ERROR;
+        out->data = reader->bytes.data();
+        out->size = reader->bytes.size();
+        return AVIF_RESULT_OK;
+    };
+    std::unique_ptr<avifDecoder, decltype(&avifDecoderDestroy)> decoder(avifDecoderCreate(), avifDecoderDestroy);
+    if (!decoder) return nullptr;
+    decoder->ignoreExif = AVIF_FALSE;
+    decoder->ignoreXMP = AVIF_TRUE;
+    avifDecoderSetIO(decoder.get(), &io); // destroy=nullptr: io is borrowed stack storage.
+    if (avifDecoderParse(decoder.get()) != AVIF_RESULT_OK || !decoder->image) return nullptr;
+    return avif_exif_result(env, decoder.get());
+} catch (...) { return nullptr; }
 
 namespace {
 
