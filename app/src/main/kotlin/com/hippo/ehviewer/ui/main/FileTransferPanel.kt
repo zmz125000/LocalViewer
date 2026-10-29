@@ -69,19 +69,21 @@ internal fun UploadTransferBars() {
                 val state by job.state.collectAsState()
                 val finished = !state.active && !state.editable && state.phase != UploadPhase.Preparing
                 Snackbar(containerColor = snackbarContainerColor(), action = {
-                    if (state.editable) {
-                        TextButton(onClick = {
-                            UploadTransfers.chooseDestination(job)
-                            explorer.open()
-                        }) { Text(stringResource(R.string.transfer_destination)) }
-                    } else {
+                    Row {
+                        if (state.editable) {
+                            TextButton(onClick = {
+                                UploadTransfers.chooseDestination(job)
+                                explorer.open()
+                            }) { Text(stringResource(R.string.transfer_dest)) }
+                        }
                         TextButton(onClick = { UploadTransfers.panelId = job.id }) { Text(stringResource(R.string.transfer_show)) }
-                    }
-                }, dismissAction = {
-                    TextButton(onClick = {
-                        if (finished) UploadTransfers.dismiss(job) else UploadTransfers.cancel(job)
-                    }) {
-                        Text(stringResource(if (finished) R.string.browse_task_done else android.R.string.cancel))
+                        if (!state.active) {
+                            TextButton(onClick = {
+                                if (finished) UploadTransfers.dismiss(job) else UploadTransfers.cancel(job)
+                            }) {
+                                Text(stringResource(if (finished) R.string.browse_task_done else android.R.string.cancel))
+                            }
+                        }
                     }
                 }) {
                     Column(Modifier.clickable { UploadTransfers.panelId = job.id }) {

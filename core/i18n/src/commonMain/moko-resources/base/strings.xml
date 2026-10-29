@@ -1258,6 +1258,7 @@
     <string name="transfer_upload">Upload</string>
     <string name="transfer_upload_to">Upload to</string>
     <string name="transfer_skip_existing">Skip existing files</string>
+    <string name="transfer_dest">Dest</string>
     <string name="transfer_destination">Destination</string>
     <string name="transfer_start">Start</string>
     <string name="transfer_stop">Stop</string>
