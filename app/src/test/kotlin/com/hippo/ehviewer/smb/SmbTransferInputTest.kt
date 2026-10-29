@@ -20,17 +20,17 @@ import org.junit.Test
 
 class SmbTransferInputTest {
     @Test
-    fun `relay uses four concurrent reads and preserves bytes through pipelined writes`() = runBlocking {
-        val data = ByteArray(6 * SmbSequentialCopy.READ_CHUNK + 17) { (it % 251).toByte() }
+    fun `relay uses a full concurrent read window and preserves bytes through pipelined writes`() = runBlocking {
+        val data = ByteArray((SmbTransferCopy.READ_WINDOW + 2) * SmbTransferCopy.BLOCK_BYTES + 17) { (it % 251).toByte() }
         val output = ByteArray(data.size)
-        val firstBatch = CountDownLatch(SmbSequentialCopy.READ_PIPELINE)
+        val firstBatch = CountDownLatch(SmbTransferCopy.READ_WINDOW)
         val active = AtomicInteger()
         val maximum = AtomicInteger()
         val read = SmbRangeReader { buffer, position, offset, length ->
             val current = active.incrementAndGet()
             maximum.updateAndGet { maxOf(it, current) }
             try {
-                if (position < 4L * SmbSequentialCopy.READ_CHUNK) {
+                if (position < SmbTransferCopy.READ_WINDOW.toLong() * SmbTransferCopy.BLOCK_BYTES) {
                     firstBatch.countDown()
                     check(firstBatch.await(3, TimeUnit.SECONDS))
                 }
@@ -51,7 +51,7 @@ class SmbTransferInputTest {
         }
         assertArrayEquals(data, output)
         assertEquals(data.size.toLong(), acknowledged)
-        assertEquals(SmbSequentialCopy.READ_PIPELINE, maximum.get())
+        assertEquals(SmbTransferCopy.READ_WINDOW, maximum.get())
         assertEquals(0, active.get())
     }
 
@@ -75,6 +75,42 @@ class SmbTransferInputTest {
             fail("Expected source failure")
         } catch (error: IOException) {
             assertTrue(error.message.orEmpty().contains("source disconnected"))
+        }
+    }
+
+    @Test
+    fun `early EOF aborts other blocking reads before joining the window`() = runBlocking {
+        val started = CountDownLatch(SmbTransferCopy.READ_WINDOW - 1)
+        val released = CountDownLatch(1)
+        val aborted = AtomicInteger()
+        val active = AtomicInteger()
+        val read = SmbRangeReader { _, position, _, _ ->
+            if (position == 0L) {
+                check(started.await(3, TimeUnit.SECONDS))
+                -1
+            } else {
+                active.incrementAndGet()
+                started.countDown()
+                try {
+                    check(released.await(3, TimeUnit.SECONDS)) { "Outstanding read was not aborted" }
+                    throw IOException("handle closed")
+                } finally {
+                    active.decrementAndGet()
+                }
+            }
+        }
+        try {
+            withTimeout(5000) {
+                withSmbTransferInput(read, SmbTransferCopy.READ_WINDOW.toLong() * SmbTransferCopy.BLOCK_BYTES, {
+                    aborted.incrementAndGet()
+                    released.countDown()
+                }) { it.readBytes() }
+            }
+            fail("Expected truncated source failure")
+        } catch (error: IOException) {
+            assertTrue(error.message.orEmpty().contains("expected file size"))
+            assertEquals(1, aborted.get())
+            assertEquals(0, active.get())
         }
     }
 
@@ -171,8 +207,8 @@ class SmbTransferInputTest {
     }
 
     @Test
-    fun `slow destination bounds source read-ahead to the existing four-block batch`() = runBlocking {
-        val batch = CountDownLatch(SmbSequentialCopy.READ_PIPELINE)
+    fun `slow destination bounds read-ahead to the read window and one pipe block`() = runBlocking {
+        val batch = CountDownLatch(SmbTransferCopy.READ_WINDOW)
         val calls = AtomicInteger()
         val read = SmbRangeReader { buffer, _, offset, length ->
             calls.incrementAndGet()
@@ -184,7 +220,7 @@ class SmbTransferInputTest {
             withSmbTransferInput(read, 100L * SmbSequentialCopy.READ_CHUNK, {}) {
                 check(batch.await(3, TimeUnit.SECONDS))
                 kotlinx.coroutines.delay(50)
-                assertEquals(SmbSequentialCopy.READ_PIPELINE, calls.get())
+                assertTrue(calls.get() <= SmbTransferCopy.READ_WINDOW + 1)
             }
         }
     }

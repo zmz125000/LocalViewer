@@ -179,7 +179,11 @@ object TransferFiles {
         }
         when (file.source.kind) {
             ExplorerWindows.Kind.Local -> ParcelFileDescriptor.AutoCloseInputStream(file.source.path.toPath().openFileDescriptor("r")).use { it.copyTo(checked, 256 * 1024) }
-            ExplorerWindows.Kind.Smb -> smb(file.source.sourceId).let { SmbGateway.downloadFile(it, SmbPasswordStore.get(it.id), file.source.path, checked) }
+            ExplorerWindows.Kind.Smb -> smb(file.source.sourceId).let {
+                SmbGateway.transferRead(it, SmbPasswordStore.get(it.id), file.source.path) { input ->
+                    input.copyTo(checked, TRANSFER_BLOCK_BYTES)
+                }
+            }
             ExplorerWindows.Kind.WebDav -> dav(file.source.sourceId).let { WebDavClient.downloadFile(it, WebDavPasswordStore.get(it.id), file.source.path, checked) }
         }
     }
@@ -244,7 +248,7 @@ object TransferFiles {
                 throw e
             }
         }
-        // Backpressure is the destination's write: only one bounded block is held in RAM.
+        // Backpressure is bounded by the transfer read/write windows; no on-disk staging.
         return withInput(file) { input ->
             val context = kotlin.coroutines.coroutineContext
             val checked = object : java.io.FilterInputStream(input) {
