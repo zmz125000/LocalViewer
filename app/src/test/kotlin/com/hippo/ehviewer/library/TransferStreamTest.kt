@@ -84,7 +84,7 @@ class TransferStreamTest {
             reported += it
             assertEquals(written, reported)
         }) { buffer, count ->
-            assertTrue(buffer.size <= 256 * 1024)
+            assertTrue(buffer.size <= TRANSFER_BLOCK_BYTES)
             if (first == null) first = buffer else assertSame(first, buffer)
             output.write(buffer, 0, count)
             written += count
@@ -95,19 +95,19 @@ class TransferStreamTest {
 
     @Test
     fun `cancel stops before consuming more source bytes`() = runBlocking {
-        val input = ByteArrayInputStream(ByteArray(1024 * 1024))
+        val input = ByteArrayInputStream(ByteArray(4 * 1024 * 1024))
         var stop = false
         try {
             copyTransferBlocks(input, { if (stop) throw CancellationException() }, {}) { _, _ -> stop = true }
             fail("Expected cancellation")
         } catch (_: CancellationException) {
-            assertEquals(768 * 1024, input.available())
+            assertEquals(3 * 1024 * 1024, input.available())
         }
     }
 
     @Test
     fun `sink failure is propagated without reporting uncommitted progress`() = runBlocking {
-        val input = ByteArrayInputStream(ByteArray(1024 * 1024))
+        val input = ByteArrayInputStream(ByteArray(4 * 1024 * 1024))
         var reported = 0L
         val failure = IOException("sink failed")
         try {
@@ -116,7 +116,7 @@ class TransferStreamTest {
         } catch (error: IOException) {
             assertSame(failure, error)
             assertEquals(0L, reported)
-            assertEquals(768 * 1024, input.available())
+            assertEquals(3 * 1024 * 1024, input.available())
         }
     }
 

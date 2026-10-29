@@ -3980,8 +3980,7 @@ object SmbGateway {
                             var remote = true
                             var resumeKey: ByteArray? = null
                             var chunkSize = 16L * 1024 * 1024
-                            val buffer = ByteArray(256 * 1024)
-                            while (offset < size) {
+                            while (offset < size && remote) {
                                 checkpoint()
                                 val count = minOf(chunkSize, size - offset)
                                 if (remote) {
@@ -4024,31 +4023,31 @@ object SmbGateway {
                                         onServerCopy(false)
                                     }
                                 }
-                                val read = input.read(buffer, offset, 0, minOf(buffer.size.toLong(), size - offset).toInt())
-                                check(read > 0) { "Unexpected end of SMB source" }
-                                var written = 0
-                                while (written < read) {
-                                    checkpoint()
-                                    val n = target.write(buffer, offset + written, written, read - written).toInt()
-                                    check(n > 0) { "SMB write made no progress" }
-                                    written += n
+                            }
+                            if (offset < size) {
+                                input.inputStream.use { stream ->
+                                    check(stream.skip(offset) == offset) { "Cannot seek SMB source" }
+                                    com.hippo.ehviewer.library.copyTransferBlocksPipelined(
+                                        stream,
+                                        checkpoint,
+                                        progress,
+                                        startOffset = offset,
+                                        maxBytes = size - offset,
+                                        timeoutMillis = SMB_IO_TIMEOUT_SEC * 1000,
+                                    ) { buffer, position, count ->
+                                        target.writeAsync(buffer, position, 0, count)
+                                    }
                                 }
-                                offset += read
-                                progress(read.toLong())
                             }
                         }
                     } else {
-                        val input = requireNotNull(inputStream)
-                        var offset = 0L
-                        com.hippo.ehviewer.library.copyTransferBlocks(input, checkpoint, progress) { buffer, count ->
-                            var written = 0
-                            while (written < count) {
-                                checkpoint()
-                                val n = target.write(buffer, offset + written, written, count - written).toInt()
-                                check(n > 0) { "SMB write made no progress" }
-                                written += n
-                            }
-                            offset += count
+                        com.hippo.ehviewer.library.copyTransferBlocksPipelined(
+                            requireNotNull(inputStream),
+                            checkpoint,
+                            progress,
+                            timeoutMillis = SMB_IO_TIMEOUT_SEC * 1000,
+                        ) { buffer, position, count ->
+                            target.writeAsync(buffer, position, 0, count)
                         }
                     }
                     target.flush()
