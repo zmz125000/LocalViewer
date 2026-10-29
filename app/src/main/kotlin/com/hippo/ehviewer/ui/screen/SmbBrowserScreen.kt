@@ -64,6 +64,7 @@ import com.ehviewer.core.i18n.R
 import com.ehviewer.core.model.BaseGalleryInfo
 import com.ehviewer.core.model.GalleryInfo.Companion.NOT_FAVORITED
 import com.ehviewer.core.ui.component.FastScrollLazyVerticalGrid
+import com.ehviewer.core.ui.util.LocalSnackBarFabPadding
 import com.ehviewer.core.ui.util.thenIf
 import com.ehviewer.core.util.launch
 import com.ehviewer.core.util.launchIO
@@ -96,6 +97,7 @@ import com.hippo.ehviewer.library.RemoteArchiveOpen
 import com.hippo.ehviewer.library.SMB_ARCHIVE_TOKEN
 import com.hippo.ehviewer.library.SMB_FOLDER_TOKEN
 import com.hippo.ehviewer.library.SavedExplorerPaths
+import com.hippo.ehviewer.library.TransferLocation
 import com.hippo.ehviewer.library.VideoThumbnail
 import com.hippo.ehviewer.library.VideoThumbnailSource
 import com.hippo.ehviewer.library.ZipAsDirListing
@@ -2026,6 +2028,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
         isFolder = true,
         shareHttp = smbShareFolderStart(name),
         saveInto = smbSaveFolderInto(name),
+        uploadSource = TransferLocation(ExplorerWindows.Kind.Smb, sourceId, SmbGateway.joinRelativePath(relativeDir, name)),
         listLine = BrowseListLine(
             typeLabel = browseZipAsDirTypeLabel(name, name.substringAfterLast('/')) ?: "Dir",
             sizeBytes = sizeBytes,
@@ -2060,6 +2063,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
         isFolder = true,
         shareHttp = smbShareFolderStart(entry.relativeName, entry.name),
         saveInto = smbSaveFolderInto(entry.relativeName, entry.name),
+        uploadSource = TransferLocation(ExplorerWindows.Kind.Smb, sourceId, SmbGateway.joinRelativePath(relativeDir, entry.relativeName)),
         listLine = BrowseListLine(
             typeLabel = browseZipAsDirTypeLabel(entry.relativeName, entry.name) ?: "Folder",
             sizeBytes = entry.size,
@@ -2163,6 +2167,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
             entry.name,
             shareHttp = smbShareFileStart(remote),
             saveInto = smbSaveFileInto(remote),
+            uploadSource = TransferLocation(ExplorerWindows.Kind.Smb, sourceId, SmbGateway.joinRelativePath(relativeDir, remote)),
             listLine = BrowseListLine(
                 typeLabel = browseFileExtensionLabel(entry.fileName),
                 sizeBytes = entry.size,
@@ -2198,6 +2203,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
         fileName.substringAfterLast('/'),
         shareHttp = smbShareFileStart(fileName),
         saveInto = smbSaveFileInto(fileName),
+        uploadSource = TransferLocation(ExplorerWindows.Kind.Smb, sourceId, SmbGateway.joinRelativePath(relativeDir, fileName)),
         listLine = BrowseListLine(
             typeLabel = browseFileExtensionLabel(fileName),
             sizeBytes = sizeBytes,
@@ -2336,6 +2342,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
         shareHttp = smbShareFileStart(fileName),
         convertStill = smbConvertStill(fileName),
         saveInto = smbSaveFileInto(fileName),
+        uploadSource = TransferLocation(ExplorerWindows.Kind.Smb, sourceId, SmbGateway.joinRelativePath(relativeDir, fileName)),
         listLine = BrowseListLine(
             typeLabel = browseFileExtensionLabel(fileName),
             sizeBytes = sizeBytes,
@@ -2402,6 +2409,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
             // Visibility follows enterAlways top-bar scroll (same collapsedFraction).
             if (LocalShowNavShortcutFab.current && !hideBackToFab) {
                 AnimatedVisibility(
+                    modifier = Modifier.padding(bottom = LocalSnackBarFabPadding.current.value),
                     visible = showScrollFab,
                     enter = fadeIn() + scaleIn(),
                     exit = fadeOut() + scaleOut(),

@@ -64,6 +64,7 @@ import com.ehviewer.core.i18n.R
 import com.ehviewer.core.model.BaseGalleryInfo
 import com.ehviewer.core.model.GalleryInfo.Companion.NOT_FAVORITED
 import com.ehviewer.core.ui.component.FastScrollLazyVerticalGrid
+import com.ehviewer.core.ui.util.LocalSnackBarFabPadding
 import com.ehviewer.core.ui.util.thenIf
 import com.ehviewer.core.util.launch
 import com.ehviewer.core.util.launchIO
@@ -94,6 +95,7 @@ import com.hippo.ehviewer.library.NetworkFolderIndexCache
 import com.hippo.ehviewer.library.ReaderGalleryPlaylist
 import com.hippo.ehviewer.library.RemoteArchiveOpen
 import com.hippo.ehviewer.library.SavedExplorerPaths
+import com.hippo.ehviewer.library.TransferLocation
 import com.hippo.ehviewer.library.VideoThumbnail
 import com.hippo.ehviewer.library.VideoThumbnailSource
 import com.hippo.ehviewer.library.WEBDAV_ARCHIVE_TOKEN
@@ -1900,6 +1902,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
         isFolder = true,
         shareHttp = webDavShareFolderStart(name),
         saveInto = webDavSaveFolderInto(name),
+        uploadSource = TransferLocation(ExplorerWindows.Kind.WebDav, sourceId, WebDavGateway.joinRelative(relativeDir, name)),
         listLine = BrowseListLine(
             typeLabel = browseZipAsDirTypeLabel(name, name.substringAfterLast('/')) ?: "Dir",
             sizeBytes = sizeBytes,
@@ -1934,6 +1937,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
         isFolder = true,
         shareHttp = webDavShareFolderStart(entry.relativeName, entry.name),
         saveInto = webDavSaveFolderInto(entry.relativeName, entry.name),
+        uploadSource = TransferLocation(ExplorerWindows.Kind.WebDav, sourceId, WebDavGateway.joinRelative(relativeDir, entry.relativeName)),
         listLine = BrowseListLine(
             typeLabel = browseZipAsDirTypeLabel(entry.relativeName, entry.name) ?: "Folder",
             sizeBytes = entry.size,
@@ -2037,6 +2041,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
             entry.name,
             shareHttp = webDavShareFileStart(remote),
             saveInto = webDavSaveFileInto(remote),
+            uploadSource = TransferLocation(ExplorerWindows.Kind.WebDav, sourceId, WebDavGateway.joinRelative(relativeDir, remote)),
             listLine = BrowseListLine(
                 typeLabel = browseFileExtensionLabel(entry.fileName),
                 sizeBytes = entry.size,
@@ -2072,6 +2077,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
         fileName.substringAfterLast('/'),
         shareHttp = webDavShareFileStart(fileName),
         saveInto = webDavSaveFileInto(fileName),
+        uploadSource = TransferLocation(ExplorerWindows.Kind.WebDav, sourceId, WebDavGateway.joinRelative(relativeDir, fileName)),
         listLine = BrowseListLine(
             typeLabel = browseFileExtensionLabel(fileName),
             sizeBytes = sizeBytes,
@@ -2214,6 +2220,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
         shareHttp = webDavShareFileStart(fileName),
         convertStill = webDavConvertStill(fileName),
         saveInto = webDavSaveFileInto(fileName),
+        uploadSource = TransferLocation(ExplorerWindows.Kind.WebDav, sourceId, WebDavGateway.joinRelative(relativeDir, fileName)),
         listLine = BrowseListLine(
             typeLabel = browseFileExtensionLabel(fileName),
             sizeBytes = sizeBytes,
@@ -2276,6 +2283,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
             // Visibility follows enterAlways top-bar scroll (same collapsedFraction).
             if (LocalShowNavShortcutFab.current && !hideBackToFab) {
                 AnimatedVisibility(
+                    modifier = Modifier.padding(bottom = LocalSnackBarFabPadding.current.value),
                     visible = showScrollFab,
                     enter = fadeIn() + scaleIn(),
                     exit = fadeOut() + scaleOut(),

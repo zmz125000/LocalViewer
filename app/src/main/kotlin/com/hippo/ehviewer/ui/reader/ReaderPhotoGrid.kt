@@ -146,7 +146,7 @@ fun readerPdfCacheKey(args: ReaderScreenArgs): String? = when (args) {
 fun readerPageFileName(args: ReaderScreenArgs, pageLoader: ReaderSession, index: Int): String {
     val fromArgs = when (args) {
         is ReaderScreenArgs.LocalFolder -> args.imageNames.getOrNull(index)
-        is ReaderScreenArgs.LocalImageList -> ReaderImageList.paths.getOrNull(index)
+        is ReaderScreenArgs.LocalImageList -> if (args.paths.isNotEmpty()) null else ReaderImageList.paths.getOrNull(index)
         is ReaderScreenArgs.LocalZipFolder -> args.imageNames.getOrNull(index)
         is ReaderScreenArgs.SmbFolder -> args.imageNames.getOrNull(index)
         is ReaderScreenArgs.WebDavFolder -> args.imageNames.getOrNull(index)
@@ -167,7 +167,7 @@ fun readerPageCover(args: ReaderScreenArgs, fileName: String, index: Int = 0): B
     return when (args) {
         is ReaderScreenArgs.LocalFolder -> BrowseCover.Local(args.path.toPath() / base)
         is ReaderScreenArgs.LocalImageList ->
-            ReaderImageList.paths.getOrNull(index)?.let { BrowseCover.Local(it.toPath()) }
+            args.paths.ifEmpty { ReaderImageList.paths }.getOrNull(index)?.let { BrowseCover.Local(it.toPath()) }
         is ReaderScreenArgs.LocalZipFolder -> {
             val member = ZipAsDirListing.joinPrefix(args.innerRel, name)
             BrowseCover.Local(ZipPaths.encodePath(args.zipPath, member))

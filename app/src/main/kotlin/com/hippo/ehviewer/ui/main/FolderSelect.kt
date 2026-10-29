@@ -355,6 +355,7 @@ data class FolderPick(
     val saveInto: (suspend (Path) -> Boolean)?,
     /** Extension, size, and the rest of the folder-list second line. */
     val listLine: BrowseListLine? = null,
+    val uploadSource: com.hippo.ehviewer.library.TransferLocation? = null,
 )
 
 fun BrowseOverflowActions.selectable(
@@ -365,6 +366,7 @@ fun BrowseOverflowActions.selectable(
     convertStill: (suspend (Path, StillExportTarget) -> Boolean)? = null,
     saveInto: (suspend (Path) -> Boolean)? = null,
     listLine: BrowseListLine? = null,
+    uploadSource: com.hippo.ehviewer.library.TransferLocation? = null,
 ): BrowseOverflowActions = copy(
     selectKey = key,
     selectTitle = title,
@@ -373,6 +375,7 @@ fun BrowseOverflowActions.selectable(
     saveInto = saveInto,
     selectFolder = isFolder,
     listLine = listLine,
+    uploadSource = uploadSource,
 )
 
 fun BrowseOverflowActions.toPick(): FolderPick? {
@@ -385,6 +388,7 @@ fun BrowseOverflowActions.toPick(): FolderPick? {
         convertStill = convertStill,
         saveInto = saveInto,
         listLine = listLine,
+        uploadSource = uploadSource,
     )
 }
 
@@ -1248,6 +1252,13 @@ private fun FolderTaskSnackbar(batch: TaskBatch) {
 
 @Composable
 private fun FolderTasksDialog(onOpenFolder: (FolderPlace) -> Boolean) {
+    TaskStyledDialog(onDismiss = { FolderSelectHost.dialog = false }) { tablet ->
+        TasksPanel(tablet = tablet, onOpenFolder = onOpenFolder)
+    }
+}
+
+@Composable
+internal fun TaskStyledDialog(onDismiss: () -> Unit, content: @Composable (Boolean) -> Unit) {
     val layout = GalleryGridDefaults.listLayout()
     val phonePortrait = layout.columns == 1
     val phoneLandscape = !layout.capReaderSheet
@@ -1256,7 +1267,7 @@ private fun FolderTasksDialog(onOpenFolder: (FolderPlace) -> Boolean) {
     val screenW = configuration.screenWidthDp.dp
     val screenH = configuration.screenHeightDp.dp
     Dialog(
-        onDismissRequest = { FolderSelectHost.dialog = false },
+        onDismissRequest = { onDismiss() },
         properties = DialogProperties(
             usePlatformDefaultWidth = false,
             dismissOnClickOutside = true,
@@ -1277,7 +1288,7 @@ private fun FolderTasksDialog(onOpenFolder: (FolderPlace) -> Boolean) {
                     .clickable(
                         interactionSource = scrim,
                         indication = null,
-                        onClick = { FolderSelectHost.dialog = false },
+                        onClick = { onDismiss() },
                     ),
             )
             BoxWithConstraints(
@@ -1320,7 +1331,7 @@ private fun FolderTasksDialog(onOpenFolder: (FolderPlace) -> Boolean) {
                     shadowElevation = 3.dp,
                     tonalElevation = 0.dp,
                 ) {
-                    TasksPanel(tablet = tablet, onOpenFolder = onOpenFolder)
+                    content(tablet)
                 }
             }
         }
@@ -1503,7 +1514,7 @@ private fun RowScope.PanelAction(label: Int, onClick: () -> Unit) {
 }
 
 @Composable
-private fun TaskPathRow(
+internal fun TaskPathRow(
     title: String,
     subtitle: String,
     icon: ImageVector,
@@ -1574,7 +1585,7 @@ private fun TaskPathRow(
 }
 
 @Composable
-private fun TaskRowAction(
+internal fun TaskRowAction(
     onClick: () -> Unit,
     icon: ImageVector,
     contentDescription: String,
@@ -1621,6 +1632,7 @@ private fun SelectionOverflowControl(
     val shareable = picks.count { it.shareHttp != null }
     val convertible = picks.count { it.convertStill != null }
     val savable = picks.count { it.saveInto != null }
+    val uploadable = picks.count { it.uploadSource != null }
     val canSelectAll = selectionActions &&
         folderKey != null &&
         FolderSelectHost.current?.folderKey == folderKey
@@ -1688,6 +1700,27 @@ private fun SelectionOverflowControl(
                         },
                     )
                 }
+                if (selectionActions && uploadable > 0) {
+                    DropdownMenuItem(
+                        text = { Text(stringResource(R.string.transfer_upload)) },
+                        onClick = {
+                            menu = false
+                            val files = picks.mapNotNull { pick ->
+                                pick.uploadSource?.let { source ->
+                                    com.hippo.ehviewer.library.TransferFile(
+                                        source,
+                                        pick.title,
+                                        pick.isFolder,
+                                        pick.listLine?.sizeBytes ?: 0L,
+                                        pick.listLine?.lastModifiedMs ?: 0L,
+                                    )
+                                }
+                            }
+                            UploadTransfers.prepare(files)
+                            FolderSelectHost.cancelShownSelection()
+                        },
+                    )
+                }
                 if (selectionActions && shareable > 0) {
                     DropdownMenuItem(
                         text = { Text(stringResource(R.string.browse_share_via_http)) },
@@ -1712,7 +1745,7 @@ private fun SelectionOverflowControl(
                         },
                     )
                 }
-                if (selectionActions && !canSelectAll && savable == 0 && shareable == 0 &&
+                if (selectionActions && !canSelectAll && savable == 0 && shareable == 0 && uploadable == 0 &&
                     convertible == 0 && onOpenFolder == null
                 ) {
                     DropdownMenuItem(

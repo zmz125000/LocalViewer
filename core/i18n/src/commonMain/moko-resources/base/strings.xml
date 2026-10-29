@@ -1341,4 +1341,24 @@
     <string name="pref_slideshow_scroll_speed_photo_time">Auto</string>
     <string name="pref_slideshow_pixels_per_second">%1$d</string>
     <string name="slideshow_info_iso">%1$d</string>
+    <string name="transfer_server_copy">Server copy</string>
+    <string name="transfer_share_target">Upload to</string>
+    <string name="transfer_upload">Upload</string>
+    <string name="transfer_upload_to">Upload to</string>
+    <string name="transfer_skip_existing">Skip existing files</string>
+    <string name="transfer_dest">Dest</string>
+    <string name="transfer_destination">Destination</string>
+    <string name="transfer_start">Start</string>
+    <string name="transfer_stop">Stop</string>
+    <string name="transfer_preparing">Preparing…</string>
+    <string name="transfer_ready">Ready</string>
+    <string name="transfer_paused">Paused</string>
+    <string name="transfer_stopped">Stopped</string>
+    <string name="transfer_skipped">Skipped</string>
+    <string name="transfer_show">Show</string>
+    <string name="transfer_dismiss">Dismiss</string>
+    <string name="transfer_remove">Remove from transfer</string>
+    <string name="transfer_local_destination">Local folder</string>
+    <string name="transfer_counts">%1$d succeeded · %2$d skipped · %3$d failed</string>
+    <string name="transfer_file_count">%1$d files</string>
 </resources>

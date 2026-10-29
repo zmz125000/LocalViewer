@@ -64,9 +64,12 @@ suspend inline fun <T> useFolderPageLoader(
                 override fun getImageExtension(index: Int): String? {
                     val name = files.getOrNull(index)?.name ?: return null
                     return FileUtils.getExtensionFromFilename(name)
+                        ?: files.getOrNull(index)?.displayName?.let(FileUtils::getExtensionFromFilename)
                 }
 
-                override fun getOriginalImageFileName(index: Int) = files.getOrNull(index)?.name
+                override fun getOriginalImageFileName(index: Int) = files.getOrNull(index)?.let {
+                    if (isImageFileName(it.name)) it.name else it.displayName
+                }
 
                 override fun getOriginalImageDate(index: Int): Long? {
                     val path = files.getOrNull(index) ?: return null
@@ -90,7 +93,10 @@ suspend inline fun <T> useFolderPageLoader(
                     return object : PathSource {
                         override val source = path
                         override val type by lazy {
-                            FileUtils.getExtensionFromFilename(path.name)!!
+                            FileUtils.getExtensionFromFilename(path.name)
+                                ?: FileUtils.getExtensionFromFilename(path.displayName)
+                                ?: runCatching { appCtx.contentResolver.getType(path.toUri())?.substringAfter('/') }.getOrNull()
+                                ?: "jpg"
                         }
 
                         override fun close() = Unit

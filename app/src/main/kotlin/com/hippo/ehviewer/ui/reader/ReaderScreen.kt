@@ -217,6 +217,8 @@ sealed interface ReaderScreenArgs {
     data class LocalImageList(
         val page: Int = 0,
         val title: String = "",
+        /** Explicit files for external opens; empty uses the library's All photos list. */
+        val paths: List<String> = emptyList(),
     ) : ReaderScreenArgs
 
     /**
@@ -1429,7 +1431,7 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
 context(_: Context, _: DialogState, nav: DestinationsNavigator)
 suspend inline fun <T> usePageLoader(args: ReaderScreenArgs, crossinline block: suspend (ReaderSession) -> T) = when (args) {
     is ReaderScreenArgs.LocalImageList -> {
-        val files = ReaderImageList.paths.map { it.toPath() }
+        val files = args.paths.ifEmpty { ReaderImageList.paths }.map { it.toPath() }
         check(files.isNotEmpty()) { "All photos list is empty" }
         useFolderPageLoader(
             files = files,

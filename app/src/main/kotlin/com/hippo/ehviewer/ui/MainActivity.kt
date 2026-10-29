@@ -152,8 +152,12 @@ import com.hippo.ehviewer.ui.destinations.WebDavBrowserScreenDestination
 import com.hippo.ehviewer.ui.main.BrowseSaveSnackbars
 import com.hippo.ehviewer.ui.main.FolderSelectBars
 import com.hippo.ehviewer.ui.main.HttpShareSnackbars
+import com.hippo.ehviewer.ui.main.UploadTransferBars
+import com.hippo.ehviewer.ui.main.UploadTransfers
 import com.hippo.ehviewer.ui.main.UsbDriveHost
 import com.hippo.ehviewer.ui.main.awaitHttpShareQr
+import com.hippo.ehviewer.ui.main.isUploadShare
+import com.hippo.ehviewer.ui.main.sharedUploadFiles
 import com.hippo.ehviewer.ui.navToReader
 import com.hippo.ehviewer.ui.reader.PendingReaderOpen
 import com.hippo.ehviewer.ui.screen.ExplorerPanelActions
@@ -175,6 +179,7 @@ import com.hippo.ehviewer.ui.tools.awaitInputText
 import com.hippo.ehviewer.updater.AppUpdater
 import com.hippo.ehviewer.util.AppConfig
 import com.hippo.ehviewer.util.addTextToClipboard
+import com.hippo.ehviewer.util.displayName
 import com.hippo.ehviewer.util.displayString
 import com.hippo.ehviewer.util.ensureLocalNetworkPermission
 import com.hippo.ehviewer.util.getParcelableExtraCompat
@@ -556,19 +561,32 @@ class MainActivity : AppCompatActivity() {
                 }
                 openPendingReader()
                 intentFlow.collect { intent ->
+                    if (intent.isUploadShare()) {
+                        try {
+                            val files = withIOContext { sharedUploadFiles(this@MainActivity, intent) }
+                            if (files.isEmpty()) snackbarState.showSnackbar(cannotParse) else UploadTransfers.prepare(files)
+                        } catch (error: Exception) {
+                            if (error is kotlinx.coroutines.CancellationException) throw error
+                            snackbarState.showSnackbar(error.message ?: cannotParse)
+                        }
+                        return@collect
+                    }
                     when (intent.action) {
                         FolderHomeShortcut.ACTION -> openFolderShortcut(navigator, intent, snackbarState)
                         PendingReaderOpen.ACTION -> openPendingReader()
                         Intent.ACTION_VIEW -> with(navigator) {
                             val uri = intent.data ?: return@collect
-                            when (uri.scheme) {
-                                SCHEME_FILE -> navToReader(uri.path!!)
-                                SCHEME_CONTENT -> navToReader(uri.toString())
-                                else -> {
-                                    // Non file/content schemes unsupported after EH purge
-                                    snackbarState.showSnackbar(cannotParse)
-                                }
+                            if (uri.scheme != SCHEME_FILE && uri.scheme != SCHEME_CONTENT) {
+                                snackbarState.showSnackbar(cannotParse)
+                                return@collect
                             }
+                            val path = uri.toOkioPath()
+                            val (name, image) = withIOContext {
+                                val name = path.displayName
+                                val mime = intent.type ?: runCatching { contentResolver.getType(uri) }.getOrNull()
+                                name to (mime?.startsWith("image/") == true || com.hippo.ehviewer.library.isImageFileName(name))
+                            }
+                            if (image) navToLocalImageReader(path.toString(), name) else navToReader(path.toString())
                         }
                         Intent.ACTION_SEND -> {
                             // Local viewer: only open shared files/archives if content URI present
@@ -747,6 +765,7 @@ class MainActivity : AppCompatActivity() {
                             },
                         ) {
                             BrowseSaveSnackbars()
+                            UploadTransferBars()
                             FolderSelectBars(
                                 onOpenFolder = { place ->
                                     val browserSourceId = when (currentDestination) {

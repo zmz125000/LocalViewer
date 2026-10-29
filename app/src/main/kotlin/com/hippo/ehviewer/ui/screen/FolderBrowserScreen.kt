@@ -67,6 +67,7 @@ import com.ehviewer.core.i18n.R
 import com.ehviewer.core.model.BaseGalleryInfo
 import com.ehviewer.core.model.GalleryInfo.Companion.NOT_FAVORITED
 import com.ehviewer.core.ui.component.FastScrollLazyVerticalGrid
+import com.ehviewer.core.ui.util.LocalSnackBarFabPadding
 import com.ehviewer.core.ui.util.thenIf
 import com.ehviewer.core.util.launch
 import com.ehviewer.core.util.launchIO
@@ -99,6 +100,7 @@ import com.hippo.ehviewer.library.LocalListingJobs
 import com.hippo.ehviewer.library.MediaStoreFs
 import com.hippo.ehviewer.library.ReaderGalleryPlaylist
 import com.hippo.ehviewer.library.SavedExplorerPaths
+import com.hippo.ehviewer.library.TransferLocation
 import com.hippo.ehviewer.library.VideoThumbnail
 import com.hippo.ehviewer.library.VideoThumbnailSource
 import com.hippo.ehviewer.library.ZipAsDirListing
@@ -2380,6 +2382,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         isFolder = true,
         shareHttp = localShareFolderStart(dir.path, dir.name, dir.relativeName),
         saveInto = localSaveFolderInto(dir.path, dir.name, dir.relativeName),
+        uploadSource = TransferLocation(ExplorerWindows.Kind.Local, 0L, dir.path.toString()),
         listLine = BrowseListLine(
             typeLabel = browseZipAsDirTypeLabel(dir.relativeName, dir.name) ?: "Dir",
             sizeBytes = dir.size,
@@ -2414,6 +2417,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         isFolder = true,
         shareHttp = localShareFolderStart(entry.path, entry.name, entry.relativeName),
         saveInto = localSaveFolderInto(entry.path, entry.name, entry.relativeName),
+        uploadSource = TransferLocation(ExplorerWindows.Kind.Local, 0L, entry.path.toString()),
         listLine = BrowseListLine(
             typeLabel = browseZipAsDirTypeLabel(entry.relativeName, entry.name) ?: "Folder",
             sizeBytes = entry.size,
@@ -2473,6 +2477,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         entry.name,
         shareHttp = localShareFileStart(entry.path),
         saveInto = localSaveFileInto(entry.path),
+        uploadSource = TransferLocation(ExplorerWindows.Kind.Local, 0L, entry.path.toString()),
         listLine = BrowseListLine(
             typeLabel = browseFileExtensionLabel(entry.name),
             sizeBytes = entry.size,
@@ -2512,6 +2517,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         path.name,
         shareHttp = localShareFileStart(path),
         saveInto = localSaveFileInto(path),
+        uploadSource = TransferLocation(ExplorerWindows.Kind.Local, 0L, path.toString()),
         listLine = BrowseListLine(
             typeLabel = browseFileExtensionLabel(path.name),
             sizeBytes = sizeBytes,
@@ -2612,6 +2618,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
             shareHttp = localShareFileStart(path),
             convertStill = localConvertStill(path, leaf),
             saveInto = localSaveFileInto(path),
+            uploadSource = TransferLocation(ExplorerWindows.Kind.Local, 0L, path.toString()),
             listLine = BrowseListLine(
                 typeLabel = browseFileExtensionLabel(leaf),
                 sizeBytes = sizeBytes,
@@ -2679,6 +2686,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
             // Visibility follows enterAlways top-bar scroll (same collapsedFraction).
             if (LocalShowNavShortcutFab.current && !hideBackToFab) {
                 AnimatedVisibility(
+                    modifier = Modifier.padding(bottom = LocalSnackBarFabPadding.current.value),
                     visible = showScrollFab,
                     enter = fadeIn() + scaleIn(),
                     exit = fadeOut() + scaleOut(),

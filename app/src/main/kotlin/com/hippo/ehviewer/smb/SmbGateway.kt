@@ -3898,6 +3898,213 @@ object SmbGateway {
 
     fun joinRelativePath(parent: String, child: String) = joinRelative(parent, child)
 
+    /** Fresh, unclassified rows for a transfer manifest. */
+    suspend fun transferChildren(source: SmbSourceEntity, password: String, relative: String): List<RemoteChild> {
+        val loc = resolveLocation(source, relative)
+        return withShare(source, password, ShareOp.List, loc.share) { listChildren(it, loc.pathInShare) }
+    }
+
+    suspend fun transferExists(source: SmbSourceEntity, password: String, relative: String): Boolean {
+        val loc = resolveLocation(source, relative)
+        return withShare(source, password, ShareOp.List, loc.share) {
+            it.fileExists(loc.pathInShare) || it.folderExists(loc.pathInShare)
+        }
+    }
+
+    suspend fun transferMkdir(source: SmbSourceEntity, password: String, relative: String) {
+        val loc = resolveLocation(source, relative)
+        withShare(source, password, ShareOp.Data, loc.share) {
+            if (!it.folderExists(loc.pathInShare)) {
+                try {
+                    it.mkdir(loc.pathInShare)
+                } catch (e: SMBApiException) {
+                    if (e.statusCode == 0xC0000035L) {
+                        if (!it.folderExists(loc.pathInShare)) throw com.hippo.ehviewer.library.TransferNameConflict(relative)
+                    } else {
+                        throw e
+                    }
+                }
+            }
+        }
+    }
+
+    /** FILE_CREATE never overwrites a collision. One dedicated session avoids nested pool borrows. */
+    suspend fun transferWrite(
+        source: SmbSourceEntity,
+        password: String,
+        destination: String,
+        mtimeMs: Long,
+        inputStream: java.io.InputStream?,
+        copyFrom: String?,
+        checkpoint: suspend () -> Unit,
+        progress: (Long) -> Unit,
+        copySource: SmbSourceEntity = source,
+        onServerCopy: (Boolean) -> Unit = {},
+    ) {
+        val dest = resolveLocation(source, destination)
+        val origin = copyFrom?.let { resolveLocation(copySource, it) }
+        withTransferShare(source, password, dest.share) { share ->
+            val originShare = origin?.let {
+                if (it.share.equals(dest.share, ignoreCase = true)) {
+                    share
+                } else {
+                    share.treeConnect.session.connectShare(it.share) as DiskShare
+                }
+            }
+            val output = try {
+                share.openFile(
+                    dest.pathInShare,
+                    EnumSet.of(AccessMask.GENERIC_WRITE, AccessMask.FILE_READ_ATTRIBUTES, AccessMask.DELETE),
+                    null,
+                    SMB2ShareAccess.ALL,
+                    SMB2CreateDisposition.FILE_CREATE,
+                    null,
+                )
+            } catch (e: SMBApiException) {
+                if (e.statusCode == 0xC0000035L) throw com.hippo.ehviewer.library.TransferNameConflict(destination)
+                throw e
+            }
+            output.use { target ->
+                try {
+                    if (origin != null) {
+                        requireNotNull(originShare).openFile(
+                            origin.pathInShare,
+                            EnumSet.of(AccessMask.GENERIC_READ),
+                            null,
+                            SMB2ShareAccess.ALL,
+                            SMB2CreateDisposition.FILE_OPEN,
+                            null,
+                        ).use { input ->
+                            val size = input.fileInformation.standardInformation.endOfFile
+                            var offset = 0L
+                            var remote = true
+                            var resumeKey: ByteArray? = null
+                            var chunkSize = 16L * 1024 * 1024
+                            val buffer = ByteArray(256 * 1024)
+                            while (offset < size) {
+                                checkpoint()
+                                val count = minOf(chunkSize, size - offset)
+                                if (remote) {
+                                    try {
+                                        val key = resumeKey ?: input.ioctl(0x00140078, true, byteArrayOf(), 0, 0, 32).also {
+                                            check(it.size >= 24) { "Invalid SMB resume key" }
+                                        }.copyOf(24).also { resumeKey = it }
+                                        val request = com.hierynomus.mssmb2.copy.CopyChunkRequest(
+                                            key,
+                                            buildList {
+                                                var position = offset
+                                                val end = offset + count
+                                                while (position < end) {
+                                                    val blockSize = minOf(1024L * 1024, end - position)
+                                                    add(com.hierynomus.mssmb2.copy.CopyChunkRequest.Chunk(position, position, blockSize))
+                                                    position += blockSize
+                                                }
+                                            },
+                                        )
+                                        val encoded = com.hierynomus.smb.SMBBuffer()
+                                        request.write(encoded)
+                                        val data = encoded.compactData
+                                        // COPYCHUNK_WRITE accepts a write-only target and works across trees.
+                                        onServerCopy(true)
+                                        val response = target.ioctl(0x001480F2, true, data, 0, data.size, 12)
+                                        val result = com.hierynomus.mssmb2.copy.CopyChunkResponse()
+                                        result.read(com.hierynomus.smb.SMBBuffer(response))
+                                        val copied = result.totalBytesWritten
+                                        check(copied in 1..count) { "SMB copy made invalid progress" }
+                                        offset += copied
+                                        progress(copied)
+                                        continue
+                                    } catch (e: SMBApiException) {
+                                        if (e.statusCode == NtStatus.STATUS_INVALID_PARAMETER.value && chunkSize > 64 * 1024) {
+                                            chunkSize /= 2
+                                            continue
+                                        }
+                                        if (!isTransferCopyUnsupported(e.statusCode)) throw e
+                                        remote = false
+                                        onServerCopy(false)
+                                    }
+                                }
+                                val read = input.read(buffer, offset, 0, minOf(buffer.size.toLong(), size - offset).toInt())
+                                check(read > 0) { "Unexpected end of SMB source" }
+                                var written = 0
+                                while (written < read) {
+                                    checkpoint()
+                                    val n = target.write(buffer, offset + written, written, read - written).toInt()
+                                    check(n > 0) { "SMB write made no progress" }
+                                    written += n
+                                }
+                                offset += read
+                                progress(read.toLong())
+                            }
+                        }
+                    } else {
+                        val input = requireNotNull(inputStream)
+                        target.outputStream.use { out ->
+                            com.hippo.ehviewer.library.copyTransferBlocks(input, checkpoint, progress) { buffer, count ->
+                                out.write(buffer, 0, count)
+                            }
+                        }
+                    }
+                    target.flush()
+                    if (mtimeMs > 0) {
+                        target.setFileInformation(
+                            com.hierynomus.msfscc.fileinformation.FileBasicInformation(
+                                com.hierynomus.msfscc.fileinformation.FileBasicInformation.DONT_SET,
+                                com.hierynomus.msfscc.fileinformation.FileBasicInformation.DONT_SET,
+                                com.hierynomus.msdtyp.FileTime.ofEpochMillis(mtimeMs),
+                                com.hierynomus.msfscc.fileinformation.FileBasicInformation.DONT_SET,
+                                0L,
+                            ),
+                        )
+                    }
+                } catch (e: Throwable) {
+                    runCatching { target.deleteOnClose() }
+                    throw e
+                }
+            }
+        }
+    }
+
+    internal fun isTransferCopyUnsupported(status: Long): Boolean = status in setOf(
+        NtStatus.STATUS_NOT_SUPPORTED.value,
+        0xC0000010L, // STATUS_INVALID_DEVICE_REQUEST
+        NtStatus.STATUS_INVALID_PARAMETER.value,
+        NtStatus.STATUS_ACCESS_DENIED.value,
+        0xC0000008L, // STATUS_INVALID_HANDLE
+        NtStatus.STATUS_OBJECT_NAME_NOT_FOUND.value,
+    )
+
+    fun canTransferCopy(from: SmbSourceEntity, fromPassword: String, to: SmbSourceEntity, toPassword: String): Boolean = com.hippo.ehviewer.library.canCopySmbOnServer(from, fromPassword, to, toPassword)
+
+    /** Destination sessions do not compete with a streaming source for host-pool slots. */
+    private suspend fun <T> withTransferShare(
+        source: SmbSourceEntity,
+        password: String,
+        shareName: String,
+        block: suspend (DiskShare) -> T,
+    ): T = withContext(Dispatchers.IO) {
+        trackSource(source)
+        val session = openSession(source, password, credKey(source, password))
+        val cancel = coroutineContext[Job]?.closeFileOnCancelling(AtomicReference<SMBClient?>(session.client))
+        try {
+            block(session.diskShare(shareName))
+        } finally {
+            cancel?.dispose()
+            session.closeQuietly()
+        }
+    }
+
+    suspend fun <T> transferRead(
+        source: SmbSourceEntity,
+        password: String,
+        relative: String,
+        block: suspend (java.io.InputStream) -> T,
+    ): T = withContext(Dispatchers.IO) {
+        copyOpenFile(source, password, relative, coroutineContext) { file ->
+            file.inputStream.use { block(it) }
+        }
+    }
+
     /**
      * Open [relativeFilePath] and run [block]. If the caller is cancelled, close the
      * handle **as soon as the job enters cancelling** ([Job.closeFileOnCancelling]) so a

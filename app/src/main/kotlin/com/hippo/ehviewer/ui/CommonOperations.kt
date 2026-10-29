@@ -74,6 +74,9 @@ fun navToLocalImageListReader(
 ) = navToReader(ReaderScreenArgs.LocalImageList(page, title))
 
 context(_: DestinationsNavigator)
+fun navToLocalImageReader(path: String, title: String) = navToReader(ReaderScreenArgs.LocalImageList(page = 0, title = title, paths = listOf(path)))
+
+context(_: DestinationsNavigator)
 fun navToLocalZipFolderReader(
     zipPath: String,
     innerRel: String,
