@@ -351,9 +351,10 @@ internal object UploadTransfers {
                                 updateRow(job, file.relative, UploadFileStatus.Failed, e.message ?: "Transfer failed")
                             }
                         }
+                        // Connection cleanup may take time; all rows are already terminal.
+                        job.state.update { it.copy(phase = UploadPhase.Finished) }
                     }
                 }
-                job.state.update { it.copy(phase = UploadPhase.Finished) }
             } catch (e: CancellationException) {
                 job.state.update { current ->
                     current.copy(
