@@ -16,6 +16,37 @@ import org.junit.Test
 
 class UploadTransfersTest {
     @Test
+    fun `continue clears transfer results and retains the manifest and destination`() {
+        for (phase in listOf(UploadPhase.Finished, UploadPhase.Stopped, UploadPhase.Failed)) {
+            val rows = UploadFileStatus.entries.map { row("$it.jpg").copy(status = it, detail = "old result") }
+            val state = UploadState(
+                phase = phase,
+                rows = rows,
+                destination = rows.first().file.source,
+                destinationLabel = "destination",
+                background = false,
+                autoFinish = false,
+                bytesTransferred = 1024,
+                speedBps = 512,
+                serverCopy = true,
+                startWhenReady = true,
+                error = "old error",
+            )
+            val reset = state.resetForTransfer()
+            assertEquals(UploadPhase.Ready, reset.phase)
+            assertEquals(rows.map { it.file }, reset.rows.map { it.file })
+            assertTrue(reset.rows.all { it.status == UploadFileStatus.Pending && it.detail == null })
+            assertEquals(state.destination, reset.destination)
+            assertEquals(state.destinationLabel, reset.destinationLabel)
+            assertEquals(0L, reset.bytesTransferred)
+            assertEquals(0L, reset.speedBps)
+            assertFalse(reset.serverCopy)
+            assertFalse(reset.startWhenReady)
+            assertEquals(null, reset.error)
+        }
+    }
+
+    @Test
     fun `selection submits each source once and disambiguates root names`() {
         val first = row("photo.jpg").file
         val other = first.copy(source = first.source.copy(path = "other/photo.jpg"))

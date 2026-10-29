@@ -53,12 +53,23 @@ internal data class UploadState(
     val failed get() = rows.count { it.status == UploadFileStatus.Failed }
     val active get() = phase == UploadPhase.Running || phase == UploadPhase.Paused
     val editable get() = phase == UploadPhase.Ready
+
+    fun resetForTransfer() = copy(
+        phase = UploadPhase.Ready,
+        rows = rows.map { it.copy(status = UploadFileStatus.Pending, detail = null) },
+        bytesTransferred = 0,
+        speedBps = 0,
+        serverCopy = false,
+        startWhenReady = false,
+        error = null,
+    )
 }
 internal class UploadJob(val id: Long, val title: String, val saving: Boolean = false) {
     val state = MutableStateFlow(UploadState())
     val control = TransferControl()
     val bytes = AtomicLong()
     var worker: Job? = null
+    var previousWorker: Job? = null
 }
 
 /** Remove the folder itself and descendants, never similarly prefixed siblings. */
@@ -181,6 +192,7 @@ internal object UploadTransfers {
         dismissAutoFinished(job)
     }
     private fun dismissAutoFinished(job: UploadJob) {
+        if (_jobs.value.none { it === job }) return
         val state = job.state.value
         if (state.autoFinish && state.phase == UploadPhase.Finished && state.failed == 0) dismiss(job)
     }
@@ -195,7 +207,9 @@ internal object UploadTransfers {
     fun stop(job: UploadJob) {
         if (_jobs.value.none { it.id == job.id }) return
         val state = job.state.value
-        cancel(job)
+        job.worker?.cancel()
+        job.state.update { it.copy(phase = UploadPhase.Stopped, speedBps = 0, startWhenReady = false) }
+        syncForeground()
         scope.launch(Dispatchers.Main.immediate) {
             Toast.makeText(
                 appCtx,
@@ -203,6 +217,16 @@ internal object UploadTransfers {
                 Toast.LENGTH_LONG,
             ).show()
         }
+    }
+    fun continueTransfer(job: UploadJob) {
+        val state = job.state.value
+        if (state.active || state.editable || state.phase == UploadPhase.Preparing) return
+        // A fresh execution keeps late cleanup updates out of the reset panel and snackbar.
+        val next = UploadJob(job.id, job.title, job.saving).apply {
+            this.state.value = state.resetForTransfer()
+            previousWorker = job.previousWorker ?: job.worker
+        }
+        _jobs.update { jobs -> jobs.map { if (it === job) next else it } }
     }
     fun cancel(job: UploadJob) {
         job.worker?.cancel()
@@ -247,6 +271,9 @@ internal object UploadTransfers {
         if (!job.state.compareAndSet(state, state.copy(phase = UploadPhase.Running, error = null, startWhenReady = false))) return
         syncForeground()
         job.worker = scope.launch {
+            // Reset the UI immediately, but serialize network resources with the old execution.
+            job.previousWorker?.join()
+            job.previousWorker = null
             val meter = launch {
                 var lastBytes = job.bytes.get()
                 var lastTime = System.nanoTime()
