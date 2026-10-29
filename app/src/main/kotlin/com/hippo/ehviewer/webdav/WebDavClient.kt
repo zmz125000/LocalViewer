@@ -85,6 +85,25 @@ import org.xmlpull.v1.XmlPullParserFactory
  * TLS: system trust by default. [Settings.webDavInsecureTls] → trust-all for self-signed LAN.
  */
 object WebDavClient {
+    /** Scope the HTTP response to the whole streaming transfer; no replay into a partial sink. */
+    suspend fun <T> transferRead(
+        source: WebDavSourceEntity,
+        password: String,
+        relative: String,
+        block: suspend (java.io.InputStream) -> T,
+    ): T = withIOContext {
+        http().prepareGet(absoluteUrl(source, relative)) {
+            basicAuthHeader(source.username, password)?.let { header(HttpHeaders.Authorization, it) }
+            timeout {
+                requestTimeoutMillis = 0
+                socketTimeoutMillis = DL_SOCKET_MS
+            }
+        }.execute { response ->
+            check(response.status.value in 200..299) { "WebDAV GET: ${response.status}" }
+            response.bodyAsChannel().toInputStream().use { block(it) }
+        }
+    }
+
     suspend fun transferExists(source: WebDavSourceEntity, password: String, relative: String): Boolean = withIOContext {
         val response = http().request(absoluteUrl(source, relative)) {
             method = HttpMethod.Head
@@ -102,6 +121,13 @@ object WebDavClient {
             method = HttpMethod("MKCOL")
             basicAuthHeader(source.username, password)?.let { header(HttpHeaders.Authorization, it) }
         }
+        if (response.status.value == 405) {
+            val parent = relative.substringBeforeLast('/', "")
+            val name = relative.substringAfterLast('/')
+            if (listChildren(source, password, parent).none { it.name == name && it.isDirectory }) {
+                throw com.hippo.ehviewer.library.TransferNameConflict(relative)
+            }
+        }
         check(response.status.value in 200..299 || response.status.value == 405) {
             "WebDAV MKCOL: ${response.status}"
         }
@@ -112,7 +138,8 @@ object WebDavClient {
         source: WebDavSourceEntity,
         password: String,
         relative: String,
-        file: java.io.File,
+        input: java.io.InputStream,
+        size: Long,
         mtimeMs: Long,
         checkpoint: suspend () -> Unit,
         progress: (Long) -> Unit,
@@ -120,6 +147,7 @@ object WebDavClient {
         val parent = relative.substringBeforeLast('/', "")
         val temp = (if (parent.isEmpty()) "" else "$parent/") + ".upload-${java.util.UUID.randomUUID()}"
         val auth = basicAuthHeader(source.username, password)
+        var ownsTemp = false
         try {
             val response = http().request(absoluteUrl(source, temp)) {
                 method = HttpMethod.Put
@@ -131,25 +159,19 @@ object WebDavClient {
                 if (mtimeMs > 0) header("X-OC-Mtime", (mtimeMs / 1000).toString())
                 header(HttpHeaders.IfNoneMatch, "*")
                 setBody(object : io.ktor.http.content.OutgoingContent.WriteChannelContent() {
-                    override val contentLength = file.length()
+                    override val contentLength = size
                     override val contentType = ContentType.Application.OctetStream
                     override suspend fun writeTo(channel: io.ktor.utils.io.ByteWriteChannel) {
                         kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                            file.inputStream().use { input ->
-                                val buffer = ByteArray(256 * 1024)
-                                while (true) {
-                                    checkpoint()
-                                    val count = input.read(buffer)
-                                    if (count < 0) break
-                                    channel.writeFully(buffer, 0, count)
-                                    progress(count.toLong())
-                                }
+                            com.hippo.ehviewer.library.copyTransferBlocks(input, checkpoint, progress) { buffer, count ->
+                                channel.writeFully(buffer, 0, count)
                             }
                         }
                     }
                 })
             }
             check(response.status.value in 200..299) { "WebDAV PUT: ${response.status}" }
+            ownsTemp = true
             if (mtimeMs > 0) {
                 val date = java.time.format.DateTimeFormatter.RFC_1123_DATE_TIME.format(
                     java.time.Instant.ofEpochMilli(mtimeMs).atZone(java.time.ZoneOffset.UTC),
@@ -171,17 +193,21 @@ object WebDavClient {
                 header("Destination", absoluteUrl(source, relative).toString())
                 header("Overwrite", "F")
             }
+            if (moved.status.value == 412) throw com.hippo.ehviewer.library.TransferNameConflict(relative)
             check(moved.status.value in 200..299) { "WebDAV MOVE: ${moved.status}" }
+            ownsTemp = false
             mtimeMs <= 0 || fileMtimeOrNull(source, password, relative)?.let {
                 kotlin.math.abs(it - mtimeMs) < 2000
             } == true
         } finally {
-            kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
-                kotlinx.coroutines.withTimeoutOrNull(10_000) {
-                    runCatching {
-                        http().request(absoluteUrl(source, temp)) {
-                            method = HttpMethod.Delete
-                            auth?.let { header(HttpHeaders.Authorization, it) }
+            if (ownsTemp) {
+                kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
+                    kotlinx.coroutines.withTimeoutOrNull(10_000) {
+                        runCatching {
+                            http().request(absoluteUrl(source, temp)) {
+                                method = HttpMethod.Delete
+                                auth?.let { header(HttpHeaders.Authorization, it) }
+                            }
                         }
                     }
                 }

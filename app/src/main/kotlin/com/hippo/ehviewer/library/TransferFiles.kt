@@ -120,14 +120,17 @@ object TransferFiles {
     suspend fun mkdir(parent: TransferLocation, name: String): TransferLocation {
         val existing = find(parent, name)
         if (existing != null) {
-            check(existing.directory) { "Destination name is a file: $name" }
+            if (!existing.directory) throw TransferNameConflict(name)
             return existing.source
         }
         val target = parent.child(name)
         when (target.kind) {
             ExplorerWindows.Kind.Local -> {
                 if (parent.path.startsWith('/')) {
-                    check(File(target.path).mkdir()) { "Cannot create directory: $name" }
+                    if (!File(target.path).mkdir() && !File(target.path).isDirectory) {
+                        if (File(target.path).exists()) throw TransferNameConflict(name)
+                        error("Cannot create directory: $name")
+                    }
                 } else {
                     val created = DocumentsContract.createDocument(appCtx.contentResolver, parent.path.toPath().toUri(), DocumentsContract.Document.MIME_TYPE_DIR, name)
                         ?: error("Cannot create directory: $name")
@@ -162,18 +165,22 @@ object TransferFiles {
     /** Returns false only when the destination cannot preserve the source timestamp. */
     suspend fun write(file: TransferFile, parent: TransferLocation, name: String, control: TransferControl, progress: (Long) -> Unit): Boolean {
         val target = parent.child(name)
-        if (target.kind == ExplorerWindows.Kind.Smb && file.source.kind == target.kind && file.source.sourceId == target.sourceId) {
-            val source = smb(target.sourceId)
-            if (SmbGateway.canTransferCopy(source, file.source.path, target.path)) {
-                SmbGateway.transferWrite(source, SmbPasswordStore.get(source.id), target.path, file.mtime, null, file.source.path, control::checkpoint, progress)
+        if (target.kind == ExplorerWindows.Kind.Smb && file.source.kind == target.kind) {
+            val source = smb(file.source.sourceId)
+            val destination = smb(target.sourceId)
+            val sourcePassword = SmbPasswordStore.get(source.id)
+            val destinationPassword = SmbPasswordStore.get(destination.id)
+            if (SmbGateway.canTransferCopy(source, sourcePassword, destination, destinationPassword)) {
+                SmbGateway.transferWrite(destination, destinationPassword, target.path, file.mtime, null, file.source.path, control::checkpoint, progress, copySource = source)
                 return true
             }
         }
         if (target.kind == ExplorerWindows.Kind.Local) {
             val created = if (parent.path.startsWith('/')) {
-                check(File(target.path).createNewFile()) { "Destination already exists" }
+                if (!File(target.path).createNewFile()) throw TransferNameConflict(name)
                 target.path.toPath()
             } else {
+                if (find(parent, name) != null) throw TransferNameConflict(name)
                 val mime = mimeTypeForFileName(name).takeUnless { it == GENERIC_FILE_MIME } ?: "application/octet-stream"
                 (
                     DocumentsContract.createDocument(appCtx.contentResolver, parent.path.toPath().toUri(), mime, name)
@@ -214,25 +221,40 @@ object TransferFiles {
                 throw e
             }
         }
-        // One file at a time on disk avoids holding an SMB destination lease while
-        // borrowing a source lease, and bounds memory for cross-protocol transfers.
-        val temp = File.createTempFile("upload-", ".part", appCtx.cacheDir)
-        try {
-            temp.outputStream().use { read(file, it, control) }
-            control.checkpoint()
-            return when (target.kind) {
+        // Backpressure is the destination's write: only one bounded block is held in RAM.
+        return withInput(file) { input ->
+            val context = kotlin.coroutines.coroutineContext
+            val checked = object : java.io.FilterInputStream(input) {
+                override fun read(): Int {
+                    control.checkpointBlocking(context)
+                    return super.read()
+                }
+                override fun read(buffer: ByteArray, offset: Int, length: Int): Int {
+                    control.checkpointBlocking(context)
+                    return input.read(buffer, offset, length)
+                }
+            }
+            when (target.kind) {
                 ExplorerWindows.Kind.Smb -> {
                     val source = smb(target.sourceId)
-                    SmbGateway.transferWrite(source, SmbPasswordStore.get(source.id), target.path, file.mtime, temp, null, control::checkpoint, progress)
+                    SmbGateway.transferWrite(source, SmbPasswordStore.get(source.id), target.path, file.mtime, checked, null, control::checkpoint, progress)
                     true
                 }
                 ExplorerWindows.Kind.WebDav -> {
                     val source = dav(target.sourceId)
-                    WebDavClient.transferWrite(source, WebDavPasswordStore.get(source.id), target.path, temp, file.mtime, control::checkpoint, progress)
+                    WebDavClient.transferWrite(source, WebDavPasswordStore.get(source.id), target.path, checked, file.size, file.mtime, control::checkpoint, progress)
                 }
             }
-        } finally {
-            temp.delete()
+        }
+    }
+
+    private suspend fun <T> withInput(file: TransferFile, block: suspend (java.io.InputStream) -> T): T = when (file.source.kind) {
+        ExplorerWindows.Kind.Local -> ParcelFileDescriptor.AutoCloseInputStream(file.source.path.toPath().openFileDescriptor("r")).use { block(it) }
+        ExplorerWindows.Kind.Smb -> smb(file.source.sourceId).let {
+            SmbGateway.transferRead(it, SmbPasswordStore.get(it.id), file.source.path, block)
+        }
+        ExplorerWindows.Kind.WebDav -> dav(file.source.sourceId).let {
+            WebDavClient.transferRead(it, WebDavPasswordStore.get(it.id), file.source.path, block)
         }
     }
 }

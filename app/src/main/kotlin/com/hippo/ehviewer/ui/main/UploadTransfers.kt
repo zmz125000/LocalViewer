@@ -239,37 +239,62 @@ internal object UploadTransfers {
                     for (row in state.rows) {
                         job.control.checkpoint()
                         val file = row.file
+                        if (job.state.value.rows.any { it.file.relative == file.relative && it.status == UploadFileStatus.Skipped }) continue
                         val parentRel = file.relative.substringBeforeLast('/', "")
                         try {
                             updateRow(job, file.relative, UploadFileStatus.Running)
                             val parent = directories[parentRel] ?: error("Parent folder could not be created")
                             val name = file.relative.substringAfterLast('/')
                             if (file.directory) {
-                                directories[file.relative] = TransferFiles.mkdir(parent, name)
-                                updateRow(job, file.relative, UploadFileStatus.Succeeded)
+                                val created = com.hippo.ehviewer.library.createTransferWithoutOverwrite(
+                                    name = name,
+                                    skipExisting = state.skipExisting,
+                                    checkpoint = job.control::checkpoint,
+                                    exists = { false }, // mkdir merges existing directories, rejects files.
+                                    create = { TransferFiles.mkdir(parent, it) },
+                                )
+                                if (created == null) {
+                                    job.state.update { current ->
+                                        current.copy(
+                                            rows = current.rows.map {
+                                                if (it.file.relative == file.relative || it.file.relative.startsWith("${file.relative}/")) {
+                                                    it.copy(status = UploadFileStatus.Skipped)
+                                                } else {
+                                                    it
+                                                }
+                                            },
+                                        )
+                                    }
+                                } else {
+                                    directories[file.relative] = created.value
+                                    updateRow(job, file.relative, UploadFileStatus.Succeeded, created.name.takeIf { it != name })
+                                }
                                 continue
                             }
-                            var outputName = name
-                            var number = 1
-
-                            // SAF document ids are opaque, so find by display name there.
-                            suspend fun collision(): Boolean = if (parent.kind == ExplorerWindows.Kind.Local && !parent.path.startsWith('/')) {
-                                val names = safNames[parent] ?: TransferFiles.children(parent).mapTo(HashSet()) { it.relative }.also { safNames[parent] = it }
-                                outputName in names
-                            } else {
-                                TransferFiles.exists(parent.child(outputName))
-                            }
-                            if (collision()) {
-                                if (state.skipExisting) {
-                                    updateRow(job, file.relative, UploadFileStatus.Skipped)
-                                    continue
-                                }
-                                do {
-                                    outputName = uploadCollisionName(name, ++number)
-                                } while (collision())
-                            }
                             val currentFile = TransferFiles.stat(file)
-                            val preserved = TransferFiles.write(currentFile, parent, outputName, job.control) { job.bytes.addAndGet(it) }
+                            val result = com.hippo.ehviewer.library.createTransferWithoutOverwrite(
+                                name = name,
+                                skipExisting = state.skipExisting,
+                                checkpoint = job.control::checkpoint,
+                                exists = { candidate ->
+                                    // SAF document ids are opaque; match display names.
+                                    if (parent.kind == ExplorerWindows.Kind.Local && !parent.path.startsWith('/')) {
+                                        val names = safNames[parent] ?: TransferFiles.children(parent).mapTo(HashSet()) { it.relative }.also { safNames[parent] = it }
+                                        candidate in names
+                                    } else {
+                                        TransferFiles.exists(parent.child(candidate))
+                                    }
+                                },
+                                create = { candidate ->
+                                    TransferFiles.write(currentFile, parent, candidate, job.control) { job.bytes.addAndGet(it) }
+                                },
+                            )
+                            if (result == null) {
+                                updateRow(job, file.relative, UploadFileStatus.Skipped)
+                                continue
+                            }
+                            val outputName = result.name
+                            val preserved = result.value
                             safNames[parent]?.add(outputName)
                             updateRow(
                                 job,
