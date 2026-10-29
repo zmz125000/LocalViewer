@@ -640,7 +640,7 @@ object SmbGateway {
         /** Last successful user op. Keep-alive ping must not bump this or extra TCPs never idle-release. */
         val lastUsedMs: AtomicLong = AtomicLong(System.currentTimeMillis()),
     ) {
-        private val shares = HashMap<String, DiskShare>()
+        private val shares = ConcurrentHashMap<String, DiskShare>()
         private val shareLock = Any()
 
         /** Snapshot of [opsPerSession] at open — do not resize mid-life. */
@@ -652,24 +652,26 @@ object SmbGateway {
         val isConnected: Boolean
             get() = !retired.get() && connection.isConnected
 
-        fun hasShare(shareName: String): Boolean = synchronized(shareLock) {
-            shares[shareName]?.let { it.isConnected } == true
-        }
+        // Called under the host pool lock: never wait for a tree-connect network request.
+        fun hasShare(shareName: String): Boolean = shares[shareName]?.isConnected == true
 
         /**
          * Cached tree connect. Reopens if the share was closed under us (common after
          * archive keep-open teardown / idle kill) so folder list never sticks on
          * "DiskShare has already been closed" until process death.
          */
-        fun diskShare(shareName: String): DiskShare = synchronized(shareLock) {
-            shares[shareName]?.let { existing ->
-                if (existing.isConnected) return existing
-                runCatching { existing.close() }
-                shares.remove(shareName)
+        fun diskShare(shareName: String): DiskShare {
+            shares[shareName]?.takeIf { it.isConnected }?.let { return it }
+            return synchronized(shareLock) {
+                shares[shareName]?.let { existing ->
+                    if (existing.isConnected) return existing
+                    runCatching { existing.close() }
+                    shares.remove(shareName)
+                }
+                val opened = session.connectShare(shareName) as DiskShare
+                shares[shareName] = opened
+                opened
             }
-            val opened = session.connectShare(shareName) as DiskShare
-            shares[shareName] = opened
-            opened
         }
 
         /** Drop a dead tree without retiring the whole TCP session. */
@@ -3826,11 +3828,15 @@ object SmbGateway {
         val kind = if (yieldable) ShareOp.Background else ShareOp.Data
         val copy = suspend {
             copyOpenFile(source, password, relativeFilePath, downloadContext, kind) { file ->
-                SmbSequentialCopy.copySuspending(
+                val aborted = AtomicBoolean(false)
+                SmbTransferCopy.copy(
                     read = SmbSequentialCopy.of(file),
                     start = 0L,
-                    maxBytes = Long.MAX_VALUE,
-                    isActive = { downloadContext.isActive },
+                    size = file.getFileInformation(com.hierynomus.msfscc.fileinformation.FileStandardInformation::class.java).endOfFile,
+                    readWindow = SmbSequentialCopy.READ_PIPELINE,
+                    onFailure = {
+                        if (aborted.compareAndSet(false, true)) SmbAsyncClose.run { file.close() }
+                    },
                 ) { buf, off, len -> out.write(buf, off, len) }
             }
         }
@@ -4168,9 +4174,13 @@ object SmbGateway {
     ): T {
         val activeFile = AtomicReference<com.hierynomus.smbj.share.File?>(null)
         val cancelClose = downloadContext[Job]?.closeFileOnCancelling(activeFile)
+        var blockFailure: Throwable? = null
+        var blockEntered = false
         try {
             val loc = resolveLocation(source, relativeFilePath)
             return withShare(source, password, kind, loc.share) { share ->
+                // Pool reconnects may retry acquisition, but a streaming sink cannot be replayed.
+                if (blockEntered) throw blockFailure ?: IOException("SMB read cannot replay into an existing stream")
                 share.openFile(
                     loc.pathInShare,
                     EnumSet.of(AccessMask.GENERIC_READ),
@@ -4181,8 +4191,12 @@ object SmbGateway {
                 ).use { file ->
                     armSmbFileForCancelClose(downloadContext[Job], activeFile, file)
                     downloadContext.ensureActive()
+                    blockEntered = true
                     try {
                         block(file)
+                    } catch (error: Throwable) {
+                        blockFailure = error
+                        throw error
                     } finally {
                         activeFile.compareAndSet(file, null)
                     }

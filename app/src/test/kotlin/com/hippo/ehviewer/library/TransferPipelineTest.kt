@@ -18,8 +18,8 @@ import org.junit.Test
 
 class TransferPipelineTest {
     @Test
-    fun `four writes overlap and pinned buffers preserve bytes through fragmented source reads`() = runBlocking {
-        val data = ByteArray(9 * TRANSFER_BLOCK_BYTES + 17) { (it % 251).toByte() }
+    fun `write window overlaps and pinned buffers preserve bytes through fragmented source reads`() = runBlocking {
+        val data = ByteArray((TRANSFER_WRITE_WINDOW + 2) * TRANSFER_BLOCK_BYTES + 17) { (it % 251).toByte() }
         val output = ByteArray(data.size)
         val source = object : ByteArrayInputStream(data) {
             override fun read(buffer: ByteArray, offset: Int, length: Int): Int = super.read(buffer, offset, minOf(length, 32 * 1024))
@@ -74,7 +74,7 @@ class TransferPipelineTest {
         val futures = mutableListOf<CompletableFuture<Long>>()
         var reported = 0L
         try {
-            copyTransferBlocksPipelined(ByteArrayInputStream(ByteArray(8 * TRANSFER_BLOCK_BYTES)), {}, { reported += it }) { _, _, count ->
+            copyTransferBlocksPipelined(ByteArrayInputStream(ByteArray(2 * TRANSFER_WRITE_WINDOW * TRANSFER_BLOCK_BYTES)), {}, { reported += it }) { _, _, count ->
                 CompletableFuture<Long>().also {
                     if (futures.isEmpty()) it.completeExceptionally(failure)
                     futures += it

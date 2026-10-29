@@ -11,7 +11,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runInterruptible
 
 internal const val TRANSFER_BLOCK_BYTES = 1024 * 1024
-internal const val TRANSFER_WRITE_WINDOW = 4
+internal const val TRANSFER_WRITE_WINDOW = 16
 
 /** WebDAV body channels already provide backpressure; use large blocks for their upload stream. */
 internal suspend fun copyTransferBlocks(
@@ -34,7 +34,7 @@ internal suspend fun copyTransferBlocks(
 
 /**
  * A small sliding window on one SMB handle, not a connection pool. Pin each buffer until
- * acknowledged, then reuse it. Source reads overlap pending writes; RAM is bounded at 4 MiB.
+ * acknowledged, then reuse it. Source reads overlap pending writes; RAM is bounded at 16 MiB.
  */
 internal suspend fun copyTransferBlocksPipelined(
     input: InputStream,
