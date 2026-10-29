@@ -102,7 +102,12 @@ internal fun UploadTransferBars() {
                                 onClick = { UploadTransfers.panelId = job.id },
                                 colors = snackbarActionButtonColors(),
                             ) { Text(stringResource(R.string.transfer_show)) }
-                            if (!state.active) {
+                            if (state.active) {
+                                TextButton(
+                                    onClick = { UploadTransfers.stop(job) },
+                                    colors = snackbarDismissButtonColors(),
+                                ) { Text(stringResource(R.string.transfer_stop)) }
+                            } else {
                                 TextButton(
                                     onClick = {
                                         if (finished) UploadTransfers.dismiss(job) else UploadTransfers.cancel(job)
