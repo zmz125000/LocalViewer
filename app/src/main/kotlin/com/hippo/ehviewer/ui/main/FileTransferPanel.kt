@@ -178,6 +178,14 @@ private fun FileTransferPanel(job: UploadJob) {
                     )
                     DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
                         DropdownMenuItem(
+                            text = { Text(stringResource(R.string.transfer_auto_start)) },
+                            trailingIcon = { if (state.autoStart) Icon(Icons.Default.Check, null) },
+                            onClick = {
+                                UploadTransfers.toggleAutoStart(job)
+                                menu = false
+                            },
+                        )
+                        DropdownMenuItem(
                             text = { Text(stringResource(R.string.transfer_skip_existing)) },
                             enabled = state.editable,
                             trailingIcon = { if (state.skipExisting) Icon(Icons.Default.Check, null) },

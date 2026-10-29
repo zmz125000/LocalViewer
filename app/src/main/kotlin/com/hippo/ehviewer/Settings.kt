@@ -755,6 +755,8 @@ object Settings : DataStorePreferences(null) {
      */
     val browseTaskAutoFinish = boolPref("browse_task_auto_finish", false)
 
+    val uploadAutoStart = boolPref("upload_auto_start", false)
+
     /**
      * Run more than one save/convert job at a time. Slot count follows the CPU
      * count and how many decoded frames fit in the Java heap. Default off.

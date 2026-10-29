@@ -26,6 +26,7 @@ class UploadTransfersTest {
                 destinationLabel = "destination",
                 background = false,
                 autoFinish = false,
+                autoStart = true,
                 bytesTransferred = 1024,
                 speedBps = 512,
                 serverCopy = true,
@@ -42,6 +43,7 @@ class UploadTransfersTest {
             assertEquals(0L, reset.speedBps)
             assertFalse(reset.serverCopy)
             assertFalse(reset.startWhenReady)
+            assertTrue(reset.autoStart)
             assertEquals(null, reset.error)
         }
     }
@@ -148,6 +150,7 @@ class UploadTransfersTest {
         val state = UploadState(
             background = false,
             autoFinish = false,
+            autoStart = false,
             rows = listOf(
                 row("album", true).copy(status = UploadFileStatus.Succeeded),
                 row("album/a.jpg").copy(status = UploadFileStatus.Succeeded),
