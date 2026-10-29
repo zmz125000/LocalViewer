@@ -163,7 +163,8 @@ object TransferFiles {
     }
 
     /** Returns false only when the destination cannot preserve the source timestamp. */
-    suspend fun write(file: TransferFile, parent: TransferLocation, name: String, control: TransferControl, progress: (Long) -> Unit): Boolean {
+    suspend fun write(file: TransferFile, parent: TransferLocation, name: String, control: TransferControl, onServerCopy: (Boolean) -> Unit = {}, progress: (Long) -> Unit): Boolean {
+        onServerCopy(false)
         val target = parent.child(name)
         if (target.kind == ExplorerWindows.Kind.Smb && file.source.kind == target.kind) {
             val source = smb(file.source.sourceId)
@@ -171,7 +172,7 @@ object TransferFiles {
             val sourcePassword = SmbPasswordStore.get(source.id)
             val destinationPassword = SmbPasswordStore.get(destination.id)
             if (SmbGateway.canTransferCopy(source, sourcePassword, destination, destinationPassword)) {
-                SmbGateway.transferWrite(destination, destinationPassword, target.path, file.mtime, null, file.source.path, control::checkpoint, progress, copySource = source)
+                SmbGateway.transferWrite(destination, destinationPassword, target.path, file.mtime, null, file.source.path, control::checkpoint, progress, copySource = source, onServerCopy = onServerCopy)
                 return true
             }
         }

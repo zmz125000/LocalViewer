@@ -57,7 +57,12 @@ import com.hippo.ehviewer.util.FileUtils
 @Composable
 private fun uploadSummary(state: UploadState): String = stringResource(R.string.transfer_counts, state.succeeded, state.skipped, state.failed)
 
-private fun transferSpeed(state: UploadState): String = "${FileUtils.humanReadableByteCount(state.speedBps)}/s"
+@Composable
+private fun transferSpeed(state: UploadState): String = if (state.serverCopy) {
+    stringResource(R.string.transfer_server_copy)
+} else {
+    "${FileUtils.humanReadableByteCount(state.speedBps)}/s"
+}
 
 @Composable
 internal fun UploadTransferBars() {
@@ -178,10 +183,14 @@ private fun FileTransferPanel(job: UploadJob) {
             }
             Text(uploadSummary(state), Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.labelLarge)
 
+            val transferRate = if (state.active) transferSpeed(state) else null
             Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text(state.destinationLabel, Modifier.weight(1f), maxLines = 2, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall)
                 Text(
-                    "${FileUtils.humanReadableByteCount(state.bytesTransferred)}/${FileUtils.humanReadableByteCount(state.totalBytes)} · ${transferSpeed(state)}",
+                    buildString {
+                        append("${FileUtils.humanReadableByteCount(state.bytesTransferred)}/${FileUtils.humanReadableByteCount(state.totalBytes)}")
+                        if (transferRate != null) append(" · $transferRate")
+                    },
                     Modifier.padding(start = 8.dp),
                     style = MaterialTheme.typography.bodySmall,
                 )

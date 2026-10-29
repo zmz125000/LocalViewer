@@ -3939,6 +3939,7 @@ object SmbGateway {
         checkpoint: suspend () -> Unit,
         progress: (Long) -> Unit,
         copySource: SmbSourceEntity = source,
+        onServerCopy: (Boolean) -> Unit = {},
     ) {
         val dest = resolveLocation(source, destination)
         val origin = copyFrom?.let { resolveLocation(copySource, it) }
@@ -4004,6 +4005,7 @@ object SmbGateway {
                                         request.write(encoded)
                                         val data = encoded.compactData
                                         // COPYCHUNK_WRITE accepts a write-only target and works across trees.
+                                        onServerCopy(true)
                                         val response = target.ioctl(0x001480F2, true, data, 0, data.size, 12)
                                         val result = com.hierynomus.mssmb2.copy.CopyChunkResponse()
                                         result.read(com.hierynomus.smb.SMBBuffer(response))
@@ -4019,6 +4021,7 @@ object SmbGateway {
                                         }
                                         if (!isTransferCopyUnsupported(e.statusCode)) throw e
                                         remote = false
+                                        onServerCopy(false)
                                     }
                                 }
                                 val read = input.read(buffer, offset, 0, minOf(buffer.size.toLong(), size - offset).toInt())

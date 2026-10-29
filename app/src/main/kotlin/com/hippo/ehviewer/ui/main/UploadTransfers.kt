@@ -39,6 +39,7 @@ internal data class UploadState(
     val autoFinish: Boolean = Settings.browseTaskAutoFinish.value,
     val bytesTransferred: Long = 0,
     val speedBps: Long = 0,
+    val serverCopy: Boolean = false,
     val startWhenReady: Boolean = false,
     val error: String? = null,
 ) {
@@ -286,7 +287,13 @@ internal object UploadTransfers {
                                     }
                                 },
                                 create = { candidate ->
-                                    TransferFiles.write(currentFile, parent, candidate, job.control) { job.bytes.addAndGet(it) }
+                                    TransferFiles.write(
+                                        currentFile,
+                                        parent,
+                                        candidate,
+                                        job.control,
+                                        onServerCopy = { serverCopy -> job.state.update { it.copy(serverCopy = serverCopy) } },
+                                    ) { job.bytes.addAndGet(it) }
                                 },
                             )
                             if (result == null) {
