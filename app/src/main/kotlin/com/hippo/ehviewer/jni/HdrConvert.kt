@@ -121,6 +121,7 @@ external fun decodeJxlBytesToDirect(
     outInfo: IntArray,
     outBoost: FloatArray,
     exportBt2020: Boolean = false,
+    outExif: Array<ByteArray?>? = null,
 ): ByteArray?
 
 external fun decodeAvifBytesToDirect(
@@ -129,6 +130,7 @@ external fun decodeAvifBytesToDirect(
     advancedColor: Boolean,
     outInfo: IntArray,
     outBoost: FloatArray,
+    outExif: Array<ByteArray?>? = null,
 ): ByteArray?
 
 // ── Camera RAW (LibRaw on 64-bit; embedded JPEG preview on every ABI) ────
@@ -296,8 +298,8 @@ external fun convertJpeg2000FdToUltraHdrMaxEdge(fd: Int, outputPath: String, max
 internal external fun mapStillInput(fd: Int): java.nio.ByteBuffer?
 internal external fun unmapStillInput(buffer: java.nio.ByteBuffer)
 internal external fun decodeJxrBufferToDirect(input: java.nio.ByteBuffer, maxEdge: Int, advancedColor: Boolean, panelBoost: Float, outInfo: IntArray, outBoost: FloatArray, exportBt2020: Boolean = false): ByteArray?
-internal external fun decodeJxlBufferToDirect(input: java.nio.ByteBuffer, maxEdge: Int, advancedColor: Boolean, outInfo: IntArray, outBoost: FloatArray, exportBt2020: Boolean = false): ByteArray?
-internal external fun decodeAvifBufferToDirect(input: java.nio.ByteBuffer, maxEdge: Int, advancedColor: Boolean, outInfo: IntArray, outBoost: FloatArray): ByteArray?
+internal external fun decodeJxlBufferToDirect(input: java.nio.ByteBuffer, maxEdge: Int, advancedColor: Boolean, outInfo: IntArray, outBoost: FloatArray, exportBt2020: Boolean = false, outExif: Array<ByteArray?>? = null): ByteArray?
+internal external fun decodeAvifBufferToDirect(input: java.nio.ByteBuffer, maxEdge: Int, advancedColor: Boolean, outInfo: IntArray, outBoost: FloatArray, outExif: Array<ByteArray?>? = null): ByteArray?
 
 /** Two malloc-owned encoded F16 planes; release both with releaseStillBuffer. Null means use the existing decoder. */
 internal external fun decodeAvifGainmap(input: java.nio.ByteBuffer?, inputBytes: ByteArray?, maxEdge: Int, alternatePrimaries: Boolean, outInfo: IntArray, outMetadata: FloatArray): Array<java.nio.ByteBuffer>?

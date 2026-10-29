@@ -99,3 +99,13 @@ private fun ImageSource.readContainerExif(jxl: Boolean): ByteArray? {
         }
     }
 }
+
+/** Normalized TIFF payload returned alongside native reader pixels. */
+internal fun exifFromTiff(bytes: ByteArray): ExifInterface? = if (bytes.isEmpty()) {
+    null
+} else {
+    ExifInterface(
+        ByteArrayInputStream(byteArrayOf(69, 120, 105, 102, 0, 0) + bytes),
+        ExifInterface.STREAM_TYPE_EXIF_DATA_ONLY,
+    )
+}
