@@ -51,7 +51,10 @@ import com.ehviewer.core.i18n.R
 import com.hippo.ehviewer.library.ExplorerWindows
 import com.hippo.ehviewer.library.TransferLocation
 import com.hippo.ehviewer.ui.screen.LocalExplorerPanel
+import com.hippo.ehviewer.ui.theme.snackbarActionButtonColors
 import com.hippo.ehviewer.ui.theme.snackbarContainerColor
+import com.hippo.ehviewer.ui.theme.snackbarDismissButtonColors
+import com.hippo.ehviewer.ui.theme.snackbarDismissContentColor
 import com.hippo.ehviewer.util.FileUtils
 
 @Composable
@@ -73,24 +76,38 @@ internal fun UploadTransferBars() {
             key(job.id) {
                 val state by job.state.collectAsState()
                 val finished = !state.active && !state.editable && state.phase != UploadPhase.Preparing
-                Snackbar(containerColor = snackbarContainerColor(), action = {
-                    Row {
-                        if (state.editable) {
-                            TextButton(onClick = {
-                                UploadTransfers.chooseDestination(job)
-                                explorer.open()
-                            }) { Text(stringResource(R.string.transfer_dest)) }
-                        }
-                        TextButton(onClick = { UploadTransfers.panelId = job.id }) { Text(stringResource(R.string.transfer_show)) }
-                        if (!state.active) {
-                            TextButton(onClick = {
-                                if (finished) UploadTransfers.dismiss(job) else UploadTransfers.cancel(job)
-                            }) {
-                                Text(stringResource(if (finished) R.string.browse_task_done else android.R.string.cancel))
+                Snackbar(
+                    modifier = Modifier.padding(bottom = 8.dp),
+                    containerColor = snackbarContainerColor(),
+                    contentColor = snackbarDismissContentColor(),
+                    action = {
+                        Row {
+                            if (state.editable) {
+                                TextButton(
+                                    onClick = {
+                                        UploadTransfers.chooseDestination(job)
+                                        explorer.open()
+                                    },
+                                    colors = snackbarActionButtonColors(),
+                                ) { Text(stringResource(R.string.transfer_dest)) }
+                            }
+                            TextButton(
+                                onClick = { UploadTransfers.panelId = job.id },
+                                colors = snackbarActionButtonColors(),
+                            ) { Text(stringResource(R.string.transfer_show)) }
+                            if (!state.active) {
+                                TextButton(
+                                    onClick = {
+                                        if (finished) UploadTransfers.dismiss(job) else UploadTransfers.cancel(job)
+                                    },
+                                    colors = snackbarDismissButtonColors(),
+                                ) {
+                                    Text(stringResource(if (finished) R.string.browse_task_done else android.R.string.cancel))
+                                }
                             }
                         }
-                    }
-                }) {
+                    },
+                ) {
                     Column(Modifier.clickable { UploadTransfers.panelId = job.id }) {
                         if (state.editable) {
                             Text("${stringResource(if (job.saving) R.string.action_save_to else R.string.transfer_upload)} #${job.id} · ${stringResource(R.string.transfer_file_count, state.total)}")
