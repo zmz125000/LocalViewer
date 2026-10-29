@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyGridScope
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.LibraryBooks
 import androidx.compose.material.icons.filled.Explore
@@ -173,6 +174,7 @@ import com.hippo.ehviewer.ui.main.browseRecentPreviewLimit
 import com.hippo.ehviewer.ui.main.browseZipAsDirTypeLabel
 import com.hippo.ehviewer.ui.main.onRecentHeaderGesture
 import com.hippo.ehviewer.ui.main.rememberBrowseSectionCollapse
+import com.hippo.ehviewer.ui.main.rememberPhotoGridProgressIndex
 import com.hippo.ehviewer.ui.main.rememberRecentStripExpanded
 import com.hippo.ehviewer.ui.main.selectable
 import com.hippo.ehviewer.ui.main.toPick
@@ -2968,6 +2970,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                         }
                     } else if (photoGrid) {
                         val progressGid = stableGalleryId(sourceId, "webdav:$relativeDir")
+                        val progressIndex = rememberPhotoGridProgressIndex(progressGid)
                         val gridState = rememberSmbPhotoGridState(
                             sourceId = sourceId,
                             relativeDir = "dav|$dirKey#pg",
@@ -2992,11 +2995,12 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                             verticalArrangement = gridSpacing,
                         ) {
                             searchSection(grid = true)
-                            items(photoGridImages, key = { "pg-${it.fileName}" }) { file ->
+                            itemsIndexed(photoGridImages, key = { _, file -> "pg-${file.fileName}" }) { index, file ->
                                 BrowsePhotoGridImageItem(
                                     modifier = Modifier.thenIf(animateItems) { animateItem() },
                                     name = file.name,
                                     cover = imageCoverFor(file),
+                                    highlighted = index == progressIndex,
                                     showPhotoThumb = true,
                                     allowRemoteFetch = allowRemoteThumbs,
                                     onClick = { openFolderImage(file) },

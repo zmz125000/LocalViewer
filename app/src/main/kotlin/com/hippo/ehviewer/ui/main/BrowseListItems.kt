@@ -311,6 +311,15 @@ private fun rememberGalleryReadProgress(progressGid: Long): Int {
     return flow.collectAsState(0).value
 }
 
+/** Saved zero-based photo index; -1 while unknown or reading progress is hidden. */
+@Composable
+internal fun rememberPhotoGridProgressIndex(progressGid: Long): Int {
+    val showProgress by Settings.showReadingProgress.collectAsState()
+    if (!showProgress || progressGid == 0L) return -1
+    val flow = remember(progressGid) { EhDB.getReadProgressFlow(progressGid) }
+    return flow.collectAsState(-1).value
+}
+
 /** Cover cache key used by [ArchiveCoverCache] PDF thumb fetch. */
 internal fun pdfMetadataCountKey(cover: BrowseCover?): String? = when (cover) {
     is BrowseCover.LocalArchive -> cover.archivePath.toString()
@@ -1212,6 +1221,7 @@ fun BrowsePhotoGridImageItem(
     thumbRetryKey: Any? = null,
     allowRemoteFetch: Boolean = true,
     overflow: BrowseOverflowActions? = null,
+    highlighted: Boolean = false,
 ) {
     if (showPhotoThumb && cover != null) {
         BrowseGridCell(
@@ -1220,6 +1230,7 @@ fun BrowsePhotoGridImageItem(
             onLongClick = onLongClick,
             modifier = modifier,
             overflow = overflow,
+            highlighted = highlighted,
             thumb = {
                 BrowseCoverThumb(
                     cover = cover,
@@ -1240,6 +1251,7 @@ fun BrowsePhotoGridImageItem(
             onLongClick = onLongClick,
             modifier = modifier,
             overflow = overflow,
+            highlighted = highlighted,
         )
     }
 }
@@ -1408,6 +1420,7 @@ fun BrowseFileGridItem(
     /** Long-press → system "Open with"; defaults to [onClick]. */
     onLongClick: (() -> Unit)? = null,
     overflow: BrowseOverflowActions? = null,
+    highlighted: Boolean = false,
 ) {
     BrowseGridCell(
         name = name,
@@ -1415,6 +1428,7 @@ fun BrowseFileGridItem(
         onLongClick = onLongClick ?: onClick,
         modifier = modifier,
         overflow = overflow,
+        highlighted = highlighted,
         thumb = {
             Box(
                 modifier = Modifier.fillMaxSize(),
@@ -1439,6 +1453,7 @@ private fun BrowseGridCell(
     modifier: Modifier = Modifier,
     onLongClick: (() -> Unit)? = null,
     overflow: BrowseOverflowActions? = null,
+    highlighted: Boolean = false,
 ) {
     val longClick = onLongClick ?: onClick
     val tap = folderSelectTap(overflow)
@@ -1450,7 +1465,7 @@ private fun BrowseGridCell(
         modifier = modifier.fillMaxWidth(),
         onClick = tap?.toggle ?: onClick,
         onLongClick = tap?.toggle ?: longClick,
-        colors = if (tap?.selected == true) folderSelectedCardColors() else GalleryGridDefaults.cardColors(),
+        colors = if (tap?.selected ?: highlighted) folderSelectedCardColors() else GalleryGridDefaults.cardColors(),
     ) {
         Column(Modifier.fillMaxWidth()) {
             Box(
