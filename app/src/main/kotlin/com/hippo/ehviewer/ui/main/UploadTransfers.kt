@@ -1,8 +1,10 @@
 package com.hippo.ehviewer.ui.main
 
+import android.widget.Toast
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import com.ehviewer.core.i18n.R
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.library.BrowseSession
 import com.hippo.ehviewer.library.ExplorerWindows
@@ -25,6 +27,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
+import splitties.init.appCtx
 
 internal enum class UploadPhase { Preparing, Ready, Running, Paused, Finished, Stopped, Failed }
 internal enum class UploadFileStatus { Pending, Running, Succeeded, Skipped, Failed }
@@ -190,7 +193,16 @@ internal object UploadTransfers {
         job.state.update { if (it.active) it.copy(phase = if (paused) UploadPhase.Paused else UploadPhase.Running) else it }
     }
     fun stop(job: UploadJob) {
-        job.worker?.cancel()
+        if (_jobs.value.none { it.id == job.id }) return
+        val state = job.state.value
+        cancel(job)
+        scope.launch(Dispatchers.Main.immediate) {
+            Toast.makeText(
+                appCtx,
+                appCtx.getString(R.string.transfer_upload_stopped_summary, state.succeeded, state.total, state.skipped, state.failed),
+                Toast.LENGTH_LONG,
+            ).show()
+        }
     }
     fun cancel(job: UploadJob) {
         job.worker?.cancel()

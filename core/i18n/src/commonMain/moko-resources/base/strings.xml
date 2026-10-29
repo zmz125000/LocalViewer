@@ -1267,6 +1267,7 @@
     <string name="transfer_preparing">Preparing…</string>
     <string name="transfer_ready">Ready</string>
     <string name="transfer_paused">Paused</string>
+    <string name="transfer_upload_stopped_summary">%1$d/%2$d/%3$d/%4$d files transferred. Upload stopped.</string>
     <string name="transfer_stopped">Stopped</string>
     <string name="transfer_skipped">Skipped</string>
     <string name="transfer_show">Show</string>
