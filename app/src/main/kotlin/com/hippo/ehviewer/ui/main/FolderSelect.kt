@@ -1250,6 +1250,13 @@ private fun FolderTaskSnackbar(batch: TaskBatch) {
 
 @Composable
 private fun FolderTasksDialog(onOpenFolder: (FolderPlace) -> Boolean) {
+    TaskStyledDialog(onDismiss = { FolderSelectHost.dialog = false }) { tablet ->
+        TasksPanel(tablet = tablet, onOpenFolder = onOpenFolder)
+    }
+}
+
+@Composable
+internal fun TaskStyledDialog(onDismiss: () -> Unit, content: @Composable (Boolean) -> Unit) {
     val layout = GalleryGridDefaults.listLayout()
     val phonePortrait = layout.columns == 1
     val phoneLandscape = !layout.capReaderSheet
@@ -1258,7 +1265,7 @@ private fun FolderTasksDialog(onOpenFolder: (FolderPlace) -> Boolean) {
     val screenW = configuration.screenWidthDp.dp
     val screenH = configuration.screenHeightDp.dp
     Dialog(
-        onDismissRequest = { FolderSelectHost.dialog = false },
+        onDismissRequest = { onDismiss() },
         properties = DialogProperties(
             usePlatformDefaultWidth = false,
             dismissOnClickOutside = true,
@@ -1279,7 +1286,7 @@ private fun FolderTasksDialog(onOpenFolder: (FolderPlace) -> Boolean) {
                     .clickable(
                         interactionSource = scrim,
                         indication = null,
-                        onClick = { FolderSelectHost.dialog = false },
+                        onClick = { onDismiss() },
                     ),
             )
             BoxWithConstraints(
@@ -1322,7 +1329,7 @@ private fun FolderTasksDialog(onOpenFolder: (FolderPlace) -> Boolean) {
                     shadowElevation = 3.dp,
                     tonalElevation = 0.dp,
                 ) {
-                    TasksPanel(tablet = tablet, onOpenFolder = onOpenFolder)
+                    content(tablet)
                 }
             }
         }
@@ -1505,7 +1512,7 @@ private fun RowScope.PanelAction(label: Int, onClick: () -> Unit) {
 }
 
 @Composable
-private fun TaskPathRow(
+internal fun TaskPathRow(
     title: String,
     subtitle: String,
     icon: ImageVector,
@@ -1576,7 +1583,7 @@ private fun TaskPathRow(
 }
 
 @Composable
-private fun TaskRowAction(
+internal fun TaskRowAction(
     onClick: () -> Unit,
     icon: ImageVector,
     contentDescription: String,

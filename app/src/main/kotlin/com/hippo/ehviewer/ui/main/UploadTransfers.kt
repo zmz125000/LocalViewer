@@ -137,6 +137,14 @@ internal object UploadTransfers {
     fun stop(job: UploadJob) {
         job.worker?.cancel()
     }
+    fun cancel(job: UploadJob) {
+        job.worker?.cancel()
+        _jobs.update { it.filterNot { item -> item.id == job.id } }
+        if (panelId == job.id) panelId = null
+        if (destinationJobId == job.id) destinationJobId = null
+        syncForeground()
+    }
+
     fun dismiss(job: UploadJob) {
         if (job.state.value.active || job.state.value.phase == UploadPhase.Preparing) return
         _jobs.update { it.filterNot { item -> item.id == job.id } }

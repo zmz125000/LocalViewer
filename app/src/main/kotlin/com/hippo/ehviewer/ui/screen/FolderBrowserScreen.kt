@@ -67,6 +67,7 @@ import com.ehviewer.core.i18n.R
 import com.ehviewer.core.model.BaseGalleryInfo
 import com.ehviewer.core.model.GalleryInfo.Companion.NOT_FAVORITED
 import com.ehviewer.core.ui.component.FastScrollLazyVerticalGrid
+import com.ehviewer.core.ui.util.LocalSnackBarFabPadding
 import com.ehviewer.core.ui.util.thenIf
 import com.ehviewer.core.util.launch
 import com.ehviewer.core.util.launchIO
@@ -2685,6 +2686,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
             // Visibility follows enterAlways top-bar scroll (same collapsedFraction).
             if (LocalShowNavShortcutFab.current && !hideBackToFab) {
                 AnimatedVisibility(
+                    modifier = Modifier.padding(bottom = LocalSnackBarFabPadding.current.value),
                     visible = showScrollFab,
                     enter = fadeIn() + scaleIn(),
                     exit = fadeOut() + scaleOut(),

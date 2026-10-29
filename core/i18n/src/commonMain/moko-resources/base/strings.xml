@@ -1270,4 +1270,5 @@
     <string name="transfer_remove">Remove from transfer</string>
     <string name="transfer_local_destination">Local folder</string>
     <string name="transfer_counts">%1$d succeeded · %2$d skipped · %3$d failed</string>
+    <string name="transfer_file_count">%1$d files</string>
 </resources>
