@@ -153,6 +153,20 @@ internal object SmbAsyncTransport {
     private class ResolvingTransport(
         private val inner: AsyncDirectTcpTransport<SMBPacketData<*>, SMBPacket<*, *>>,
     ) : TransportLayer<SMBPacket<*, *>> by inner {
+        private val writes = SmbAsyncWriteLifecycle.of(inner)
+
+        override fun write(packet: SMBPacket<*, *>) {
+            try {
+                writes.write { inner.write(packet) }
+            } catch (error: IOException) {
+                throw TransportException.Wrapper.wrap(error)
+            }
+        }
+
+        override fun disconnect() {
+            writes.disconnect { inner.disconnect() }
+        }
+
         override fun connect(remoteAddress: InetSocketAddress) {
             try {
                 LocalNetworkPermission.requireGranted()
@@ -184,7 +198,7 @@ internal object SmbAsyncTransport {
             }
             (connectedField.get(inner) as AtomicBoolean).set(true)
             val soTimeout = soTimeoutField.getInt(inner)
-            val large = largeReader(inner, channel)
+            val large = largeReader(inner, channel, writes)
             if (large != null) {
                 large.start(remoteAddress.hostString, soTimeout)
             } else {
@@ -202,6 +216,7 @@ internal object SmbAsyncTransport {
     private fun largeReader(
         transport: AsyncDirectTcpTransport<SMBPacketData<*>, SMBPacket<*, *>>,
         channel: AsynchronousSocketChannel,
+        writes: SmbAsyncWriteLifecycle,
     ): LargeAsyncPacketReader<SMBPacketData<*>>? {
         @Suppress("UNCHECKED_CAST")
         val handlers = runCatching {
@@ -210,9 +225,8 @@ internal object SmbAsyncTransport {
             logcat { "SmbAsyncTransport: no handlers (${e.message}) — 9KiB smbj reader" }
             return null
         }
-        val connected = connectedField.get(transport) as AtomicBoolean
         return LargeAsyncPacketReader(channel, handlers.packetFactory, handlers.receiver) {
-            connected.set(false)
+            writes.markDisconnected()
         }
     }
 
