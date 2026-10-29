@@ -4025,8 +4025,12 @@ object SmbGateway {
                                 }
                             }
                             if (offset < size) {
-                                input.inputStream.use { stream ->
-                                    check(stream.skip(offset) == offset) { "Cannot seek SMB source" }
+                                withSmbTransferInput(
+                                    read = SmbSequentialCopy.of(input),
+                                    size = size - offset,
+                                    startOffset = offset,
+                                    abortRead = { input.close() },
+                                ) { stream ->
                                     com.hippo.ehviewer.library.copyTransferBlocksPipelined(
                                         stream,
                                         checkpoint,
@@ -4137,7 +4141,12 @@ object SmbGateway {
         block: suspend (java.io.InputStream) -> T,
     ): T = withContext(Dispatchers.IO) {
         copyOpenFile(source, password, relative, coroutineContext) { file ->
-            file.inputStream.use { block(it) }
+            withSmbTransferInput(
+                read = SmbSequentialCopy.of(file),
+                size = file.fileInformation.standardInformation.endOfFile,
+                abortRead = { file.close() },
+                consume = block,
+            )
         }
     }
 
