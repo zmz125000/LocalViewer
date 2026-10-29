@@ -96,6 +96,7 @@ import com.hippo.ehviewer.library.RemoteArchiveOpen
 import com.hippo.ehviewer.library.SMB_ARCHIVE_TOKEN
 import com.hippo.ehviewer.library.SMB_FOLDER_TOKEN
 import com.hippo.ehviewer.library.SavedExplorerPaths
+import com.hippo.ehviewer.library.TransferLocation
 import com.hippo.ehviewer.library.VideoThumbnail
 import com.hippo.ehviewer.library.VideoThumbnailSource
 import com.hippo.ehviewer.library.ZipAsDirListing
@@ -2026,6 +2027,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
         isFolder = true,
         shareHttp = smbShareFolderStart(name),
         saveInto = smbSaveFolderInto(name),
+        uploadSource = TransferLocation(ExplorerWindows.Kind.Smb, sourceId, SmbGateway.joinRelativePath(relativeDir, name)),
         listLine = BrowseListLine(
             typeLabel = browseZipAsDirTypeLabel(name, name.substringAfterLast('/')) ?: "Dir",
             sizeBytes = sizeBytes,
@@ -2060,6 +2062,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
         isFolder = true,
         shareHttp = smbShareFolderStart(entry.relativeName, entry.name),
         saveInto = smbSaveFolderInto(entry.relativeName, entry.name),
+        uploadSource = TransferLocation(ExplorerWindows.Kind.Smb, sourceId, SmbGateway.joinRelativePath(relativeDir, entry.relativeName)),
         listLine = BrowseListLine(
             typeLabel = browseZipAsDirTypeLabel(entry.relativeName, entry.name) ?: "Folder",
             sizeBytes = entry.size,
@@ -2163,6 +2166,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
             entry.name,
             shareHttp = smbShareFileStart(remote),
             saveInto = smbSaveFileInto(remote),
+            uploadSource = TransferLocation(ExplorerWindows.Kind.Smb, sourceId, SmbGateway.joinRelativePath(relativeDir, remote)),
             listLine = BrowseListLine(
                 typeLabel = browseFileExtensionLabel(entry.fileName),
                 sizeBytes = entry.size,
@@ -2198,6 +2202,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
         fileName.substringAfterLast('/'),
         shareHttp = smbShareFileStart(fileName),
         saveInto = smbSaveFileInto(fileName),
+        uploadSource = TransferLocation(ExplorerWindows.Kind.Smb, sourceId, SmbGateway.joinRelativePath(relativeDir, fileName)),
         listLine = BrowseListLine(
             typeLabel = browseFileExtensionLabel(fileName),
             sizeBytes = sizeBytes,
@@ -2336,6 +2341,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
         shareHttp = smbShareFileStart(fileName),
         convertStill = smbConvertStill(fileName),
         saveInto = smbSaveFileInto(fileName),
+        uploadSource = TransferLocation(ExplorerWindows.Kind.Smb, sourceId, SmbGateway.joinRelativePath(relativeDir, fileName)),
         listLine = BrowseListLine(
             typeLabel = browseFileExtensionLabel(fileName),
             sizeBytes = sizeBytes,

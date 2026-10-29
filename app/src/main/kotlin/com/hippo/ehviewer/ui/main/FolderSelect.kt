@@ -365,6 +365,7 @@ fun BrowseOverflowActions.selectable(
     convertStill: (suspend (Path, StillExportTarget) -> Boolean)? = null,
     saveInto: (suspend (Path) -> Boolean)? = null,
     listLine: BrowseListLine? = null,
+    uploadSource: com.hippo.ehviewer.library.TransferLocation? = null,
 ): BrowseOverflowActions = copy(
     selectKey = key,
     selectTitle = title,
@@ -373,6 +374,7 @@ fun BrowseOverflowActions.selectable(
     saveInto = saveInto,
     selectFolder = isFolder,
     listLine = listLine,
+    uploadSource = uploadSource,
 )
 
 fun BrowseOverflowActions.toPick(): FolderPick? {

@@ -51,9 +51,16 @@ object StreamKeepAlivePolicy {
     /** Unfinished folder batch. The setting decides whether this holds the FGS. */
     private var taskWantsFgs = false
 
+    @Volatile private var uploadWantsFgs = false
+
     fun unlimited(): Boolean = Settings.streamKeepAliveUnlimited.value
 
-    fun taskHoldsFgs(): Boolean = Settings.browseTaskForegroundService.value && taskWantsFgs
+    fun taskHoldsFgs(): Boolean = uploadWantsFgs || (Settings.browseTaskForegroundService.value && taskWantsFgs)
+
+    fun setUploadActive(active: Boolean) {
+        uploadWantsFgs = active
+        runCatching { reconcileFgs() }
+    }
 
     /**
      * Idle grant lifetime. Null = never age out (unlimited).

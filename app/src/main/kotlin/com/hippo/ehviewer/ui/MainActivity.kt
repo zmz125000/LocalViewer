@@ -151,6 +151,7 @@ import com.hippo.ehviewer.ui.destinations.WebDavBrowserScreenDestination
 import com.hippo.ehviewer.ui.main.BrowseSaveSnackbars
 import com.hippo.ehviewer.ui.main.FolderSelectBars
 import com.hippo.ehviewer.ui.main.HttpShareSnackbars
+import com.hippo.ehviewer.ui.main.UploadTransferBars
 import com.hippo.ehviewer.ui.main.UsbDriveHost
 import com.hippo.ehviewer.ui.main.awaitHttpShareQr
 import com.hippo.ehviewer.ui.navToReader
@@ -745,6 +746,7 @@ class MainActivity : AppCompatActivity() {
                             },
                         ) {
                             BrowseSaveSnackbars()
+                            UploadTransferBars()
                             FolderSelectBars(
                                 onOpenFolder = { place ->
                                     val browserSourceId = when (currentDestination) {

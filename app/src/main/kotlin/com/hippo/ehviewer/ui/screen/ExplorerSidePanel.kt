@@ -50,6 +50,7 @@ import androidx.compose.material.icons.filled.BookmarkBorder
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.Icon
@@ -114,6 +115,7 @@ import com.hippo.ehviewer.library.FavoriteBrowseSource
 import com.hippo.ehviewer.library.LocalLibrary
 import com.hippo.ehviewer.library.NavTabWindows
 import com.hippo.ehviewer.library.SavedExplorerPaths
+import com.hippo.ehviewer.library.TransferLocation
 import com.hippo.ehviewer.library.UsbVolumes
 import com.hippo.ehviewer.library.hideDuplicateGalleriesPreferMediaStore
 import com.hippo.ehviewer.library.resolveFavoriteBrowseSources
@@ -130,6 +132,8 @@ import com.hippo.ehviewer.ui.main.BrowseSectionHeader
 import com.hippo.ehviewer.ui.main.FolderPlace
 import com.hippo.ehviewer.ui.main.GalleryGridDefaults
 import com.hippo.ehviewer.ui.main.LocalBrowseListHeaderInset
+import com.hippo.ehviewer.ui.main.UploadTransfers
+import com.hippo.ehviewer.ui.main.rememberUploadLocalDestinationPicker
 import com.hippo.ehviewer.ui.navToLocalFolderReader
 import com.hippo.ehviewer.ui.navToReader
 import com.hippo.ehviewer.ui.openLocalBrowseDir
@@ -233,6 +237,7 @@ fun ExplorerSidePanelHost(
     val closeGuard = remember { PanelCloseGuard() }
     var closeJob by remember { mutableStateOf<Job?>(null) }
     fun closePanel() {
+        if (UploadTransfers.destinationJobId != null) UploadTransfers.cancelDestination()
         closeGuard.snapOnCancel = true
         if (closeJob?.isActive == true) return
         closeJob = scope.launch {
@@ -259,6 +264,7 @@ fun ExplorerSidePanelHost(
     fun togglePanel() {
         val expanded = panelState.isOpen || panelState.targetValue == DrawerValue.Open
         if (expanded) {
+            if (UploadTransfers.destinationJobId != null) UploadTransfers.cancelDestination()
             closeGuard.snapOnCancel = true
             closeJob?.cancel()
             closeJob = scope.launch {
@@ -302,6 +308,13 @@ fun ExplorerSidePanelHost(
         }
     }
     val panelOpen = panelState.isOpen || panelState.targetValue == DrawerValue.Open
+    var panelWasOpen by remember { mutableStateOf(false) }
+    LaunchedEffect(panelOpen) {
+        if (panelWasOpen && !panelOpen && UploadTransfers.destinationJobId != null) {
+            UploadTransfers.cancelDestination()
+        }
+        panelWasOpen = panelOpen
+    }
     SideEffect {
         backCallback.isEnabled = panelOpen
         // Screens register their own back handlers after this host. While the panel
@@ -475,6 +488,8 @@ private fun ExplorerPanel(
     onNavigated: () -> Unit,
 ) {
     var showFavorites by rememberSaveable { mutableStateOf(false) }
+    val choosingUpload = UploadTransfers.destinationJobId != null
+    LaunchedEffect(choosingUpload) { if (choosingUpload) showFavorites = false }
     var gridReady by remember { mutableStateOf(showFavorites) }
     LaunchedEffect(panelOpen) {
         if (panelOpen && !gridReady) {
@@ -493,7 +508,8 @@ private fun ExplorerPanel(
     Column(
         Modifier
             .fillMaxSize()
-            .pointerInput(showFavorites, layoutDirection) {
+            .pointerInput(showFavorites, layoutDirection, choosingUpload) {
+                if (choosingUpload) return@pointerInput
                 val slop = viewConfiguration.touchSlop
                 val threshold = 48.dp.toPx()
                 awaitEachGesture {
@@ -551,7 +567,13 @@ private fun ExplorerPanel(
             ) { quickAccess ->
                 Text(
                     text = stringResource(
-                        if (quickAccess) R.string.explorer_quick_access else R.string.explorer,
+                        if (choosingUpload) {
+                            R.string.transfer_upload_to
+                        } else if (quickAccess) {
+                            R.string.explorer_quick_access
+                        } else {
+                            R.string.explorer
+                        },
                     ),
                     style = headerStyle,
                     modifier = Modifier
@@ -559,36 +581,38 @@ private fun ExplorerPanel(
                         .clickable(
                             interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
                             indication = null,
-                        ) { showFavorites = !showFavorites },
+                        ) { if (!choosingUpload) showFavorites = !showFavorites },
                 )
             }
-            val duplicateEnabled = activeId != null
-            Icon(
-                Icons.Default.ContentCopy,
-                contentDescription = stringResource(R.string.explorer_duplicate),
-                modifier = Modifier
-                    .padding(8.dp)
-                    .size(headerIconSize)
-                    .clickable(
-                        enabled = duplicateEnabled,
-                        onClick = {
-                            val copy = ExplorerWindows.duplicateActive() ?: return@clickable
-                            bindOpenedWindow(navTab)
-                            showWindow(
-                                navigator,
-                                ExplorerWindows.active() ?: copy,
-                                currentDestination,
-                                browserSourceId,
-                                activeFromHistory,
-                                activeFromLibrary,
-                            )
-                            onNavigated()
-                        },
+            if (!choosingUpload) {
+                val duplicateEnabled = activeId != null
+                Icon(
+                    Icons.Default.ContentCopy,
+                    contentDescription = stringResource(R.string.explorer_duplicate),
+                    modifier = Modifier
+                        .padding(8.dp)
+                        .size(headerIconSize)
+                        .clickable(
+                            enabled = duplicateEnabled,
+                            onClick = {
+                                val copy = ExplorerWindows.duplicateActive() ?: return@clickable
+                                bindOpenedWindow(navTab)
+                                showWindow(
+                                    navigator,
+                                    ExplorerWindows.active() ?: copy,
+                                    currentDestination,
+                                    browserSourceId,
+                                    activeFromHistory,
+                                    activeFromLibrary,
+                                )
+                                onNavigated()
+                            },
+                        ),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(
+                        alpha = if (duplicateEnabled) 1f else 0.38f,
                     ),
-                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(
-                    alpha = if (duplicateEnabled) 1f else 0.38f,
-                ),
-            )
+                )
+            }
         }
         var paneWidth by remember { mutableIntStateOf(0) }
         val slideDirection = if (layoutDirection == LayoutDirection.Rtl) -1f else 1f
@@ -619,7 +643,7 @@ private fun ExplorerPanel(
                     activeFromLibrary = activeFromLibrary,
                     navTab = navTab,
                     tablet = tablet,
-                    onToggleMode = { showFavorites = !showFavorites },
+                    onToggleMode = { if (!choosingUpload) showFavorites = !showFavorites },
                     onNavigated = onNavigated,
                 )
             }
@@ -637,7 +661,7 @@ private fun ExplorerPanel(
                         navigator = navigator,
                         navTab = navTab,
                         tablet = tablet,
-                        onToggleMode = { showFavorites = !showFavorites },
+                        onToggleMode = { if (!choosingUpload) showFavorites = !showFavorites },
                         onNavigated = onNavigated,
                     )
                 }
@@ -668,6 +692,16 @@ private fun ExplorerWindowList(
         SavedExplorerPaths.resolve(roots, smb, webDav)
     }
     val viewingBrowser = isBrowserDestination(currentDestination)
+    val choosingUpload = UploadTransfers.destinationJobId != null
+    val pickLocal = rememberUploadLocalDestinationPicker(onNavigated)
+    fun chooseUpload(kind: ExplorerWindows.Kind, sourceId: Long, relative: String, label: String) {
+        if (kind == ExplorerWindows.Kind.Local) {
+            pickLocal()
+        } else {
+            UploadTransfers.destination(TransferLocation(kind, sourceId, relative), label)
+            onNavigated()
+        }
+    }
     CompositionLocalProvider(
         LocalBrowseListHeaderInset provides GalleryGridDefaults.margin(),
         LocalExplorerTablet provides tablet,
@@ -706,6 +740,17 @@ private fun ExplorerWindowList(
                     }
                 }
             }
+            if (choosingUpload) {
+                item(key = "upload-local") {
+                    ExplorerPathRow(
+                        title = stringResource(R.string.transfer_local_destination),
+                        subtitle = stringResource(R.string.transfer_destination),
+                        active = false,
+                        onClick = pickLocal,
+                        trailing = {},
+                    )
+                }
+            }
             if (windows.isNotEmpty()) {
                 item(key = "win-hdr") {
                     BrowseSectionHeader(stringResource(R.string.explorer_windows), onClick = onToggleMode)
@@ -717,8 +762,17 @@ private fun ExplorerWindowList(
                         title = windowRowTitle(window, source),
                         subtitle = windowSubtitle(source, window.relativePath),
                         active = window.id == activeId,
-                        onLongClick = { closeListedWindow(window.id) },
+                        leadingIcon = if (choosingUpload && window.kind != ExplorerWindows.Kind.Local) Icons.Default.FileDownload else Icons.Default.Folder,
+                        onLongClick = if (choosingUpload) {
+                            null
+                        } else {
+                            { closeListedWindow(window.id) }
+                        },
                         onClick = {
+                            if (choosingUpload) {
+                                chooseUpload(window.kind, window.sourceId, window.relativePath, windowSubtitle(source, window.relativePath))
+                                return@ExplorerPathRow
+                            }
                             val shown = ExplorerWindows.activate(window.id) ?: return@ExplorerPathRow
                             bindOpenedWindow(navTab)
                             val restored = ExplorerWindows.active() ?: shown
@@ -733,18 +787,20 @@ private fun ExplorerWindowList(
                             onNavigated()
                         },
                         trailing = {
-                            ExplorerRowAction(
-                                onClick = {
-                                    SavedExplorerPaths.remember(window.kind, window.sourceId, window.relativePath)
-                                },
-                                icon = if (savedAlready) Icons.Default.Bookmark else Icons.Default.BookmarkBorder,
-                                contentDescription = stringResource(R.string.explorer_save_path),
-                            )
-                            ExplorerRowAction(
-                                onClick = { closeListedWindow(window.id) },
-                                icon = Icons.Default.Close,
-                                contentDescription = stringResource(R.string.explorer_close_window),
-                            )
+                            if (!choosingUpload) {
+                                ExplorerRowAction(
+                                    onClick = {
+                                        SavedExplorerPaths.remember(window.kind, window.sourceId, window.relativePath)
+                                    },
+                                    icon = if (savedAlready) Icons.Default.Bookmark else Icons.Default.BookmarkBorder,
+                                    contentDescription = stringResource(R.string.explorer_save_path),
+                                )
+                                ExplorerRowAction(
+                                    onClick = { closeListedWindow(window.id) },
+                                    icon = Icons.Default.Close,
+                                    contentDescription = stringResource(R.string.explorer_close_window),
+                                )
+                            }
                         },
                     )
                 }
@@ -755,18 +811,25 @@ private fun ExplorerWindowList(
             items(saved, key = { "s-${it.key}" }) { item ->
                 ExplorerPathRow(
                     title = item.title,
+                    leadingIcon = if (choosingUpload && item.kind != ExplorerWindows.Kind.Local) Icons.Default.FileDownload else Icons.Default.Folder,
                     subtitle = windowSubtitle(item.sourceName, item.relativePath),
                     active = false,
                     onClick = {
+                        if (choosingUpload) {
+                            chooseUpload(item.kind, item.sourceId, item.relativePath, windowSubtitle(item.sourceName, item.relativePath))
+                            return@ExplorerPathRow
+                        }
                         openSaved(navigator, item, roots, navTab)
                         onNavigated()
                     },
                     trailing = {
-                        ExplorerRowAction(
-                            onClick = { SavedExplorerPaths.forget(item.key) },
-                            icon = Icons.Default.Delete,
-                            contentDescription = stringResource(R.string.explorer_delete_saved),
-                        )
+                        if (!choosingUpload) {
+                            ExplorerRowAction(
+                                onClick = { SavedExplorerPaths.forget(item.key) },
+                                icon = Icons.Default.Delete,
+                                contentDescription = stringResource(R.string.explorer_delete_saved),
+                            )
+                        }
                     },
                 )
             }
@@ -902,6 +965,7 @@ private fun ExplorerPathRow(
     trailing: @Composable () -> Unit,
     modifier: Modifier = Modifier,
     onLongClick: (() -> Unit)? = null,
+    leadingIcon: ImageVector = Icons.Default.Folder,
 ) {
     val tablet = LocalExplorerTablet.current
     val darkPage = MaterialTheme.colorScheme.background.luminance() < 0.5f
@@ -929,7 +993,7 @@ private fun ExplorerPathRow(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Icon(
-            Icons.Default.Folder,
+            leadingIcon,
             contentDescription = null,
             modifier = Modifier.size(if (tablet) ExplorerListIconSizeTablet else ExplorerListIconSize),
             tint = MaterialTheme.colorScheme.primary,

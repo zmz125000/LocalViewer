@@ -91,6 +91,7 @@ data class BrowseOverflowActions(
     val selectFolder: Boolean = false,
     /** Extension, size, and the rest of the folder-list second line. */
     val listLine: BrowseListLine? = null,
+    val uploadSource: com.hippo.ehviewer.library.TransferLocation? = null,
 )
 
 @Composable
@@ -276,6 +277,21 @@ fun BrowseItemOverflowButton(
                 text = { Text(stringResource(R.string.action_save_to)) },
                 onClick = { run(actions.onSaveAs) },
             )
+            actions.uploadSource?.let { source ->
+                DropdownMenuItem(
+                    text = { Text(stringResource(R.string.transfer_upload)) },
+                    onClick = {
+                        expanded = false
+                        UploadTransfers.prepare(
+                            source,
+                            actions.selectTitle ?: "Upload",
+                            actions.selectFolder,
+                            actions.listLine?.sizeBytes ?: 0L,
+                            actions.listLine?.lastModifiedMs ?: 0L,
+                        )
+                    },
+                )
+            }
             if (actions.onConvert != null) {
                 DropdownMenuItem(
                     text = { Text(stringResource(R.string.convert_to)) },

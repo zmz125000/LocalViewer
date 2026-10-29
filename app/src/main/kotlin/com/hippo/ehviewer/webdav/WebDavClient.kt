@@ -37,6 +37,7 @@ import io.ktor.http.contentType
 import io.ktor.http.encodedPath
 import io.ktor.http.takeFrom
 import io.ktor.utils.io.jvm.javaio.toInputStream
+import io.ktor.utils.io.writeFully
 import java.io.IOException
 import java.io.OutputStream
 import java.io.RandomAccessFile
@@ -67,7 +68,7 @@ import org.xmlpull.v1.XmlPullParser
 import org.xmlpull.v1.XmlPullParserFactory
 
 /**
- * Read-only WebDAV (PROPFIND + GET).
+ * WebDAV browsing, downloads, and conditional uploads.
  *
  * **Engine:** OkHttp HTTP/2 by default ([Settings.webDavHttp2]). Off → Ktor CIO HTTP/1.1.
  * Cronet / Android HUC reject PROPFIND.
@@ -84,6 +85,110 @@ import org.xmlpull.v1.XmlPullParserFactory
  * TLS: system trust by default. [Settings.webDavInsecureTls] → trust-all for self-signed LAN.
  */
 object WebDavClient {
+    suspend fun transferExists(source: WebDavSourceEntity, password: String, relative: String): Boolean = withIOContext {
+        val response = http().request(absoluteUrl(source, relative)) {
+            method = HttpMethod.Head
+            basicAuthHeader(source.username, password)?.let { header(HttpHeaders.Authorization, it) }
+        }
+        when (response.status.value) {
+            404 -> false
+            in 200..299 -> true
+            else -> error("WebDAV HEAD: ${response.status}")
+        }
+    }
+
+    suspend fun transferMkdir(source: WebDavSourceEntity, password: String, relative: String) = withIOContext {
+        val response = http().request(dirUrl(source, relative)) {
+            method = HttpMethod("MKCOL")
+            basicAuthHeader(source.username, password)?.let { header(HttpHeaders.Authorization, it) }
+        }
+        check(response.status.value in 200..299 || response.status.value == 405) {
+            "WebDAV MKCOL: ${response.status}"
+        }
+    }
+
+    /** Stage under a private name, then MOVE with Overwrite:F so existing files remain intact. */
+    suspend fun transferWrite(
+        source: WebDavSourceEntity,
+        password: String,
+        relative: String,
+        file: java.io.File,
+        mtimeMs: Long,
+        checkpoint: suspend () -> Unit,
+        progress: (Long) -> Unit,
+    ): Boolean = withIOContext {
+        val parent = relative.substringBeforeLast('/', "")
+        val temp = (if (parent.isEmpty()) "" else "$parent/") + ".upload-${java.util.UUID.randomUUID()}"
+        val auth = basicAuthHeader(source.username, password)
+        try {
+            val response = http().request(absoluteUrl(source, temp)) {
+                method = HttpMethod.Put
+                timeout {
+                    requestTimeoutMillis = 0
+                    socketTimeoutMillis = DL_SOCKET_MS
+                }
+                auth?.let { header(HttpHeaders.Authorization, it) }
+                if (mtimeMs > 0) header("X-OC-Mtime", (mtimeMs / 1000).toString())
+                header(HttpHeaders.IfNoneMatch, "*")
+                setBody(object : io.ktor.http.content.OutgoingContent.WriteChannelContent() {
+                    override val contentLength = file.length()
+                    override val contentType = ContentType.Application.OctetStream
+                    override suspend fun writeTo(channel: io.ktor.utils.io.ByteWriteChannel) {
+                        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                            file.inputStream().use { input ->
+                                val buffer = ByteArray(256 * 1024)
+                                while (true) {
+                                    checkpoint()
+                                    val count = input.read(buffer)
+                                    if (count < 0) break
+                                    channel.writeFully(buffer, 0, count)
+                                    progress(count.toLong())
+                                }
+                            }
+                        }
+                    }
+                })
+            }
+            check(response.status.value in 200..299) { "WebDAV PUT: ${response.status}" }
+            if (mtimeMs > 0) {
+                val date = java.time.format.DateTimeFormatter.RFC_1123_DATE_TIME.format(
+                    java.time.Instant.ofEpochMilli(mtimeMs).atZone(java.time.ZoneOffset.UTC),
+                )
+                // Some servers accept getlastmodified; others use X-OC-Mtime on PUT.
+                runCatching {
+                    http().request(absoluteUrl(source, temp)) {
+                        method = HttpMethod("PROPPATCH")
+                        auth?.let { header(HttpHeaders.Authorization, it) }
+                        contentType(ContentType.Application.Xml)
+                        setBody("<d:propertyupdate xmlns:d=\"DAV:\"><d:set><d:prop><d:getlastmodified>$date</d:getlastmodified></d:prop></d:set></d:propertyupdate>")
+                    }.bodyAsText()
+                }.onFailure { if (it is kotlinx.coroutines.CancellationException) throw it }
+            }
+            checkpoint()
+            val moved = http().request(absoluteUrl(source, temp)) {
+                method = HttpMethod("MOVE")
+                auth?.let { header(HttpHeaders.Authorization, it) }
+                header("Destination", absoluteUrl(source, relative).toString())
+                header("Overwrite", "F")
+            }
+            check(moved.status.value in 200..299) { "WebDAV MOVE: ${moved.status}" }
+            mtimeMs <= 0 || fileMtimeOrNull(source, password, relative)?.let {
+                kotlin.math.abs(it - mtimeMs) < 2000
+            } == true
+        } finally {
+            kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
+                kotlinx.coroutines.withTimeoutOrNull(10_000) {
+                    runCatching {
+                        http().request(absoluteUrl(source, temp)) {
+                            method = HttpMethod.Delete
+                            auth?.let { header(HttpHeaders.Authorization, it) }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     private val PropFind = HttpMethod("PROPFIND")
 
     private val PropfindBody = "" +
