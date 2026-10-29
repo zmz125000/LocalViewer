@@ -68,7 +68,11 @@ data class ImageMetadata(
 )
 
 /** Header/EXIF reads only: never decodes pixels or retains the compressed source. */
-internal fun ImageSource.readMetadata(fileDate: Long? = null, fileName: String? = null): ImageMetadata {
+internal fun ImageSource.readMetadata(
+    fileDate: Long? = null,
+    fileName: String? = null,
+    decodedExif: ByteArray? = null,
+): ImageMetadata {
     val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
     runCatching { metadataStream().use { BitmapFactory.decodeStream(it, null, bounds) } }
     val header = runCatching {
@@ -83,7 +87,10 @@ internal fun ImageSource.readMetadata(fileDate: Long? = null, fileName: String? 
             bytes.copyOf(count)
         }
     }.getOrDefault(byteArrayOf())
-    val exif = runCatching { readEncodedExif(fileName, header) }.getOrNull()
+    // null: decoder did not inspect EXIF; empty: inspected and absent. Never re-probe the latter.
+    val exif = runCatching {
+        if (decodedExif != null) exifFromTiff(decodedExif) else readEncodedExif(fileName, header)
+    }.getOrNull()
     val heif = HeifPrecisionProbe.probe(header)
     val dimensions = HeifPrecisionProbe.thumbnailMemory(ByteBuffer.wrap(header))?.dimensions ?: 0L
     val extension = fileName?.substringAfterLast('.', "")?.lowercase()
