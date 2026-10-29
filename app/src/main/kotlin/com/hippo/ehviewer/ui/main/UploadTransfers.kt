@@ -169,7 +169,7 @@ internal object UploadTransfers {
         job.state.update { if (it.editable) it.copy(rows = removeUploadSubtree(it.rows, relative)) else it }
     }
     fun chooseDestination(job: UploadJob) {
-        if (!job.state.value.editable) return
+        if (!job.state.value.editable && job.state.value.phase != UploadPhase.Preparing) return
         panelId = null
         destinationJobId = job.id
     }
@@ -180,7 +180,6 @@ internal object UploadTransfers {
         panelId = job.id
     }
     fun cancelDestination() {
-        panelId = destinationJobId
         destinationJobId = null
     }
     fun toggleBackground(job: UploadJob) {

@@ -32,6 +32,7 @@ import com.hippo.ehviewer.image.hdr.visibleForSources
 import com.hippo.ehviewer.shortcuts.FolderHomeShortcut
 import com.hippo.ehviewer.shortcuts.FolderShortcutTarget
 import com.hippo.ehviewer.ui.LocalSnackBarHostState
+import com.hippo.ehviewer.ui.screen.LocalExplorerPanel
 
 enum class BrowseOverflowKind {
     Common,
@@ -106,6 +107,7 @@ fun BrowseItemOverflowButton(
     val scope = rememberCoroutineScope()
     val snackbar = LocalSnackBarHostState.current
     val saveTransfer = rememberSaveToTransferPicker()
+    val explorer = LocalExplorerPanel.current
     val shortcutUnsupported = stringResource(R.string.browse_shortcut_unsupported)
     val grid = placement == BrowseOverflowPlacement.GridBottomEnd
     val more = stringResource(R.string.browse_item_more)
@@ -300,13 +302,15 @@ fun BrowseItemOverflowButton(
                     text = { Text(stringResource(R.string.transfer_upload)) },
                     onClick = {
                         expanded = false
-                        UploadTransfers.prepare(
+                        val job = UploadTransfers.prepare(
                             source,
                             actions.selectTitle ?: "Upload",
                             actions.selectFolder,
                             actions.listLine?.sizeBytes ?: 0L,
                             actions.listLine?.lastModifiedMs ?: 0L,
                         )
+                        UploadTransfers.chooseDestination(job)
+                        explorer.open()
                     },
                 )
             }

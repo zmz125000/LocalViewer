@@ -82,6 +82,7 @@ import com.hippo.ehviewer.image.hdr.visibleForSources
 import com.hippo.ehviewer.library.ExplorerWindows
 import com.hippo.ehviewer.provider.StreamKeepAlivePolicy
 import com.hippo.ehviewer.ui.LocalSnackBarHostState
+import com.hippo.ehviewer.ui.screen.LocalExplorerPanel
 import com.hippo.ehviewer.ui.theme.snackbarActionButtonColors
 import com.hippo.ehviewer.ui.theme.snackbarContainerColor
 import com.hippo.ehviewer.ui.theme.snackbarDismissButtonColors
@@ -1619,6 +1620,7 @@ private fun SelectionOverflowControl(
     onOpenFolder: (() -> Unit)? = null,
 ) {
     val context = LocalContext.current
+    val explorer = LocalExplorerPanel.current
     val snackbar = LocalSnackBarHostState.current
     val scope = rememberCoroutineScope()
     var menu by remember { mutableStateOf(false) }
@@ -1716,8 +1718,10 @@ private fun SelectionOverflowControl(
                                     )
                                 }
                             }
-                            UploadTransfers.prepare(files)
+                            val job = UploadTransfers.prepare(files)
                             FolderSelectHost.cancelShownSelection()
+                            UploadTransfers.chooseDestination(job)
+                            explorer.open()
                         },
                     )
                 }
