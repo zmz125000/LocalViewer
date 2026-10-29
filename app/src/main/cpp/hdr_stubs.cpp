@@ -91,13 +91,13 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_convertJpeg2000BytesToUltraHdrMaxEdge(
 
 extern "C" JNIEXPORT jbyteArray JNICALL
 Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeJxlBytesToDirect(JNIEnv*, jclass, jbyteArray, jint,
-                                                                jboolean, jintArray, jfloatArray, jboolean) {
+                                                                jboolean, jintArray, jfloatArray, jboolean, jobjectArray) {
     return nullptr;
 }
 
 extern "C" JNIEXPORT jbyteArray JNICALL
 Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeAvifBytesToDirect(JNIEnv*, jclass, jbyteArray, jint,
-                                                                 jboolean, jintArray, jfloatArray) {
+                                                                 jboolean, jintArray, jfloatArray, jobjectArray) {
     return nullptr;
 }
 
@@ -170,13 +170,13 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeJxrBufferToDirect(
 
 extern "C" JNIEXPORT jbyteArray JNICALL
 Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeJxlBufferToDirect(
-        JNIEnv*, jclass, jobject, jint, jboolean, jintArray, jfloatArray, jboolean) {
+        JNIEnv*, jclass, jobject, jint, jboolean, jintArray, jfloatArray, jboolean, jobjectArray) {
     return nullptr;
 }
 
 extern "C" JNIEXPORT jbyteArray JNICALL
 Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeAvifBufferToDirect(
-        JNIEnv*, jclass, jobject, jint, jboolean, jintArray, jfloatArray) {
+        JNIEnv*, jclass, jobject, jint, jboolean, jintArray, jfloatArray, jobjectArray) {
     return nullptr;
 }
 
@@ -227,3 +227,11 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_linearizeHeifIccBuffer(JNIEnv*, jclass,
 
 extern "C" JNIEXPORT jbyteArray JNICALL
 Java_com_hippo_ehviewer_jni_HdrConvertKt_extractJxlExif(JNIEnv*, jclass, jobject) { return nullptr; }
+
+extern "C" JNIEXPORT jbyteArray JNICALL
+Java_com_hippo_ehviewer_jni_HdrConvertKt_extractAvifExif(JNIEnv*, jclass, jobject) { return nullptr; }
+
+extern "C" JNIEXPORT jbyteArray JNICALL
+Java_com_hippo_ehviewer_jni_HdrConvertKt_extractJxlExifInput(JNIEnv*, jclass, jobject) { return nullptr; }
+extern "C" JNIEXPORT jbyteArray JNICALL
+Java_com_hippo_ehviewer_jni_HdrConvertKt_extractAvifExifInput(JNIEnv*, jclass, jobject) { return nullptr; }

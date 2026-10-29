@@ -68,15 +68,13 @@ data class ImageMetadata(
 )
 
 /** Header/EXIF reads only: never decodes pixels or retains the compressed source. */
-internal fun ImageSource.readMetadata(fileDate: Long? = null, fileName: String? = null): ImageMetadata {
+internal fun ImageSource.readMetadata(
+    fileDate: Long? = null,
+    fileName: String? = null,
+    decodedExif: ByteArray? = null,
+): ImageMetadata {
     val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
     runCatching { metadataStream().use { BitmapFactory.decodeStream(it, null, bounds) } }
-    val exif = runCatching {
-        when (this) {
-            is PathSource -> source.openFileDescriptor("r").use { ExifInterface(it.fileDescriptor) }
-            is ByteBufferSource -> metadataStream().use { ExifInterface(it) }
-        }
-    }.getOrNull()
     val header = runCatching {
         metadataStream().use { input ->
             val bytes = ByteArray(HeifPrecisionProbe.HEADER_BYTES)
@@ -89,6 +87,10 @@ internal fun ImageSource.readMetadata(fileDate: Long? = null, fileName: String? 
             bytes.copyOf(count)
         }
     }.getOrDefault(byteArrayOf())
+    // null: decoder did not inspect EXIF; empty: inspected and absent. Never re-probe the latter.
+    val exif = runCatching {
+        if (decodedExif != null) exifFromTiff(decodedExif) else readEncodedExif(fileName, header)
+    }.getOrNull()
     val heif = HeifPrecisionProbe.probe(header)
     val dimensions = HeifPrecisionProbe.thumbnailMemory(ByteBuffer.wrap(header))?.dimensions ?: 0L
     val extension = fileName?.substringAfterLast('.', "")?.lowercase()
@@ -166,7 +168,7 @@ private fun ImageSource.nativeDimensions(kind: Int, header: ByteArray): Long = w
     }
 }
 
-private fun ImageSource.metadataStream(): InputStream = when (this) {
+internal fun ImageSource.metadataStream(): InputStream = when (this) {
     is PathSource -> ParcelFileDescriptor.AutoCloseInputStream(source.openFileDescriptor("r"))
     is ByteBufferSource -> {
         val buffer = source.asReadOnlyBuffer()

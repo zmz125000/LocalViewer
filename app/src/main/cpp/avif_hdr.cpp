@@ -14,6 +14,8 @@
 #include <android/log.h>
 #include <jni.h>
 #include "thumbnail_mapped_input.h"
+#include "still_exif_input.h"
+#include "decoded_exif.h"
 
 #include <algorithm>
 #include <cmath>
@@ -33,6 +35,61 @@
 #define LOG_TAG "AvifHdr"
 #define ALOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
 #define ALOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
+
+// Parse container metadata only, independently of platform AV1/profile support.
+static jbyteArray avif_exif_result(JNIEnv* env, const avifDecoder* decoder) {
+    const auto& exif = decoder->image->exif;
+    if (!exif.data || !exif.size || exif.size > 1024 * 1024) return nullptr;
+    size_t offset = 0;
+    if (avifGetExifTiffHeaderOffset(exif.data, exif.size, &offset) != AVIF_RESULT_OK || offset >= exif.size) return nullptr;
+    const size_t count = exif.size - offset;
+    auto result = env->NewByteArray(static_cast<jsize>(count));
+    if (result) env->SetByteArrayRegion(result, 0, static_cast<jsize>(count), reinterpret_cast<const jbyte*>(exif.data + offset));
+    return result;
+}
+
+extern "C" JNIEXPORT jbyteArray JNICALL
+Java_com_hippo_ehviewer_jni_HdrConvertKt_extractAvifExif(JNIEnv* env, jclass, jobject input) try {
+    if (!input) return nullptr;
+    const auto* data = static_cast<const uint8_t*>(env->GetDirectBufferAddress(input));
+    const jlong size = env->GetDirectBufferCapacity(input);
+    if (!data || size <= 0) return nullptr;
+    std::unique_ptr<avifDecoder, decltype(&avifDecoderDestroy)> decoder(avifDecoderCreate(), avifDecoderDestroy);
+    if (!decoder) return nullptr;
+    decoder->ignoreExif = AVIF_FALSE;
+    decoder->ignoreXMP = AVIF_TRUE;
+    if (avifDecoderSetIOMemory(decoder.get(), data, static_cast<size_t>(size)) != AVIF_RESULT_OK ||
+        avifDecoderParse(decoder.get()) != AVIF_RESULT_OK || !decoder->image) return nullptr;
+    return avif_exif_result(env, decoder.get());
+} catch (...) { return nullptr; }
+
+extern "C" JNIEXPORT jbyteArray JNICALL
+Java_com_hippo_ehviewer_jni_HdrConvertKt_extractAvifExifInput(JNIEnv* env, jclass, jobject input) try {
+    if (!input) return nullptr;
+    struct Reader {
+        StillExifInput input;
+        std::vector<uint8_t> bytes;
+        Reader(JNIEnv* env, jobject source) : input(env, source) {}
+    } reader(env, input);
+    // Declared before decoder so its storage outlives avifDecoderDestroy.
+    avifIO io{};
+    io.sizeHint = INT64_MAX;
+    io.data = &reader;
+    io.read = [](avifIO* source, uint32_t flags, uint64_t offset, size_t size, avifROData* out) -> avifResult {
+        auto* reader = static_cast<Reader*>(source->data);
+        if (flags || !reader->input.read(offset, size, reader->bytes)) return AVIF_RESULT_IO_ERROR;
+        out->data = reader->bytes.data();
+        out->size = reader->bytes.size();
+        return AVIF_RESULT_OK;
+    };
+    std::unique_ptr<avifDecoder, decltype(&avifDecoderDestroy)> decoder(avifDecoderCreate(), avifDecoderDestroy);
+    if (!decoder) return nullptr;
+    decoder->ignoreExif = AVIF_FALSE;
+    decoder->ignoreXMP = AVIF_TRUE;
+    avifDecoderSetIO(decoder.get(), &io); // destroy=nullptr: io is borrowed stack storage.
+    if (avifDecoderParse(decoder.get()) != AVIF_RESULT_OK || !decoder->image) return nullptr;
+    return avif_exif_result(env, decoder.get());
+} catch (...) { return nullptr; }
 
 namespace {
 
@@ -396,7 +453,8 @@ bool apply_iso_gain_map(const avifImage* image, std::vector<uint16_t>& out_rgba,
 int decode_avif_to_linear_f16(const uint8_t* data, size_t len, std::vector<uint16_t>& out_rgba,
                               unsigned& w, unsigned& h, int* out_has_gainmap,
                               int* out_transfer /* 16=PQ, 18=HLG, else other */,
-                              uhdr_color_gamut_t* out_cg, unsigned max_edge) {
+                              uhdr_color_gamut_t* out_cg, unsigned max_edge, std::vector<uint8_t>* out_exif = nullptr) {
+    if (out_exif) out_exif->clear();
     if (out_has_gainmap) *out_has_gainmap = 0;
     if (out_transfer) *out_transfer = 0;
     if (out_cg) *out_cg = UHDR_CG_BT_709;
@@ -404,7 +462,7 @@ int decode_avif_to_linear_f16(const uint8_t* data, size_t len, std::vector<uint1
 
     avifDecoder* dec = avifDecoderCreate();
     if (!dec) return -2;
-    dec->ignoreExif = AVIF_TRUE;
+    dec->ignoreExif = out_exif ? AVIF_FALSE : AVIF_TRUE;
     dec->ignoreXMP = AVIF_TRUE;
     // Default decode skips the gain-map item. ISO 21496-1 AVIF needs those pixels.
     dec->imageContentToDecode = AVIF_IMAGE_CONTENT_ALL;
@@ -417,11 +475,24 @@ int decode_avif_to_linear_f16(const uint8_t* data, size_t len, std::vector<uint1
         return -3;
     }
     r = avifDecoderParse(dec);
+    if (r != AVIF_RESULT_OK && out_exif) {
+        // Optional malformed EXIF must not turn a previously readable AVIF into an error.
+        dec->ignoreExif = AVIF_TRUE;
+        r = avifDecoderParse(dec);
+    }
     if (r != AVIF_RESULT_OK) {
         ALOGE("avifDecoderParse: %s", avifResultToString(r));
         avifDecoderDestroy(dec);
         return -4;
     }
+    if (out_exif && dec->image && dec->image->exif.data && dec->image->exif.size <= 1024 * 1024) {
+        const auto& exif = dec->image->exif;
+        size_t offset = 0;
+        if (avifGetExifTiffHeaderOffset(exif.data, exif.size, &offset) == AVIF_RESULT_OK && offset < exif.size) {
+            out_exif->assign(exif.data + offset, exif.data + exif.size);
+        }
+    }
+
     r = avifDecoderNextImage(dec);
     if (r != AVIF_RESULT_OK) {
         ALOGE("avifDecoderNextImage: %s", avifResultToString(r));
@@ -911,7 +982,7 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeAvifBytesToDirect(JNIEnv* env, jc
                                                                  jbyteArray jInput, jint maxEdge,
                                                                  jboolean advancedColor,
                                                                  jintArray jOutInfo,
-                                                                 jfloatArray jOutBoost) {
+                                                                 jfloatArray jOutBoost, jobjectArray jOutExif) {
     if (!jInput || !jOutInfo || !jOutBoost) return nullptr;
     if (env->GetArrayLength(jOutInfo) < 6 || env->GetArrayLength(jOutBoost) < 1) return nullptr;
     const jsize len = env->GetArrayLength(jInput);
@@ -919,6 +990,7 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeAvifBytesToDirect(JNIEnv* env, jc
     jbyte* bytes = env->GetByteArrayElements(jInput, nullptr);
     if (!bytes) return nullptr;
 
+    std::vector<uint8_t> exif;
     std::vector<uint16_t> rgba;
     unsigned w = 0, h = 0;
     int has_gm = 0;
@@ -927,8 +999,9 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeAvifBytesToDirect(JNIEnv* env, jc
     jbyteArray result = nullptr;
     int rc = decode_avif_to_linear_f16(
         reinterpret_cast<const uint8_t*>(bytes), static_cast<size_t>(len), rgba, w, h, &has_gm,
-        &transfer, &cg, maxEdge > 0 ? static_cast<unsigned>(maxEdge) : 0u);
+        &transfer, &cg, maxEdge > 0 ? static_cast<unsigned>(maxEdge) : 0u, jOutExif ? &exif : nullptr);
     if (rc == 0) {
+        publish_decoded_exif(env, jOutExif, exif, false);
         if (maxEdge > 0) {
             scale_rgba_f16_max_edge(rgba, w, h, static_cast<unsigned>(maxEdge));
         }
@@ -949,13 +1022,14 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeAvifBufferToDirect(JNIEnv* env, j
                                                                  jobject jInput, jint maxEdge,
                                                                  jboolean advancedColor,
                                                                  jintArray jOutInfo,
-                                                                 jfloatArray jOutBoost) try {
+                                                                 jfloatArray jOutBoost, jobjectArray jOutExif) try {
     if (!jInput || !jOutInfo || !jOutBoost) return nullptr;
     if (env->GetArrayLength(jOutInfo) < 6 || env->GetArrayLength(jOutBoost) < 1) return nullptr;
     const jlong len = env->GetDirectBufferCapacity(jInput);
     const auto* bytes = static_cast<const uint8_t*>(env->GetDirectBufferAddress(jInput));
     if (!bytes || len <= 0) return nullptr;
 
+    std::vector<uint8_t> exif;
     std::vector<uint16_t> rgba;
     unsigned w = 0, h = 0;
     int has_gm = 0;
@@ -964,8 +1038,9 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeAvifBufferToDirect(JNIEnv* env, j
     jbyteArray result = nullptr;
     int rc = decode_avif_to_linear_f16(
         reinterpret_cast<const uint8_t*>(bytes), static_cast<size_t>(len), rgba, w, h, &has_gm,
-        &transfer, &cg, maxEdge > 0 ? static_cast<unsigned>(maxEdge) : 0u);
+        &transfer, &cg, maxEdge > 0 ? static_cast<unsigned>(maxEdge) : 0u, jOutExif ? &exif : nullptr);
     if (rc == 0) {
+        publish_decoded_exif(env, jOutExif, exif, false);
         if (maxEdge > 0) {
             scale_rgba_f16_max_edge(rgba, w, h, static_cast<unsigned>(maxEdge));
         }

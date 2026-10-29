@@ -31,15 +31,17 @@ internal object HevcHdrDecode {
         val boost: Float,
         val isHdr: Boolean,
         val transfer: Int,
+        val sourceExif: ByteArray? = null,
     ) : AutoCloseable {
         override fun close() = pixels.close()
     }
 
     fun decode(bytes: ByteArray, maxEdge: Int, advancedColor: Boolean): Frame? = decode(ByteBuffer.wrap(bytes), maxEdge, advancedColor)
 
-    fun decode(bytes: ByteBuffer, maxEdge: Int, advancedColor: Boolean, allowHdr: Boolean = true): Frame? {
+    fun decode(bytes: ByteBuffer, maxEdge: Int, advancedColor: Boolean, allowHdr: Boolean = true, collectExif: Boolean = false): Frame? {
         val parsed = HeifContainer.parse(bytes) ?: return null
         val hdr = parsed.primaryImage() ?: return null
+        val sourceExif = if (collectExif) parsed.photoExif() else null
         val isHdr = hdr.transfer == 16 || hdr.transfer == 18
         // Decide on the parsed primary before allocating pixels or decoding tiles.
         // The caller used to parse and assemble the access units a second time.
@@ -155,10 +157,10 @@ internal object HevcHdrDecode {
                 val turned = rotateHalf(pixels, outW, outH, hdr.rotationDegreesCcw)
                 outW = turned.width
                 outH = turned.height
-                return Frame(turned.pixels, outW, outH, gamut, peak.coerceIn(1f, 64f), isHdr, hdr.transfer).also { result = it }
+                return Frame(turned.pixels, outW, outH, gamut, peak.coerceIn(1f, 64f), isHdr, hdr.transfer, sourceExif).also { result = it }
             }
             Log.i(TAG, "HEIC F16 ${outW}x$outH transfer=${hdr.transfer} boost=$peak tiles=${hdr.tiles.size}")
-            return Frame(pixels, outW, outH, gamut, peak.coerceIn(1f, 64f), isHdr, hdr.transfer).also { result = it }
+            return Frame(pixels, outW, outH, gamut, peak.coerceIn(1f, 64f), isHdr, hdr.transfer, sourceExif).also { result = it }
         } finally {
             if (result?.pixels !== pixels) pixels.close()
         }

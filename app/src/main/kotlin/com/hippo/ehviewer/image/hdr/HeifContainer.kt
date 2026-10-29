@@ -116,6 +116,18 @@ internal object HeifContainer {
             )
         }
 
+        /** Normalized primary-image TIFF, reusing the items already parsed for HEVC decode. */
+        fun photoExif(): ByteArray {
+            val ref = refs.firstOrNull { it.type == "cdsc" && primaryId in it.to && items[it.from]?.type == "Exif" }
+            val item = ref?.let { items[it.from] } ?: items.values.singleOrNull { it.type == "Exif" }
+            val payload = item?.bytes?.asReadOnlyBuffer()?.order(java.nio.ByteOrder.BIG_ENDIAN) ?: return byteArrayOf()
+            if (payload.remaining() !in 8..(1024 * 1024 + 4)) return byteArrayOf()
+            val offset = payload.int.toLong() and 0xffffffffL
+            if (offset > payload.remaining()) return byteArrayOf()
+            payload.position(payload.position() + offset.toInt())
+            return ByteArray(payload.remaining()).also { payload.get(it) }
+        }
+
         private fun appleHeadroom(): Float? {
             val payload = items.values.firstOrNull { it.type == "Exif" }?.bytes ?: return null
             return appleHeadroomFromExif(payload.copyOfRange(0, payload.remaining()))

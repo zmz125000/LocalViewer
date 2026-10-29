@@ -10,6 +10,8 @@
 #include <android/log.h>
 #include <jni.h>
 #include "thumbnail_mapped_input.h"
+#include "still_exif_input.h"
+#include "decoded_exif.h"
 
 #include <algorithm>
 #include <atomic>
@@ -189,7 +191,8 @@ int decode_jxl_to_linear_f16(const uint8_t* data, size_t len, std::vector<uint16
                              unsigned& w, unsigned& h, uhdr_color_gamut_t* out_cg,
                              bool* out_force_hdr = nullptr, int* out_transfer_cicp = nullptr,
                              bool composite_alpha_on_black = true, unsigned thumbnail_edge = 0,
-                             bool export_bt2020 = false) {
+                             bool export_bt2020 = false, std::vector<uint8_t>* out_exif = nullptr) {
+    if (out_exif) out_exif->clear();
     if (out_cg) *out_cg = UHDR_CG_BT_709;
     if (out_force_hdr) *out_force_hdr = false;
     if (out_transfer_cicp) *out_transfer_cicp = 0;
@@ -211,11 +214,13 @@ int decode_jxl_to_linear_f16(const uint8_t* data, size_t len, std::vector<uint16
     (void)JxlDecoderSetUnpremultiplyAlpha(dec.get(), JXL_TRUE);
 
     const int events = JXL_DEC_BASIC_INFO | JXL_DEC_COLOR_ENCODING | JXL_DEC_FULL_IMAGE |
-        (thumbnail_edge > 0 ? JXL_DEC_FRAME_PROGRESSION : 0);
+        (thumbnail_edge > 0 ? JXL_DEC_FRAME_PROGRESSION : 0) |
+        (out_exif ? JXL_DEC_BOX | JXL_DEC_BOX_COMPLETE : 0);
     if (JxlDecoderSubscribeEvents(dec.get(), events) !=
         JXL_DEC_SUCCESS) {
         return -4;
     }
+    if (out_exif && JxlDecoderSetDecompressBoxes(dec.get(), JXL_TRUE) != JXL_DEC_SUCCESS) return -4;
     if (thumbnail_edge > 0 &&
         JxlDecoderSetProgressiveDetail(dec.get(), kLastPasses) != JXL_DEC_SUCCESS) return -4;
     JxlDecoderSetParallelRunner(dec.get(), JxlResizableParallelRunner, runner.get());
@@ -232,18 +237,45 @@ int decode_jxl_to_linear_f16(const uint8_t* data, size_t len, std::vector<uint16
     std::vector<uint8_t> source_icc;
     std::vector<float> pixels;
     JxlPixelFormat format = {4, JXL_TYPE_FLOAT, JXL_NATIVE_ENDIAN, 0};
+    std::vector<uint8_t> exif_box;
+    bool collecting_exif = false;
+    bool exif_finished = false;
+    bool frame_complete = false;
 
     for (;;) {
         JxlDecoderStatus status = JxlDecoderProcessInput(dec.get());
         if (status == JXL_DEC_ERROR) {
+            // Malformed trailing metadata must not invalidate an already decoded image.
+            if (frame_complete) break;
             ALOGE("JxlDecoderProcessInput error");
             return -5;
         }
         if (status == JXL_DEC_NEED_MORE_INPUT) {
+            if (frame_complete) break;
             ALOGE("JXL truncated");
             return -6;
         }
-        if (status == JXL_DEC_BASIC_INFO) {
+        if (status == JXL_DEC_BOX && out_exif && !exif_finished) {
+            JxlBoxType type;
+            if (JxlDecoderGetBoxType(dec.get(), type, JXL_TRUE) == JXL_DEC_SUCCESS && memcmp(type, "Exif", 4) == 0) {
+                exif_box.resize(1024 * 1024);
+                collecting_exif = JxlDecoderSetBoxBuffer(dec.get(), exif_box.data(), exif_box.size()) == JXL_DEC_SUCCESS;
+            }
+        } else if (status == JXL_DEC_BOX_COMPLETE && collecting_exif) {
+            const size_t count = exif_box.size() - JxlDecoderReleaseBoxBuffer(dec.get());
+            exif_box.resize(count);
+            *out_exif = std::move(exif_box);
+            collecting_exif = false;
+            exif_finished = true;
+            if (frame_complete) break;
+        } else if (status == JXL_DEC_BOX_NEED_MORE_OUTPUT && collecting_exif) {
+            // Oversized EXIF is optional; stop buffering it and keep decoding pixels.
+            JxlDecoderReleaseBoxBuffer(dec.get());
+            collecting_exif = false;
+            exif_finished = true;
+            exif_box.clear();
+            if (frame_complete) break;
+        } else if (status == JXL_DEC_BASIC_INFO) {
             if (JxlDecoderGetBasicInfo(dec.get(), &info) != JXL_DEC_SUCCESS) return -7;
             w = info.xsize;
             h = info.ysize;
@@ -302,7 +334,10 @@ int decode_jxl_to_linear_f16(const uint8_t* data, size_t len, std::vector<uint16
             if (ratio > 0 && (std::max(w, h) + ratio - 1) / ratio >= thumbnail_edge &&
                 JxlDecoderFlushImage(dec.get()) == JXL_DEC_SUCCESS) break;
         } else if (status == JXL_DEC_FULL_IMAGE) {
-            break;
+            frame_complete = true;
+            if (!out_exif || exif_finished) break;
+            // Preserve the reader's first-frame behavior while scanning trailing boxes.
+            JxlDecoderSkipFrames(dec.get(), 0x7fffffffu);
         } else if (status == JXL_DEC_SUCCESS) {
             break;
         }
@@ -600,7 +635,7 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeJxlBytesToDirect(JNIEnv* env, jcl
                                                                 jbyteArray jInput, jint maxEdge,
                                                                 jboolean advancedColor,
                                                                 jintArray jOutInfo,
-                                                                jfloatArray jOutBoost, jboolean exportBt2020) {
+                                                                jfloatArray jOutBoost, jboolean exportBt2020, jobjectArray jOutExif) {
     if (!jInput || !jOutInfo || !jOutBoost) return nullptr;
     if (env->GetArrayLength(jOutInfo) < 6 || env->GetArrayLength(jOutBoost) < 1) return nullptr;
     const jsize len = env->GetArrayLength(jInput);
@@ -608,6 +643,7 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeJxlBytesToDirect(JNIEnv* env, jcl
     jbyte* bytes = env->GetByteArrayElements(jInput, nullptr);
     if (!bytes) return nullptr;
 
+    std::vector<uint8_t> exif;
     std::vector<uint16_t> rgba;
     unsigned w = 0, h = 0;
     uhdr_color_gamut_t cg = UHDR_CG_BT_709;
@@ -617,8 +653,9 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeJxlBytesToDirect(JNIEnv* env, jcl
     int rc = decode_jxl_to_linear_f16(reinterpret_cast<const uint8_t*>(bytes),
                                       static_cast<size_t>(len), rgba, w, h, &cg, &force_hdr,
                                       &transfer_cicp, /*composite_alpha_on_black=*/false, 0,
-                                      exportBt2020 == JNI_TRUE && export_pixels_capture());
+                                      exportBt2020 == JNI_TRUE && export_pixels_capture(), jOutExif ? &exif : nullptr);
     if (rc == 0) {
+        publish_decoded_exif(env, jOutExif, exif, true);
         if (maxEdge > 0) {
             scale_rgba_f16_max_edge(rgba, w, h, static_cast<unsigned>(maxEdge));
         }
@@ -638,13 +675,14 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeJxlBufferToDirect(JNIEnv* env, jc
                                                                 jobject jInput, jint maxEdge,
                                                                 jboolean advancedColor,
                                                                 jintArray jOutInfo,
-                                                                jfloatArray jOutBoost, jboolean exportBt2020) try {
+                                                                jfloatArray jOutBoost, jboolean exportBt2020, jobjectArray jOutExif) try {
     if (!jInput || !jOutInfo || !jOutBoost) return nullptr;
     if (env->GetArrayLength(jOutInfo) < 6 || env->GetArrayLength(jOutBoost) < 1) return nullptr;
     const jlong len = env->GetDirectBufferCapacity(jInput);
     const auto* bytes = static_cast<const uint8_t*>(env->GetDirectBufferAddress(jInput));
     if (!bytes || len <= 0) return nullptr;
 
+    std::vector<uint8_t> exif;
     std::vector<uint16_t> rgba;
     unsigned w = 0, h = 0;
     uhdr_color_gamut_t cg = UHDR_CG_BT_709;
@@ -654,8 +692,9 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeJxlBufferToDirect(JNIEnv* env, jc
     int rc = decode_jxl_to_linear_f16(reinterpret_cast<const uint8_t*>(bytes),
                                       static_cast<size_t>(len), rgba, w, h, &cg, &force_hdr,
                                       &transfer_cicp, /*composite_alpha_on_black=*/false, 0,
-                                      exportBt2020 == JNI_TRUE && export_pixels_capture());
+                                      exportBt2020 == JNI_TRUE && export_pixels_capture(), jOutExif ? &exif : nullptr);
     if (rc == 0) {
+        publish_decoded_exif(env, jOutExif, exif, true);
         if (maxEdge > 0) {
             scale_rgba_f16_max_edge(rgba, w, h, static_cast<unsigned>(maxEdge));
         }
@@ -671,17 +710,16 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeJxlBufferToDirect(JNIEnv* env, jc
 }
 
 // Extract only the EXIF box (including Brotli-compressed boxes), not image pixels.
-extern "C" JNIEXPORT jbyteArray JNICALL
-Java_com_hippo_ehviewer_jni_HdrConvertKt_extractJxlExif(JNIEnv* env, jclass, jobject input) try {
-    if (!input) return nullptr;
-    const auto* data = static_cast<const uint8_t*>(env->GetDirectBufferAddress(input));
-    const jlong size = env->GetDirectBufferCapacity(input);
-    if (!data || size <= 0) return nullptr;
+static jbyteArray extract_jxl_exif(JNIEnv* env, const uint8_t* data, size_t size, StillExifInput* input) {
     auto decoder = JxlDecoderMake(nullptr);
     if (!decoder || JxlDecoderSubscribeEvents(decoder.get(), JXL_DEC_BOX | JXL_DEC_BOX_COMPLETE) != JXL_DEC_SUCCESS ||
         JxlDecoderSetDecompressBoxes(decoder.get(), JXL_TRUE) != JXL_DEC_SUCCESS) return nullptr;
-    JxlDecoderSetInput(decoder.get(), data, static_cast<size_t>(size));
-    JxlDecoderCloseInput(decoder.get());
+    std::vector<uint8_t> chunk;
+    uint64_t offset = 0;
+    if (!input) {
+        JxlDecoderSetInput(decoder.get(), data, size);
+        JxlDecoderCloseInput(decoder.get());
+    }
     std::vector<uint8_t> box;
     bool collecting = false;
     for (;;) {
@@ -700,9 +738,32 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_extractJxlExif(JNIEnv* env, jclass, job
             auto result = env->NewByteArray(static_cast<jsize>(count));
             if (result) env->SetByteArrayRegion(result, 0, static_cast<jsize>(count), reinterpret_cast<const jbyte*>(box.data()));
             return result;
+        } else if (status == JXL_DEC_NEED_MORE_INPUT && input) {
+            const size_t remaining = JxlDecoderReleaseInput(decoder.get());
+            if (remaining > chunk.size()) return nullptr;
+            offset += chunk.size() - remaining;
+            if (!input->read(offset, 64 * 1024, chunk) || chunk.size() <= remaining) return nullptr;
+            if (JxlDecoderSetInput(decoder.get(), chunk.data(), chunk.size()) != JXL_DEC_SUCCESS) return nullptr;
+            if (chunk.size() < 64 * 1024) JxlDecoderCloseInput(decoder.get());
         } else if (status == JXL_DEC_SUCCESS || status == JXL_DEC_ERROR ||
                    status == JXL_DEC_NEED_MORE_INPUT || status == JXL_DEC_BOX_NEED_MORE_OUTPUT) {
             return nullptr;
         }
     }
+}
+
+extern "C" JNIEXPORT jbyteArray JNICALL
+Java_com_hippo_ehviewer_jni_HdrConvertKt_extractJxlExif(JNIEnv* env, jclass, jobject input) try {
+    if (!input) return nullptr;
+    const auto* data = static_cast<const uint8_t*>(env->GetDirectBufferAddress(input));
+    const jlong size = env->GetDirectBufferCapacity(input);
+    if (!data || size <= 0) return nullptr;
+    return extract_jxl_exif(env, data, static_cast<size_t>(size), nullptr);
+} catch (...) { return nullptr; }
+
+extern "C" JNIEXPORT jbyteArray JNICALL
+Java_com_hippo_ehviewer_jni_HdrConvertKt_extractJxlExifInput(JNIEnv* env, jclass, jobject input) try {
+    if (!input) return nullptr;
+    StillExifInput reader(env, input);
+    return extract_jxl_exif(env, nullptr, 0, &reader);
 } catch (...) { return nullptr; }

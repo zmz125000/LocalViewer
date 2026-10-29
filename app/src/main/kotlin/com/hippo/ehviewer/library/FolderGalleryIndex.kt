@@ -576,7 +576,10 @@ object FolderGalleryIndex {
         folderDir: String,
     ): Map<String, Long> {
         val folder = BrowseSession.normalizeBrowseRelativeDir(folderDir)
-        return directChildMtimes(smbListing(sourceId, configKey, folder).orEmpty())
+        // Name-only session overlays must not mask timestamps in the persisted listing.
+        val saved = NetworkFolderIndexCache.loadSmb(sourceId, configKey, folder).orEmpty()
+        val live = BrowseSession.getSmbListing(sourceId, folder).orEmpty()
+        return directChildMtimes(saved) + directChildMtimes(live)
     }
 
     suspend fun loadWebDavDirectMtimes(
@@ -585,7 +588,10 @@ object FolderGalleryIndex {
         folderDir: String,
     ): Map<String, Long> {
         val folder = BrowseSession.normalizeBrowseRelativeDir(folderDir)
-        return directChildMtimes(webDavListing(sourceId, configKey, folder).orEmpty())
+        // Name-only session overlays must not mask timestamps in the persisted listing.
+        val saved = NetworkFolderIndexCache.loadWebDav(sourceId, configKey, folder).orEmpty()
+        val live = BrowseSession.getWebDavListing(sourceId, folder).orEmpty()
+        return directChildMtimes(saved) + directChildMtimes(live)
     }
 
     suspend fun siblingListingSmb(

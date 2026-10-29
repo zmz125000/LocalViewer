@@ -238,9 +238,12 @@ abstract class PageLoader(
     }
 
     private suspend fun decodeOpened(index: Int, raw: ImageSource, forceOriginal: Boolean): Image {
-        val metadata = runCatching {
-            raw.readMetadata(runCatching { getOriginalImageDate(index) }.getOrNull(), sourceLeafName(index))
-        }.getOrDefault(ImageMetadata())
+        var metadata = ImageMetadata()
+        fun readSourceMetadata(decodedExif: ByteArray? = null) {
+            metadata = runCatching {
+                raw.readMetadata(runCatching { getOriginalImageDate(index) }.getOrNull(), sourceLeafName(index), decodedExif)
+            }.getOrDefault(ImageMetadata())
+        }
         val checkAds = hasAds && detectAds(index, size)
         val hint = getImageExtension(index)?.let { "page.$it" } ?: "page.bin"
         val persistTo = if (Settings.disableReaderNetworkCache.value) {
@@ -248,8 +251,9 @@ abstract class PageLoader(
         } else {
             null
         }
-        val image = tryDecodeLibDirect(index, raw, forceOriginal, hint)
+        val image = tryDecodeLibDirect(index, raw, forceOriginal, hint, ::readSourceMetadata)
             ?: run {
+                readSourceMetadata()
                 val ready = DisplaySource.ensureReady(raw, hint, persistTo = persistTo)
                 if (ready is PathSource) {
                     exportFiles[index] = ready.source
@@ -303,6 +307,7 @@ abstract class PageLoader(
         raw: ImageSource,
         forceOriginal: Boolean,
         hint: String,
+        readSourceMetadata: (ByteArray?) -> Unit,
     ): Image? {
         val pathName = (raw as? PathSource)?.source?.name.orEmpty()
         val pageExt = getImageExtension(index)
@@ -341,6 +346,9 @@ abstract class PageLoader(
             if (deepHeif || avifDirect) error("High-bit-depth image decode failed: $nameHint")
             return null
         }
+        // Read from the still-open original before Image takes ownership/closes it.
+        // Native JXL/AVIF have already collected EXIF while decoding.
+        readSourceMetadata(direct.sourceExif)
         thumbSoftwareBitmapBeforeHardware(index, raw, direct.bitmap)
         return Image.fromLibDirect(direct, raw, attachHeifGainMap = hevcHdr && Settings.preferNativeHeifAvif.value).also {
             it.noteHiResPreview(Image.hiResPreviewCapEdge(forceOriginal) > 0)

@@ -72,6 +72,8 @@ data class LibDirectResult(
     val isWideGamutSource: Boolean,
     /** Encoded source CICP transfer, before conversion to a linear working bitmap. */
     val sourceTransfer: Int = 0,
+    /** null = not inspected; empty = inspected but no EXIF; otherwise normalized TIFF. */
+    val sourceExif: ByteArray? = null,
 )
 
 /**
@@ -300,7 +302,7 @@ object LibDirectDecode {
                 packed.outInfo,
                 packed.outBoost,
                 nativePixels = nativePixels,
-            )
+            )?.copy(sourceExif = packed.sourceExif)
         } finally {
             // Upload/copy has completed (or failed); no bitmap references this buffer.
             releaseNativeReaderPixels(handle)
@@ -365,26 +367,27 @@ object LibDirectDecode {
         // inputs go directly to JNI without a compressed Java-array copy.
         val bytes by lazy { buffer.heapBytesForConvert() }
         val panelBoost = if (!export && codec == LibCodec.Jxr) jxrHighlightCap() else 1f
+        val outExif = if (!export && (codec == LibCodec.Jxl || codec == LibCodec.AvifPq)) arrayOfNulls<ByteArray>(1) else null
         val pixels = if (buffer.isDirect) {
             when (codec) {
-                LibCodec.Jxl -> decodeJxlBufferToDirect(buffer, maxEdge, advanced, outInfo, outBoost, export && extendedSrgbBt2020)
+                LibCodec.Jxl -> decodeJxlBufferToDirect(buffer, maxEdge, advanced, outInfo, outBoost, export && extendedSrgbBt2020, outExif)
                 LibCodec.Jxr -> decodeJxrBufferToDirect(buffer, maxEdge, advanced, panelBoost, outInfo, outBoost, export && extendedSrgbBt2020)
-                LibCodec.AvifPq -> decodeAvifBufferToDirect(buffer, maxEdge, advanced, outInfo, outBoost)
+                LibCodec.AvifPq -> decodeAvifBufferToDirect(buffer, maxEdge, advanced, outInfo, outBoost, outExif)
                 LibCodec.Jpeg2000 -> decodeJpeg2000BufferToDirect(buffer, maxEdge, advanced, outInfo, outBoost)
                     ?: packJpeg2000(buffer, maxEdge, outInfo, outBoost)
                 else -> null
             }
         } else {
             when (codec) {
-                LibCodec.Jxl -> decodeJxlBytesToDirect(bytes, maxEdge, advanced, outInfo, outBoost, export && extendedSrgbBt2020)
+                LibCodec.Jxl -> decodeJxlBytesToDirect(bytes, maxEdge, advanced, outInfo, outBoost, export && extendedSrgbBt2020, outExif)
                 LibCodec.Jxr -> decodeJxrBytesToDirect(bytes, maxEdge, advanced, panelBoost, outInfo, outBoost, export && extendedSrgbBt2020)
                 LibCodec.Jpeg2000 -> decodeJpeg2000BytesToDirect(bytes, maxEdge, advanced, outInfo, outBoost)
                     ?: packJpeg2000(bytes, maxEdge, outInfo, outBoost)
-                LibCodec.AvifPq -> decodeAvifBytesToDirect(bytes, maxEdge, advanced, outInfo, outBoost)
+                LibCodec.AvifPq -> decodeAvifBytesToDirect(bytes, maxEdge, advanced, outInfo, outBoost, outExif)
                 else -> null
             }
         } ?: return@withStillInput null
-        PackedPixels(pixels, outInfo, outBoost, premultiplied = !export)
+        PackedPixels(pixels, outInfo, outBoost, premultiplied = !export, sourceExif = outExif?.get(0))
     }
 
     /** SDR raster export uses the platform decoder's first frame, independent of reader filters. */
@@ -525,12 +528,12 @@ object LibDirectDecode {
         // ProXDR attaches its gain map after decoding this SDR base. Preserve the
         // base gamut too; the trailer probe reads only a small tail of the buffer.
         val preserveColor = advanced || (Settings.readerHdrDisplay.value && OppoProxdr.looksLike(bytes))
-        val frame = HevcHdrDecode.decode(bytes, maxEdge, preserveColor, allowHdr) ?: return null
+        val frame = HevcHdrDecode.decode(bytes, maxEdge, preserveColor, allowHdr, collectExif = !export) ?: return null
         frame.use {
             val outInfo = intArrayOf(frame.width, frame.height, 1, if (frame.isHdr) 1 else 0, frame.gamut, frame.transfer)
             val outBoost = floatArrayOf(frame.boost)
             val pixels = frame.pixels.capture() ?: return null
-            return PackedPixels(pixels, outInfo, outBoost, premultiplied = true)
+            return PackedPixels(pixels, outInfo, outBoost, premultiplied = true, sourceExif = frame.sourceExif)
         }
     }
 
@@ -871,6 +874,7 @@ object LibDirectDecode {
         val premultiplied: Boolean,
         val sdrOffset: Int = 0,
         val convertLinearSrgb: Boolean = false,
+        val sourceExif: ByteArray? = null,
     )
 
     private fun decodePlatformBitmap(src: ImageSource, options: BitmapFactory.Options): Bitmap? = when (src) {
