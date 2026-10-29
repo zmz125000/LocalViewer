@@ -22,7 +22,11 @@ fun slideshowScaleType(): Int {
     val fillScreen by Settings.slideshowFillScreen.collectAsState()
     val autoScroll by Settings.slideshowAutoScroll.collectAsState()
     val scale by Settings.imageScaleType.collectAsState()
-    return if (mode == ReadingModeType.SLIDESHOW.prefValue && (fillScreen || autoScroll)) 7 else scale
+    return if (mode == ReadingModeType.SLIDESHOW.prefValue) {
+        if (fillScreen || autoScroll) 7 else 1
+    } else {
+        scale
+    }
 }
 
 /** Pending decode/transition work blocks a new countdown, just like an active drag. */
