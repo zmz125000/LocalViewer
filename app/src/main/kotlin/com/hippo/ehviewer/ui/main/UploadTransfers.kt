@@ -380,6 +380,14 @@ internal object UploadTransfers {
                         }
                         // Connection cleanup may take time; all rows are already terminal.
                         job.state.update { it.copy(phase = UploadPhase.Finished) }
+                        val finished = job.state.value
+                        scope.launch(Dispatchers.Main.immediate) {
+                            Toast.makeText(
+                                appCtx,
+                                appCtx.getString(R.string.transfer_upload_finished_summary, finished.succeeded, finished.total, finished.skipped, finished.failed),
+                                Toast.LENGTH_LONG,
+                            ).show()
+                        }
                     }
                 }
             } catch (e: CancellationException) {

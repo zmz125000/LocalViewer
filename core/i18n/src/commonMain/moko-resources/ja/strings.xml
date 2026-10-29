@@ -1157,6 +1157,7 @@
     <string name="transfer_ready">開始待ち</string>
     <string name="transfer_paused">一時停止中</string>
     <string name="transfer_upload_stopped_summary">%1$d/%2$d/%3$d/%4$d ファイル転送済み。アップロードを停止しました。</string>
+    <string name="transfer_upload_finished_summary">%1$d/%2$d/%3$d/%4$d ファイルのアップロードが完了しました。</string>
     <string name="transfer_stopped">停止済み</string>
     <string name="transfer_skipped">スキップ済み</string>
     <string name="transfer_show">表示</string>

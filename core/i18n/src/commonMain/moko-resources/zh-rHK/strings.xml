@@ -535,6 +535,7 @@
     <string name="transfer_ready">等待開始</string>
     <string name="transfer_paused">已暫停</string>
     <string name="transfer_upload_stopped_summary">%1$d/%2$d/%3$d/%4$d 個檔案已傳輸。上傳已停止。</string>
+    <string name="transfer_upload_finished_summary">%1$d/%2$d/%3$d/%4$d 檔案上傳已完成。</string>
     <string name="transfer_stopped">已停止</string>
     <string name="transfer_skipped">已略過</string>
     <string name="transfer_show">顯示</string>
