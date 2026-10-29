@@ -263,6 +263,7 @@ fun ReaderPhotoGridSheet(
                     cover = readerPageCover(args, name, index),
                     showPhotoThumb = true,
                     allowRemoteFetch = allowRemoteFetch,
+                    highlighted = index == pageIndex,
                     onClick = { onJumpToPage(index + 1) },
                     onLongClick = { onJumpToPage(index + 1) },
                 )

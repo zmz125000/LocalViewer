@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyGridScope
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.LibraryBooks
 import androidx.compose.material.icons.filled.Explore
@@ -178,6 +179,7 @@ import com.hippo.ehviewer.ui.main.browseRecentPreviewLimit
 import com.hippo.ehviewer.ui.main.browseZipAsDirTypeLabel
 import com.hippo.ehviewer.ui.main.onRecentHeaderGesture
 import com.hippo.ehviewer.ui.main.rememberBrowseSectionCollapse
+import com.hippo.ehviewer.ui.main.rememberPhotoGridProgressIndex
 import com.hippo.ehviewer.ui.main.rememberRecentStripExpanded
 import com.hippo.ehviewer.ui.main.selectable
 import com.hippo.ehviewer.ui.main.toPick
@@ -286,11 +288,13 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
         enteredFromParent: Boolean = false,
         exitToOrigin: Boolean = false,
     ) {
-        photoGridOverlay = if (dir == null) {
+        val next = if (dir == null) {
             null
         } else {
             BrowseSession.PhotoGridOverlay(dir, enteredFromParent, exitToOrigin)
         }
+        if (next != photoGridOverlay) activeListingRequest = null
+        photoGridOverlay = next
         BrowseSession.setSmbPhotoGrid(sourceId, dir, enteredFromParent, exitToOrigin)
     }
     val photoGridDir = photoGridOverlay?.dir
@@ -322,7 +326,6 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
         zipPlainFolder = zipPlainFolder,
     )
     val photoGrid = virtual == BrowseVirtualKind.PhotoGrid
-    val photoGridNow = rememberUpdatedState(photoGrid)
     // Virtual share-list key must not govern mode under real share paths.
     val smbModeSkipAncestors = remember(sourceId, source) {
         if (source?.let { SmbGateway.isServerRootSource(it) } == true) {
@@ -753,13 +756,13 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
         prevShowHidden = showHiddenFiles
     }
 
-    // Single loader for the current path. When [relativeDir] changes, Compose cancels this
-    // effect and starts a new one — that is the only concurrency control we need.
+    // Path and photo-grid mode both own a listing: the grid can contain only images,
+    // so leaving it at the same path must restore the full folder listing.
     // Previous epoch/ON_RESUME races could ++epoch, early-return without clearing loading,
     // and leave History→up→up stuck on an empty infinite spinner (manual refresh worked).
     val thumbFolderKey = "smb:$sourceId:$relativeDir"
     val thumbFolderKeyNow = rememberUpdatedState(thumbFolderKey)
-    LaunchedEffect(explorerWindowId, sourceId, relativeDir, refreshToken) {
+    LaunchedEffect(explorerWindowId, sourceId, relativeDir, photoGrid, refreshToken) {
         val request = Any()
         activeListingRequest = request
         // New folder, including a side-panel window switch, drops the previous
@@ -797,7 +800,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
 
         val loadDir = if (configChanged) "" else targetDir
         // Photo-grid open: same complete index the reader uses — no directory scan.
-        if (!force && !configChanged && photoGridNow.value) {
+        if (!force && !configChanged && photoGrid) {
             val names = FolderGalleryIndex.loadSmb(src.id, configKey, loadDir)
             if (!names.isNullOrEmpty()) {
                 if (listedDir != loadDir || entries.isEmpty()) {
@@ -1009,7 +1012,14 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                     navigator.popBackStack()
                     return
                 }
-                else -> return
+                else -> {
+                    if (!applyCachedListing(relativeDir)) {
+                        entries = emptyList()
+                        listedDir = null
+                        loading = true
+                    }
+                    return
+                }
             }
         }
         // Dir pin from History/Library/Fav with alwaysExitToDir off: leave immediately.
@@ -3090,6 +3100,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                         }
                     } else if (photoGrid) {
                         val progressGid = stableGalleryId(sourceId, "smb:$relativeDir")
+                        val progressIndex = rememberPhotoGridProgressIndex(progressGid)
                         val gridState = rememberSmbPhotoGridState(
                             sourceId = sourceId,
                             relativeDir = "$dirKey#pg",
@@ -3114,11 +3125,12 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                             verticalArrangement = gridSpacing,
                         ) {
                             searchSection(grid = true)
-                            items(photoGridImages, key = { "pg-${it.fileName}" }) { file ->
+                            itemsIndexed(photoGridImages, key = { _, file -> "pg-${file.fileName}" }) { index, file ->
                                 BrowsePhotoGridImageItem(
                                     modifier = Modifier.thenIf(animateItems) { animateItem() },
                                     name = file.name,
                                     cover = imageCoverFor(file),
+                                    highlighted = index == progressIndex,
                                     showPhotoThumb = true,
                                     thumbRetryKey = refreshToken,
                                     allowRemoteFetch = allowRemoteThumbs,
