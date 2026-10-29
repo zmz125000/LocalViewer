@@ -40,6 +40,7 @@
 -keep class com.hierynomus.smbj.transport.tcp.async.AsyncDirectTcpTransport {
     java.nio.channels.AsynchronousSocketChannel socketChannel;
     java.util.concurrent.atomic.AtomicBoolean connected;
+    java.util.Queue writeQueue;
     com.hierynomus.smbj.transport.tcp.async.AsyncPacketReader packetReader;
     int soTimeout;
     com.hierynomus.protocol.transport.PacketHandlers handlers;

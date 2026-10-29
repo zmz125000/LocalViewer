@@ -183,6 +183,15 @@ private fun FileTransferPanel(job: UploadJob) {
                     )
                     DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
                         DropdownMenuItem(
+                            text = { Text(stringResource(R.string.browse_run_in_parallel)) },
+                            enabled = !state.active,
+                            trailingIcon = { if (state.parallel) Icon(Icons.Default.Check, null) },
+                            onClick = {
+                                UploadTransfers.toggleParallel(job)
+                                menu = false
+                            },
+                        )
+                        DropdownMenuItem(
                             text = { Text(stringResource(R.string.transfer_auto_start)) },
                             trailingIcon = { if (state.autoStart) Icon(Icons.Default.Check, null) },
                             onClick = {

@@ -58,7 +58,7 @@ object TransferFiles {
     private suspend fun smb(id: Long) = requireNotNull(SmbRepository.load(id)) { "SMB source missing" }
     private suspend fun dav(id: Long) = requireNotNull(WebDavRepository.load(id)) { "WebDAV source missing" }
 
-    /** Explicit destination lifetime: one connection for the job, closed on success, failure or stop. */
+    /** One sequential lane's destination connection, closed on success, failure or stop. */
     suspend fun <T> withUploadConnection(destination: TransferLocation, block: suspend (SmbGateway.UploadConnection?) -> T): T {
         val connection = if (destination.kind == ExplorerWindows.Kind.Smb) {
             val source = smb(destination.sourceId)
@@ -70,6 +70,19 @@ object TransferFiles {
             block(connection)
         } finally {
             connection?.close()
+        }
+    }
+
+    /** Fixed, lazy lane connections. Finish the manifest before tearing them down. */
+    internal suspend fun <T> withUploadConnections(destination: TransferLocation, count: Int, block: suspend (List<SmbGateway.UploadConnection?>) -> T): T {
+        require(count >= 0)
+        val source = if (count > 0 && destination.kind == ExplorerWindows.Kind.Smb) smb(destination.sourceId) else null
+        val password = source?.let { SmbPasswordStore.get(it.id) }
+        val connections = List(count) { source?.let { SmbGateway.uploadConnection(it, requireNotNull(password)) } }
+        return try {
+            block(connections)
+        } finally {
+            connections.forEach { it?.close() }
         }
     }
 
@@ -189,7 +202,7 @@ object TransferFiles {
     }
 
     /** Returns false only when the destination cannot preserve the source timestamp. */
-    suspend fun write(file: TransferFile, parent: TransferLocation, name: String, control: TransferControl, connection: SmbGateway.UploadConnection?, onServerCopy: (Boolean) -> Unit = {}, progress: (Long) -> Unit): Boolean {
+    suspend fun write(file: TransferFile, parent: TransferLocation, name: String, control: TransferControl, connection: SmbGateway.UploadConnection?, onServerCopy: (Boolean) -> Unit = {}, destinationChecked: Boolean = false, progress: (Long) -> Unit): Boolean {
         onServerCopy(false)
         val target = parent.child(name)
         if (target.kind == ExplorerWindows.Kind.Smb && file.source.kind == target.kind) {
@@ -207,7 +220,7 @@ object TransferFiles {
                 if (!File(target.path).createNewFile()) throw TransferNameConflict(name)
                 target.path.toPath()
             } else {
-                if (find(parent, name) != null) throw TransferNameConflict(name)
+                if (!destinationChecked && find(parent, name) != null) throw TransferNameConflict(name)
                 val mime = mimeTypeForFileName(name).takeUnless { it == GENERIC_FILE_MIME } ?: "application/octet-stream"
                 (
                     DocumentsContract.createDocument(appCtx.contentResolver, parent.path.toPath().toUri(), mime, name)

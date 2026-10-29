@@ -13,7 +13,11 @@ import com.hippo.ehviewer.library.TransferControl
 import com.hippo.ehviewer.library.TransferFile
 import com.hippo.ehviewer.library.TransferFiles
 import com.hippo.ehviewer.library.TransferLocation
+import com.hippo.ehviewer.library.forEachTransferLane
+import com.hippo.ehviewer.library.transferBatchParallelism
 import com.hippo.ehviewer.provider.StreamKeepAlivePolicy
+import com.hippo.ehviewer.smb.SmbGateway
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -24,9 +28,12 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.flow.updateAndGet
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.sync.withPermit
 import splitties.init.appCtx
 
@@ -38,10 +45,11 @@ internal data class UploadState(
     val rows: List<UploadRow> = emptyList(),
     val destination: TransferLocation? = null,
     val destinationLabel: String = "",
-    val skipExisting: Boolean = true,
+    val skipExisting: Boolean = Settings.uploadSkipExisting.value,
     val background: Boolean = Settings.browseTaskForegroundService.value,
     val autoFinish: Boolean = Settings.browseTaskAutoFinish.value,
     val autoStart: Boolean = Settings.uploadAutoStart.value,
+    val parallel: Boolean = Settings.uploadParallel.value,
     val bytesTransferred: Long = 0,
     val speedBps: Long = 0,
     val serverCopy: Boolean = false,
@@ -188,17 +196,25 @@ internal object UploadTransfers {
         destinationJobId = null
     }
     fun toggleBackground(job: UploadJob) {
-        job.state.update { it.copy(background = !it.background) }
+        val state = job.state.updateAndGet { it.copy(background = !it.background) }
+        Settings.browseTaskForegroundService.value = state.background
         syncForeground()
     }
     fun toggleAutoFinish(job: UploadJob) {
-        job.state.update { it.copy(autoFinish = !it.autoFinish) }
+        val state = job.state.updateAndGet { it.copy(autoFinish = !it.autoFinish) }
+        Settings.browseTaskAutoFinish.value = state.autoFinish
         dismissAutoFinished(job)
     }
     fun toggleAutoStart(job: UploadJob) {
         val enabled = !job.state.value.autoStart
-        Settings.uploadAutoStart.value = enabled
-        job.state.update { it.copy(autoStart = enabled, startWhenReady = if (enabled) it.startWhenReady else false) }
+        val state = job.state.updateAndGet { it.copy(autoStart = enabled, startWhenReady = if (enabled) it.startWhenReady else false) }
+        Settings.uploadAutoStart.value = state.autoStart
+    }
+    fun toggleParallel(job: UploadJob) {
+        if (job.state.value.active) return
+        val enabled = !job.state.value.parallel
+        val state = job.state.updateAndGet { if (it.active) it else it.copy(parallel = enabled) }
+        Settings.uploadParallel.value = state.parallel
     }
     private fun dismissAutoFinished(job: UploadJob) {
         if (_jobs.value.none { it === job }) return
@@ -206,7 +222,9 @@ internal object UploadTransfers {
         if (state.autoFinish && state.phase == UploadPhase.Finished && state.failed == 0) dismiss(job)
     }
     fun toggleSkipExisting(job: UploadJob) {
-        job.state.update { if (it.editable) it.copy(skipExisting = !it.skipExisting) else it }
+        if (!job.state.value.editable) return
+        val state = job.state.updateAndGet { if (it.editable) it.copy(skipExisting = !it.skipExisting) else it }
+        Settings.uploadSkipExisting.value = state.skipExisting
     }
     fun togglePause(job: UploadJob) {
         val paused = !job.control.paused.get()
@@ -301,11 +319,12 @@ internal object UploadTransfers {
                     slots.withPermit {
                         val directories = HashMap<String, TransferLocation>()
                         val safNames = HashMap<TransferLocation, MutableSet<String>>()
+                        val safListing = Mutex()
                         directories[""] = state.destination
-                        for (row in state.rows) {
+                        suspend fun transferRow(row: UploadRow, connection: SmbGateway.UploadConnection?) {
                             job.control.checkpoint()
                             val file = row.file
-                            if (job.state.value.rows.any { it.file.relative == file.relative && it.status == UploadFileStatus.Skipped }) continue
+                            if (job.state.value.rows.any { it.file.relative == file.relative && it.status == UploadFileStatus.Skipped }) return
                             val parentRel = file.relative.substringBeforeLast('/', "")
                             try {
                                 updateRow(job, file.relative, UploadFileStatus.Running)
@@ -335,9 +354,9 @@ internal object UploadTransfers {
                                         directories[file.relative] = created.value
                                         updateRow(job, file.relative, UploadFileStatus.Succeeded, created.name.takeIf { it != name })
                                     }
-                                    continue
+                                    return
                                 }
-                                val currentFile = TransferFiles.stat(file)
+                                val currentFile = if (file.size >= 0 && file.mtime > 0) file else TransferFiles.stat(file)
                                 val result = com.hippo.ehviewer.library.createTransferWithoutOverwrite(
                                     name = name,
                                     skipExisting = state.skipExisting,
@@ -345,8 +364,15 @@ internal object UploadTransfers {
                                     exists = { candidate ->
                                         // SAF document ids are opaque; match display names.
                                         if (parent.kind == ExplorerWindows.Kind.Local && !parent.path.startsWith('/')) {
-                                            val names = safNames[parent] ?: TransferFiles.children(parent, connection).mapTo(HashSet()) { it.relative }.also { safNames[parent] = it }
-                                            candidate in names
+                                            safListing.withLock {
+                                                val names = safNames[parent] ?: TransferFiles.children(parent, connection)
+                                                    .mapTo(ConcurrentHashMap.newKeySet<String>()) { it.relative }.also { safNames[parent] = it }
+                                                // Reserve a candidate so parallel files cannot choose the same name.
+                                                !names.add(candidate)
+                                            }
+                                        } else if (parent.kind == ExplorerWindows.Kind.Smb) {
+                                            // FILE_CREATE is already an atomic existence check.
+                                            false
                                         } else {
                                             TransferFiles.exists(parent.child(candidate), connection)
                                         }
@@ -359,16 +385,16 @@ internal object UploadTransfers {
                                             job.control,
                                             connection,
                                             onServerCopy = { serverCopy -> job.state.update { it.copy(serverCopy = serverCopy) } },
+                                            destinationChecked = parent.kind == ExplorerWindows.Kind.Local && !parent.path.startsWith('/'),
                                         ) { job.bytes.addAndGet(it) }
                                     },
                                 )
                                 if (result == null) {
                                     updateRow(job, file.relative, UploadFileStatus.Skipped)
-                                    continue
+                                    return
                                 }
                                 val outputName = result.name
                                 val preserved = result.value
-                                safNames[parent]?.add(outputName)
                                 updateRow(
                                     job,
                                     file.relative,
@@ -388,15 +414,25 @@ internal object UploadTransfers {
                                 updateRow(job, file.relative, UploadFileStatus.Failed, e.message ?: "Transfer failed")
                             }
                         }
-                        // Connection cleanup may take time; all rows are already terminal.
-                        job.state.update { it.copy(phase = UploadPhase.Finished) }
-                        val finished = job.state.value
-                        scope.launch(Dispatchers.Main.immediate) {
-                            Toast.makeText(
-                                appCtx,
-                                appCtx.getString(R.string.transfer_upload_finished_summary, finished.succeeded, finished.total, finished.skipped, finished.failed),
-                                Toast.LENGTH_LONG,
-                            ).show()
+                        // Parent creation and subtree skips complete before file workers begin.
+                        for (row in state.rows.filter { it.file.directory }) transferRow(row, connection)
+                        val files = state.rows.filter { !it.file.directory }
+                        val parallelism = transferBatchParallelism(files.map { it.file }, state.destination.kind, state.parallel)
+                        TransferFiles.withUploadConnections(state.destination, parallelism - 1) { extraConnections ->
+                            forEachTransferLane(files, parallelism) { lane, rows ->
+                                val laneConnection = if (lane == 0) connection else extraConnections[lane - 1]
+                                for (row in rows) transferRow(row, laneConnection)
+                            }
+                            // Connection cleanup may take time; all rows are already terminal.
+                            job.state.update { it.copy(phase = UploadPhase.Finished) }
+                            val finished = job.state.value
+                            scope.launch(Dispatchers.Main.immediate) {
+                                Toast.makeText(
+                                    appCtx,
+                                    appCtx.getString(R.string.transfer_upload_finished_summary, finished.succeeded, finished.total, finished.skipped, finished.failed),
+                                    Toast.LENGTH_LONG,
+                                ).show()
+                            }
                         }
                     }
                 }

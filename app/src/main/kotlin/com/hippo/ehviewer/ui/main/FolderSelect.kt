@@ -1178,6 +1178,7 @@ private fun FolderSelectSnackbar(snack: SelectionSnack) {
             } else {
                 stringResource(R.string.browse_selected_in_folder, snack.count, snack.folderName)
             },
+            modifier = Modifier.clickable { FolderSelectHost.showList(snack.folderKey) },
             maxLines = 2,
             overflow = TextOverflow.Ellipsis,
         )
