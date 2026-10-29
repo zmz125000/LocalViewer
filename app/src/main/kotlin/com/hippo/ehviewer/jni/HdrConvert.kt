@@ -339,3 +339,6 @@ internal external fun captureStillBitmap(bitmap: android.graphics.Bitmap): ByteA
 
 /** Read EXIF boxes without decoding image pixels. */
 internal external fun extractJxlExif(input: ByteBuffer): ByteArray?
+
+/** Read the primary image's EXIF without decoding AV1 pixels. */
+internal external fun extractAvifExif(input: ByteBuffer): ByteArray?

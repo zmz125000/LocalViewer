@@ -1,17 +1,14 @@
 package com.hippo.ehviewer.image.hdr
 
 import android.graphics.Bitmap
-import android.os.ParcelFileDescriptor
 import android.util.Log
 import androidx.exifinterface.media.ExifInterface
-import com.ehviewer.core.files.openFileDescriptor
-import com.hippo.ehviewer.jni.extractJxlExif
-import java.io.ByteArrayInputStream
+import com.hippo.ehviewer.image.PathSource
+import com.hippo.ehviewer.image.readEncodedExif
 import java.io.ByteArrayOutputStream
 import java.io.DataInputStream
 import java.io.File
 import java.io.InputStream
-import java.io.PushbackInputStream
 import okio.Path
 import splitties.init.appCtx
 
@@ -123,35 +120,11 @@ internal class StillExportExif private constructor(private val attributes: Map<S
 
         fun read(source: Path, name: String): StillExportExif? {
             return try {
-                val extension = name.substringAfterLast('.', "").lowercase()
-                val exif = if (extension == "jxl") {
-                    val bytes = withStillInput(source) { extractJxlExif(it) } ?: return null
-                    // JPEG XL Exif boxes start with a big-endian offset to the TIFF header.
-                    if (bytes.size < 4) return null
-                    val offset = java.nio.ByteBuffer.wrap(bytes).int.toLong() and 0xffffffffL
-                    if (offset > bytes.size - 4L) return null
-                    ExifInterface(
-                        ByteArrayInputStream(exifPrefix + bytes.copyOfRange(4 + offset.toInt(), bytes.size)),
-                        ExifInterface.STREAM_TYPE_EXIF_DATA_ONLY,
-                    )
-                } else if (extension in setOf("jxr", "wdp", "hdp")) {
-                    ParcelFileDescriptor.AutoCloseInputStream(source.openFileDescriptor("r")).use { input ->
-                        PushbackInputStream(input, 4).use { stream ->
-                            val prefix = stream.readExact(4)
-                            // JXR is TIFF-like; its EXIF IFD pointers use the same offsets.
-                            if (prefix.contentEquals(byteArrayOf(73, 73, 0xbc.toByte(), 1))) {
-                                prefix[2] = 42
-                                prefix[3] = 0
-                            }
-                            stream.unread(prefix)
-                            ExifInterface(stream)
-                        }
-                    }
-                } else {
-                    // Keep seekable local/SAF files on the descriptor path rather
-                    // than buffering a large camera image through an InputStream.
-                    source.openFileDescriptor("r").use { ExifInterface(it.fileDescriptor) }
-                }
+                val exif = object : PathSource {
+                    override val source = source
+                    override val type = name.substringAfterLast('.', "")
+                    override fun close() = Unit
+                }.readEncodedExif(name) ?: return null
                 var remaining = 24_000
                 val values = buildMap {
                     for (tag in tags) {

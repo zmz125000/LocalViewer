@@ -34,6 +34,29 @@
 #define ALOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
 #define ALOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
 
+// Parse container metadata only. This works independently of platform AV1/profile support.
+extern "C" JNIEXPORT jbyteArray JNICALL
+Java_com_hippo_ehviewer_jni_HdrConvertKt_extractAvifExif(JNIEnv* env, jclass, jobject input) try {
+    if (!input) return nullptr;
+    const auto* data = static_cast<const uint8_t*>(env->GetDirectBufferAddress(input));
+    const jlong size = env->GetDirectBufferCapacity(input);
+    if (!data || size <= 0) return nullptr;
+    std::unique_ptr<avifDecoder, decltype(&avifDecoderDestroy)> decoder(avifDecoderCreate(), avifDecoderDestroy);
+    if (!decoder) return nullptr;
+    decoder->ignoreExif = AVIF_FALSE;
+    decoder->ignoreXMP = AVIF_TRUE;
+    if (avifDecoderSetIOMemory(decoder.get(), data, static_cast<size_t>(size)) != AVIF_RESULT_OK ||
+        avifDecoderParse(decoder.get()) != AVIF_RESULT_OK || !decoder->image) return nullptr;
+    const auto& exif = decoder->image->exif;
+    if (!exif.data || !exif.size || exif.size > 1024 * 1024) return nullptr;
+    size_t offset = 0;
+    if (avifGetExifTiffHeaderOffset(exif.data, exif.size, &offset) != AVIF_RESULT_OK || offset >= exif.size) return nullptr;
+    const size_t count = exif.size - offset;
+    auto result = env->NewByteArray(static_cast<jsize>(count));
+    if (result) env->SetByteArrayRegion(result, 0, static_cast<jsize>(count), reinterpret_cast<const jbyte*>(exif.data + offset));
+    return result;
+} catch (...) { return nullptr; }
+
 namespace {
 
 // SMPTE ST 2084 PQ EOTF → linear relative luminance [0, 10000] nits-ish (absolute).
