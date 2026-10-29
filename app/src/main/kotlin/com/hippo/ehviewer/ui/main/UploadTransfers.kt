@@ -175,8 +175,9 @@ internal object UploadTransfers {
         panelId = null
         destinationJobId = job.id
     }
-    fun destination(location: TransferLocation, label: String) {
-        val job = job(destinationJobId) ?: return
+    fun destination(location: TransferLocation, label: String, jobId: Long? = destinationJobId) {
+        val job = job(jobId) ?: return
+        if (!job.state.value.editable && job.state.value.phase != UploadPhase.Preparing) return
         job.state.update { it.copy(destination = location, destinationLabel = label) }
         destinationJobId = null
         panelId = job.id
