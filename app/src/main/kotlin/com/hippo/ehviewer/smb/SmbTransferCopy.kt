@@ -9,7 +9,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.ensureActive
 
-/** Transfer-only rolling read window; reader/gallery pipelines retain their existing policy. */
+/** Bounded rolling reads. Bulk transfers use eight slots; pooled image reads can use fewer. */
 internal object SmbTransferCopy {
     const val BLOCK_BYTES = 1024 * 1024
     const val READ_WINDOW = 8
@@ -19,9 +19,11 @@ internal object SmbTransferCopy {
         start: Long,
         size: Long,
         onFailure: (Throwable) -> Unit = {},
+        readWindow: Int = READ_WINDOW,
         write: (ByteArray, Int, Int) -> Unit,
     ): Unit = coroutineScope {
         require(start >= 0 && size >= 0 && start <= Long.MAX_VALUE - size)
+        require(readWindow in 1..READ_WINDOW)
         class Pending(val buffer: ByteArray, val length: Int, val result: Deferred<Unit>)
         val pending = ArrayDeque<Pending>()
         var scheduled = 0L
@@ -49,8 +51,8 @@ internal object SmbTransferCopy {
         }
 
         try {
-            repeat(READ_WINDOW) {
-                if (scheduled < size) submit(ByteArray(BLOCK_BYTES))
+            repeat(readWindow) {
+                if (scheduled < size) submit(ByteArray(minOf(BLOCK_BYTES.toLong(), size - scheduled).toInt()))
             }
             while (pending.isNotEmpty()) {
                 coroutineContext.ensureActive()
