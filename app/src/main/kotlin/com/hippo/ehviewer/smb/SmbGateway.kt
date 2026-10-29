@@ -4091,7 +4091,7 @@ object SmbGateway {
 
     fun canTransferCopy(from: SmbSourceEntity, fromPassword: String, to: SmbSourceEntity, toPassword: String): Boolean = com.hippo.ehviewer.library.canCopySmbOnServer(from, fromPassword, to, toPassword)
 
-    /** One explicit destination connection per upload job; source reads retain their existing pool. */
+    /** One explicit destination connection per upload lane; source reads retain their existing pool. */
     class UploadConnection internal constructor(
         private val source: SmbSourceEntity,
         private val password: String,

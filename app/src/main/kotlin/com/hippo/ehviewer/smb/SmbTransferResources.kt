@@ -1,6 +1,6 @@
 package com.hippo.ehviewer.smb
 
-/** One resource owned by a sequential upload job. No pool, multiplex slots, or global state. */
+/** One resource owned by a sequential upload lane. No pool, multiplex slots, or global state. */
 internal class SmbTransferResources<V>(
     private val usable: (V) -> Boolean,
     private val close: (V) -> Unit,
