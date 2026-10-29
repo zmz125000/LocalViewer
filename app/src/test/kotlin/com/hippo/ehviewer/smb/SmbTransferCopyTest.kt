@@ -1,15 +1,77 @@
 package com.hippo.ehviewer.smb
 
+import com.hippo.ehviewer.gallery.KeyedJobRegistry
+import java.io.IOException
 import java.util.Collections
 import java.util.IdentityHashMap
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class SmbTransferCopyTest {
+    @Test
+    fun `fast scroll cancels stale rolling reads without cancelling the retained page`() = runBlocking {
+        val registry = KeyedJobRegistry<Int>()
+        val window = SmbSequentialCopy.READ_PIPELINE
+        val started = CountDownLatch(window)
+        val closed = CountDownLatch(1)
+        val active = AtomicInteger()
+        val aborted = AtomicBoolean()
+        val writes = AtomicInteger()
+        val retained = Job()
+        assertTrue(registry.register(10, retained))
+        val stale = launch(Dispatchers.IO, start = CoroutineStart.LAZY) {
+            try {
+                SmbTransferCopy.copy(
+                    read = SmbRangeReader { _, _, _, _ ->
+                        active.incrementAndGet()
+                        started.countDown()
+                        try {
+                            check(closed.await(3, TimeUnit.SECONDS)) { "Stale read handle was not closed" }
+                            throw IOException("handle closed")
+                        } finally {
+                            active.decrementAndGet()
+                        }
+                    },
+                    start = 0,
+                    size = 100L * SmbTransferCopy.BLOCK_BYTES,
+                    readWindow = window,
+                    onFailure = {
+                        if (aborted.compareAndSet(false, true)) SmbAsyncClose.run { closed.countDown() }
+                    },
+                ) { _, _, _ -> writes.incrementAndGet() }
+            } finally {
+                registry.release(0, coroutineContext[Job])
+            }
+        }
+        assertTrue(registry.register(0, stale))
+        stale.start()
+        try {
+            assertTrue(started.await(3, TimeUnit.SECONDS))
+            registry.cancelOutside(setOf(10))
+            withTimeout(3000) { stale.join() }
+            assertTrue(stale.isCancelled)
+            assertTrue(aborted.get())
+            assertEquals(0, active.get())
+            assertEquals(0, writes.get())
+            assertEquals(null, registry.owner(0))
+            assertTrue(retained.isActive)
+        } finally {
+            closed.countDown()
+            registry.cancelAll()
+        }
+    }
+
     @Test
     fun `completed read slot refills before the rest of its batch completes`() = runBlocking {
         for (window in listOf(SmbSequentialCopy.READ_PIPELINE, SmbTransferCopy.READ_WINDOW)) {
