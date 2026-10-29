@@ -311,11 +311,10 @@ private fun rememberGalleryReadProgress(progressGid: Long): Int {
     return flow.collectAsState(0).value
 }
 
-/** Saved zero-based photo index; -1 while unknown or reading progress is hidden. */
+/** Saved zero-based photo index; independent of the gallery progress badge setting. */
 @Composable
 internal fun rememberPhotoGridProgressIndex(progressGid: Long): Int {
-    val showProgress by Settings.showReadingProgress.collectAsState()
-    if (!showProgress || progressGid == 0L) return -1
+    if (progressGid == 0L) return -1
     val flow = remember(progressGid) { EhDB.getReadProgressFlow(progressGid) }
     return flow.collectAsState(-1).value
 }
