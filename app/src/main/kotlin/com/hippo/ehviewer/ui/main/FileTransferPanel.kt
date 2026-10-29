@@ -52,12 +52,16 @@ import com.hippo.ehviewer.library.ExplorerWindows
 import com.hippo.ehviewer.library.TransferLocation
 import com.hippo.ehviewer.ui.screen.LocalExplorerPanel
 import com.hippo.ehviewer.ui.theme.snackbarContainerColor
+import com.hippo.ehviewer.util.FileUtils
 
 @Composable
 private fun uploadSummary(state: UploadState): String = stringResource(R.string.transfer_counts, state.succeeded, state.skipped, state.failed)
 
+private fun transferSpeed(state: UploadState): String = "${FileUtils.humanReadableByteCount(state.speedBps)}/s"
+
 @Composable
 internal fun UploadTransferBars() {
+    val explorer = LocalExplorerPanel.current
     val jobs by UploadTransfers.jobs.collectAsState()
     Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         jobs.forEach { job ->
@@ -65,7 +69,14 @@ internal fun UploadTransferBars() {
                 val state by job.state.collectAsState()
                 val finished = !state.active && !state.editable && state.phase != UploadPhase.Preparing
                 Snackbar(containerColor = snackbarContainerColor(), action = {
-                    TextButton(onClick = { UploadTransfers.panelId = job.id }) { Text(stringResource(R.string.transfer_show)) }
+                    if (state.editable) {
+                        TextButton(onClick = {
+                            UploadTransfers.chooseDestination(job)
+                            explorer.open()
+                        }) { Text(stringResource(R.string.transfer_destination)) }
+                    } else {
+                        TextButton(onClick = { UploadTransfers.panelId = job.id }) { Text(stringResource(R.string.transfer_show)) }
+                    }
                 }, dismissAction = {
                     TextButton(onClick = {
                         if (finished) UploadTransfers.dismiss(job) else UploadTransfers.cancel(job)
@@ -74,13 +85,18 @@ internal fun UploadTransferBars() {
                     }
                 }) {
                     Column(Modifier.clickable { UploadTransfers.panelId = job.id }) {
-                        if (state.phase == UploadPhase.Preparing || state.editable) {
-                            Text("${stringResource(R.string.transfer_upload)} #${job.id} · ${stringResource(R.string.transfer_file_count, state.rows.count { !it.file.directory })}")
+                        if (state.editable) {
+                            Text("${stringResource(if (job.saving) R.string.action_save_to else R.string.transfer_upload)} #${job.id} · ${stringResource(R.string.transfer_file_count, state.total)}")
+                        } else if (state.phase == UploadPhase.Preparing) {
+                            Text("${stringResource(if (job.saving) R.string.action_save_to else R.string.transfer_upload)} #${job.id} · ${stringResource(R.string.transfer_preparing)}")
+                            Text(stringResource(R.string.transfer_file_count, state.total))
                         } else if (state.phase == UploadPhase.Finished) {
-                            Text("${stringResource(R.string.transfer_upload)} #${job.id} · ${stringResource(R.string.browse_finished)}")
+                            Text("${stringResource(if (job.saving) R.string.action_save_to else R.string.transfer_upload)} #${job.id} · ${stringResource(R.string.browse_finished)}")
                             Text(uploadSummary(state))
+                        } else if (state.active) {
+                            Text("${stringResource(if (job.saving) R.string.action_save_to else R.string.transfer_upload)} #${job.id} · ${state.succeeded}/${state.total}/${state.skipped}/${state.failed} · ${transferSpeed(state)}")
                         } else {
-                            Text("${stringResource(R.string.transfer_upload)} #${job.id} · ${job.title}", maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text("${stringResource(if (job.saving) R.string.action_save_to else R.string.transfer_upload)} #${job.id} · ${job.title}", maxLines = 1, overflow = TextOverflow.Ellipsis)
                             Text(uploadSummary(state))
                         }
                     }
@@ -88,11 +104,11 @@ internal fun UploadTransferBars() {
             }
         }
     }
-    UploadTransfers.job(UploadTransfers.panelId)?.let { UploadTransferDialog(it) }
+    UploadTransfers.job(UploadTransfers.panelId)?.let { FileTransferPanel(it) }
 }
 
 @Composable
-private fun UploadTransferDialog(job: UploadJob) {
+private fun FileTransferPanel(job: UploadJob) {
     val state by job.state.collectAsState()
     val explorer = LocalExplorerPanel.current
     var menu by remember(job.id) { mutableStateOf(false) }
@@ -111,7 +127,7 @@ private fun UploadTransferDialog(job: UploadJob) {
         }
         Column {
             Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp, top = 16.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text("${stringResource(R.string.transfer_upload)} #${job.id}", Modifier.weight(1f), style = headerStyle)
+                Text("${stringResource(if (job.saving) R.string.action_save_to else R.string.transfer_upload)} #${job.id}", Modifier.weight(1f), style = headerStyle)
                 Text(
                     stringResource(phaseLabel),
                     modifier = Modifier.padding(end = 8.dp),
@@ -160,7 +176,14 @@ private fun UploadTransferDialog(job: UploadJob) {
             }
             Text(uploadSummary(state), Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.labelLarge)
 
-            if (state.destinationLabel.isNotEmpty()) Text(state.destinationLabel, Modifier.padding(horizontal = 16.dp), maxLines = 2, style = MaterialTheme.typography.bodySmall)
+            Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text(state.destinationLabel, Modifier.weight(1f), maxLines = 2, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall)
+                Text(
+                    "${FileUtils.humanReadableByteCount(state.bytesTransferred)}/${FileUtils.humanReadableByteCount(state.totalBytes)} · ${transferSpeed(state)}",
+                    Modifier.padding(start = 8.dp),
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
             state.error?.let { Text(it, Modifier.padding(16.dp), color = MaterialTheme.colorScheme.error) }
             LazyColumn(Modifier.weight(1f).fillMaxWidth(), contentPadding = PaddingValues(top = 8.dp, bottom = GalleryGridDefaults.margin())) {
                 items(state.rows, key = { it.file.relative }) { row ->
@@ -231,4 +254,36 @@ internal fun rememberUploadLocalDestinationPicker(onSelected: () -> Unit): () ->
         })
     }
     return { launcher.launch(null) }
+}
+
+/** Save to uses the same transfer engine, starting once the SAF destination is chosen. */
+@Composable
+internal fun rememberSaveToTransferPicker(): (UploadJob) -> Unit {
+    val context = LocalContext.current
+    var pendingId by remember { mutableStateOf<Long?>(null) }
+    var error by remember { mutableStateOf<String?>(null) }
+    val launcher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+        val job = UploadTransfers.job(pendingId)
+        pendingId = null
+        if (job != null) {
+            if (uri == null) {
+                UploadTransfers.cancel(job)
+            } else {
+                runCatching {
+                    context.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+                    val document = DocumentsContract.buildDocumentUriUsingTree(uri, DocumentsContract.getTreeDocumentId(uri))
+                    UploadTransfers.saveDestination(job, TransferLocation(ExplorerWindows.Kind.Local, 0, document.toOkioPath().toString()), uri.lastPathSegment.orEmpty())
+                }.onFailure { error = it.message ?: "Cannot access destination" }
+            }
+        }
+    }
+    error?.let { message ->
+        AlertDialog(onDismissRequest = { error = null }, text = { Text(message) }, confirmButton = {
+            TextButton(onClick = { error = null }) { Text(stringResource(android.R.string.ok)) }
+        })
+    }
+    return { job ->
+        pendingId = job.id
+        launcher.launch(null)
+    }
 }

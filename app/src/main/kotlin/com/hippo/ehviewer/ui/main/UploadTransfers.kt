@@ -17,9 +17,11 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
@@ -35,15 +37,20 @@ internal data class UploadState(
     val skipExisting: Boolean = true,
     val background: Boolean = Settings.browseTaskForegroundService.value,
     val autoFinish: Boolean = Settings.browseTaskAutoFinish.value,
+    val bytesTransferred: Long = 0,
+    val speedBps: Long = 0,
+    val startWhenReady: Boolean = false,
     val error: String? = null,
 ) {
+    val total get() = rows.count { !it.file.directory }
+    val totalBytes get() = rows.sumOf { if (it.file.directory) 0L else it.file.size.coerceAtLeast(0) }
     val succeeded get() = rows.count { !it.file.directory && it.status == UploadFileStatus.Succeeded }
     val skipped get() = rows.count { !it.file.directory && it.status == UploadFileStatus.Skipped }
     val failed get() = rows.count { it.status == UploadFileStatus.Failed }
     val active get() = phase == UploadPhase.Running || phase == UploadPhase.Paused
     val editable get() = phase == UploadPhase.Ready
 }
-internal class UploadJob(val id: Long, val title: String) {
+internal class UploadJob(val id: Long, val title: String, val saving: Boolean = false) {
     val state = MutableStateFlow(UploadState())
     val control = TransferControl()
     val bytes = AtomicLong()
@@ -86,10 +93,9 @@ internal object UploadTransfers {
     var panelId by mutableStateOf<Long?>(null)
     var destinationJobId by mutableStateOf<Long?>(null)
 
-    fun prepare(source: TransferLocation, title: String, directory: Boolean, size: Long = 0, mtime: Long = 0) {
-        val job = UploadJob(ids.getAndIncrement(), title)
+    fun prepare(source: TransferLocation, title: String, directory: Boolean, size: Long = 0, mtime: Long = 0, saving: Boolean = false): UploadJob {
+        val job = UploadJob(ids.getAndIncrement(), title, saving)
         _jobs.update { it + job }
-        panelId = job.id
         job.worker = scope.launch {
             try {
                 val rows = ArrayList<UploadRow>()
@@ -119,6 +125,12 @@ internal object UploadTransfers {
             }
         }
         trackWorker(job)
+        return job
+    }
+
+    fun saveDestination(job: UploadJob, location: TransferLocation, label: String) {
+        job.state.update { it.copy(destination = location, destinationLabel = label, startWhenReady = true) }
+        if (job.state.value.editable) start(job)
     }
 
     fun job(id: Long?) = _jobs.value.find { it.id == id }
@@ -195,6 +207,7 @@ internal object UploadTransfers {
                     )
                 }
             }
+            if (job.state.value.editable && job.state.value.startWhenReady) start(job)
             dismissAutoFinished(job)
             syncForeground()
         }
@@ -202,9 +215,22 @@ internal object UploadTransfers {
     fun start(job: UploadJob) {
         val state = job.state.value
         if (!state.editable || state.destination == null || state.rows.isEmpty()) return
-        job.state.update { it.copy(phase = UploadPhase.Running, error = null) }
+        if (!job.state.compareAndSet(state, state.copy(phase = UploadPhase.Running, error = null, startWhenReady = false))) return
         syncForeground()
         job.worker = scope.launch {
+            val meter = launch {
+                var lastBytes = job.bytes.get()
+                var lastTime = System.nanoTime()
+                while (isActive) {
+                    delay(500)
+                    val now = System.nanoTime()
+                    val bytes = job.bytes.get()
+                    val speed = ((bytes - lastBytes) * 1_000_000_000.0 / (now - lastTime).coerceAtLeast(1)).toLong()
+                    job.state.update { it.copy(bytesTransferred = bytes, speedBps = if (it.phase == UploadPhase.Running) speed else 0) }
+                    lastBytes = bytes
+                    lastTime = now
+                }
+            }
             try {
                 slots.withPermit {
                     val directories = HashMap<String, TransferLocation>()
@@ -278,6 +304,8 @@ internal object UploadTransfers {
             } catch (e: Throwable) {
                 job.state.update { it.copy(phase = UploadPhase.Failed, error = e.message) }
             } finally {
+                meter.cancel()
+                job.state.update { it.copy(bytesTransferred = job.bytes.get(), speedBps = 0) }
                 val dest = state.destination
                 when (dest.kind) {
                     ExplorerWindows.Kind.Local -> BrowseSession.invalidateLocalListing()

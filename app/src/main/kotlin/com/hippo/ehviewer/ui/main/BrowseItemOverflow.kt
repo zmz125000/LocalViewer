@@ -105,6 +105,7 @@ fun BrowseItemOverflowButton(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val snackbar = LocalSnackBarHostState.current
+    val saveTransfer = rememberSaveToTransferPicker()
     val shortcutUnsupported = stringResource(R.string.browse_shortcut_unsupported)
     val grid = placement == BrowseOverflowPlacement.GridBottomEnd
     val more = stringResource(R.string.browse_item_more)
@@ -275,7 +276,24 @@ fun BrowseItemOverflowButton(
             )
             DropdownMenuItem(
                 text = { Text(stringResource(R.string.action_save_to)) },
-                onClick = { run(actions.onSaveAs) },
+                onClick = {
+                    val source = actions.uploadSource
+                    if (source == null) {
+                        run(actions.onSaveAs)
+                    } else {
+                        expanded = false
+                        saveTransfer(
+                            UploadTransfers.prepare(
+                                source,
+                                actions.selectTitle ?: source.path.substringAfterLast('/'),
+                                actions.selectFolder,
+                                actions.listLine?.sizeBytes ?: 0L,
+                                actions.listLine?.lastModifiedMs ?: 0L,
+                                saving = true,
+                            ),
+                        )
+                    }
+                },
             )
             actions.uploadSource?.let { source ->
                 DropdownMenuItem(

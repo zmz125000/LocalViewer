@@ -98,6 +98,7 @@ class UploadTransfersTest {
     fun `progress counts files independently of folders and pending work`() {
         val state = UploadState(
             background = false,
+            autoFinish = false,
             rows = listOf(
                 row("album", true).copy(status = UploadFileStatus.Succeeded),
                 row("album/a.jpg").copy(status = UploadFileStatus.Succeeded),
@@ -106,6 +107,8 @@ class UploadTransfersTest {
                 row("album/d.jpg"),
             ),
         )
+        assertEquals(4, state.total)
+        assertEquals(48L, state.totalBytes)
         assertEquals(1, state.succeeded)
         assertEquals(1, state.skipped)
         assertEquals(1, state.failed)
