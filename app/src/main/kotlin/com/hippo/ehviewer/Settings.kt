@@ -924,6 +924,7 @@ object Settings : DataStorePreferences(null) {
     val ebookVerticalMargin = intPref("pref_ebook_vertical_margin", 2)
     val orientationMode = intPref("pref_default_orientation_type_key", OrientationType.DEFAULT.prefValue)
     val showReaderSeekbar = boolPref("pref_show_reader_seekbar", true)
+    val readerHideFab = boolPref("pref_reader_hide_fab", false)
     val showPageNumber = boolPref("pref_show_page_number_key", true)
 
     /** Hide reader title/top app bar (bottom bar + seekbar still show when chrome is visible). Default on. */

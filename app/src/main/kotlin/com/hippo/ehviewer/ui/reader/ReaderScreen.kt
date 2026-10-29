@@ -582,6 +582,7 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
         info?.simpleTags?.any { it.endsWith("webtoon") } == true
     }
     val showSeekbar by Settings.showReaderSeekbar.collectAsState()
+    val hideFab by Settings.readerHideFab.collectAsState()
     val hideTopBar by Settings.readerHideTopBar.collectAsState()
     val readerPhotoGrid by Settings.readerPhotoGrid.collectAsState()
     val readingMode by Settings.readingMode.collectAsState {
@@ -1316,7 +1317,7 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
             .navigationBarsPadding()
             .padding(end = 16.dp, bottom = 16.dp)
         AnimatedVisibility(
-            visible = !slideshow && showNextGalleryFab &&
+            visible = !hideFab && !slideshow && showNextGalleryFab &&
                 pageLoader.size > 0 &&
                 syncState.sliderValue >= pageLoader.size,
             modifier = fabPad,
@@ -1331,7 +1332,7 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
             }
         }
         AnimatedVisibility(
-            visible = !slideshow && showGoFirstFab && syncState.sliderValue > 1 && !showNextGalleryFab,
+            visible = !hideFab && !slideshow && showGoFirstFab && syncState.sliderValue > 1 && !showNextGalleryFab,
             modifier = fabPad,
             enter = fadeIn() + scaleIn(),
             exit = fadeOut() + scaleOut(),
