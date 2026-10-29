@@ -17,17 +17,20 @@ class TransferBatchTest {
     private fun file(kind: ExplorerWindows.Kind, size: Long) = TransferFile(TransferLocation(kind, 1, "photo.jpg"), "photo.jpg", false, size, 1234)
 
     @Test
-    fun `small SMB batches overlap while large unknown and unrelated transfers stay sequential`() {
+    fun `small network batches overlap while large unknown and local transfers stay sequential`() {
         val local = file(ExplorerWindows.Kind.Local, 3 * 1024 * 1024)
-        val smb = file(ExplorerWindows.Kind.Smb, local.size)
-        assertEquals(4, transferBatchParallelism(listOf(local, local), ExplorerWindows.Kind.Smb))
-        assertEquals(1, transferBatchParallelism(listOf(local, local), ExplorerWindows.Kind.Smb, enabled = false))
-        assertEquals(1, transferBatchParallelism(listOf(smb, smb), ExplorerWindows.Kind.Local, enabled = false))
-        assertEquals(4, transferBatchParallelism(listOf(smb, smb), ExplorerWindows.Kind.Local))
-        assertEquals(1, transferBatchParallelism(listOf(smb), ExplorerWindows.Kind.Local))
-        assertEquals(1, transferBatchParallelism(listOf(smb, smb.copy(size = 100 * 1024 * 1024)), ExplorerWindows.Kind.Local))
-        assertEquals(1, transferBatchParallelism(listOf(smb, smb.copy(size = -1)), ExplorerWindows.Kind.Local))
-        assertEquals(1, transferBatchParallelism(listOf(local, local), ExplorerWindows.Kind.WebDav))
+        for (kind in listOf(ExplorerWindows.Kind.Smb, ExplorerWindows.Kind.WebDav)) {
+            val remote = file(kind, local.size)
+            assertEquals(4, transferBatchParallelism(listOf(local, local), kind))
+            assertEquals(4, transferBatchParallelism(listOf(remote, remote), ExplorerWindows.Kind.Local))
+            assertEquals(4, transferBatchParallelism(listOf(remote, remote), kind))
+            assertEquals(1, transferBatchParallelism(listOf(local, local), kind, enabled = false))
+            assertEquals(1, transferBatchParallelism(listOf(remote, remote), ExplorerWindows.Kind.Local, enabled = false))
+            assertEquals(1, transferBatchParallelism(listOf(remote), ExplorerWindows.Kind.Local))
+            assertEquals(1, transferBatchParallelism(listOf(remote, remote.copy(size = 100 * 1024 * 1024)), ExplorerWindows.Kind.Local))
+            assertEquals(1, transferBatchParallelism(listOf(remote, remote.copy(size = -1)), ExplorerWindows.Kind.Local))
+        }
+        assertEquals(1, transferBatchParallelism(listOf(local, local), ExplorerWindows.Kind.Local))
     }
 
     @Test

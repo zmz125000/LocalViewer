@@ -7,7 +7,7 @@ internal const val SMALL_TRANSFER_BYTES = 8L * 1024 * 1024
 internal const val SMALL_TRANSFER_LANES = 4
 
 internal fun transferBatchParallelism(files: List<TransferFile>, destination: ExplorerWindows.Kind, enabled: Boolean = true): Int = if (enabled && files.size > 1 && files.all { it.size in 0..SMALL_TRANSFER_BYTES } &&
-    (destination == ExplorerWindows.Kind.Smb || files.any { it.source.kind == ExplorerWindows.Kind.Smb })
+    (destination != ExplorerWindows.Kind.Local || files.any { it.source.kind != ExplorerWindows.Kind.Local })
 ) {
     SMALL_TRANSFER_LANES
 } else {
