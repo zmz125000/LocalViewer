@@ -1256,6 +1256,7 @@
     <string name="pref_slideshow_pixels_per_second">%1$d</string>
     <string name="slideshow_info_iso">%1$d</string>
     <string name="transfer_server_copy">Server copy</string>
+    <string name="transfer_share_target">Upload to</string>
     <string name="transfer_upload">Upload</string>
     <string name="transfer_upload_to">Upload to</string>
     <string name="transfer_skip_existing">Skip existing files</string>

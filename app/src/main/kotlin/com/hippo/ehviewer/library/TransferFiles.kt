@@ -93,7 +93,14 @@ object TransferFiles {
         return when (file.source.kind) {
             ExplorerWindows.Kind.Local -> file.source.path.toPath().metadataOrNull()?.let {
                 file.copy(size = it.size ?: file.size, mtime = it.lastModifiedAtMillis ?: file.mtime)
-            } ?: error("Source file missing: ${file.relative}")
+            } ?: if (file.source.path.startsWith("content:")) {
+                // Shared FileProvider URIs may not support document metadata columns.
+                file.source.path.toPath().openFileDescriptor("r").use {
+                    file.copy(size = it.statSize.takeIf { size -> size >= 0 } ?: file.size)
+                }
+            } else {
+                error("Source file missing: ${file.relative}")
+            }
             ExplorerWindows.Kind.Smb -> {
                 val source = smb(file.source.sourceId)
                 val stat = SmbGateway.fileStatOrNull(source, SmbPasswordStore.get(source.id), file.source.path)

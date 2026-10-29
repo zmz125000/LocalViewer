@@ -159,7 +159,7 @@ object WebDavClient {
                 if (mtimeMs > 0) header("X-OC-Mtime", (mtimeMs / 1000).toString())
                 header(HttpHeaders.IfNoneMatch, "*")
                 setBody(object : io.ktor.http.content.OutgoingContent.WriteChannelContent() {
-                    override val contentLength = size
+                    override val contentLength = size.takeIf { it >= 0 }
                     override val contentType = ContentType.Application.OctetStream
                     override suspend fun writeTo(channel: io.ktor.utils.io.ByteWriteChannel) {
                         kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {

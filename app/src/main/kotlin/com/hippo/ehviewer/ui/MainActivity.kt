@@ -152,8 +152,11 @@ import com.hippo.ehviewer.ui.main.BrowseSaveSnackbars
 import com.hippo.ehviewer.ui.main.FolderSelectBars
 import com.hippo.ehviewer.ui.main.HttpShareSnackbars
 import com.hippo.ehviewer.ui.main.UploadTransferBars
+import com.hippo.ehviewer.ui.main.UploadTransfers
 import com.hippo.ehviewer.ui.main.UsbDriveHost
 import com.hippo.ehviewer.ui.main.awaitHttpShareQr
+import com.hippo.ehviewer.ui.main.isUploadShare
+import com.hippo.ehviewer.ui.main.sharedUploadFiles
 import com.hippo.ehviewer.ui.navToReader
 import com.hippo.ehviewer.ui.reader.PendingReaderOpen
 import com.hippo.ehviewer.ui.screen.ExplorerPanelActions
@@ -555,6 +558,16 @@ class MainActivity : AppCompatActivity() {
                 }
                 openPendingReader()
                 intentFlow.collect { intent ->
+                    if (intent.isUploadShare()) {
+                        try {
+                            val files = withIOContext { sharedUploadFiles(this@MainActivity, intent) }
+                            if (files.isEmpty()) snackbarState.showSnackbar(cannotParse) else UploadTransfers.prepare(files)
+                        } catch (error: Exception) {
+                            if (error is kotlinx.coroutines.CancellationException) throw error
+                            snackbarState.showSnackbar(error.message ?: cannotParse)
+                        }
+                        return@collect
+                    }
                     when (intent.action) {
                         FolderHomeShortcut.ACTION -> openFolderShortcut(navigator, intent, snackbarState)
                         PendingReaderOpen.ACTION -> openPendingReader()
