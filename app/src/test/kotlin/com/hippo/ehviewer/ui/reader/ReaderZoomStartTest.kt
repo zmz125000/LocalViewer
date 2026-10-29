@@ -41,8 +41,22 @@ class ReaderZoomStartTest {
     fun automaticStartRespectsReadingDirectionAndExplicitChoicesRemainAbsolute() {
         assertEquals(AbsoluteAlignment.Right, Alignment.fromPreferences(1, isRtl = true, isVertical = false))
         assertEquals(AbsoluteAlignment.Left, Alignment.fromPreferences(1, isRtl = false, isVertical = false))
-        assertEquals(Alignment.CenterHorizontally, Alignment.fromPreferences(1, isRtl = true, isVertical = true))
+        assertEquals(AbsoluteAlignment.Left, Alignment.fromPreferences(1, isRtl = true, isVertical = true))
         assertEquals(AbsoluteAlignment.Left, Alignment.fromPreferences(2, isRtl = true, isVertical = false))
         assertEquals(AbsoluteAlignment.Right, Alignment.fromPreferences(3, isRtl = false, isVertical = false))
+    }
+
+    @Test
+    fun automaticFillScreenStartFollowsOverflowInVerticalPageMode() {
+        val alignment = Alignment.fromPreferences(1, isRtl = false, isVertical = true)
+        val viewport = Size(1000f, 800f)
+        assertEquals(
+            Offset(500f, 0f),
+            readerZoomStartPan(Rect(-500f, 0f, 1500f, 800f), viewport, alignment),
+        )
+        assertEquals(
+            Offset(0f, 600f),
+            readerZoomStartPan(Rect(0f, -600f, 1000f, 1400f), viewport, alignment),
+        )
     }
 }
