@@ -87,7 +87,7 @@ fun <T> Iterable<T>.sortedForBrowseFolderUi(
 }
 
 /**
- * Photo-grid page order. Name is the open order. Date is a visit-only override:
+ * Photo-grid page order. Name is the open order. Date/Size are visit-only overrides:
  * it does not follow [Settings.browseSortMode]. No modified times keeps name order.
  */
 fun <T> Iterable<T>.sortedPhotoGridPages(
@@ -95,8 +95,12 @@ fun <T> Iterable<T>.sortedPhotoGridPages(
     ascending: Boolean,
     nameOf: (T) -> String,
     dateOf: (T) -> Long,
+    sizeOf: (T) -> Long = { 0L },
 ): List<T> {
     val named = sortedWith { a, b -> naturalCompare(nameOf(a), nameOf(b)) }
+    if (mode == BrowseSortMode.Size) {
+        return named.sortedForBrowseFolderUi(mode, ascending, nameOf, dateOf, sizeOf)
+    }
     if (mode != BrowseSortMode.Date) {
         return if (ascending) named else named.asReversed()
     }
@@ -115,7 +119,7 @@ fun photoGridProgressOrderKey(
     return hash
 }
 
-/** In-memory Name/Date for the current photo grid. Reset when [folderKey] changes. */
+/** In-memory sort for the current photo grid. Reset when [folderKey] changes. */
 class PhotoGridSortControls(
     val mode: BrowseSortMode,
     val ascending: Boolean,
@@ -199,10 +203,12 @@ fun BrowseViewModeMenu(
     folder: BrowseFolderId? = null,
     /** Virtual folder layers still inherit this setting from their real path. */
     virtualGalleriesFolder: BrowseFolderId? = folder,
+    /** History controls also apply to photo grids, which have no content-mode persistence. */
+    historyFolder: BrowseFolderId? = virtualGalleriesFolder,
     skipAncestorKeys: Set<String> = emptySet(),
     hideContentModes: Boolean = false,
     /**
-     * Photo-grid Name/Date. When set, those rows do not write [Settings.browseSortMode].
+     * Photo-grid sort. When set, those rows do not write [Settings.browseSortMode].
      * Leaving the grid drops the override, so the next open is name order again.
      */
     ephemeralSort: BrowseSortMode? = null,
@@ -244,8 +250,8 @@ fun BrowseViewModeMenu(
     var browseRecentOpen by Settings.browseRecentOpen.asMutableState()
     var browseRecentExpanded by Settings.browseRecentExpanded.asMutableState()
     val historyHideFolders by Settings.historyHideFolders.collectAsState()
-    val historyHideMode = remember(folder, historyHideFolders) {
-        folder?.let { HistoryHidePersist.effective(it) } ?: HistoryHideMode.Off
+    val historyHideMode = remember(historyFolder, historyHideFolders) {
+        historyFolder?.let { HistoryHidePersist.effective(it) } ?: HistoryHideMode.Off
     }
     val haptic = LocalHapticFeedback.current
 
@@ -384,14 +390,12 @@ fun BrowseViewModeMenu(
                 ascending = sortAscending,
                 onClick = { selectBrowseSort(BrowseSortMode.Date) },
             )
-            if (onEphemeralSort == null) {
-                SortMenuItem(
-                    label = stringResource(R.string.key_size),
-                    selected = sortMode == BrowseSortMode.Size,
-                    ascending = sortAscending,
-                    onClick = { selectBrowseSort(BrowseSortMode.Size) },
-                )
-            }
+            SortMenuItem(
+                label = stringResource(R.string.key_size),
+                selected = sortMode == BrowseSortMode.Size,
+                ascending = sortAscending,
+                onClick = { selectBrowseSort(BrowseSortMode.Size) },
+            )
             // Tap shows or hides Recent and does not change the lock.
             // Long-press sets the default for a newly opened folder: lock = full list, tick = preview rows.
             ContentModeItem(
@@ -413,7 +417,7 @@ fun BrowseViewModeMenu(
             )
             // Tap: hide this folder's tree from the History screen, still record it.
             // Long-press: lock, do not record. Long-press again returns to hide-but-record.
-            if (folder != null) {
+            if (historyFolder != null) {
                 ContentModeItem(
                     label = stringResource(R.string.browse_menu_hide_from_history),
                     mark = when (historyHideMode) {
@@ -421,8 +425,8 @@ fun BrowseViewModeMenu(
                         HistoryHideMode.Hide -> ModeMark.Tick
                         HistoryHideMode.NoRecord -> ModeMark.Lock
                     },
-                    onClick = { HistoryHidePersist.tap(folder) },
-                    onLongClick = { HistoryHidePersist.longPress(folder) },
+                    onClick = { HistoryHidePersist.tap(historyFolder) },
+                    onLongClick = { HistoryHidePersist.longPress(historyFolder) },
                 )
             }
             HorizontalDivider()

@@ -768,6 +768,7 @@ object Settings : DataStorePreferences(null) {
 
     /** 0 lossless (JPEG Q95), 1 high (Q95), 2 mid (Q90), 3 low (Q85), 4 custom. JPEG always uses 4:4:4. */
     val imageConversionQuality = intPref("image_conversion_quality", 2)
+    val imageConversionKeepExif = boolPref("image_conversion_keep_exif", true)
     val imageConversionExtendedSrgbBt2020 = boolPref("image_conversion_scrgb_bt2020", true)
     val imageConversionJxlJpegTranscoding = boolPref("image_conversion_jxl_jpeg_transcoding", false)
 
@@ -924,6 +925,7 @@ object Settings : DataStorePreferences(null) {
     val ebookVerticalMargin = intPref("pref_ebook_vertical_margin", 2)
     val orientationMode = intPref("pref_default_orientation_type_key", OrientationType.DEFAULT.prefValue)
     val showReaderSeekbar = boolPref("pref_show_reader_seekbar", true)
+    val readerHideFab = boolPref("pref_reader_hide_fab", false)
     val showPageNumber = boolPref("pref_show_page_number_key", true)
 
     /** Hide reader title/top app bar (bottom bar + seekbar still show when chrome is visible). Default on. */

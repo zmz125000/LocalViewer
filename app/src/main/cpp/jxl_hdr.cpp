@@ -669,3 +669,40 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeJxlBufferToDirect(JNIEnv* env, jc
 } catch (...) {
     return nullptr;
 }
+
+// Extract only the EXIF box (including Brotli-compressed boxes), not image pixels.
+extern "C" JNIEXPORT jbyteArray JNICALL
+Java_com_hippo_ehviewer_jni_HdrConvertKt_extractJxlExif(JNIEnv* env, jclass, jobject input) try {
+    if (!input) return nullptr;
+    const auto* data = static_cast<const uint8_t*>(env->GetDirectBufferAddress(input));
+    const jlong size = env->GetDirectBufferCapacity(input);
+    if (!data || size <= 0) return nullptr;
+    auto decoder = JxlDecoderMake(nullptr);
+    if (!decoder || JxlDecoderSubscribeEvents(decoder.get(), JXL_DEC_BOX | JXL_DEC_BOX_COMPLETE) != JXL_DEC_SUCCESS ||
+        JxlDecoderSetDecompressBoxes(decoder.get(), JXL_TRUE) != JXL_DEC_SUCCESS) return nullptr;
+    JxlDecoderSetInput(decoder.get(), data, static_cast<size_t>(size));
+    JxlDecoderCloseInput(decoder.get());
+    std::vector<uint8_t> box;
+    bool collecting = false;
+    for (;;) {
+        const auto status = JxlDecoderProcessInput(decoder.get());
+        if (status == JXL_DEC_BOX) {
+            JxlBoxType type;
+            if (JxlDecoderGetBoxType(decoder.get(), type, JXL_TRUE) != JXL_DEC_SUCCESS) return nullptr;
+            if (memcmp(type, "Exif", 4) == 0) {
+                box.resize(1024 * 1024);
+                if (JxlDecoderSetBoxBuffer(decoder.get(), box.data(), box.size()) != JXL_DEC_SUCCESS) return nullptr;
+                collecting = true;
+            }
+        } else if (status == JXL_DEC_BOX_COMPLETE && collecting) {
+            const size_t count = box.size() - JxlDecoderReleaseBoxBuffer(decoder.get());
+            if (!count) return nullptr;
+            auto result = env->NewByteArray(static_cast<jsize>(count));
+            if (result) env->SetByteArrayRegion(result, 0, static_cast<jsize>(count), reinterpret_cast<const jbyte*>(box.data()));
+            return result;
+        } else if (status == JXL_DEC_SUCCESS || status == JXL_DEC_ERROR ||
+                   status == JXL_DEC_NEED_MORE_INPUT || status == JXL_DEC_BOX_NEED_MORE_OUTPUT) {
+            return nullptr;
+        }
+    }
+} catch (...) { return nullptr; }

@@ -1889,6 +1889,7 @@ private fun PdfReaderScreen(
     val initial = startPage.coerceIn(0, (pageCount - 1).coerceAtLeast(0))
     val scope = rememberCoroutineScope()
     val showSeekbar by Settings.showReaderSeekbar.collectAsState()
+    val hideFab by Settings.readerHideFab.collectAsState()
     val hideTopBar by Settings.readerHideTopBar.collectAsState()
     val showPageNumber by Settings.showPageNumber.collectAsState()
     val readerPhotoGrid by Settings.readerPhotoGrid.collectAsState()
@@ -2832,7 +2833,7 @@ private fun PdfReaderScreen(
                 }
         }
         AnimatedVisibility(
-            visible = showNextGalleryFab && pageCount > 0 && currentPage >= pageCount,
+            visible = !hideFab && showNextGalleryFab && pageCount > 0 && currentPage >= pageCount,
             modifier = Modifier
                 .align(Alignment.BottomEnd)
                 .navigationBarsPadding()

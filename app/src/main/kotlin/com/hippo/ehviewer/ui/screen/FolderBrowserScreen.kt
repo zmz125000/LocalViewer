@@ -21,6 +21,7 @@ import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyGridScope
 import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.LibraryBooks
 import androidx.compose.material.icons.filled.Explore
@@ -175,6 +176,7 @@ import com.hippo.ehviewer.ui.main.browseZipAsDirTypeLabel
 import com.hippo.ehviewer.ui.main.directoryBrowseCover
 import com.hippo.ehviewer.ui.main.onRecentHeaderGesture
 import com.hippo.ehviewer.ui.main.rememberBrowseSectionCollapse
+import com.hippo.ehviewer.ui.main.rememberPhotoGridProgressIndex
 import com.hippo.ehviewer.ui.main.rememberRecentStripExpanded
 import com.hippo.ehviewer.ui.main.selectable
 import com.hippo.ehviewer.ui.main.toPick
@@ -374,6 +376,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                 gridSort.ascending,
                 nameOf = { it.name },
                 dateOf = { it.lastModifiedMs },
+                sizeOf = { it.size },
             )
         }
     }
@@ -554,7 +557,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
     }
 
     LaunchedEffect(photoGridKey, gridSort.mode) {
-        if (photoGridKey == null || gridSort.mode != BrowseSortMode.Date) return@LaunchedEffect
+        if (photoGridKey == null || gridSort.mode == BrowseSortMode.Name) return@LaunchedEffect
         val frame = stack.lastOrNull() ?: return@LaunchedEffect
         val names = entries.map { it.name }
         val metadata = withIOContext { metadataForLibraryOpen(frame, names) }
@@ -3323,6 +3326,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                 stableGalleryId(it.rootId, it.relativePath.ifEmpty { "." })
                             }
                         } ?: 0L
+                        val progressIndex = rememberPhotoGridProgressIndex(progressGid)
                         val gridState = rememberLocalPhotoGridState(
                             pathKey = pathKey,
                             listMode = scrollLayoutKey,
@@ -3346,11 +3350,12 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                             verticalArrangement = gridSpacing,
                         ) {
                             searchSection(grid = true)
-                            items(photoGridImages, key = { "pg-${it.path}" }) { file ->
+                            itemsIndexed(photoGridImages, key = { _, file -> "pg-${file.path}" }) { index, file ->
                                 BrowsePhotoGridImageItem(
                                     modifier = Modifier.thenIf(animateItems) { animateItem() },
                                     name = file.name,
                                     cover = BrowseCover.Local(file.path),
+                                    highlighted = index == progressIndex,
                                     showPhotoThumb = true,
                                     onClick = { openFolderImage(file) },
                                     onLongClick = { openExternalFile(file.path) },

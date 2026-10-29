@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyGridScope
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.LibraryBooks
 import androidx.compose.material.icons.filled.Explore
@@ -173,6 +174,7 @@ import com.hippo.ehviewer.ui.main.browseRecentPreviewLimit
 import com.hippo.ehviewer.ui.main.browseZipAsDirTypeLabel
 import com.hippo.ehviewer.ui.main.onRecentHeaderGesture
 import com.hippo.ehviewer.ui.main.rememberBrowseSectionCollapse
+import com.hippo.ehviewer.ui.main.rememberPhotoGridProgressIndex
 import com.hippo.ehviewer.ui.main.rememberRecentStripExpanded
 import com.hippo.ehviewer.ui.main.selectable
 import com.hippo.ehviewer.ui.main.toPick
@@ -275,11 +277,13 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
         enteredFromParent: Boolean = false,
         exitToOrigin: Boolean = false,
     ) {
-        photoGridOverlay = if (dir == null) {
+        val next = if (dir == null) {
             null
         } else {
             BrowseSession.PhotoGridOverlay(dir, enteredFromParent, exitToOrigin)
         }
+        if (next != photoGridOverlay) activeListingRequest = null
+        photoGridOverlay = next
         BrowseSession.setWebDavPhotoGrid(sourceId, dir, enteredFromParent, exitToOrigin)
     }
     val photoGridDir = photoGridOverlay?.dir
@@ -299,7 +303,6 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
         else -> BrowseVirtualKind.None
     }
     val photoGrid = virtual == BrowseVirtualKind.PhotoGrid
-    val photoGridNow = rememberUpdatedState(photoGrid)
     val folderId = BrowseFolderId.webDav(sourceId, relativeDirForMode)
     val contentMode = rememberEffectiveBrowseContentMode(folderId)
     val useGrid = browseUseGrid(listMode, contentMode, virtual)
@@ -470,6 +473,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                 gridSort.ascending,
                 nameOf = { it.name },
                 dateOf = { it.lastModifiedMs },
+                sizeOf = { it.size },
             )
         }
     }
@@ -650,13 +654,13 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
         prevShowHidden = showHiddenFiles
     }
 
-    // Single loader for the current path. When [relativeDir] changes, Compose cancels this
-    // effect and starts a new one — that is the only concurrency control we need.
+    // Path and photo-grid mode both own a listing: the grid can contain only images,
+    // so leaving it at the same path must restore the full folder listing.
     // Previous epoch/ON_RESUME races could ++epoch, early-return without clearing loading,
     // and leave History→up→up stuck on an empty infinite spinner (manual refresh worked).
     val thumbFolderKey = "dav:$sourceId:$relativeDir"
     val thumbFolderKeyNow = rememberUpdatedState(thumbFolderKey)
-    LaunchedEffect(explorerWindowId, sourceId, relativeDir, refreshToken) {
+    LaunchedEffect(explorerWindowId, sourceId, relativeDir, photoGrid, refreshToken) {
         val request = Any()
         activeListingRequest = request
         VideoThumbnail.onBrowseFolderChanged(thumbFolderKey)
@@ -692,7 +696,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
 
         val loadDir = if (configChanged) "" else targetDir
         // Photo-grid open: same complete index the reader uses — no directory scan.
-        if (!force && !configChanged && photoGridNow.value) {
+        if (!force && !configChanged && photoGrid) {
             val names = FolderGalleryIndex.loadWebDav(src.id, configKey, loadDir)
             if (!names.isNullOrEmpty()) {
                 if (listedDir != loadDir || entries.isEmpty()) {
@@ -891,7 +895,14 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                     navigator.popBackStack()
                     return
                 }
-                else -> return
+                else -> {
+                    if (!applyCachedListing(relativeDir)) {
+                        entries = emptyList()
+                        listedDir = null
+                        loading = true
+                    }
+                    return
+                }
             }
         }
         // Dir pin from History/Library/Fav with alwaysExitToDir off: leave immediately.
@@ -2960,6 +2971,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                         }
                     } else if (photoGrid) {
                         val progressGid = stableGalleryId(sourceId, "webdav:$relativeDir")
+                        val progressIndex = rememberPhotoGridProgressIndex(progressGid)
                         val gridState = rememberSmbPhotoGridState(
                             sourceId = sourceId,
                             relativeDir = "dav|$dirKey#pg",
@@ -2984,11 +2996,12 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                             verticalArrangement = gridSpacing,
                         ) {
                             searchSection(grid = true)
-                            items(photoGridImages, key = { "pg-${it.fileName}" }) { file ->
+                            itemsIndexed(photoGridImages, key = { _, file -> "pg-${file.fileName}" }) { index, file ->
                                 BrowsePhotoGridImageItem(
                                     modifier = Modifier.thenIf(animateItems) { animateItem() },
                                     name = file.name,
                                     cover = imageCoverFor(file),
+                                    highlighted = index == progressIndex,
                                     showPhotoThumb = true,
                                     allowRemoteFetch = allowRemoteThumbs,
                                     onClick = { openFolderImage(file) },

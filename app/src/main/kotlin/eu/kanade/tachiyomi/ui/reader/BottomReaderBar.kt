@@ -97,11 +97,27 @@ fun BottomReaderBar(
             contentDescription = stringResource(autoRotate.stringRes),
         )
     }
-    // 3. Fit width / height / screen — single page and dual no-gap
+    // 3. Fit screen / fill screen — single page and dual no-gap
     if (showScaleFitCycle) {
-        val scaleFit by Settings.imageScaleType.collectAsState { ScaleFitCycle.fromPreference(it) }
+        val scale by Settings.imageScaleType.collectAsState()
+        val autoScroll by Settings.slideshowAutoScroll.collectAsState()
+        val fillScreen by Settings.slideshowFillScreen.collectAsState()
+        val slideshow = readingMode == ReadingModeType.SLIDESHOW && onClickContents == null
+        val scaleFit = if (slideshow) {
+            if (autoScroll || fillScreen) ScaleFitCycle.FILL_SCREEN else ScaleFitCycle.FIT_SCREEN
+        } else {
+            ScaleFitCycle.fromPreference(scale)
+        }
         ActionButton(
-            onClick = { Settings.imageScaleType.value = ScaleFitCycle.next(scaleFit.prefValue).prefValue },
+            onClick = {
+                if (slideshow) {
+                    val enable = scaleFit != ScaleFitCycle.FILL_SCREEN
+                    Settings.slideshowFillScreen.value = enable
+                    Settings.slideshowAutoScroll.value = enable
+                } else {
+                    Settings.imageScaleType.value = ScaleFitCycle.next(scaleFit.prefValue).prefValue
+                }
+            },
             imageVector = scaleFit.icon,
             contentDescription = stringResource(scaleFit.stringRes),
         )

@@ -71,7 +71,12 @@ fun SpinnerChoice(title: String, entries: Array<String>, values: List<Int>, fiel
 
 /** Multiple checked options; keep the menu open while changing selections. */
 @Composable
-fun ToggleMenuChoice(title: String, selectedValue: String, options: List<Pair<String, MutableState<Boolean>>>) {
+fun ToggleMenuChoice(
+    title: String,
+    selectedValue: String,
+    options: List<Pair<String, MutableState<Boolean>>>,
+    onOptionChanged: (MutableState<Boolean>) -> Unit = {},
+) {
     var expanded by remember { mutableStateOf(false) }
     Row(
         modifier = Modifier.fillMaxWidth().height(48.dp).clickable { expanded = true }.padding(horizontal = 16.dp),
@@ -85,7 +90,10 @@ fun ToggleMenuChoice(title: String, selectedValue: String, options: List<Pair<St
                 options.forEach { (label, field) ->
                     DropdownMenuItem(
                         text = { Text(label) },
-                        onClick = { field.value = !field.value },
+                        onClick = {
+                            field.value = !field.value
+                            onOptionChanged(field)
+                        },
                         trailingIcon = {
                             Box(modifier = Modifier.size(24.dp), contentAlignment = Alignment.Center) {
                                 if (field.value) Icon(Icons.Default.Check, contentDescription = null)

@@ -157,6 +157,10 @@ fun ReaderGeneralSetting(
         field = Settings.showReaderSeekbar.asMutableState(),
     )
     SwitchChoice(
+        title = stringResource(id = R.string.pref_reader_hide_fab),
+        field = Settings.readerHideFab.asMutableState(),
+    )
+    SwitchChoice(
         title = stringResource(id = R.string.pref_double_tap_to_zoom),
         field = Settings.doubleTapToZoom.asMutableState(),
     )

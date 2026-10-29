@@ -13,6 +13,7 @@ internal class StillExportQuality(
     val avifBitDepth: Int = 10,
     val downsizeGainMap: Boolean = false,
     val extendedSrgbBt2020: Boolean = true,
+    val keepExif: Boolean = false,
 ) : AbstractCoroutineContextElement(Key) {
     companion object Key : CoroutineContext.Key<StillExportQuality> {
         fun current() = StillExportQuality(
@@ -23,6 +24,7 @@ internal class StillExportQuality(
             if (Settings.imageConversionAvif12Bit.value) 12 else 10,
             Settings.imageConversionDownsizeGainMap.value,
             Settings.imageConversionExtendedSrgbBt2020.value,
+            Settings.imageConversionKeepExif.value,
         )
     }
 }

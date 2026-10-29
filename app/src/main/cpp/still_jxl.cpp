@@ -75,6 +75,14 @@ static int encode_jxl_pixels(unsigned w, unsigned h, const void* rgba, uhdr_colo
         JxlEncoderFrameSettingsSetOption(frame, JXL_ENC_FRAME_SETTING_EFFORT, compression ? 5 : 3) != JXL_ENC_SUCCESS ||
         JxlEncoderFrameSettingsSetOption(frame, JXL_ENC_FRAME_SETTING_DECODING_SPEED, compression ? 0 : 2) != JXL_ENC_SUCCESS) return -63;
     const JxlPixelFormat format{4, type, JXL_NATIVE_ENDIAN, 0};
+    if (quality.exif_size) {
+        if (JxlEncoderUseContainer(encoder.get(), JXL_TRUE) != JXL_ENC_SUCCESS ||
+            JxlEncoderUseBoxes(encoder.get()) != JXL_ENC_SUCCESS) return -62;
+        std::vector<uint8_t> box(4 + quality.exif_size, 0);
+        std::copy(quality.exif, quality.exif + quality.exif_size, box.begin() + 4);
+        if (JxlEncoderAddBox(encoder.get(), "Exif", box.data(), box.size(), JXL_FALSE) != JXL_ENC_SUCCESS) return -62;
+        JxlEncoderCloseBoxes(encoder.get());
+    }
     if (JxlEncoderAddImageFrame(frame, &format, rgba, pixels * (type == JXL_TYPE_UINT8 ? 4 : 8)) != JXL_ENC_SUCCESS) return -64;
     JxlEncoderCloseInput(encoder.get());
     return write_jxl_output(encoder.get(), path);
@@ -138,7 +146,7 @@ int encode_jxl_u8(unsigned w, unsigned h, const uint8_t* rgba, uhdr_color_gamut_
 // No RGB conversion or distance setting is involved.
 extern "C" JNIEXPORT jint JNICALL
 Java_com_hippo_ehviewer_jni_HdrConvertKt_transcodeJpegToJxl(
-        JNIEnv* env, jclass, jbyteArray input, jstring output) {
+        JNIEnv* env, jclass, jbyteArray input, jstring output, jboolean keepExif) {
     if (!input || !output) return -60;
     const jsize length = env->GetArrayLength(input);
     if (length <= 0) return -60;
@@ -147,9 +155,10 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_transcodeJpegToJxl(
     auto runner = JxlThreadParallelRunnerMake(nullptr, threads);
     if (!encoder || !runner ||
         JxlEncoderSetParallelRunner(encoder.get(), JxlThreadParallelRunner, runner.get()) != JXL_ENC_SUCCESS ||
-        JxlEncoderStoreJPEGMetadata(encoder.get(), JXL_TRUE) != JXL_ENC_SUCCESS) return -61;
+        JxlEncoderStoreJPEGMetadata(encoder.get(), keepExif) != JXL_ENC_SUCCESS) return -61;
     auto* frame = JxlEncoderFrameSettingsCreate(encoder.get(), nullptr);
-    if (!frame || JxlEncoderFrameSettingsSetOption(frame, JXL_ENC_FRAME_SETTING_EFFORT, 5) != JXL_ENC_SUCCESS) return -63;
+    if (!frame || JxlEncoderFrameSettingsSetOption(frame, JXL_ENC_FRAME_SETTING_JPEG_KEEP_EXIF, keepExif == JNI_TRUE ? 1 : 0) != JXL_ENC_SUCCESS ||
+        JxlEncoderFrameSettingsSetOption(frame, JXL_ENC_FRAME_SETTING_EFFORT, 5) != JXL_ENC_SUCCESS) return -63;
     auto* jpeg = env->GetByteArrayElements(input, nullptr);
     if (!jpeg) return -60;
     // AddJPEGFrame copies the JPEG internally. Release the JNI input before
@@ -167,7 +176,7 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_transcodeJpegToJxl(
 
 extern "C" JNIEXPORT jint JNICALL
 Java_com_hippo_ehviewer_jni_HdrConvertKt_transcodeJpegBufferToJxl(
-        JNIEnv* env, jclass, jobject input, jstring output) try {
+        JNIEnv* env, jclass, jobject input, jstring output, jboolean keepExif) try {
     if (!input || !output) return -60;
     const jlong length = env->GetDirectBufferCapacity(input);
     if (length <= 0) return -60;
@@ -176,9 +185,10 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_transcodeJpegBufferToJxl(
     auto runner = JxlThreadParallelRunnerMake(nullptr, threads);
     if (!encoder || !runner ||
         JxlEncoderSetParallelRunner(encoder.get(), JxlThreadParallelRunner, runner.get()) != JXL_ENC_SUCCESS ||
-        JxlEncoderStoreJPEGMetadata(encoder.get(), JXL_TRUE) != JXL_ENC_SUCCESS) return -61;
+        JxlEncoderStoreJPEGMetadata(encoder.get(), keepExif) != JXL_ENC_SUCCESS) return -61;
     auto* frame = JxlEncoderFrameSettingsCreate(encoder.get(), nullptr);
-    if (!frame || JxlEncoderFrameSettingsSetOption(frame, JXL_ENC_FRAME_SETTING_EFFORT, 5) != JXL_ENC_SUCCESS) return -63;
+    if (!frame || JxlEncoderFrameSettingsSetOption(frame, JXL_ENC_FRAME_SETTING_JPEG_KEEP_EXIF, keepExif == JNI_TRUE ? 1 : 0) != JXL_ENC_SUCCESS ||
+        JxlEncoderFrameSettingsSetOption(frame, JXL_ENC_FRAME_SETTING_EFFORT, 5) != JXL_ENC_SUCCESS) return -63;
     const auto* jpeg = static_cast<const uint8_t*>(env->GetDirectBufferAddress(input));
     if (!jpeg) return -60;
     // AddJPEGFrame owns the required reconstruction data; input is borrowed.
