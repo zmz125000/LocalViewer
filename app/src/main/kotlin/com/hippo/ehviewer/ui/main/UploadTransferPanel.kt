@@ -63,16 +63,22 @@ internal fun UploadTransferBars() {
         jobs.forEach { job ->
             key(job.id) {
                 val state by job.state.collectAsState()
+                val finished = !state.active && !state.editable && state.phase != UploadPhase.Preparing
                 Snackbar(containerColor = snackbarContainerColor(), action = {
                     TextButton(onClick = { UploadTransfers.panelId = job.id }) { Text(stringResource(R.string.transfer_show)) }
                 }, dismissAction = {
-                    TextButton(onClick = { UploadTransfers.cancel(job) }) {
-                        Text(stringResource(android.R.string.cancel))
+                    TextButton(onClick = {
+                        if (finished) UploadTransfers.dismiss(job) else UploadTransfers.cancel(job)
+                    }) {
+                        Text(stringResource(if (finished) R.string.browse_task_done else android.R.string.cancel))
                     }
                 }) {
                     Column(Modifier.clickable { UploadTransfers.panelId = job.id }) {
                         if (state.phase == UploadPhase.Preparing || state.editable) {
                             Text("${stringResource(R.string.transfer_upload)} #${job.id} · ${stringResource(R.string.transfer_file_count, state.rows.count { !it.file.directory })}")
+                        } else if (state.phase == UploadPhase.Finished) {
+                            Text("${stringResource(R.string.transfer_upload)} #${job.id} · ${stringResource(R.string.browse_finished)}")
+                            Text(uploadSummary(state))
                         } else {
                             Text("${stringResource(R.string.transfer_upload)} #${job.id} · ${job.title}", maxLines = 1, overflow = TextOverflow.Ellipsis)
                             Text(uploadSummary(state))
@@ -94,9 +100,24 @@ private fun UploadTransferDialog(job: UploadJob) {
         val headerStyle = if (tablet) MaterialTheme.typography.titleLarge else MaterialTheme.typography.titleMedium
         val headerIconSize = with(LocalDensity.current) { headerStyle.fontSize.toDp() }
         val overflowPress = remember { MutableInteractionSource() }
+        val phaseLabel = when (state.phase) {
+            UploadPhase.Preparing -> R.string.transfer_preparing
+            UploadPhase.Ready -> R.string.transfer_ready
+            UploadPhase.Running -> R.string.browse_task_running
+            UploadPhase.Paused -> R.string.transfer_paused
+            UploadPhase.Finished -> R.string.browse_task_done
+            UploadPhase.Stopped -> R.string.transfer_stopped
+            UploadPhase.Failed -> R.string.browse_task_failed
+        }
         Column {
             Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp, top = 16.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text("${stringResource(R.string.transfer_upload)} #${job.id}", Modifier.weight(1f), style = headerStyle)
+                Text(
+                    stringResource(phaseLabel),
+                    modifier = Modifier.padding(end = 8.dp),
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                )
                 Box {
                     Icon(
                         Icons.Default.MoreVert,
@@ -119,6 +140,14 @@ private fun UploadTransferDialog(job: UploadJob) {
                             },
                         )
                         DropdownMenuItem(
+                            text = { Text(stringResource(R.string.browse_auto_finish)) },
+                            trailingIcon = { if (state.autoFinish) Icon(Icons.Default.Check, null) },
+                            onClick = {
+                                UploadTransfers.toggleAutoFinish(job)
+                                menu = false
+                            },
+                        )
+                        DropdownMenuItem(
                             text = { Text(stringResource(R.string.browse_run_in_background)) },
                             trailingIcon = { if (state.background) Icon(Icons.Default.Check, null) },
                             onClick = {
@@ -130,16 +159,7 @@ private fun UploadTransferDialog(job: UploadJob) {
                 }
             }
             Text(uploadSummary(state), Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.labelLarge)
-            val phaseLabel = when (state.phase) {
-                UploadPhase.Preparing -> R.string.transfer_preparing
-                UploadPhase.Ready -> R.string.transfer_ready
-                UploadPhase.Running -> R.string.browse_task_running
-                UploadPhase.Paused -> R.string.transfer_paused
-                UploadPhase.Finished -> R.string.browse_task_done
-                UploadPhase.Stopped -> R.string.transfer_stopped
-                UploadPhase.Failed -> R.string.browse_task_failed
-            }
-            Text(stringResource(phaseLabel), Modifier.padding(horizontal = 16.dp, vertical = 4.dp), style = MaterialTheme.typography.bodySmall)
+
             if (state.destinationLabel.isNotEmpty()) Text(state.destinationLabel, Modifier.padding(horizontal = 16.dp), maxLines = 2, style = MaterialTheme.typography.bodySmall)
             state.error?.let { Text(it, Modifier.padding(16.dp), color = MaterialTheme.colorScheme.error) }
             LazyColumn(Modifier.weight(1f).fillMaxWidth(), contentPadding = PaddingValues(top = 8.dp, bottom = GalleryGridDefaults.margin())) {
@@ -181,6 +201,8 @@ private fun UploadTransferDialog(job: UploadJob) {
                         explorer.open()
                     }) { Text(stringResource(R.string.transfer_destination)) }
                     TextButton(onClick = { UploadTransfers.start(job) }, enabled = state.destination != null && state.rows.isNotEmpty()) { Text(stringResource(R.string.transfer_start)) }
+                } else {
+                    TextButton(onClick = { UploadTransfers.dismiss(job) }) { Text(stringResource(R.string.browse_task_done)) }
                 }
             }
         }

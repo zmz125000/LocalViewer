@@ -34,6 +34,7 @@ internal data class UploadState(
     val destinationLabel: String = "",
     val skipExisting: Boolean = true,
     val background: Boolean = Settings.browseTaskForegroundService.value,
+    val autoFinish: Boolean = Settings.browseTaskAutoFinish.value,
     val error: String? = null,
 ) {
     val succeeded get() = rows.count { !it.file.directory && it.status == UploadFileStatus.Succeeded }
@@ -143,6 +144,14 @@ internal object UploadTransfers {
         job.state.update { it.copy(background = !it.background) }
         syncForeground()
     }
+    fun toggleAutoFinish(job: UploadJob) {
+        job.state.update { it.copy(autoFinish = !it.autoFinish) }
+        dismissAutoFinished(job)
+    }
+    private fun dismissAutoFinished(job: UploadJob) {
+        val state = job.state.value
+        if (state.autoFinish && state.phase == UploadPhase.Finished && state.failed == 0) dismiss(job)
+    }
     fun toggleSkipExisting(job: UploadJob) {
         job.state.update { if (it.editable) it.copy(skipExisting = !it.skipExisting) else it }
     }
@@ -186,6 +195,7 @@ internal object UploadTransfers {
                     )
                 }
             }
+            dismissAutoFinished(job)
             syncForeground()
         }
     }
