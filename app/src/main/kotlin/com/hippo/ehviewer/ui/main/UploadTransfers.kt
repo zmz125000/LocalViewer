@@ -5,6 +5,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.ehviewer.core.i18n.R
+import com.ehviewer.core.util.logcat
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.library.BrowseSession
 import com.hippo.ehviewer.library.ExplorerWindows
@@ -152,6 +153,7 @@ internal object UploadTransfers {
                 job.state.update { it.copy(phase = UploadPhase.Stopped) }
                 throw e
             } catch (e: Throwable) {
+                logcat("FileTransfer", e)
                 job.state.update { it.copy(phase = UploadPhase.Failed, error = e.message ?: "Cannot list source") }
             }
         }
@@ -374,6 +376,7 @@ internal object UploadTransfers {
                             } catch (e: CancellationException) {
                                 throw e
                             } catch (e: Throwable) {
+                                logcat("FileTransfer", e)
                                 updateRow(job, file.relative, UploadFileStatus.Failed, e.message ?: "Transfer failed")
                             }
                         }
@@ -400,6 +403,7 @@ internal object UploadTransfers {
                 }
                 throw e
             } catch (e: Throwable) {
+                logcat("FileTransfer", e)
                 job.state.update { it.copy(phase = UploadPhase.Failed, error = e.message) }
             } finally {
                 meter.cancel()

@@ -20,6 +20,7 @@ import io.ktor.client.engine.cio.CIO
 import io.ktor.client.engine.okhttp.OkHttp
 import io.ktor.client.plugins.HttpRequestTimeoutException
 import io.ktor.client.plugins.HttpTimeout
+import io.ktor.client.plugins.HttpTimeoutConfig
 import io.ktor.client.plugins.timeout
 import io.ktor.client.request.header
 import io.ktor.client.request.prepareGet
@@ -95,7 +96,7 @@ object WebDavClient {
         http().prepareGet(absoluteUrl(source, relative)) {
             basicAuthHeader(source.username, password)?.let { header(HttpHeaders.Authorization, it) }
             timeout {
-                requestTimeoutMillis = 0
+                requestTimeoutMillis = HttpTimeoutConfig.INFINITE_TIMEOUT_MS
                 socketTimeoutMillis = DL_SOCKET_MS
             }
         }.execute { response ->
@@ -152,7 +153,7 @@ object WebDavClient {
             val response = http().request(absoluteUrl(source, temp)) {
                 method = HttpMethod.Put
                 timeout {
-                    requestTimeoutMillis = 0
+                    requestTimeoutMillis = HttpTimeoutConfig.INFINITE_TIMEOUT_MS
                     socketTimeoutMillis = DL_SOCKET_MS
                 }
                 auth?.let { header(HttpHeaders.Authorization, it) }
@@ -244,8 +245,8 @@ object WebDavClient {
 
     /**
      * TrafficStats tag for WebDAV sockets ("WDV1").
-     * CIO / OkHttp open sockets on pool threads; StrictMode requires the **opening
-     * thread** to have a stats tag — set once on each pool thread below.
+     * Tag CIO / dispatcher workers and OkHttp's socket factory, including sockets
+     * opened by OkHttp's independent fast-fallback workers.
      */
     private const val TRAFFIC_TAG = 0x57445631
 
@@ -410,6 +411,7 @@ object WebDavClient {
     private fun buildOkHttpClient(insecureTls: Boolean): HttpClient = HttpClient(OkHttp) {
         engine {
             config {
+                socketFactory(WebDavSocketFactory(TRAFFIC_TAG))
                 protocols(listOf(Protocol.HTTP_2, Protocol.HTTP_1_1))
                 dispatcher(
                     Dispatcher(taggedExecutor("webdav-okhttp")).apply {
