@@ -463,12 +463,12 @@ object Settings : DataStorePreferences(null) {
      * SMB multiplex: overlapping file/list ops per TCP session (smbj message IDs).
      * Advanced slider 1–20, default 10. Changing drops pools so new sessions pick up the budget.
      */
-    val smbOpsPerSession = intPref("smb_ops_per_session", 10).observed {
+    val smbOpsPerSession = intPref("smb_ops_per_session", 15).observed {
         com.hippo.ehviewer.smb.SmbGateway.onPoolBudgetChanged()
     }
 
     /** Fill existing browse/reader multiplex slots before growing the data connection pool. */
-    val smbPreferMultiplex = boolPref("smb_prefer_multiplex", false)
+    val smbPreferMultiplex = boolPref("smb_prefer_multiplex", true)
 
     /** Prefer SMB 3.x only (disable SMB 2.0.2 / 2.1 dialects). Default off. */
     val smb3Only = boolPref("smb3_only", false).observed {
