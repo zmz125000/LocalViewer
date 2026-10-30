@@ -7,6 +7,62 @@ import org.junit.Test
 
 class SmbHostPoolPolicyTest {
     @Test
+    fun multiplexArchiveHandleReusesBusyTcpEvenWhenAnotherTcpHasTheShare() {
+        assertEquals(
+            SmbDataPlacement.Use(0),
+            smbPlaceDataOp(
+                outstanding = intArrayOf(1, 0),
+                availableSlots = intArrayOf(9, 10),
+                maxConnections = 5,
+                hasShare = booleanArrayOf(false, true),
+                preferMultiplex = true,
+                lastUsedMs = longArrayOf(100, 200),
+            ),
+        )
+    }
+
+    @Test
+    fun multiplexIdleHandlesStayOnRecentlyUsedTcpInsteadOfRevivingOldShareTcp() {
+        for (preferred in 0..1) {
+            val used = LongArray(2) { if (it == preferred) 200 else 100 }
+            val shares = BooleanArray(2) { it != preferred }
+            assertEquals(
+                SmbDataPlacement.Use(preferred),
+                smbPlaceDataOp(
+                    outstanding = intArrayOf(0, 0),
+                    availableSlots = intArrayOf(10, 10),
+                    maxConnections = 5,
+                    hasShare = shares,
+                    preferMultiplex = true,
+                    lastUsedMs = used,
+                ),
+            )
+        }
+        // With the preference off, preserve cached-share placement.
+        assertEquals(
+            SmbDataPlacement.Use(1),
+            smbPlaceDataOp(
+                intArrayOf(0, 0),
+                intArrayOf(10, 10),
+                5,
+                hasShare = booleanArrayOf(false, true),
+                lastUsedMs = longArrayOf(200, 100),
+            ),
+        )
+    }
+
+    @Test
+    fun idleCleanupReleasesOnlyExpiredExtraDataConnections() {
+        assertTrue(smbShouldReleaseIdleData(false, 0, 90_000, 3, 1, 90_000))
+        assertTrue(smbShouldReleaseIdleData(false, 0, 130_000, 2, 1, 90_000))
+        assertFalse(smbShouldReleaseIdleData(false, 0, 89_999, 3, 1, 90_000))
+        assertFalse(smbShouldReleaseIdleData(false, 1, 180_000, 3, 1, 90_000))
+        assertFalse(smbShouldReleaseIdleData(true, 0, 180_000, 3, 1, 90_000))
+        assertFalse(smbShouldReleaseIdleData(false, 0, 180_000, 1, 1, 90_000))
+        assertFalse(smbShouldReleaseIdleData(false, 0, -1, 3, 1, 90_000))
+    }
+
+    @Test
     fun preferMultiplexFillsEachConnectionsSlotsBeforeGrowing() {
         assertEquals(listOf(3), smbSpreadDataOps(3, 3, 3, preferMultiplex = true))
         assertEquals(listOf(3, 2), smbSpreadDataOps(5, 3, 3, preferMultiplex = true))
