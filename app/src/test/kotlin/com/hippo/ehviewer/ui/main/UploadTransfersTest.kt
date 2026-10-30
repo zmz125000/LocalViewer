@@ -95,6 +95,34 @@ class UploadTransfersTest {
     }
 
     @Test
+    fun `saved zip projections reopen as their backing file with fresh metadata`() {
+        val paths = listOf(
+            ExplorerWindows.Kind.Local to "mediastore:/Pictures/album.zip/part",
+            ExplorerWindows.Kind.Local to "content:/provider/tree/primary%3APictures/document/primary%3APictures/album.zip/part",
+            ExplorerWindows.Kind.Local to "content:/provider/tree/primary%3APictures%2Falbum.zip/document/primary%3APictures%2Falbum.zip/part",
+            ExplorerWindows.Kind.Smb to "photos/album.zip/part",
+            ExplorerWindows.Kind.WebDav to "photos/album.zip/part",
+        )
+        for ((kind, path) in paths) {
+            val legacy = com.hippo.ehviewer.library.SavedUploads.Entry(
+                "old",
+                "part",
+                com.hippo.ehviewer.library.SavedUploads.Location(kind.name, 7, path),
+                com.hippo.ehviewer.library.SavedUploads.Location("Local", 0, "/backup"),
+                "backup",
+            ).file()
+            val root = uploadSelectionRoots(listOf(legacy)).single()
+            assertFalse(root.directory)
+            assertEquals("album.zip", root.relative)
+            assertEquals(path.removeSuffix("/part"), root.source.path)
+            assertEquals(-1L, root.size)
+            assertEquals(0L, root.mtime)
+        }
+        val folder = "content:/provider/tree/primary%3Aarchives.zip/document/primary%3Aphotos/album"
+        assertTrue(uploadRoot(TransferLocation(ExplorerWindows.Kind.Local, 0, folder), "album", true, 0, 0).directory)
+    }
+
+    @Test
     fun `zip folder roots upload their backing archive once`() {
         for (kind in ExplorerWindows.Kind.entries) {
             val path = if (kind == ExplorerWindows.Kind.Local) "/photos/album.zip/part" else "photos/album.zip/part"

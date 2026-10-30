@@ -103,13 +103,20 @@ internal fun uploadRoot(source: TransferLocation, title: String, directory: Bool
     val localZip = if (source.kind == ExplorerWindows.Kind.Local) com.hippo.ehviewer.library.ZipPaths.parse(source.path)?.first else null
     val archive = if (localZip != null) {
         localZip
-    } else if (directory && !source.path.startsWith("content:")) {
-        Regex("(?i)(?:^|/)[^/]+\\.(?:zip|cbz)(?=/|$)").find(source.path)?.let { source.path.take(it.range.last + 1) }
+    } else if (directory) {
+        // SAF tree IDs may also contain .zip; only inspect the document path.
+        val start = if (source.path.startsWith("content:")) {
+            source.path.indexOf("/document/").let { if (it >= 0) it + "/document".length else source.path.length }
+        } else {
+            0
+        }
+        Regex("(?i)(?:^|/)[^/]+\\.(?:zip|cbz)(?=/|$)").find(source.path, start)?.let { source.path.take(it.range.last + 1) }
     } else {
         null
     }
     return if (archive != null) {
-        TransferFile(source.copy(path = archive), archive.substringAfterLast('/'), false, size, mtime)
+        val name = archive.substringAfterLast('/').let { if (archive.startsWith("content:")) humanizePathName(it) else it }
+        TransferFile(source.copy(path = archive), name, false, -1, 0)
     } else {
         TransferFile(source, title.substringAfterLast('/').ifBlank { "Upload" }, directory, size, mtime)
     }
@@ -154,16 +161,15 @@ internal object UploadTransfers {
     val choosingDestination get() = destinationRequestId != null
 
     fun chooseSavedUploadDestination(file: TransferFile) {
-        require(file.directory)
         panelId = null
         destinationJobId = null
-        savedUploadDraft = SavedUploadDraft(ids.getAndIncrement(), file)
+        savedUploadDraft = SavedUploadDraft(ids.getAndIncrement(), uploadRoot(file.source, file.relative, file.directory, file.size, file.mtime))
     }
 
     fun hasDestinationRequest(id: Long) = savedUploadDraft?.id == id || job(id) != null
 
     fun openSavedUpload(entry: SavedUploads.Entry) {
-        val file = TransferFile(entry.source.transfer(), entry.title, true, -1, 0)
+        val file = entry.file()
         recordUploadHistory(file)
         val job = prepare(listOf(file))
         destination(entry.destination.transfer(), entry.destinationLabel, job.id)
