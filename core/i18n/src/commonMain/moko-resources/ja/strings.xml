@@ -1167,5 +1167,15 @@
     <string name="transfer_local_destination">ローカルフォルダー</string>
     <string name="transfer_counts">成功 %1$d · スキップ %2$d · 失敗 %3$d</string>
     <string name="transfer_file_count">%1$d 個のファイル</string>
-    <string name="browse_save_to_upload">アップロードに保存</string>
+    <string name="explorer">エクスプローラー</string>
+    <string name="explorer_quick_access">クイックアクセス</string>
+    <string name="explorer_windows">ウィンドウ</string>
+    <string name="explorer_saved_paths">保存済みパス</string>
+    <string name="explorer_duplicate">ウィンドウを複製</string>
+    <string name="explorer_save_path">パスを保存</string>
+    <string name="browse_open_in_new_tab">新しいタブで開く</string>
+    <string name="browse_save_to_paths">保存済みパスに追加</string>
+    <string name="explorer_close_window">ウィンドウを閉じる</string>
+    <string name="explorer_delete_saved">保存済みパスを削除</string>
+    <string name="browse_save_to_upload">クイックアップロードに保存</string>
 </resources>

@@ -1239,5 +1239,15 @@
     <string name="transfer_local_destination">本地文件夹</string>
     <string name="transfer_counts">%1$d 个成功 · %2$d 个跳过 · %3$d 个失败</string>
     <string name="transfer_file_count">%1$d 个文件</string>
-    <string name="browse_save_to_upload">保存到上传</string>
+    <string name="explorer">文件管理器</string>
+    <string name="explorer_quick_access">快速访问</string>
+    <string name="explorer_windows">窗口</string>
+    <string name="explorer_saved_paths">已保存的路径</string>
+    <string name="explorer_duplicate">复制窗口</string>
+    <string name="explorer_save_path">保存路径</string>
+    <string name="browse_open_in_new_tab">在新标签页中打开</string>
+    <string name="browse_save_to_paths">保存到路径</string>
+    <string name="explorer_close_window">关闭窗口</string>
+    <string name="explorer_delete_saved">删除已保存的路径</string>
+    <string name="browse_save_to_upload">保存到快捷上传</string>
 </resources>
