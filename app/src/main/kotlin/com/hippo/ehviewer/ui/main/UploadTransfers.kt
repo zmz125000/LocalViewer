@@ -16,14 +16,17 @@ import com.hippo.ehviewer.library.TransferControl
 import com.hippo.ehviewer.library.TransferFile
 import com.hippo.ehviewer.library.TransferFiles
 import com.hippo.ehviewer.library.TransferLocation
+import com.hippo.ehviewer.library.TrashFiles
 import com.hippo.ehviewer.library.forEachPreparedTransfer
 import com.hippo.ehviewer.library.forEachTransferLane
 import com.hippo.ehviewer.library.humanizePathName
 import com.hippo.ehviewer.library.needsLocalTransferMetadata
 import com.hippo.ehviewer.library.resolveBrowsePath
 import com.hippo.ehviewer.library.transferBatchParallelism
+import com.hippo.ehviewer.library.trashSelectionRoots
 import com.hippo.ehviewer.provider.StreamKeepAlivePolicy
 import com.hippo.ehviewer.smb.SmbGateway
+import java.time.LocalDate
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.CancellationException
@@ -51,6 +54,7 @@ internal data class UploadRow(val file: TransferFile, val status: UploadFileStat
 internal data class SavedUploadDraft(val id: Long, val file: TransferFile)
 internal data class UploadState(
     val phase: UploadPhase = UploadPhase.Preparing,
+    val deleting: Boolean = false,
     val rows: List<UploadRow> = emptyList(),
     val destination: TransferLocation? = null,
     val destinationLabel: String = "",
@@ -66,10 +70,10 @@ internal data class UploadState(
     val startWhenReady: Boolean = false,
     val error: String? = null,
 ) {
-    val total get() = rows.count { !it.file.directory }
+    val total get() = rows.count { deleting || !it.file.directory }
     val totalBytes get() = rows.sumOf { if (it.file.directory) 0L else it.file.size.coerceAtLeast(0) }
-    val succeeded get() = rows.count { !it.file.directory && it.status == UploadFileStatus.Succeeded }
-    val skipped get() = rows.count { !it.file.directory && it.status == UploadFileStatus.Skipped }
+    val succeeded get() = rows.count { (deleting || !it.file.directory) && it.status == UploadFileStatus.Succeeded }
+    val skipped get() = rows.count { (deleting || !it.file.directory) && it.status == UploadFileStatus.Skipped }
     val failed get() = rows.count { it.status == UploadFileStatus.Failed }
     val active get() = phase == UploadPhase.Running || phase == UploadPhase.Paused
     val editable get() = phase == UploadPhase.Ready
@@ -84,7 +88,7 @@ internal data class UploadState(
         error = null,
     )
 }
-internal class UploadJob(val id: Long, val title: String, val saving: Boolean = false) {
+internal class UploadJob(val id: Long, val title: String, val saving: Boolean = false, val deleting: Boolean = false) {
     val state = MutableStateFlow(UploadState())
     val control = TransferControl()
     val bytes = AtomicLong()
@@ -254,6 +258,85 @@ internal object UploadTransfers {
         return job
     }
 
+    /** Confirmation is supplied by the item/selection menu. No directory enumeration. */
+    fun delete(files: List<TransferFile>) {
+        val roots = trashSelectionRoots(files)
+        if (roots.isEmpty()) return
+        val job = UploadJob(ids.getAndIncrement(), roots.first().relative, deleting = true)
+        job.state.value = job.state.value.copy(
+            phase = UploadPhase.Ready,
+            deleting = true,
+            rows = roots.map { UploadRow(it) },
+            destinationLabel = ".trash/${LocalDate.now()}",
+        )
+        _jobs.update { it + job }
+        panelId = job.id
+        start(job)
+    }
+
+    private fun startDelete(job: UploadJob) {
+        val state = job.state.value
+        if (!state.editable || state.rows.isEmpty()) return
+        if (!job.state.compareAndSet(state, state.copy(phase = UploadPhase.Running, serverCopy = true))) return
+        syncForeground()
+        val date = state.destinationLabel.substringAfterLast('/')
+        job.worker = scope.launch {
+            val changed = HashSet<TransferLocation>()
+            try {
+                slots.withPermit {
+                    for (row in state.rows) {
+                        job.control.checkpoint()
+                        updateRow(job, row.file.relative, UploadFileStatus.Running)
+                        val parent = row.file.source.copy(path = row.file.source.path.substringBeforeLast('/', ""))
+                        // Stop or a lost reply can race an already committed server rename.
+                        // Refresh attempted SMB parents even when its acknowledgement is lost.
+                        if (parent.kind == ExplorerWindows.Kind.Smb) changed += parent
+                        try {
+                            val name = TrashFiles.move(row.file, date, job.control)
+                            // Account for confirmed server moves before observing a later Stop.
+                            updateRow(job, row.file.relative, UploadFileStatus.Succeeded, "$date/$name")
+                            BrowseSession.invalidateSmbListing(parent.sourceId, parent.path)
+                            BrowseSession.invalidateSmbListingsUnder(row.file.source.sourceId, row.file.source.path)
+                        } catch (error: CancellationException) {
+                            throw error
+                        } catch (error: Throwable) {
+                            logcat("FileDelete", error)
+                            val message = deleteFailureMessage(error)
+                            updateRow(job, row.file.relative, UploadFileStatus.Failed, message)
+                        }
+                    }
+                    job.state.update { it.copy(phase = UploadPhase.Finished) }
+                    val finished = job.state.value
+                    val summary = appCtx.getString(R.string.transfer_delete_finished_summary, finished.succeeded, finished.total, finished.skipped, finished.failed)
+                    val failures = finished.rows.filter { it.status == UploadFileStatus.Failed }.mapNotNull { it.detail }.distinct().take(3)
+                    scope.launch(Dispatchers.Main.immediate) {
+                        Toast.makeText(appCtx, (listOf(summary) + failures).joinToString("\n"), Toast.LENGTH_LONG).show()
+                    }
+                }
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Throwable) {
+                val message = deleteFailureMessage(error)
+                job.state.update { it.copy(phase = UploadPhase.Failed, error = message) }
+                scope.launch(Dispatchers.Main.immediate) { Toast.makeText(appCtx, message, Toast.LENGTH_LONG).show() }
+            } finally {
+                for (parent in changed) BrowseSession.notifySmbMutation(parent.sourceId, parent.path)
+                syncForeground()
+            }
+        }
+        trackWorker(job)
+    }
+
+    private fun deleteFailureMessage(error: Throwable): String {
+        val causes = generateSequence(error) { it.cause }.take(8).toList()
+        val status = causes.filterIsInstance<com.hierynomus.mssmb2.SMBApiException>().firstOrNull()?.statusCode
+        return when {
+            causes.any { it is UnsupportedOperationException } || status in listOf(0xC00000BBL, 0xC0000010L, 0xC0000002L) -> appCtx.getString(R.string.transfer_delete_unsupported)
+            status in listOf(0xC0000022L, 0xC0000061L) -> appCtx.getString(R.string.transfer_delete_access_denied)
+            else -> error.message ?: appCtx.getString(R.string.browse_task_failed)
+        }
+    }
+
     fun saveDestination(job: UploadJob, location: TransferLocation, label: String) {
         job.state.update { it.copy(destination = location, destinationLabel = label, startWhenReady = true) }
         if (job.state.value.editable) start(job)
@@ -336,12 +419,13 @@ internal object UploadTransfers {
         scope.launch(Dispatchers.Main.immediate) {
             Toast.makeText(
                 appCtx,
-                appCtx.getString(R.string.transfer_upload_stopped_summary, state.succeeded, state.total, state.skipped, state.failed),
+                appCtx.getString(if (job.deleting) R.string.transfer_delete_stopped_summary else R.string.transfer_upload_stopped_summary, state.succeeded, state.total, state.skipped, state.failed),
                 Toast.LENGTH_LONG,
             ).show()
         }
     }
     fun continueTransfer(job: UploadJob) {
+        if (job.deleting) return
         val state = job.state.value
         if (state.active || state.editable || state.phase == UploadPhase.Preparing) return
         // A fresh execution keeps late cleanup updates out of the reset panel and snackbar.
@@ -389,6 +473,10 @@ internal object UploadTransfers {
         }
     }
     fun start(job: UploadJob) {
+        if (job.deleting) {
+            startDelete(job)
+            return
+        }
         val state = job.state.value
         if (!state.editable || state.destination == null || state.rows.isEmpty()) return
         if (!job.state.compareAndSet(state, state.copy(phase = UploadPhase.Running, error = null, startWhenReady = false))) return

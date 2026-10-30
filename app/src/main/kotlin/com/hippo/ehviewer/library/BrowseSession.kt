@@ -1,6 +1,9 @@
 package com.hippo.ehviewer.library
 
 import java.util.concurrent.ConcurrentHashMap
+import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import okio.Path
 import okio.Path.Companion.toPath
 
@@ -16,6 +19,14 @@ const val BROWSE_IMAGE_SCAN_CAP = 128
  * Survives navigating to the reader (unlike [androidx.compose.runtime.remember]).
  */
 object BrowseSession {
+    private val _smbMutations = MutableSharedFlow<Pair<Long, String>>(extraBufferCapacity = 64, onBufferOverflow = BufferOverflow.DROP_OLDEST)
+    val smbMutations = _smbMutations.asSharedFlow()
+
+    fun notifySmbMutation(sourceId: Long, parent: String) {
+        invalidateSmbListing(sourceId, parent)
+        _smbMutations.tryEmit(sourceId to parent.trim('/'))
+    }
+
     // --- Local folder path stack ---
     data class LocalFrame(
         val rootId: Long,

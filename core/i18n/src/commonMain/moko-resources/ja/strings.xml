@@ -1181,4 +1181,11 @@
     <string name="transfer_smb_multiplex">SMB 多重化</string>
     <string name="settings_smb_prefer_multiplex">SMB 多重化を優先</string>
     <string name="settings_smb_prefer_multiplex_summary">既存の接続の多重化スロットを使い切ってから、新しい接続を作成します。</string>
+    <string name="transfer_delete_confirm">%1$d 件を .trash フォルダに移動しますか？</string>
+    <string name="transfer_delete_finished_summary">%1$d/%2$d/%3$d/%4$d · 削除完了。</string>
+    <string name="transfer_delete_stopped_summary">%1$d/%2$d/%3$d/%4$d · 削除を停止しました。</string>
+    <string name="transfer_delete_unsupported">この接続先またはサーバーは、この項目の .trash への移動に対応していません。</string>
+    <string name="transfer_delete_access_denied">.trash への移動中にアクセスが拒否されました。</string>
+    <string name="transfer_server_move">サーバー側の移動</string>
+    <string name="transfer_item_count">%d 件</string>
 </resources>

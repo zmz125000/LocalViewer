@@ -16,6 +16,29 @@ import org.junit.Test
 
 class UploadTransfersTest {
     @Test
+    fun `delete progress counts whole folders as individual items`() {
+        val state = UploadState(
+            deleting = true,
+            rows = listOf(
+                row("folder", true).copy(status = UploadFileStatus.Succeeded),
+                row("photo.jpg").copy(status = UploadFileStatus.Succeeded),
+                row("denied", true).copy(status = UploadFileStatus.Failed),
+                row("pending", true),
+            ),
+            skipExisting = false,
+            background = false,
+            autoFinish = false,
+            autoStart = false,
+            parallel = false,
+            smbMultiplex = false,
+        )
+        assertEquals(4, state.total)
+        assertEquals(2, state.succeeded)
+        assertEquals(1, state.failed)
+        assertEquals(0, state.skipped)
+    }
+
+    @Test
     fun `continue clears transfer results and retains the manifest and destination`() {
         for (phase in listOf(UploadPhase.Finished, UploadPhase.Stopped, UploadPhase.Failed)) {
             for (enabled in listOf(false, true)) {

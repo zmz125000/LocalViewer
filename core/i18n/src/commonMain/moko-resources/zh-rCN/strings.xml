@@ -1253,4 +1253,11 @@
     <string name="transfer_smb_multiplex">SMB 多路复用</string>
     <string name="settings_smb_prefer_multiplex">优先使用 SMB 多路复用</string>
     <string name="settings_smb_prefer_multiplex_summary">先用尽多路复用额度，再建立新连接。</string>
+    <string name="transfer_delete_confirm">将 %1$d 个项目移动到 .trash 文件夹？</string>
+    <string name="transfer_delete_finished_summary">%1$d/%2$d/%3$d/%4$d · 删除完成。</string>
+    <string name="transfer_delete_stopped_summary">%1$d/%2$d/%3$d/%4$d · 删除已停止。</string>
+    <string name="transfer_delete_unsupported">此来源或服务器不支持将此项目移动到 .trash。</string>
+    <string name="transfer_delete_access_denied">移动到 .trash 时访问被拒绝。</string>
+    <string name="transfer_server_move">服务器端移动</string>
+    <string name="transfer_item_count">%d 项</string>
 </resources>

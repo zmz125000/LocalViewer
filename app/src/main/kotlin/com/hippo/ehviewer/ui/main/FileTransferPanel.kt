@@ -65,11 +65,19 @@ import com.hippo.ehviewer.util.awaitPickerReturn
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 
+private val UploadJob.actionLabel get() = when {
+    deleting -> R.string.delete
+    saving -> R.string.action_save_to
+    else -> R.string.transfer_upload
+}
+
 @Composable
 private fun uploadSummary(state: UploadState): String = stringResource(R.string.transfer_counts, state.succeeded, state.skipped, state.failed)
 
 @Composable
-private fun transferSpeed(state: UploadState): String = if (state.serverCopy) {
+private fun transferSpeed(state: UploadState): String = if (state.deleting) {
+    stringResource(R.string.transfer_server_move)
+} else if (state.serverCopy) {
     stringResource(R.string.transfer_server_copy)
 } else {
     "${FileUtils.humanReadableByteCount(state.speedBps)}/s"
@@ -92,7 +100,7 @@ internal fun UploadTransferBars() {
                     contentColor = snackbarDismissContentColor(),
                     action = {
                         Row {
-                            if (state.editable) {
+                            if (state.editable && !job.deleting) {
                                 TextButton(
                                     onClick = {
                                         UploadTransfers.chooseDestination(job)
@@ -125,18 +133,18 @@ internal fun UploadTransferBars() {
                 ) {
                     Column(Modifier.clickable { UploadTransfers.panelId = job.id }) {
                         if (state.editable) {
-                            Text("${stringResource(if (job.saving) R.string.action_save_to else R.string.transfer_upload)} #${job.id} · ${stringResource(R.string.transfer_file_count, state.total)}")
+                            Text("${stringResource(job.actionLabel)} #${job.id} · ${stringResource(if (job.deleting) R.string.transfer_item_count else R.string.transfer_file_count, state.total)}")
                         } else if (state.phase == UploadPhase.Preparing) {
-                            Text("${stringResource(if (job.saving) R.string.action_save_to else R.string.transfer_upload)} #${job.id} · ${stringResource(R.string.transfer_preparing)}")
-                            Text(stringResource(R.string.transfer_file_count, state.total))
+                            Text("${stringResource(job.actionLabel)} #${job.id} · ${stringResource(R.string.transfer_preparing)}")
+                            Text(stringResource(if (job.deleting) R.string.transfer_item_count else R.string.transfer_file_count, state.total))
                         } else if (state.phase == UploadPhase.Finished) {
-                            Text("${stringResource(if (job.saving) R.string.action_save_to else R.string.transfer_upload)} #${job.id} · ${stringResource(R.string.browse_finished)}")
+                            Text("${stringResource(job.actionLabel)} #${job.id} · ${stringResource(R.string.browse_finished)}")
                             Text(uploadSummary(state))
                         } else if (state.active) {
-                            Text("${stringResource(if (job.saving) R.string.action_save_to else R.string.transfer_upload)} #${job.id} · ${state.succeeded}/${state.total}/${state.skipped}/${state.failed}")
-                            Text("${transferSize(state)} · ${transferSpeed(state)}")
+                            Text("${stringResource(job.actionLabel)} #${job.id} · ${state.succeeded}/${state.total}/${state.skipped}/${state.failed}")
+                            Text(if (job.deleting) transferSpeed(state) else "${transferSize(state)} · ${transferSpeed(state)}")
                         } else {
-                            Text("${stringResource(if (job.saving) R.string.action_save_to else R.string.transfer_upload)} #${job.id} · ${job.title}", maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text("${stringResource(job.actionLabel)} #${job.id} · ${job.title}", maxLines = 1, overflow = TextOverflow.Ellipsis)
                             Text(uploadSummary(state))
                         }
                     }
@@ -167,7 +175,7 @@ private fun FileTransferPanel(job: UploadJob) {
         }
         Column {
             Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp, top = 16.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text("${stringResource(if (job.saving) R.string.action_save_to else R.string.transfer_upload)} #${job.id}", Modifier.weight(1f), style = headerStyle)
+                Text("${stringResource(job.actionLabel)} #${job.id}", Modifier.weight(1f), style = headerStyle)
                 Text(
                     stringResource(phaseLabel),
                     modifier = Modifier.padding(end = 8.dp),
@@ -186,41 +194,43 @@ private fun FileTransferPanel(job: UploadJob) {
                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                     DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-                        DropdownMenuItem(
-                            text = { Text(stringResource(R.string.browse_run_in_parallel)) },
-                            enabled = !state.active,
-                            trailingIcon = { if (state.parallel) Icon(Icons.Default.Check, null) },
-                            onClick = {
-                                UploadTransfers.toggleParallel(job)
-                                menu = false
-                            },
-                        )
-                        DropdownMenuItem(
-                            text = { Text(stringResource(R.string.transfer_smb_multiplex)) },
-                            enabled = state.parallel && !state.active,
-                            trailingIcon = { if (state.smbMultiplex) Icon(Icons.Default.Check, null) },
-                            onClick = {
-                                UploadTransfers.toggleSmbMultiplex(job)
-                                menu = false
-                            },
-                        )
-                        DropdownMenuItem(
-                            text = { Text(stringResource(R.string.transfer_auto_start)) },
-                            trailingIcon = { if (state.autoStart) Icon(Icons.Default.Check, null) },
-                            onClick = {
-                                UploadTransfers.toggleAutoStart(job)
-                                menu = false
-                            },
-                        )
-                        DropdownMenuItem(
-                            text = { Text(stringResource(R.string.transfer_skip_existing)) },
-                            enabled = state.editable,
-                            trailingIcon = { if (state.skipExisting) Icon(Icons.Default.Check, null) },
-                            onClick = {
-                                UploadTransfers.toggleSkipExisting(job)
-                                menu = false
-                            },
-                        )
+                        if (!job.deleting) {
+                            DropdownMenuItem(
+                                text = { Text(stringResource(R.string.browse_run_in_parallel)) },
+                                enabled = !state.active,
+                                trailingIcon = { if (state.parallel) Icon(Icons.Default.Check, null) },
+                                onClick = {
+                                    UploadTransfers.toggleParallel(job)
+                                    menu = false
+                                },
+                            )
+                            DropdownMenuItem(
+                                text = { Text(stringResource(R.string.transfer_smb_multiplex)) },
+                                enabled = state.parallel && !state.active,
+                                trailingIcon = { if (state.smbMultiplex) Icon(Icons.Default.Check, null) },
+                                onClick = {
+                                    UploadTransfers.toggleSmbMultiplex(job)
+                                    menu = false
+                                },
+                            )
+                            DropdownMenuItem(
+                                text = { Text(stringResource(R.string.transfer_auto_start)) },
+                                trailingIcon = { if (state.autoStart) Icon(Icons.Default.Check, null) },
+                                onClick = {
+                                    UploadTransfers.toggleAutoStart(job)
+                                    menu = false
+                                },
+                            )
+                            DropdownMenuItem(
+                                text = { Text(stringResource(R.string.transfer_skip_existing)) },
+                                enabled = state.editable,
+                                trailingIcon = { if (state.skipExisting) Icon(Icons.Default.Check, null) },
+                                onClick = {
+                                    UploadTransfers.toggleSkipExisting(job)
+                                    menu = false
+                                },
+                            )
+                        }
                         DropdownMenuItem(
                             text = { Text(stringResource(R.string.browse_auto_finish)) },
                             trailingIcon = { if (state.autoFinish) Icon(Icons.Default.Check, null) },
@@ -245,20 +255,22 @@ private fun FileTransferPanel(job: UploadJob) {
             val transferRate = if (state.active) transferSpeed(state) else null
             Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text(state.destinationLabel, Modifier.weight(1f), maxLines = 2, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall)
-                Text(
-                    buildString {
-                        append(transferSize(state))
-                        if (transferRate != null) append(" · $transferRate")
-                    },
-                    Modifier.padding(start = 8.dp),
-                    style = MaterialTheme.typography.bodySmall,
-                )
+                if (!job.deleting) {
+                    Text(
+                        buildString {
+                            append(transferSize(state))
+                            if (transferRate != null) append(" · $transferRate")
+                        },
+                        Modifier.padding(start = 8.dp),
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
             }
             state.error?.let { Text(it, Modifier.padding(16.dp), color = MaterialTheme.colorScheme.error) }
             LazyColumn(Modifier.weight(1f).fillMaxWidth(), contentPadding = PaddingValues(top = 8.dp, bottom = GalleryGridDefaults.margin())) {
                 items(state.rows, key = { it.file.relative }) { row ->
                     TaskPathRow(
-                        title = row.file.relative,
+                        title = if (job.deleting) row.file.source.path else row.file.relative,
                         tablet = tablet,
                         subtitle = row.detail ?: when (row.status) {
                             UploadFileStatus.Pending -> stringResource(R.string.browse_task_pending)
@@ -289,13 +301,15 @@ private fun FileTransferPanel(job: UploadJob) {
                 } else if (state.phase == UploadPhase.Preparing) {
                     TextButton(onClick = { UploadTransfers.stop(job) }) { Text(stringResource(R.string.transfer_stop)) }
                 } else if (state.editable) {
-                    TextButton(onClick = {
-                        UploadTransfers.chooseDestination(job)
-                        explorer.open()
-                    }) { Text(stringResource(R.string.transfer_destination)) }
-                    TextButton(onClick = { UploadTransfers.start(job) }, enabled = state.destination != null && state.rows.isNotEmpty()) { Text(stringResource(R.string.transfer_start)) }
+                    if (!job.deleting) {
+                        TextButton(onClick = {
+                            UploadTransfers.chooseDestination(job)
+                            explorer.open()
+                        }) { Text(stringResource(R.string.transfer_destination)) }
+                    }
+                    TextButton(onClick = { UploadTransfers.start(job) }, enabled = (job.deleting || state.destination != null) && state.rows.isNotEmpty()) { Text(stringResource(if (job.deleting) R.string.delete else R.string.transfer_start)) }
                 } else {
-                    TextButton(onClick = { UploadTransfers.continueTransfer(job) }) { Text(stringResource(R.string.browse_continue)) }
+                    if (!job.deleting) TextButton(onClick = { UploadTransfers.continueTransfer(job) }) { Text(stringResource(R.string.browse_continue)) }
                     TextButton(onClick = { UploadTransfers.dismiss(job) }) { Text(stringResource(R.string.browse_task_done)) }
                 }
             }
