@@ -385,7 +385,7 @@ bool setup_full_frame(PKImageDecode* dec, PKPixelFormatGUID* fmt, unsigned max_e
 bool decode_jxr_from_memory(const uint8_t* data, size_t len, std::vector<uint16_t>& out_rgba,
                             unsigned& w, unsigned& h, bool composite_alpha_on_black = true,
                             bool* out_untagged_linear = nullptr, uhdr_color_gamut_t* out_cg = nullptr,
-                            unsigned thumbnail_edge = 0) {
+                            unsigned thumbnail_edge = 0, int* out_source_depth = nullptr) {
     if (out_untagged_linear) *out_untagged_linear = false;
     if (out_cg) *out_cg = UHDR_CG_BT_709;
     if (!data || len == 0) return false;
@@ -464,6 +464,16 @@ bool decode_jxr_from_memory(const uint8_t* data, size_t len, std::vector<uint16_
         return false;
     }
     JxrPix pix = classify_guid(guid);
+    if (out_source_depth) {
+        switch (pix) {
+            case JxrPix::RgbaF32: case JxrPix::RgbaF32Prem: *out_source_depth = 32; break;
+            case JxrPix::RgbaF16: case JxrPix::Fixed16: case JxrPix::Rgb16:
+            case JxrPix::Rgba16: case JxrPix::Gray16: *out_source_depth = 16; break;
+            case JxrPix::Rgb101010: *out_source_depth = 10; break;
+            case JxrPix::Unsupported: *out_source_depth = 0; break;
+            default: *out_source_depth = 8; break;
+        }
+    }
     if (pix == JxrPix::Unsupported) {
         log_unsupported_guid(guid);
         release_all();
@@ -2075,9 +2085,10 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeJxrBytesToDirect(JNIEnv* env, jcl
     jbyteArray result = nullptr;
     // Preserve transparency: do not composite onto black (UHDR convert paths do).
     bool untagged_linear = false;
+    int source_depth = 0;
     uhdr_color_gamut_t cg = UHDR_CG_BT_709;
     if (decode_jxr_from_memory(reinterpret_cast<const uint8_t*>(bytes), static_cast<size_t>(len),
-                               rgba, w, h, /*composite_alpha_on_black=*/false, &untagged_linear, &cg)) {
+                               rgba, w, h, /*composite_alpha_on_black=*/false, &untagged_linear, &cg, 0, &source_depth)) {
         if (maxEdge > 0) {
             scale_rgba_f16_max_edge(rgba, w, h, static_cast<unsigned>(maxEdge));
         }
@@ -2093,6 +2104,10 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeJxrBytesToDirect(JNIEnv* env, jcl
         result = pack_direct_to_jbyte_array(env, rgba, w, h, /*force_hdr=*/false, cg,
                                             advancedColor == JNI_TRUE, /*transfer_cicp=*/0, jOutInfo,
                                             jOutBoost);
+        if (result && env->GetArrayLength(jOutInfo) >= 7) {
+            const jint depth = source_depth;
+            env->SetIntArrayRegion(jOutInfo, 6, 1, &depth);
+        }
     }
     env->ReleaseByteArrayElements(jInput, bytes, JNI_ABORT);
     return result;
@@ -2118,9 +2133,10 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeJxrBufferToDirect(JNIEnv* env, jc
     jbyteArray result = nullptr;
     // Preserve transparency: do not composite onto black (UHDR convert paths do).
     bool untagged_linear = false;
+    int source_depth = 0;
     uhdr_color_gamut_t cg = UHDR_CG_BT_709;
     if (decode_jxr_from_memory(reinterpret_cast<const uint8_t*>(bytes), static_cast<size_t>(len),
-                               rgba, w, h, /*composite_alpha_on_black=*/false, &untagged_linear, &cg)) {
+                               rgba, w, h, /*composite_alpha_on_black=*/false, &untagged_linear, &cg, 0, &source_depth)) {
         if (maxEdge > 0) {
             scale_rgba_f16_max_edge(rgba, w, h, static_cast<unsigned>(maxEdge));
         }
@@ -2136,6 +2152,10 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeJxrBufferToDirect(JNIEnv* env, jc
         result = pack_direct_to_jbyte_array(env, rgba, w, h, /*force_hdr=*/false, cg,
                                             advancedColor == JNI_TRUE, /*transfer_cicp=*/0, jOutInfo,
                                             jOutBoost);
+        if (result && env->GetArrayLength(jOutInfo) >= 7) {
+            const jint depth = source_depth;
+            env->SetIntArrayRegion(jOutInfo, 6, 1, &depth);
+        }
     }
     return result;
 } catch (...) {

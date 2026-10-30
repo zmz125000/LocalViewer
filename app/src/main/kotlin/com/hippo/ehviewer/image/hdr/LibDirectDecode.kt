@@ -74,7 +74,7 @@ data class LibDirectResult(
     val sourceTransfer: Int = 0,
     /** null = not inspected; empty = inspected but no EXIF; otherwise normalized TIFF. */
     val sourceExif: ByteArray? = null,
-    /** Original RAW precision captured by the same LibRaw instance that decoded the pixels. */
+    /** Encoded component precision captured by the native decoder before conversion. */
     val sourceBitDepth: Int? = null,
 )
 
@@ -366,7 +366,7 @@ object LibDirectDecode {
     ): PackedPixels? = withStillInput(src) { buffer ->
         if (!buffer.hasRemaining()) return@withStillInput null
         if (codec == LibCodec.HevcHdr) return@withStillInput decodeHevcHdrPacked(buffer, maxEdge, advanced, export)
-        val outInfo = IntArray(6)
+        val outInfo = IntArray(7)
         val outBoost = FloatArray(1)
         // Existing RAM-backed pages reuse the source array; mapped archive/local
         // inputs go directly to JNI without a compressed Java-array copy.

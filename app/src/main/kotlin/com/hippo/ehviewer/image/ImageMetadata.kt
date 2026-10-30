@@ -74,7 +74,7 @@ internal fun ImageSource.readMetadata(
     fileDate: Long? = null,
     fileName: String? = null,
     decodedExif: ByteArray? = null,
-    decodedRawBitDepth: Int? = null,
+    decodedSourceBitDepth: Int? = null,
 ): ImageMetadata {
     val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
     runCatching { metadataStream().use { BitmapFactory.decodeStream(it, null, bounds) } }
@@ -112,9 +112,9 @@ internal fun ImageSource.readMetadata(
     fun attributeDouble(tag: String) = exif?.getAttributeDouble(tag, Double.NaN)?.takeIf { it.isFinite() && it > 0 }
     val readRawDepth = kind == 2 && Settings.readerCameraRaw.value
     val depth = if (readRawDepth) {
-        decodedRawBitDepth?.takeIf { it in 1..32 }
+        decodedSourceBitDepth?.takeIf { it in 1..32 }
     } else {
-        encodedBitDepth(header) ?: heif?.bitDepth ?: exif?.getAttribute(ExifInterface.TAG_BITS_PER_SAMPLE)
+        decodedSourceBitDepth?.takeIf { it in 1..32 } ?: encodedBitDepth(header) ?: heif?.bitDepth ?: exif?.getAttribute(ExifInterface.TAG_BITS_PER_SAMPLE)
             ?.split(',')?.mapNotNull { it.trim().toIntOrNull() }?.maxOrNull()
     }
     val headerText = header.toString(Charsets.ISO_8859_1)

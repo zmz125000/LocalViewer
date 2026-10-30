@@ -239,9 +239,9 @@ abstract class PageLoader(
 
     private suspend fun decodeOpened(index: Int, raw: ImageSource, forceOriginal: Boolean): Image {
         var metadata = ImageMetadata()
-        fun readSourceMetadata(decodedExif: ByteArray? = null, decodedRawBitDepth: Int? = null) {
+        fun readSourceMetadata(decodedExif: ByteArray? = null, decodedSourceBitDepth: Int? = null) {
             metadata = runCatching {
-                raw.readMetadata(runCatching { getOriginalImageDate(index) }.getOrNull(), sourceLeafName(index), decodedExif, decodedRawBitDepth)
+                raw.readMetadata(runCatching { getOriginalImageDate(index) }.getOrNull(), sourceLeafName(index), decodedExif, decodedSourceBitDepth)
             }.getOrDefault(ImageMetadata()).let { sourceMetadata ->
                 sourceMetadata.copy(fileSize = runCatching { getOriginalImageSize(index) }.getOrNull() ?: sourceMetadata.fileSize)
             }
