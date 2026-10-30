@@ -3,6 +3,8 @@ package com.hippo.ehviewer.library
 import android.content.ContentValues
 import android.os.ParcelFileDescriptor
 import android.provider.DocumentsContract
+import android.system.Os
+import android.system.OsConstants
 import com.ehviewer.core.files.metadataOrNull
 import com.ehviewer.core.files.openFileDescriptor
 import com.ehviewer.core.files.toOkioPath
@@ -110,25 +112,29 @@ object TransferFiles {
             if (file.source.kind == ExplorerWindows.Kind.Local) {
                 val metadata = file.source.path.toPath().metadataOrNull()
                 if (metadata != null && !metadata.isDirectory) {
-                    return file.copy(
-                        directory = false,
-                        size = metadata.size ?: file.size,
-                        mtime = metadata.lastModifiedAtMillis ?: file.mtime,
-                    )
+                    return stat(file.copy(directory = false))
                 }
             }
             return file
         }
         return when (file.source.kind) {
-            ExplorerWindows.Kind.Local -> file.source.path.toPath().metadataOrNull()?.let {
-                file.copy(size = it.size ?: file.size, mtime = it.lastModifiedAtMillis ?: file.mtime)
-            } ?: if (file.source.path.startsWith("content:")) {
-                // Shared FileProvider URIs may not support document metadata columns.
-                file.source.path.toPath().openFileDescriptor("r").use {
-                    file.copy(size = it.statSize.takeIf { size -> size >= 0 } ?: file.size)
+            ExplorerWindows.Kind.Local -> {
+                val path = file.source.path.toPath()
+                val metadata = path.metadataOrNull()
+                var size = metadata?.size?.takeIf { it >= 0 }
+                var mtime = metadata?.lastModifiedAtMillis?.takeIf { it > 0 }
+                if (size == null || mtime == null) {
+                    // MediaStore virtual paths and some SAF/FileProvider documents
+                    // omit size/mtime metadata; inspect the underlying file instead.
+                    path.openFileDescriptor("r").use { descriptor ->
+                        if (size == null) size = descriptor.statSize.takeIf { it >= 0 }
+                        if (mtime == null) {
+                            val stat = Os.fstat(descriptor.fileDescriptor)
+                            if (OsConstants.S_ISREG(stat.st_mode)) mtime = (stat.st_mtime * 1000).takeIf { it > 0 }
+                        }
+                    }
                 }
-            } else {
-                error("Source file missing: ${file.relative}")
+                file.copy(size = size ?: file.size, mtime = mtime ?: file.mtime)
             }
             ExplorerWindows.Kind.Smb -> {
                 val source = smb(file.source.sourceId)

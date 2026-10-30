@@ -125,6 +125,41 @@ fun BrowseItemOverflowButton(
         }
         style.fontSize.toDp() * 1.3f
     }
+    fun beginUpload(saveQuick: Boolean) {
+        expanded = false
+        scope.launch {
+            val file = try {
+                withIOContext {
+                    actions.resolveUpload?.invoke() ?: actions.uploadSource?.let { source ->
+                        com.hippo.ehviewer.library.TransferFile(
+                            source,
+                            actions.selectTitle ?: "Upload",
+                            actions.selectFolder,
+                            actions.listLine?.sizeBytes ?: -1L,
+                            actions.listLine?.lastModifiedMs ?: 0L,
+                        )
+                    }
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                logcat("FileTransfer", e)
+                null
+            }
+            if (file == null) {
+                snackbar.showSnackbar(context.getString(R.string.history_unavailable))
+                return@launch
+            }
+            if (saveQuick) {
+                UploadTransfers.chooseSavedUploadDestination(file)
+            } else {
+                if (actions.uploadSource != null) UploadTransfers.recordUploadHistory(file)
+                val job = UploadTransfers.prepare(listOf(file))
+                UploadTransfers.chooseDestination(job)
+            }
+            explorer.open()
+        }
+    }
     Box(modifier) {
         val interactionSource = remember { MutableInteractionSource() }
         Icon(
@@ -305,37 +340,7 @@ fun BrowseItemOverflowButton(
             if (actions.uploadSource != null || actions.resolveUpload != null) {
                 DropdownMenuItem(
                     text = { Text(stringResource(R.string.transfer_upload)) },
-                    onClick = {
-                        expanded = false
-                        scope.launch {
-                            val file = try {
-                                withIOContext {
-                                    actions.resolveUpload?.invoke() ?: actions.uploadSource?.let { source ->
-                                        com.hippo.ehviewer.library.TransferFile(
-                                            source,
-                                            actions.selectTitle ?: "Upload",
-                                            actions.selectFolder,
-                                            actions.listLine?.sizeBytes ?: 0L,
-                                            actions.listLine?.lastModifiedMs ?: 0L,
-                                        )
-                                    }
-                                }
-                            } catch (e: CancellationException) {
-                                throw e
-                            } catch (e: Throwable) {
-                                logcat("FileTransfer", e)
-                                null
-                            }
-                            if (file == null) {
-                                snackbar.showSnackbar(context.getString(R.string.history_unavailable))
-                                return@launch
-                            }
-                            if (actions.uploadSource != null) UploadTransfers.recordUploadHistory(file)
-                            val job = UploadTransfers.prepare(listOf(file))
-                            UploadTransfers.chooseDestination(job)
-                            explorer.open()
-                        }
-                    },
+                    onClick = { beginUpload(saveQuick = false) },
                 )
             }
             if (actions.onConvert != null) {
@@ -356,22 +361,10 @@ fun BrowseItemOverflowButton(
                     onClick = { run(actions.onSaveToPaths) },
                 )
             }
-            if (actions.onSaveToPaths != null && actions.selectFolder && actions.uploadSource != null) {
+            if (actions.uploadSource != null || actions.resolveUpload != null) {
                 DropdownMenuItem(
                     text = { Text(stringResource(R.string.browse_save_to_upload)) },
-                    onClick = {
-                        expanded = false
-                        UploadTransfers.chooseSavedUploadDestination(
-                            com.hippo.ehviewer.library.TransferFile(
-                                actions.uploadSource,
-                                actions.selectTitle ?: actions.uploadSource.path.substringAfterLast('/'),
-                                true,
-                                -1,
-                                0,
-                            ),
-                        )
-                        explorer.open()
-                    },
+                    onClick = { beginUpload(saveQuick = true) },
                 )
             }
             if (actions.onShare != null) {

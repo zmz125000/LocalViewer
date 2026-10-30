@@ -1,10 +1,36 @@
 package com.hippo.ehviewer.library
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class SavedUploadsTest {
+    @Test
+    fun filesKeepTheirTypeAndRefreshMetadataWhenReopened() {
+        for (kind in ExplorerWindows.Kind.entries) {
+            val entry = SavedUploads.Entry(
+                "id",
+                "album.zip",
+                SavedUploads.Location(kind.name, 1, "photos/album.zip"),
+                SavedUploads.Location("Local", 0, "/backup"),
+                "backup",
+                directory = false,
+            )
+            val restored = SavedUploads.decode(SavedUploads.encode(listOf(entry))).single().file()
+            assertFalse(restored.directory)
+            assertEquals("photos/album.zip", restored.source.path)
+            assertEquals(-1L, restored.size)
+            assertEquals(0L, restored.mtime)
+        }
+    }
+
+    @Test
+    fun oldFolderEntriesRemainCompatibleWithoutATypeField() {
+        val raw = """[{"id":"old","title":"album","source":{"kind":"Smb","sourceId":1,"path":"photos/album"},"destination":{"kind":"Local","sourceId":0,"path":"/backup"},"destinationLabel":"backup"}]"""
+        assertTrue(SavedUploads.decode(raw).single().file().directory)
+    }
+
     @Test
     fun folderReferencesRoundTripAcrossAllBackends() {
         val entries = ExplorerWindows.Kind.entries.mapIndexed { index, kind ->
