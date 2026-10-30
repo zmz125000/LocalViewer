@@ -1368,4 +1368,13 @@
     <string name="transfer_smb_multiplex">SMB multiplex</string>
     <string name="settings_smb_prefer_multiplex">Prefer SMB multiplexing</string>
     <string name="settings_smb_prefer_multiplex_summary">Fill available multiplex slots on existing connections before opening another connection.</string>
+    <string name="transfer_delete_confirm">Move %1$d items to the .trash folder?</string>
+    <string name="transfer_delete_finished_summary">%1$d/%2$d/%3$d/%4$d · Delete finished.</string>
+    <string name="transfer_delete_stopped_summary">%1$d/%2$d/%3$d/%4$d · Delete stopped.</string>
+    <string name="transfer_delete_unsupported">This source or server does not support moving this item to .trash.</string>
+    <string name="transfer_delete_access_denied">Access denied while moving the item to .trash.</string>
+    <string name="transfer_server_move">Server move</string>
+    <string name="transfer_item_count">%d items</string>
+    <string name="transfer_source_unavailable">This item is busy, being deleted, or no longer available. Refresh the folder before trying again.</string>
+    <string name="transfer_delete_trash_protected">Items inside .trash cannot be deleted.</string>
 </resources>

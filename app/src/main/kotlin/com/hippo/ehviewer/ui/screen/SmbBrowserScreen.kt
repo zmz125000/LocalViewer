@@ -677,6 +677,12 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
         refreshToken++
     }
 
+    LaunchedEffect(sourceId, relativeDir) {
+        BrowseSession.smbMutations.collect { (changedSource, parent) ->
+            if (changedSource == sourceId && parent == relativeDir.trim('/')) requestForceReload()
+        }
+    }
+
     var prevZipAsDir by remember { mutableStateOf(browseZipAsDir) }
     LaunchedEffect(browseZipAsDir) {
         if (browseZipAsDir != prevZipAsDir) {

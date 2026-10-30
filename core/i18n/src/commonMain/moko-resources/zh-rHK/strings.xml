@@ -559,4 +559,13 @@
     <string name="transfer_smb_multiplex">SMB 多路複用</string>
     <string name="settings_smb_prefer_multiplex">優先使用 SMB 多路複用</string>
     <string name="settings_smb_prefer_multiplex_summary">先用盡現有連線的多路複用額度，再建立新連線。</string>
+    <string name="transfer_delete_confirm">將 %1$d 個項目移動至 .trash 資料夾？</string>
+    <string name="transfer_delete_finished_summary">%1$d/%2$d/%3$d/%4$d · 刪除完成。</string>
+    <string name="transfer_delete_stopped_summary">%1$d/%2$d/%3$d/%4$d · 刪除已停止。</string>
+    <string name="transfer_delete_unsupported">此來源或伺服器不支援將此項目移動至 .trash。</string>
+    <string name="transfer_delete_access_denied">移動至 .trash 時存取遭拒。</string>
+    <string name="transfer_server_move">伺服器端移動</string>
+    <string name="transfer_item_count">%d 個項目</string>
+    <string name="transfer_source_unavailable">此項目忙碌中、正在刪除或已無法使用。請重新整理資料夾後再試。</string>
+    <string name="transfer_delete_trash_protected">.trash 內的項目無法刪除。</string>
 </resources>

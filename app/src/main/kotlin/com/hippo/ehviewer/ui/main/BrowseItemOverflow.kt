@@ -112,6 +112,7 @@ fun BrowseItemOverflowButton(
     val scope = rememberCoroutineScope()
     val snackbar = LocalSnackBarHostState.current
     val saveTransfer = rememberSaveToTransferPicker()
+    val confirmDelete = rememberNetworkDeleteConfirmation()
     val explorer = LocalExplorerPanel.current
     val shortcutUnsupported = stringResource(R.string.browse_shortcut_unsupported)
     val grid = placement == BrowseOverflowPlacement.GridBottomEnd
@@ -153,8 +154,8 @@ fun BrowseItemOverflowButton(
             if (saveQuick) {
                 UploadTransfers.chooseSavedUploadDestination(file)
             } else {
+                val job = UploadTransfers.prepare(listOf(file)) ?: return@launch
                 if (actions.uploadSource != null) UploadTransfers.recordUploadHistory(file)
-                val job = UploadTransfers.prepare(listOf(file))
                 UploadTransfers.chooseDestination(job)
             }
             explorer.open()
@@ -324,16 +325,14 @@ fun BrowseItemOverflowButton(
                         run(actions.onSaveAs)
                     } else {
                         expanded = false
-                        saveTransfer(
-                            UploadTransfers.prepare(
-                                source,
-                                actions.selectTitle ?: source.path.substringAfterLast('/'),
-                                actions.selectFolder,
-                                actions.listLine?.sizeBytes ?: 0L,
-                                actions.listLine?.lastModifiedMs ?: 0L,
-                                saving = true,
-                            ),
-                        )
+                        UploadTransfers.prepare(
+                            source,
+                            actions.selectTitle ?: source.path.substringAfterLast('/'),
+                            actions.selectFolder,
+                            actions.listLine?.sizeBytes ?: 0L,
+                            actions.listLine?.lastModifiedMs ?: 0L,
+                            saving = true,
+                        )?.let(saveTransfer)
                     }
                 },
             )
@@ -341,6 +340,27 @@ fun BrowseItemOverflowButton(
                 DropdownMenuItem(
                     text = { Text(stringResource(R.string.transfer_upload)) },
                     onClick = { beginUpload(saveQuick = false) },
+                )
+            }
+            if (actions.uploadSource?.let { it.kind != com.hippo.ehviewer.library.ExplorerWindows.Kind.Local && !com.hippo.ehviewer.library.isInsideTrashPath(it.path) } == true) {
+                DropdownMenuItem(
+                    text = { Text(stringResource(R.string.delete)) },
+                    onClick = {
+                        expanded = false
+                        actions.uploadSource.let { source ->
+                            confirmDelete(
+                                listOf(
+                                    com.hippo.ehviewer.library.TransferFile(
+                                        source,
+                                        actions.selectTitle ?: source.path.substringAfterLast('/'),
+                                        actions.selectFolder,
+                                        actions.listLine?.sizeBytes ?: -1L,
+                                        actions.listLine?.lastModifiedMs ?: 0L,
+                                    ),
+                                ),
+                            )
+                        }
+                    },
                 )
             }
             if (actions.onConvert != null) {

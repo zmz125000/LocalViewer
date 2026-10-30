@@ -3958,6 +3958,77 @@ object SmbGateway {
         }
     }
 
+    /** One SMB rename for a file or entire directory; never fall back to copy/delete. */
+    suspend fun moveToTrash(
+        source: SmbSourceEntity,
+        password: String,
+        relative: String,
+        date: String,
+        checkpoint: suspend () -> Unit,
+    ): String = withIOContext {
+        val trash = com.hippo.ehviewer.library.trashDestinationDirectory(relative, date)
+        val origin = resolveLocation(source, relative)
+        val destination = resolveLocation(source, trash)
+        com.hippo.ehviewer.library.requireOutsideTrash(origin.pathInShare)
+        require(origin.pathInShare.isNotBlank() && origin.share == destination.share) { "Cannot move a share root" }
+        val host = endpointHost(source)
+        trackSource(source)
+        ensureHostNotCoolingDown(host, source.port)
+        val credential = credKey(source, password)
+        // Do not use withShare's transport retry: a lost reply may already have moved the item.
+        hostPoolFor(host, source.port).borrowForShare(
+            credential,
+            origin.share,
+            ShareOp.Data,
+            openSession = { reserved -> openSession(source, password, credential, reservedForList = reserved) },
+        ) { share ->
+            suspend fun ensureDirectory(path: String) {
+                checkpoint()
+                if (share.folderExists(path)) return
+                try {
+                    share.mkdir(path)
+                } catch (error: SMBApiException) {
+                    if (error.status != NtStatus.STATUS_OBJECT_NAME_COLLISION || !share.folderExists(path)) throw error
+                }
+            }
+            val (trashRoot, datedTrash) = smbTrashDirectories(destination.pathInShare)
+            ensureDirectory(trashRoot)
+            ensureDirectory(datedTrash)
+            checkpoint()
+            // DiskShare.open accepts either a file or a directory. FILE_OPEN never creates it.
+            val entry = share.open(
+                origin.pathInShare,
+                setOf(AccessMask.DELETE, AccessMask.FILE_READ_ATTRIBUTES),
+                emptySet(),
+                setOf(SMB2ShareAccess.FILE_SHARE_READ, SMB2ShareAccess.FILE_SHARE_WRITE, SMB2ShareAccess.FILE_SHARE_DELETE),
+                SMB2CreateDisposition.FILE_OPEN,
+                emptySet(),
+            )
+            try {
+                val directory = entry is Directory
+                val name = relative.replace('\\', '/').trim('/').substringAfterLast('/')
+                com.hippo.ehviewer.library.moveToTrashWithoutOverwrite(name, directory) { candidate ->
+                    checkpoint()
+                    val target = smbTrashTarget(datedTrash, candidate)
+                    if (share.fileExists(target) || share.folderExists(target)) {
+                        throw com.hippo.ehviewer.library.TransferNameConflict(candidate)
+                    }
+                    try {
+                        entry.rename(target, false)
+                    } catch (error: SMBApiException) {
+                        if (error.status == NtStatus.STATUS_OBJECT_NAME_COLLISION) {
+                            throw com.hippo.ehviewer.library.TransferNameConflict(candidate)
+                        }
+                        throw error
+                    }
+                }
+            } finally {
+                // A confirmed rename remains successful even if closing its handle fails.
+                runCatching { entry.close() }.onFailure { logcat("SmbTrash", it) }
+            }
+        }
+    }
+
     /** FILE_CREATE never overwrites a collision. One dedicated session avoids nested pool borrows. */
     suspend fun transferWrite(
         source: SmbSourceEntity,

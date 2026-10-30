@@ -1,6 +1,9 @@
 package com.hippo.ehviewer.library
 
 import java.util.concurrent.ConcurrentHashMap
+import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import okio.Path
 import okio.Path.Companion.toPath
 
@@ -16,6 +19,22 @@ const val BROWSE_IMAGE_SCAN_CAP = 128
  * Survives navigating to the reader (unlike [androidx.compose.runtime.remember]).
  */
 object BrowseSession {
+    private val _smbMutations = MutableSharedFlow<Pair<Long, String>>(extraBufferCapacity = 64, onBufferOverflow = BufferOverflow.DROP_OLDEST)
+    val smbMutations = _smbMutations.asSharedFlow()
+
+    fun notifySmbMutation(sourceId: Long, parent: String) {
+        invalidateSmbListing(sourceId, parent)
+        _smbMutations.tryEmit(sourceId to parent.trim('/'))
+    }
+
+    private val _webDavMutations = MutableSharedFlow<Pair<Long, String>>(extraBufferCapacity = 64, onBufferOverflow = BufferOverflow.DROP_OLDEST)
+    val webDavMutations = _webDavMutations.asSharedFlow()
+
+    fun notifyWebDavMutation(sourceId: Long, parent: String) {
+        invalidateWebDavListing(sourceId, parent)
+        _webDavMutations.tryEmit(sourceId to parent.trim('/'))
+    }
+
     // --- Local folder path stack ---
     data class LocalFrame(
         val rootId: Long,
@@ -466,7 +485,9 @@ object BrowseSession {
     ): List<RemoteChild> {
         val key = smbListingKey(sourceId, normalizeBrowseRelativeDir(relativeDir))
         smbRawChildren[key]?.let { return it }
+        val started = networkSourceGuard.listingStarted()
         val children = load().withoutProtectedSystemNames()
+        networkSourceGuard.listed(TransferLocation(ExplorerWindows.Kind.Smb, sourceId, relativeDir), children.map { it.name }, started)
         return smbRawChildren.putIfAbsent(key, children) ?: children
     }
 
@@ -482,7 +503,9 @@ object BrowseSession {
     ): List<RemoteChild> {
         val key = webDavListingKey(sourceId, normalizeBrowseRelativeDir(relativeDir))
         webDavRawChildren[key]?.let { return it }
+        val started = networkSourceGuard.listingStarted()
         val children = load().withoutProtectedSystemNames()
+        networkSourceGuard.listed(TransferLocation(ExplorerWindows.Kind.WebDav, sourceId, relativeDir), children.map { it.name }, started)
         return webDavRawChildren.putIfAbsent(key, children) ?: children
     }
 

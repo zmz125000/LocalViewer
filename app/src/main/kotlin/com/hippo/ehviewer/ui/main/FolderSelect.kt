@@ -1636,6 +1636,8 @@ private fun SelectionOverflowControl(
     val convertible = picks.count { it.convertStill != null }
     val savable = picks.count { it.saveInto != null }
     val uploadable = picks.count { it.uploadSource != null }
+    val confirmDelete = rememberNetworkDeleteConfirmation { FolderSelectHost.cancelShownSelection() }
+    val deletable = picks.isNotEmpty() && picks.all { it.uploadSource?.let { source -> source.kind != com.hippo.ehviewer.library.ExplorerWindows.Kind.Local && !com.hippo.ehviewer.library.isInsideTrashPath(source.path) } == true }
     val canSelectAll = selectionActions &&
         folderKey != null &&
         FolderSelectHost.current?.folderKey == folderKey
@@ -1719,11 +1721,31 @@ private fun SelectionOverflowControl(
                                     )
                                 }
                             }
-                            files.firstOrNull()?.let { UploadTransfers.recordUploadHistory(it, parentOnly = true) }
-                            val job = UploadTransfers.prepare(files)
-                            FolderSelectHost.cancelShownSelection()
-                            UploadTransfers.chooseDestination(job)
-                            explorer.open()
+                            UploadTransfers.prepare(files)?.let { job ->
+                                files.firstOrNull()?.let { UploadTransfers.recordUploadHistory(it, parentOnly = true) }
+                                FolderSelectHost.cancelShownSelection()
+                                UploadTransfers.chooseDestination(job)
+                                explorer.open()
+                            }
+                        },
+                    )
+                }
+                if (selectionActions && deletable) {
+                    DropdownMenuItem(
+                        text = { Text(stringResource(R.string.delete)) },
+                        onClick = {
+                            menu = false
+                            confirmDelete(
+                                picks.map { pick ->
+                                    com.hippo.ehviewer.library.TransferFile(
+                                        requireNotNull(pick.uploadSource),
+                                        pick.title,
+                                        pick.isFolder,
+                                        pick.listLine?.sizeBytes ?: -1L,
+                                        pick.listLine?.lastModifiedMs ?: 0L,
+                                    )
+                                },
+                            )
                         },
                     )
                 }
