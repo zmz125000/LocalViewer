@@ -54,6 +54,7 @@ import com.ehviewer.core.util.logcat
 import com.ehviewer.core.util.withIOContext
 import com.hippo.ehviewer.library.ExplorerWindows
 import com.hippo.ehviewer.library.TransferLocation
+import com.hippo.ehviewer.library.humanizePathName
 import com.hippo.ehviewer.ui.screen.LocalExplorerPanel
 import com.hippo.ehviewer.ui.theme.snackbarActionButtonColors
 import com.hippo.ehviewer.ui.theme.snackbarContainerColor
@@ -313,8 +314,9 @@ internal fun rememberUploadLocalDestinationPicker(onSelected: () -> Unit): () ->
                         val document = DocumentsContract.buildDocumentUriUsingTree(uri, DocumentsContract.getTreeDocumentId(uri))
                         TransferLocation(ExplorerWindows.Kind.Local, 0, document.toOkioPath().toString())
                     }
-                    if (UploadTransfers.job(jobId) != null) {
-                        UploadTransfers.destination(location, label, jobId)
+                    if (UploadTransfers.hasDestinationRequest(jobId)) {
+                        val folderName = humanizePathName(DocumentsContract.getTreeDocumentId(uri))
+                        UploadTransfers.destination(location, "$label · $folderName", jobId)
                         onSelected()
                     }
                 } catch (e: CancellationException) {
@@ -332,7 +334,7 @@ internal fun rememberUploadLocalDestinationPicker(onSelected: () -> Unit): () ->
         })
     }
     return {
-        pendingId = UploadTransfers.destinationJobId
+        pendingId = UploadTransfers.destinationRequestId
         launcher.launch(null)
     }
 }

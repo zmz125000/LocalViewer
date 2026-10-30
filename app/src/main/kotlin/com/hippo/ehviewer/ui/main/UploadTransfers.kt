@@ -9,11 +9,16 @@ import com.ehviewer.core.util.logcat
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.library.BrowseSession
 import com.hippo.ehviewer.library.ExplorerWindows
+import com.hippo.ehviewer.library.LocalHistory
+import com.hippo.ehviewer.library.LocalLibrary
+import com.hippo.ehviewer.library.SavedUploads
 import com.hippo.ehviewer.library.TransferControl
 import com.hippo.ehviewer.library.TransferFile
 import com.hippo.ehviewer.library.TransferFiles
 import com.hippo.ehviewer.library.TransferLocation
 import com.hippo.ehviewer.library.forEachTransferLane
+import com.hippo.ehviewer.library.humanizePathName
+import com.hippo.ehviewer.library.resolveBrowsePath
 import com.hippo.ehviewer.library.transferBatchParallelism
 import com.hippo.ehviewer.provider.StreamKeepAlivePolicy
 import com.hippo.ehviewer.smb.SmbGateway
@@ -35,11 +40,13 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.sync.withPermit
+import okio.Path.Companion.toPath
 import splitties.init.appCtx
 
 internal enum class UploadPhase { Preparing, Ready, Running, Paused, Finished, Stopped, Failed }
 internal enum class UploadFileStatus { Pending, Running, Succeeded, Skipped, Failed }
 internal data class UploadRow(val file: TransferFile, val status: UploadFileStatus = UploadFileStatus.Pending, val detail: String? = null)
+internal data class SavedUploadDraft(val id: Long, val file: TransferFile)
 internal data class UploadState(
     val phase: UploadPhase = UploadPhase.Preparing,
     val rows: List<UploadRow> = emptyList(),
@@ -121,6 +128,18 @@ internal fun uploadSelectionRoots(files: List<TransferFile>): List<TransferFile>
         }
 }
 
+/** Record only the chosen root, never the expanded upload manifest. */
+internal fun uploadHistoryRoot(file: TransferFile, parentOnly: Boolean): TransferFile? {
+    val root = uploadRoot(file.source, file.relative, file.directory, file.size, file.mtime)
+    if (!parentOnly) return root
+    val parent = if (root.source.kind == ExplorerWindows.Kind.Local) {
+        root.source.path.toPath().parent?.toString() ?: return null
+    } else {
+        root.source.path.trim('/').substringBeforeLast('/', "")
+    }
+    return root.copy(source = root.source.copy(path = parent), relative = humanizePathName(parent.substringAfterLast('/')), directory = true, size = 0, mtime = 0)
+}
+
 /** Each upload owns its manifest, controls, snackbar and panel. Navigation never cancels work. */
 internal object UploadTransfers {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -130,6 +149,62 @@ internal object UploadTransfers {
     val jobs = _jobs.asStateFlow()
     var panelId by mutableStateOf<Long?>(null)
     var destinationJobId by mutableStateOf<Long?>(null)
+    private var savedUploadDraft by mutableStateOf<SavedUploadDraft?>(null)
+    val destinationRequestId get() = savedUploadDraft?.id ?: destinationJobId
+    val choosingDestination get() = destinationRequestId != null
+
+    fun chooseSavedUploadDestination(file: TransferFile) {
+        require(file.directory)
+        panelId = null
+        destinationJobId = null
+        savedUploadDraft = SavedUploadDraft(ids.getAndIncrement(), file)
+    }
+
+    fun hasDestinationRequest(id: Long) = savedUploadDraft?.id == id || job(id) != null
+
+    fun openSavedUpload(entry: SavedUploads.Entry) {
+        val file = TransferFile(entry.source.transfer(), entry.title, true, -1, 0)
+        recordUploadHistory(file)
+        val job = prepare(listOf(file))
+        destination(entry.destination.transfer(), entry.destinationLabel, job.id)
+    }
+
+    fun recordUploadHistory(file: TransferFile, parentOnly: Boolean = false) {
+        val root = uploadHistoryRoot(file, parentOnly) ?: return
+        scope.launch {
+            try {
+                val source = root.source
+                when (source.kind) {
+                    ExplorerWindows.Kind.Local -> if (root.directory) {
+                        val match = LocalLibrary.listRoots().mapNotNull { libraryRoot ->
+                            val base = LocalLibrary.rootPath(libraryRoot) ?: return@mapNotNull null
+                            val path = resolveBrowsePath(source.path.toPath(), preferMediaStore = libraryRoot.prefersMediaStore).toString().trimEnd('/')
+                            val prefix = base.toString().trimEnd('/')
+                            if (path != prefix && !path.startsWith("$prefix/")) return@mapNotNull null
+                            Triple(libraryRoot, prefix, path.removePrefix(prefix).trim('/'))
+                        }.maxByOrNull { it.second.length } ?: return@launch
+                        LocalHistory.recordLocalBrowseFolder(match.first.id, match.third, if (match.third.isEmpty()) match.first.displayName else root.relative)
+                    } else {
+                        LocalHistory.recordLocalFile(source.path, root.relative)
+                    }
+                    ExplorerWindows.Kind.Smb -> if (root.directory) {
+                        LocalHistory.recordSmbBrowseFolder(source.sourceId, source.path, root.relative)
+                    } else {
+                        LocalHistory.recordSmbFile(source.sourceId, source.path, root.relative)
+                    }
+                    ExplorerWindows.Kind.WebDav -> if (root.directory) {
+                        LocalHistory.recordWebDavBrowseFolder(source.sourceId, source.path, root.relative)
+                    } else {
+                        LocalHistory.recordWebDavFile(source.sourceId, source.path, root.relative)
+                    }
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                logcat("FileTransfer", e)
+            }
+        }
+    }
 
     fun prepare(source: TransferLocation, title: String, directory: Boolean, size: Long = 0, mtime: Long = 0, saving: Boolean = false): UploadJob = prepare(listOf(TransferFile(source, title, directory, size, mtime)), saving)
 
@@ -182,9 +257,15 @@ internal object UploadTransfers {
     fun chooseDestination(job: UploadJob) {
         if (!job.state.value.editable && job.state.value.phase != UploadPhase.Preparing) return
         panelId = null
+        savedUploadDraft = null
         destinationJobId = job.id
     }
-    fun destination(location: TransferLocation, label: String, jobId: Long? = destinationJobId) {
+    fun destination(location: TransferLocation, label: String, jobId: Long? = destinationRequestId) {
+        savedUploadDraft?.takeIf { it.id == jobId }?.let { draft ->
+            SavedUploads.remember(draft.file, location, label)
+            savedUploadDraft = null
+            return
+        }
         val job = job(jobId) ?: return
         if (!job.state.value.editable && job.state.value.phase != UploadPhase.Preparing) return
         job.state.update { it.copy(destination = location, destinationLabel = label, startWhenReady = it.autoStart) }
@@ -194,6 +275,7 @@ internal object UploadTransfers {
     }
     fun cancelDestination() {
         destinationJobId = null
+        savedUploadDraft = null
     }
     fun toggleBackground(job: UploadJob) {
         val state = job.state.updateAndGet { it.copy(background = !it.background) }

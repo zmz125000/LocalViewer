@@ -4,14 +4,19 @@ import android.content.Context
 import androidx.compose.material3.SnackbarHostState
 import com.ehviewer.core.database.model.GalleryEntity
 import com.ehviewer.core.database.model.LOCAL_GALLERY_KIND_ARCHIVE
+import com.ehviewer.core.database.model.LOCAL_GALLERY_KIND_FOLDER
+import com.ehviewer.core.database.model.LOCAL_GALLERY_KIND_VIDEO_FOLDER
 import com.ehviewer.core.i18n.R
 import com.ehviewer.core.model.GalleryInfo
 import com.ehviewer.core.util.withUIContext
 import com.hippo.ehviewer.EhDB
 import com.hippo.ehviewer.library.BrowseFavorites
+import com.hippo.ehviewer.library.ExplorerWindows
 import com.hippo.ehviewer.library.LocalHistory
 import com.hippo.ehviewer.library.LocalHistoryTarget
 import com.hippo.ehviewer.library.LocalLibrary
+import com.hippo.ehviewer.library.TransferFile
+import com.hippo.ehviewer.library.TransferLocation
 import com.hippo.ehviewer.library.ZipAsDirListing
 import com.hippo.ehviewer.library.isHtmlFileName
 import com.hippo.ehviewer.library.isPdfFileName
@@ -154,6 +159,7 @@ internal fun historyOverflowActions(
             null
         },
         onSaveAs = { env.saveAs(info) },
+        resolveUpload = if (LocalHistory.parse(info) !is LocalHistoryTarget.Orphan) ({ historyUploadFile(info) }) else null,
         onShare = share,
         onShareViaHttp = env.httpShare(info),
         onOpenFolder = openFolder,
@@ -214,6 +220,35 @@ private class HistoryOverflowEnv(
 }
 
 private fun historyDisplayName(info: GalleryInfo): String = info.title?.takeIf { it.isNotBlank() } ?: LocalHistory.fileNameOfHistory(info)
+
+internal suspend fun historyUploadFile(info: GalleryInfo): TransferFile? {
+    val name = historyDisplayName(info)
+    fun file(kind: ExplorerWindows.Kind, id: Long, path: String, directory: Boolean = false) = TransferFile(TransferLocation(kind, id, path), name, directory, -1, 0)
+    suspend fun localFolder(rootId: Long, relative: String): TransferFile? = localAbsPath(rootId, relative)?.let { file(ExplorerWindows.Kind.Local, 0, it.toString(), true) }
+    return when (val target = LocalHistory.parse(info)) {
+        is LocalHistoryTarget.LocalBrowseFolder -> localFolder(target.rootId, target.relativePath)
+        is LocalHistoryTarget.LocalFolderGallery -> localFolder(target.rootId, target.relativePath)
+        is LocalHistoryTarget.LocalArchive -> file(ExplorerWindows.Kind.Local, 0, target.path)
+        is LocalHistoryTarget.LocalFile -> file(ExplorerWindows.Kind.Local, 0, target.path)
+        is LocalHistoryTarget.SmbBrowseFolder -> file(ExplorerWindows.Kind.Smb, target.sourceId, target.relativePath, true)
+        is LocalHistoryTarget.SmbFolderGallery -> file(ExplorerWindows.Kind.Smb, target.sourceId, target.remoteDir, true)
+        is LocalHistoryTarget.SmbStreamArchive -> file(ExplorerWindows.Kind.Smb, target.sourceId, target.remotePath)
+        is LocalHistoryTarget.SmbFile -> file(ExplorerWindows.Kind.Smb, target.sourceId, target.remotePath)
+        is LocalHistoryTarget.WebDavBrowseFolder -> file(ExplorerWindows.Kind.WebDav, target.sourceId, target.relativePath, true)
+        is LocalHistoryTarget.WebDavFolderGallery -> file(ExplorerWindows.Kind.WebDav, target.sourceId, target.remoteDir, true)
+        is LocalHistoryTarget.WebDavStreamArchive -> file(ExplorerWindows.Kind.WebDav, target.sourceId, target.remotePath)
+        is LocalHistoryTarget.WebDavFile -> file(ExplorerWindows.Kind.WebDav, target.sourceId, target.remotePath)
+        is LocalHistoryTarget.LibraryGallery -> {
+            val local = LocalLibrary.loadGallery(target.galleryId) ?: return null
+            if (local.kind == LOCAL_GALLERY_KIND_FOLDER || local.kind == LOCAL_GALLERY_KIND_VIDEO_FOLDER) {
+                localFolder(local.rootId, local.relativePath)
+            } else {
+                file(ExplorerWindows.Kind.Local, 0, local.contentPath)
+            }
+        }
+        is LocalHistoryTarget.Orphan -> null
+    }
+}
 
 private fun HistoryOverflowEnv.toggleFavorite(info: GalleryInfo) {
     when (val target = LocalHistory.parse(info)) {

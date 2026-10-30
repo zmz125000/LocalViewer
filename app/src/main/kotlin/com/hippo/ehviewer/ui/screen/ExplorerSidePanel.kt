@@ -51,6 +51,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.FileDownload
+import androidx.compose.material.icons.filled.FileUpload
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Hub
 import androidx.compose.material3.DrawerValue
@@ -119,6 +120,7 @@ import com.hippo.ehviewer.library.FavoriteBrowseSource
 import com.hippo.ehviewer.library.LocalLibrary
 import com.hippo.ehviewer.library.NavTabWindows
 import com.hippo.ehviewer.library.SavedExplorerPaths
+import com.hippo.ehviewer.library.SavedUploads
 import com.hippo.ehviewer.library.TransferLocation
 import com.hippo.ehviewer.library.UsbVolumes
 import com.hippo.ehviewer.library.hideDuplicateGalleriesPreferMediaStore
@@ -244,7 +246,7 @@ fun ExplorerSidePanelHost(
     val closeGuard = remember { PanelCloseGuard() }
     var closeJob by remember { mutableStateOf<Job?>(null) }
     fun closePanel() {
-        if (UploadTransfers.destinationJobId != null) UploadTransfers.cancelDestination()
+        if (UploadTransfers.choosingDestination) UploadTransfers.cancelDestination()
         closeGuard.snapOnCancel = true
         if (closeJob?.isActive == true) return
         closeJob = scope.launch {
@@ -271,7 +273,7 @@ fun ExplorerSidePanelHost(
     fun togglePanel() {
         val expanded = panelState.isOpen || panelState.targetValue == DrawerValue.Open
         if (expanded) {
-            if (UploadTransfers.destinationJobId != null) UploadTransfers.cancelDestination()
+            if (UploadTransfers.choosingDestination) UploadTransfers.cancelDestination()
             closeGuard.snapOnCancel = true
             closeJob?.cancel()
             closeJob = scope.launch {
@@ -317,7 +319,7 @@ fun ExplorerSidePanelHost(
     val panelOpen = panelState.isOpen || panelState.targetValue == DrawerValue.Open
     var panelWasOpen by remember { mutableStateOf(false) }
     LaunchedEffect(panelOpen) {
-        if (panelWasOpen && !panelOpen && UploadTransfers.destinationJobId != null) {
+        if (panelWasOpen && !panelOpen && UploadTransfers.choosingDestination) {
             UploadTransfers.cancelDestination()
         }
         panelWasOpen = panelOpen
@@ -495,7 +497,7 @@ private fun ExplorerPanel(
     onNavigated: () -> Unit,
 ) {
     var showFavorites by rememberSaveable { mutableStateOf(false) }
-    val choosingUpload = UploadTransfers.destinationJobId != null
+    val choosingUpload = UploadTransfers.choosingDestination
     LaunchedEffect(choosingUpload) { if (choosingUpload) showFavorites = false }
     var gridReady by remember { mutableStateOf(showFavorites) }
     LaunchedEffect(panelOpen) {
@@ -732,11 +734,13 @@ private fun ExplorerWindowList(
     val smb by SmbRepository.sourcesFlow().collectAsState(initial = emptyList())
     val webDav by WebDavRepository.sourcesFlow().collectAsState(initial = emptyList())
     val savedRaw by Settings.savedExplorerPaths.collectAsState()
+    val uploadsRaw by Settings.savedUploads.collectAsState()
+    val uploads = remember(uploadsRaw) { SavedUploads.decode(uploadsRaw) }
     val saved = remember(savedRaw, roots, smb, webDav) {
         SavedExplorerPaths.resolve(roots, smb, webDav)
     }
     val viewingBrowser = isBrowserDestination(currentDestination)
-    val choosingUpload = UploadTransfers.destinationJobId != null
+    val choosingUpload = UploadTransfers.choosingDestination
     val pickLocal = rememberUploadLocalDestinationPicker(onNavigated)
     fun chooseUpload(kind: ExplorerWindows.Kind, sourceId: Long, relative: String, label: String) {
         if (kind == ExplorerWindows.Kind.Local) {
@@ -876,6 +880,30 @@ private fun ExplorerWindowList(
                         }
                     },
                 )
+            }
+            if (!choosingUpload) {
+                item(key = "uploads-hdr") {
+                    BrowseSectionHeader(stringResource(R.string.transfer_upload), onClick = onToggleMode)
+                }
+                items(uploads, key = { "upload-${it.id}" }) { upload ->
+                    ExplorerPathRow(
+                        title = upload.title,
+                        subtitle = upload.destinationLabel,
+                        leadingIcon = Icons.Default.FileUpload,
+                        active = false,
+                        onClick = {
+                            UploadTransfers.openSavedUpload(upload)
+                            onNavigated()
+                        },
+                        trailing = {
+                            ExplorerRowAction(
+                                onClick = { SavedUploads.forget(upload.id) },
+                                icon = Icons.Default.Delete,
+                                contentDescription = stringResource(R.string.explorer_delete_saved),
+                            )
+                        },
+                    )
+                }
             }
         }
     }

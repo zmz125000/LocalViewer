@@ -1719,6 +1719,7 @@ private fun SelectionOverflowControl(
                                     )
                                 }
                             }
+                            files.firstOrNull()?.let { UploadTransfers.recordUploadHistory(it, parentOnly = true) }
                             val job = UploadTransfers.prepare(files)
                             FolderSelectHost.cancelShownSelection()
                             UploadTransfers.chooseDestination(job)
