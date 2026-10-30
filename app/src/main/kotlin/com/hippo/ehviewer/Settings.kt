@@ -758,6 +758,7 @@ object Settings : DataStorePreferences(null) {
 
     val uploadAutoStart = boolPref("upload_auto_start", false)
     val uploadParallel = boolPref("upload_parallel", true)
+    val uploadSmbMultiplex = boolPref("upload_smb_multiplex", false)
     val uploadSkipExisting = boolPref("upload_skip_existing", true)
 
     /**

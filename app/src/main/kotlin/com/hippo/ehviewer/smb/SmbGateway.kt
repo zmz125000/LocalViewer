@@ -4108,7 +4108,7 @@ object SmbGateway {
 
     fun canTransferCopy(from: SmbSourceEntity, fromPassword: String, to: SmbSourceEntity, toPassword: String): Boolean = com.hippo.ehviewer.library.canCopySmbOnServer(from, fromPassword, to, toPassword)
 
-    /** One explicit destination connection per upload lane; source reads retain their existing pool. */
+    /** One destination TCP, optionally shared by parallel lanes through separate file handles. */
     class UploadConnection internal constructor(
         private val source: SmbSourceEntity,
         private val password: String,
@@ -4128,7 +4128,9 @@ object SmbGateway {
                 block(session.diskShare(shareName))
             } catch (error: Throwable) {
                 // Never replay a write: its input may already be consumed. Reconnect for the next file.
-                if (isTransportError(error) || isSessionRejectError(error) || !session.isConnected) resource.discard()
+                if (isTransportError(error) || isSessionRejectError(error) || !session.isConnected) {
+                    withContext(kotlinx.coroutines.NonCancellable) { resource.discard(session) }
+                }
                 throw error
             } finally {
                 cancel?.dispose()

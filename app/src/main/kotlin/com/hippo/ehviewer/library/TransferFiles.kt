@@ -76,9 +76,10 @@ object TransferFiles {
         }
     }
 
-    /** Fixed, lazy lane connections. Finish the manifest before tearing them down. */
-    internal suspend fun <T> withUploadConnections(destination: TransferLocation, count: Int, block: suspend (List<SmbGateway.UploadConnection?>) -> T): T {
+    /** Parallel lanes can borrow the owner's connection; only the owner closes it. */
+    internal suspend fun <T> withUploadConnections(destination: TransferLocation, count: Int, shared: SmbGateway.UploadConnection? = null, block: suspend (List<SmbGateway.UploadConnection?>) -> T): T {
         require(count >= 0)
+        if (shared != null) return block(List(count) { shared })
         val source = if (count > 0 && destination.kind == ExplorerWindows.Kind.Smb) smb(destination.sourceId) else null
         val password = source?.let { SmbPasswordStore.get(it.id) }
         val connections = List(count) { source?.let { SmbGateway.uploadConnection(it, requireNotNull(password)) } }
