@@ -1,6 +1,8 @@
 package com.hippo.ehviewer.library
 
+import com.hippo.ehviewer.smb.SmbReadCancelledException
 import java.io.File
+import java.util.Random
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
@@ -14,6 +16,89 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ZipMemberByteSourceTest {
+    @Test
+    fun cancelledCompressedPrefetchCanResumeWithoutReinflatingCommittedPrefix() {
+        val payload = ByteArray(3 * 1024 * 1024 + 13).also { Random(11).nextBytes(it) }
+        val zip = writeZip(stored = false, "clip.mp4" to payload)
+        val source = FileArchiveByteSource(zip)
+        var interruptRead = false
+        var reads = 0
+        var fetched = 0L
+        val container = object : ArchiveByteSource by source {
+            override fun readAt(offset: Long, buf: ByteArray, off: Int, len: Int): Int {
+                val count = source.readAt(offset, buf, off, len)
+                if (interruptRead) {
+                    fetched += count.coerceAtLeast(0)
+                    if (++reads == 2) Thread.currentThread().interrupt()
+                }
+                return count
+            }
+        }
+        val member = ZipMemberByteSource.open(container, "clip.mp4")!!
+        val temporary = File.createTempFile("zip-video-cancel-", ".tmp")
+        SequentialVideoByteSource(member, temporary).use { seekable ->
+            interruptRead = true
+            try {
+                seekable.readAt(payload.size - 1L, ByteArray(1), 0, 1)
+                throw AssertionError("Interrupted prefetch completed")
+            } catch (_: SmbReadCancelledException) {
+                // A playback seek will continue from another, non-interrupted worker.
+            } finally {
+                Thread.interrupted()
+            }
+            val actual = ByteArray(payload.size)
+            assertEquals(actual.size, seekable.readAt(0, actual, 0, actual.size))
+            assertArrayEquals(payload, actual)
+            assertTrue("Cancellation must not rewind the ZIP stream", fetched <= zip.length())
+        }
+        assertFalse(temporary.exists())
+    }
+
+    @Test
+    fun compressedVideoSeeksReplayInflatedPrefixWithoutMoreContainerReads() {
+        val payload = ByteArray(5 * 1024 * 1024 + 31).also { Random(42).nextBytes(it) }
+        val zip = writeZip(stored = false, "clip.mp4" to payload)
+        val bytesRead = AtomicInteger()
+        val source = FileArchiveByteSource(zip)
+        val container = object : ArchiveByteSource by source {
+            override fun readAt(offset: Long, buf: ByteArray, off: Int, len: Int): Int = source.readAt(offset, buf, off, len).also { if (it > 0) bytesRead.addAndGet(it) }
+        }
+        val member = ZipMemberByteSource.open(container, "clip.mp4")!!
+        bytesRead.set(0)
+        val temporary = File.createTempFile("zip-video-test-", ".tmp")
+        SequentialVideoByteSource(member, temporary).use { seekable ->
+            VideoDirectLinkByteSource(demand = seekable, maxBlocks = 2, prefetchAhead = 2).use { video ->
+                val head = ByteArray(32)
+                assertEquals(32, video.readAt(0, head, 0, head.size))
+                assertArrayEquals(payload.copyOf(32), head)
+                val tailAt = payload.size - 32L
+                val tail = ByteArray(32)
+                assertEquals(32, video.readAt(tailAt, tail, 0, tail.size))
+                assertArrayEquals(payload.takeLast(32).toByteArray(), tail)
+                val fetched = bytesRead.get()
+                assertTrue("Compressed payload should be fetched once", fetched <= zip.length())
+                video.noteSeek(System.currentTimeMillis() + 3000)
+                assertEquals(32, video.readAt(0, head, 0, head.size))
+                assertArrayEquals(payload.copyOf(32), head)
+                assertEquals("Backwards playback seek must not refetch the ZIP", fetched, bytesRead.get())
+            }
+        }
+        assertFalse(temporary.exists())
+    }
+
+    @Test
+    fun photoExtractionReadsStoredAndDeflatedMembersWithoutStreamingSeeks() {
+        val payload = ByteArray(1024 * 1024 + 17).also { Random(7).nextBytes(it) }
+        for (stored in listOf(true, false)) {
+            val zip = writeZip(stored, "photo.jpg" to payload)
+            FileArchiveByteSource(zip).use { source ->
+                val directory = ZipCentralDirectory.open(source)!!
+                val entry = directory.find("photo.jpg")!!
+                assertArrayEquals(payload, directory.extract(entry))
+            }
+        }
+    }
+
     @Test
     fun openLocalArchiveByteSourceReadsZipfileMember() {
         val payload = "chapter one".toByteArray()

@@ -479,6 +479,7 @@ object SmbGateway {
     private var videoConfig: SmbConfig? = null
 
     private val hostPools = ConcurrentHashMap<String, HostPool>()
+    private val browseKeepAlivePings = AtomicBoolean(true)
     private val connectedHosts = ConcurrentHashMap.newKeySet<String>()
     private val _connectionRevision = MutableStateFlow(0L)
 
@@ -635,7 +636,7 @@ object SmbGateway {
         val connection: Connection,
         val session: Session,
         val reservedForList: Boolean = false,
-        /** Last successful user op. Keep-alive ping must not bump this or extra TCPs never idle-release. */
+        /** Last finished user op. Keep-alive ping must not bump this or extra TCPs never idle-release. */
         val lastUsedMs: AtomicLong = AtomicLong(System.currentTimeMillis()),
     ) {
         private val shares = ConcurrentHashMap<String, DiskShare>()
@@ -737,7 +738,6 @@ object SmbGateway {
                 while (isActive && !closed.get()) {
                     delay(KEEPALIVE_INTERVAL_MS)
                     if (closed.get()) break
-                    if (isHostCoolingDown(hostPortKey)) continue
                     pingIdleSessions()
                 }
             }
@@ -748,8 +748,10 @@ object SmbGateway {
             keepAliveJob = null
         }
 
-        /** ProcessLifecycle ON_STOP: stop pings, leave sockets in the map. */
-        fun pauseKeepAlive() = stopKeepAlive()
+        /** ProcessLifecycle ON_STOP: keep idle retirement running without network probes. */
+        fun pauseKeepAlive() {
+            if (size.get() > 0) startKeepAlive()
+        }
 
         /** ProcessLifecycle ON_START: resume pings; first op still retires a half-open TCP. */
         fun resumeKeepAlive() {
@@ -834,7 +836,6 @@ object SmbGateway {
             var kept = 0
             var dropped = 0
             var released = 0
-            var dataLive = liveDataCount()
             val now = System.currentTimeMillis()
             for (ps in candidates) {
                 if (closed.get()) break
@@ -847,34 +848,14 @@ object SmbGateway {
                     kept++
                     continue
                 }
-                val releaseExtra = !ps.reservedForList &&
-                    idleMs >= IDLE_RELEASE_MS &&
-                    dataLive > MIN_WARM_DATA_SESSIONS
-                if (releaseExtra) {
-                    // Exclusive slots only when closing — ping concurrent with a READ is fine,
-                    // and hogging every slot made waiters grow extra TCPs up to the cap.
-                    var acquired = 0
-                    try {
-                        while (acquired < ps.opsLimit && ps.opSlots.tryAcquire()) {
-                            acquired++
-                        }
-                        if (acquired < ps.opsLimit) {
-                            kept++
-                            continue
-                        }
-                        markDyingAndMaybeClose(ps)
-                        dataLive--
-                        released++
-                    } finally {
-                        if (!ps.retired.get()) {
-                            repeat(acquired) { ps.opSlots.release() }
-                        }
-                    }
+                if (retireIdleExtra(ps, now)) {
+                    released++
+                } else if (!browseKeepAlivePings.get() || isHostCoolingDown(hostPortKey)) {
+                    kept++
                 } else if (ps.ping()) {
                     kept++
                 } else {
                     markDyingAndMaybeClose(ps)
-                    if (!ps.reservedForList) dataLive--
                     dropped++
                 }
             }
@@ -886,6 +867,35 @@ object SmbGateway {
                         "released=$released sessions=${size.get()}"
                 }
             }
+        }
+
+        private fun retireIdleExtra(ps: PooledSession, nowMs: Long): Boolean {
+            val retired = synchronized(sessionsLock) {
+                // A handle may have opened or finished since the idle snapshot. Recheck
+                // under the same lock used to reserve handles before detaching this TCP.
+                if (ps !in sessions || ps.retired.get() || !ps.connection.isConnected ||
+                    !smbShouldReleaseIdleData(
+                        ps.reservedForList,
+                        ps.outstanding.get(),
+                        nowMs - ps.lastUsedMs.get(),
+                        liveDataCount(),
+                        MIN_WARM_DATA_SESSIONS,
+                        IDLE_RELEASE_MS,
+                    )
+                ) {
+                    false
+                } else {
+                    ps.retired.set(true)
+                    sessions.remove(ps)
+                    size.updateAndGet { (it - 1).coerceAtLeast(0) }
+                    true
+                }
+            }
+            if (retired) {
+                // Slow SMB CLOSE/LOGOFF must not block retirement of the other idle TCPs.
+                SmbAsyncClose.run { ps.closeQuietly() }
+            }
+            return retired
         }
 
         private fun liveDataCount(): Int = synchronized(sessionsLock) {
@@ -950,6 +960,7 @@ object SmbGateway {
                     allowBusyData = allowBusyData,
                     hasShare = BooleanArray(matching.size) { matching[it].hasShare(shareName) },
                     preferMultiplex = Settings.smbPreferMultiplex.value,
+                    lastUsedMs = LongArray(matching.size) { matching[it].lastUsedMs.get() },
                 )
                 val ps = (place as? SmbDataPlacement.Use)?.let { matching[it.index] } ?: return@synchronized null
                 return@synchronized takeSlot(ps)
@@ -1000,6 +1011,8 @@ object SmbGateway {
          * (never close while siblings still read — that crashed high multiplex throughput).
          */
         private fun releaseOp(ps: PooledSession, killSession: Boolean) {
+            // Idle time starts when the last handle finishes, including cancellation.
+            ps.lastUsedMs.set(System.currentTimeMillis())
             if (killSession) {
                 ps.retired.set(true)
             }
@@ -1400,7 +1413,6 @@ object SmbGateway {
                 }
                 val disk = ps.diskShare(shareName)
                 val result = block(disk)
-                ps.lastUsedMs.set(System.currentTimeMillis())
                 return result
             } catch (e: Throwable) {
                 if (isShareClosedError(e)) {
@@ -1711,10 +1723,12 @@ object SmbGateway {
     /**
      * Pause browse keep-alive pings (ProcessLifecycle ON_STOP / activity switch).
      * List + data sockets stay in the map so folder → external player → back reuses them.
+     * Extra idle data TCPs still expire; cleanup does not send keep-alive probes.
      * Screen-off and Recents still call [dropBrowseSessions].
      */
     fun onAppBackgrounded(reason: String = "app background") {
         logcat { "SmbGateway: $reason — pausing browse keep-alive (sessions kept)" }
+        browseKeepAlivePings.set(false)
         hostPools.values.forEach { it.pauseKeepAlive() }
     }
 
@@ -1727,6 +1741,7 @@ object SmbGateway {
      */
     fun onAppForegrounded() {
         logcat { "SmbGateway: app foreground — resuming browse keep-alive" }
+        browseKeepAlivePings.set(true)
         hostPools.values.toList().forEach { pool ->
             val live = pool.retireDisconnectedNow()
             if (live > 0) pool.resumeKeepAlive()
@@ -4452,7 +4467,9 @@ object SmbGateway {
  *
  * At cap: multiplex onto the least-loaded session that still has a slot.
  * Prefer-multiplex mode instead fills the busiest available session first,
- * growing only when every matching session has exhausted its handle slots.
+ * growing only when every matching session has exhausted its handle slots. Equal
+ * loads prefer the recently used TCP so older extra connections can idle out,
+ * even when they already have the requested archive's share connected.
  */
 internal sealed interface SmbDataPlacement {
     data class Use(val index: Int) : SmbDataPlacement
@@ -4467,25 +4484,33 @@ internal fun smbPlaceDataOp(
     hasShare: BooleanArray? = null,
     allowBusyData: Boolean = false,
     preferMultiplex: Boolean = false,
+    lastUsedMs: LongArray? = null,
 ): SmbDataPlacement {
     require(outstanding.size == availableSlots.size)
     require(hasShare == null || hasShare.size == outstanding.size)
+    require(lastUsedMs == null || lastUsedMs.size == outstanding.size)
     val cap = maxConnections.coerceAtLeast(1)
     val atCap = outstanding.size >= cap
     var best = -1
     var bestOut = Int.MAX_VALUE
     var bestHasShare = false
+    var bestUsed = Long.MIN_VALUE
     for (i in outstanding.indices) {
         if (availableSlots[i] <= 0) continue
         if (!atCap && !allowBusyData && !preferMultiplex && outstanding[i] >= 1) continue
         val share = hasShare?.get(i) == true
+        val used = if (preferMultiplex) lastUsedMs?.get(i) ?: 0L else 0L
         val better = best < 0 ||
             (if (preferMultiplex) outstanding[i] > bestOut else outstanding[i] < bestOut) ||
-            (outstanding[i] == bestOut && share && !bestHasShare)
+            (
+                outstanding[i] == bestOut &&
+                    (used > bestUsed || used == bestUsed && share && !bestHasShare)
+                )
         if (better) {
             best = i
             bestOut = outstanding[i]
             bestHasShare = share
+            bestUsed = used
         }
     }
     if (best >= 0) return SmbDataPlacement.Use(best)
@@ -4521,6 +4546,16 @@ internal fun smbSpreadDataOps(opCount: Int, maxConnections: Int, opsPerSession: 
     }
     return outstanding
 }
+
+/** Idle cleanup is independent of keep-alive pings and never retires an active handle. */
+internal fun smbShouldReleaseIdleData(
+    reservedForList: Boolean,
+    outstanding: Int,
+    idleMs: Long,
+    liveDataCount: Int,
+    minWarmData: Int,
+    idleReleaseMs: Long,
+): Boolean = !reservedForList && outstanding == 0 && idleMs >= idleReleaseMs && liveDataCount > minWarmData
 
 /** Data TCP counts toward [SmbGateway.maxConnectionsPerHost] only while the socket is live. */
 internal fun smbCountsTowardDataCap(
