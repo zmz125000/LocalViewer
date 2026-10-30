@@ -261,8 +261,13 @@ object TransferFiles {
                 }
             } catch (e: Throwable) {
                 runCatching {
-                    if (created.toString().startsWith('/')) File(created.toString()).delete() else DocumentsContract.deleteDocument(appCtx.contentResolver, created.toUri())
-                }
+                    val deleted = if (created.toString().startsWith('/')) {
+                        File(created.toString()).let { it.delete() || !it.exists() }
+                    } else {
+                        DocumentsContract.deleteDocument(appCtx.contentResolver, created.toUri())
+                    }
+                    check(deleted) { "Cannot delete unfinished transfer: $created" }
+                }.onFailure { logcat("FileTransfer", it) }
                 throw e
             }
             // Index only completed images, after preserving their source timestamp.

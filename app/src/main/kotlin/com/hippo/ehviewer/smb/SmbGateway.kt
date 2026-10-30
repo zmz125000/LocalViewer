@@ -3984,6 +3984,9 @@ object SmbGateway {
             }
             output.use { target ->
                 try {
+                    // Arm server-side cleanup while the connection is still alive. Stop
+                    // aborts the transport, so a later delete request cannot be relied on.
+                    target.deleteOnClose()
                     if (origin != null) {
                         requireNotNull(originShare).openFile(
                             origin.pathInShare,
@@ -4084,6 +4087,8 @@ object SmbGateway {
                             ),
                         )
                     }
+                    checkpoint()
+                    target.setFileInformation(com.hierynomus.msfscc.fileinformation.FileDispositionInformation(false))
                 } catch (e: Throwable) {
                     runCatching { target.deleteOnClose() }
                     throw e
