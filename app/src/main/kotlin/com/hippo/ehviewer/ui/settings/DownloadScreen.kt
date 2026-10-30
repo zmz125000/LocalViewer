@@ -167,6 +167,10 @@ fun AnimatedVisibilityScope.DownloadScreen(navigator: DestinationsNavigator) = S
                     }
                 }
             }
+            SwitchPreference(
+                title = stringResource(R.string.ask_where_to_save),
+                state = Settings.askWhereToSave.asMutableState(),
+            )
             val conversionLocationSummary = conversionLocation.value?.let { saved ->
                 runCatching {
                     val treeUri = Uri.parse(saved)

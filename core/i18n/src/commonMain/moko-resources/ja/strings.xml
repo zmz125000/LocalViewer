@@ -143,7 +143,7 @@
     <string name="image_conversion_downsize_gain_map_summary">ゲインマップの画素数を1/4（幅と高さが各1/2）にします。ベース画像のサイズは維持します。</string>
     <string name="raw_hdr_conversion">RAW HDR 変換</string>
     <string name="raw_hdr_conversion_summary">%1$s</string>
-    <string name="browse_ask_where_to_save">保存先を毎回確認</string>
+    <string name="browse_ask_where_to_save">画像変換の保存先を確認</string>
     <string name="browse_convert_accept_sdr">SDR 形式も含める</string>
     <string name="image_conversion_default_location">画像変換フォルダー</string>
     <string name="image_conversion_default_location_not_set">フォルダー未選択</string>
@@ -1190,4 +1190,6 @@
     <string name="transfer_item_count">%d 件</string>
     <string name="transfer_source_unavailable">この項目は処理中、削除中、または利用できなくなっています。フォルダを更新してからもう一度お試しください。</string>
     <string name="transfer_delete_trash_protected">.trash 内の項目は削除できません。</string>
+    <string name="ask_where_to_save">保存先を毎回確認</string>
+    <string name="transfer_upload_action">アップロード先を選択…</string>
 </resources>

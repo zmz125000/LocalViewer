@@ -137,7 +137,7 @@
     <string name="image_conversion_downsize_gain_map_summary">增益图像素数为原来的 1/4（宽高各为 1/2），基础图像保持原尺寸。</string>
     <string name="raw_hdr_conversion">RAW HDR 转换</string>
     <string name="raw_hdr_conversion_summary">%1$s</string>
-    <string name="browse_ask_where_to_save">询问保存位置</string>
+    <string name="browse_ask_where_to_save">询问图像转换保存位置</string>
     <string name="browse_convert_accept_sdr">接受 SDR 格式</string>
     <string name="image_conversion_default_location">图像转换文件夹</string>
     <string name="image_conversion_default_location_not_set">尚未选择文件夹</string>
@@ -1262,4 +1262,6 @@
     <string name="transfer_item_count">%d 项</string>
     <string name="transfer_source_unavailable">此项目正忙、正在删除或已不可用。请刷新文件夹后重试。</string>
     <string name="transfer_delete_trash_protected">.trash 内的项目不能删除。</string>
+    <string name="ask_where_to_save">询问保存位置</string>
+    <string name="transfer_upload_action">上传到…</string>
 </resources>

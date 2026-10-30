@@ -141,7 +141,7 @@
     <string name="image_conversion_downsize_gain_map_summary">增益圖像素數為原來的 1/4（寬高各為 1/2），基礎影像保持原尺寸。</string>
     <string name="raw_hdr_conversion">RAW HDR 轉換</string>
     <string name="raw_hdr_conversion_summary">%1$s</string>
-    <string name="browse_ask_where_to_save">詢問儲存位置</string>
+    <string name="browse_ask_where_to_save">詢問影像轉換儲存位置</string>
     <string name="browse_convert_accept_sdr">接受 SDR 格式</string>
     <string name="image_conversion_default_location">圖片轉換資料夾</string>
     <string name="image_conversion_default_location_not_set">尚未選擇資料夾</string>
@@ -1228,4 +1228,6 @@
     <string name="transfer_item_count">%d 個項目</string>
     <string name="transfer_source_unavailable">此項目忙碌中、正在刪除或已無法使用。請重新整理資料夾後再試。</string>
     <string name="transfer_delete_trash_protected">.trash 內的項目無法刪除。</string>
+    <string name="ask_where_to_save">詢問儲存位置</string>
+    <string name="transfer_upload_action">上傳到…</string>
 </resources>

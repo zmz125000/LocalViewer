@@ -13,6 +13,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.material3.SnackbarHostState
 import androidx.core.content.FileProvider
 import com.ehviewer.core.files.toOkioPath
+import com.ehviewer.core.files.toUri
 import com.ehviewer.core.i18n.R
 import com.ehviewer.core.model.GalleryInfo
 import com.ehviewer.core.util.isAtLeastT
@@ -20,9 +21,11 @@ import com.ehviewer.core.util.logcat
 import com.ehviewer.core.util.withIOContext
 import com.ehviewer.core.util.withUIContext
 import com.hippo.ehviewer.BuildConfig.APPLICATION_ID
+import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.gallery.Page
 import com.hippo.ehviewer.gallery.ReaderSession
 import com.hippo.ehviewer.library.MediaStorePublish
+import com.hippo.ehviewer.ui.main.BrowseSaveAs
 import com.hippo.ehviewer.ui.main.FolderSelectHost
 import com.hippo.ehviewer.util.AppConfig
 import com.hippo.ehviewer.util.FileUtils
@@ -138,19 +141,24 @@ suspend fun saveTo(page: Page) {
     }
     val extension = FileUtils.getExtensionFromFilename(filename)
     val mimeType = MimeTypeMap.getSingleton().getMimeTypeFromExtension(extension) ?: "image/jpeg"
+    val ask = Settings.askWhereToSave.value
     val uri = try {
-        awaitActivityResult(ActivityResultContracts.CreateDocument(mimeType), filename)
+        if (ask) {
+            awaitActivityResult(ActivityResultContracts.CreateDocument(mimeType), filename)
+        } else {
+            BrowseSaveAs.createDefaultSaveFile(filename).toUri()
+        }
     } catch (error: CancellationException) {
         throw error
     } catch (error: Throwable) {
         logcat("SavePage", error)
-        snackbar(string(R.string.error_cant_find_activity))
+        snackbar(string(if (ask) R.string.error_cant_find_activity else R.string.invalid_download_location))
         return
     } ?: return
     val destination = uri.toOkioPath()
     var submitted = false
     try {
-        awaitPickerReturn()
+        if (ask) awaitPickerReturn()
         withUIContext {
             val job = FolderSelectHost.newJob(
                 filename,

@@ -1707,7 +1707,7 @@ private fun SelectionOverflowControl(
                 }
                 if (selectionActions && uploadable > 0) {
                     DropdownMenuItem(
-                        text = { Text(stringResource(R.string.transfer_upload)) },
+                        text = { Text(stringResource(R.string.transfer_upload_action)) },
                         onClick = {
                             menu = false
                             val files = picks.mapNotNull { pick ->

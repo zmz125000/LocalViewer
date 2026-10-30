@@ -156,7 +156,7 @@
     <string name="raw_hdr_conversion_hdr">HDR</string>
     <string name="raw_hdr_conversion_boost">HDR boost</string>
     <string name="raw_hdr_conversion_custom">HDR custom</string>
-    <string name="browse_ask_where_to_save">Ask where to save</string>
+    <string name="browse_ask_where_to_save">Ask for image conversion dest</string>
     <string name="browse_convert_accept_sdr">Accept SDR formats</string>
     <string name="image_conversion_default_location">Image conversion folder</string>
     <string name="image_conversion_default_location_not_set">No folder selected</string>
@@ -1291,4 +1291,6 @@
     <string name="transfer_item_count">%d items</string>
     <string name="transfer_source_unavailable">This item is busy, being deleted, or no longer available. Refresh the folder before trying again.</string>
     <string name="transfer_delete_trash_protected">Items inside .trash cannot be deleted.</string>
+    <string name="ask_where_to_save">Ask where to save</string>
+    <string name="transfer_upload_action">Upload to…</string>
 </resources>

@@ -568,4 +568,7 @@
     <string name="transfer_item_count">%d 個項目</string>
     <string name="transfer_source_unavailable">此項目忙碌中、正在刪除或已無法使用。請重新整理資料夾後再試。</string>
     <string name="transfer_delete_trash_protected">.trash 內的項目無法刪除。</string>
+    <string name="browse_ask_where_to_save">詢問影像轉換儲存位置</string>
+    <string name="ask_where_to_save">詢問儲存位置</string>
+    <string name="transfer_upload_action">上傳到…</string>
 </resources>

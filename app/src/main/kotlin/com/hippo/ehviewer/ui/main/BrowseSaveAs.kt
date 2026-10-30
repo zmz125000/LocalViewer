@@ -26,6 +26,7 @@ import com.ehviewer.core.util.withIOContext
 import com.ehviewer.core.util.withUIContext
 import com.hippo.ehviewer.BuildConfig.APPLICATION_ID
 import com.hippo.ehviewer.Settings
+import com.hippo.ehviewer.download.downloadLocation
 import com.hippo.ehviewer.library.GENERIC_FILE_MIME
 import com.hippo.ehviewer.library.MediaStorePublish
 import com.hippo.ehviewer.library.OriginDiskCache
@@ -110,7 +111,7 @@ object BrowseSaveAs {
 
     context(_: SnackbarHostState, ctx: Context)
     suspend fun saveLocalFolder(dir: Path, displayName: String, relativeName: String) = saveCatching {
-        val destRoot = pickTreeDir() ?: return@saveCatching
+        val destRoot = pickSaveDirectory() ?: return@saveCatching
         val dest = uniqueChildDir(destRoot, displayName.ifEmpty { "folder" })
         val name = displayName.ifEmpty { dest.name }
         val ok = string(R.string.browse_saved, dest.toUri().displayPath ?: dest.toString())
@@ -152,7 +153,7 @@ object BrowseSaveAs {
         displayName: String,
     ) = saveCatching {
         val (source, password) = smbCreds(sourceId)
-        val destRoot = pickTreeDir() ?: return@saveCatching
+        val destRoot = pickSaveDirectory() ?: return@saveCatching
         val dest = uniqueChildDir(destRoot, displayName.ifEmpty { "folder" })
         val ok = string(R.string.browse_saved, dest.toUri().displayPath ?: dest.toString())
         BrowseSaveTransfers.start(displayName.ifEmpty { dest.name }, ok) { counter ->
@@ -182,7 +183,7 @@ object BrowseSaveAs {
         displayName: String,
     ) = saveCatching {
         val (source, password) = webDavCreds(sourceId)
-        val destRoot = pickTreeDir() ?: return@saveCatching
+        val destRoot = pickSaveDirectory() ?: return@saveCatching
         val dest = uniqueChildDir(destRoot, displayName.ifEmpty { "folder" })
         val ok = string(R.string.browse_saved, dest.toUri().displayPath ?: dest.toString())
         BrowseSaveTransfers.start(displayName.ifEmpty { dest.name }, ok) { counter ->
@@ -269,6 +270,7 @@ object BrowseSaveAs {
     context(_: SnackbarHostState, ctx: Context)
     private suspend fun pickCreateFile(displayName: String): Uri? {
         val filename = FileUtils.sanitizeFilename(displayName)
+        if (!Settings.askWhereToSave.value) return createDefaultSaveFile(filename).toUri()
         val mime = createDocumentMime(displayName)
         return runSuspendCatching {
             awaitActivityResult(ActivityResultContracts.CreateDocument(mime), filename)
@@ -340,7 +342,41 @@ object BrowseSaveAs {
 
     /** Same tree picker as Save to… for a folder destination. */
     context(_: SnackbarHostState, _: Context)
-    internal suspend fun pickSaveDirectory(): Path? = pickTreeDir()
+    internal suspend fun pickSaveDirectory(): Path? = if (Settings.askWhereToSave.value) {
+        pickTreeDir()
+    } else {
+        try {
+            configuredSaveDirectory()
+        } catch (error: CancellationException) {
+            throw error
+        } catch (_: Exception) {
+            snackbar(string(R.string.invalid_download_location))
+            null
+        }
+    }
+
+    /** The same persisted folder as Download settings; app-private defaults are created lazily. */
+    internal suspend fun configuredSaveDirectory(): Path = withIOContext {
+        val directory = downloadLocation
+        if (directory.toString().startsWith('/')) File(directory.toString()).mkdirs()
+        check(directory.isDirectory) { "Download location is unavailable" }
+        directory
+    }
+
+    /** Reserve a new document without truncating an existing local file. */
+    internal suspend fun createDefaultSaveFile(displayName: String): Path = withIOContext {
+        val directory = configuredSaveDirectory()
+        val safe = FileUtils.sanitizeFilename(displayName)
+        if (directory.toString().startsWith('/')) {
+            synchronized(convertNameLock) {
+                var destination = directory / uniqueConvertName(directory, safe)
+                while (!destination.toFile().createNewFile()) destination = directory / uniqueConvertName(directory, safe)
+                destination
+            }
+        } else {
+            directory.createSafChild(safe, createDocumentMime(safe))
+        }
+    }
 
     /** Batch Save to…: write one local file under [dir]. */
     internal suspend fun saveLocalFileInto(dir: Path, path: Path, displayName: String): Boolean = saveIntoCatching {

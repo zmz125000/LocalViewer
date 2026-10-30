@@ -338,7 +338,7 @@ fun BrowseItemOverflowButton(
             )
             if (actions.uploadSource != null || actions.resolveUpload != null) {
                 DropdownMenuItem(
-                    text = { Text(stringResource(R.string.transfer_upload)) },
+                    text = { Text(stringResource(R.string.transfer_upload_action)) },
                     onClick = { beginUpload(saveQuick = false) },
                 )
             }
