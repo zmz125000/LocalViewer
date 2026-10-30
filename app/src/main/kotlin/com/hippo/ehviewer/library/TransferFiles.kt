@@ -61,11 +61,13 @@ object TransferFiles {
     private suspend fun smb(id: Long) = requireNotNull(SmbRepository.load(id)) { "SMB source missing" }
     private suspend fun dav(id: Long) = requireNotNull(WebDavRepository.load(id)) { "WebDAV source missing" }
 
-    /** One sequential lane's destination connection, closed on success, failure or stop. */
-    suspend fun <T> withUploadConnection(destination: TransferLocation, block: suspend (SmbGateway.UploadConnection?) -> T): T {
+    /** Multiplex jobs borrow a shared destination connection until their own work ends. */
+    suspend fun <T> withUploadConnection(destination: TransferLocation, multiplex: Boolean = false, block: suspend (SmbGateway.UploadConnection?) -> T): T {
         val connection = if (destination.kind == ExplorerWindows.Kind.Smb) {
             val source = smb(destination.sourceId)
-            SmbGateway.uploadConnection(source, SmbPasswordStore.get(source.id))
+            val password = SmbPasswordStore.get(source.id)
+            if (multiplex) return SmbGateway.withMultiplexedUploadConnection(source, password) { block(it) }
+            SmbGateway.uploadConnection(source, password)
         } else {
             null
         }

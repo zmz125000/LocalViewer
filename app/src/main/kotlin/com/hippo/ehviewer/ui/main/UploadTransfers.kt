@@ -409,7 +409,7 @@ internal object UploadTransfers {
                 }
             }
             try {
-                TransferFiles.withUploadConnection(state.destination) { connection ->
+                TransferFiles.withUploadConnection(state.destination, multiplex = state.smbMultiplex) { connection ->
                     slots.withPermit {
                         val directories = HashMap<String, TransferLocation>()
                         val safNames = HashMap<TransferLocation, MutableSet<String>>()
