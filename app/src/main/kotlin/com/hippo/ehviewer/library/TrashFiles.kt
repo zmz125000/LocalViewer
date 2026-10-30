@@ -9,6 +9,14 @@ import com.hippo.ehviewer.webdav.WebDavRepository
 
 private val trashArchivePath = Regex("(?i)(?:^|/)[^/]+\\.(?:zip|cbz)(?=/|$)")
 
+internal class TrashProtectedException : IllegalArgumentException("Items in .trash cannot be deleted")
+
+internal fun isInsideTrashPath(path: String): Boolean = path.replace('\\', '/').split('/').any { it.equals(".trash", ignoreCase = true) }
+
+internal fun requireOutsideTrash(path: String) {
+    if (isInsideTrashPath(path)) throw TrashProtectedException()
+}
+
 internal fun isTrashArchiveMember(path: String): Boolean {
     val normalized = path.replace('\\', '/').trim('/')
     val archive = trashArchivePath.find(normalized) ?: return false
@@ -37,7 +45,7 @@ internal fun trashDestinationDirectory(path: String, date: String): String {
     require(date.matches(Regex("\\d{4}-\\d{2}-\\d{2}")))
     val normalized = path.replace('\\', '/').trim('/')
     require(normalized.isNotEmpty() && normalized.split('/').none { it == "." || it == ".." })
-    require(normalized.substringAfterLast('/') != ".trash") { "Cannot move .trash into itself" }
+    requireOutsideTrash(normalized)
     val parent = normalized.substringBeforeLast('/', "")
     return listOf(parent, ".trash", date).filter { it.isNotEmpty() }.joinToString("/")
 }
@@ -63,6 +71,7 @@ internal suspend fun moveToTrashWithoutOverwrite(
 
 internal object TrashFiles {
     suspend fun move(file: TransferFile, date: String, control: TransferControl): String {
+        requireOutsideTrash(file.source.path)
         if (isTrashArchiveMember(file.source.path)) {
             throw UnsupportedOperationException("Server-side moves require a physical file or folder")
         }

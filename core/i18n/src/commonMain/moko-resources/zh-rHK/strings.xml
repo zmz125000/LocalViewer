@@ -567,4 +567,5 @@
     <string name="transfer_server_move">伺服器端移動</string>
     <string name="transfer_item_count">%d 個項目</string>
     <string name="transfer_source_unavailable">此項目忙碌中、正在刪除或已無法使用。請重新整理資料夾後再試。</string>
+    <string name="transfer_delete_trash_protected">.trash 內的項目無法刪除。</string>
 </resources>

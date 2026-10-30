@@ -136,6 +136,7 @@ object WebDavClient {
 
     /** One server MOVE for a file or complete collection. No transport replay or payload copy. */
     suspend fun moveToTrash(source: WebDavSourceEntity, password: String, relative: String, directory: Boolean, date: String, checkpoint: suspend () -> Unit): String = withIOContext {
+        com.hippo.ehviewer.library.requireOutsideTrash(decodeHref(absoluteUrl(source, relative).encodedPath))
         val client = trashHttp()
         val auth = basicAuthHeader(source.username, password)
         moveWebDavToTrash(relative, directory, date, checkpoint) { operation ->

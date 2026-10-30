@@ -1290,4 +1290,5 @@
     <string name="transfer_server_move">Server move</string>
     <string name="transfer_item_count">%d items</string>
     <string name="transfer_source_unavailable">This item is busy, being deleted, or no longer available. Refresh the folder before trying again.</string>
+    <string name="transfer_delete_trash_protected">Items inside .trash cannot be deleted.</string>
 </resources>

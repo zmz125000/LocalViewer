@@ -3969,6 +3969,7 @@ object SmbGateway {
         val trash = com.hippo.ehviewer.library.trashDestinationDirectory(relative, date)
         val origin = resolveLocation(source, relative)
         val destination = resolveLocation(source, trash)
+        com.hippo.ehviewer.library.requireOutsideTrash(origin.pathInShare)
         require(origin.pathInShare.isNotBlank() && origin.share == destination.share) { "Cannot move a share root" }
         val host = endpointHost(source)
         trackSource(source)
@@ -3990,8 +3991,9 @@ object SmbGateway {
                     if (error.status != NtStatus.STATUS_OBJECT_NAME_COLLISION || !share.folderExists(path)) throw error
                 }
             }
-            ensureDirectory(destination.pathInShare.substringBeforeLast('\\', ""))
-            ensureDirectory(destination.pathInShare)
+            val (trashRoot, datedTrash) = smbTrashDirectories(destination.pathInShare)
+            ensureDirectory(trashRoot)
+            ensureDirectory(datedTrash)
             checkpoint()
             // DiskShare.open accepts either a file or a directory. FILE_OPEN never creates it.
             val entry = share.open(
@@ -4007,7 +4009,7 @@ object SmbGateway {
                 val name = relative.replace('\\', '/').trim('/').substringAfterLast('/')
                 com.hippo.ehviewer.library.moveToTrashWithoutOverwrite(name, directory) { candidate ->
                     checkpoint()
-                    val target = destination.pathInShare + "\\" + candidate
+                    val target = smbTrashTarget(datedTrash, candidate)
                     if (share.fileExists(target) || share.folderExists(target)) {
                         throw com.hippo.ehviewer.library.TransferNameConflict(candidate)
                     }

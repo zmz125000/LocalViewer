@@ -12,6 +12,22 @@ class TrashFilesTest {
     private fun file(path: String, directory: Boolean = false, sourceId: Long = 1) = TransferFile(TransferLocation(ExplorerWindows.Kind.Smb, sourceId, path), path.substringAfterLast('/'), directory, 123, 456)
 
     @Test
+    fun trashFolderAndAllDescendantsAreProtectedAcrossPathStyles() {
+        for (path in listOf(".trash", "photos/.trash", ".trash/2026-10-30/photo.jpg", "share/photos/.trash/2026-10-30/folder/sub", "share\\photos\\.TRASH\\2026-10-30\\photo.jpg")) {
+            assertTrue(path, isInsideTrashPath(path))
+            try {
+                trashDestinationDirectory(path, "2026-10-30")
+                throw AssertionError("Allowed deleting a protected trash item: $path")
+            } catch (_: TrashProtectedException) {
+                // The common destination planner must reject before any remote mutation.
+            }
+        }
+        for (path in listOf("photos/trash/a.jpg", "photos/.trashcan/a.jpg", "photos/my.trash/a.jpg")) {
+            assertFalse(path, isInsideTrashPath(path))
+        }
+    }
+
+    @Test
     fun wholeFolderIsOneRootAndSelectedDescendantsAreNotMovedAgain() {
         val roots = trashSelectionRoots(listOf(file("photos", true), file("photos/a.jpg"), file("photos/sub", true), file("photos2/b.jpg"), file("photos", true), file("photos/a.jpg", sourceId = 2)))
         assertEquals(listOf("photos", "photos2/b.jpg", "photos/a.jpg"), roots.map { it.source.path })

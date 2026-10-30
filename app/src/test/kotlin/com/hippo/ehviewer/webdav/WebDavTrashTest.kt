@@ -11,6 +11,22 @@ import org.junit.Test
 
 class WebDavTrashTest {
     @Test
+    fun protectedTrashItemsAreRejectedBeforeAnyServerRequest() = runBlocking {
+        for (path in listOf(".trash", "photos/.trash/2026-10-30/photo.jpg", "photos/.TRASH/album")) {
+            var requests = 0
+            try {
+                moveWebDavToTrash(path, false, "2026-10-30", {}) {
+                    requests++
+                    WebDavTrashResponse(201)
+                }
+                fail("Trash contents must be protected")
+            } catch (_: com.hippo.ehviewer.library.TrashProtectedException) {
+                assertEquals(0, requests)
+            }
+        }
+    }
+
+    @Test
     fun folderUsesOneExclusiveServerMoveWithoutListingItsChildren() = runBlocking {
         val operations = mutableListOf<WebDavTrashRequest>()
         val result = moveWebDavToTrash("photos/album.v1", true, "2026-10-30", {}) {

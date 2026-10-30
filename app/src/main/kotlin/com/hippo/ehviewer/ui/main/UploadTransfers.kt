@@ -268,6 +268,12 @@ internal object UploadTransfers {
     fun delete(files: List<TransferFile>): Boolean {
         val roots = trashSelectionRoots(files)
         if (roots.isEmpty()) return false
+        if (roots.any { com.hippo.ehviewer.library.isInsideTrashPath(it.source.path) }) {
+            scope.launch(Dispatchers.Main.immediate) {
+                Toast.makeText(appCtx, R.string.transfer_delete_trash_protected, Toast.LENGTH_LONG).show()
+            }
+            return false
+        }
         val lease = networkSourceGuard.acquire(roots.map { it.source }, deleting = true) ?: run {
             sourceUnavailable()
             return false
@@ -358,6 +364,7 @@ internal object UploadTransfers {
         val status = causes.filterIsInstance<com.hierynomus.mssmb2.SMBApiException>().firstOrNull()?.statusCode
         val davStatus = causes.filterIsInstance<com.hippo.ehviewer.webdav.WebDavTrashException>().firstOrNull()?.status
         return when {
+            causes.any { it is com.hippo.ehviewer.library.TrashProtectedException } -> appCtx.getString(R.string.transfer_delete_trash_protected)
             causes.any { it is UnsupportedOperationException } || status in listOf(0xC00000BBL, 0xC0000010L, 0xC0000002L) -> appCtx.getString(R.string.transfer_delete_unsupported)
             status in listOf(0xC0000022L, 0xC0000061L) || davStatus == 401 || davStatus == 403 -> appCtx.getString(R.string.transfer_delete_access_denied)
             else -> error.message ?: appCtx.getString(R.string.browse_task_failed)
