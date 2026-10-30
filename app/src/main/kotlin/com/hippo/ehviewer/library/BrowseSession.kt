@@ -485,7 +485,9 @@ object BrowseSession {
     ): List<RemoteChild> {
         val key = smbListingKey(sourceId, normalizeBrowseRelativeDir(relativeDir))
         smbRawChildren[key]?.let { return it }
+        val started = networkSourceGuard.listingStarted()
         val children = load().withoutProtectedSystemNames()
+        networkSourceGuard.listed(TransferLocation(ExplorerWindows.Kind.Smb, sourceId, relativeDir), children.map { it.name }, started)
         return smbRawChildren.putIfAbsent(key, children) ?: children
     }
 
@@ -501,7 +503,9 @@ object BrowseSession {
     ): List<RemoteChild> {
         val key = webDavListingKey(sourceId, normalizeBrowseRelativeDir(relativeDir))
         webDavRawChildren[key]?.let { return it }
+        val started = networkSourceGuard.listingStarted()
         val children = load().withoutProtectedSystemNames()
+        networkSourceGuard.listed(TransferLocation(ExplorerWindows.Kind.WebDav, sourceId, relativeDir), children.map { it.name }, started)
         return webDavRawChildren.putIfAbsent(key, children) ?: children
     }
 

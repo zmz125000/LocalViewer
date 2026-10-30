@@ -154,8 +154,8 @@ fun BrowseItemOverflowButton(
             if (saveQuick) {
                 UploadTransfers.chooseSavedUploadDestination(file)
             } else {
+                val job = UploadTransfers.prepare(listOf(file)) ?: return@launch
                 if (actions.uploadSource != null) UploadTransfers.recordUploadHistory(file)
-                val job = UploadTransfers.prepare(listOf(file))
                 UploadTransfers.chooseDestination(job)
             }
             explorer.open()
@@ -325,16 +325,14 @@ fun BrowseItemOverflowButton(
                         run(actions.onSaveAs)
                     } else {
                         expanded = false
-                        saveTransfer(
-                            UploadTransfers.prepare(
-                                source,
-                                actions.selectTitle ?: source.path.substringAfterLast('/'),
-                                actions.selectFolder,
-                                actions.listLine?.sizeBytes ?: 0L,
-                                actions.listLine?.lastModifiedMs ?: 0L,
-                                saving = true,
-                            ),
-                        )
+                        UploadTransfers.prepare(
+                            source,
+                            actions.selectTitle ?: source.path.substringAfterLast('/'),
+                            actions.selectFolder,
+                            actions.listLine?.sizeBytes ?: 0L,
+                            actions.listLine?.lastModifiedMs ?: 0L,
+                            saving = true,
+                        )?.let(saveTransfer)
                     }
                 },
             )

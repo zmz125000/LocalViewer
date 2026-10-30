@@ -1289,4 +1289,5 @@
     <string name="transfer_delete_access_denied">Access denied while moving the item to .trash.</string>
     <string name="transfer_server_move">Server move</string>
     <string name="transfer_item_count">%d items</string>
+    <string name="transfer_source_unavailable">This item is busy, being deleted, or no longer available. Refresh the folder before trying again.</string>
 </resources>

@@ -566,7 +566,7 @@ class MainActivity : AppCompatActivity() {
                             if (files.isEmpty()) {
                                 snackbarState.showSnackbar(cannotParse)
                             } else {
-                                val job = UploadTransfers.prepare(files)
+                                val job = UploadTransfers.prepare(files) ?: return@collect
                                 UploadTransfers.chooseDestination(job)
                                 explorerPanel.open()
                             }

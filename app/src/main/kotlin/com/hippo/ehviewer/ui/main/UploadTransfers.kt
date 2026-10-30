@@ -11,6 +11,7 @@ import com.hippo.ehviewer.library.BrowseSession
 import com.hippo.ehviewer.library.ExplorerWindows
 import com.hippo.ehviewer.library.LocalHistory
 import com.hippo.ehviewer.library.LocalLibrary
+import com.hippo.ehviewer.library.NetworkSourceGuard
 import com.hippo.ehviewer.library.SavedUploads
 import com.hippo.ehviewer.library.TransferControl
 import com.hippo.ehviewer.library.TransferFile
@@ -21,6 +22,7 @@ import com.hippo.ehviewer.library.forEachPreparedTransfer
 import com.hippo.ehviewer.library.forEachTransferLane
 import com.hippo.ehviewer.library.humanizePathName
 import com.hippo.ehviewer.library.needsLocalTransferMetadata
+import com.hippo.ehviewer.library.networkSourceGuard
 import com.hippo.ehviewer.library.resolveBrowsePath
 import com.hippo.ehviewer.library.transferBatchParallelism
 import com.hippo.ehviewer.library.trashSelectionRoots
@@ -177,8 +179,8 @@ internal object UploadTransfers {
 
     fun openSavedUpload(entry: SavedUploads.Entry) {
         val file = entry.file()
+        val job = prepare(listOf(file)) ?: return
         recordUploadHistory(file)
-        val job = prepare(listOf(file))
         destination(entry.destination.transfer(), entry.destinationLabel, job.id)
     }
 
@@ -219,11 +221,15 @@ internal object UploadTransfers {
         }
     }
 
-    fun prepare(source: TransferLocation, title: String, directory: Boolean, size: Long = 0, mtime: Long = 0, saving: Boolean = false): UploadJob = prepare(listOf(TransferFile(source, title, directory, size, mtime)), saving)
+    fun prepare(source: TransferLocation, title: String, directory: Boolean, size: Long = 0, mtime: Long = 0, saving: Boolean = false): UploadJob? = prepare(listOf(TransferFile(source, title, directory, size, mtime)), saving)
 
-    fun prepare(files: List<TransferFile>, saving: Boolean = false): UploadJob {
+    fun prepare(files: List<TransferFile>, saving: Boolean = false): UploadJob? {
         require(files.isNotEmpty())
         val roots = uploadSelectionRoots(files)
+        val lease = networkSourceGuard.acquire(roots.map { it.source }, deleting = false) ?: run {
+            sourceUnavailable()
+            return null
+        }
         val job = UploadJob(ids.getAndIncrement(), roots.first().relative, saving)
         _jobs.update { it + job }
         job.worker = scope.launch {
@@ -254,14 +260,18 @@ internal object UploadTransfers {
                 job.state.update { it.copy(phase = UploadPhase.Failed, error = e.message ?: "Cannot list source") }
             }
         }
-        trackWorker(job)
+        trackWorker(job, lease)
         return job
     }
 
     /** Confirmation is supplied by the item/selection menu. No directory enumeration. */
-    fun delete(files: List<TransferFile>) {
+    fun delete(files: List<TransferFile>): Boolean {
         val roots = trashSelectionRoots(files)
-        if (roots.isEmpty()) return
+        if (roots.isEmpty()) return false
+        val lease = networkSourceGuard.acquire(roots.map { it.source }, deleting = true) ?: run {
+            sourceUnavailable()
+            return false
+        }
         val job = UploadJob(ids.getAndIncrement(), roots.first().relative, deleting = true)
         job.state.value = job.state.value.copy(
             phase = UploadPhase.Ready,
@@ -271,17 +281,25 @@ internal object UploadTransfers {
         )
         _jobs.update { it + job }
         panelId = job.id
-        start(job)
+        startDelete(job, lease)
+        return true
     }
 
-    private fun startDelete(job: UploadJob) {
+    private fun sourceUnavailable() {
+        scope.launch(Dispatchers.Main.immediate) {
+            Toast.makeText(appCtx, R.string.transfer_source_unavailable, Toast.LENGTH_LONG).show()
+        }
+    }
+
+    private fun startDelete(job: UploadJob, lease: NetworkSourceGuard.Lease) {
         val state = job.state.value
-        if (!state.editable || state.rows.isEmpty()) return
-        if (!job.state.compareAndSet(state, state.copy(phase = UploadPhase.Running, serverCopy = true))) return
+        if (!state.editable || state.rows.isEmpty() || !job.state.compareAndSet(state, state.copy(phase = UploadPhase.Running, serverCopy = true))) {
+            lease.close()
+            return
+        }
         syncForeground()
         val date = state.destinationLabel.substringAfterLast('/')
         job.worker = scope.launch {
-            val changed = HashSet<TransferLocation>()
             try {
                 slots.withPermit {
                     for (row in state.rows) {
@@ -290,8 +308,8 @@ internal object UploadTransfers {
                         val parent = row.file.source.copy(path = row.file.source.path.substringBeforeLast('/', ""))
                         // Stop or a lost reply can race an already committed server rename.
                         // Refresh attempted network parents even when the acknowledgement is lost.
-                        if (parent.kind != ExplorerWindows.Kind.Local) changed += parent
                         try {
+                            lease.attempted(row.file.source)
                             val name = TrashFiles.move(row.file, date, job.control)
                             // Account for confirmed server moves before observing a later Stop.
                             updateRow(job, row.file.relative, UploadFileStatus.Succeeded, "$date/$name")
@@ -329,17 +347,10 @@ internal object UploadTransfers {
                 job.state.update { it.copy(phase = UploadPhase.Failed, error = message) }
                 scope.launch(Dispatchers.Main.immediate) { Toast.makeText(appCtx, message, Toast.LENGTH_LONG).show() }
             } finally {
-                for (parent in changed) {
-                    when (parent.kind) {
-                        ExplorerWindows.Kind.Smb -> BrowseSession.notifySmbMutation(parent.sourceId, parent.path)
-                        ExplorerWindows.Kind.WebDav -> BrowseSession.notifyWebDavMutation(parent.sourceId, parent.path)
-                        ExplorerWindows.Kind.Local -> Unit
-                    }
-                }
                 syncForeground()
             }
         }
-        trackWorker(job)
+        trackWorker(job, lease)
     }
 
     private fun deleteFailureMessage(error: Throwable): String {
@@ -469,10 +480,21 @@ internal object UploadTransfers {
     private fun syncForeground() {
         StreamKeepAlivePolicy.setUploadActive(_jobs.value.any { it.state.value.active && it.state.value.background })
     }
-    private fun trackWorker(job: UploadJob) {
+    private fun trackWorker(job: UploadJob, lease: NetworkSourceGuard.Lease? = null) {
         // Cancellation can arrive before the IO dispatcher starts the coroutine,
         // in which case its try/finally never runs.
         job.worker?.invokeOnCompletion { cause ->
+            lease?.close()
+            if (job.deleting) {
+                job.state.value.rows.map { it.file.source }.distinct().forEach { source ->
+                    val parent = source.path.substringBeforeLast('/', "")
+                    when (source.kind) {
+                        ExplorerWindows.Kind.Smb -> BrowseSession.notifySmbMutation(source.sourceId, parent)
+                        ExplorerWindows.Kind.WebDav -> BrowseSession.notifyWebDavMutation(source.sourceId, parent)
+                        ExplorerWindows.Kind.Local -> Unit
+                    }
+                }
+            }
             if (cause is CancellationException) {
                 job.state.update { current ->
                     current.copy(
@@ -489,13 +511,18 @@ internal object UploadTransfers {
         }
     }
     fun start(job: UploadJob) {
-        if (job.deleting) {
-            startDelete(job)
-            return
-        }
+        if (job.deleting) return
         val state = job.state.value
         if (!state.editable || state.destination == null || state.rows.isEmpty()) return
-        if (!job.state.compareAndSet(state, state.copy(phase = UploadPhase.Running, error = null, startWhenReady = false))) return
+        val lease = networkSourceGuard.acquire(state.rows.map { it.file.source }, deleting = false) ?: run {
+            job.state.update { it.copy(phase = UploadPhase.Failed, error = appCtx.getString(R.string.transfer_source_unavailable)) }
+            sourceUnavailable()
+            return
+        }
+        if (!job.state.compareAndSet(state, state.copy(phase = UploadPhase.Running, error = null, startWhenReady = false))) {
+            lease.close()
+            return
+        }
         syncForeground()
         job.worker = scope.launch {
             // Reset the UI immediately, but serialize network resources with the old execution.
@@ -710,7 +737,7 @@ internal object UploadTransfers {
                 syncForeground()
             }
         }
-        trackWorker(job)
+        trackWorker(job, lease)
     }
     private fun updateRow(job: UploadJob, relative: String, status: UploadFileStatus, detail: String? = null) {
         job.state.update { it.copy(rows = it.rows.map { row -> if (row.file.relative == relative) row.copy(status = status, detail = detail) else row }) }

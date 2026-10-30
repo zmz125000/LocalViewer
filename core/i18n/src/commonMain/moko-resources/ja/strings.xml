@@ -1188,4 +1188,5 @@
     <string name="transfer_delete_access_denied">.trash への移動中にアクセスが拒否されました。</string>
     <string name="transfer_server_move">サーバー側の移動</string>
     <string name="transfer_item_count">%d 件</string>
+    <string name="transfer_source_unavailable">この項目は処理中、削除中、または利用できなくなっています。フォルダを更新してからもう一度お試しください。</string>
 </resources>

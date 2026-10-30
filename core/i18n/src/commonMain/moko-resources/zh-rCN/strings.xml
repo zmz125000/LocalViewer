@@ -1260,4 +1260,5 @@
     <string name="transfer_delete_access_denied">移动到 .trash 时访问被拒绝。</string>
     <string name="transfer_server_move">服务器端移动</string>
     <string name="transfer_item_count">%d 项</string>
+    <string name="transfer_source_unavailable">此项目正忙、正在删除或已不可用。请刷新文件夹后重试。</string>
 </resources>

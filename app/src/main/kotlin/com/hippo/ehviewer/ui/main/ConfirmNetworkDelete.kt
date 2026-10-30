@@ -25,8 +25,7 @@ internal fun rememberNetworkDeleteConfirmation(onConfirmed: () -> Unit = {}): (L
             confirmButton = {
                 TextButton(onClick = {
                     pending = null
-                    UploadTransfers.delete(files)
-                    onConfirmed()
+                    if (UploadTransfers.delete(files)) onConfirmed()
                 }) { Text(stringResource(R.string.delete)) }
             },
             dismissButton = {
