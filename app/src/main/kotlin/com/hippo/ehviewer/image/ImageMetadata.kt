@@ -136,7 +136,7 @@ internal fun ImageSource.readMetadata(
                 when (this) {
                     is ByteBufferSource -> source.remaining().toLong()
                     is PathSource -> source.openFileDescriptor("r").use { it.statSize }
-                }?.takeIf { it > 0 }
+                }.takeIf { it > 0 }
             }
         }.getOrNull(),
         // CICP primaries describe the source gamut independently of its transfer curve.

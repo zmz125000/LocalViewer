@@ -284,7 +284,6 @@ object FolderGalleryIndex {
         when (entry) {
             is BrowseEntryRemote.RegularFile -> entry.copy(size = size, lastModifiedMs = date)
             is BrowseEntryRemote.VideoFile -> entry.copy(size = size, lastModifiedMs = date)
-            else -> entry
         }
     }
 
