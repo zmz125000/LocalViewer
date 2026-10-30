@@ -7,6 +7,47 @@ import org.junit.Test
 
 class SmbHostPoolPolicyTest {
     @Test
+    fun preferMultiplexFillsEachConnectionsSlotsBeforeGrowing() {
+        assertEquals(listOf(3), smbSpreadDataOps(3, 3, 3, preferMultiplex = true))
+        assertEquals(listOf(3, 2), smbSpreadDataOps(5, 3, 3, preferMultiplex = true))
+        assertEquals(listOf(3, 3, 3), smbSpreadDataOps(9, 3, 3, preferMultiplex = true))
+        assertEquals(listOf(10, 1), smbSpreadDataOps(11, 3, 10, preferMultiplex = true))
+        assertEquals(listOf(1, 1, 1), smbSpreadDataOps(3, 3, 1, preferMultiplex = true))
+    }
+
+    @Test
+    fun preferMultiplexConsolidatesWorkOntoBusyConnectionsInsteadOfIdleOnes() {
+        assertEquals(
+            SmbDataPlacement.Use(0),
+            smbPlaceDataOp(intArrayOf(2, 0, 1), intArrayOf(1, 3, 2), 5, preferMultiplex = true),
+        )
+        assertEquals(
+            SmbDataPlacement.Use(2),
+            smbPlaceDataOp(intArrayOf(3, 0, 1), intArrayOf(0, 3, 2), 5, preferMultiplex = true),
+        )
+        assertEquals(
+            SmbDataPlacement.Use(1),
+            smbPlaceDataOp(intArrayOf(2, 2), intArrayOf(1, 1), 5, hasShare = booleanArrayOf(false, true), preferMultiplex = true),
+        )
+    }
+
+    @Test
+    fun preferMultiplexStillHonorsConnectionLimitsAndCapacityBackoff() {
+        assertEquals(
+            SmbDataPlacement.Grow,
+            smbPlaceDataOp(intArrayOf(3), intArrayOf(0), 3, preferMultiplex = true),
+        )
+        assertEquals(
+            SmbDataPlacement.Wait,
+            smbPlaceDataOp(intArrayOf(3, 3, 3), intArrayOf(0, 0, 0), 3, preferMultiplex = true),
+        )
+        assertEquals(
+            SmbDataPlacement.Wait,
+            smbPlaceDataOp(intArrayOf(3), intArrayOf(0), 3, allowBusyData = true, preferMultiplex = true),
+        )
+    }
+
+    @Test
     fun capacityBackoffMultiplexesExistingTcpBelowConfiguredCap() {
         assertEquals(
             SmbDataPlacement.Use(0),

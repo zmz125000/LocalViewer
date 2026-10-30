@@ -260,6 +260,11 @@ fun AnimatedVisibilityScope.AdvancedScreen(navigator: DestinationsNavigator) = S
                 state = Settings.smbOpsPerSession.asMutableState(),
             )
             SwitchPreference(
+                title = stringResource(R.string.settings_smb_prefer_multiplex),
+                summary = stringResource(R.string.settings_smb_prefer_multiplex_summary),
+                state = Settings.smbPreferMultiplex.asMutableState(),
+            )
+            SwitchPreference(
                 title = stringResource(id = R.string.settings_smb3_only),
                 state = Settings.smb3Only.asMutableState(),
             )

@@ -467,6 +467,9 @@ object Settings : DataStorePreferences(null) {
         com.hippo.ehviewer.smb.SmbGateway.onPoolBudgetChanged()
     }
 
+    /** Fill existing browse/reader multiplex slots before growing the data connection pool. */
+    val smbPreferMultiplex = boolPref("smb_prefer_multiplex", false)
+
     /** Prefer SMB 3.x only (disable SMB 2.0.2 / 2.1 dialects). Default off. */
     val smb3Only = boolPref("smb3_only", false).observed {
         com.hippo.ehviewer.smb.SmbGateway.onProtocolSettingsChanged()
@@ -758,7 +761,7 @@ object Settings : DataStorePreferences(null) {
 
     val uploadAutoStart = boolPref("upload_auto_start", false)
     val uploadParallel = boolPref("upload_parallel", true)
-    val uploadSmbMultiplex = boolPref("upload_smb_multiplex", false)
+    val uploadSmbMultiplex = boolPref("upload_smb_multiplex", true)
     val uploadSkipExisting = boolPref("upload_skip_existing", true)
 
     /**
