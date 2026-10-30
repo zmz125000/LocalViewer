@@ -1217,4 +1217,6 @@
     <string name="explorer_delete_saved">刪除已儲存的路徑</string>
     <string name="browse_save_to_upload">儲存至快速上傳</string>
     <string name="transfer_smb_multiplex">SMB 多路複用</string>
+    <string name="settings_smb_prefer_multiplex">優先使用 SMB 多路複用</string>
+    <string name="settings_smb_prefer_multiplex_summary">先用盡現有連線的多路複用額度，再建立新連線。</string>
 </resources>

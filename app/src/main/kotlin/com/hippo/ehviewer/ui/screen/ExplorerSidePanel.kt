@@ -48,12 +48,14 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.BookmarkBorder
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.FileUpload
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Hub
+import androidx.compose.material.icons.filled.Lan
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -810,7 +812,7 @@ private fun ExplorerWindowList(
                         title = windowRowTitle(window, source),
                         subtitle = windowSubtitle(source, window.relativePath),
                         active = window.id == activeId,
-                        leadingIcon = if (choosingUpload && window.kind != ExplorerWindows.Kind.Local) Icons.Default.FileDownload else Icons.Default.Folder,
+                        leadingIcon = if (choosingUpload && window.kind != ExplorerWindows.Kind.Local) Icons.Default.FileDownload else explorerSourceIcon(window.kind),
                         onLongClick = if (choosingUpload) {
                             null
                         } else {
@@ -859,7 +861,7 @@ private fun ExplorerWindowList(
             items(saved, key = { "s-${it.key}" }) { item ->
                 ExplorerPathRow(
                     title = item.title,
-                    leadingIcon = if (choosingUpload && item.kind != ExplorerWindows.Kind.Local) Icons.Default.FileDownload else Icons.Default.Folder,
+                    leadingIcon = if (choosingUpload && item.kind != ExplorerWindows.Kind.Local) Icons.Default.FileDownload else explorerSourceIcon(item.kind),
                     subtitle = windowSubtitle(item.sourceName, item.relativePath),
                     active = false,
                     onClick = {
@@ -1009,6 +1011,12 @@ private fun ExplorerFavoritesGrid(
             }
         }
     }
+}
+
+private fun explorerSourceIcon(kind: ExplorerWindows.Kind): ImageVector = when (kind) {
+    ExplorerWindows.Kind.Local -> Icons.Default.Folder
+    ExplorerWindows.Kind.Smb -> Icons.Default.Lan
+    ExplorerWindows.Kind.WebDav -> Icons.Default.Cloud
 }
 
 @Composable

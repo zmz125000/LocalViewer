@@ -151,6 +151,7 @@ object WebDavClient {
         val auth = basicAuthHeader(source.username, password)
         // A cancelled/failed PUT may already have created a partial file on the server.
         var ownsTemp = true
+        var putCompleted = false
         try {
             val response = http().request(absoluteUrl(source, temp)) {
                 method = HttpMethod.Put
@@ -175,6 +176,7 @@ object WebDavClient {
             }
             if (response.status.value == 412) ownsTemp = false // Never delete an existing file on a name conflict.
             check(response.status.value in 200..299) { "WebDAV PUT: ${response.status}" }
+            putCompleted = true
             if (mtimeMs > 0) {
                 val date = java.time.format.DateTimeFormatter.RFC_1123_DATE_TIME.format(
                     java.time.Instant.ofEpochMilli(mtimeMs).atZone(java.time.ZoneOffset.UTC),
@@ -205,14 +207,25 @@ object WebDavClient {
         } finally {
             if (ownsTemp) {
                 kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
-                    kotlinx.coroutines.withTimeoutOrNull(10_000) {
-                        runCatching {
-                            val deleted = http().request(absoluteUrl(source, temp)) {
-                                method = HttpMethod.Delete
-                                auth?.let { header(HttpHeaders.Authorization, it) }
-                            }
-                            check(deleted.status.value in 200..299 || deleted.status.value == 404) { "WebDAV cleanup DELETE: ${deleted.status}" }
-                        }.onFailure { logcat("FileTransfer", it) }
+                    val cleaned = kotlinx.coroutines.withTimeoutOrNull(30_000) {
+                        cleanupWebDavUpload(
+                            putCompleted = putCompleted,
+                            delete = {
+                                http().request(absoluteUrl(source, temp)) {
+                                    method = HttpMethod.Delete
+                                    timeout {
+                                        connectTimeoutMillis = 3000
+                                        requestTimeoutMillis = 3000
+                                        socketTimeoutMillis = 3000
+                                    }
+                                    auth?.let { header(HttpHeaders.Authorization, it) }
+                                }.status.value
+                            },
+                            onFailure = { logcat("FileTransfer", it) },
+                        )
+                    } == true
+                    if (!cleaned) {
+                        logcat("FileTransfer", java.io.IOException("Cannot clean up WebDAV temporary upload: $temp"))
                     }
                 }
             }

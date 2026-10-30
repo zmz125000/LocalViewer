@@ -548,10 +548,13 @@ private fun ScreenWidgetSetting(slideshow: Boolean) = Column {
                 add(stringResource(R.string.pref_screen_widget_file_name) to showFileName)
                 add(stringResource(R.string.pref_screen_widget_auto_align) to autoAlign)
             },
-            onOptionChanged = { field ->
+            onOptionChanged = { field, checked ->
                 if (field !== autoAlign && field !== showClock && field !== useExifDate) {
-                    autoAlign.value = field.value ||
-                        showImageInfo.value || showColorSpace.value || showExifInfo.value || showFileName.value
+                    // Preference-backed state may still contain the value before this click.
+                    val infoFields = listOf(showImageInfo, showColorSpace, showExifInfo, showFileName)
+                    autoAlign.value = checked || infoFields.any { option ->
+                        if (option === field) checked else option.value
+                    }
                 }
             },
         )

@@ -16,8 +16,10 @@ import com.hippo.ehviewer.library.TransferControl
 import com.hippo.ehviewer.library.TransferFile
 import com.hippo.ehviewer.library.TransferFiles
 import com.hippo.ehviewer.library.TransferLocation
+import com.hippo.ehviewer.library.forEachPreparedTransfer
 import com.hippo.ehviewer.library.forEachTransferLane
 import com.hippo.ehviewer.library.humanizePathName
+import com.hippo.ehviewer.library.needsLocalTransferMetadata
 import com.hippo.ehviewer.library.resolveBrowsePath
 import com.hippo.ehviewer.library.transferBatchParallelism
 import com.hippo.ehviewer.provider.StreamKeepAlivePolicy
@@ -418,7 +420,7 @@ internal object UploadTransfers {
                         suspend fun destinationFiles(parent: TransferLocation, connection: SmbGateway.UploadConnection?): MutableMap<String, TransferFile> = destinationEntries[parent] ?: TransferFiles.children(parent, connection).associateByTo(HashMap()) { it.relative }
                             .also { destinationEntries[parent] = it }
                         directories[""] = state.destination
-                        suspend fun transferRow(row: UploadRow, connection: SmbGateway.UploadConnection?) {
+                        suspend fun transferRow(row: UploadRow, connection: SmbGateway.UploadConnection?, prepared: Result<TransferFile>? = null) {
                             job.control.checkpoint()
                             val file = row.file
                             if (job.state.value.rows.any { it.file.relative == file.relative && it.status == UploadFileStatus.Skipped }) return
@@ -453,7 +455,7 @@ internal object UploadTransfers {
                                     }
                                     return
                                 }
-                                val currentFile = if (file.size >= 0 && file.mtime > 0) file else TransferFiles.stat(file)
+                                val currentFile = prepared?.getOrThrow() ?: if (file.size >= 0 && file.mtime > 0) file else TransferFiles.stat(file)
                                 val result = com.hippo.ehviewer.library.createTransferWithoutOverwrite(
                                     name = name,
                                     skipExisting = state.skipExisting,
@@ -534,12 +536,37 @@ internal object UploadTransfers {
                         }
                         // Parent creation and subtree skips complete before file workers begin.
                         for (row in state.rows.filter { it.file.directory }) transferRow(row, connection)
-                        val files = state.rows.filter { !it.file.directory }
+                        val files = job.state.value.rows.filter { !it.file.directory && it.status != UploadFileStatus.Skipped }
                         val parallelism = transferBatchParallelism(files.map { it.file }, state.destination.kind, state.parallel)
                         TransferFiles.withUploadConnections(state.destination, parallelism - 1, shared = connection.takeIf { state.smbMultiplex }) { extraConnections ->
                             forEachTransferLane(files, parallelism) { lane, rows ->
                                 val laneConnection = if (lane == 0) connection else extraConnections[lane - 1]
-                                for (row in rows) transferRow(row, laneConnection)
+                                if (rows.any { it.file.needsLocalTransferMetadata() }) {
+                                    forEachPreparedTransfer(
+                                        items = rows,
+                                        prepare = { row ->
+                                            job.control.checkpoint()
+                                            if (row.file.needsLocalTransferMetadata()) {
+                                                try {
+                                                    val metadata = TransferFiles.stat(row.file)
+                                                    job.state.update { current ->
+                                                        current.copy(rows = current.rows.map { if (it.file.relative == row.file.relative) it.copy(file = metadata) else it })
+                                                    }
+                                                    Result.success(metadata)
+                                                } catch (e: CancellationException) {
+                                                    throw e
+                                                } catch (e: Throwable) {
+                                                    Result.failure<TransferFile>(e)
+                                                }
+                                            } else {
+                                                null
+                                            }
+                                        },
+                                        transfer = { row, metadata -> transferRow(row, laneConnection, metadata) },
+                                    )
+                                } else {
+                                    for (row in rows) transferRow(row, laneConnection)
+                                }
                             }
                             // Connection cleanup may take time; all rows are already terminal.
                             job.state.update { it.copy(phase = UploadPhase.Finished) }

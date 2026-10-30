@@ -92,6 +92,13 @@ class SmbArchiveByteSource(
      */
     readahead: Boolean = true,
 ) : ArchiveByteSource {
+    // Only plain sticky files opt in; ZIP members and browse/reader retain their windows.
+    internal val videoReadWindowBytes: Int = if (videoPlay && stickySession && !readahead && ZipAsDirListing.zipMemberPath(remoteRelativeFile) == null) {
+        8 * 1024 * 1024
+    } else {
+        4 * 1024 * 1024
+    }
+
     private val raw: KeepOpenSmbFileSource?
     private val inner: ArchiveByteSource
 
@@ -270,6 +277,7 @@ private class KeepOpenSmbFileSource(
                                                             op.buf,
                                                             op.off,
                                                             op.len,
+                                                            rolling = stickySession && videoPlay,
                                                         ) { op.cancel.get() },
                                                     )
                                                 } catch (e: Throwable) {
@@ -604,18 +612,23 @@ private class KeepOpenSmbFileSource(
             buf: ByteArray,
             off: Int,
             len: Int,
+            rolling: Boolean = false,
             shouldAbort: () -> Boolean = { false },
         ): Int {
             var last: Throwable? = null
             for (attempt in 0 until READ_ATTEMPTS) {
                 if (shouldAbort()) return -1
                 try {
-                    val n = readFully(file, fileOffset, buf, off, len, shouldAbort)
+                    val n = if (rolling && len > READ_CHUNK) {
+                        readSmbVideoRange(SmbSequentialCopy.of(file), fileOffset, buf, off, len, shouldAbort)
+                    } else {
+                        readFully(file, fileOffset, buf, off, len, shouldAbort)
+                    }
                     // n==0 on a positive request is rare; treat as retryable empty.
                     if (n > 0 || len == 0 || shouldAbort()) return n
                     last = IOException("SMB read returned 0 at offset=$fileOffset len=$len")
                 } catch (e: Throwable) {
-                    if (isSmbExpectedCloseError(e)) throw e
+                    if (e is CancellationException || e is SmbReadCancelledException || isSmbExpectedCloseError(e)) throw e
                     last = e
                 }
                 if (attempt < READ_ATTEMPTS - 1) {

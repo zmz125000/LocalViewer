@@ -1179,4 +1179,6 @@
     <string name="explorer_delete_saved">保存済みパスを削除</string>
     <string name="browse_save_to_upload">クイックアップロードに保存</string>
     <string name="transfer_smb_multiplex">SMB 多重化</string>
+    <string name="settings_smb_prefer_multiplex">SMB 多重化を優先</string>
+    <string name="settings_smb_prefer_multiplex_summary">既存の接続の多重化スロットを使い切ってから、新しい接続を作成します。</string>
 </resources>

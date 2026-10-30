@@ -129,12 +129,10 @@ import kotlinx.coroutines.withTimeoutOrNull
  *   (Advanced → SMB concurrent connections), plus one reserved list TCP. Data may
  *   borrow that list socket only after the data budget is full and every data TCP
  *   is out of multiplex slots.
- * - **Spread then multiplex:** concurrent file ops (browse thumbs, reader pages)
- *   each take their own data TCP until the budget is used. Only then are leftover
- *   ops multiplexed onto the least-loaded session ([opsPerSession] slots, host-wide
- *   cap [MAX_SAFE_HOST_OPS]). Filling one session's slots first made the setting a
- *   max-session cap while work queued on a single TCP; extras stayed connected
- *   and idle.
+ * - **Placement:** by default, concurrent data ops spread across TCPs before
+ *   multiplexing. Advanced → Prefer SMB multiplexing instead fills available
+ *   handle slots on existing TCPs before growing, retaining the same connection
+ *   and [opsPerSession] limits.
  * - **Session identity:** `host|port|user|domain|password`
  * - **Multi-user same host:** several sources may share `host:port` with different
  *   usernames. List has one reserved TCP — a new user may idle-steal that slot (or
@@ -951,6 +949,7 @@ object SmbGateway {
                     maxConnections = maxConnectionsPerHost(),
                     allowBusyData = allowBusyData,
                     hasShare = BooleanArray(matching.size) { matching[it].hasShare(shareName) },
+                    preferMultiplex = Settings.smbPreferMultiplex.value,
                 )
                 val ps = (place as? SmbDataPlacement.Use)?.let { matching[it.index] } ?: return@synchronized null
                 return@synchronized takeSlot(ps)
@@ -978,7 +977,7 @@ object SmbGateway {
 
         /**
          * Matching-cred TCP with a free slot.
-         * Data: idle reuse, or least-loaded multiplex once at [maxConnectionsPerHost].
+         * Data placement follows the multiplex preference and connection budget.
          * List fallback only when the data budget is already full (do not absorb
          * concurrent files onto the reserved list TCP instead of growing).
          */
@@ -1083,8 +1082,7 @@ object SmbGateway {
             openSession: suspend (reservedForList: Boolean) -> PooledSession,
         ): PooledSession? {
             sweepDeadSessions()
-            // Idle reuse / at-cap multiplex only — do not pack new files onto a busy
-            // TCP's leftover [opsPerSession] slots while we can still grow.
+            // Apply the configured placement policy before considering another TCP.
             tryReserveExisting(credKey, shareName, forList)?.let { return it }
             if (connectGuard.isCoolingDown(hostPortKey)) {
                 return tryReserveSession(
@@ -1103,9 +1101,8 @@ object SmbGateway {
             if (atCap && !retireOneOtherCred(credKey, listOnly = forList)) return null
             return growLock.withLock {
                 if (closed.get()) return@withLock null
-                // Another waiter may have opened a TCP; take it only if placement says so
-                // (idle, or at cap). Concurrent prefetch used to serialize onto the first
-                // opener's free multiplex slots and never spread across the pool.
+                // Another waiter may have opened a TCP; recheck its available slots
+                // under the configured placement policy before opening another.
                 tryReserveExisting(credKey, shareName, forList)?.let { return@withLock it }
                 val stillAtCap = if (forList) {
                     liveListCount() >= LIST_RESERVED_SESSIONS
@@ -4454,6 +4451,8 @@ object SmbGateway {
  * queued on one TCP, and left extra sessions connected but unused.
  *
  * At cap: multiplex onto the least-loaded session that still has a slot.
+ * Prefer-multiplex mode instead fills the busiest available session first,
+ * growing only when every matching session has exhausted its handle slots.
  */
 internal sealed interface SmbDataPlacement {
     data class Use(val index: Int) : SmbDataPlacement
@@ -4467,6 +4466,7 @@ internal fun smbPlaceDataOp(
     maxConnections: Int,
     hasShare: BooleanArray? = null,
     allowBusyData: Boolean = false,
+    preferMultiplex: Boolean = false,
 ): SmbDataPlacement {
     require(outstanding.size == availableSlots.size)
     require(hasShare == null || hasShare.size == outstanding.size)
@@ -4477,10 +4477,10 @@ internal fun smbPlaceDataOp(
     var bestHasShare = false
     for (i in outstanding.indices) {
         if (availableSlots[i] <= 0) continue
-        if (!atCap && !allowBusyData && outstanding[i] >= 1) continue
+        if (!atCap && !allowBusyData && !preferMultiplex && outstanding[i] >= 1) continue
         val share = hasShare?.get(i) == true
         val better = best < 0 ||
-            outstanding[i] < bestOut ||
+            (if (preferMultiplex) outstanding[i] > bestOut else outstanding[i] < bestOut) ||
             (outstanding[i] == bestOut && share && !bestHasShare)
         if (better) {
             best = i
@@ -4493,10 +4493,10 @@ internal fun smbPlaceDataOp(
 }
 
 /**
- * Spread [opCount] overlapping data ops across new/idle TCPs, then multiplex.
+ * Simulate [opCount] overlapping data ops using the configured placement policy.
  * Returns outstanding counts per session (stable open order).
  */
-internal fun smbSpreadDataOps(opCount: Int, maxConnections: Int, opsPerSession: Int): List<Int> {
+internal fun smbSpreadDataOps(opCount: Int, maxConnections: Int, opsPerSession: Int, preferMultiplex: Boolean = false): List<Int> {
     val outstanding = ArrayList<Int>()
     val available = ArrayList<Int>()
     repeat(opCount) {
@@ -4505,6 +4505,7 @@ internal fun smbSpreadDataOps(opCount: Int, maxConnections: Int, opsPerSession: 
                 outstanding.toIntArray(),
                 available.toIntArray(),
                 maxConnections,
+                preferMultiplex = preferMultiplex,
             )
         ) {
             is SmbDataPlacement.Use -> {

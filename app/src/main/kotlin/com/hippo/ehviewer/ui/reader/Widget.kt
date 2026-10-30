@@ -75,7 +75,7 @@ fun ToggleMenuChoice(
     title: String,
     selectedValue: String,
     options: List<Pair<String, MutableState<Boolean>>>,
-    onOptionChanged: (MutableState<Boolean>) -> Unit = {},
+    onOptionChanged: (MutableState<Boolean>, Boolean) -> Unit = { _, _ -> },
 ) {
     var expanded by remember { mutableStateOf(false) }
     Row(
@@ -91,8 +91,9 @@ fun ToggleMenuChoice(
                     DropdownMenuItem(
                         text = { Text(label) },
                         onClick = {
-                            field.value = !field.value
-                            onOptionChanged(field)
+                            val checked = !field.value
+                            field.value = checked
+                            onOptionChanged(field, checked)
                         },
                         trailingIcon = {
                             Box(modifier = Modifier.size(24.dp), contentAlignment = Alignment.Center) {
