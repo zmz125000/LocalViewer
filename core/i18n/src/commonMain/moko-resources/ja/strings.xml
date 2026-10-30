@@ -1167,4 +1167,5 @@
     <string name="transfer_local_destination">ローカルフォルダー</string>
     <string name="transfer_counts">成功 %1$d · スキップ %2$d · 失敗 %3$d</string>
     <string name="transfer_file_count">%1$d 個のファイル</string>
+    <string name="browse_save_to_upload">アップロードに保存</string>
 </resources>

@@ -356,6 +356,24 @@ fun BrowseItemOverflowButton(
                     onClick = { run(actions.onSaveToPaths) },
                 )
             }
+            if (actions.onSaveToPaths != null && actions.selectFolder && actions.uploadSource != null) {
+                DropdownMenuItem(
+                    text = { Text(stringResource(R.string.browse_save_to_upload)) },
+                    onClick = {
+                        expanded = false
+                        UploadTransfers.chooseSavedUploadDestination(
+                            com.hippo.ehviewer.library.TransferFile(
+                                actions.uploadSource,
+                                actions.selectTitle ?: actions.uploadSource.path.substringAfterLast('/'),
+                                true,
+                                -1,
+                                0,
+                            ),
+                        )
+                        explorer.open()
+                    },
+                )
+            }
             if (actions.onShare != null) {
                 DropdownMenuItem(
                     text = { Text(stringResource(R.string.share)) },

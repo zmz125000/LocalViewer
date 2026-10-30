@@ -11,6 +11,7 @@ import com.hippo.ehviewer.library.BrowseSession
 import com.hippo.ehviewer.library.ExplorerWindows
 import com.hippo.ehviewer.library.LocalHistory
 import com.hippo.ehviewer.library.LocalLibrary
+import com.hippo.ehviewer.library.SavedUploads
 import com.hippo.ehviewer.library.TransferControl
 import com.hippo.ehviewer.library.TransferFile
 import com.hippo.ehviewer.library.TransferFiles
@@ -45,6 +46,7 @@ import splitties.init.appCtx
 internal enum class UploadPhase { Preparing, Ready, Running, Paused, Finished, Stopped, Failed }
 internal enum class UploadFileStatus { Pending, Running, Succeeded, Skipped, Failed }
 internal data class UploadRow(val file: TransferFile, val status: UploadFileStatus = UploadFileStatus.Pending, val detail: String? = null)
+internal data class SavedUploadDraft(val id: Long, val file: TransferFile)
 internal data class UploadState(
     val phase: UploadPhase = UploadPhase.Preparing,
     val rows: List<UploadRow> = emptyList(),
@@ -147,6 +149,25 @@ internal object UploadTransfers {
     val jobs = _jobs.asStateFlow()
     var panelId by mutableStateOf<Long?>(null)
     var destinationJobId by mutableStateOf<Long?>(null)
+    private var savedUploadDraft by mutableStateOf<SavedUploadDraft?>(null)
+    val destinationRequestId get() = savedUploadDraft?.id ?: destinationJobId
+    val choosingDestination get() = destinationRequestId != null
+
+    fun chooseSavedUploadDestination(file: TransferFile) {
+        require(file.directory)
+        panelId = null
+        destinationJobId = null
+        savedUploadDraft = SavedUploadDraft(ids.getAndIncrement(), file)
+    }
+
+    fun hasDestinationRequest(id: Long) = savedUploadDraft?.id == id || job(id) != null
+
+    fun openSavedUpload(entry: SavedUploads.Entry) {
+        val file = TransferFile(entry.source.transfer(), entry.title, true, -1, 0)
+        recordUploadHistory(file)
+        val job = prepare(listOf(file))
+        destination(entry.destination.transfer(), entry.destinationLabel, job.id)
+    }
 
     fun recordUploadHistory(file: TransferFile, parentOnly: Boolean = false) {
         val root = uploadHistoryRoot(file, parentOnly) ?: return
@@ -236,9 +257,15 @@ internal object UploadTransfers {
     fun chooseDestination(job: UploadJob) {
         if (!job.state.value.editable && job.state.value.phase != UploadPhase.Preparing) return
         panelId = null
+        savedUploadDraft = null
         destinationJobId = job.id
     }
-    fun destination(location: TransferLocation, label: String, jobId: Long? = destinationJobId) {
+    fun destination(location: TransferLocation, label: String, jobId: Long? = destinationRequestId) {
+        savedUploadDraft?.takeIf { it.id == jobId }?.let { draft ->
+            SavedUploads.remember(draft.file, location, label)
+            savedUploadDraft = null
+            return
+        }
         val job = job(jobId) ?: return
         if (!job.state.value.editable && job.state.value.phase != UploadPhase.Preparing) return
         job.state.update { it.copy(destination = location, destinationLabel = label, startWhenReady = it.autoStart) }
@@ -248,6 +275,7 @@ internal object UploadTransfers {
     }
     fun cancelDestination() {
         destinationJobId = null
+        savedUploadDraft = null
     }
     fun toggleBackground(job: UploadJob) {
         val state = job.state.updateAndGet { it.copy(background = !it.background) }

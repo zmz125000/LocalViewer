@@ -545,4 +545,5 @@
     <string name="transfer_local_destination">本機資料夾</string>
     <string name="transfer_counts">%1$d 個成功 · %2$d 個略過 · %3$d 個失敗</string>
     <string name="transfer_file_count">%1$d 個檔案</string>
+    <string name="browse_save_to_upload">儲存至上傳</string>
 </resources>

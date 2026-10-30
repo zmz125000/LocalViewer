@@ -425,6 +425,7 @@ object Settings : DataStorePreferences(null) {
      * In-memory windows are not stored here; they die with the process.
      */
     val savedExplorerPaths = stringPref("saved_explorer_paths", "")
+    val savedUploads = stringPref("saved_uploads", "")
 
     /**
      * Per-folder browse-mode persist. Entries: `{lf|sf|wf}:{id}:{rel}={prefInt}`.

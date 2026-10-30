@@ -1239,4 +1239,5 @@
     <string name="transfer_local_destination">本地文件夹</string>
     <string name="transfer_counts">%1$d 个成功 · %2$d 个跳过 · %3$d 个失败</string>
     <string name="transfer_file_count">%1$d 个文件</string>
+    <string name="browse_save_to_upload">保存到上传</string>
 </resources>
