@@ -74,6 +74,8 @@ private fun transferSpeed(state: UploadState): String = if (state.serverCopy) {
     "${FileUtils.humanReadableByteCount(state.speedBps)}/s"
 }
 
+private fun transferSize(state: UploadState): String = "${FileUtils.humanReadableByteCount(state.bytesTransferred)}/${FileUtils.humanReadableByteCount(state.totalBytes)}"
+
 @Composable
 internal fun UploadTransferBars() {
     val explorer = LocalExplorerPanel.current
@@ -130,7 +132,8 @@ internal fun UploadTransferBars() {
                             Text("${stringResource(if (job.saving) R.string.action_save_to else R.string.transfer_upload)} #${job.id} · ${stringResource(R.string.browse_finished)}")
                             Text(uploadSummary(state))
                         } else if (state.active) {
-                            Text("${stringResource(if (job.saving) R.string.action_save_to else R.string.transfer_upload)} #${job.id} · ${state.succeeded}/${state.total}/${state.skipped}/${state.failed} · ${transferSpeed(state)}")
+                            Text("${stringResource(if (job.saving) R.string.action_save_to else R.string.transfer_upload)} #${job.id} · ${state.succeeded}/${state.total}/${state.skipped}/${state.failed}")
+                            Text("${transferSize(state)} · ${transferSpeed(state)}")
                         } else {
                             Text("${stringResource(if (job.saving) R.string.action_save_to else R.string.transfer_upload)} #${job.id} · ${job.title}", maxLines = 1, overflow = TextOverflow.Ellipsis)
                             Text(uploadSummary(state))
@@ -234,7 +237,7 @@ private fun FileTransferPanel(job: UploadJob) {
                 Text(state.destinationLabel, Modifier.weight(1f), maxLines = 2, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall)
                 Text(
                     buildString {
-                        append("${FileUtils.humanReadableByteCount(state.bytesTransferred)}/${FileUtils.humanReadableByteCount(state.totalBytes)}")
+                        append(transferSize(state))
                         if (transferRate != null) append(" · $transferRate")
                     },
                     Modifier.padding(start = 8.dp),

@@ -7,6 +7,7 @@ import com.ehviewer.core.files.metadataOrNull
 import com.ehviewer.core.files.openFileDescriptor
 import com.ehviewer.core.files.toOkioPath
 import com.ehviewer.core.files.toUri
+import com.ehviewer.core.util.logcat
 import com.hippo.ehviewer.smb.SmbGateway
 import com.hippo.ehviewer.smb.SmbPasswordStore
 import com.hippo.ehviewer.smb.SmbRepository
@@ -227,7 +228,7 @@ object TransferFiles {
                         ?: error("Cannot create $name")
                     ).toOkioPath()
             }
-            try {
+            val timestampPreserved = try {
                 val counted = object : OutputStream() {
                     lateinit var output: OutputStream
                     override fun write(b: Int) {
@@ -243,23 +244,34 @@ object TransferFiles {
                     counted.output = it
                     read(file, counted, control)
                 }
-                if (file.mtime <= 0) return true
-                if (created.toString().startsWith('/')) return File(created.toString()).setLastModified(file.mtime)
-                val preserved = runCatching {
-                    created.openFileDescriptor("rw").use { File("/proc/self/fd/${it.fd}").setLastModified(file.mtime) }
-                }.getOrDefault(false)
-                if (!preserved) {
-                    runCatching {
-                        appCtx.contentResolver.update(created.toUri(), ContentValues().apply { put(DocumentsContract.Document.COLUMN_LAST_MODIFIED, file.mtime) }, null, null)
+                when {
+                    file.mtime <= 0 -> true
+                    created.toString().startsWith('/') -> File(created.toString()).setLastModified(file.mtime)
+                    else -> {
+                        val preserved = runCatching {
+                            created.openFileDescriptor("rw").use { File("/proc/self/fd/${it.fd}").setLastModified(file.mtime) }
+                        }.getOrDefault(false)
+                        if (!preserved) {
+                            runCatching {
+                                appCtx.contentResolver.update(created.toUri(), ContentValues().apply { put(DocumentsContract.Document.COLUMN_LAST_MODIFIED, file.mtime) }, null, null)
+                            }
+                        }
+                        created.metadataOrNull()?.lastModifiedAtMillis?.let { kotlin.math.abs(it - file.mtime) < 2000 } == true
                     }
                 }
-                return created.metadataOrNull()?.lastModifiedAtMillis?.let { kotlin.math.abs(it - file.mtime) < 2000 } == true
             } catch (e: Throwable) {
                 runCatching {
                     if (created.toString().startsWith('/')) File(created.toString()).delete() else DocumentsContract.deleteDocument(appCtx.contentResolver, created.toUri())
                 }
                 throw e
             }
+            // Index only completed images, after preserving their source timestamp.
+            // A scanner failure must not delete an otherwise successful transfer.
+            if (mimeTypeForFileName(name).startsWith("image/")) {
+                runCatching { MediaStorePublish.indexConvertedFile(created) }
+                    .onFailure { logcat("FileTransfer", it) }
+            }
+            return timestampPreserved
         }
         // Backpressure is bounded by the transfer read/write windows; no on-disk staging.
         return withInput(file) { input ->

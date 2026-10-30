@@ -59,8 +59,8 @@ suspend inline fun <T> useWebDavFolderPageLoader(
         val password = WebDavPasswordStore.get(source.id)
         val size = imageFileNames.size
         // History/library opens may have no live listing, or only name-only photo-grid rows.
-        val originalImageDates = try {
-            FolderGalleryIndex.loadWebDavDirectMtimes(source.id, WebDavGateway.sourceConfigKey(source), remoteDir)
+        val originalImageMetadata = try {
+            FolderGalleryIndex.loadWebDavDirectFileMetadata(source.id, WebDavGateway.sourceConfigKey(source), remoteDir)
         } catch (e: CancellationException) {
             throw e
         } catch (_: Exception) {
@@ -97,7 +97,12 @@ suspend inline fun <T> useWebDavFolderPageLoader(
                 override fun getOriginalImageDate(index: Int): Long? = BrowseSession.getWebDavListing(source.id, remoteDir)
                     ?.filterIsInstance<BrowseEntryRemote.RegularFile>()
                     ?.firstOrNull { it.fileName == imageFileNames[index] }?.lastModifiedMs?.takeIf { it > 0 }
-                    ?: originalImageDates[imageFileNames[index]]
+                    ?: originalImageMetadata[imageFileNames[index]]?.lastModifiedMs?.takeIf { it > 0 }
+
+                override fun getOriginalImageSize(index: Int): Long? = BrowseSession.getWebDavListing(source.id, remoteDir)
+                    ?.filterIsInstance<BrowseEntryRemote.RegularFile>()
+                    ?.firstOrNull { it.fileName == imageFileNames[index] }?.size?.takeIf { it > 0 }
+                    ?: originalImageMetadata[imageFileNames[index]]?.size?.takeIf { it > 0 }
 
                 private fun relativeFile(index: Int): String = imageFileNames[index].let { name ->
                     if (remoteDir.isEmpty()) name else "$remoteDir/$name"

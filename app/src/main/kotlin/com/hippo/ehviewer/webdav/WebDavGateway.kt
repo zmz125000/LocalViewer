@@ -23,6 +23,7 @@ import com.hippo.ehviewer.library.confirmedMissingRemoteDirectories
 import com.hippo.ehviewer.library.directoriesNeedingDeepScanOnMtimeChange
 import com.hippo.ehviewer.library.hiddenDirectoriesNeedingDeepScan
 import com.hippo.ehviewer.library.isDotHiddenName
+import com.hippo.ehviewer.library.isImageFileName
 import com.hippo.ehviewer.library.isPromotableLeafDirName
 import com.hippo.ehviewer.library.isProtectedSystemName
 import com.hippo.ehviewer.library.isShallowIncompleteListing
@@ -994,6 +995,18 @@ object WebDavGateway {
         relativeDir: String,
     ): List<RemoteChild> = BrowseSession.rememberWebDavRawChildren(source.id, relativeDir) {
         WebDavClient.listChildren(source, password, relativeDir)
+    }
+
+    /** One unclassified folder listing; preserves source size/date without opening each image. */
+    suspend fun imageFileMetadata(
+        source: WebDavSourceEntity,
+        password: String,
+        relativeDir: String,
+    ): Map<String, FolderGalleryIndex.FileMetadata> = withIOContext {
+        if (ZipAsDirListing.splitZipBrowsePath(relativeDir) != null) return@withIOContext emptyMap()
+        listChildrenForRelativeDir(source, password, relativeDir)
+            .filter { !it.isDirectory && isImageFileName(it.name) }
+            .associate { it.name to FolderGalleryIndex.FileMetadata(it.size, it.lastModifiedMs) }
     }
 
     suspend fun listImageFileNames(

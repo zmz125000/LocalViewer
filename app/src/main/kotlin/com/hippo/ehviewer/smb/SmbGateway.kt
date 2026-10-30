@@ -3232,6 +3232,18 @@ object SmbGateway {
         if (isIgnorableListError(e)) emptyList() else throw e
     }
 
+    /** One unclassified folder listing; preserves source size/date without opening each image. */
+    suspend fun imageFileMetadata(
+        source: SmbSourceEntity,
+        password: String,
+        relativeDir: String,
+    ): Map<String, FolderGalleryIndex.FileMetadata> = withIOContext {
+        if (ZipAsDirListing.splitZipBrowsePath(relativeDir) != null) return@withIOContext emptyMap()
+        listChildrenForRelativeDir(source, password, relativeDir)
+            .filter { !it.isDirectory && isImageFileName(it.name) }
+            .associate { it.name to FolderGalleryIndex.FileMetadata(it.size, it.lastModifiedMs) }
+    }
+
     suspend fun listImageFileNames(
         source: SmbSourceEntity,
         password: String,

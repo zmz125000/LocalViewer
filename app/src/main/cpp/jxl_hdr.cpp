@@ -191,7 +191,8 @@ int decode_jxl_to_linear_f16(const uint8_t* data, size_t len, std::vector<uint16
                              unsigned& w, unsigned& h, uhdr_color_gamut_t* out_cg,
                              bool* out_force_hdr = nullptr, int* out_transfer_cicp = nullptr,
                              bool composite_alpha_on_black = true, unsigned thumbnail_edge = 0,
-                             bool export_bt2020 = false, std::vector<uint8_t>* out_exif = nullptr) {
+                             bool export_bt2020 = false, std::vector<uint8_t>* out_exif = nullptr, int* out_source_depth = nullptr) {
+    if (out_source_depth) *out_source_depth = 0;
     if (out_exif) out_exif->clear();
     if (out_cg) *out_cg = UHDR_CG_BT_709;
     if (out_force_hdr) *out_force_hdr = false;
@@ -277,6 +278,7 @@ int decode_jxl_to_linear_f16(const uint8_t* data, size_t len, std::vector<uint16
             if (frame_complete) break;
         } else if (status == JXL_DEC_BASIC_INFO) {
             if (JxlDecoderGetBasicInfo(dec.get(), &info) != JXL_DEC_SUCCESS) return -7;
+            if (out_source_depth) *out_source_depth = static_cast<int>(info.bits_per_sample);
             w = info.xsize;
             h = info.ysize;
             if (w == 0 || h == 0 || w > 16384 || h > 16384) return -8;
@@ -649,11 +651,12 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeJxlBytesToDirect(JNIEnv* env, jcl
     uhdr_color_gamut_t cg = UHDR_CG_BT_709;
     bool force_hdr = false;
     int transfer_cicp = 0;
+    int source_depth = 0;
     jbyteArray result = nullptr;
     int rc = decode_jxl_to_linear_f16(reinterpret_cast<const uint8_t*>(bytes),
                                       static_cast<size_t>(len), rgba, w, h, &cg, &force_hdr,
                                       &transfer_cicp, /*composite_alpha_on_black=*/false, 0,
-                                      exportBt2020 == JNI_TRUE && export_pixels_capture(), jOutExif ? &exif : nullptr);
+                                      exportBt2020 == JNI_TRUE && export_pixels_capture(), jOutExif ? &exif : nullptr, &source_depth);
     if (rc == 0) {
         publish_decoded_exif(env, jOutExif, exif, true);
         if (maxEdge > 0) {
@@ -662,6 +665,10 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeJxlBytesToDirect(JNIEnv* env, jcl
         result = pack_direct_to_jbyte_array(env, rgba, w, h, force_hdr, cg,
                                             advancedColor == JNI_TRUE, transfer_cicp, jOutInfo,
                                             jOutBoost);
+        if (result && env->GetArrayLength(jOutInfo) >= 7) {
+            const jint depth = source_depth;
+            env->SetIntArrayRegion(jOutInfo, 6, 1, &depth);
+        }
     } else {
         ALOGE("JXL direct decode failed rc=%d", rc);
     }
@@ -688,11 +695,12 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeJxlBufferToDirect(JNIEnv* env, jc
     uhdr_color_gamut_t cg = UHDR_CG_BT_709;
     bool force_hdr = false;
     int transfer_cicp = 0;
+    int source_depth = 0;
     jbyteArray result = nullptr;
     int rc = decode_jxl_to_linear_f16(reinterpret_cast<const uint8_t*>(bytes),
                                       static_cast<size_t>(len), rgba, w, h, &cg, &force_hdr,
                                       &transfer_cicp, /*composite_alpha_on_black=*/false, 0,
-                                      exportBt2020 == JNI_TRUE && export_pixels_capture(), jOutExif ? &exif : nullptr);
+                                      exportBt2020 == JNI_TRUE && export_pixels_capture(), jOutExif ? &exif : nullptr, &source_depth);
     if (rc == 0) {
         publish_decoded_exif(env, jOutExif, exif, true);
         if (maxEdge > 0) {
@@ -701,6 +709,10 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeJxlBufferToDirect(JNIEnv* env, jc
         result = pack_direct_to_jbyte_array(env, rgba, w, h, force_hdr, cg,
                                             advancedColor == JNI_TRUE, transfer_cicp, jOutInfo,
                                             jOutBoost);
+        if (result && env->GetArrayLength(jOutInfo) >= 7) {
+            const jint depth = source_depth;
+            env->SetIntArrayRegion(jOutInfo, 6, 1, &depth);
+        }
     } else {
         ALOGE("JXL direct decode failed rc=%d", rc);
     }

@@ -513,18 +513,34 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
             )
         }
     }
-    LaunchedEffect(photoGridKey, gridSort.mode, source?.id) {
-        if (photoGridKey == null || gridSort.mode != BrowseSortMode.Date) return@LaunchedEffect
+    LaunchedEffect(photoGridKey, source?.id, entries) {
+        if (photoGridKey == null) return@LaunchedEffect
         val src = source ?: return@LaunchedEffect
-        val mtimes = withIOContext {
-            FolderGalleryIndex.loadSmbDirectMtimes(
+        val metadata = withIOContext {
+            val cached = FolderGalleryIndex.loadSmbDirectFileMetadata(
                 src.id,
                 SmbGateway.sourceConfigKey(src),
                 photoGridDir.orEmpty(),
             )
+            val missing = entries.filterIsInstance<BrowseEntryRemote.RegularFile>().any {
+                val info = cached[it.fileName]
+                (it.size <= 0 && (info?.size ?: 0) <= 0) ||
+                    (it.lastModifiedMs <= 0 && (info?.lastModifiedMs ?: 0) <= 0)
+            }
+            if (!missing) {
+                cached
+            } else {
+                try {
+                    FolderGalleryIndex.mergeFileMetadata(cached, SmbGateway.imageFileMetadata(src, SmbPasswordStore.get(src.id), photoGridDir.orEmpty()))
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Exception) {
+                    cached
+                }
+            }
         }
-        if (mtimes.isEmpty()) return@LaunchedEffect
-        entries = FolderGalleryIndex.stampRemoteMtimes(entries, mtimes)
+        if (metadata.isEmpty()) return@LaunchedEffect
+        entries = FolderGalleryIndex.stampRemoteFileMetadata(entries, metadata)
     }
     val searchHint = stringResource(R.string.search_bar_hint, title)
 
