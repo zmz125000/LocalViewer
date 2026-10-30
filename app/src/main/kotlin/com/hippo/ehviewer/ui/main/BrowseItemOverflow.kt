@@ -26,6 +26,8 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import com.ehviewer.core.i18n.R
+import com.ehviewer.core.util.logcat
+import com.ehviewer.core.util.withIOContext
 import com.hippo.ehviewer.image.hdr.StillExportTarget
 import com.hippo.ehviewer.image.hdr.isHdrExportFileName
 import com.hippo.ehviewer.image.hdr.visibleForSources
@@ -33,6 +35,8 @@ import com.hippo.ehviewer.shortcuts.FolderHomeShortcut
 import com.hippo.ehviewer.shortcuts.FolderShortcutTarget
 import com.hippo.ehviewer.ui.LocalSnackBarHostState
 import com.hippo.ehviewer.ui.screen.LocalExplorerPanel
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.launch
 
 enum class BrowseOverflowKind {
     Common,
@@ -93,6 +97,7 @@ data class BrowseOverflowActions(
     /** Extension, size, and the rest of the folder-list second line. */
     val listLine: BrowseListLine? = null,
     val uploadSource: com.hippo.ehviewer.library.TransferLocation? = null,
+    val resolveUpload: (suspend () -> com.hippo.ehviewer.library.TransferFile?)? = null,
 )
 
 @Composable
@@ -297,20 +302,39 @@ fun BrowseItemOverflowButton(
                     }
                 },
             )
-            actions.uploadSource?.let { source ->
+            if (actions.uploadSource != null || actions.resolveUpload != null) {
                 DropdownMenuItem(
                     text = { Text(stringResource(R.string.transfer_upload)) },
                     onClick = {
                         expanded = false
-                        val job = UploadTransfers.prepare(
-                            source,
-                            actions.selectTitle ?: "Upload",
-                            actions.selectFolder,
-                            actions.listLine?.sizeBytes ?: 0L,
-                            actions.listLine?.lastModifiedMs ?: 0L,
-                        )
-                        UploadTransfers.chooseDestination(job)
-                        explorer.open()
+                        scope.launch {
+                            val file = try {
+                                withIOContext {
+                                    actions.resolveUpload?.invoke() ?: actions.uploadSource?.let { source ->
+                                        com.hippo.ehviewer.library.TransferFile(
+                                            source,
+                                            actions.selectTitle ?: "Upload",
+                                            actions.selectFolder,
+                                            actions.listLine?.sizeBytes ?: 0L,
+                                            actions.listLine?.lastModifiedMs ?: 0L,
+                                        )
+                                    }
+                                }
+                            } catch (e: CancellationException) {
+                                throw e
+                            } catch (e: Throwable) {
+                                logcat("FileTransfer", e)
+                                null
+                            }
+                            if (file == null) {
+                                snackbar.showSnackbar(context.getString(R.string.history_unavailable))
+                                return@launch
+                            }
+                            if (actions.uploadSource != null) UploadTransfers.recordUploadHistory(file)
+                            val job = UploadTransfers.prepare(listOf(file))
+                            UploadTransfers.chooseDestination(job)
+                            explorer.open()
+                        }
                     },
                 )
             }

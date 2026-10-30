@@ -68,6 +68,26 @@ class UploadTransfersTest {
     }
 
     @Test
+    fun `upload history records only the chosen root or the first selection parent`() {
+        for (kind in ExplorerWindows.Kind.entries) {
+            val path = if (kind == ExplorerWindows.Kind.Local) "/photos/album" else "photos/album"
+            val folder = TransferFile(TransferLocation(kind, 7, path), "album", true, 0, 0)
+            assertEquals(folder, uploadHistoryRoot(folder, parentOnly = false))
+            val parent = requireNotNull(uploadHistoryRoot(folder, parentOnly = true))
+            assertEquals(path.substringBeforeLast('/'), parent.source.path)
+            assertTrue(parent.directory)
+            val image = folder.copy(source = folder.source.copy(path = "$path/photo.jpg"), relative = "photo.jpg", directory = false)
+            assertEquals(image, uploadHistoryRoot(image, parentOnly = false))
+            assertEquals(folder.source, uploadHistoryRoot(image, parentOnly = true)?.source)
+            val zip = folder.copy(source = folder.source.copy(path = "$path.zip/part"), relative = "part")
+            assertEquals("album.zip", uploadHistoryRoot(zip, parentOnly = false)?.relative)
+            assertEquals(parent.source, uploadHistoryRoot(zip, parentOnly = true)?.source)
+        }
+        val shareRootFile = row("photo.jpg").file
+        assertEquals("", uploadHistoryRoot(shareRootFile, parentOnly = true)?.source?.path)
+    }
+
+    @Test
     fun `selected items retain their transfer sources`() {
         val source = TransferLocation(ExplorerWindows.Kind.Smb, 7, "photo.jpg")
         val pick = BrowseOverflowActions(onUnsupported = {}).selectable("photo", "photo.jpg", uploadSource = source).toPick()

@@ -1,12 +1,22 @@
 package com.hippo.ehviewer.ui.screen
 
 import com.ehviewer.core.model.BaseGalleryInfo
+import com.hippo.ehviewer.library.ExplorerWindows
 import com.hippo.ehviewer.library.LOCAL_ARCHIVE_TOKEN
 import com.hippo.ehviewer.library.LOCAL_BROWSE_TOKEN
 import com.hippo.ehviewer.library.LOCAL_FILE_TOKEN
 import com.hippo.ehviewer.library.LOCAL_FOLDER_TOKEN
 import com.hippo.ehviewer.library.LocalHistory
+import com.hippo.ehviewer.library.SMB_ARCHIVE_TOKEN
+import com.hippo.ehviewer.library.SMB_BROWSE_TOKEN
+import com.hippo.ehviewer.library.SMB_FILE_TOKEN
+import com.hippo.ehviewer.library.SMB_FOLDER_TOKEN
+import com.hippo.ehviewer.library.WEBDAV_ARCHIVE_TOKEN
+import com.hippo.ehviewer.library.WEBDAV_BROWSE_TOKEN
+import com.hippo.ehviewer.library.WEBDAV_FILE_TOKEN
+import com.hippo.ehviewer.library.WEBDAV_FOLDER_TOKEN
 import com.hippo.ehviewer.ui.main.BrowseOverflowKind
+import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -15,6 +25,28 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class HistoryFilterTest {
+    @Test
+    fun uploadResolvesHistoryFilesAndRemoteFolders() = runBlocking {
+        for ((kind, tokens) in listOf(
+            ExplorerWindows.Kind.Smb to listOf(SMB_BROWSE_TOKEN, SMB_FOLDER_TOKEN, SMB_ARCHIVE_TOKEN, SMB_FILE_TOKEN),
+            ExplorerWindows.Kind.WebDav to listOf(WEBDAV_BROWSE_TOKEN, WEBDAV_FOLDER_TOKEN, WEBDAV_ARCHIVE_TOKEN, WEBDAV_FILE_TOKEN),
+        )) {
+            tokens.forEachIndexed { index, token ->
+                val file = requireNotNull(historyUploadFile(item(token, "album", "7\u0000photos/album")))
+                assertEquals(kind, file.source.kind)
+                assertEquals(7L, file.source.sourceId)
+                assertEquals("photos/album", file.source.path)
+                assertEquals(index < 2, file.directory)
+            }
+        }
+        for (token in listOf(LOCAL_ARCHIVE_TOKEN, LOCAL_FILE_TOKEN)) {
+            val file = requireNotNull(historyUploadFile(item(token, "book.zip", "/books/book.zip")))
+            assertEquals(ExplorerWindows.Kind.Local, file.source.kind)
+            assertEquals("/books/book.zip", file.source.path)
+            assertFalse(file.directory)
+        }
+    }
+
     @Test
     fun directoriesAreNeverDocuments() {
         val dir = item(LOCAL_BROWSE_TOKEN, "Notes", "/root/Notes")
