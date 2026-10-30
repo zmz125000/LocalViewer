@@ -2,6 +2,7 @@ package com.hippo.ehviewer.library
 
 import com.hippo.ehviewer.smb.SmbArchiveByteSource
 import com.hippo.ehviewer.smb.SmbReadCancelledException
+import java.io.File
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.Future
@@ -10,6 +11,7 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
+import splitties.init.appCtx
 
 /**
  * MiXplorer-style **direct link** window for external video over AppFuse.
@@ -676,10 +678,29 @@ class VideoDirectLinkByteSource(
         fun open(
             openLane: () -> ArchiveByteSource,
             knownSize: Long,
-        ): VideoDirectLinkByteSource = VideoDirectLinkByteSource(
-            demand = openLane(),
-            prefetch = null,
-            knownSize = knownSize,
-        )
+        ): VideoDirectLinkByteSource {
+            val lane = openLane()
+            var temporaryFile: File? = null
+            val seekable = try {
+                if (lane.isRandomAccess) {
+                    lane
+                } else {
+                    // DEFLATE cannot seek backwards. Retain the inflated prefix for this play;
+                    // metadata probes and prefetch must not repeatedly inflate it over SMB/DAV.
+                    val file = File.createTempFile("zip-video-", ".tmp", appCtx.cacheDir)
+                    temporaryFile = file
+                    SequentialVideoByteSource(lane, file)
+                }
+            } catch (error: Throwable) {
+                runCatching { lane.close() }
+                temporaryFile?.delete()
+                throw error
+            }
+            return VideoDirectLinkByteSource(
+                demand = seekable,
+                prefetch = null,
+                knownSize = knownSize,
+            )
+        }
     }
 }

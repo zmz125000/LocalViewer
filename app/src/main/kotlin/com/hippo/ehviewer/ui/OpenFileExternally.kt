@@ -1152,14 +1152,21 @@ object OpenFileExternally {
                 cacheBody = video,
                 onPlaybackStart = onPlay,
                 open = {
-                    val zip = openLocalArchiveByteSource(zipPath)
-                        ?: error("ZIP missing: $zipAbs")
-                    ExternalHttpStreamServer.ArchiveBody(
+                    val openMember = {
+                        val zip = openLocalArchiveByteSource(zipPath)
+                            ?: error("ZIP missing: $zipAbs")
                         ZipMemberByteSource.open(zip, member, ownsZip = true)
                             ?: run {
                                 runCatching { zip.close() }
                                 error("Cannot stream ZIP video member $member")
-                            },
+                            }
+                    }
+                    ExternalHttpStreamServer.ArchiveBody(
+                        if (video) {
+                            VideoDirectLinkByteSource.open(openMember, sizeBytes)
+                        } else {
+                            openMember()
+                        },
                     )
                 },
             )

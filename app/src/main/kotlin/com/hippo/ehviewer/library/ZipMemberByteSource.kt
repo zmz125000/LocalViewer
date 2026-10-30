@@ -2,6 +2,8 @@ package com.hippo.ehviewer.library
 
 import java.io.File
 import java.io.IOException
+import java.io.InterruptedIOException
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.zip.Inflater
 
 /**
@@ -23,6 +25,7 @@ class ZipMemberByteSource private constructor(
     private val deflateLock = Any()
     private var inflatedTo = 0L
     private var compressedAt = 0L
+    private val closed = AtomicBoolean()
 
     /** Reused; 1 MiB amortizes SMB/WebDAV RTT when inflating a stored-as-deflate video. */
     private val compressed = ByteArray(DEFLATE_IO_CHUNK)
@@ -34,6 +37,7 @@ class ZipMemberByteSource private constructor(
         get() = entry.method == ZipCentralDirectory.METHOD_STORE && !entry.isEncrypted
 
     override fun readAt(offset: Long, buf: ByteArray, off: Int, len: Int): Int {
+        if (closed.get()) return -1
         if (len <= 0) return 0
         if (offset < 0L || offset >= size) return 0
         val want = minOf(len.toLong(), size - offset).toInt()
@@ -50,6 +54,7 @@ class ZipMemberByteSource private constructor(
     }
 
     override fun prefetchReadAt(offset: Long, buf: ByteArray, off: Int, len: Int): Int {
+        if (closed.get()) return -1
         if (len <= 0) return 0
         if (offset < 0L || offset >= size) return 0
         val want = minOf(len.toLong(), size - offset).toInt()
@@ -72,6 +77,7 @@ class ZipMemberByteSource private constructor(
     }
 
     private fun readDeflatePrefix(offset: Long, buf: ByteArray, off: Int, want: Int): Int {
+        if (closed.get()) return -1
         val inf = inflater ?: return -1
         if (offset >= prefixCap) return 0
         val cappedWant = minOf(want.toLong(), prefixCap - offset).toInt()
@@ -87,6 +93,10 @@ class ZipMemberByteSource private constructor(
         }
         var filled = 0
         while (filled < cappedWant) {
+            // Commit bytes already inflated before surfacing cancellation. The seekable video
+            // prefix cache must stay in step with the inflater when a prefetch is interrupted.
+            if (filled > 0 && Thread.currentThread().isInterrupted) return filled
+            checkInflateActive()
             val n = inf.inflate(buf, off + filled, cappedWant - filled)
             if (n > 0) {
                 filled += n
@@ -98,7 +108,12 @@ class ZipMemberByteSource private constructor(
             val remain = entry.compressedSize - compressedAt
             if (remain <= 0L) break
             val chunk = minOf(compressed.size.toLong(), remain).toInt()
-            val got = zip.readAt(payloadOffset + compressedAt, compressed, 0, chunk)
+            val got = try {
+                zip.readAt(payloadOffset + compressedAt, compressed, 0, chunk)
+            } catch (error: Throwable) {
+                if (filled > 0) return filled
+                throw error
+            }
             if (got <= 0) break
             inf.setInput(compressed, 0, got)
             compressedAt += got
@@ -110,6 +125,7 @@ class ZipMemberByteSource private constructor(
         val inf = inflater ?: return
         var left = bytes
         while (left > 0L && inflatedTo < prefixCap) {
+            checkInflateActive()
             val n = inf.inflate(skipBuf, 0, minOf(skipBuf.size.toLong(), left).toInt())
             if (n > 0) {
                 inflatedTo += n
@@ -128,11 +144,20 @@ class ZipMemberByteSource private constructor(
         }
     }
 
+    private fun checkInflateActive() {
+        if (closed.get()) throw IOException("ZIP member closed")
+        if (Thread.currentThread().isInterrupted) throw InterruptedIOException("ZIP member read interrupted")
+    }
+
     override fun close() {
-        synchronized(deflateLock) {
-            inflater?.end()
+        if (!closed.compareAndSet(false, true)) return
+        try {
+            if (ownsZip) zip.close()
+        } finally {
+            synchronized(deflateLock) {
+                inflater?.end()
+            }
         }
-        if (ownsZip) runCatching { zip.close() }
     }
 
     companion object {
