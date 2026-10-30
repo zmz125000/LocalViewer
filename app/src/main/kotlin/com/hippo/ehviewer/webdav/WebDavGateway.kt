@@ -28,6 +28,7 @@ import com.hippo.ehviewer.library.isProtectedSystemName
 import com.hippo.ehviewer.library.isShallowIncompleteListing
 import com.hippo.ehviewer.library.isUntrustedSlimLiveFileListing
 import com.hippo.ehviewer.library.isUntrustedSlimLiveListing
+import com.hippo.ehviewer.library.isImageFileName
 import com.hippo.ehviewer.library.isZipArchiveFileName
 import com.hippo.ehviewer.library.mergeRemoteDirectorySlimRefresh
 import com.hippo.ehviewer.library.peekIndicatesHiddenDir
