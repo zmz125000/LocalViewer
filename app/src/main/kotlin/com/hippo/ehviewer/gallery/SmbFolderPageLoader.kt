@@ -63,8 +63,8 @@ suspend inline fun <T> useSmbFolderPageLoader(
         val password = SmbPasswordStore.get(source.id)
         val size = imageFileNames.size
         // History/library opens may have no live listing, or only name-only photo-grid rows.
-        val originalImageDates = try {
-            FolderGalleryIndex.loadSmbDirectMtimes(source.id, SmbGateway.sourceConfigKey(source), remoteDir)
+        val originalImageMetadata = try {
+            FolderGalleryIndex.loadSmbDirectFileMetadata(source.id, SmbGateway.sourceConfigKey(source), remoteDir)
         } catch (e: CancellationException) {
             throw e
         } catch (_: Exception) {
@@ -113,7 +113,12 @@ suspend inline fun <T> useSmbFolderPageLoader(
                 override fun getOriginalImageDate(index: Int): Long? = BrowseSession.getSmbListing(source.id, remoteDir)
                     ?.filterIsInstance<BrowseEntryRemote.RegularFile>()
                     ?.firstOrNull { it.fileName == imageFileNames[index] }?.lastModifiedMs?.takeIf { it > 0 }
-                    ?: originalImageDates[imageFileNames[index]]
+                    ?: originalImageMetadata[imageFileNames[index]]?.lastModifiedMs?.takeIf { it > 0 }
+
+                override fun getOriginalImageSize(index: Int): Long? = BrowseSession.getSmbListing(source.id, remoteDir)
+                    ?.filterIsInstance<BrowseEntryRemote.RegularFile>()
+                    ?.firstOrNull { it.fileName == imageFileNames[index] }?.size?.takeIf { it > 0 }
+                    ?: originalImageMetadata[imageFileNames[index]]?.size?.takeIf { it > 0 }
 
                 private fun relativeFile(index: Int): String = imageFileNames[index].let { name ->
                     if (remoteDir.isEmpty()) name else "$remoteDir/$name"

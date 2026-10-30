@@ -239,10 +239,12 @@ abstract class PageLoader(
 
     private suspend fun decodeOpened(index: Int, raw: ImageSource, forceOriginal: Boolean): Image {
         var metadata = ImageMetadata()
-        fun readSourceMetadata(decodedExif: ByteArray? = null) {
+        fun readSourceMetadata(decodedExif: ByteArray? = null, decodedRawBitDepth: Int? = null) {
             metadata = runCatching {
-                raw.readMetadata(runCatching { getOriginalImageDate(index) }.getOrNull(), sourceLeafName(index), decodedExif)
-            }.getOrDefault(ImageMetadata())
+                raw.readMetadata(runCatching { getOriginalImageDate(index) }.getOrNull(), sourceLeafName(index), decodedExif, decodedRawBitDepth)
+            }.getOrDefault(ImageMetadata()).let { sourceMetadata ->
+                sourceMetadata.copy(fileSize = runCatching { getOriginalImageSize(index) }.getOrNull() ?: sourceMetadata.fileSize)
+            }
         }
         val checkAds = hasAds && detectAds(index, size)
         val hint = getImageExtension(index)?.let { "page.$it" } ?: "page.bin"
@@ -307,7 +309,7 @@ abstract class PageLoader(
         raw: ImageSource,
         forceOriginal: Boolean,
         hint: String,
-        readSourceMetadata: (ByteArray?) -> Unit,
+        readSourceMetadata: (ByteArray?, Int?) -> Unit,
     ): Image? {
         val pathName = (raw as? PathSource)?.source?.name.orEmpty()
         val pageExt = getImageExtension(index)
@@ -348,7 +350,7 @@ abstract class PageLoader(
         }
         // Read from the still-open original before Image takes ownership/closes it.
         // Native JXL/AVIF have already collected EXIF while decoding.
-        readSourceMetadata(direct.sourceExif)
+        readSourceMetadata(direct.sourceExif, direct.sourceBitDepth)
         thumbSoftwareBitmapBeforeHardware(index, raw, direct.bitmap)
         return Image.fromLibDirect(direct, raw, attachHeifGainMap = hevcHdr && Settings.preferNativeHeifAvif.value).also {
             it.noteHiResPreview(Image.hiResPreviewCapEdge(forceOriginal) > 0)
@@ -872,6 +874,8 @@ abstract class PageLoader(
 
     /** Original modification date, never the download/conversion cache timestamp. */
     protected open fun getOriginalImageDate(index: Int): Long? = null
+
+    protected open fun getOriginalImageSize(index: Int): Long? = null
 
     override fun getImageFilename(index: Int): String? {
         val originalExt = getImageExtension(index) ?: return null

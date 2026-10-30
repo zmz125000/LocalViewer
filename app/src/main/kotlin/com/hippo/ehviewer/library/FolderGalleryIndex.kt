@@ -269,6 +269,40 @@ object FolderGalleryIndex {
         return directChildMetadata(entries)
     }
 
+    fun stampRemoteFileMetadata(
+        entries: List<BrowseEntryRemote>,
+        metadata: Map<String, FileMetadata>,
+    ): List<BrowseEntryRemote> = entries.map { entry ->
+        val name = when (entry) {
+            is BrowseEntryRemote.RegularFile -> entry.fileName
+            is BrowseEntryRemote.VideoFile -> entry.fileName
+            else -> return@map entry
+        }
+        val info = metadata[name] ?: return@map entry
+        val size = info.size.takeIf { it > 0 } ?: entry.size
+        val date = info.lastModifiedMs.takeIf { it > 0 } ?: entry.lastModifiedMs
+        when (entry) {
+            is BrowseEntryRemote.RegularFile -> entry.copy(size = size, lastModifiedMs = date)
+            is BrowseEntryRemote.VideoFile -> entry.copy(size = size, lastModifiedMs = date)
+            else -> entry
+        }
+    }
+
+    internal fun mergeFileMetadata(
+        saved: Map<String, FileMetadata>,
+        live: Map<String, FileMetadata>,
+    ): Map<String, FileMetadata> {
+        val result = saved.toMutableMap()
+        for ((name, info) in live) {
+            val previous = result[name]
+            result[name] = FileMetadata(
+                info.size.takeIf { it > 0 } ?: previous?.size ?: 0L,
+                info.lastModifiedMs.takeIf { it > 0 } ?: previous?.lastModifiedMs ?: 0L,
+            )
+        }
+        return result
+    }
+
     fun stampRemoteMtimes(
         entries: List<BrowseEntryRemote>,
         mtimes: Map<String, Long>,
@@ -570,29 +604,47 @@ object FolderGalleryIndex {
         )
     }
 
+    suspend fun loadSmbDirectFileMetadata(
+        sourceId: Long,
+        configKey: String,
+        folderDir: String,
+    ): Map<String, FileMetadata> {
+        val folder = BrowseSession.normalizeBrowseRelativeDir(folderDir)
+        val saved = NetworkFolderIndexCache.loadSmb(sourceId, configKey, folder).orEmpty()
+        val live = BrowseSession.getSmbListing(sourceId, folder).orEmpty()
+        val children = BrowseSession.peekSmbRawChildren(sourceId, folder).orEmpty()
+            .filter { !it.isDirectory }
+            .associate { it.name to FileMetadata(it.size, it.lastModifiedMs) }
+        return mergeFileMetadata(mergeFileMetadata(directChildMetadata(saved), children), directChildMetadata(live))
+    }
+
     suspend fun loadSmbDirectMtimes(
         sourceId: Long,
         configKey: String,
         folderDir: String,
-    ): Map<String, Long> {
+    ): Map<String, Long> = loadSmbDirectFileMetadata(sourceId, configKey, folderDir)
+        .mapValues { it.value.lastModifiedMs }.filterValues { it > 0 }
+
+    suspend fun loadWebDavDirectFileMetadata(
+        sourceId: Long,
+        configKey: String,
+        folderDir: String,
+    ): Map<String, FileMetadata> {
         val folder = BrowseSession.normalizeBrowseRelativeDir(folderDir)
-        // Name-only session overlays must not mask timestamps in the persisted listing.
-        val saved = NetworkFolderIndexCache.loadSmb(sourceId, configKey, folder).orEmpty()
-        val live = BrowseSession.getSmbListing(sourceId, folder).orEmpty()
-        return directChildMtimes(saved) + directChildMtimes(live)
+        val saved = NetworkFolderIndexCache.loadWebDav(sourceId, configKey, folder).orEmpty()
+        val live = BrowseSession.getWebDavListing(sourceId, folder).orEmpty()
+        val children = BrowseSession.peekWebDavRawChildren(sourceId, folder).orEmpty()
+            .filter { !it.isDirectory }
+            .associate { it.name to FileMetadata(it.size, it.lastModifiedMs) }
+        return mergeFileMetadata(mergeFileMetadata(directChildMetadata(saved), children), directChildMetadata(live))
     }
 
     suspend fun loadWebDavDirectMtimes(
         sourceId: Long,
         configKey: String,
         folderDir: String,
-    ): Map<String, Long> {
-        val folder = BrowseSession.normalizeBrowseRelativeDir(folderDir)
-        // Name-only session overlays must not mask timestamps in the persisted listing.
-        val saved = NetworkFolderIndexCache.loadWebDav(sourceId, configKey, folder).orEmpty()
-        val live = BrowseSession.getWebDavListing(sourceId, folder).orEmpty()
-        return directChildMtimes(saved) + directChildMtimes(live)
-    }
+    ): Map<String, Long> = loadWebDavDirectFileMetadata(sourceId, configKey, folderDir)
+        .mapValues { it.value.lastModifiedMs }.filterValues { it > 0 }
 
     suspend fun siblingListingSmb(
         sourceId: Long,

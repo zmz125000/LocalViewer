@@ -74,6 +74,8 @@ data class LibDirectResult(
     val sourceTransfer: Int = 0,
     /** null = not inspected; empty = inspected but no EXIF; otherwise normalized TIFF. */
     val sourceExif: ByteArray? = null,
+    /** Original RAW precision captured by the same LibRaw instance that decoded the pixels. */
+    val sourceBitDepth: Int? = null,
 )
 
 /**
@@ -302,7 +304,10 @@ object LibDirectDecode {
                 packed.outInfo,
                 packed.outBoost,
                 nativePixels = nativePixels,
-            )?.copy(sourceExif = packed.sourceExif)
+            )?.copy(
+                sourceExif = packed.sourceExif,
+                sourceBitDepth = packed.outInfo.getOrNull(6)?.takeIf { it in 1..32 },
+            )
         } finally {
             // Upload/copy has completed (or failed); no bitmap references this buffer.
             releaseNativeReaderPixels(handle)
@@ -616,7 +621,7 @@ object LibDirectDecode {
             export != null && mode == RawPresent.Hdr -> if (controls.hdrMode != 0) 4 else 3
             else -> mode.ordinal
         }
-        val outInfo = IntArray(6)
+        val outInfo = IntArray(7)
         val outBoost = FloatArray(1)
         val exposureEv = controls.exposure
         val whiteBalance = controls.whiteBalance

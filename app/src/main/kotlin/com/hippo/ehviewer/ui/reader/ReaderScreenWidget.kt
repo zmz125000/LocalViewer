@@ -35,6 +35,7 @@ import com.hippo.ehviewer.gallery.Page
 import com.hippo.ehviewer.gallery.PageStatus
 import com.hippo.ehviewer.gallery.statusObserved
 import com.hippo.ehviewer.image.ImageTransfer
+import com.hippo.ehviewer.util.FileUtils
 import java.text.DecimalFormat
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -125,7 +126,8 @@ internal fun BoxScope.ReaderScreenWidget(page: Page?, slideshow: Boolean, source
             val dimensions = if (metadata.width != null && metadata.height != null) "${metadata.width} × ${metadata.height}" else null
             val depth = metadata.bitDepth?.let { stringResource(R.string.slideshow_info_bit_depth, it) }
             val extension = sourceName?.substringAfterLast('.', "")?.takeIf { it.isNotBlank() }?.uppercase(Locale.ROOT)
-            val imageInfo = listOfNotNull(dimensions, depth, extension).joinToString(" · ")
+            val fileSize = metadata.fileSize?.takeIf { it > 0 }?.let(FileUtils::humanReadableByteCount)
+            val imageInfo = listOfNotNull(dimensions, depth, extension, fileSize).joinToString(" · ")
             if (imageInfo.isNotEmpty()) Text(imageInfo, style = style, fontSize = 16.sp, lineHeight = 22.sp)
         }
         if (showExifInfo && metadata != null) {

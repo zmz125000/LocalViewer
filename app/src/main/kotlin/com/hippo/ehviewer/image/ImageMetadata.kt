@@ -5,6 +5,7 @@ import android.graphics.ColorSpace
 import android.os.ParcelFileDescriptor
 import androidx.exifinterface.media.ExifInterface
 import com.ehviewer.core.files.openFileDescriptor
+import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.image.hdr.HeifPrecisionProbe
 import com.hippo.ehviewer.image.hdr.isRawStillExtension
 import com.hippo.ehviewer.jni.probeStillExportSize
@@ -58,6 +59,7 @@ data class ImageMetadata(
     val transfer: ImageTransfer? = null,
     val rawTransfer: String? = null,
     val date: Long? = null,
+    val fileSize: Long? = null,
     val cameraModel: String? = null,
     val exposureSeconds: Double? = null,
     val aperture: Double? = null,
@@ -72,6 +74,7 @@ internal fun ImageSource.readMetadata(
     fileDate: Long? = null,
     fileName: String? = null,
     decodedExif: ByteArray? = null,
+    decodedRawBitDepth: Int? = null,
 ): ImageMetadata {
     val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
     runCatching { metadataStream().use { BitmapFactory.decodeStream(it, null, bounds) } }
@@ -107,8 +110,13 @@ internal fun ImageSource.readMetadata(
     }
     fun attributeInt(tag: String) = exif?.getAttributeInt(tag, 0)?.takeIf { it > 0 }
     fun attributeDouble(tag: String) = exif?.getAttributeDouble(tag, Double.NaN)?.takeIf { it.isFinite() && it > 0 }
-    val depth = encodedBitDepth(header) ?: heif?.bitDepth ?: exif?.getAttribute(ExifInterface.TAG_BITS_PER_SAMPLE)
-        ?.split(',')?.mapNotNull { it.trim().toIntOrNull() }?.maxOrNull()
+    val readRawDepth = kind == 2 && Settings.readerCameraRaw.value
+    val depth = if (readRawDepth) {
+        decodedRawBitDepth?.takeIf { it in 1..32 }
+    } else {
+        encodedBitDepth(header) ?: heif?.bitDepth ?: exif?.getAttribute(ExifInterface.TAG_BITS_PER_SAMPLE)
+            ?.split(',')?.mapNotNull { it.trim().toIntOrNull() }?.maxOrNull()
+    }
     val headerText = header.toString(Charsets.ISO_8859_1)
     val gainmapMarker = listOf("hdrgm:", "HDRGainMap", "GainMap", "urn:com:apple:photo:2020:aux:hdrgainmap").firstOrNull { it in headerText }
     val gainmap = gainmapMarker != null
@@ -120,6 +128,17 @@ internal fun ImageSource.readMetadata(
             ?: attributeInt(ExifInterface.TAG_PIXEL_Y_DIMENSION) ?: attributeInt(ExifInterface.TAG_IMAGE_LENGTH)
             ?: dimensions.toInt().takeIf { it > 0 },
         bitDepth = depth,
+        fileSize = runCatching {
+            // A converted preview is not the original RAW/native file.
+            if (kind >= 0 && header.size >= 2 && header[0] == 0xff.toByte() && header[1] == 0xd8.toByte()) {
+                null
+            } else {
+                when (this) {
+                    is ByteBufferSource -> source.remaining().toLong()
+                    is PathSource -> source.openFileDescriptor("r").use { it.statSize }
+                }?.takeIf { it > 0 }
+            }
+        }.getOrNull(),
         // CICP primaries describe the source gamut independently of its transfer curve.
         // BitmapFactory can report sRGB here for a BT.2020 AVIF with an sRGB transfer.
         colorSpace = when (heif?.primaries) {

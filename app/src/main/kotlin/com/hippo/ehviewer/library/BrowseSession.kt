@@ -486,6 +486,11 @@ object BrowseSession {
         return webDavRawChildren.putIfAbsent(key, children) ?: children
     }
 
+    fun peekWebDavRawChildren(sourceId: Long, relativeDir: String): List<RemoteChild>? {
+        val key = webDavListingKey(sourceId, normalizeBrowseRelativeDir(relativeDir))
+        return webDavRawChildren[key]
+    }
+
     fun invalidateSmbRawChildren(sourceId: Long, relativeDir: String) {
         val dir = normalizeBrowseRelativeDir(relativeDir)
         val exact = smbListingKey(sourceId, dir)

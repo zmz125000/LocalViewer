@@ -992,10 +992,11 @@ bool demosaic_cover_jpeg(const char* path, const uint8_t* mem, size_t mem_len, c
     return write_rgba8_jpeg(decoded.pixels.data(), decoded.w, decoded.h, out_path, 85);
 }
 
-jbyteArray decoded_to_java(JNIEnv* env, Decoded& decoded, jintArray j_info, jfloatArray j_boost) {
+jbyteArray decoded_to_java(JNIEnv* env, Decoded& decoded, jintArray j_info, jfloatArray j_boost, jint source_depth = 0) {
     if (env->GetArrayLength(j_info) < 6 || env->GetArrayLength(j_boost) < 1) return nullptr;
     jint meta[6] = {decoded.w, decoded.h, decoded.format, decoded.is_hdr, decoded.gamut, 0};
     env->SetIntArrayRegion(j_info, 0, 6, meta);
+    if (env->GetArrayLength(j_info) >= 7) env->SetIntArrayRegion(j_info, 6, 1, &source_depth);
     env->SetFloatArrayRegion(j_boost, 0, 1, &decoded.boost);
     if (decoded.pixels.size() > static_cast<size_t>(std::numeric_limits<jsize>::max())) return nullptr;
     if (retain_reader_pixels(decoded.pixels)) return env->NewByteArray(0);
@@ -1016,6 +1017,8 @@ jbyteArray decode_raw_buffer(JNIEnv* env, const uint8_t* data, size_t len, jint 
         HeadroomRaw raw;
         request_embedded_matrix(raw, wb);
         if (raw.open_buffer(data, len) == LIBRAW_SUCCESS) {
+            const unsigned bits = raw.get_internal_data_pointer()->unpacker_data.tiff_bps;
+            const jint source_depth = bits > 0 && bits <= 32 ? static_cast<jint>(bits) : 0;
             Decoded decoded;
             int mode = present < 0 ? 0 : (present > 4 ? 4 : present);
             float exposure = std::isfinite(exposure_ev) ? std::clamp(exposure_ev, -3.f, 3.f) : 0.f;
@@ -1026,7 +1029,7 @@ jbyteArray decode_raw_buffer(JNIEnv* env, const uint8_t* data, size_t len, jint 
             if (process_open_raw(raw, data, len, max_edge, mode, panel_boost, /*demosaic_qual=*/3, wb, exposure,
                                  stops, temp, hdr_linear == JNI_TRUE, camera_look == JNI_TRUE, shoulder_amount,
                                  zone(shadows), zone(midtones), zone(highlights), decoded)) {
-                result = decoded_to_java(env, decoded, j_info, j_boost);
+                result = decoded_to_java(env, decoded, j_info, j_boost, source_depth);
             }
         }
     } catch (...) {
@@ -1105,6 +1108,8 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeRawFileToDirect(JNIEnv* env, jcla
         HeadroomRaw raw;
         request_embedded_matrix(raw, wb);
         if (raw.open_file(path) == LIBRAW_SUCCESS) {
+            const unsigned bits = raw.get_internal_data_pointer()->unpacker_data.tiff_bps;
+            const jint source_depth = bits > 0 && bits <= 32 ? static_cast<jint>(bits) : 0;
             Decoded decoded;
             int mode = present < 0 ? 0 : (present > 4 ? 4 : present);
             float exposure = std::isfinite(exposure_ev) ? std::clamp(exposure_ev, -3.f, 3.f) : 0.f;
@@ -1119,7 +1124,7 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeRawFileToDirect(JNIEnv* env, jcla
             if (process_open_raw(raw, tiff, tiff_len, max_edge, mode, panel_boost, /*demosaic_qual=*/3, wb, exposure,
                                  stops, temp, hdr_linear == JNI_TRUE, camera_look == JNI_TRUE, shoulder_amount,
                                  zone(shadows), zone(midtones), zone(highlights), decoded)) {
-                result = decoded_to_java(env, decoded, j_info, j_boost);
+                result = decoded_to_java(env, decoded, j_info, j_boost, source_depth);
             }
         }
     } catch (...) {

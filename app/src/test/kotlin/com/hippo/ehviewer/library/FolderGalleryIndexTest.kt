@@ -12,6 +12,23 @@ import org.junit.Test
 
 class FolderGalleryIndexTest {
     @Test
+    fun remotePhotoGridFillsSizeAndDateWithoutLosingExistingValues() {
+        val rows = listOf(
+            BrowseEntryRemote.RegularFile("a.jpg", size = 10, lastModifiedMs = 20),
+            BrowseEntryRemote.RegularFile("b.jpg"),
+        )
+        val metadata = FolderGalleryIndex.mergeFileMetadata(
+            mapOf("b.jpg" to FolderGalleryIndex.FileMetadata(100, 200)),
+            mapOf("a.jpg" to FolderGalleryIndex.FileMetadata(), "b.jpg" to FolderGalleryIndex.FileMetadata(0, 300)),
+        )
+        val stamped = FolderGalleryIndex.stampRemoteFileMetadata(rows, metadata)
+        assertEquals(10L, stamped[0].size)
+        assertEquals(20L, stamped[0].lastModifiedMs)
+        assertEquals(100L, stamped[1].size)
+        assertEquals(300L, stamped[1].lastModifiedMs)
+    }
+
+    @Test
     fun `library names refresh preserves existing file metadata`() {
         val image = BrowseEntryRemote.RegularFile("a.jpg", size = 1234L, lastModifiedMs = 1000L)
         val video = BrowseEntryRemote.VideoFile("b.mp4", size = 5678L, lastModifiedMs = 2000L)

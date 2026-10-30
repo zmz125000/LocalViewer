@@ -71,6 +71,16 @@ suspend inline fun <T> useFolderPageLoader(
                     if (isImageFileName(it.name)) it.name else it.displayName
                 }
 
+                override fun getOriginalImageSize(index: Int): Long? {
+                    val path = files.getOrNull(index) ?: return null
+                    path.metadataOrNull()?.size?.takeIf { it > 0 }?.let { return it }
+                    return runCatching {
+                        appCtx.contentResolver.query(path.toUri(), arrayOf(MediaStore.MediaColumns.SIZE), null, null, null)?.use {
+                            if (it.moveToFirst() && !it.isNull(0)) it.getLong(0).takeIf { bytes -> bytes > 0 } else null
+                        }
+                    }.getOrNull()
+                }
+
                 override fun getOriginalImageDate(index: Int): Long? {
                     val path = files.getOrNull(index) ?: return null
                     path.metadataOrNull()?.lastModifiedAtMillis?.takeIf { it > 0 }?.let { return it }
