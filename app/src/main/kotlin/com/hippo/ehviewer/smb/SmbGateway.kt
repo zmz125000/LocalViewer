@@ -3983,10 +3983,15 @@ object SmbGateway {
                 throw e
             }
             output.use { target ->
+                val activeOutput = AtomicReference<AutoCloseable?>(null)
+                val outputJob = coroutineContext[Job]
+                val cancelOutput = if (connection.sharedAcrossJobs) outputJob?.closeFileOnCancelling(activeOutput) else null
                 try {
-                    // Arm server-side cleanup while the connection is still alive. Stop
-                    // aborts the transport, so a later delete request cannot be relied on.
+                    // Arm cleanup before publishing the handle to cancellation. Shared
+                    // uploads close this file on Stop, leaving other jobs' TCP alive.
                     target.deleteOnClose()
+                    if (connection.sharedAcrossJobs) armSmbFileForCancelClose(outputJob, activeOutput, target)
+                    coroutineContext.ensureActive()
                     if (origin != null) {
                         requireNotNull(originShare).openFile(
                             origin.pathInShare,
@@ -4092,6 +4097,9 @@ object SmbGateway {
                 } catch (e: Throwable) {
                     runCatching { target.deleteOnClose() }
                     throw e
+                } finally {
+                    activeOutput.set(null)
+                    cancelOutput?.dispose()
                 }
             }
         }
@@ -4108,10 +4116,11 @@ object SmbGateway {
 
     fun canTransferCopy(from: SmbSourceEntity, fromPassword: String, to: SmbSourceEntity, toPassword: String): Boolean = com.hippo.ehviewer.library.canCopySmbOnServer(from, fromPassword, to, toPassword)
 
-    /** One explicit destination connection per upload lane; source reads retain their existing pool. */
+    /** One destination TCP, optionally shared by parallel lanes through separate file handles. */
     class UploadConnection internal constructor(
         private val source: SmbSourceEntity,
         private val password: String,
+        internal val sharedAcrossJobs: Boolean = false,
     ) {
         private val resource = SmbTransferResources<PooledSession>(
             usable = { it.isConnected },
@@ -4122,13 +4131,16 @@ object SmbGateway {
             trackSource(source)
             val session = resource.get { openSession(source, password, credKey(source, password)) }
             val abort = AutoCloseable { session.connection.close(true) }
-            val cancel = coroutineContext[Job]?.closeFileOnCancelling(AtomicReference<AutoCloseable?>(abort))
+            val cancel = if (sharedAcrossJobs) null else coroutineContext[Job]?.closeFileOnCancelling(AtomicReference<AutoCloseable?>(abort))
             try {
                 coroutineContext.ensureActive()
                 block(session.diskShare(shareName))
             } catch (error: Throwable) {
                 // Never replay a write: its input may already be consumed. Reconnect for the next file.
-                if (isTransportError(error) || isSessionRejectError(error) || !session.isConnected) resource.discard()
+                val cancelledSharedHandle = sharedAcrossJobs && !coroutineContext.isActive
+                if (!session.isConnected || !cancelledSharedHandle && (isTransportError(error) || isSessionRejectError(error))) {
+                    withContext(kotlinx.coroutines.NonCancellable) { resource.discard(session) }
+                }
                 throw error
             } finally {
                 cancel?.dispose()
@@ -4141,6 +4153,10 @@ object SmbGateway {
     }
 
     fun uploadConnection(source: SmbSourceEntity, password: String): UploadConnection = UploadConnection(source, password)
+
+    private val multiplexedUploads = SharedSmbUploads<String, UploadConnection> { it.close() }
+
+    internal suspend fun <T> withMultiplexedUploadConnection(source: SmbSourceEntity, password: String, block: suspend (UploadConnection) -> T): T = multiplexedUploads.withConnection(credKey(source, password), { UploadConnection(source, password, sharedAcrossJobs = true) }, block)
 
     private fun closeTransferSession(session: PooledSession) {
         session.retired.set(true)

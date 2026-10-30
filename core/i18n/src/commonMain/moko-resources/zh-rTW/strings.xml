@@ -1216,4 +1216,5 @@
     <string name="explorer_close_window">關閉視窗</string>
     <string name="explorer_delete_saved">刪除已儲存的路徑</string>
     <string name="browse_save_to_upload">儲存至快速上傳</string>
+    <string name="transfer_smb_multiplex">SMB 多路複用</string>
 </resources>

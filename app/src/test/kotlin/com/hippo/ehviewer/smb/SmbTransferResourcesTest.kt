@@ -1,7 +1,10 @@
 package com.hippo.ehviewer.smb
 
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.launch
@@ -23,6 +26,61 @@ class SmbTransferResourcesTest {
             it.closes++
         },
     )
+
+    @Test
+    fun `parallel file handles initialize one connection and remain concurrent`() = runBlocking {
+        val resources = resources()
+        val opening = CompletableDeferred<Unit>()
+        val allowOpen = CompletableDeferred<Unit>()
+        val allHandlesActive = CompletableDeferred<Unit>()
+        val finishHandles = CompletableDeferred<Unit>()
+        var opens = 0
+        var active = 0
+        val handles = List(4) {
+            async {
+                val session = resources.get {
+                    opens++
+                    opening.complete(Unit)
+                    allowOpen.await()
+                    Session()
+                }
+                if (++active == 4) allHandlesActive.complete(Unit)
+                finishHandles.await()
+                session
+            }
+        }
+        opening.await()
+        allowOpen.complete(Unit)
+        allHandlesActive.await()
+        assertEquals(1, opens)
+        assertEquals(4, active)
+        finishHandles.complete(Unit)
+        val sessions = handles.awaitAll()
+        sessions.forEach { assertSame(sessions.first(), it) }
+        assertEquals(0, sessions.first().closes)
+        resources.closeAll()
+        assertEquals(1, sessions.first().closes)
+    }
+
+    @Test
+    fun `late failure from an old handle cannot discard a replacement connection`() = runBlocking {
+        val resources = resources()
+        val old = resources.get { Session() }
+        resources.discard(old)
+        val replacement = resources.get { Session() }
+        resources.discard(old)
+        assertEquals(1, old.closes)
+        assertEquals(0, replacement.closes)
+        assertSame(
+            replacement,
+            resources.get {
+                fail("Replacement must stay connected")
+                Session()
+            },
+        )
+        resources.closeAll()
+        assertEquals(1, replacement.closes)
+    }
 
     @Test
     fun `many files reuse one connection and close it only at job end`() = runBlocking {

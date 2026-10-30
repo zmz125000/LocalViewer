@@ -196,6 +196,15 @@ private fun FileTransferPanel(job: UploadJob) {
                             },
                         )
                         DropdownMenuItem(
+                            text = { Text(stringResource(R.string.transfer_smb_multiplex)) },
+                            enabled = state.parallel && !state.active,
+                            trailingIcon = { if (state.smbMultiplex) Icon(Icons.Default.Check, null) },
+                            onClick = {
+                                UploadTransfers.toggleSmbMultiplex(job)
+                                menu = false
+                            },
+                        )
+                        DropdownMenuItem(
                             text = { Text(stringResource(R.string.transfer_auto_start)) },
                             trailingIcon = { if (state.autoStart) Icon(Icons.Default.Check, null) },
                             onClick = {

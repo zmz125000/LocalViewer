@@ -1336,4 +1336,5 @@
     <string name="explorer_close_window">关闭窗口</string>
     <string name="explorer_delete_saved">删除已保存的路径</string>
     <string name="browse_save_to_upload">保存到快捷上传</string>
+    <string name="transfer_smb_multiplex">SMB 多路复用</string>
 </resources>

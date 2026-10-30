@@ -57,6 +57,7 @@ internal data class UploadState(
     val autoFinish: Boolean = Settings.browseTaskAutoFinish.value,
     val autoStart: Boolean = Settings.uploadAutoStart.value,
     val parallel: Boolean = Settings.uploadParallel.value,
+    val smbMultiplex: Boolean = Settings.uploadSmbMultiplex.value,
     val bytesTransferred: Long = 0,
     val speedBps: Long = 0,
     val serverCopy: Boolean = false,
@@ -304,6 +305,11 @@ internal object UploadTransfers {
         val state = job.state.updateAndGet { if (it.active) it else it.copy(parallel = enabled) }
         Settings.uploadParallel.value = state.parallel
     }
+    fun toggleSmbMultiplex(job: UploadJob) {
+        if (job.state.value.active || !job.state.value.parallel) return
+        val state = job.state.updateAndGet { if (it.active || !it.parallel) it else it.copy(smbMultiplex = !it.smbMultiplex) }
+        Settings.uploadSmbMultiplex.value = state.smbMultiplex
+    }
     private fun dismissAutoFinished(job: UploadJob) {
         if (_jobs.value.none { it === job }) return
         val state = job.state.value
@@ -403,7 +409,7 @@ internal object UploadTransfers {
                 }
             }
             try {
-                TransferFiles.withUploadConnection(state.destination) { connection ->
+                TransferFiles.withUploadConnection(state.destination, multiplex = state.smbMultiplex) { connection ->
                     slots.withPermit {
                         val directories = HashMap<String, TransferLocation>()
                         val safNames = HashMap<TransferLocation, MutableSet<String>>()
@@ -530,7 +536,7 @@ internal object UploadTransfers {
                         for (row in state.rows.filter { it.file.directory }) transferRow(row, connection)
                         val files = state.rows.filter { !it.file.directory }
                         val parallelism = transferBatchParallelism(files.map { it.file }, state.destination.kind, state.parallel)
-                        TransferFiles.withUploadConnections(state.destination, parallelism - 1) { extraConnections ->
+                        TransferFiles.withUploadConnections(state.destination, parallelism - 1, shared = connection.takeIf { state.smbMultiplex }) { extraConnections ->
                             forEachTransferLane(files, parallelism) { lane, rows ->
                                 val laneConnection = if (lane == 0) connection else extraConnections[lane - 1]
                                 for (row in rows) transferRow(row, laneConnection)

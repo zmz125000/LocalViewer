@@ -30,6 +30,7 @@ class UploadTransfersTest {
                     autoFinish = enabled,
                     autoStart = enabled,
                     parallel = enabled,
+                    smbMultiplex = enabled,
                     bytesTransferred = 1024,
                     speedBps = 512,
                     serverCopy = true,
@@ -51,6 +52,7 @@ class UploadTransfersTest {
                 assertEquals(enabled, reset.autoFinish)
                 assertEquals(enabled, reset.autoStart)
                 assertEquals(enabled, reset.parallel)
+                assertEquals(enabled, reset.smbMultiplex)
                 assertEquals(null, reset.error)
             }
         }
@@ -209,6 +211,7 @@ class UploadTransfersTest {
             autoFinish = false,
             autoStart = false,
             parallel = false,
+            smbMultiplex = false,
             rows = listOf(
                 row("album", true).copy(status = UploadFileStatus.Succeeded),
                 row("album/a.jpg").copy(status = UploadFileStatus.Succeeded),

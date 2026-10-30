@@ -61,11 +61,13 @@ object TransferFiles {
     private suspend fun smb(id: Long) = requireNotNull(SmbRepository.load(id)) { "SMB source missing" }
     private suspend fun dav(id: Long) = requireNotNull(WebDavRepository.load(id)) { "WebDAV source missing" }
 
-    /** One sequential lane's destination connection, closed on success, failure or stop. */
-    suspend fun <T> withUploadConnection(destination: TransferLocation, block: suspend (SmbGateway.UploadConnection?) -> T): T {
+    /** Multiplex jobs borrow a shared destination connection until their own work ends. */
+    suspend fun <T> withUploadConnection(destination: TransferLocation, multiplex: Boolean = false, block: suspend (SmbGateway.UploadConnection?) -> T): T {
         val connection = if (destination.kind == ExplorerWindows.Kind.Smb) {
             val source = smb(destination.sourceId)
-            SmbGateway.uploadConnection(source, SmbPasswordStore.get(source.id))
+            val password = SmbPasswordStore.get(source.id)
+            if (multiplex) return SmbGateway.withMultiplexedUploadConnection(source, password) { block(it) }
+            SmbGateway.uploadConnection(source, password)
         } else {
             null
         }
@@ -76,9 +78,10 @@ object TransferFiles {
         }
     }
 
-    /** Fixed, lazy lane connections. Finish the manifest before tearing them down. */
-    internal suspend fun <T> withUploadConnections(destination: TransferLocation, count: Int, block: suspend (List<SmbGateway.UploadConnection?>) -> T): T {
+    /** Parallel lanes can borrow the owner's connection; only the owner closes it. */
+    internal suspend fun <T> withUploadConnections(destination: TransferLocation, count: Int, shared: SmbGateway.UploadConnection? = null, block: suspend (List<SmbGateway.UploadConnection?>) -> T): T {
         require(count >= 0)
+        if (shared != null) return block(List(count) { shared })
         val source = if (count > 0 && destination.kind == ExplorerWindows.Kind.Smb) smb(destination.sourceId) else null
         val password = source?.let { SmbPasswordStore.get(it.id) }
         val connections = List(count) { source?.let { SmbGateway.uploadConnection(it, requireNotNull(password)) } }
