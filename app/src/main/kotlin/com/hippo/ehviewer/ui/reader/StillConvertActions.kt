@@ -26,6 +26,7 @@ import com.hippo.ehviewer.image.hdr.StillExportQuality
 import com.hippo.ehviewer.image.hdr.StillExportTarget
 import com.hippo.ehviewer.image.hdr.StillExportWork
 import com.hippo.ehviewer.image.hdr.mimeType
+import com.hippo.ehviewer.image.hdr.sourceEncodedExport
 import com.hippo.ehviewer.image.hdr.stillExportFileName
 import com.hippo.ehviewer.image.hdr.withRawExportControls
 import com.hippo.ehviewer.image.hdr.withStillInput
@@ -94,7 +95,7 @@ suspend fun exportStillToDirectory(
     return try {
         val encoded = encodeStaged(leaf, target, stage, localSource) ?: return false
         try {
-            withIOContext { BrowseSaveAs.writeConvertFile(dir, stillExportFileName(leaf, encoded.target), encoded.file) }
+            withIOContext { BrowseSaveAs.writeConvertFile(dir, stillExportFileName(leaf, encoded.target, encoded.encoding), encoded.file) }
         } finally {
             encoded.file.delete()
         }
@@ -128,7 +129,7 @@ private suspend fun convertStagedUnchecked(leaf: String, target: StillExportTarg
         val encoded = encodeStaged(leaf, target, stage) ?: return
         try {
             val dest = withIOContext {
-                BrowseSaveAs.writeConvertFile(dir, stillExportFileName(leaf, encoded.target), encoded.file)
+                BrowseSaveAs.writeConvertFile(dir, stillExportFileName(leaf, encoded.target, encoded.encoding), encoded.file)
             }
             snackbar(string(R.string.image_saved, dest.toUri().displayPath ?: dest.toString()))
             true
@@ -202,7 +203,7 @@ private fun Context.discardUnpublished(uri: Uri) {
     runCatching { DocumentsContract.deleteDocument(contentResolver, uri) }
 }
 
-private data class EncodedStill(val file: File, val target: StillExportTarget)
+private data class EncodedStill(val file: File, val target: StillExportTarget, val encoding: String? = null)
 
 /** Download/stage first; retain the memory lease until encoding releases its pixels. */
 private suspend fun encodeStaged(leaf: String, target: StillExportTarget, stage: suspend () -> File, localSource: Path? = null): EncodedStill? = withRawExportControls(target) {
@@ -230,6 +231,9 @@ private suspend fun encodeStagedCaptured(leaf: String, target: StillExportTarget
                 } finally {
                     if (!success) out.delete()
                 }
+            }
+            sourceEncodedExport(decodeSource, leaf, target, quality)?.let {
+                return@withSource EncodedStill(it.file, it.target, it.encoding)
             }
             val exif = if (quality.keepExif) StillExportExif.read(decodeSource, leaf) else null
             LibDirectDecode.withExportPixels(decodeSource.asPathSource(), leaf, maxEdge = 0, target = target) { pixels ->
