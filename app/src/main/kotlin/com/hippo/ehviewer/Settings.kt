@@ -1261,7 +1261,7 @@ object Settings : DataStorePreferences(null) {
     // Rendered screen pixels per second; zero uses the photo display interval.
     val slideshowAutoScrollSpeed = intPref("slideshow_auto_scroll_speed", 0)
 
-    val readerScreenWidgetPosition = intPref("reader_screen_widget_position", 0)
+    val readerScreenWidgetPosition = intPref("reader_screen_widget_position", 1)
     val readerShowClock = boolPref("reader_show_clock", true)
     val readerUseExifDate = boolPref("reader_use_exif_date", true)
     val readerShowImageInfo = boolPref("reader_show_image_info", true)
@@ -1270,7 +1270,7 @@ object Settings : DataStorePreferences(null) {
     val readerShowLensModel = boolPref("reader_show_lens_model", false)
     val readerUseRawColorStrings = boolPref("reader_use_raw_color_strings", false)
     val readerShowFileName = boolPref("reader_show_file_name", false)
-    val readerWidgetAutoAlign = boolPref("reader_widget_auto_align", false)
+    val readerWidgetAutoAlign = boolPref("reader_widget_auto_align", true)
 
     // 0=off, 1=top left, 2=top right, 3=bottom left, 4=bottom right, 5=random.
     // Keep the stored position when upgrading from the clock-only widget.
