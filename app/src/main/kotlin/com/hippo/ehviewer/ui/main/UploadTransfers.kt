@@ -407,7 +407,10 @@ internal object UploadTransfers {
                     slots.withPermit {
                         val directories = HashMap<String, TransferLocation>()
                         val safNames = HashMap<TransferLocation, MutableSet<String>>()
+                        val destinationEntries = HashMap<TransferLocation, MutableMap<String, TransferFile>>()
                         val safListing = Mutex()
+                        suspend fun destinationFiles(parent: TransferLocation, connection: SmbGateway.UploadConnection?): MutableMap<String, TransferFile> = destinationEntries[parent] ?: TransferFiles.children(parent, connection).associateByTo(HashMap()) { it.relative }
+                            .also { destinationEntries[parent] = it }
                         directories[""] = state.destination
                         suspend fun transferRow(row: UploadRow, connection: SmbGateway.UploadConnection?) {
                             job.control.checkpoint()
@@ -453,8 +456,8 @@ internal object UploadTransfers {
                                         // SAF document ids are opaque; match display names.
                                         if (parent.kind == ExplorerWindows.Kind.Local && !parent.path.startsWith('/')) {
                                             safListing.withLock {
-                                                val names = safNames[parent] ?: TransferFiles.children(parent, connection)
-                                                    .mapTo(ConcurrentHashMap.newKeySet<String>()) { it.relative }.also { safNames[parent] = it }
+                                                val names = safNames[parent] ?: destinationFiles(parent, connection).keys
+                                                    .toCollection(ConcurrentHashMap.newKeySet<String>()).also { safNames[parent] = it }
                                                 // Reserve a candidate so parallel files cannot choose the same name.
                                                 !names.add(candidate)
                                             }
@@ -463,6 +466,24 @@ internal object UploadTransfers {
                                             false
                                         } else {
                                             TransferFiles.exists(parent.child(candidate), connection)
+                                        }
+                                    },
+                                    matchesExisting = { candidate ->
+                                        try {
+                                            // Reuse destination metadata across the batch's conflicts.
+                                            val existing = safListing.withLock { destinationFiles(parent, connection)[candidate] }
+                                                ?: TransferFiles.find(parent, candidate, connection)
+                                            if (existing == null || existing.directory) {
+                                                false
+                                            } else {
+                                                val metadata = if (existing.size >= 0 && existing.mtime > 0) existing else TransferFiles.stat(existing)
+                                                com.hippo.ehviewer.library.transferMetadataMatches(currentFile, metadata)
+                                            }
+                                        } catch (e: CancellationException) {
+                                            throw e
+                                        } catch (e: Throwable) {
+                                            logcat("FileTransfer", e)
+                                            false // Unreadable metadata keeps the existing rename policy.
                                         }
                                     },
                                     create = { candidate ->
@@ -483,6 +504,9 @@ internal object UploadTransfers {
                                 }
                                 val outputName = result.name
                                 val preserved = result.value
+                                safListing.withLock {
+                                    destinationEntries[parent]?.put(outputName, currentFile.copy(relative = outputName, source = parent.child(outputName), mtime = if (preserved) currentFile.mtime else 0))
+                                }
                                 updateRow(
                                     job,
                                     file.relative,

@@ -15,6 +15,67 @@ import org.junit.Assert.fail
 import org.junit.Test
 
 class TransferStreamTest {
+    private fun metadata(size: Long = 12, mtime: Long = 10_000, directory: Boolean = false) = TransferFile(TransferLocation(ExplorerWindows.Kind.Smb, 7, "photo.jpg"), "photo.jpg", directory, size, mtime)
+
+    @Test
+    fun `skip off skips matching conflicts before choosing another name`() = runBlocking {
+        for (preflightConflict in listOf(true, false)) {
+            val attempts = mutableListOf<String>()
+            var comparisons = 0
+            val result = createTransferWithoutOverwrite(
+                name = "photo.jpg",
+                skipExisting = false,
+                checkpoint = {},
+                exists = { preflightConflict },
+                matchesExisting = {
+                    comparisons++
+                    transferMetadataMatches(metadata(), metadata())
+                },
+                create = {
+                    attempts += it
+                    throw TransferNameConflict(it)
+                },
+            )
+            assertEquals(null, result)
+            assertEquals(1, comparisons)
+            assertEquals(if (preflightConflict) emptyList<String>() else listOf("photo.jpg"), attempts)
+        }
+    }
+
+    @Test
+    fun `skip off still renames mismatches and skips an already uploaded numbered copy`() = runBlocking {
+        val occupied = mapOf("photo.jpg" to metadata(size = 99), "photo (2).jpg" to metadata())
+        var writes = 0
+        val result = createTransferWithoutOverwrite(
+            name = "photo.jpg",
+            skipExisting = false,
+            checkpoint = {},
+            exists = { it in occupied },
+            matchesExisting = { occupied[it]?.let { existing -> transferMetadataMatches(metadata(), existing) } == true },
+            create = { writes++ },
+        )
+        assertEquals(null, result)
+        assertEquals(0, writes)
+        val renamed = createTransferWithoutOverwrite(
+            name = "photo.jpg",
+            skipExisting = false,
+            checkpoint = {},
+            exists = { it == "photo.jpg" },
+            matchesExisting = { transferMetadataMatches(metadata(), metadata(mtime = 20_000)) },
+            create = { it },
+        )
+        assertEquals("photo (2).jpg", renamed?.name)
+    }
+
+    @Test
+    fun `matching requires known size and mtime and excludes directories`() {
+        assertTrue(transferMetadataMatches(metadata(), metadata(mtime = 11_999)))
+        for (other in listOf(metadata(size = 13), metadata(mtime = 12_000), metadata(size = -1), metadata(mtime = 0), metadata(directory = true))) {
+            assertFalse(transferMetadataMatches(metadata(), other))
+            assertFalse(transferMetadataMatches(other, metadata()))
+        }
+    }
+
     @Test
     fun `rename retries preflight conflicts and exclusive create races until a free name succeeds`() = runBlocking {
         val attempted = mutableListOf<String>()
