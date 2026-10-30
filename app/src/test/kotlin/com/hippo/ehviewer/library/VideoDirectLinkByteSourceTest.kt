@@ -150,6 +150,33 @@ class VideoDirectLinkByteSourceTest {
         video.close()
     }
 
+    @Test
+    fun rollingRangeKeepsSeekReadsSmallAndCachesSteadyRunway() {
+        val lane = RecordingSource(size = 32L * 1024 * 1024)
+        val video = VideoDirectLinkByteSource(
+            demand = lane,
+            prefetchAhead = 0,
+            pipelineBytes = 8 * 1024 * 1024,
+        )
+        try {
+            video.noteSeek(System.currentTimeMillis() + 3000)
+            val seek = ByteArray(VideoDirectLinkByteSource.SEEK_STARTUP_CHUNK)
+            assertEquals(seek.size, video.readAt(0, seek, 0, seek.size))
+            assertEquals(seek.size, lane.readLens.first())
+            val nal = ByteArray(4)
+            assertEquals(4, video.readAt(4, nal, 0, 4))
+            assertEquals(1, lane.reads.size)
+            video.noteSeek(System.currentTimeMillis() - 1)
+            assertEquals(4, video.readAt(0, nal, 0, 4))
+            assertEquals(8 * 1024 * 1024, lane.readLens.last())
+            val reads = lane.reads.size
+            assertEquals(4, video.readAt(6L * 1024 * 1024, nal, 0, 4))
+            assertEquals(reads, lane.reads.size)
+        } finally {
+            video.close()
+        }
+    }
+
     private class RecordingSource(
         override val size: Long,
         override val isRandomAccess: Boolean = true,

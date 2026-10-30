@@ -1,5 +1,6 @@
 package com.hippo.ehviewer.library
 
+import com.hippo.ehviewer.smb.SmbArchiveByteSource
 import com.hippo.ehviewer.smb.SmbReadCancelledException
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
@@ -20,7 +21,8 @@ import java.util.concurrent.atomic.AtomicLong
  *   are RAM hits, so Media3's few-byte NAL reads do not each pay an SMB round trip.
  *   Header / moov probes do not call [noteSeek]; a short read away from the chunk
  *   stays that length.
- * - After those 3 s, sequential playback uses the 4×1 MiB pipeline again.
+ * - After those 3 s, sequential playback uses large pipelined ranges again.
+ *   Plain sticky SMB uses 8 MiB ranges with four rolling 1 MiB reads.
  * - Prefetch uses the **same** sticky lane as demand (one handle) but a separate
  *   queue. A seek drops queued prefetch and sends the new offset immediately.
  *
@@ -36,6 +38,7 @@ class VideoDirectLinkByteSource(
     private val maxBlocks: Int = VIDEO_WINDOW_BLOCKS,
     prefetchAhead: Int = VIDEO_PREFETCH_AHEAD,
     prefetchParallel: Int = -1,
+    private val pipelineBytes: Int = (demand as? SmbArchiveByteSource)?.videoReadWindowBytes ?: PIPELINE_BYTES,
 ) : ArchiveByteSource {
     /**
      * Deflate ZIP members cannot jump: parallel far-ahead loads reset the inflater.
@@ -46,6 +49,7 @@ class VideoDirectLinkByteSource(
     private val randomAccess: Boolean
 
     init {
+        require(pipelineBytes > 0) { "pipelineBytes must be positive" }
         require(blockSize > 0) { "blockSize must be positive" }
         require(maxBlocks > 0) { "maxBlocks must be positive" }
         require(prefetchAhead >= 0) { "prefetchAhead must be non-negative" }
@@ -472,9 +476,9 @@ class VideoDirectLinkByteSource(
         while (filled < expected && !closed.get()) {
             if (epoch.get() != epochAtStart) break
             val from = blockStart + filled
-            // Random-access: 4×1 MiB in one SMB read. Deflate stays inside this block.
+            // Random-access uses the backend range window. Deflate stays inside this block.
             val pipeline = if (randomAccess) {
-                minOf(PIPELINE_BYTES.toLong(), size - from).toInt()
+                minOf(pipelineBytes.toLong(), size - from).toInt()
             } else {
                 minOf((expected - filled).toLong(), size - from).toInt()
             }
@@ -535,8 +539,8 @@ class VideoDirectLinkByteSource(
         val executor = prefetchExecutor ?: return
         if (closed.get() || prefetchAhead <= 0) return
         val myEpoch = epoch.get()
-        // Demand already filled this block and, on random-access, the rest of its 4 MiB pipeline.
-        val step = if (randomAccess) (PIPELINE_BYTES / blockSize).coerceAtLeast(1) else 1
+        // Demand already filled this block and the rest of its backend range window.
+        val step = if (randomAccess) (pipelineBytes / blockSize).coerceAtLeast(1) else 1
         for (i in step..prefetchAhead step step) {
             val blockIndex = fromBlock + i
             if (blockIndex * blockSize >= size) break
@@ -653,12 +657,12 @@ class VideoDirectLinkByteSource(
          */
         const val PREFETCH_PARALLEL = 4
 
-        /** One steady-state SMB read: four 1 MiB credits. */
+        /** Default range for backends without a larger rolling SMB window. */
         private const val PIPELINE_BYTES = 4 * 1024 * 1024
 
         /**
          * External HTTP seek: reads of at most this size for [SEEK_STARTUP_MS],
-         * then [PIPELINE_BYTES] on the sticky lane.
+         * then the backend's steady-state range window on the same lane.
          */
         const val SEEK_STARTUP_MS = 3_000L
         const val SEEK_STARTUP_CHUNK = 256 * 1024
