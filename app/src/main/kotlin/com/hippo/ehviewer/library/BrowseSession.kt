@@ -27,6 +27,14 @@ object BrowseSession {
         _smbMutations.tryEmit(sourceId to parent.trim('/'))
     }
 
+    private val _webDavMutations = MutableSharedFlow<Pair<Long, String>>(extraBufferCapacity = 64, onBufferOverflow = BufferOverflow.DROP_OLDEST)
+    val webDavMutations = _webDavMutations.asSharedFlow()
+
+    fun notifyWebDavMutation(sourceId: Long, parent: String) {
+        invalidateWebDavListing(sourceId, parent)
+        _webDavMutations.tryEmit(sourceId to parent.trim('/'))
+    }
+
     // --- Local folder path stack ---
     data class LocalFrame(
         val rootId: Long,

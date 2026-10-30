@@ -289,14 +289,23 @@ internal object UploadTransfers {
                         updateRow(job, row.file.relative, UploadFileStatus.Running)
                         val parent = row.file.source.copy(path = row.file.source.path.substringBeforeLast('/', ""))
                         // Stop or a lost reply can race an already committed server rename.
-                        // Refresh attempted SMB parents even when its acknowledgement is lost.
-                        if (parent.kind == ExplorerWindows.Kind.Smb) changed += parent
+                        // Refresh attempted network parents even when the acknowledgement is lost.
+                        if (parent.kind != ExplorerWindows.Kind.Local) changed += parent
                         try {
                             val name = TrashFiles.move(row.file, date, job.control)
                             // Account for confirmed server moves before observing a later Stop.
                             updateRow(job, row.file.relative, UploadFileStatus.Succeeded, "$date/$name")
-                            BrowseSession.invalidateSmbListing(parent.sourceId, parent.path)
-                            BrowseSession.invalidateSmbListingsUnder(row.file.source.sourceId, row.file.source.path)
+                            when (parent.kind) {
+                                ExplorerWindows.Kind.Smb -> {
+                                    BrowseSession.invalidateSmbListing(parent.sourceId, parent.path)
+                                    BrowseSession.invalidateSmbListingsUnder(row.file.source.sourceId, row.file.source.path)
+                                }
+                                ExplorerWindows.Kind.WebDav -> {
+                                    BrowseSession.invalidateWebDavListing(parent.sourceId, parent.path)
+                                    BrowseSession.invalidateWebDavListingsUnder(row.file.source.sourceId, row.file.source.path)
+                                }
+                                ExplorerWindows.Kind.Local -> Unit
+                            }
                         } catch (error: CancellationException) {
                             throw error
                         } catch (error: Throwable) {
@@ -320,7 +329,13 @@ internal object UploadTransfers {
                 job.state.update { it.copy(phase = UploadPhase.Failed, error = message) }
                 scope.launch(Dispatchers.Main.immediate) { Toast.makeText(appCtx, message, Toast.LENGTH_LONG).show() }
             } finally {
-                for (parent in changed) BrowseSession.notifySmbMutation(parent.sourceId, parent.path)
+                for (parent in changed) {
+                    when (parent.kind) {
+                        ExplorerWindows.Kind.Smb -> BrowseSession.notifySmbMutation(parent.sourceId, parent.path)
+                        ExplorerWindows.Kind.WebDav -> BrowseSession.notifyWebDavMutation(parent.sourceId, parent.path)
+                        ExplorerWindows.Kind.Local -> Unit
+                    }
+                }
                 syncForeground()
             }
         }
@@ -330,9 +345,10 @@ internal object UploadTransfers {
     private fun deleteFailureMessage(error: Throwable): String {
         val causes = generateSequence(error) { it.cause }.take(8).toList()
         val status = causes.filterIsInstance<com.hierynomus.mssmb2.SMBApiException>().firstOrNull()?.statusCode
+        val davStatus = causes.filterIsInstance<com.hippo.ehviewer.webdav.WebDavTrashException>().firstOrNull()?.status
         return when {
             causes.any { it is UnsupportedOperationException } || status in listOf(0xC00000BBL, 0xC0000010L, 0xC0000002L) -> appCtx.getString(R.string.transfer_delete_unsupported)
-            status in listOf(0xC0000022L, 0xC0000061L) -> appCtx.getString(R.string.transfer_delete_access_denied)
+            status in listOf(0xC0000022L, 0xC0000061L) || davStatus == 401 || davStatus == 403 -> appCtx.getString(R.string.transfer_delete_access_denied)
             else -> error.message ?: appCtx.getString(R.string.browse_task_failed)
         }
     }

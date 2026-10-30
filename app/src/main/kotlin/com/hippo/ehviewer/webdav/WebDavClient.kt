@@ -134,6 +134,65 @@ object WebDavClient {
         }
     }
 
+    /** One server MOVE for a file or complete collection. No transport replay or payload copy. */
+    suspend fun moveToTrash(source: WebDavSourceEntity, password: String, relative: String, directory: Boolean, date: String, checkpoint: suspend () -> Unit): String = withIOContext {
+        val client = trashHttp()
+        val auth = basicAuthHeader(source.username, password)
+        moveWebDavToTrash(relative, directory, date, checkpoint) { operation ->
+            val url = if (operation.directory) dirUrl(source, operation.path) else absoluteUrl(source, operation.path)
+            val response = client.request(url) {
+                method = HttpMethod(operation.method)
+                auth?.let { header(HttpHeaders.Authorization, it) }
+                operation.depth?.let { header("Depth", it) }
+                operation.overwrite?.let { header("Overwrite", it) }
+                operation.destination?.let {
+                    header("Destination", (if (operation.directory) dirUrl(source, it) else absoluteUrl(source, it)).toString())
+                }
+                if (operation.method == "PROPFIND") {
+                    contentType(ContentType.Application.Xml)
+                    setBody("<d:propfind xmlns:d=\"DAV:\"><d:prop><d:resourcetype/></d:prop></d:propfind>")
+                }
+                timeout {
+                    connectTimeoutMillis = LIST_CONNECT_MS
+                    requestTimeoutMillis = DL_REQUEST_MS
+                    socketTimeoutMillis = DL_SOCKET_MS
+                }
+            }
+            if (response.status.value == 207) {
+                parseTrashMultiStatus(response.bodyAsText())
+            } else {
+                WebDavTrashResponse(response.status.value)
+            }
+        }
+    }
+
+    private fun parseTrashMultiStatus(xml: String): WebDavTrashResponse {
+        val parser = XmlPullParserFactory.newInstance().newPullParser().apply {
+            setFeature(XmlPullParser.FEATURE_PROCESS_NAMESPACES, true)
+            setInput(xml.reader())
+        }
+        var collection = false
+        var failureStatus: Int? = null
+        var inResourceType = false
+        while (parser.eventType != XmlPullParser.END_DOCUMENT) {
+            val name = parser.name?.substringAfterLast(':').orEmpty()
+            if (parser.eventType == XmlPullParser.START_TAG) {
+                when (name) {
+                    "resourcetype" -> inResourceType = true
+                    "collection" -> if (inResourceType) collection = true
+                    "status" -> {
+                        val status = parser.nextText().trim().split(Regex("\\s+")).getOrNull(1)?.toIntOrNull()
+                        if (status != null && status >= 400 && failureStatus == null) failureStatus = status
+                    }
+                }
+            } else if (parser.eventType == XmlPullParser.END_TAG && name == "resourcetype") {
+                inResourceType = false
+            }
+            parser.next()
+        }
+        return WebDavTrashResponse(207, collection, failureStatus)
+    }
+
     /** Stage under a private name, then MOVE with Overwrite:F so existing files remain intact. */
     suspend fun transferWrite(
         source: WebDavSourceEntity,
@@ -335,6 +394,20 @@ object WebDavClient {
     @Volatile
     private var stickyClientHttp2: Boolean = false
 
+    private var trashClient: HttpClient? = null
+    private var trashClientConfig: Pair<Boolean, Boolean>? = null
+
+    @Synchronized
+    private fun trashHttp(): HttpClient {
+        val config = Settings.webDavInsecureTls.value to Settings.webDavHttp2.value
+        trashClient?.let { if (trashClientConfig == config) return it }
+        runCatching { trashClient?.close() }
+        val built = if (config.second) buildOkHttpClient(config.first, replay = false) else buildCioClient(config.first, redirects = false)
+        trashClient = built
+        trashClientConfig = config
+        return built
+    }
+
     private val lastPathChangeMs = AtomicLong(0L)
 
     private val trustAllManager = object : X509TrustManager {
@@ -408,7 +481,8 @@ object WebDavClient {
 
     private fun buildClient(insecureTls: Boolean, http2: Boolean): HttpClient = if (http2) buildOkHttpClient(insecureTls) else buildCioClient(insecureTls)
 
-    private fun buildCioClient(insecureTls: Boolean): HttpClient = HttpClient(CIO) {
+    private fun buildCioClient(insecureTls: Boolean, redirects: Boolean = true): HttpClient = HttpClient(CIO) {
+        followRedirects = redirects
         engine {
             dispatcher = cioDispatcher
             requestTimeout = DL_REQUEST_MS
@@ -423,7 +497,8 @@ object WebDavClient {
         expectSuccess = false
     }
 
-    private fun buildOkHttpClient(insecureTls: Boolean): HttpClient = HttpClient(OkHttp) {
+    private fun buildOkHttpClient(insecureTls: Boolean, replay: Boolean = true): HttpClient = HttpClient(OkHttp) {
+        followRedirects = replay
         engine {
             config {
                 socketFactory(WebDavSocketFactory(TRAFFIC_TAG))
@@ -438,7 +513,9 @@ object WebDavClient {
                 readTimeout(DL_SOCKET_MS, TimeUnit.MILLISECONDS)
                 writeTimeout(DL_SOCKET_MS, TimeUnit.MILLISECONDS)
                 callTimeout(0, TimeUnit.MILLISECONDS)
-                retryOnConnectionFailure(true)
+                retryOnConnectionFailure(replay)
+                followRedirects(replay)
+                followSslRedirects(replay)
                 if (insecureTls) {
                     sslSocketFactory(trustAllSslContext.socketFactory, trustAllManager)
                     hostnameVerifier { _, _ -> true }
@@ -465,6 +542,9 @@ object WebDavClient {
         synchronized(this) {
             val old = client
             client = null
+            runCatching { trashClient?.close() }
+            trashClient = null
+            trashClientConfig = null
             runCatching { old?.close() }
         }
     }

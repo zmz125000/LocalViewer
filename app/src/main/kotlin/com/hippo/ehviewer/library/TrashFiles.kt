@@ -3,6 +3,9 @@ package com.hippo.ehviewer.library
 import com.hippo.ehviewer.smb.SmbGateway
 import com.hippo.ehviewer.smb.SmbPasswordStore
 import com.hippo.ehviewer.smb.SmbRepository
+import com.hippo.ehviewer.webdav.WebDavClient
+import com.hippo.ehviewer.webdav.WebDavPasswordStore
+import com.hippo.ehviewer.webdav.WebDavRepository
 
 private val trashArchivePath = Regex("(?i)(?:^|/)[^/]+\\.(?:zip|cbz)(?=/|$)")
 
@@ -60,10 +63,19 @@ internal suspend fun moveToTrashWithoutOverwrite(
 
 internal object TrashFiles {
     suspend fun move(file: TransferFile, date: String, control: TransferControl): String {
-        if (file.source.kind != ExplorerWindows.Kind.Smb || isTrashArchiveMember(file.source.path)) {
-            throw UnsupportedOperationException("Only SMB server-side moves of physical files and folders are supported")
+        if (isTrashArchiveMember(file.source.path)) {
+            throw UnsupportedOperationException("Server-side moves require a physical file or folder")
         }
-        val source = requireNotNull(SmbRepository.load(file.source.sourceId)) { "SMB source missing" }
-        return SmbGateway.moveToTrash(source, SmbPasswordStore.get(source.id), file.source.path, date, control::checkpoint)
+        return when (file.source.kind) {
+            ExplorerWindows.Kind.Smb -> {
+                val source = requireNotNull(SmbRepository.load(file.source.sourceId)) { "SMB source missing" }
+                SmbGateway.moveToTrash(source, SmbPasswordStore.get(source.id), file.source.path, date, control::checkpoint)
+            }
+            ExplorerWindows.Kind.WebDav -> {
+                val source = requireNotNull(WebDavRepository.load(file.source.sourceId)) { "WebDAV source missing" }
+                WebDavClient.moveToTrash(source, WebDavPasswordStore.get(source.id), file.source.path, file.directory, date, control::checkpoint)
+            }
+            ExplorerWindows.Kind.Local -> throw UnsupportedOperationException("Only network server-side moves are supported")
+        }
     }
 }
