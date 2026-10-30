@@ -74,6 +74,9 @@ static int encode_jxl_pixels(unsigned w, unsigned h, const void* rgba, uhdr_colo
             color.white_point = source->primaries == 11 ? JXL_WHITE_POINT_DCI : JXL_WHITE_POINT_D65;
         } else if (source->primaries == 1 || source->primaries == 9) {
             color.primaries = static_cast<JxlPrimaries>(source->primaries);
+        } else if (source->primaries == 0 || source->primaries == 2) {
+            // Unspecified CICP is rendered as sRGB; JXL has no "unknown" encoding.
+            color.primaries = JXL_PRIMARIES_SRGB;
         } else if (!source->icc_size) {
             float xy[8];avifColorPrimariesGetValues(static_cast<avifColorPrimaries>(source->primaries), xy);
             color.primaries = JXL_PRIMARIES_CUSTOM;color.white_point = JXL_WHITE_POINT_CUSTOM;
@@ -88,6 +91,8 @@ static int encode_jxl_pixels(unsigned w, unsigned h, const void* rgba, uhdr_colo
             color.gamma = source->transfer == 4 ? 1.0/2.2 : 1.0/2.8;
         } else if (source->transfer == 6 || source->transfer == 14 || source->transfer == 15) {
             color.transfer_function = JXL_TRANSFER_FUNCTION_709;
+        } else if (source->transfer == 0 || source->transfer == 2) {
+            color.transfer_function = JXL_TRANSFER_FUNCTION_SRGB;
         }
     }
     color.rendering_intent = JXL_RENDERING_INTENT_RELATIVE;

@@ -207,28 +207,33 @@ private fun encodePlatformSource(source: Path, name: String, input: ByteBuffer, 
     val orientation = runCatching {
         source.openFileDescriptor("r").use { ExifInterface(it.fileDescriptor).getAttributeInt(ExifInterface.TAG_ORIENTATION, 1) }
     }.getOrDefault(1).coerceIn(1, 8)
-    val primaries = when {
-        icc != null -> 2
-        space == ColorSpace.get(ColorSpace.Named.DISPLAY_P3) -> 12
-        space == ColorSpace.get(ColorSpace.Named.BT2020) || space == ColorSpace.get(ColorSpace.Named.BT2020_PQ) || space == ColorSpace.get(ColorSpace.Named.BT2020_HLG) -> 9
-        !space.isWideGamut -> 1
-        else -> return 0
-    }
     val pngTags = if (ext == "png") pngColorTags(input) else null
-    val encodedPrimaries = pngTags?.first ?: primaries
     val params = (space as? ColorSpace.Rgb)?.transferParameters
-    val transfer = when {
-        pngTags != null && (icc == null || pngTags.second == 16 || pngTags.second == 18) -> pngTags.second
-        icc != null -> 2
-        space == ColorSpace.get(ColorSpace.Named.BT2020_PQ) -> 16
-        space == ColorSpace.get(ColorSpace.Named.BT2020_HLG) -> 18
-        space.isSrgb || space == ColorSpace.get(ColorSpace.Named.DISPLAY_P3) -> 13
-        params?.g == 1.0 -> 8
-        params != null && kotlin.math.abs(params.g - 2.2) < 0.001 -> 4
-        params != null && kotlin.math.abs(params.g - 2.8) < 0.001 -> 5
-        else -> return 0
+
+    /** CICP primaries/transfer for samples in [space], optionally described by [profile]. */
+    fun cicp(profile: ByteArray?): Pair<Int, Int>? {
+        val primaries = when {
+            profile != null -> 2
+            space == ColorSpace.get(ColorSpace.Named.DISPLAY_P3) -> 12
+            space == ColorSpace.get(ColorSpace.Named.BT2020) || space == ColorSpace.get(ColorSpace.Named.BT2020_PQ) || space == ColorSpace.get(ColorSpace.Named.BT2020_HLG) -> 9
+            !space.isWideGamut -> 1
+            else -> return null
+        }
+        val transfer = when {
+            pngTags != null && (profile == null || pngTags.second == 16 || pngTags.second == 18) -> pngTags.second
+            profile != null -> 2
+            space == ColorSpace.get(ColorSpace.Named.BT2020_PQ) -> 16
+            space == ColorSpace.get(ColorSpace.Named.BT2020_HLG) -> 18
+            space.isSrgb || space == ColorSpace.get(ColorSpace.Named.DISPLAY_P3) -> 13
+            params?.g == 1.0 -> 8
+            params != null && kotlin.math.abs(params.g - 2.2) < 0.001 -> 4
+            params != null && kotlin.math.abs(params.g - 2.8) < 0.001 -> 5
+            else -> return null
+        }
+        return (pngTags?.first ?: primaries) to transfer
     }
     if (ext == "png") {
+        val (encodedPrimaries, transfer) = cicp(icc) ?: return 0
         val exif = if (quality.keepExif) StillExportExif.read(source, name)?.encode(bounds.outWidth, bounds.outHeight) else null
         pngSourcePixels(input, bounds.outWidth, bounds.outHeight)?.use { pixels ->
             return encodeSourceRgb(
@@ -238,6 +243,11 @@ private fun encodePlatformSource(source: Path, name: String, input: ByteBuffer, 
             )
         }
     }
+    // Skia converts samples from an ICC it cannot represent into sRGB and reports sRGB;
+    // the source ICC no longer describes those samples.
+    val convertedToSrgb = icc != null && space.isSrgb
+    val bitmapIcc = icc.takeUnless { convertedToSrgb }
+    val (encodedPrimaries, transfer) = if (convertedToSrgb) 1 to 13 else cicp(icc) ?: return 0
     val bitmap = BitmapFactory.decodeStream(
         StillBufferInputStream(input.slice()),
         null,
@@ -257,7 +267,7 @@ private fun encodePlatformSource(source: Path, name: String, input: ByteBuffer, 
         NativeStillBuffer.allocate(bitmap.width.toLong() * bitmap.height * if (f16) 8 else 4).use { pixels ->
             bitmap.copyPixelsToBuffer(pixels.buffer)
             return encodeSourceRgb(
-                pixels.buffer, bitmap.width, bitmap.height, depth, encodedPrimaries, transfer, icc,
+                pixels.buffer, bitmap.width, bitmap.height, depth, encodedPrimaries, transfer, bitmapIcc,
                 (if (f16) 2 else 1) or (if (bitmap.isPremultiplied) 4 else 0) or (orientation shl 8), format, out.absolutePath,
                 quality.value, quality.jxlDistance, quality.codecQuality, quality.avifBitDepth, quality.downsizeGainMap,
                 exif, null, 0, 0, false, null, info,

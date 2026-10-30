@@ -46,6 +46,10 @@ std::vector<uint8_t> orientation_exif(unsigned value) {
 }
 uhdr_color_gamut_t gamut(int p) { return p == 9 ? UHDR_CG_BT_2100 : p == 12 ? UHDR_CG_DISPLAY_P3 : UHDR_CG_BT_709; }
 int primary(uhdr_color_gamut_t p) { return p == UHDR_CG_BT_2100 ? 9 : p == UHDR_CG_DISPLAY_P3 ? 12 : 1; }
+// AV1 stores 8/10/12-bit samples; only wider sources fall back to the configured AVIF depth.
+unsigned avif_source_depth(unsigned bits, const StillEncodeQuality& quality) {
+    return bits <= 8 ? 8 : bits <= 10 ? 10 : bits <= 12 ? 12 : quality.avif_depth();
+}
 
 Image from_rgb(unsigned w, unsigned h, const void* pixels, bool sixteen, unsigned depth,
                int primaries, int transfer, StillEncodeQuality quality, bool map = false, bool gray = false) {
@@ -53,7 +57,10 @@ Image from_rgb(unsigned w, unsigned h, const void* pixels, bool sixteen, unsigne
     if (!image || uint64_t(w)*h > kLimit) return Image(nullptr,avifImageDestroy);
     image->colorPrimaries = static_cast<avifColorPrimaries>(primaries);
     image->transferCharacteristics = static_cast<avifTransferCharacteristics>(transfer);
-    image->matrixCoefficients = AVIF_MATRIX_COEFFICIENTS_IDENTITY;
+    // Identity keeps RGB codes exact only when lossless; lossy AV1 quantizes the U/V planes
+    // harder, which would shift R and B. AV1 forbids identity for monochrome.
+    image->matrixCoefficients = quality.avif_lossless() && !gray ? AVIF_MATRIX_COEFFICIENTS_IDENTITY :
+        primaries == 9 ? AVIF_MATRIX_COEFFICIENTS_BT2020_NCL : AVIF_MATRIX_COEFFICIENTS_BT709;
     image->yuvRange = AVIF_RANGE_FULL;
     avifRGBImage rgb; avifRGBImageSetDefaults(&rgb,image.get());
     rgb.format = AVIF_RGB_FORMAT_RGBA; rgb.depth = sixteen ? 16 : 8;
@@ -183,8 +190,10 @@ Image jxl_image(const uint8_t* data,size_t size,int target,StillEncodeQuality qu
             size_t count=0;
             if(JxlDecoderGetICCProfileSize(decoder.get(),JXL_COLOR_PROFILE_TARGET_ORIGINAL,&count)!=JXL_DEC_SUCCESS || count>16*1024*1024)return Image(nullptr,avifImageDestroy);
             icc.resize(count);
+            // Non-XYB samples already are in the original space (libjxl rejects re-targeting them);
+            // XYB would otherwise decode an ICC-only original as linear sRGB.
             if(count && (JxlDecoderGetColorAsICCProfile(decoder.get(),JXL_COLOR_PROFILE_TARGET_ORIGINAL,icc.data(),icc.size())!=JXL_DEC_SUCCESS ||
-                (info.num_color_channels==3 && JxlDecoderSetOutputColorProfile(decoder.get(),nullptr,icc.data(),icc.size())!=JXL_DEC_SUCCESS)))return Image(nullptr,avifImageDestroy);
+                (!info.uses_original_profile && JxlDecoderSetOutputColorProfile(decoder.get(),nullptr,icc.data(),icc.size())!=JXL_DEC_SUCCESS)))return Image(nullptr,avifImageDestroy);
         } else if(status==JXL_DEC_NEED_IMAGE_OUT_BUFFER) {
             size_t count=0;if(JxlDecoderImageOutBufferSize(decoder.get(),&format,&count)!=JXL_DEC_SUCCESS)return Image(nullptr,avifImageDestroy);
             pixels.resize(count);if(JxlDecoderSetImageOutBuffer(decoder.get(),&format,pixels.data(),pixels.size())!=JXL_DEC_SUCCESS)return Image(nullptr,avifImageDestroy);
@@ -238,7 +247,7 @@ Image jxl_image(const uint8_t* data,size_t size,int target,StillEncodeQuality qu
         unsupported=true;return Image(nullptr,avifImageDestroy);
     }
     const bool gray=icc.size()>=20 && !std::memcmp(icc.data()+16,"GRAY",4);
-    auto image=from_rgb(info.xsize,info.ysize,pixels.data(),info.bits_per_sample>8,info.bits_per_sample>8?(target==1?info.bits_per_sample:quality.avif_depth()):8,p,t,quality,false,gray);
+    auto image=from_rgb(info.xsize,info.ysize,pixels.data(),info.bits_per_sample>8,avif_source_depth(info.bits_per_sample,quality),p,t,quality,false,gray);
     if(image && !icc.empty() && avifImageSetProfileICC(image.get(),icc.data(),icc.size())!=AVIF_RESULT_OK)image.reset();
     // libjxl already applied orientation to the pixels.
     if(image && image->exif.size)avifRWDataFree(&image->exif);
@@ -473,26 +482,8 @@ int write_source(avifImage* image,int target,const char* path,StillEncodeQuality
             if(!packed)return -91;
             image->gainMap->image=packed.release();avifImageDestroy(map);
         }
-        // AVIF outputs remain 4:4:4. Repack source codes, never apply a transfer/gamut transform.
-        const unsigned depth=image->depth<=8?8:quality.avif_depth();
-        const bool gray=image->icc.size>=20 && !std::memcmp(image->icc.data+16,"GRAY",4);
-        if((image->yuvFormat!=(gray?AVIF_PIXEL_FORMAT_YUV400:AVIF_PIXEL_FORMAT_YUV444)) || image->depth!=depth) {
-            std::vector<uint8_t> pixels;
-            if(!rgb_pixels(image,image->depth>8?16:8,pixels))return -91;
-            auto repacked=from_rgb(image->width,image->height,pixels.data(),image->depth>8,depth,image->colorPrimaries,image->transferCharacteristics,quality,false,gray);
-            if(!repacked)return -91;
-            if(avifImageSetProfileICC(repacked.get(),image->icc.data,image->icc.size)!=AVIF_RESULT_OK ||
-               avifRWDataSet(&repacked->exif,image->exif.data,image->exif.size)!=AVIF_RESULT_OK)return -91;
-            repacked->transformFlags=image->transformFlags;repacked->irot=image->irot;repacked->imir=image->imir;
-            repacked->clap=image->clap;repacked->pasp=image->pasp;repacked->clli=image->clli;
-            // Borrow the gain map only for this synchronous encoder call.
-            repacked->gainMap=image->gainMap;
-            struct DetachGainMap {
-                avifImage* image;
-                ~DetachGainMap(){image->gainMap=nullptr;}
-            } detach{repacked.get()};
-            return write_avif_source(repacked.get(),path,quality);
-        }
+        // A decoded AVIF keeps its YUV planes, depth, subsampling, matrix and range; any
+        // repack through RGB would re-quantize or resample the source codes.
         return write_avif_source(image,path,quality);
     }
     StillSourceColor color; color.bits=image->depth;color.primaries=image->colorPrimaries;
@@ -640,7 +631,7 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_encodeSourceRgb(JNIEnv* env,jclass,jobj
     if(icc && env->GetArrayLength(icc)>=20) {
         jbyte signature[4];env->GetByteArrayRegion(icc,16,4,signature);gray=!std::memcmp(signature,"GRAY",4);
     }
-    auto image=from_rgb(width,height,data,format!=1 || !converted.empty(),bits<=8?8:quality.avif_depth(),primaries,transfer,quality,false,gray);
+    auto image=from_rgb(width,height,data,format!=1 || !converted.empty(),avif_source_depth(bits,quality),primaries,transfer,quality,false,gray);
     if(!image)return -91;
     if(icc) {
         std::vector<uint8_t> profile(env->GetArrayLength(icc));env->GetByteArrayRegion(icc,0,profile.size(),reinterpret_cast<jbyte*>(profile.data()));
