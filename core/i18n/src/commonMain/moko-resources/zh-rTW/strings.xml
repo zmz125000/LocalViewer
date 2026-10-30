@@ -1205,4 +1205,15 @@
     <string name="transfer_local_destination">本機資料夾</string>
     <string name="transfer_counts">%1$d 個成功 · %2$d 個略過 · %3$d 個失敗</string>
     <string name="transfer_file_count">%1$d 個檔案</string>
+    <string name="explorer">檔案總管</string>
+    <string name="explorer_quick_access">快速存取</string>
+    <string name="explorer_windows">視窗</string>
+    <string name="explorer_saved_paths">已儲存的路徑</string>
+    <string name="explorer_duplicate">複製視窗</string>
+    <string name="explorer_save_path">儲存路徑</string>
+    <string name="browse_open_in_new_tab">在新分頁中開啟</string>
+    <string name="browse_save_to_paths">儲存至路徑</string>
+    <string name="explorer_close_window">關閉視窗</string>
+    <string name="explorer_delete_saved">刪除已儲存的路徑</string>
+    <string name="browse_save_to_upload">儲存至快速上傳</string>
 </resources>
