@@ -1,6 +1,7 @@
 package com.hippo.ehviewer.ui.settings
 
 import android.content.ActivityNotFoundException
+import android.content.ContentResolver
 import android.content.Context
 import android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION
 import android.content.Intent.FLAG_GRANT_WRITE_URI_PERMISSION
@@ -52,9 +53,22 @@ import com.ramcosta.composedestinations.annotation.Destination
 import com.ramcosta.composedestinations.annotation.RootGraph
 import com.ramcosta.composedestinations.navigation.DestinationsNavigator
 import moe.tarsin.snackbar
+import okio.Path
 import okio.Path.Companion.toOkioPath
 
 private const val URI_FLAGS = FLAG_GRANT_READ_URI_PERMISSION or FLAG_GRANT_WRITE_URI_PERMISSION
+
+/** Drop only the previous download tree, matching the image-conversion folder picker. */
+private fun releaseDownloadLocationGrant(context: Context, location: Path, replacement: Uri?) {
+    val uri = location.toUri()
+    if (uri.scheme != ContentResolver.SCHEME_CONTENT) return
+    val authority = uri.authority ?: return
+    val tree = runCatching {
+        DocumentsContract.buildTreeDocumentUri(authority, DocumentsContract.getTreeDocumentId(uri))
+    }.getOrNull() ?: return
+    if (tree == replacement) return
+    runCatching { context.contentResolver.releasePersistableUriPermission(tree, URI_FLAGS) }
+}
 
 @Destination<RootGraph>
 @Composable
@@ -83,16 +97,19 @@ fun AnimatedVisibilityScope.DownloadScreen(navigator: DestinationsNavigator) = S
             var downloadLocationState by ::downloadLocation.observed
             val cannotGetDownloadLocation = stringResource(id = R.string.settings_download_cant_get_download_location)
             val selectDownloadDirLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { treeUri ->
-                treeUri?.run {
+                treeUri?.let { selectedUri ->
                     launchIO {
-                        contextOf<Context>().contentResolver.runCatching {
-                            persistedUriPermissions.forEach {
-                                releasePersistableUriPermission(it.uri, URI_FLAGS)
-                            }
-                            takePersistableUriPermission(treeUri, URI_FLAGS)
-                            val path = DocumentsContract.buildDocumentUriUsingTree(treeUri, DocumentsContract.getTreeDocumentId(treeUri)).toOkioPath()
+                        val ctx = contextOf<Context>()
+                        val previous = downloadLocationState
+                        runCatching {
+                            ctx.contentResolver.takePersistableUriPermission(selectedUri, URI_FLAGS)
+                            val path = DocumentsContract.buildDocumentUriUsingTree(
+                                selectedUri,
+                                DocumentsContract.getTreeDocumentId(selectedUri),
+                            ).toOkioPath()
                             check(path.isDirectory) { "$path is not a directory" }
                             keepNoMediaFileStatus(path) // Check if the directory is writable
+                            releaseDownloadLocationGrant(ctx, previous, selectedUri)
                             downloadLocationState = path
                         }.onFailure {
                             logcat(it)
@@ -147,11 +164,7 @@ fun AnimatedVisibilityScope.DownloadScreen(navigator: DestinationsNavigator) = S
                             title = R.string.waring,
                             onCancelButtonClick = {
                                 if (downloadLocationState != path) {
-                                    contextOf<Context>().contentResolver.run {
-                                        persistedUriPermissions.forEach {
-                                            releasePersistableUriPermission(it.uri, URI_FLAGS)
-                                        }
-                                    }
+                                    releaseDownloadLocationGrant(contextOf<Context>(), downloadLocationState, null)
                                     downloadLocationState = path
                                 }
                             },
