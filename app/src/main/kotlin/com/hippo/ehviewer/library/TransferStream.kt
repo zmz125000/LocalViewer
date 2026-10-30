@@ -114,12 +114,16 @@ class TransferNameConflict(name: String) : java.io.IOException("Destination alre
 
 internal data class TransferCreation<T>(val name: String, val value: T)
 
+internal fun transferMetadataMatches(source: TransferFile, destination: TransferFile): Boolean = !source.directory && !destination.directory && source.size >= 0 && destination.size == source.size &&
+    source.mtime > 0 && destination.mtime > 0 && source.mtime - destination.mtime in -1999L..1999L
+
 /** Both preflight collisions and exclusive-create races use the same skip/rename policy. */
 internal suspend fun <T> createTransferWithoutOverwrite(
     name: String,
     skipExisting: Boolean,
     checkpoint: suspend () -> Unit,
     exists: suspend (String) -> Boolean,
+    matchesExisting: suspend (String) -> Boolean = { false },
     create: suspend (String) -> T,
 ): TransferCreation<T>? {
     var candidate = name
@@ -133,7 +137,7 @@ internal suspend fun <T> createTransferWithoutOverwrite(
                 // Someone created the target between exists() and create().
             }
         }
-        if (skipExisting) return null
+        if (skipExisting || matchesExisting(candidate)) return null
         val dot = name.lastIndexOf('.').takeIf { it > 0 } ?: name.length
         candidate = "${name.take(dot)} (${++number})${name.drop(dot)}"
     }
