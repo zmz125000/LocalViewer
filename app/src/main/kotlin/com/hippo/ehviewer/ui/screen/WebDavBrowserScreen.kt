@@ -1128,9 +1128,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
             category = 3,
         )
         launchIO {
-            // Parent browse dir (not gated by file/gallery prefs) + gallery row.
             recordCurrentBrowseFolderHistory(src.id, entry.name, asGallery = true)
-            // History = folder gallery (open → reader). Same gid as progress.
             LocalHistory.recordWebDavFolderGallery(
                 sourceId = src.id,
                 remoteDir = remote,
@@ -1906,6 +1904,161 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
         return { dir -> BrowseSaveAs.saveWebDavFolderInto(dir, src.id, remote, name) }
     }
 
+    suspend fun rememberWebDavFolderGallery(entry: BrowseEntryRemote.FolderGallery) {
+        val src = source ?: return
+        val remote = if (entry.relativeName.isEmpty()) {
+            relativeDir
+        } else {
+            WebDavGateway.joinRelative(relativeDir, entry.relativeName)
+        }
+        val coverKey = LocalHistory.zipOrRemoteThumbKey(
+            sourceId = src.id,
+            listedDir = relativeDir,
+            relativeName = entry.relativeName,
+            coverFileName = entry.coverFileName,
+            smb = false,
+        )
+        val pages = if (entry.pageCountCapped) 0 else entry.pageCount
+        val info = BaseGalleryInfo(
+            gid = stableGalleryId(src.id, "webdav:$remote"),
+            token = WEBDAV_FOLDER_TOKEN,
+            title = entry.name,
+            pages = pages,
+            favoriteSlot = NOT_FAVORITED,
+            rating = -1f,
+            thumbKey = coverKey,
+            uploader = "${src.id}\u0000${remote.trim('/')}",
+            category = 3,
+        )
+        recordCurrentBrowseFolderHistory(src.id, entry.name, asGallery = true)
+        LocalHistory.recordWebDavFolderGallery(src.id, remote, entry.name, coverKey, pages, info)
+    }
+
+    suspend fun rememberWebDavImage(file: BrowseEntryRemote.RegularFile) {
+        val src = source ?: return
+        val rel = file.fileName.replace('\\', '/').trim('/')
+        val fileName = FolderSearch.baseName(rel)
+        if (!isImageFileName(fileName)) return
+        val parentRel = FolderSearch.parentRelative(rel)
+        val inListing = parentRel.isEmpty() && folderImages.any { it.fileName == file.fileName }
+        if (!inListing) {
+            val remote = if (relativeDir.isEmpty()) parentRel else WebDavGateway.joinRelative(relativeDir, parentRel)
+            val password = WebDavPasswordStore.get(src.id)
+            val names = runCatching { WebDavGateway.listImageFileNames(src, password, remote) }.getOrDefault(emptyList())
+            if (names.isEmpty()) return
+            val coverKey = names.firstOrNull()?.let { coverName ->
+                LocalHistory.zipOrRemoteThumbKey(src.id, remote, "", coverName, smb = false)
+            }
+            val galleryTitle = FolderSearch.baseName(parentRel).ifEmpty { title }
+            val info = BaseGalleryInfo(
+                gid = stableGalleryId(src.id, "webdav:$remote"),
+                token = WEBDAV_FOLDER_TOKEN,
+                title = galleryTitle,
+                pages = names.size,
+                favoriteSlot = NOT_FAVORITED,
+                rating = -1f,
+                thumbKey = coverKey,
+                uploader = "${src.id}\u0000${remote.trim('/')}",
+                category = 3,
+            )
+            recordCurrentBrowseFolderHistory(src.id, galleryTitle, asGallery = true)
+            LocalHistory.recordWebDavFolderGallery(src.id, remote, galleryTitle, coverKey, names.size, info)
+            return
+        }
+        val images = if (photoGrid) photoGridImages else folderImages
+        val names = images.map { it.fileName }
+        val coverKey = names.firstOrNull()?.let { coverName ->
+            LocalHistory.zipOrRemoteThumbKey(src.id, relativeDir, "", coverName, smb = false)
+        }
+        val info = BaseGalleryInfo(
+            gid = stableGalleryId(src.id, "webdav:$relativeDir"),
+            token = WEBDAV_FOLDER_TOKEN,
+            title = title,
+            pages = names.size,
+            favoriteSlot = NOT_FAVORITED,
+            rating = -1f,
+            thumbKey = coverKey,
+            uploader = "${src.id}\u0000${relativeDir.trim('/')}",
+            category = 3,
+        )
+        recordCurrentBrowseFolderHistory(src.id, title, asGallery = true)
+        LocalHistory.recordWebDavFolderGallery(src.id, relativeDir, title, coverKey, names.size, info)
+    }
+
+    suspend fun rememberWebDavFile(fileName: String) {
+        val src = source ?: return
+        val actualName = fileName.substringAfterLast('/').substringAfterLast('\\')
+        val remote = if (relativeDir.isEmpty()) fileName else WebDavGateway.joinRelative(relativeDir, fileName)
+        recordCurrentBrowseFolderHistory(src.id, actualName)
+        LocalHistory.recordWebDavFile(src.id, remote, title = actualName)
+    }
+
+    fun recordDirectoryOpened(name: String, coverFileName: String?) {
+        val src = source ?: return
+        launchIO {
+            LocalHistory.recordWebDavBrowseFolder(
+                sourceId = src.id,
+                relativePath = dirRelative(name),
+                title = name.substringAfterLast('/'),
+                thumbKey = LocalHistory.zipOrRemoteThumbKey(src.id, relativeDir, name, coverFileName, smb = false),
+            )
+        }
+    }
+
+    fun recordFileOpened(fileName: String) {
+        launchIO {
+            val leaf = fileName.substringAfterLast('/').substringAfterLast('\\')
+            val image = entries.filterIsInstance<BrowseEntryRemote.RegularFile>().firstOrNull { it.fileName == fileName }
+            if (image != null && isImageFileName(leaf)) rememberWebDavImage(image) else rememberWebDavFile(fileName)
+        }
+    }
+
+    fun recordArchiveOpened(entry: BrowseEntryRemote.ArchiveGallery) {
+        val src = source ?: return
+        launchIO {
+            val remote = joinRemoteArchivePath(relativeDir, entry.parentRelativeName, entry.fileName)
+            val externalPdf = isPdfFileName(entry.fileName) &&
+                !isEbookFileName(entry.fileName) &&
+                Settings.pdfReaderMode.value == PdfReaderMode.EXTERNAL
+            if (OpenFileExternally.shouldOpenHtmlInBrowser(entry.fileName)) {
+                rememberWebDavFile(entry.fileName)
+                return@launchIO
+            }
+            if (externalPdf) {
+                recordCurrentBrowseFolderHistory(src.id, entry.fileName)
+                LocalHistory.recordWebDavFile(src.id, remote, title = entry.name)
+                return@launchIO
+            }
+            if (browseZipAsDir && isZipArchiveFileName(entry.fileName) && !isPdfOrEbookFileName(entry.fileName)) {
+                LocalHistory.recordWebDavBrowseFolder(src.id, dirRelative(entry.fileName), entry.name)
+                return@launchIO
+            }
+            recordCurrentBrowseFolderHistory(src.id, entry.name)
+            if (!isPdfOrEbookFileName(entry.fileName) &&
+                !isStreamableArchiveFileName(entry.fileName) &&
+                !isSolidArchiveFileName(entry.fileName) &&
+                !isDocumentFileName(entry.fileName)
+            ) {
+                LocalHistory.recordWebDavFile(src.id, remote, title = entry.name)
+                return@launchIO
+            }
+            val remoteNorm = remote.trim('/')
+            val info = BaseGalleryInfo(
+                gid = stableGalleryId(src.id, "dava:$remoteNorm"),
+                token = WEBDAV_ARCHIVE_TOKEN,
+                title = entry.name,
+                pages = 0,
+                favoriteSlot = NOT_FAVORITED,
+                rating = -1f,
+                thumbKey = HistoryThumbKey.webdavArchive(src.id, remoteNorm),
+                uploader = "${src.id}\u0000$remoteNorm",
+                category = 1,
+            )
+            LocalHistory.ensureGalleryForProgress(info)
+            LocalHistory.recordWebDavStreamArchive(src.id, remoteNorm, title = entry.name, info = info)
+        }
+    }
+
     fun dirOverflow(
         name: String,
         coverFileName: String? = null,
@@ -1925,6 +2078,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
         onSaveToPaths = { saveRemoteFolderToPaths(name) },
         shortcut = webDavShortcut(name, true, name),
         onUnsupported = { notSupportedAction() },
+        recordOpen = { recordDirectoryOpened(name, coverFileName) },
     ).selectable(
         webDavKey("d:$name"),
         name.substringAfterLast('/'),
@@ -1960,6 +2114,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
         onSaveToPaths = { saveRemoteFolderToPaths(entry.relativeName) },
         shortcut = webDavShortcut(entry.relativeName, true, entry.name),
         onUnsupported = { notSupportedAction() },
+        recordOpen = { launchIO { rememberWebDavFolderGallery(entry) } },
     ).selectable(
         webDavKey("g:${entry.relativeName}"),
         entry.name,
@@ -2077,7 +2232,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                 pageCount = if (showGalleryPages) entry.pageCount else 0,
                 lastModifiedMs = entry.lastModifiedMs,
             ),
-        )
+        ).copy(recordOpen = { recordArchiveOpened(entry) })
     }
 
     fun videoOverflow(
@@ -2101,6 +2256,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
         },
         shortcut = webDavShortcut(fileName, false, fileName),
         onUnsupported = { notSupportedAction() },
+        recordOpen = { recordFileOpened(fileName) },
     ).selectable(
         webDavKey("v:$fileName"),
         fileName.substringAfterLast('/'),
@@ -2255,7 +2411,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
             sizeBytes = sizeBytes,
             lastModifiedMs = lastModifiedMs,
         ),
-    )
+    ).copy(recordOpen = { recordFileOpened(fileName) })
 
     Scaffold(
         contentWindowInsets = WindowInsets(0, 0, 0, 0),

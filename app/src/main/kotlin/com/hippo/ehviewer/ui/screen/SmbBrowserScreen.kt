@@ -1245,9 +1245,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
             category = 2,
         )
         launchIO {
-            // Parent browse dir (not gated by file/gallery prefs) + gallery row.
             recordCurrentBrowseFolderHistory(src.id, entry.name, asGallery = true)
-            // History = folder gallery (open → reader). Same gid as progress.
             LocalHistory.recordSmbFolderGallery(
                 sourceId = src.id,
                 remoteDir = remote,
@@ -2032,6 +2030,161 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
         return { dir -> BrowseSaveAs.saveSmbFolderInto(dir, src.id, remote, name) }
     }
 
+    suspend fun rememberSmbFolderGallery(entry: BrowseEntryRemote.FolderGallery) {
+        val src = source ?: return
+        val remote = if (entry.relativeName.isEmpty()) {
+            relativeDir
+        } else {
+            SmbGateway.joinRelativePath(relativeDir, entry.relativeName)
+        }
+        val coverKey = LocalHistory.zipOrRemoteThumbKey(
+            sourceId = src.id,
+            listedDir = relativeDir,
+            relativeName = entry.relativeName,
+            coverFileName = entry.coverFileName,
+            smb = true,
+        )
+        val pages = if (entry.pageCountCapped) 0 else entry.pageCount
+        val info = BaseGalleryInfo(
+            gid = stableGalleryId(src.id, "smb:$remote"),
+            token = SMB_FOLDER_TOKEN,
+            title = entry.name,
+            pages = pages,
+            favoriteSlot = NOT_FAVORITED,
+            rating = -1f,
+            thumbKey = coverKey,
+            uploader = "${src.id}\u0000${remote.trim('/')}",
+            category = 2,
+        )
+        recordCurrentBrowseFolderHistory(src.id, entry.name, asGallery = true)
+        LocalHistory.recordSmbFolderGallery(src.id, remote, entry.name, coverKey, pages, info)
+    }
+
+    suspend fun rememberSmbImage(file: BrowseEntryRemote.RegularFile) {
+        val src = source ?: return
+        val rel = file.fileName.replace('\\', '/').trim('/')
+        val fileName = FolderSearch.baseName(rel)
+        if (!isImageFileName(fileName)) return
+        val parentRel = FolderSearch.parentRelative(rel)
+        val inListing = parentRel.isEmpty() && folderImages.any { it.fileName == file.fileName }
+        if (!inListing) {
+            val remote = if (relativeDir.isEmpty()) parentRel else SmbGateway.joinRelativePath(relativeDir, parentRel)
+            val password = SmbPasswordStore.get(src.id)
+            val names = runCatching { SmbGateway.listImageFileNames(src, password, remote) }.getOrDefault(emptyList())
+            if (names.isEmpty()) return
+            val coverKey = names.firstOrNull()?.let { coverName ->
+                LocalHistory.zipOrRemoteThumbKey(src.id, remote, "", coverName, smb = true)
+            }
+            val galleryTitle = FolderSearch.baseName(parentRel).ifEmpty { title }
+            val info = BaseGalleryInfo(
+                gid = stableGalleryId(src.id, "smb:$remote"),
+                token = SMB_FOLDER_TOKEN,
+                title = galleryTitle,
+                pages = names.size,
+                favoriteSlot = NOT_FAVORITED,
+                rating = -1f,
+                thumbKey = coverKey,
+                uploader = "${src.id}\u0000${remote.trim('/')}",
+                category = 2,
+            )
+            recordCurrentBrowseFolderHistory(src.id, galleryTitle, asGallery = true)
+            LocalHistory.recordSmbFolderGallery(src.id, remote, galleryTitle, coverKey, names.size, info)
+            return
+        }
+        val images = if (photoGrid) photoGridImages else folderImages
+        val names = images.map { it.fileName }
+        val coverKey = names.firstOrNull()?.let { coverName ->
+            LocalHistory.zipOrRemoteThumbKey(src.id, relativeDir, "", coverName, smb = true)
+        }
+        val info = BaseGalleryInfo(
+            gid = stableGalleryId(src.id, "smb:$relativeDir"),
+            token = SMB_FOLDER_TOKEN,
+            title = title,
+            pages = names.size,
+            favoriteSlot = NOT_FAVORITED,
+            rating = -1f,
+            thumbKey = coverKey,
+            uploader = "${src.id}\u0000${relativeDir.trim('/')}",
+            category = 2,
+        )
+        recordCurrentBrowseFolderHistory(src.id, title, asGallery = true)
+        LocalHistory.recordSmbFolderGallery(src.id, relativeDir, title, coverKey, names.size, info)
+    }
+
+    suspend fun rememberSmbFile(fileName: String) {
+        val src = source ?: return
+        val actualName = fileName.substringAfterLast('/').substringAfterLast('\\')
+        val remote = if (relativeDir.isEmpty()) fileName else SmbGateway.joinRelativePath(relativeDir, fileName)
+        recordCurrentBrowseFolderHistory(src.id, actualName)
+        LocalHistory.recordSmbFile(src.id, remote, title = actualName)
+    }
+
+    fun recordDirectoryOpened(name: String, coverFileName: String?) {
+        val src = source ?: return
+        launchIO {
+            LocalHistory.recordSmbBrowseFolder(
+                sourceId = src.id,
+                relativePath = dirRelative(name),
+                title = name.substringAfterLast('/'),
+                thumbKey = LocalHistory.zipOrRemoteThumbKey(src.id, relativeDir, name, coverFileName, smb = true),
+            )
+        }
+    }
+
+    fun recordFileOpened(fileName: String) {
+        launchIO {
+            val leaf = fileName.substringAfterLast('/').substringAfterLast('\\')
+            val image = entries.filterIsInstance<BrowseEntryRemote.RegularFile>().firstOrNull { it.fileName == fileName }
+            if (image != null && isImageFileName(leaf)) rememberSmbImage(image) else rememberSmbFile(fileName)
+        }
+    }
+
+    fun recordArchiveOpened(entry: BrowseEntryRemote.ArchiveGallery) {
+        val src = source ?: return
+        launchIO {
+            val remote = joinRemoteArchivePath(relativeDir, entry.parentRelativeName, entry.fileName)
+            val externalPdf = isPdfFileName(entry.fileName) &&
+                !isEbookFileName(entry.fileName) &&
+                Settings.pdfReaderMode.value == PdfReaderMode.EXTERNAL
+            if (OpenFileExternally.shouldOpenHtmlInBrowser(entry.fileName)) {
+                rememberSmbFile(entry.fileName)
+                return@launchIO
+            }
+            if (externalPdf) {
+                recordCurrentBrowseFolderHistory(src.id, entry.fileName)
+                LocalHistory.recordSmbFile(src.id, remote, title = entry.name)
+                return@launchIO
+            }
+            if (browseZipAsDir && isZipArchiveFileName(entry.fileName) && !isPdfOrEbookFileName(entry.fileName)) {
+                LocalHistory.recordSmbBrowseFolder(src.id, dirRelative(entry.fileName), entry.name)
+                return@launchIO
+            }
+            recordCurrentBrowseFolderHistory(src.id, entry.name)
+            if (!isPdfOrEbookFileName(entry.fileName) &&
+                !isStreamableArchiveFileName(entry.fileName) &&
+                !isSolidArchiveFileName(entry.fileName) &&
+                !isDocumentFileName(entry.fileName)
+            ) {
+                LocalHistory.recordSmbFile(src.id, remote, title = entry.name)
+                return@launchIO
+            }
+            val remoteNorm = remote.trim('/')
+            val info = BaseGalleryInfo(
+                gid = stableGalleryId(src.id, "smba:$remoteNorm"),
+                token = SMB_ARCHIVE_TOKEN,
+                title = entry.name,
+                pages = 0,
+                favoriteSlot = NOT_FAVORITED,
+                rating = -1f,
+                thumbKey = HistoryThumbKey.smbArchive(src.id, remoteNorm),
+                uploader = "${src.id}\u0000$remoteNorm",
+                category = 1,
+            )
+            LocalHistory.ensureGalleryForProgress(info)
+            LocalHistory.recordSmbStreamArchive(src.id, remoteNorm, title = entry.name, info = info)
+        }
+    }
+
     fun dirOverflow(
         name: String,
         coverFileName: String? = null,
@@ -2051,6 +2204,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
         onSaveToPaths = { saveRemoteFolderToPaths(name) },
         shortcut = smbShortcut(name, true, name),
         onUnsupported = { notSupportedAction() },
+        recordOpen = { recordDirectoryOpened(name, coverFileName) },
     ).selectable(
         smbKey("d:$name"),
         name.substringAfterLast('/'),
@@ -2086,6 +2240,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
         onSaveToPaths = { saveRemoteFolderToPaths(entry.relativeName) },
         shortcut = smbShortcut(entry.relativeName, true, entry.name),
         onUnsupported = { notSupportedAction() },
+        recordOpen = { launchIO { rememberSmbFolderGallery(entry) } },
     ).selectable(
         smbKey("g:${entry.relativeName}"),
         entry.name,
@@ -2203,7 +2358,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                 pageCount = if (showGalleryPages) entry.pageCount else 0,
                 lastModifiedMs = entry.lastModifiedMs,
             ),
-        )
+        ).copy(recordOpen = { recordArchiveOpened(entry) })
     }
 
     fun videoOverflow(
@@ -2227,6 +2382,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
         },
         shortcut = smbShortcut(fileName, false, fileName),
         onUnsupported = { notSupportedAction() },
+        recordOpen = { recordFileOpened(fileName) },
     ).selectable(
         smbKey("v:$fileName"),
         fileName.substringAfterLast('/'),
@@ -2377,7 +2533,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
             sizeBytes = sizeBytes,
             lastModifiedMs = lastModifiedMs,
         ),
-    )
+    ).copy(recordOpen = { recordFileOpened(fileName) })
 
     Scaffold(
         contentWindowInsets = WindowInsets(0, 0, 0, 0),

@@ -4,8 +4,10 @@ import com.hippo.ehviewer.library.ExplorerWindows
 import com.hippo.ehviewer.library.TransferFile
 import com.hippo.ehviewer.library.TransferLocation
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class GalleryConversionTest {
@@ -22,6 +24,16 @@ class GalleryConversionTest {
         }
         assertNull(galleryConversionRoot(actions("photos/album").copy(kind = BrowseOverflowKind.Common)))
         assertNull(galleryConversionRoot(actions("photos/album").copy(selectFolder = false)))
+        val resolved = BrowseOverflowActions(
+            kind = BrowseOverflowKind.Gallery,
+            onPhotoGrid = {},
+            onUnsupported = {},
+            selectFolder = true,
+            resolveUpload = { null },
+        )
+        assertNull(galleryConversionRoot(resolved))
+        assertTrue(resolvedGalleryConversion(resolved))
+        assertFalse(resolvedGalleryConversion(resolved.copy(uploadSource = TransferLocation(ExplorerWindows.Kind.Smb, 1, "photos/album"))))
     }
 
     @Test

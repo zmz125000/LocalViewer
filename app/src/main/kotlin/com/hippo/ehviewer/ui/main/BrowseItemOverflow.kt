@@ -98,6 +98,8 @@ data class BrowseOverflowActions(
     val listLine: BrowseListLine? = null,
     val uploadSource: com.hippo.ehviewer.library.TransferLocation? = null,
     val resolveUpload: (suspend () -> com.hippo.ehviewer.library.TransferFile?)? = null,
+    /** History write for Upload and Convert to, same as tapping the row open. */
+    val recordOpen: (() -> Unit)? = null,
 )
 
 @Composable
@@ -115,7 +117,8 @@ fun BrowseItemOverflowButton(
     val confirmDelete = rememberNetworkDeleteConfirmation()
     val explorer = LocalExplorerPanel.current
     val galleryConvert = galleryConversionRoot(actions)
-    val canConvert = galleryConvert != null || (actions.onConvert != null && actions.convertStill != null)
+    val resolvedGallery = resolvedGalleryConversion(actions)
+    val canConvert = galleryConvert != null || resolvedGallery || (actions.onConvert != null && actions.convertStill != null)
     val shortcutUnsupported = stringResource(R.string.browse_shortcut_unsupported)
     val grid = placement == BrowseOverflowPlacement.GridBottomEnd
     val more = stringResource(R.string.browse_item_more)
@@ -130,6 +133,7 @@ fun BrowseItemOverflowButton(
     }
     fun beginUpload(saveQuick: Boolean) {
         expanded = false
+        actions.recordOpen?.invoke()
         scope.launch {
             val file = try {
                 withIOContext {
@@ -209,16 +213,19 @@ fun BrowseItemOverflowButton(
                     StillExportTarget.AvifGainMap to R.string.convert_avif_gain_map,
                     StillExportTarget.AvifPq to R.string.convert_avif_pq,
 
-                ).filter { (target, _) -> if (galleryConvert != null) target.available else target.visibleForSources(isHdrExportFileName(actions.selectTitle)) }.forEach { (target, label) ->
+                ).filter { (target, _) -> if (galleryConvert != null || resolvedGallery) target.available else target.visibleForSources(isHdrExportFileName(actions.selectTitle)) }.forEach { (target, label) ->
                     DropdownMenuItem(
                         text = { Text(stringResource(label)) },
                         onClick = {
                             expanded = false
                             convertMenu = false
+                            actions.recordOpen?.invoke()
                             val title = actions.selectTitle?.takeIf { it.isNotBlank() }
                                 ?: context.getString(R.string.convert_to)
                             if (galleryConvert != null) {
                                 beginGalleryConvert(scope, snackbar, context, galleryConvert, target)
+                            } else if (resolvedGallery) {
+                                beginResolvedGalleryConvert(scope, snackbar, context, actions, target)
                             } else if (convert != null) {
                                 beginSingleConvert(scope, snackbar, context, title, target, convert)
                             }

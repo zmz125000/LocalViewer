@@ -1577,9 +1577,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
             category = 0,
         )
         launchIO {
-            // Parent browse dir (not gated by file/gallery prefs) + gallery row.
             recordCurrentBrowseFolderHistory(entry.name, asGallery = true)
-            // History = folder gallery (open → reader). Same gid as progress.
             LocalHistory.recordLocalFolderGallery(
                 rootId = frame.rootId,
                 relativePath = rel,
@@ -2396,6 +2394,253 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
 
     fun localSaveFolderInto(dirPath: okio.Path, displayName: String, relativeName: String): suspend (okio.Path) -> Boolean = { dest -> BrowseSaveAs.saveLocalFolderInto(dest, dirPath, displayName, relativeName) }
 
+    /** Same history rows as tapping this gallery open. */
+    suspend fun rememberOpenedFolderGallery(entry: BrowseEntry.FolderGallery) {
+        val frame = stack.lastOrNull() ?: return
+        if (frame.isZipBrowse) {
+            val inner = entry.relativeName.replace('\\', '/').trim('/')
+            val names = localZipGalleryNames(frame, frame.relativePath, inner, frame.path.toPath())
+            if (names.isEmpty()) return
+            val coverKey = entry.coverPath?.toString()
+            val histRel = ZipAsDirListing.historyGalleryRelative(frame.relativePath, inner)
+            val info = BaseGalleryInfo(
+                gid = stableGalleryId(frame.rootId, "zip:$histRel"),
+                token = LOCAL_FOLDER_TOKEN,
+                title = entry.name,
+                pages = names.size,
+                favoriteSlot = NOT_FAVORITED,
+                rating = -1f,
+                thumbKey = coverKey,
+                uploader = "${frame.rootId}\u0000$histRel",
+                category = 0,
+            )
+            recordCurrentBrowseFolderHistory(entry.name, asGallery = true)
+            LocalHistory.recordLocalFolderGallery(frame.rootId, histRel, entry.name, coverKey, names.size, info)
+            return
+        }
+        if (browseZipAsDir && isZipAsDirFolderGallery(entry)) {
+            val zipSeg = ZipAsDirListing.zipFileSegment(entry.relativeName, entry.path.name)
+                ?: ZipPaths.parse(entry.path.toString())?.first?.toPath()?.name
+                ?: ZipPaths.parse(entry.coverPath?.toString().orEmpty())?.first?.toPath()?.name
+                ?: entry.path.name
+            val inner = ZipAsDirListing.zipInnerPrefix(entry.relativeName)
+            val zipRel = when {
+                frame.relativePath.isEmpty() -> zipSeg
+                else -> "${frame.relativePath.trimEnd('/')}/$zipSeg"
+            }
+            val zipPath = when {
+                ZipPaths.parse(entry.path.toString()) != null -> ZipPaths.parse(entry.path.toString())!!.first
+                isZipArchiveFileName(entry.path.name) -> entry.path.toString()
+                else -> (frame.path.toPath() / zipSeg).toString()
+            }
+            val names = localZipGalleryNames(frame, zipRel, inner, zipPath.toPath())
+            if (names.isEmpty()) return
+            val coverKey = entry.coverPath?.toString()
+            val histRel = ZipAsDirListing.historyGalleryRelative(zipRel, inner)
+            val info = BaseGalleryInfo(
+                gid = stableGalleryId(frame.rootId, "zip:$histRel"),
+                token = LOCAL_FOLDER_TOKEN,
+                title = entry.name,
+                pages = names.size,
+                favoriteSlot = NOT_FAVORITED,
+                rating = -1f,
+                thumbKey = coverKey,
+                uploader = "${frame.rootId}\u0000$histRel",
+                category = 0,
+            )
+            recordCurrentBrowseFolderHistory(entry.name, asGallery = true)
+            LocalHistory.recordLocalFolderGallery(frame.rootId, histRel, entry.name, coverKey, names.size, info)
+            return
+        }
+        val rel = folderGalleryRelative(entry, frame)
+        val coverKey = entry.coverPath?.toString()
+        val info = BaseGalleryInfo(
+            gid = stableGalleryId(frame.rootId, rel.ifEmpty { "." }),
+            token = LOCAL_FOLDER_TOKEN,
+            title = entry.name,
+            pages = if (entry.pageCountCapped) 0 else entry.pageCount,
+            favoriteSlot = NOT_FAVORITED,
+            rating = -1f,
+            thumbKey = coverKey,
+            uploader = "${frame.rootId}\u0000${rel.trim('/')}",
+            category = 0,
+        )
+        recordCurrentBrowseFolderHistory(entry.name, asGallery = true)
+        LocalHistory.recordLocalFolderGallery(
+            frame.rootId,
+            rel,
+            entry.name,
+            coverKey,
+            if (entry.pageCountCapped) 0 else entry.pageCount,
+            info,
+        )
+    }
+
+    suspend fun rememberOpenedLocalImage(file: BrowseEntry.RegularFile) {
+        val frame = stack.lastOrNull() ?: return
+        val rel = file.name.replace('\\', '/').trim('/')
+        val fileName = FolderSearch.baseName(rel).ifEmpty { file.path.name }
+        if (!isImageFileName(fileName)) return
+        val parentRel = FolderSearch.parentRelative(rel)
+        val inListing = parentRel.isEmpty() && folderImages.any { it.path == file.path }
+        if (!inListing) {
+            if (frame.isZipBrowse) {
+                val inner = ZipAsDirListing.joinPrefix(frame.zipInnerRel.orEmpty(), parentRel)
+                val names = localZipGalleryNames(frame, frame.relativePath, inner, frame.path.toPath()).ifEmpty {
+                    withLocalZipCentralDirectory(frame.path.toPath()) { cd ->
+                        ZipAsDirListing.directImageNames(cd, inner)
+                    }.orEmpty()
+                }
+                if (names.isEmpty()) return
+                val histRel = ZipAsDirListing.historyGalleryRelative(frame.relativePath, inner)
+                val coverKey = ZipPaths.encodePath(frame.path, ZipAsDirListing.joinPrefix(inner, names.first())).toString()
+                val galleryTitle = FolderSearch.baseName(parentRel).ifEmpty { frame.title }
+                val info = BaseGalleryInfo(
+                    gid = stableGalleryId(frame.rootId, "zip:$histRel"),
+                    token = LOCAL_FOLDER_TOKEN,
+                    title = galleryTitle,
+                    pages = names.size,
+                    favoriteSlot = NOT_FAVORITED,
+                    rating = -1f,
+                    thumbKey = coverKey,
+                    uploader = "${frame.rootId}\u0000$histRel",
+                    category = 0,
+                )
+                recordCurrentBrowseFolderHistory(galleryTitle, asGallery = true)
+                LocalHistory.recordLocalFolderGallery(frame.rootId, histRel, galleryTitle, coverKey, names.size, info)
+                return
+            }
+            val galleryRel = when {
+                parentRel.isEmpty() -> frame.relativePath
+                frame.relativePath.isEmpty() -> parentRel
+                else -> "${frame.relativePath.trimEnd('/')}/$parentRel"
+            }
+            val parentPath = file.path.parent ?: frame.path.toPath().resolveRelative(parentRel)
+            val names = localPhotoGridNames(frame, galleryRel)
+                ?: parentPath.listBrowseChildrenRaw()
+                    .filter { !it.isDirectory && isImageFileName(it.name) }
+                    .map { it.name }
+                    .sortedWith { a, b -> naturalCompare(a, b) }
+            if (names.isEmpty()) return
+            val coverKey = (parentPath / names.first()).toString()
+            val galleryTitle = FolderSearch.baseName(parentRel).ifEmpty { frame.title }
+            val info = BaseGalleryInfo(
+                gid = stableGalleryId(frame.rootId, galleryRel.ifEmpty { "." }),
+                token = LOCAL_FOLDER_TOKEN,
+                title = galleryTitle,
+                pages = names.size,
+                favoriteSlot = NOT_FAVORITED,
+                rating = -1f,
+                thumbKey = coverKey,
+                uploader = "${frame.rootId}\u0000${galleryRel.trim('/')}",
+                category = 0,
+            )
+            recordCurrentBrowseFolderHistory(galleryTitle, asGallery = true)
+            LocalHistory.recordLocalFolderGallery(frame.rootId, galleryRel, galleryTitle, coverKey, names.size, info)
+            return
+        }
+        val images = if (photoGrid) photoGridImages else folderImages
+        if (frame.isZipBrowse) {
+            val inner = frame.zipInnerRel.orEmpty()
+            val names = images.map { it.name }
+            val coverKey = images.firstOrNull()?.path?.toString()
+            val histRel = ZipAsDirListing.historyGalleryRelative(frame.relativePath, inner)
+            val info = BaseGalleryInfo(
+                gid = stableGalleryId(frame.rootId, "zip:$histRel"),
+                token = LOCAL_FOLDER_TOKEN,
+                title = frame.title,
+                pages = names.size,
+                favoriteSlot = NOT_FAVORITED,
+                rating = -1f,
+                thumbKey = coverKey,
+                uploader = "${frame.rootId}\u0000$histRel",
+                category = 0,
+            )
+            recordCurrentBrowseFolderHistory(frame.title, asGallery = true)
+            LocalHistory.recordLocalFolderGallery(frame.rootId, histRel, frame.title, coverKey, names.size, info)
+            return
+        }
+        val coverKey = images.firstOrNull()?.path?.toString()
+        val info = BaseGalleryInfo(
+            gid = stableGalleryId(frame.rootId, frame.relativePath.ifEmpty { "." }),
+            token = LOCAL_FOLDER_TOKEN,
+            title = frame.title,
+            pages = images.size,
+            favoriteSlot = NOT_FAVORITED,
+            rating = -1f,
+            thumbKey = coverKey,
+            uploader = "${frame.rootId}\u0000${frame.relativePath.trim('/')}",
+            category = 0,
+        )
+        recordCurrentBrowseFolderHistory(frame.title, asGallery = true)
+        LocalHistory.recordLocalFolderGallery(frame.rootId, frame.relativePath, frame.title, coverKey, images.size, info)
+    }
+
+    fun recordDirectoryOpened(dir: BrowseEntry.Directory) {
+        val next = childStack(dir.name, dir.path, dir.relativeName)?.lastOrNull() ?: return
+        launchIO {
+            val histRel = if (next.isZipBrowse) {
+                ZipAsDirListing.virtualRelativeDir(next.relativePath, next.zipInnerRel.orEmpty())
+            } else {
+                next.relativePath
+            }
+            LocalHistory.recordLocalBrowseFolder(next.rootId, histRel, next.title, dir.coverPath?.toString())
+        }
+    }
+
+    fun recordFileOpened(path: okio.Path) {
+        val pathStr = path.toString()
+        val name = ZipPaths.memberLeafName(pathStr) ?: path.name
+        launchIO {
+            val image = entries.filterIsInstance<BrowseEntry.RegularFile>().firstOrNull { it.path == path }
+            if (image != null && isImageFileName(name)) {
+                rememberOpenedLocalImage(image)
+            } else {
+                recordCurrentBrowseFolderHistory(name)
+                LocalHistory.recordLocalFile(pathStr, title = name)
+            }
+        }
+    }
+
+    fun recordArchiveOpened(entry: BrowseEntry.ArchiveGallery) {
+        val path = entry.path.toString()
+        val name = entry.name
+        launchIO {
+            val frame = stack.lastOrNull()
+            if (isPdfOrEbookFileName(name)) {
+                val externalPdf = isPdfFileName(name) &&
+                    !isEbookFileName(name) &&
+                    Settings.pdfReaderMode.value == PdfReaderMode.EXTERNAL
+                if (OpenFileExternally.shouldOpenHtmlInBrowser(name) || externalPdf) {
+                    recordCurrentBrowseFolderHistory(name)
+                    LocalHistory.recordLocalFile(path, title = name)
+                } else {
+                    recordCurrentBrowseFolderHistory(name)
+                    if (isEbookFileName(name) ||
+                        (isPdfFileName(name) && Settings.pdfReaderMode.value == PdfReaderMode.PDF)
+                    ) {
+                        val info = LocalHistory.galleryInfoForLocalArchive(path, title = name)
+                        LocalHistory.ensureGalleryForProgress(info)
+                    }
+                    LocalHistory.recordLocalArchive(path, title = name)
+                }
+                return@launchIO
+            }
+            if (frame?.isZipBrowse == true || ZipPaths.isZipPath(path)) return@launchIO
+            if (browseZipAsDir && isZipArchiveFileName(name)) {
+                val zipRel = frame?.let { folderArchiveRelative(entry, it) } ?: name
+                LocalHistory.recordLocalBrowseFolder(
+                    rootId = frame?.rootId ?: return@launchIO,
+                    relativePath = zipRel,
+                    title = name,
+                )
+                return@launchIO
+            }
+            recordCurrentBrowseFolderHistory(name)
+            LocalHistory.recordLocalArchive(path, title = name)
+        }
+    }
+
     fun dirOverflow(dir: BrowseEntry.Directory) = BrowseOverflowActions(
         kind = BrowseOverflowKind.Common,
         favorited = isDirFavorite(dir),
@@ -2415,6 +2660,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         onSaveToPaths = { saveLocalFolderToPaths(dir.name, dir.path, dir.relativeName) },
         shortcut = localShortcut(dir.relativeName, true, dir.name),
         onUnsupported = { notSupportedAction() },
+        recordOpen = { recordDirectoryOpened(dir) },
     ).selectable(
         localSelectKey("d:${dir.relativeName}"),
         dir.name,
@@ -2450,6 +2696,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         onSaveToPaths = { saveLocalFolderToPaths(entry.name, entry.path, entry.relativeName) },
         shortcut = localShortcut(entry.relativeName, true, entry.name),
         onUnsupported = { notSupportedAction() },
+        recordOpen = { launchIO { rememberOpenedFolderGallery(entry) } },
     ).selectable(
         localSelectKey("g:${entry.relativeName}"),
         entry.name,
@@ -2523,7 +2770,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
             pageCount = if (showGalleryPages) entry.pageCount else 0,
             lastModifiedMs = entry.lastModifiedMs,
         ),
-    )
+    ).copy(recordOpen = { recordArchiveOpened(entry) })
 
     fun videoOverflow(
         path: okio.Path,
@@ -2551,6 +2798,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         },
         shortcut = localShortcut(relativeName, false, path.name),
         onUnsupported = { notSupportedAction() },
+        recordOpen = { recordFileOpened(path) },
     ).selectable(
         localSelectKey("v:$path"),
         path.name,
@@ -2663,7 +2911,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                 sizeBytes = sizeBytes,
                 lastModifiedMs = lastModifiedMs,
             ),
-        )
+        ).copy(recordOpen = { recordFileOpened(path) })
     }
 
     Scaffold(
