@@ -152,9 +152,10 @@ fun BrowseItemOverflowButton(
                 return@launch
             }
             if (saveQuick) {
-                UploadTransfers.chooseSavedUploadDestination(file)
+                UploadTransfers.chooseSavedUploadDestination(file, gallery = actions.kind == BrowseOverflowKind.Gallery && actions.onPhotoGrid != null)
             } else {
-                val job = UploadTransfers.prepare(listOf(file)) ?: return@launch
+                val files = collectTransferFilesForAction(listOf(file to (actions.kind == BrowseOverflowKind.Gallery && actions.onPhotoGrid != null)), snackbar, context) ?: return@launch
+                val job = UploadTransfers.prepare(files) ?: return@launch
                 if (actions.uploadSource != null) UploadTransfers.recordUploadHistory(file)
                 UploadTransfers.chooseDestination(job)
             }
@@ -348,17 +349,22 @@ fun BrowseItemOverflowButton(
                     onClick = {
                         expanded = false
                         actions.uploadSource.let { source ->
-                            confirmDelete(
-                                listOf(
-                                    com.hippo.ehviewer.library.TransferFile(
-                                        source,
-                                        actions.selectTitle ?: source.path.substringAfterLast('/'),
-                                        actions.selectFolder,
-                                        actions.listLine?.sizeBytes ?: -1L,
-                                        actions.listLine?.lastModifiedMs ?: 0L,
+                            scope.launch {
+                                val files = collectTransferFilesForAction(
+                                    listOf(
+                                        com.hippo.ehviewer.library.TransferFile(
+                                            source,
+                                            actions.selectTitle ?: source.path.substringAfterLast('/'),
+                                            actions.selectFolder,
+                                            actions.listLine?.sizeBytes ?: -1L,
+                                            actions.listLine?.lastModifiedMs ?: 0L,
+                                        ) to (actions.kind == BrowseOverflowKind.Gallery && actions.onPhotoGrid != null),
                                     ),
-                                ),
-                            )
+                                    snackbar,
+                                    context,
+                                ) ?: return@launch
+                                confirmDelete(files)
+                            }
                         }
                     },
                 )

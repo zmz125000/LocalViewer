@@ -47,13 +47,14 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.sync.withPermit
+import kotlinx.coroutines.withContext
 import okio.Path.Companion.toPath
 import splitties.init.appCtx
 
 internal enum class UploadPhase { Preparing, Ready, Running, Paused, Finished, Stopped, Failed }
 internal enum class UploadFileStatus { Pending, Running, Succeeded, Skipped, Failed }
 internal data class UploadRow(val file: TransferFile, val status: UploadFileStatus = UploadFileStatus.Pending, val detail: String? = null)
-internal data class SavedUploadDraft(val id: Long, val file: TransferFile)
+internal data class SavedUploadDraft(val id: Long, val file: TransferFile, val gallery: Boolean = false)
 internal data class UploadState(
     val phase: UploadPhase = UploadPhase.Preparing,
     val deleting: Boolean = false,
@@ -170,20 +171,34 @@ internal object UploadTransfers {
     val destinationRequestId get() = savedUploadDraft?.id ?: destinationJobId
     val choosingDestination get() = destinationRequestId != null
 
-    fun chooseSavedUploadDestination(file: TransferFile) {
+    fun chooseSavedUploadDestination(file: TransferFile, gallery: Boolean = false) {
         panelId = null
         skipDestinationPanelFor = null
         destinationJobId = null
-        savedUploadDraft = SavedUploadDraft(ids.getAndIncrement(), uploadRoot(file.source, file.relative, file.directory, file.size, file.mtime))
+        savedUploadDraft = SavedUploadDraft(ids.getAndIncrement(), uploadRoot(file.source, file.relative, file.directory, file.size, file.mtime), gallery)
     }
 
     fun hasDestinationRequest(id: Long) = savedUploadDraft?.id == id || job(id) != null
 
     fun openSavedUpload(entry: SavedUploads.Entry) {
-        val file = entry.file()
-        val job = prepare(listOf(file)) ?: return
-        recordUploadHistory(file)
-        destination(entry.destination.transfer(), entry.destinationLabel, job.id)
+        scope.launch(Dispatchers.Main.immediate) {
+            try {
+                val file = entry.file()
+                val files = withContext(Dispatchers.IO) { collectGalleryTransferFiles(file, entry.gallery) }
+                if (files.isEmpty()) {
+                    Toast.makeText(appCtx, R.string.browse_action_not_supported, Toast.LENGTH_LONG).show()
+                    return@launch
+                }
+                val job = prepare(files) ?: return@launch
+                recordUploadHistory(file)
+                destination(entry.destination.transfer(), entry.destinationLabel, job.id)
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Throwable) {
+                logcat("FileTransfer", error)
+                Toast.makeText(appCtx, error.message ?: appCtx.getString(R.string.browse_open_failed), Toast.LENGTH_LONG).show()
+            }
+        }
     }
 
     fun recordUploadHistory(file: TransferFile, parentOnly: Boolean = false) {
@@ -390,7 +405,7 @@ internal object UploadTransfers {
     }
     fun destination(location: TransferLocation, label: String, jobId: Long? = destinationRequestId) {
         savedUploadDraft?.takeIf { it.id == jobId }?.let { draft ->
-            SavedUploads.remember(draft.file, location, label)
+            SavedUploads.remember(draft.file, location, label, draft.gallery)
             savedUploadDraft = null
             return
         }

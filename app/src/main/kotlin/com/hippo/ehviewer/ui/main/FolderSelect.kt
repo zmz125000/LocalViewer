@@ -357,6 +357,7 @@ data class FolderPick(
     /** Extension, size, and the rest of the folder-list second line. */
     val listLine: BrowseListLine? = null,
     val uploadSource: com.hippo.ehviewer.library.TransferLocation? = null,
+    val gallery: Boolean = false,
 )
 
 fun BrowseOverflowActions.selectable(
@@ -390,6 +391,7 @@ fun BrowseOverflowActions.toPick(): FolderPick? {
         saveInto = saveInto,
         listLine = listLine,
         uploadSource = uploadSource,
+        gallery = kind == BrowseOverflowKind.Gallery && onPhotoGrid != null,
     )
 }
 
@@ -1699,22 +1701,25 @@ private fun SelectionOverflowControl(
                         text = { Text(stringResource(R.string.transfer_upload_action)) },
                         onClick = {
                             menu = false
-                            val files = picks.mapNotNull { pick ->
-                                pick.uploadSource?.let { source ->
-                                    com.hippo.ehviewer.library.TransferFile(
-                                        source,
-                                        pick.title,
-                                        pick.isFolder,
-                                        pick.listLine?.sizeBytes ?: 0L,
-                                        pick.listLine?.lastModifiedMs ?: 0L,
-                                    )
+                            scope.launch {
+                                val requests = picks.mapNotNull { pick ->
+                                    pick.uploadSource?.let { source ->
+                                        com.hippo.ehviewer.library.TransferFile(
+                                            source,
+                                            pick.title,
+                                            pick.isFolder,
+                                            pick.listLine?.sizeBytes ?: 0L,
+                                            pick.listLine?.lastModifiedMs ?: 0L,
+                                        ) to pick.gallery
+                                    }
                                 }
-                            }
-                            UploadTransfers.prepare(files)?.let { job ->
-                                files.firstOrNull()?.let { UploadTransfers.recordUploadHistory(it, parentOnly = true) }
-                                FolderSelectHost.cancelShownSelection()
-                                UploadTransfers.chooseDestination(job)
-                                explorer.open()
+                                val files = collectTransferFilesForAction(requests, snackbar, context) ?: return@launch
+                                UploadTransfers.prepare(files)?.let { job ->
+                                    requests.firstOrNull()?.first?.let { UploadTransfers.recordUploadHistory(it, parentOnly = true) }
+                                    FolderSelectHost.cancelShownSelection()
+                                    UploadTransfers.chooseDestination(job)
+                                    explorer.open()
+                                }
                             }
                         },
                     )
@@ -1724,17 +1729,19 @@ private fun SelectionOverflowControl(
                         text = { Text(stringResource(R.string.delete)) },
                         onClick = {
                             menu = false
-                            confirmDelete(
-                                picks.map { pick ->
+                            scope.launch {
+                                val requests = picks.map { pick ->
                                     com.hippo.ehviewer.library.TransferFile(
                                         requireNotNull(pick.uploadSource),
                                         pick.title,
                                         pick.isFolder,
                                         pick.listLine?.sizeBytes ?: -1L,
                                         pick.listLine?.lastModifiedMs ?: 0L,
-                                    )
-                                },
-                            )
+                                    ) to pick.gallery
+                                }
+                                val files = collectTransferFilesForAction(requests, snackbar, context) ?: return@launch
+                                confirmDelete(files)
+                            }
                         },
                     )
                 }

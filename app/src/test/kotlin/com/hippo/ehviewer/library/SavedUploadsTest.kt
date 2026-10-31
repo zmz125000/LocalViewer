@@ -7,6 +7,16 @@ import org.junit.Test
 
 class SavedUploadsTest {
     @Test
+    fun savedGalleriesRetainImageOnlyBehaviorWithoutChangingPlainFolders() {
+        val folder = SavedUploads.Entry("folder", "Album", SavedUploads.Location("Smb", 1, "photos/album"), SavedUploads.Location("Local", 0, "/backup"), "backup")
+        val gallery = folder.copy(id = "gallery", gallery = true)
+        val restored = SavedUploads.decode(SavedUploads.encode(listOf(folder, gallery)))
+        assertFalse(restored[0].gallery)
+        assertTrue(restored[1].gallery)
+        assertEquals("photos/album", restored[1].file().source.path)
+    }
+
+    @Test
     fun filesKeepTheirTypeAndRefreshMetadataWhenReopened() {
         for (kind in ExplorerWindows.Kind.entries) {
             val entry = SavedUploads.Entry(
