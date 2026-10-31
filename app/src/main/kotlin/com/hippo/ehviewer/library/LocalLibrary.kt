@@ -11,6 +11,7 @@ import com.ehviewer.core.database.model.LIBRARY_ROOT_ACCESS_MEDIA_ARCHIVE
 import com.ehviewer.core.database.model.LIBRARY_ROOT_ROLE_FOLDER
 import com.ehviewer.core.database.model.LIBRARY_ROOT_ROLE_LIBRARY
 import com.ehviewer.core.database.model.LOCAL_GALLERY_KIND_ARCHIVE
+import com.ehviewer.core.database.model.LOCAL_GALLERY_KIND_FOLDER
 import com.ehviewer.core.database.model.LibraryRootEntity
 import com.ehviewer.core.database.model.LocalGalleryEntity
 import com.ehviewer.core.database.roomDb
@@ -450,7 +451,8 @@ object LocalLibrary {
                 rootId = root.id,
                 configKey = LocalFolderListing.rootConfigKey(path, root.prefersMediaStore),
                 rootAbs = path,
-                pages = scanned.folderPages,
+                pages = previous.filter { it.kind == LOCAL_GALLERY_KIND_FOLDER }
+                    .associate { FolderGalleryIndex.normalizeGalleryRelativeDir(it.relativePath) to emptyList<String>() } + scanned.folderPages,
                 videos = scanned.folderVideos,
             )
         }.onFailure {

@@ -4,6 +4,9 @@ import com.ehviewer.core.database.model.LOCAL_GALLERY_KIND_ARCHIVE
 import com.ehviewer.core.database.model.LOCAL_GALLERY_KIND_VIDEO_FILE
 import com.ehviewer.core.database.model.LocalGalleryEntity
 import com.ehviewer.core.model.GalleryInfo
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import okio.Path
 import okio.Path.Companion.toPath
 
@@ -20,6 +23,9 @@ import okio.Path.Companion.toPath
  * A complete cache hit opens the same way as the folder path; missing pages stay per-page errors.
  */
 object FolderGalleryIndex {
+    private val _localRevision = MutableStateFlow(0L)
+    val localRevision = _localRevision.asStateFlow()
+
     /**
      * Page names the reader uses from a classified gallery row, or null when it would
      * live-list (capped / empty). Photo-grid open uses the same list and skips a scan.
@@ -67,7 +73,6 @@ object FolderGalleryIndex {
         val pages = listingFromImageNames(dirName, names).map { entry ->
             if (entry is BrowseEntryRemote.RegularFile) knownFiles[entry.fileName] ?: entry else entry
         }
-        if (pages.isEmpty()) return previous.orEmpty()
         if (previous.isNullOrEmpty()) return pages
         if (shouldKeepPreviousFolderIndex(previous, pages) || !isShallowIncompleteListing(previous)) {
             val kept = previous.filter { entry ->
@@ -101,7 +106,6 @@ object FolderGalleryIndex {
     ): List<BrowseEntryRemote> {
         val knownFiles = previous.orEmpty().filterIsInstance<BrowseEntryRemote.VideoFile>().associateBy { it.fileName }
         val videos = names.map { name -> knownFiles[name] ?: BrowseEntryRemote.VideoFile(name = name, fileName = name) }
-        if (videos.isEmpty()) return previous.orEmpty()
         if (previous.isNullOrEmpty()) return videos
         if (shouldKeepPreviousFolderIndex(previous, videos) || !isShallowIncompleteListing(previous)) {
             val kept = previous.filter { entry ->
@@ -143,7 +147,6 @@ object FolderGalleryIndex {
         for (rel in dirs) {
             val imageNames = pages[rel].orEmpty()
             val videoNames = videos[rel].orEmpty()
-            if (imageNames.isEmpty() && videoNames.isEmpty()) continue
             val dir = normalizeGalleryRelativeDir(rel)
             val title = dir.substringAfterLast('/').ifEmpty { "Gallery" }
             val zip = ZipAsDirListing.splitZipBrowsePath(dir) != null
@@ -156,14 +159,13 @@ object FolderGalleryIndex {
             val previous = previousRam?.entries
                 ?: NetworkFolderIndexCache.loadLocal(rootId, configKey, dir)
             var entries = previous
-            if (imageNames.isNotEmpty()) {
+            if (rel in pages) {
                 entries = mergeLibraryFolderPages(entries, title, imageNames)
             }
-            if (videoNames.isNotEmpty()) {
+            if (rel in videos) {
                 entries = mergeLibraryFolderVideos(entries, videoNames)
             }
             val listing = entries.orEmpty()
-            if (listing.isEmpty()) continue
             val sessionCurrent = previousRam?.sessionCurrent == true &&
                 !isImagePagesOnlyListing(listing)
             updates[dir] = listing
@@ -179,6 +181,7 @@ object FolderGalleryIndex {
         for ((ramKey, entries, sessionCurrent) in ram) {
             BrowseSession.putLocalListing(ramKey, entries, sessionCurrent = sessionCurrent)
         }
+        _localRevision.update { it + 1 }
     }
 
     /**
@@ -506,6 +509,7 @@ object FolderGalleryIndex {
      */
     suspend fun namesWalkingParents(
         galleryDir: String,
+        authoritativeDirect: Boolean = false,
         listingFor: suspend (listedDir: String) -> List<BrowseEntryRemote>?,
     ): List<String>? {
         val gallery = normalizeGalleryRelativeDir(galleryDir)
@@ -513,6 +517,13 @@ object FolderGalleryIndex {
         while (true) {
             listingFor(listed)?.let { entries ->
                 namesFromListing(listed, entries, gallery)?.let { return it }
+                // Local library scans publish authoritative deletions. Network partial
+                // listings still need the parent fallback used by archive galleries.
+                if (authoritativeDirect && listed == gallery && !isShallowIncompleteListing(entries) &&
+                    entries.none { it is BrowseEntryRemote.FolderGallery && it.relativeName.isEmpty() }
+                ) {
+                    return emptyList()
+                }
             }
             if (listed.isEmpty()) break
             listed = parentRelativeOfFile(listed)
@@ -566,7 +577,7 @@ object FolderGalleryIndex {
         configKey: String,
         galleryDir: String,
         rootAbs: Path? = null,
-    ): List<String>? = namesWalkingParents(galleryDir) { dir ->
+    ): List<String>? = namesWalkingParents(galleryDir, authoritativeDirect = true) { dir ->
         localListing(rootId, configKey, dir, rootAbs)
     }
 

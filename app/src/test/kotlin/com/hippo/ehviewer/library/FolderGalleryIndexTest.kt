@@ -12,6 +12,36 @@ import org.junit.Test
 
 class FolderGalleryIndexTest {
     @Test
+    fun deletedPhotosAreRemovedWhileOtherFolderContentsStay() = runBlocking {
+        val previous = FolderGalleryIndex.listingFromImageNames("album", listOf("a.jpg", "b.jpg")) +
+            BrowseEntryRemote.RegularFile("notes.txt") + BrowseEntryRemote.VideoFile("clip.mp4")
+        val remaining = FolderGalleryIndex.mergeLibraryFolderPages(previous, "album", listOf("b.jpg"))
+        assertEquals(listOf("b.jpg"), FolderGalleryIndex.namesFromListing("album", remaining, "album"))
+        val empty = FolderGalleryIndex.mergeLibraryFolderPages(remaining, "album", emptyList())
+        assertEquals(listOf("notes.txt", "clip.mp4"), empty.map { it.name })
+        assertEquals(emptyList<String>(), FolderGalleryIndex.namesWalkingParents("album", authoritativeDirect = true) { empty })
+    }
+
+    @Test
+    fun emptyDirectFolderDoesNotResurrectDeletedPhotosFromParent() = runBlocking {
+        val staleParent = FolderGalleryIndex.listingFromImageNames("album", listOf("deleted.jpg"))
+            .map { if (it is BrowseEntryRemote.FolderGallery) it.copy(relativeName = "album") else it }
+        val names = FolderGalleryIndex.namesWalkingParents("album", authoritativeDirect = true) { dir ->
+            if (dir == "album") emptyList() else staleParent
+        }
+        assertEquals(emptyList<String>(), names)
+    }
+
+    @Test
+    fun deletingLastVideoPreservesPhotosAndOtherFiles() {
+        val previous = FolderGalleryIndex.listingFromImageNames("album", listOf("a.jpg")) +
+            BrowseEntryRemote.VideoFile("clip.mp4")
+        val merged = FolderGalleryIndex.mergeLibraryFolderVideos(previous, emptyList())
+        assertTrue(merged.none { it is BrowseEntryRemote.VideoFile })
+        assertEquals(listOf("a.jpg"), FolderGalleryIndex.namesFromListing("album", merged, "album"))
+    }
+
+    @Test
     fun remotePhotoGridFillsSizeAndDateWithoutLosingExistingValues() {
         val rows = listOf(
             BrowseEntryRemote.RegularFile("a.jpg", size = 10, lastModifiedMs = 20),

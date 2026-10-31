@@ -61,6 +61,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.ehviewer.core.database.model.LibraryRootEntity
 import com.ehviewer.core.i18n.R
@@ -98,6 +99,7 @@ import com.hippo.ehviewer.library.LocalHistory
 import com.hippo.ehviewer.library.LocalLibrary
 import com.hippo.ehviewer.library.LocalListingJobs
 import com.hippo.ehviewer.library.MediaStoreFs
+import com.hippo.ehviewer.library.MediaStoreWatch
 import com.hippo.ehviewer.library.ReaderGalleryPlaylist
 import com.hippo.ehviewer.library.SavedExplorerPaths
 import com.hippo.ehviewer.library.TransferLocation
@@ -692,7 +694,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         ArchiveCoverCache.onBrowseFolderChanged(key)
     }
 
-    suspend fun reload(force: Boolean = false) {
+    suspend fun reload(force: Boolean = false, refreshPhotoGrid: Boolean = false) {
         val request = Any()
         activeListingRequest = request
         val frame = stack.lastOrNull()
@@ -712,12 +714,12 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
             val shownImages = entries.filter { it is BrowseEntry.RegularFile && isImageFileName(it.name) }
             val alreadyShown = listedPath == targetPath && shownImages.isNotEmpty()
             val missingMetadata = shownImages.any { it.size <= 0L || it.lastModifiedMs <= 0L }
-            if (alreadyShown && !missingMetadata) {
+            if (alreadyShown && !missingMetadata && !refreshPhotoGrid) {
                 loading = false
                 refreshing = false
                 return
             }
-            if (alreadyShown && missingMetadata) {
+            if (alreadyShown && missingMetadata && !refreshPhotoGrid) {
                 stampLibraryOpenMetadata(frame)
                 loading = false
                 refreshing = false
@@ -741,8 +743,9 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                 null
             } ?: MediaStoreFs.imageFileNames(frame.path.toPath())
             if (!ownsListing()) return
-            if (!names.isNullOrEmpty()) {
+            if (names != null) {
                 val metadata = metadataForLibraryOpen(frame, names)
+                if (!ownsListing()) return
                 applyLocalPhotoGridFiles(frame, names, metadata)
                 return
             }
@@ -887,6 +890,19 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
             loading = false
             refreshing = false
         }
+    }
+
+    // Gallery grids opened from Library are part of its live-update surface too.
+    val liveLibraryGrid = fromLibrary && photoGrid && stack.lastOrNull()?.isZipBrowse == false
+    if (liveLibraryGrid) {
+        LifecycleResumeEffect(photoGridKey) {
+            MediaStoreWatch.onLibraryVisible()
+            onPauseOrDispose { MediaStoreWatch.onLibraryHidden() }
+        }
+    }
+    val localIndexRevision by FolderGalleryIndex.localRevision.collectAsState()
+    LaunchedEffect(liveLibraryGrid, photoGridKey, localIndexRevision) {
+        if (liveLibraryGrid && localIndexRevision > 0) reload(refreshPhotoGrid = true)
     }
 
     /** Force the next stack-driven [reload] (zip-as-dir toggle leaving a zip frame). */
