@@ -83,10 +83,10 @@ fun StillExportTarget.mimeType(): String = when (this) {
     else -> "image/jpeg"
 }
 
-fun stillExportFileName(sourceName: String, target: StillExportTarget): String {
+fun stillExportFileName(sourceName: String, target: StillExportTarget, encoding: String? = null): String {
     val leaf = sourceName.substringAfterLast('/').substringAfterLast('\\')
     val stem = FileUtils.getNameFromFilename(leaf)?.takeIf { it.isNotBlank() } ?: "image"
-    val type = when (target) {
+    val type = encoding ?: when (target) {
         StillExportTarget.Jpeg, StillExportTarget.Jxl, StillExportTarget.Avif -> "sdr"
         StillExportTarget.JpegHdr, StillExportTarget.AvifGainMap -> "gainmap"
         StillExportTarget.JxlPq, StillExportTarget.AvifPq -> "pq"

@@ -352,3 +352,18 @@ int encode_avif_f16(unsigned w, unsigned h, uint16_t* rgba, uhdr_color_gamut_t c
                     int mode, const char* path, StillEncodeQuality quality, const uint8_t* sdr_base = nullptr);
 int encode_avif_u8(unsigned w, unsigned h, const uint8_t* rgba, uhdr_color_gamut_t cg,
                    const char* path, StillEncodeQuality quality);
+
+/** Transfer-encoded source RGB. No EOTF, gamut conversion, or HDR reconstruction. */
+struct StillSourceColor {
+    unsigned bits = 8;
+    unsigned channels = 4;
+    unsigned exponent_bits = 0;
+    float intensity_target = 0.f;
+    int primaries = 1;
+    int transfer = 13;
+    unsigned orientation = 1;
+    const uint8_t* icc = nullptr;
+    size_t icc_size = 0;
+};
+int encode_jxl_source(unsigned w, unsigned h, const void* rgba, bool sixteen,
+                      const StillSourceColor& color, const char* path, StillEncodeQuality quality);

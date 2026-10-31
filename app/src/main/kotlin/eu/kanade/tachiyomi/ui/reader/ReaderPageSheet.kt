@@ -15,6 +15,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.FileCopy
+import androidx.compose.material.icons.filled.FileUpload
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Share
@@ -45,6 +46,7 @@ fun ReaderPageSheetMeta(
     copy: () -> Unit,
     save: () -> Unit,
     saveTo: () -> Unit,
+    uploadTo: (() -> Unit)?,
     convert: ((StillExportTarget) -> Unit)?,
     sourceName: String?,
     showAds: (() -> Unit)?,
@@ -84,6 +86,7 @@ fun ReaderPageSheetMeta(
             Item(icon = Icons.Default.FileCopy, text = R.string.action_copy, onClick = copy)
             Item(icon = Icons.Default.Save, text = R.string.action_save, onClick = save)
             Item(icon = Icons.Default.Save, text = R.string.action_save_to, onClick = saveTo)
+            uploadTo?.let { Item(icon = Icons.Default.Save, text = R.string.transfer_upload_action, onClick = it) }
             if (convert != null) {
                 Item(icon = Icons.Default.Save, text = R.string.convert_to, onClick = { pickingConvert = true }, close = false)
             }

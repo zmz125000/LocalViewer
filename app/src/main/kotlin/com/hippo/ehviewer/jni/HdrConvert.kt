@@ -348,3 +348,42 @@ internal external fun extractAvifExif(input: ByteBuffer): ByteArray?
 /** Bounded reads from heap-backed RAM caches and pipe-backed SAF sources. */
 internal external fun extractJxlExifInput(input: com.hippo.ehviewer.image.EncodedExifInput): ByteArray?
 internal external fun extractAvifExifInput(input: com.hippo.ehviewer.image.EncodedExifInput): ByteArray?
+
+/** Format conversion of transfer-encoded source RGB and optional existing gain map. */
+internal external fun convertSourceEncodedStill(
+    input: ByteBuffer,
+    kind: Int,
+    target: Int,
+    output: String,
+    quality: Int,
+    distance: Float,
+    codecQuality: Int,
+    avifDepth: Int,
+    downsize: Boolean,
+    keepExif: Boolean,
+    outInfo: IntArray,
+): Int
+internal external fun encodeSourceRgb(
+    pixels: ByteBuffer,
+    width: Int,
+    height: Int,
+    bits: Int,
+    primaries: Int,
+    transfer: Int,
+    icc: ByteArray?,
+    storage: Int,
+    target: Int,
+    output: String,
+    quality: Int,
+    distance: Float,
+    codecQuality: Int,
+    avifDepth: Int,
+    downsize: Boolean,
+    exif: ByteArray?,
+    gainPixels: ByteBuffer?,
+    gainWidth: Int,
+    gainHeight: Int,
+    gainJpeg: Boolean,
+    gainMetadata: FloatArray?,
+    outInfo: IntArray,
+): Int

@@ -10,6 +10,9 @@ import com.ehviewer.core.files.toUri
 import com.ehviewer.core.model.GalleryInfo
 import com.hippo.ehviewer.image.ImageSource
 import com.hippo.ehviewer.image.PathSource
+import com.hippo.ehviewer.library.ExplorerWindows
+import com.hippo.ehviewer.library.TransferLocation
+import com.hippo.ehviewer.library.ZipPaths
 import com.hippo.ehviewer.library.isImageFileName
 import com.hippo.ehviewer.library.naturalCompare
 import com.hippo.ehviewer.util.FileUtils
@@ -60,6 +63,10 @@ suspend inline fun <T> useFolderPageLoader(
         val loader = install(
             object : PageLoader(this, info, startPage.coerceIn(0, size - 1), size) {
                 override val title get() = loaderTitle
+
+                override fun uploadSource(index: Int): TransferLocation? = files.getOrNull(index)
+                    ?.takeUnless { ZipPaths.isZipPath(it.toString()) }
+                    ?.let { TransferLocation(ExplorerWindows.Kind.Local, 0, it.toString()) }
 
                 override fun getImageExtension(index: Int): String? {
                     val name = files.getOrNull(index)?.name ?: return null

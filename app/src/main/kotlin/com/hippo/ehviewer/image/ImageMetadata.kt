@@ -49,6 +49,17 @@ internal fun ColorSpace?.rawTransferDescription(): String? = (this as? ColorSpac
     "a=${it.a}, b=${it.b}, c=${it.c}, d=${it.d}, e=${it.e}, f=${it.f}, g=${it.g}"
 }
 
+/** Unknown platform header tags must not hide a valid native/base-bitmap color space. */
+internal fun firstKnownColorSpace(vararg names: String?): String? = names.firstNotNullOfOrNull { name ->
+    name?.trim()?.takeUnless { it.isEmpty() || it.equals("Unknown", ignoreCase = true) }
+}
+
+/** A coder comment such as "Attrib: GainMap Image" does not describe an attached gain map. */
+internal fun sourceGainmapMarker(header: ByteArray): String? {
+    val text = header.toString(Charsets.ISO_8859_1)
+    return listOf("hdrgm:", "urn:com:apple:photo:2020:aux:hdrgainmap").firstOrNull { it in text }
+}
+
 /** Original encoded metadata; color tags may fall back to the decoded bitmap when unavailable. */
 data class ImageMetadata(
     val width: Int? = null,
@@ -117,8 +128,7 @@ internal fun ImageSource.readMetadata(
         decodedSourceBitDepth?.takeIf { it in 1..32 } ?: encodedBitDepth(header) ?: heif?.bitDepth ?: exif?.getAttribute(ExifInterface.TAG_BITS_PER_SAMPLE)
             ?.split(',')?.mapNotNull { it.trim().toIntOrNull() }?.maxOrNull()
     }
-    val headerText = header.toString(Charsets.ISO_8859_1)
-    val gainmapMarker = listOf("hdrgm:", "HDRGainMap", "GainMap", "urn:com:apple:photo:2020:aux:hdrgainmap").firstOrNull { it in headerText }
+    val gainmapMarker = sourceGainmapMarker(header)
     val gainmap = gainmapMarker != null
     return ImageMetadata(
         width = bounds.outWidth.takeIf { it > 0 } ?: (nativeDimensions ushr 32).toInt().takeIf { it > 0 }
@@ -146,7 +156,7 @@ internal fun ImageSource.readMetadata(
             9 -> "BT.2020"
             11 -> "DCI-P3"
             12 -> "Display P3"
-            else -> bounds.outColorSpace?.name ?: if (attributeInt(ExifInterface.TAG_COLOR_SPACE) == 1) "sRGB" else null
+            else -> firstKnownColorSpace(bounds.outColorSpace?.name, if (attributeInt(ExifInterface.TAG_COLOR_SPACE) == 1) "sRGB" else null)
         },
         hdr = when {
             gainmap || heif?.transfer in listOf(16, 18) -> true

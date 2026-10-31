@@ -23,6 +23,7 @@ import com.hippo.ehviewer.image.ImageSource
 import com.hippo.ehviewer.image.ImageTransfer
 import com.hippo.ehviewer.image.PathSource
 import com.hippo.ehviewer.image.byteBufferSource
+import com.hippo.ehviewer.image.firstKnownColorSpace
 import com.hippo.ehviewer.image.hdr.DisplaySource
 import com.hippo.ehviewer.image.hdr.HdrConvertCache
 import com.hippo.ehviewer.image.hdr.LibCodec
@@ -277,7 +278,7 @@ abstract class PageLoader(
             else -> metadata.transfer ?: image.metadata.transfer
         }
         image.metadata = metadata.copy(
-            colorSpace = metadata.colorSpace ?: image.metadata.colorSpace ?: image.decodedColorSpace?.name,
+            colorSpace = firstKnownColorSpace(metadata.colorSpace, image.metadata.colorSpace, image.decodedColorSpace?.name),
             hdr = if (image.isHdrContent) {
                 true
             } else {

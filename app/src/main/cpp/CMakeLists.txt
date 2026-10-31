@@ -396,7 +396,7 @@ if (EHVIEWER_HDR_CODECS)
     else ()
         set(EHVIEWER_JXL_EXPORT_SOURCE still_jxl_stub.cpp)
     endif ()
-    set(EHVIEWER_HDR_SOURCES hdr_convert.cpp avif_hdr.cpp still_avif.cpp jxl_hdr.cpp hevc_decode.cpp ${EHVIEWER_JXL_EXPORT_SOURCE} still_probe.cpp)
+    set(EHVIEWER_HDR_SOURCES hdr_convert.cpp avif_hdr.cpp still_avif.cpp source_export.cpp jxl_hdr.cpp hevc_decode.cpp ${EHVIEWER_JXL_EXPORT_SOURCE} still_probe.cpp)
     list(APPEND EHVIEWER_HDR_LIBS de265)
 
     if (TARGET uhdr)

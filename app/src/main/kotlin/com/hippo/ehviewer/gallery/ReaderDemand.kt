@@ -2,6 +2,9 @@ package com.hippo.ehviewer.gallery
 
 import com.ehviewer.core.model.GalleryInfo
 import com.hippo.ehviewer.image.Image
+import com.hippo.ehviewer.library.ExplorerWindows
+import com.hippo.ehviewer.library.TransferLocation
+import com.hippo.ehviewer.library.ZipAsDirListing
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import okio.Path
@@ -64,6 +67,17 @@ interface ReaderSession : AutoCloseable {
 
     /** Capture the original location, rather than a decoded/converted cache file. */
     fun originalFile(index: Int): ReaderOriginalFile? = null
+
+    /** Only real standalone files can use the folder browser's upload flow. */
+    fun uploadSource(index: Int): TransferLocation? {
+        val source = when (val original = originalFile(index)) {
+            is ReaderOriginalFile.Smb -> TransferLocation(ExplorerWindows.Kind.Smb, original.sourceId, original.relativePath)
+            is ReaderOriginalFile.WebDav -> TransferLocation(ExplorerWindows.Kind.WebDav, original.sourceId, original.relativePath)
+            null -> return null
+        }
+        // Do not let uploadRoot turn an archive member into an upload of the entire archive.
+        return source.takeIf { ZipAsDirListing.splitZipBrowsePath(it.path) == null }
+    }
 
     /**
      * Copy the original page bytes. Unlike [save], this does not substitute a

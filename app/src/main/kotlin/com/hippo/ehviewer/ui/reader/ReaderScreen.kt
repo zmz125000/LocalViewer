@@ -116,6 +116,7 @@ import com.hippo.ehviewer.library.LandscapeCoverMarks
 import com.hippo.ehviewer.library.LocalHistory
 import com.hippo.ehviewer.library.MediaStoreFs
 import com.hippo.ehviewer.library.ReaderImageList
+import com.hippo.ehviewer.library.TransferFile
 import com.hippo.ehviewer.library.ZipAsDirListing
 import com.hippo.ehviewer.library.ZipPaths
 import com.hippo.ehviewer.library.document.MobiImageEngine
@@ -133,7 +134,9 @@ import com.hippo.ehviewer.ui.OpenPdfBySettings
 import com.hippo.ehviewer.ui.Screen
 import com.hippo.ehviewer.ui.destinations.ReaderScreenDestination
 import com.hippo.ehviewer.ui.main.GalleryGridDefaults
+import com.hippo.ehviewer.ui.main.UploadTransfers
 import com.hippo.ehviewer.ui.main.browseCoverThumbIdentity
+import com.hippo.ehviewer.ui.screen.LocalExplorerPanel
 import com.hippo.ehviewer.ui.theme.EhTheme
 import com.hippo.ehviewer.ui.tools.DialogState
 import com.hippo.ehviewer.ui.tools.awaitInputText
@@ -450,6 +453,7 @@ fun AnimatedVisibilityScope.ReaderScreen(args: ReaderScreenArgs, navigator: Dest
 @Composable
 context(activity: MainActivity, _: SnackbarHostState, _: DialogState, _: CoroutineScope, nav: DestinationsNavigator)
 fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: ReaderScreenArgs) {
+    val explorer = LocalExplorerPanel.current
     LaunchedEffect(Unit) {
         val orientation = activity.requestedOrientation
         Settings.orientationMode.valueFlow()
@@ -951,6 +955,19 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
                                 copy = { launchIO { with(pageLoader) { copy(page) } } },
                                 save = { launchIO { with(pageLoader) { save(page) } } },
                                 saveTo = { launchIO { with(pageLoader) { saveTo(page) } } },
+                                uploadTo = pageLoader.uploadSource(page.index)?.let { source ->
+                                    val title = pageLoader.sourceLeafName(page.index) ?: source.path.substringAfterLast('/')
+                                    val upload: () -> Unit = {
+                                        val file = TransferFile(source, title, directory = false, size = -1, mtime = 0)
+                                        val job = UploadTransfers.prepare(listOf(file))
+                                        if (job != null) {
+                                            UploadTransfers.recordUploadHistory(file)
+                                            UploadTransfers.chooseDestination(job)
+                                            explorer.open()
+                                        }
+                                    }
+                                    upload
+                                },
                                 sourceName = pageLoader.sourceLeafName(page.index),
                                 convert = pageLoader.sourceLeafName(page.index)
                                     ?.takeIf { isStillExportFileName(it) }
