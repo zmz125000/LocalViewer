@@ -899,9 +899,17 @@ class Image private constructor(
                 it.metadata = ImageMetadata(
                     colorSpace = decodedColorSpace?.name,
                     hdr = result.isHdrContent,
-                    transfer = ImageTransfer.fromCicp(result.sourceTransfer) ?: ImageTransfer.fromColorSpace(decodedColorSpace),
-                    rawTransfer = result.sourceTransfer.takeIf { code -> code != 0 }?.let { code -> "CICP transfer $code" }
-                        ?: decodedColorSpace.rawTransferDescription(),
+                    transfer = if (result.sourceHasGainmap) {
+                        ImageTransfer.GAIN_MAP
+                    } else {
+                        ImageTransfer.fromCicp(result.sourceTransfer) ?: ImageTransfer.fromColorSpace(decodedColorSpace)
+                    },
+                    rawTransfer = if (result.sourceHasGainmap) {
+                        "ISO 21496-1 gain map"
+                    } else {
+                        result.sourceTransfer.takeIf { code -> code != 0 }?.let { code -> "CICP transfer $code" }
+                            ?: decodedColorSpace.rawTransferDescription()
+                    },
                 )
                 it.prepareToDraw()
             }
