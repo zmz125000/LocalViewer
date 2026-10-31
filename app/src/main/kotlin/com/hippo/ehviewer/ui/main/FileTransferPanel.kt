@@ -110,10 +110,6 @@ internal fun UploadTransferBars() {
                                     colors = snackbarActionButtonColors(),
                                 ) { Text(stringResource(R.string.transfer_dest)) }
                             }
-                            TextButton(
-                                onClick = { UploadTransfers.panelId = job.id },
-                                colors = snackbarActionButtonColors(),
-                            ) { Text(stringResource(R.string.transfer_show)) }
                             if (state.active) {
                                 TextButton(
                                     onClick = { UploadTransfers.stop(job) },
@@ -132,7 +128,7 @@ internal fun UploadTransferBars() {
                         }
                     },
                 ) {
-                    Column(Modifier.clickable { UploadTransfers.panelId = job.id }) {
+                    Column(Modifier.fillMaxWidth().clickable { UploadTransfers.panelId = job.id }) {
                         if (state.editable) {
                             Text("${stringResource(job.actionLabel)} #${job.id} · ${stringResource(if (job.deleting) R.string.transfer_item_count else R.string.transfer_file_count, state.total)}")
                         } else if (state.phase == UploadPhase.Preparing) {

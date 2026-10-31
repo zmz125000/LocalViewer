@@ -156,6 +156,7 @@
     <string name="raw_hdr_conversion_hdr">HDR</string>
     <string name="raw_hdr_conversion_boost">HDR boost</string>
     <string name="raw_hdr_conversion_custom">HDR custom</string>
+    <string name="browse_ask_for_dest">Ask for dest</string>
     <string name="browse_ask_where_to_save">Ask for image conversion dest</string>
     <string name="browse_convert_accept_sdr">Accept SDR formats</string>
     <string name="image_conversion_default_location">Image conversion folder</string>

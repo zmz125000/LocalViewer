@@ -2,6 +2,7 @@ package com.hippo.ehviewer.ui.main
 
 import android.content.Context
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -33,7 +34,6 @@ import com.hippo.ehviewer.provider.requestStreamNotificationPermission
 import com.hippo.ehviewer.smb.SmbPasswordStore
 import com.hippo.ehviewer.smb.SmbRepository
 import com.hippo.ehviewer.ui.OpenFileExternally
-import com.hippo.ehviewer.ui.theme.snackbarActionButtonColors
 import com.hippo.ehviewer.ui.theme.snackbarContainerColor
 import com.hippo.ehviewer.ui.theme.snackbarDismissButtonColors
 import com.hippo.ehviewer.ui.theme.snackbarDismissContentColor
@@ -422,14 +422,6 @@ fun HttpShareSnackbars(
                 modifier = Modifier.padding(bottom = 8.dp),
                 containerColor = snackbarContainerColor(),
                 contentColor = snackbarDismissContentColor(),
-                action = {
-                    TextButton(
-                        onClick = { onShare(item) },
-                        colors = snackbarActionButtonColors(),
-                    ) {
-                        Text(stringResource(R.string.share))
-                    }
-                },
                 dismissAction = {
                     TextButton(
                         onClick = { HttpShare.stop(item.id) },
@@ -441,6 +433,7 @@ fun HttpShareSnackbars(
             ) {
                 Text(
                     text = stringResource(R.string.browse_http_share_snackbar, item.title),
+                    modifier = Modifier.fillMaxWidth().clickable { onShare(item) },
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                 )

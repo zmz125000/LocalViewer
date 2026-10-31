@@ -141,6 +141,7 @@
     <string name="image_conversion_downsize_gain_map_summary">增益圖像素數為原來的 1/4（寬高各為 1/2），基礎影像保持原尺寸。</string>
     <string name="raw_hdr_conversion">RAW HDR 轉換</string>
     <string name="raw_hdr_conversion_summary">%1$s</string>
+    <string name="browse_ask_for_dest">詢問目的地</string>
     <string name="browse_ask_where_to_save">詢問影像轉換儲存位置</string>
     <string name="browse_convert_accept_sdr">接受 SDR 格式</string>
     <string name="image_conversion_default_location">圖片轉換資料夾</string>

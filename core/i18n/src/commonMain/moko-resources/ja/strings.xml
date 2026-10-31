@@ -143,6 +143,7 @@
     <string name="image_conversion_downsize_gain_map_summary">ゲインマップの画素数を1/4（幅と高さが各1/2）にします。ベース画像のサイズは維持します。</string>
     <string name="raw_hdr_conversion">RAW HDR 変換</string>
     <string name="raw_hdr_conversion_summary">%1$s</string>
+    <string name="browse_ask_for_dest">保存先を確認</string>
     <string name="browse_ask_where_to_save">画像変換の保存先を確認</string>
     <string name="browse_convert_accept_sdr">SDR 形式も含める</string>
     <string name="image_conversion_default_location">画像変換フォルダー</string>
