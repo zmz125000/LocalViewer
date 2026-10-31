@@ -11,6 +11,7 @@ import com.hippo.ehviewer.library.TransferFile
 import com.hippo.ehviewer.library.isImageFileName
 import com.hippo.ehviewer.library.resolveBrowsePath
 import com.hippo.ehviewer.ui.reader.exportStillToDirectory
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import okio.Path.Companion.toPath
@@ -20,6 +21,13 @@ internal fun galleryConversionRoot(actions: BrowseOverflowActions): TransferFile
     val source = actions.uploadSource ?: return null
     return uploadRoot(source, actions.selectTitle.orEmpty(), true, -1, 0).takeIf { it.directory }
 }
+
+/** History rows resolve the gallery directory when Upload does, after the menu opens. */
+internal fun resolvedGalleryConversion(actions: BrowseOverflowActions): Boolean = actions.kind == BrowseOverflowKind.Gallery &&
+    actions.selectFolder &&
+    actions.onPhotoGrid != null &&
+    actions.uploadSource == null &&
+    actions.resolveUpload != null
 
 internal fun galleryConversionPick(file: TransferFile, folderKey: String): FolderPick? {
     if (!isImageFileName(file.relative) || file.directory) return null
@@ -76,5 +84,34 @@ internal fun beginGalleryConvert(scope: CoroutineScope, snackbar: SnackbarHostSt
         }
         FolderSelectHost.rememberGallerySelection(key, gallery.relative, picks, place)
         beginConvert(scope, snackbar, context, target)
+    }
+}
+
+internal fun beginResolvedGalleryConvert(
+    scope: CoroutineScope,
+    snackbar: SnackbarHostState,
+    context: Context,
+    actions: BrowseOverflowActions,
+    target: StillExportTarget,
+) {
+    val resolve = actions.resolveUpload ?: return
+    scope.launch {
+        val file = try {
+            withIOContext { resolve() }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Throwable) {
+            null
+        }
+        if (file == null) {
+            snackbar.showSnackbar(context.getString(R.string.history_unavailable))
+            return@launch
+        }
+        val root = uploadRoot(file.source, file.relative, file.directory, file.size, file.mtime)
+        if (!root.directory) {
+            snackbar.showSnackbar(context.getString(R.string.browse_action_not_supported))
+            return@launch
+        }
+        beginGalleryConvert(scope, snackbar, context, root, target)
     }
 }

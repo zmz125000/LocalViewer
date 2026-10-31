@@ -6,6 +6,7 @@ import com.hippo.ehviewer.library.LOCAL_ARCHIVE_TOKEN
 import com.hippo.ehviewer.library.LOCAL_BROWSE_TOKEN
 import com.hippo.ehviewer.library.LOCAL_FILE_TOKEN
 import com.hippo.ehviewer.library.LOCAL_FOLDER_TOKEN
+import com.hippo.ehviewer.library.LOCAL_GALLERY_TOKEN
 import com.hippo.ehviewer.library.LocalHistory
 import com.hippo.ehviewer.library.SMB_ARCHIVE_TOKEN
 import com.hippo.ehviewer.library.SMB_BROWSE_TOKEN
@@ -186,6 +187,16 @@ class HistoryFilterTest {
         assertFalse(historyOverflowHasImageReader(item(LOCAL_FILE_TOKEN, "guide.pdf", "/docs/guide.pdf")))
         assertTrue(historyOverflowHasFavorite(dir))
         assertFalse(historyOverflowHasFavorite(txt))
+        assertTrue(historyGalleryConvertible(folder))
+        assertTrue(historyGalleryConvertible(item(SMB_FOLDER_TOKEN, "Album", "7\u0000photos/Album")))
+        assertTrue(historyGalleryConvertible(item(WEBDAV_FOLDER_TOKEN, "Album", "7\u0000photos/Album")))
+        assertTrue(historyGalleryConvertible(item(LOCAL_GALLERY_TOKEN, "Album", "")))
+        assertFalse(historyGalleryConvertible(item(LOCAL_FOLDER_TOKEN, "Album", "1\u0000photos/album.zip")))
+        assertFalse(historyGalleryConvertible(item(LOCAL_FOLDER_TOKEN, "Album", "1\u0000photos/album.zip|Album")))
+        assertFalse(historyGalleryConvertible(item(SMB_FOLDER_TOKEN, "Album", "7\u0000photos/album.cbz/inner")))
+        assertFalse(historyGalleryConvertible(zip))
+        assertFalse(historyGalleryConvertible(dir))
+        assertFalse(historyGalleryConvertible(item(LOCAL_GALLERY_TOKEN, "pack.cbz", "/comics/pack.cbz", category = 1)))
     }
 
     @Test
@@ -220,10 +231,11 @@ class HistoryFilterTest {
         assertNull(HistoryListMemory.display(emptyList(), key))
     }
 
-    private fun item(token: String, title: String, uploader: String) = BaseGalleryInfo(
+    private fun item(token: String, title: String, uploader: String, category: Int = 0) = BaseGalleryInfo(
         gid = title.hashCode().toLong(),
         token = token,
         title = title,
         uploader = uploader,
+        category = category,
     )
 }

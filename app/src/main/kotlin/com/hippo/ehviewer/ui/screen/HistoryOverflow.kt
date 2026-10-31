@@ -74,6 +74,19 @@ internal fun historyOverflowKind(info: GalleryInfo): BrowseOverflowKind {
     }
 }
 
+/** Real image folders. Zip projections stay on the archive upload path. */
+internal fun historyGalleryConvertible(info: GalleryInfo): Boolean {
+    if (!historyOverflowHasPhotoGrid(info)) return false
+    val relative = when (val target = LocalHistory.parse(info)) {
+        is LocalHistoryTarget.LocalFolderGallery -> target.relativePath
+        is LocalHistoryTarget.SmbFolderGallery -> target.remoteDir
+        is LocalHistoryTarget.WebDavFolderGallery -> target.remoteDir
+        is LocalHistoryTarget.LibraryGallery -> return true
+        else -> return false
+    }
+    return ZipAsDirListing.parseZipGalleryRelative(relative) == null
+}
+
 internal fun historyOverflowHasPhotoGrid(info: GalleryInfo): Boolean = when (LocalHistory.parse(info)) {
     is LocalHistoryTarget.LocalFolderGallery,
     is LocalHistoryTarget.SmbFolderGallery,
@@ -196,6 +209,11 @@ internal fun historyOverflowActions(
             env.io {
                 snackbar(context.getString(R.string.browse_action_not_supported))
             }
+        },
+        selectFolder = historyGalleryConvertible(info),
+        selectTitle = historyDisplayName(info),
+        recordOpen = {
+            env.io { EhDB.putHistoryInfo(info) }
         },
     )
 }
