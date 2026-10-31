@@ -114,6 +114,8 @@ fun BrowseItemOverflowButton(
     val saveTransfer = rememberSaveToTransferPicker()
     val confirmDelete = rememberNetworkDeleteConfirmation()
     val explorer = LocalExplorerPanel.current
+    val galleryConvert = galleryConversionRoot(actions)
+    val canConvert = galleryConvert != null || (actions.onConvert != null && actions.convertStill != null)
     val shortcutUnsupported = stringResource(R.string.browse_shortcut_unsupported)
     val grid = placement == BrowseOverflowPlacement.GridBottomEnd
     val more = stringResource(R.string.browse_item_more)
@@ -189,7 +191,7 @@ fun BrowseItemOverflowButton(
                 convertMenu = false
                 (action ?: actions.onUnsupported)()
             }
-            if (convertMenu && actions.onConvert != null && actions.convertStill != null) {
+            if (convertMenu && canConvert) {
                 val convert = actions.convertStill
                 DropdownMenuItem(
                     text = { Text(stringResource(R.string.convert_back)) },
@@ -207,7 +209,7 @@ fun BrowseItemOverflowButton(
                     StillExportTarget.AvifGainMap to R.string.convert_avif_gain_map,
                     StillExportTarget.AvifPq to R.string.convert_avif_pq,
 
-                ).filter { (target, _) -> target.visibleForSources(isHdrExportFileName(actions.selectTitle)) }.forEach { (target, label) ->
+                ).filter { (target, _) -> if (galleryConvert != null) target.available else target.visibleForSources(isHdrExportFileName(actions.selectTitle)) }.forEach { (target, label) ->
                     DropdownMenuItem(
                         text = { Text(stringResource(label)) },
                         onClick = {
@@ -215,7 +217,11 @@ fun BrowseItemOverflowButton(
                             convertMenu = false
                             val title = actions.selectTitle?.takeIf { it.isNotBlank() }
                                 ?: context.getString(R.string.convert_to)
-                            beginSingleConvert(scope, snackbar, context, title, target, convert)
+                            if (galleryConvert != null) {
+                                beginGalleryConvert(scope, snackbar, context, galleryConvert, target)
+                            } else if (convert != null) {
+                                beginSingleConvert(scope, snackbar, context, title, target, convert)
+                            }
                         },
                     )
                 }
@@ -369,7 +375,7 @@ fun BrowseItemOverflowButton(
                     },
                 )
             }
-            if (actions.onConvert != null) {
+            if (canConvert) {
                 DropdownMenuItem(
                     text = { Text(stringResource(R.string.convert_to)) },
                     onClick = { convertMenu = true },

@@ -736,6 +736,11 @@ object FolderSelectHost {
         }
     }
 
+    internal fun rememberGallerySelection(key: String, title: String, picks: List<FolderPick>, place: FolderPlace?) {
+        rememberFolder(key, FolderMemory(selecting = false, picks = picks, folderName = title, snackbar = picks.isNotEmpty(), place = place))
+        focusFolder(key)
+    }
+
     /** Point actions at [folderKey] without opening the panel. */
     fun focusFolder(folderKey: String) {
         shownFolderKey = folderKey
@@ -1950,7 +1955,7 @@ internal suspend fun enqueueSingleConvert(
     }
 }
 
-private fun beginConvert(
+internal fun beginConvert(
     scope: CoroutineScope,
     snackbar: SnackbarHostState,
     context: Context,
