@@ -135,7 +135,10 @@ internal fun uploadRoot(source: TransferLocation, title: String, directory: Bool
 /** One source appears once, including ZIP projections; root names are unique within the job. */
 internal fun uploadSelectionRoots(files: List<TransferFile>): List<TransferFile> {
     val names = HashSet<String>()
-    return files.map { uploadRoot(it.source, it.relative, it.directory, it.size, it.mtime) }
+    return files.map { file ->
+        val root = uploadRoot(file.source, file.relative, file.directory, file.size, file.mtime)
+        root.copy(galleryImages = file.galleryImages?.takeIf { root.directory })
+    }
         .distinctBy { it.source }
         .map { file ->
             var name = file.relative
@@ -184,7 +187,7 @@ internal object UploadTransfers {
         scope.launch(Dispatchers.Main.immediate) {
             try {
                 val file = entry.file()
-                val files = withContext(Dispatchers.IO) { collectGalleryTransferFiles(file, entry.gallery) }
+                val files = withContext(Dispatchers.IO) { collectGalleryTransferFiles(file, entry.gallery, GalleryFileAction.Upload) }
                 if (files.isEmpty()) {
                     Toast.makeText(appCtx, R.string.browse_action_not_supported, Toast.LENGTH_LONG).show()
                     return@launch
@@ -260,7 +263,7 @@ internal object UploadTransfers {
                     rows += UploadRow(file)
                     if (rows.size % 64 == 0) job.state.update { it.copy(rows = rows.toList()) }
                     if (file.directory) {
-                        for (child in TransferFiles.children(file.source)) {
+                        for (child in file.galleryImages ?: TransferFiles.children(file.source)) {
                             require(child.relative.isNotEmpty() && child.relative != "." && child.relative != ".." && '/' !in child.relative && '\\' !in child.relative)
                             walk(child.copy(relative = "${file.relative}/${child.relative}"), depth + 1)
                         }

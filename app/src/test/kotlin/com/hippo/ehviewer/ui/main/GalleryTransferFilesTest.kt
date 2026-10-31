@@ -15,6 +15,68 @@ class GalleryTransferFilesTest {
     private fun child(name: String, directory: Boolean = false) = TransferFile(source.child(name), name, directory, 123, 456)
 
     @Test
+    fun galleryDeleteMovesWholeFolderWithFewerThanThreeNonImageFiles() = runBlocking {
+        val images = listOf(child("1.jpg"), child("2.webp"))
+        for (extraCount in 0..2) {
+            val result = collectGalleryTransferFiles(gallery, true, GalleryFileAction.Delete) {
+                images + (1..extraCount).map { child("sidecar-$it.txt") }
+            }
+            assertEquals(listOf(gallery), result)
+        }
+        val result = collectGalleryTransferFiles(gallery, true, GalleryFileAction.Delete) {
+            images + (1..3).map { child("sidecar-$it.txt") }
+        }
+        assertEquals(images, result)
+    }
+
+    @Test
+    fun galleryDeleteKeepsFolderWhenAnySubfolderExists() = runBlocking {
+        val image = child("1.jpg")
+        for (name in listOf("nested", ".trash")) {
+            assertEquals(
+                listOf(image),
+                collectGalleryTransferFiles(gallery, true, GalleryFileAction.Delete) {
+                    listOf(image, child(name, true))
+                },
+            )
+        }
+    }
+
+    @Test
+    fun sourceRootGalleryDeletesImagesInsteadOfTryingToMoveStorageRoot() = runBlocking {
+        val image = child("1.jpg")
+        assertEquals(listOf(image), collectGalleryTransferFiles(gallery.copy(source = source.copy(path = "")), true, GalleryFileAction.Delete) { listOf(image) })
+        val safRoot = TransferLocation(ExplorerWindows.Kind.Local, 0, "content:/provider/tree/primary%3APhotos/document/primary%3APhotos")
+        assertEquals(listOf(image), collectGalleryTransferFiles(gallery.copy(source = safRoot), true, GalleryFileAction.Delete) { listOf(image) })
+        val safFolder = safRoot.copy(path = safRoot.path + "/album")
+        val folder = gallery.copy(source = safFolder)
+        assertEquals(listOf(folder), collectGalleryTransferFiles(folder, true, GalleryFileAction.Delete) { listOf(image) })
+    }
+
+    @Test
+    fun galleryUploadCreatesNamedFolderWithOnlyTheCollectedImages() = runBlocking {
+        val image = child("1.jpg")
+        val result = collectGalleryTransferFiles(gallery, true, GalleryFileAction.Upload) {
+            listOf(image, child("notes.txt"), child("nested", true), child("clip.mp4"))
+        }.single()
+        assertTrue(result.directory)
+        assertEquals("Album", result.relative)
+        assertEquals(listOf(image), result.galleryImages)
+        assertEquals(result, uploadSelectionRoots(listOf(result)).single())
+        val empty = collectGalleryTransferFiles(gallery, true, GalleryFileAction.Upload) { listOf(child("notes.txt")) }
+        assertTrue(empty.isEmpty())
+    }
+
+    @Test
+    fun sameNamedGalleryUploadsKeepSeparateFolderRootsAndImageSnapshots() = runBlocking {
+        val first = collectGalleryTransferFiles(gallery, true, GalleryFileAction.Upload) { listOf(child("1.jpg")) }.single()
+        val second = first.copy(source = source.copy(path = "other/album"))
+        val roots = uploadSelectionRoots(listOf(first, second))
+        assertEquals(listOf("Album", "Album (2)"), roots.map { it.relative })
+        assertTrue(roots.all { it.galleryImages == first.galleryImages })
+    }
+
+    @Test
     fun galleryCollectsOnlyDirectImagesWithTheirMetadata() = runBlocking {
         var listings = 0
         val image2 = child("2.jpg")

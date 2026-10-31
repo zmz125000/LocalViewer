@@ -1718,7 +1718,7 @@ private fun SelectionOverflowControl(
                                         ) to pick.gallery
                                     }
                                 }
-                                val files = collectTransferFilesForAction(requests, snackbar, context) ?: return@launch
+                                val files = collectTransferFilesForAction(requests, snackbar, context, GalleryFileAction.Upload) ?: return@launch
                                 UploadTransfers.prepare(files)?.let { job ->
                                     requests.firstOrNull()?.first?.let { UploadTransfers.recordUploadHistory(it, parentOnly = true) }
                                     FolderSelectHost.cancelShownSelection()
@@ -1744,7 +1744,7 @@ private fun SelectionOverflowControl(
                                         pick.listLine?.lastModifiedMs ?: 0L,
                                     ) to pick.gallery
                                 }
-                                val files = collectTransferFilesForAction(requests, snackbar, context) ?: return@launch
+                                val files = collectTransferFilesForAction(requests, snackbar, context, GalleryFileAction.Delete) ?: return@launch
                                 confirmDelete(files)
                             }
                         },

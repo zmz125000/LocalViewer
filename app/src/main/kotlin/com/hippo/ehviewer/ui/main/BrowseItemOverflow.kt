@@ -156,7 +156,7 @@ fun BrowseItemOverflowButton(
             if (saveQuick) {
                 UploadTransfers.chooseSavedUploadDestination(file, gallery = actions.kind == BrowseOverflowKind.Gallery && actions.onPhotoGrid != null)
             } else {
-                val files = collectTransferFilesForAction(listOf(file to (actions.kind == BrowseOverflowKind.Gallery && actions.onPhotoGrid != null)), snackbar, context) ?: return@launch
+                val files = collectTransferFilesForAction(listOf(file to (actions.kind == BrowseOverflowKind.Gallery && actions.onPhotoGrid != null)), snackbar, context, GalleryFileAction.Upload) ?: return@launch
                 val job = UploadTransfers.prepare(files) ?: return@launch
                 if (actions.uploadSource != null) UploadTransfers.recordUploadHistory(file)
                 UploadTransfers.chooseDestination(job)
@@ -368,6 +368,7 @@ fun BrowseItemOverflowButton(
                                     ),
                                     snackbar,
                                     context,
+                                    GalleryFileAction.Delete,
                                 ) ?: return@launch
                                 confirmDelete(files)
                             }
