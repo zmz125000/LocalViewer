@@ -1249,7 +1249,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
 
     val hideBackToFab by Settings.hideBackToFab.collectAsState()
     fun onTopBarBack() {
-        if (folderSelect.selecting && !FolderSelectHost.taskRunning) {
+        if (folderSelect.selecting) {
             folderSelect.exitSelectMode()
             return
         }
@@ -1257,7 +1257,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
     }
 
     BackHandler {
-        if (folderSelect.selecting && !FolderSelectHost.taskRunning) {
+        if (folderSelect.selecting) {
             folderSelect.exitSelectMode()
             return@BackHandler
         }
