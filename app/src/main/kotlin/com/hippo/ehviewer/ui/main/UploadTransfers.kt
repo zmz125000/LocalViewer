@@ -47,13 +47,14 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.sync.withPermit
+import kotlinx.coroutines.withContext
 import okio.Path.Companion.toPath
 import splitties.init.appCtx
 
 internal enum class UploadPhase { Preparing, Ready, Running, Paused, Finished, Stopped, Failed }
 internal enum class UploadFileStatus { Pending, Running, Succeeded, Skipped, Failed }
 internal data class UploadRow(val file: TransferFile, val status: UploadFileStatus = UploadFileStatus.Pending, val detail: String? = null)
-internal data class SavedUploadDraft(val id: Long, val file: TransferFile)
+internal data class SavedUploadDraft(val id: Long, val file: TransferFile, val gallery: Boolean = false)
 internal data class UploadState(
     val phase: UploadPhase = UploadPhase.Preparing,
     val deleting: Boolean = false,
@@ -134,7 +135,10 @@ internal fun uploadRoot(source: TransferLocation, title: String, directory: Bool
 /** One source appears once, including ZIP projections; root names are unique within the job. */
 internal fun uploadSelectionRoots(files: List<TransferFile>): List<TransferFile> {
     val names = HashSet<String>()
-    return files.map { uploadRoot(it.source, it.relative, it.directory, it.size, it.mtime) }
+    return files.map { file ->
+        val root = uploadRoot(file.source, file.relative, file.directory, file.size, file.mtime)
+        root.copy(galleryImages = file.galleryImages?.takeIf { root.directory })
+    }
         .distinctBy { it.source }
         .map { file ->
             var name = file.relative
@@ -165,23 +169,39 @@ internal object UploadTransfers {
     val jobs = _jobs.asStateFlow()
     var panelId by mutableStateOf<Long?>(null)
     var destinationJobId by mutableStateOf<Long?>(null)
+    private var skipDestinationPanelFor: Long? = null
     private var savedUploadDraft by mutableStateOf<SavedUploadDraft?>(null)
     val destinationRequestId get() = savedUploadDraft?.id ?: destinationJobId
     val choosingDestination get() = destinationRequestId != null
 
-    fun chooseSavedUploadDestination(file: TransferFile) {
+    fun chooseSavedUploadDestination(file: TransferFile, gallery: Boolean = false) {
         panelId = null
+        skipDestinationPanelFor = null
         destinationJobId = null
-        savedUploadDraft = SavedUploadDraft(ids.getAndIncrement(), uploadRoot(file.source, file.relative, file.directory, file.size, file.mtime))
+        savedUploadDraft = SavedUploadDraft(ids.getAndIncrement(), uploadRoot(file.source, file.relative, file.directory, file.size, file.mtime), gallery)
     }
 
     fun hasDestinationRequest(id: Long) = savedUploadDraft?.id == id || job(id) != null
 
     fun openSavedUpload(entry: SavedUploads.Entry) {
-        val file = entry.file()
-        val job = prepare(listOf(file)) ?: return
-        recordUploadHistory(file)
-        destination(entry.destination.transfer(), entry.destinationLabel, job.id)
+        scope.launch(Dispatchers.Main.immediate) {
+            try {
+                val file = entry.file()
+                val files = withContext(Dispatchers.IO) { collectGalleryTransferFiles(file, entry.gallery, GalleryFileAction.Upload) }
+                if (files.isEmpty()) {
+                    Toast.makeText(appCtx, R.string.browse_action_not_supported, Toast.LENGTH_LONG).show()
+                    return@launch
+                }
+                val job = prepare(files) ?: return@launch
+                recordUploadHistory(file)
+                destination(entry.destination.transfer(), entry.destinationLabel, job.id)
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Throwable) {
+                logcat("FileTransfer", error)
+                Toast.makeText(appCtx, error.message ?: appCtx.getString(R.string.browse_open_failed), Toast.LENGTH_LONG).show()
+            }
+        }
     }
 
     fun recordUploadHistory(file: TransferFile, parentOnly: Boolean = false) {
@@ -243,7 +263,7 @@ internal object UploadTransfers {
                     rows += UploadRow(file)
                     if (rows.size % 64 == 0) job.state.update { it.copy(rows = rows.toList()) }
                     if (file.directory) {
-                        for (child in TransferFiles.children(file.source)) {
+                        for (child in file.galleryImages ?: TransferFiles.children(file.source)) {
                             require(child.relative.isNotEmpty() && child.relative != "." && child.relative != ".." && '/' !in child.relative && '\\' !in child.relative)
                             walk(child.copy(relative = "${file.relative}/${child.relative}"), depth + 1)
                         }
@@ -327,7 +347,7 @@ internal object UploadTransfers {
                                     BrowseSession.invalidateWebDavListing(parent.sourceId, parent.path)
                                     BrowseSession.invalidateWebDavListingsUnder(row.file.source.sourceId, row.file.source.path)
                                 }
-                                ExplorerWindows.Kind.Local -> Unit
+                                ExplorerWindows.Kind.Local -> BrowseSession.invalidateLocalListing()
                             }
                         } catch (error: CancellationException) {
                             throw error
@@ -365,7 +385,7 @@ internal object UploadTransfers {
         return when {
             causes.any { it is com.hippo.ehviewer.library.TrashProtectedException } -> appCtx.getString(R.string.transfer_delete_trash_protected)
             causes.any { it is UnsupportedOperationException } || status in listOf(0xC00000BBL, 0xC0000010L, 0xC0000002L) -> appCtx.getString(R.string.transfer_delete_unsupported)
-            status in listOf(0xC0000022L, 0xC0000061L) || davStatus == 401 || davStatus == 403 -> appCtx.getString(R.string.transfer_delete_access_denied)
+            causes.any { it is SecurityException } || status in listOf(0xC0000022L, 0xC0000061L) || davStatus == 401 || davStatus == 403 -> appCtx.getString(R.string.transfer_delete_access_denied)
             else -> error.message ?: appCtx.getString(R.string.browse_task_failed)
         }
     }
@@ -379,15 +399,16 @@ internal object UploadTransfers {
     fun remove(job: UploadJob, relative: String) {
         job.state.update { if (it.editable) it.copy(rows = removeUploadSubtree(it.rows, relative)) else it }
     }
-    fun chooseDestination(job: UploadJob) {
+    fun chooseDestination(job: UploadJob, showPanelAfterSelection: Boolean = true) {
         if (!job.state.value.editable && job.state.value.phase != UploadPhase.Preparing) return
         panelId = null
         savedUploadDraft = null
         destinationJobId = job.id
+        skipDestinationPanelFor = job.id.takeUnless { showPanelAfterSelection }
     }
     fun destination(location: TransferLocation, label: String, jobId: Long? = destinationRequestId) {
         savedUploadDraft?.takeIf { it.id == jobId }?.let { draft ->
-            SavedUploads.remember(draft.file, location, label)
+            SavedUploads.remember(draft.file, location, label, draft.gallery)
             savedUploadDraft = null
             return
         }
@@ -395,11 +416,13 @@ internal object UploadTransfers {
         if (!job.state.value.editable && job.state.value.phase != UploadPhase.Preparing) return
         job.state.update { it.copy(destination = location, destinationLabel = label, startWhenReady = it.autoStart) }
         destinationJobId = null
-        panelId = job.id
+        if (skipDestinationPanelFor != job.id) panelId = job.id
+        skipDestinationPanelFor = null
         if (job.state.value.autoStart && job.state.value.editable) start(job)
     }
     fun cancelDestination() {
         destinationJobId = null
+        skipDestinationPanelFor = null
         savedUploadDraft = null
     }
     fun toggleBackground(job: UploadJob) {
@@ -497,7 +520,7 @@ internal object UploadTransfers {
                     when (source.kind) {
                         ExplorerWindows.Kind.Smb -> BrowseSession.notifySmbMutation(source.sourceId, parent)
                         ExplorerWindows.Kind.WebDav -> BrowseSession.notifyWebDavMutation(source.sourceId, parent)
-                        ExplorerWindows.Kind.Local -> Unit
+                        ExplorerWindows.Kind.Local -> BrowseSession.notifyLocalMutation()
                     }
                 }
             }

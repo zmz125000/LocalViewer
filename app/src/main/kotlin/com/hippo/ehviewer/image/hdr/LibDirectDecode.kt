@@ -76,6 +76,8 @@ data class LibDirectResult(
     val sourceExif: ByteArray? = null,
     /** Encoded component precision captured by the native decoder before conversion. */
     val sourceBitDepth: Int? = null,
+    /** Gain map applied during native decoding, even when the returned bitmap is flattened HDR. */
+    val sourceHasGainmap: Boolean = false,
 )
 
 /**
@@ -307,6 +309,7 @@ object LibDirectDecode {
             )?.copy(
                 sourceExif = packed.sourceExif,
                 sourceBitDepth = packed.outInfo.getOrNull(6)?.takeIf { it in 1..32 },
+                sourceHasGainmap = packed.outInfo.getOrNull(7) == 1,
             )
         } finally {
             // Upload/copy has completed (or failed); no bitmap references this buffer.
@@ -366,7 +369,7 @@ object LibDirectDecode {
     ): PackedPixels? = withStillInput(src) { buffer ->
         if (!buffer.hasRemaining()) return@withStillInput null
         if (codec == LibCodec.HevcHdr) return@withStillInput decodeHevcHdrPacked(buffer, maxEdge, advanced, export)
-        val outInfo = IntArray(7)
+        val outInfo = IntArray(8)
         val outBoost = FloatArray(1)
         // Existing RAM-backed pages reuse the source array; mapped archive/local
         // inputs go directly to JNI without a compressed Java-array copy.

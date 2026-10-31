@@ -1374,6 +1374,7 @@
     <string name="transfer_delete_stopped_summary">%1$d/%2$d/%3$d/%4$d · Delete stopped.</string>
     <string name="transfer_delete_unsupported">This source or server does not support moving this item to .trash.</string>
     <string name="transfer_delete_access_denied">Access denied while moving the item to .trash.</string>
+    <string name="transfer_local_move">Storage move</string>
     <string name="transfer_server_move">Server move</string>
     <string name="transfer_item_count">%d items</string>
     <string name="transfer_source_unavailable">This item is busy, being deleted, or no longer available. Refresh the folder before trying again.</string>

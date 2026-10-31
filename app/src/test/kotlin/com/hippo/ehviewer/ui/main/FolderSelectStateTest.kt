@@ -22,6 +22,23 @@ class FolderSelectStateTest {
     }
 
     @Test
+    fun galleryImageListUsesSelectionWithoutReplacingAnotherFoldersPicks() {
+        val state = FolderSelectState()
+        state.bindFolder("parent", "Photos")
+        FolderSelectHost.attach(state)
+        state.enter(pick("parent-file", "keep.jpg"))
+        val images = listOf(pick("gallery-1", "one.jpg"), pick("gallery-2", "two.jpg"))
+        FolderSelectHost.rememberGallerySelection("gallery", "Album", images, null)
+        assertEquals(listOf("parent-file"), state.picks.map { it.key })
+        assertEquals(images, FolderSelectHost.selectionPicks)
+        assertEquals("Album", FolderSelectHost.selectionSnack?.folderName)
+        assertEquals(2, FolderSelectHost.selectionSnack?.count)
+        FolderSelectHost.removeShownPick("gallery-1")
+        assertEquals(listOf("gallery-2"), FolderSelectHost.selectionPicks.map { it.key })
+        assertEquals(listOf("parent-file"), state.picks.map { it.key })
+    }
+
+    @Test
     fun overflowSelectMarksThatItemAndEntersSelectMode() {
         val state = FolderSelectState()
         state.bindFolder("a")

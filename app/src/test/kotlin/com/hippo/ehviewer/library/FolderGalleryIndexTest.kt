@@ -12,6 +12,94 @@ import org.junit.Test
 
 class FolderGalleryIndexTest {
     @Test
+    fun refreshUpdatesPromotedAncestorGalleryWithoutChangingItsSiblings() {
+        val promoted = gallery(relativeName = "nested/album", names = listOf("old.jpg"))
+        val sibling = gallery(relativeName = "other", names = listOf("keep.jpg"))
+        val entries = listOf(promoted, sibling)
+        val refreshed = FolderGalleryIndex.refreshAncestorGalleryPages(entries, "photos", "photos/nested/album", listOf("new.jpg", "next.jpg"))
+        val updated = refreshed.first() as BrowseEntryRemote.FolderGallery
+        assertEquals(listOf("new.jpg", "next.jpg"), updated.imageFileNames)
+        assertEquals(2, updated.pageCount)
+        assertEquals("new.jpg", updated.coverFileName)
+        assertEquals(sibling, refreshed.last())
+        assertEquals(listOf(sibling), FolderGalleryIndex.refreshAncestorGalleryPages(entries, "photos", "photos/nested/album", emptyList()))
+    }
+
+    @Test
+    fun successfulPhotoGridRefreshReplacesNamesAndMetadataButKeepsOtherContents() {
+        val previous = FolderGalleryIndex.listingFromImageNames("album", listOf("old.jpg", "kept.jpg"))
+            .map { if (it is BrowseEntryRemote.RegularFile) it.copy(size = 1, lastModifiedMs = 2) else it } +
+            BrowseEntryRemote.RegularFile("notes.txt") + BrowseEntryRemote.VideoFile("clip.mp4")
+        val refreshed = FolderGalleryIndex.refreshedPhotoGridListing(
+            previous,
+            "album",
+            listOf(RemoteChild("kept.jpg", false, size = 123, lastModifiedMs = 456), RemoteChild("new.webp", false, size = 789, lastModifiedMs = 999)),
+        )
+        assertEquals(listOf("kept.jpg", "new.webp"), FolderGalleryIndex.namesFromListing("album", refreshed, "album"))
+        val kept = refreshed.filterIsInstance<BrowseEntryRemote.RegularFile>().first { it.fileName == "kept.jpg" }
+        assertEquals(123L, kept.size)
+        assertEquals(456L, kept.lastModifiedMs)
+        assertTrue(refreshed.any { it.name == "notes.txt" })
+        assertTrue(refreshed.any { it.name == "clip.mp4" })
+        assertTrue(refreshed.none { it.name == "old.jpg" })
+    }
+
+    @Test
+    fun refreshingAfterLastPhotoDeletionClearsTheSavedImageList() = runBlocking {
+        val previous = FolderGalleryIndex.listingFromImageNames("album", listOf("deleted.jpg"))
+        val refreshed = FolderGalleryIndex.refreshedPhotoGridListing(previous, "album", emptyList())
+        assertTrue(refreshed.isEmpty())
+        assertEquals(
+            emptyList<String>(),
+            FolderGalleryIndex.namesWalkingParents("album", authoritativeDirect = true) { dir ->
+                if (dir == "album") refreshed else previous
+            },
+        )
+    }
+
+    @Test
+    fun authoritativeDirectImagesAreCompleteEvenBeforeChildFolderPeeksFinish() = runBlocking {
+        val direct = listOf(BrowseEntryRemote.Directory("child", hasVideo = false, hasGallery = false, presence = DirPresence.Pending))
+        val stale = FolderGalleryIndex.listingFromImageNames("album", listOf("deleted.jpg"))
+        assertEquals(
+            emptyList<String>(),
+            FolderGalleryIndex.namesWalkingParents("album", authoritativeDirect = true) { dir ->
+                if (dir == "album") direct else stale
+            },
+        )
+    }
+
+    @Test
+    fun deletedPhotosAreRemovedWhileOtherFolderContentsStay() = runBlocking {
+        val previous = FolderGalleryIndex.listingFromImageNames("album", listOf("a.jpg", "b.jpg")) +
+            BrowseEntryRemote.RegularFile("notes.txt") + BrowseEntryRemote.VideoFile("clip.mp4")
+        val remaining = FolderGalleryIndex.mergeLibraryFolderPages(previous, "album", listOf("b.jpg"))
+        assertEquals(listOf("b.jpg"), FolderGalleryIndex.namesFromListing("album", remaining, "album"))
+        val empty = FolderGalleryIndex.mergeLibraryFolderPages(remaining, "album", emptyList())
+        assertEquals(listOf("notes.txt", "clip.mp4"), empty.map { it.name })
+        assertEquals(emptyList<String>(), FolderGalleryIndex.namesWalkingParents("album", authoritativeDirect = true) { empty })
+    }
+
+    @Test
+    fun emptyDirectFolderDoesNotResurrectDeletedPhotosFromParent() = runBlocking {
+        val staleParent = FolderGalleryIndex.listingFromImageNames("album", listOf("deleted.jpg"))
+            .map { if (it is BrowseEntryRemote.FolderGallery) it.copy(relativeName = "album") else it }
+        val names = FolderGalleryIndex.namesWalkingParents("album", authoritativeDirect = true) { dir ->
+            if (dir == "album") emptyList() else staleParent
+        }
+        assertEquals(emptyList<String>(), names)
+    }
+
+    @Test
+    fun deletingLastVideoPreservesPhotosAndOtherFiles() {
+        val previous = FolderGalleryIndex.listingFromImageNames("album", listOf("a.jpg")) +
+            BrowseEntryRemote.VideoFile("clip.mp4")
+        val merged = FolderGalleryIndex.mergeLibraryFolderVideos(previous, emptyList())
+        assertTrue(merged.none { it is BrowseEntryRemote.VideoFile })
+        assertEquals(listOf("a.jpg"), FolderGalleryIndex.namesFromListing("album", merged, "album"))
+    }
+
+    @Test
     fun remotePhotoGridFillsSizeAndDateWithoutLosingExistingValues() {
         val rows = listOf(
             BrowseEntryRemote.RegularFile("a.jpg", size = 10, lastModifiedMs = 20),

@@ -19,6 +19,15 @@ const val BROWSE_IMAGE_SCAN_CAP = 128
  * Survives navigating to the reader (unlike [androidx.compose.runtime.remember]).
  */
 object BrowseSession {
+    private val _localMutations = MutableSharedFlow<Unit>(extraBufferCapacity = 1, onBufferOverflow = BufferOverflow.DROP_OLDEST)
+    val localMutations = _localMutations.asSharedFlow()
+
+    fun notifyLocalMutation() {
+        LocalFolderListing.cancelListingJobs()
+        invalidateLocalListing()
+        _localMutations.tryEmit(Unit)
+    }
+
     private val _smbMutations = MutableSharedFlow<Pair<Long, String>>(extraBufferCapacity = 64, onBufferOverflow = BufferOverflow.DROP_OLDEST)
     val smbMutations = _smbMutations.asSharedFlow()
 
@@ -472,7 +481,9 @@ object BrowseSession {
      */
     fun rememberLocalRawChildren(pathKey: String, load: () -> List<RemoteChild>): List<RemoteChild> {
         localRawChildren[pathKey]?.let { return it }
+        val started = networkSourceGuard.listingStarted()
         val children = load().withoutProtectedSystemNames()
+        networkSourceGuard.listed(TransferLocation(ExplorerWindows.Kind.Local, 0, pathKey), children.map { it.name }, started)
         return localRawChildren.putIfAbsent(pathKey, children) ?: children
     }
 

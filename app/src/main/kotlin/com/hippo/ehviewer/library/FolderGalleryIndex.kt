@@ -4,6 +4,11 @@ import com.ehviewer.core.database.model.LOCAL_GALLERY_KIND_ARCHIVE
 import com.ehviewer.core.database.model.LOCAL_GALLERY_KIND_VIDEO_FILE
 import com.ehviewer.core.database.model.LocalGalleryEntity
 import com.ehviewer.core.model.GalleryInfo
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.withContext
 import okio.Path
 import okio.Path.Companion.toPath
 
@@ -20,6 +25,120 @@ import okio.Path.Companion.toPath
  * A complete cache hit opens the same way as the folder path; missing pages stay per-page errors.
  */
 object FolderGalleryIndex {
+    private val _localRevision = MutableStateFlow(0L)
+    val localRevision = _localRevision.asStateFlow()
+
+    /** Replace direct image rows from the successful raw listing, retaining other folder contents. */
+    fun refreshedPhotoGridListing(previous: List<BrowseEntryRemote>?, title: String, children: List<RemoteChild>): List<BrowseEntryRemote> {
+        val images = children.filter { !it.isDirectory && isImageFileName(it.name) }.associateBy { it.name }
+        val names = images.keys.sortedWith { a, b -> naturalCompare(a, b) }
+        return mergeLibraryFolderPages(previous, title, names).map { entry ->
+            if (entry is BrowseEntryRemote.RegularFile) {
+                images[entry.fileName]?.let { entry.copy(size = it.size, lastModifiedMs = it.lastModifiedMs, hidden = it.hidden) } ?: entry
+            } else {
+                entry
+            }
+        }
+    }
+
+    suspend fun persistPhotoGridRefresh(
+        kind: ExplorerWindows.Kind,
+        sourceId: Long,
+        configKey: String,
+        relativeDir: String,
+        children: List<RemoteChild>,
+        pathAlias: Path? = null,
+    ): List<BrowseEntryRemote> = withContext(NonCancellable) {
+        val previous = when (kind) {
+            ExplorerWindows.Kind.Local -> BrowseSession.getLocalFolderCachedListing(sourceId, relativeDir)?.entries
+                ?: NetworkFolderIndexCache.loadLocal(sourceId, configKey, relativeDir)
+            ExplorerWindows.Kind.Smb -> BrowseSession.getSmbListing(sourceId, relativeDir)
+                ?: NetworkFolderIndexCache.loadSmb(sourceId, configKey, relativeDir)
+            ExplorerWindows.Kind.WebDav -> BrowseSession.getWebDavListing(sourceId, relativeDir)
+                ?: NetworkFolderIndexCache.loadWebDav(sourceId, configKey, relativeDir)
+        }
+        val refreshed = refreshedPhotoGridListing(previous, relativeDir.substringAfterLast('/'), children)
+        val sessionCurrent = when (kind) {
+            ExplorerWindows.Kind.Local -> BrowseSession.getLocalFolderCachedListing(sourceId, relativeDir)?.sessionCurrent
+            ExplorerWindows.Kind.Smb -> BrowseSession.getSmbCachedListing(sourceId, relativeDir)?.sessionCurrent
+            ExplorerWindows.Kind.WebDav -> BrowseSession.getWebDavCachedListing(sourceId, relativeDir)?.sessionCurrent
+        } == true
+        persistPhotoGridListing(kind, sourceId, configKey, relativeDir, refreshed, pathAlias, sessionCurrent)
+    }
+
+    /** Keep the self index and cached ancestor gallery rows on the same refreshed page list. */
+    suspend fun persistPhotoGridListing(
+        kind: ExplorerWindows.Kind,
+        sourceId: Long,
+        configKey: String,
+        relativeDir: String,
+        refreshed: List<BrowseEntryRemote>,
+        pathAlias: Path? = null,
+        sessionCurrent: Boolean = true,
+    ): List<BrowseEntryRemote> = withContext(NonCancellable) {
+        fun ram(dir: String): List<BrowseEntryRemote>? = when (kind) {
+            ExplorerWindows.Kind.Local -> if (ZipAsDirListing.splitZipBrowsePath(dir) != null) {
+                BrowseSession.getLocalCachedListing(BrowseSession.localZipListingKey(sourceId, dir))?.entries
+            } else {
+                BrowseSession.getLocalFolderCachedListing(sourceId, dir)?.entries
+            }
+            ExplorerWindows.Kind.Smb -> BrowseSession.getSmbListing(sourceId, dir)
+            ExplorerWindows.Kind.WebDav -> BrowseSession.getWebDavListing(sourceId, dir)
+        }
+        fun isCurrent(dir: String): Boolean = when (kind) {
+            ExplorerWindows.Kind.Local -> if (ZipAsDirListing.splitZipBrowsePath(dir) != null) {
+                BrowseSession.getLocalCachedListing(BrowseSession.localZipListingKey(sourceId, dir))?.sessionCurrent
+            } else {
+                BrowseSession.getLocalFolderCachedListing(sourceId, dir)?.sessionCurrent
+            }
+            ExplorerWindows.Kind.Smb -> BrowseSession.getSmbCachedListing(sourceId, dir)?.sessionCurrent
+            ExplorerWindows.Kind.WebDav -> BrowseSession.getWebDavCachedListing(sourceId, dir)?.sessionCurrent
+        } == true
+        fun putRam(dir: String, listing: List<BrowseEntryRemote>, alias: Path?, current: Boolean) {
+            when (kind) {
+                ExplorerWindows.Kind.Local -> if (ZipAsDirListing.splitZipBrowsePath(dir) != null) {
+                    BrowseSession.putLocalListing(BrowseSession.localZipListingKey(sourceId, dir), listing, sessionCurrent = current)
+                } else {
+                    BrowseSession.putLocalFolderListing(sourceId, dir, listing, sessionCurrent = current, pathAlias = alias)
+                }
+                ExplorerWindows.Kind.Smb -> BrowseSession.putSmbListing(sourceId, dir, listing, sessionCurrent = current)
+                ExplorerWindows.Kind.WebDav -> BrowseSession.putWebDavListing(sourceId, dir, listing, sessionCurrent = current)
+            }
+        }
+        val stored = NetworkFolderIndexCache.savePhotoGrid(kind, sourceId, configKey, relativeDir, refreshed)
+        putRam(relativeDir, stored, pathAlias, sessionCurrent)
+        val gallery = normalizeGalleryRelativeDir(relativeDir)
+        val names = namesFromListing(gallery, stored, gallery).orEmpty()
+        var ancestor = gallery
+        var alias = pathAlias
+        while (ancestor.isNotEmpty()) {
+            ancestor = parentRelativeOfFile(ancestor)
+            alias = alias?.parent
+            val previous = ram(ancestor) ?: when (kind) {
+                ExplorerWindows.Kind.Local -> NetworkFolderIndexCache.loadLocal(sourceId, configKey, ancestor)
+                ExplorerWindows.Kind.Smb -> NetworkFolderIndexCache.loadSmb(sourceId, configKey, ancestor)
+                ExplorerWindows.Kind.WebDav -> NetworkFolderIndexCache.loadWebDav(sourceId, configKey, ancestor)
+            } ?: continue
+            val next = refreshAncestorGalleryPages(previous, ancestor, gallery, names)
+            if (next != previous) {
+                val current = isCurrent(ancestor)
+                val saved = NetworkFolderIndexCache.savePhotoGrid(kind, sourceId, configKey, ancestor, next)
+                putRam(ancestor, saved, alias, current)
+            }
+        }
+        stored
+    }
+
+    fun refreshAncestorGalleryPages(entries: List<BrowseEntryRemote>, listedDir: String, galleryDir: String, names: List<String>): List<BrowseEntryRemote> = entries.mapNotNull { entry ->
+        if (entry !is BrowseEntryRemote.FolderGallery || join(listedDir, entry.relativeName) != galleryDir) {
+            entry
+        } else if (names.isEmpty()) {
+            null
+        } else {
+            entry.copy(pageCount = names.size, pageCountCapped = false, coverFileName = names.first(), imageFileNames = names)
+        }
+    }
+
     /**
      * Page names the reader uses from a classified gallery row, or null when it would
      * live-list (capped / empty). Photo-grid open uses the same list and skips a scan.
@@ -67,7 +186,6 @@ object FolderGalleryIndex {
         val pages = listingFromImageNames(dirName, names).map { entry ->
             if (entry is BrowseEntryRemote.RegularFile) knownFiles[entry.fileName] ?: entry else entry
         }
-        if (pages.isEmpty()) return previous.orEmpty()
         if (previous.isNullOrEmpty()) return pages
         if (shouldKeepPreviousFolderIndex(previous, pages) || !isShallowIncompleteListing(previous)) {
             val kept = previous.filter { entry ->
@@ -101,7 +219,6 @@ object FolderGalleryIndex {
     ): List<BrowseEntryRemote> {
         val knownFiles = previous.orEmpty().filterIsInstance<BrowseEntryRemote.VideoFile>().associateBy { it.fileName }
         val videos = names.map { name -> knownFiles[name] ?: BrowseEntryRemote.VideoFile(name = name, fileName = name) }
-        if (videos.isEmpty()) return previous.orEmpty()
         if (previous.isNullOrEmpty()) return videos
         if (shouldKeepPreviousFolderIndex(previous, videos) || !isShallowIncompleteListing(previous)) {
             val kept = previous.filter { entry ->
@@ -143,7 +260,6 @@ object FolderGalleryIndex {
         for (rel in dirs) {
             val imageNames = pages[rel].orEmpty()
             val videoNames = videos[rel].orEmpty()
-            if (imageNames.isEmpty() && videoNames.isEmpty()) continue
             val dir = normalizeGalleryRelativeDir(rel)
             val title = dir.substringAfterLast('/').ifEmpty { "Gallery" }
             val zip = ZipAsDirListing.splitZipBrowsePath(dir) != null
@@ -156,14 +272,13 @@ object FolderGalleryIndex {
             val previous = previousRam?.entries
                 ?: NetworkFolderIndexCache.loadLocal(rootId, configKey, dir)
             var entries = previous
-            if (imageNames.isNotEmpty()) {
+            if (rel in pages) {
                 entries = mergeLibraryFolderPages(entries, title, imageNames)
             }
-            if (videoNames.isNotEmpty()) {
+            if (rel in videos) {
                 entries = mergeLibraryFolderVideos(entries, videoNames)
             }
             val listing = entries.orEmpty()
-            if (listing.isEmpty()) continue
             val sessionCurrent = previousRam?.sessionCurrent == true &&
                 !isImagePagesOnlyListing(listing)
             updates[dir] = listing
@@ -179,6 +294,7 @@ object FolderGalleryIndex {
         for ((ramKey, entries, sessionCurrent) in ram) {
             BrowseSession.putLocalListing(ramKey, entries, sessionCurrent = sessionCurrent)
         }
+        _localRevision.update { it + 1 }
     }
 
     /**
@@ -506,6 +622,7 @@ object FolderGalleryIndex {
      */
     suspend fun namesWalkingParents(
         galleryDir: String,
+        authoritativeDirect: Boolean = false,
         listingFor: suspend (listedDir: String) -> List<BrowseEntryRemote>?,
     ): List<String>? {
         val gallery = normalizeGalleryRelativeDir(galleryDir)
@@ -513,6 +630,13 @@ object FolderGalleryIndex {
         while (true) {
             listingFor(listed)?.let { entries ->
                 namesFromListing(listed, entries, gallery)?.let { return it }
+                // A successful direct listing confirms deletions. Callers with only
+                // partial indexes can still use the parent fallback.
+                if (authoritativeDirect && listed == gallery &&
+                    entries.none { it is BrowseEntryRemote.FolderGallery && it.relativeName.isEmpty() }
+                ) {
+                    return emptyList()
+                }
             }
             if (listed.isEmpty()) break
             listed = parentRelativeOfFile(listed)
@@ -545,7 +669,7 @@ object FolderGalleryIndex {
         sourceId: Long,
         configKey: String,
         galleryDir: String,
-    ): List<String>? = namesWalkingParents(galleryDir) { dir ->
+    ): List<String>? = namesWalkingParents(galleryDir, authoritativeDirect = true) { dir ->
         smbListing(sourceId, configKey, dir)
     }
 
@@ -553,7 +677,7 @@ object FolderGalleryIndex {
         sourceId: Long,
         configKey: String,
         galleryDir: String,
-    ): List<String>? = namesWalkingParents(galleryDir) { dir ->
+    ): List<String>? = namesWalkingParents(galleryDir, authoritativeDirect = true) { dir ->
         webDavListing(sourceId, configKey, dir)
     }
 
@@ -566,7 +690,7 @@ object FolderGalleryIndex {
         configKey: String,
         galleryDir: String,
         rootAbs: Path? = null,
-    ): List<String>? = namesWalkingParents(galleryDir) { dir ->
+    ): List<String>? = namesWalkingParents(galleryDir, authoritativeDirect = true) { dir ->
         localListing(rootId, configKey, dir, rootAbs)
     }
 

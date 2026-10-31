@@ -26,7 +26,8 @@ import kotlinx.serialization.json.jsonPrimitive
  * or re-parsed. Legacy v5 `{protocol}_{id}.json` blobs are split by [migrateFromV5Blob].
  *
  * Current-dir gallery images are stored once ([BrowseEntryRemote.FolderGallery.imageFileNames]);
- * matching [BrowseEntryRemote.RegularFile] rows are rebuilt on load.
+ * matching metadata-free [BrowseEntryRemote.RegularFile] rows are rebuilt on load.
+ * Rows with known file size or modification time are retained.
  */
 internal class FolderIndexDisk(val sourceDir: File) {
     data class Meta(val version: Int, val configKey: String)
@@ -206,7 +207,8 @@ internal class FolderIndexDisk(val sourceDir: File) {
 
         /**
          * Drop current-dir image [BrowseEntryRemote.RegularFile] rows that are already
-         * listed on the self [BrowseEntryRemote.FolderGallery.imageFileNames].
+         * listed on the self [BrowseEntryRemote.FolderGallery.imageFileNames], only
+         * when they have no size/date metadata to preserve.
          */
         internal fun compactListingEntries(entries: List<BrowseEntryRemote>): List<BrowseEntryRemote> {
             val galleryNames = HashSet<String>()
@@ -219,6 +221,7 @@ internal class FolderIndexDisk(val sourceDir: File) {
             if (galleryNames.isEmpty()) return entries
             return entries.filterNot { entry ->
                 entry is BrowseEntryRemote.RegularFile &&
+                    entry.size <= 0L && entry.lastModifiedMs <= 0L &&
                     !entry.hidden &&
                     !entry.virtual &&
                     directChildName(entry.fileName) in galleryNames

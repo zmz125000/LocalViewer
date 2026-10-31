@@ -114,6 +114,8 @@ fun BrowseItemOverflowButton(
     val saveTransfer = rememberSaveToTransferPicker()
     val confirmDelete = rememberNetworkDeleteConfirmation()
     val explorer = LocalExplorerPanel.current
+    val galleryConvert = galleryConversionRoot(actions)
+    val canConvert = galleryConvert != null || (actions.onConvert != null && actions.convertStill != null)
     val shortcutUnsupported = stringResource(R.string.browse_shortcut_unsupported)
     val grid = placement == BrowseOverflowPlacement.GridBottomEnd
     val more = stringResource(R.string.browse_item_more)
@@ -152,9 +154,10 @@ fun BrowseItemOverflowButton(
                 return@launch
             }
             if (saveQuick) {
-                UploadTransfers.chooseSavedUploadDestination(file)
+                UploadTransfers.chooseSavedUploadDestination(file, gallery = actions.kind == BrowseOverflowKind.Gallery && actions.onPhotoGrid != null)
             } else {
-                val job = UploadTransfers.prepare(listOf(file)) ?: return@launch
+                val files = collectTransferFilesForAction(listOf(file to (actions.kind == BrowseOverflowKind.Gallery && actions.onPhotoGrid != null)), snackbar, context, GalleryFileAction.Upload) ?: return@launch
+                val job = UploadTransfers.prepare(files) ?: return@launch
                 if (actions.uploadSource != null) UploadTransfers.recordUploadHistory(file)
                 UploadTransfers.chooseDestination(job)
             }
@@ -188,7 +191,7 @@ fun BrowseItemOverflowButton(
                 convertMenu = false
                 (action ?: actions.onUnsupported)()
             }
-            if (convertMenu && actions.onConvert != null && actions.convertStill != null) {
+            if (convertMenu && canConvert) {
                 val convert = actions.convertStill
                 DropdownMenuItem(
                     text = { Text(stringResource(R.string.convert_back)) },
@@ -206,7 +209,7 @@ fun BrowseItemOverflowButton(
                     StillExportTarget.AvifGainMap to R.string.convert_avif_gain_map,
                     StillExportTarget.AvifPq to R.string.convert_avif_pq,
 
-                ).filter { (target, _) -> target.visibleForSources(isHdrExportFileName(actions.selectTitle)) }.forEach { (target, label) ->
+                ).filter { (target, _) -> if (galleryConvert != null) target.available else target.visibleForSources(isHdrExportFileName(actions.selectTitle)) }.forEach { (target, label) ->
                     DropdownMenuItem(
                         text = { Text(stringResource(label)) },
                         onClick = {
@@ -214,7 +217,11 @@ fun BrowseItemOverflowButton(
                             convertMenu = false
                             val title = actions.selectTitle?.takeIf { it.isNotBlank() }
                                 ?: context.getString(R.string.convert_to)
-                            beginSingleConvert(scope, snackbar, context, title, target, convert)
+                            if (galleryConvert != null) {
+                                beginGalleryConvert(scope, snackbar, context, galleryConvert, target)
+                            } else if (convert != null) {
+                                beginSingleConvert(scope, snackbar, context, title, target, convert)
+                            }
                         },
                     )
                 }
@@ -342,28 +349,34 @@ fun BrowseItemOverflowButton(
                     onClick = { beginUpload(saveQuick = false) },
                 )
             }
-            if (actions.uploadSource?.let { it.kind != com.hippo.ehviewer.library.ExplorerWindows.Kind.Local && !com.hippo.ehviewer.library.isInsideTrashPath(it.path) } == true) {
+            if (actions.uploadSource?.let { com.hippo.ehviewer.library.canTrash(it) } == true) {
                 DropdownMenuItem(
                     text = { Text(stringResource(R.string.delete)) },
                     onClick = {
                         expanded = false
                         actions.uploadSource.let { source ->
-                            confirmDelete(
-                                listOf(
-                                    com.hippo.ehviewer.library.TransferFile(
-                                        source,
-                                        actions.selectTitle ?: source.path.substringAfterLast('/'),
-                                        actions.selectFolder,
-                                        actions.listLine?.sizeBytes ?: -1L,
-                                        actions.listLine?.lastModifiedMs ?: 0L,
+                            scope.launch {
+                                val files = collectTransferFilesForAction(
+                                    listOf(
+                                        com.hippo.ehviewer.library.TransferFile(
+                                            source,
+                                            actions.selectTitle ?: source.path.substringAfterLast('/'),
+                                            actions.selectFolder,
+                                            actions.listLine?.sizeBytes ?: -1L,
+                                            actions.listLine?.lastModifiedMs ?: 0L,
+                                        ) to (actions.kind == BrowseOverflowKind.Gallery && actions.onPhotoGrid != null),
                                     ),
-                                ),
-                            )
+                                    snackbar,
+                                    context,
+                                    GalleryFileAction.Delete,
+                                ) ?: return@launch
+                                confirmDelete(files)
+                            }
                         }
                     },
                 )
             }
-            if (actions.onConvert != null) {
+            if (canConvert) {
                 DropdownMenuItem(
                     text = { Text(stringResource(R.string.convert_to)) },
                     onClick = { convertMenu = true },

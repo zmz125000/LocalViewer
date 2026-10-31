@@ -287,7 +287,9 @@ abstract class PageLoader(
             },
             transfer = transfer,
             rawTransfer = when {
-                transfer == ImageTransfer.GAIN_MAP -> metadata.rawTransfer.takeIf { metadata.transfer == ImageTransfer.GAIN_MAP } ?: "Gainmap"
+                transfer == ImageTransfer.GAIN_MAP -> metadata.rawTransfer.takeIf { metadata.transfer == ImageTransfer.GAIN_MAP }
+                    ?: image.metadata.rawTransfer.takeIf { image.metadata.transfer == ImageTransfer.GAIN_MAP }
+                    ?: "Gainmap"
                 transfer == metadata.transfer -> metadata.rawTransfer
                 transfer == image.metadata.transfer -> image.metadata.rawTransfer
                 else -> null

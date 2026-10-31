@@ -6,6 +6,7 @@ import com.ehviewer.core.util.withIOContext
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.library.BrowseEntryRemote
 import com.hippo.ehviewer.library.BrowseSession
+import com.hippo.ehviewer.library.ExplorerWindows
 import com.hippo.ehviewer.library.FolderGalleryIndex
 import com.hippo.ehviewer.library.FolderSearch
 import com.hippo.ehviewer.library.NetworkFolderIndexCache
@@ -713,7 +714,10 @@ object WebDavGateway {
                     pipeline = false,
                     readahead = false,
                 ).use { src ->
-                    val cd = ZipCentralDirectory.open(src, ZipCdParse.Enter) ?: return@use emptyList()
+                    val cd = ZipCentralDirectory.open(src, ZipCdParse.Enter) ?: run {
+                        if (!useCache) error("Cannot read ZIP central directory")
+                        return@use emptyList()
+                    }
                     val clearedParent = if (stale && parentEntries != null) {
                         ZipAsDirListing.clearZipAsDirStale(parentEntries, zipName)
                     } else {
@@ -734,12 +738,20 @@ object WebDavGateway {
                             sessionCurrent = true,
                         )
                     }
-                    BrowseSession.getWebDavListing(source.id, relativeDir)
-                        ?: ZipAsDirListing.listingAt(cd, inner, title)
+                    if (!useCache) {
+                        val fresh = ZipAsDirListing.listingAt(cd, inner, title)
+                        val stored = FolderGalleryIndex.persistPhotoGridListing(ExplorerWindows.Kind.WebDav, source.id, configKey, relativeDir, fresh)
+                        BrowseSession.putWebDavListing(source.id, relativeDir, stored, sessionCurrent = true)
+                        stored
+                    } else {
+                        BrowseSession.getWebDavListing(source.id, relativeDir)
+                            ?: ZipAsDirListing.listingAt(cd, inner, title)
+                    }
                 }
             } catch (e: CancellationException) {
                 throw e
-            } catch (_: Throwable) {
+            } catch (e: Throwable) {
+                if (!useCache) throw e
                 emptyList()
             }
         }

@@ -77,7 +77,7 @@ private fun uploadSummary(state: UploadState): String = stringResource(R.string.
 
 @Composable
 private fun transferSpeed(state: UploadState): String = if (state.deleting) {
-    stringResource(R.string.transfer_server_move)
+    stringResource(if (state.rows.all { it.file.source.kind == ExplorerWindows.Kind.Local }) R.string.transfer_local_move else R.string.transfer_server_move)
 } else if (state.serverCopy) {
     stringResource(R.string.transfer_server_copy)
 } else {

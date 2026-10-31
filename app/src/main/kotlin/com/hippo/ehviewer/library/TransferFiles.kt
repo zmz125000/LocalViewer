@@ -39,7 +39,15 @@ data class TransferLocation(val kind: ExplorerWindows.Kind, val sourceId: Long, 
     }
 }
 
-data class TransferFile(val source: TransferLocation, val relative: String, val directory: Boolean, val size: Long, val mtime: Long)
+data class TransferFile(
+    val source: TransferLocation,
+    val relative: String,
+    val directory: Boolean,
+    val size: Long,
+    val mtime: Long,
+    /** A gallery directory carries only its collected direct images, never a recursive scan. */
+    val galleryImages: List<TransferFile>? = null,
+)
 
 class TransferControl {
     val paused = AtomicBoolean(false)
@@ -115,6 +123,7 @@ object TransferFiles {
             if (file.source.kind == ExplorerWindows.Kind.Local) {
                 val metadata = file.source.path.toPath().metadataOrNull()
                 if (metadata != null && !metadata.isDirectory) {
+                    check(file.galleryImages == null) { "Gallery source is no longer a directory" }
                     return stat(file.copy(directory = false))
                 }
             }

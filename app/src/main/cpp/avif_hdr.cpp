@@ -1009,6 +1009,10 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeAvifBytesToDirect(JNIEnv* env, jc
         result = pack_direct_to_jbyte_array(env, rgba, w, h, force_hdr, cg,
                                             advancedColor == JNI_TRUE, transfer, jOutInfo,
                                             jOutBoost);
+        if (result && env->GetArrayLength(jOutInfo) >= 8) {
+            const jint source_has_gainmap = has_gm != 0;
+            env->SetIntArrayRegion(jOutInfo, 7, 1, &source_has_gainmap);
+        }
     } else {
         ALOGE("AVIF direct decode failed rc=%d", rc);
     }
@@ -1048,6 +1052,10 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeAvifBufferToDirect(JNIEnv* env, j
         result = pack_direct_to_jbyte_array(env, rgba, w, h, force_hdr, cg,
                                             advancedColor == JNI_TRUE, transfer, jOutInfo,
                                             jOutBoost);
+        if (result && env->GetArrayLength(jOutInfo) >= 8) {
+            const jint source_has_gainmap = has_gm != 0;
+            env->SetIntArrayRegion(jOutInfo, 7, 1, &source_has_gainmap);
+        }
     } else {
         ALOGE("AVIF direct decode failed rc=%d", rc);
     }
