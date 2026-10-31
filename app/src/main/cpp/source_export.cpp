@@ -363,7 +363,7 @@ bool jpeg_compress(const avifImage* image,int quality,bool base,std::vector<uint
             const uint8_t prefix[]={'I','C','C','_','P','R','O','F','I','L','E',0,1,1};
             icc.assign(prefix,prefix+sizeof(prefix));icc.insert(icc.end(),profile_data,profile_data+profile_size);
         } else {
-            auto p=ultrahdr::IccHelper::writeIccProfile(gain_owner?UHDR_CT_LINEAR:UHDR_CT_SRGB,gamut(profile_primaries));
+            auto p=ultrahdr::IccHelper::writeIccProfile(gain_owner || image->transferCharacteristics==8?UHDR_CT_LINEAR:UHDR_CT_SRGB,gamut(profile_primaries));
             if(p)icc.assign(static_cast<const uint8_t*>(p->getData()),static_cast<const uint8_t*>(p->getData())+p->getLength());
         }
     }
@@ -422,18 +422,48 @@ std::vector<uint8_t> with_orientation(const uint8_t* data,size_t size,unsigned v
     set32(fresh+2+(n+1)*12,next_ifd);set32(4,fresh);return bytes;
 }
 
+bool opaque_alpha(const avifImage* image) {
+    if(!image->alphaPlane)return true;
+    const uint32_t maximum=(1u<<image->depth)-1;
+    for(uint32_t y=0;y<image->height;++y)for(uint32_t x=0;x<image->width;++x) {
+        const auto* row=image->alphaPlane+size_t(y)*image->alphaRowBytes;
+        const uint32_t alpha=image->depth>8?reinterpret_cast<const uint16_t*>(row)[x]:row[x];
+        if(alpha!=maximum)return false;
+    }
+    return true;
+}
+bool insert_jpeg_exif(std::vector<uint8_t>& jpeg,const StillEncodeQuality& quality) {
+    if(!quality.exif_size)return true;
+    if(quality.exif_size>65527)return false;
+    const size_t length=quality.exif_size+8;
+    std::vector<uint8_t> marker={255,225,static_cast<uint8_t>(length>>8),static_cast<uint8_t>(length),'E','x','i','f',0,0};
+    marker.insert(marker.end(),quality.exif,quality.exif+quality.exif_size);
+    jpeg.insert(jpeg.begin()+2,marker.begin(),marker.end());return true;
+}
+int write_source_jpeg(const avifImage* image,const char* path,StillEncodeQuality quality) {
+    // JPEG without a gain map needs the existing render path for absolute HDR
+    // and alpha compositing. SDR source codes must not be gamma-encoded again.
+    if(image->transferCharacteristics==16 || image->transferCharacteristics==18 ||
+       (!image->icc.size && image->transferCharacteristics!=13 && image->transferCharacteristics!=8) ||
+       (image->transformFlags & AVIF_TRANSFORM_CLAP) || !opaque_alpha(image))return 0;
+    std::vector<uint8_t> oriented;
+    if(image->transformFlags & (AVIF_TRANSFORM_IROT|AVIF_TRANSFORM_IMIR)) {
+        oriented=with_orientation(quality.exif,quality.exif_size,image_orientation(image));
+        quality.exif=oriented.data();quality.exif_size=oriented.size();
+    }
+    std::vector<uint8_t> encoded;
+    if(!jpeg_compress(image,quality.jpeg(),true,encoded))return -86;
+    if(!insert_jpeg_exif(encoded,quality))return -87;
+    FILE* file=fopen(path,"wb");if(!file)return -83;
+    const bool wrote=fwrite(encoded.data(),1,encoded.size(),file)==encoded.size();
+    const bool closed=fclose(file)==0;return wrote&&closed?1:-83;
+}
+
 int write_gainmap_jpeg(avifImage* image,const char* path,StillEncodeQuality quality,
                       const uint8_t* original_map=nullptr,size_t original_map_size=0) {
     if(image->transferCharacteristics!=AVIF_TRANSFER_CHARACTERISTICS_SRGB && image->icc.size==0)return -84;
     if(image->transformFlags & AVIF_TRANSFORM_CLAP)return -90;
-    if(image->alphaPlane) {
-        const uint32_t maximum=(1u<<image->depth)-1;
-        for(uint32_t y=0;y<image->height;++y)for(uint32_t x=0;x<image->width;++x) {
-            const auto* row=image->alphaPlane+size_t(y)*image->alphaRowBytes;
-            const uint32_t alpha=image->depth>8?reinterpret_cast<const uint16_t*>(row)[x]:row[x];
-            if(alpha!=maximum)return -97; // JPEG cannot retain an alpha-bearing gain-map rendition.
-        }
-    }
+    if(!opaque_alpha(image))return -97; // JPEG cannot retain alpha without changing gain-map math.
     std::vector<uint8_t> oriented;
     if(image->transformFlags & (AVIF_TRANSFORM_IROT|AVIF_TRANSFORM_IMIR)) {
         oriented=with_orientation(quality.exif,quality.exif_size,image_orientation(image));
@@ -443,13 +473,7 @@ int write_gainmap_jpeg(avifImage* image,const char* path,StillEncodeQuality qual
     if(!to_uhdr_metadata(image,metadata))return -85;
     std::vector<uint8_t> base,map;
     if(!jpeg_compress(image,quality.jpeg(),true,base))return -86;
-    if(quality.exif_size) {
-        if(quality.exif_size>65527)return -87;
-        const size_t length=quality.exif_size+8;
-        std::vector<uint8_t> marker={255,225,static_cast<uint8_t>(length>>8),static_cast<uint8_t>(length),'E','x','i','f',0,0};
-        marker.insert(marker.end(),quality.exif,quality.exif+quality.exif_size);
-        base.insert(base.begin()+2,marker.begin(),marker.end());
-    }
+    if(!insert_jpeg_exif(base,quality))return -87;
     if(!original_map && !jpeg_compress(image->gainMap->image,quality.jpeg(),false,map,image))return -86;
     Uhdr enc(uhdr_create_encoder(),uhdr_release_encoder);if(!enc)return -87;
     uhdr_compressed_image_t b{base.data(),base.size(),base.size(),gamut(image->colorPrimaries),UHDR_CT_SRGB,UHDR_CR_FULL_RANGE};
@@ -471,7 +495,7 @@ int write_source(avifImage* image,int target,const char* path,StillEncodeQuality
         if(!downsize_map(image,quality.jpeg_gain_map_scale()))return -89;
         if(oldW!=image->gainMap->image->width || oldH!=image->gainMap->image->height)original_map=nullptr;
     }
-    if(target==0)return gain?write_gainmap_jpeg(image,path,quality,original_map,original_map_size):0;
+    if(target==0)return gain?write_gainmap_jpeg(image,path,quality,original_map,original_map_size):write_source_jpeg(image,path,quality);
     if(target==2) {
         // Equivalent ICCs can use CICP; custom ICCs remain intact in the ISO container.
         gain_map_cicp(image);
@@ -524,7 +548,8 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_convertSourceEncodedStill(JNIEnv* env,j
         auto parsed=avifDecoderParse(decoder.get());
         if(parsed!=AVIF_RESULT_OK) {decoder->ignoreExif=AVIF_TRUE;parsed=avifDecoderParse(decoder.get());}
         if(parsed!=AVIF_RESULT_OK)return -92;
-        if(target==0 && !decoder->image->gainMap)return 0;
+        if(target==0 && !decoder->image->gainMap &&
+           (decoder->image->transferCharacteristics==16 || decoder->image->transferCharacteristics==18))return 0;
         if(avifDecoderNextImage(decoder.get())!=AVIF_RESULT_OK)return -93;
         decoded_image=decoder->image;
         if(decoded_image->exif.size)exif.assign(decoded_image->exif.data,decoded_image->exif.data+decoded_image->exif.size);
@@ -532,7 +557,6 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_convertSourceEncodedStill(JNIEnv* env,j
         jpeg.reset(uhdr_create_decoder());if(!jpeg)return -80;
         uhdr_compressed_image_t source{const_cast<uint8_t*>(data),size_t(size),size_t(size),UHDR_CG_UNSPECIFIED,UHDR_CT_UNSPECIFIED,UHDR_CR_FULL_RANGE};
         const bool gain=ok(uhdr_dec_set_image(jpeg.get(),&source)) && ok(uhdr_dec_probe(jpeg.get()));
-        if(target==0 && !gain)return 0;
         const auto* base=gain?uhdr_dec_get_base_image(jpeg.get()):nullptr;
         if(target==1) {
             jint info[5]{};

@@ -71,7 +71,7 @@ private fun simpleGainMetadata(maximum: Float, display: Float = maximum) = float
 )
 
 private fun encodeHeifSource(source: Path, name: String, input: ByteBuffer, format: Int, out: File, quality: StillExportQuality, info: IntArray): Int {
-    if (format == 0 && !OppoProxdr.looksLike(input) && HeifContainer.parse(input)?.hasAppleGainMap() != true) return 0
+    if (format == 0 && HeifPrecisionProbe.probe(input)?.transfer in listOf(16, 18)) return 0
     val frame = HevcHdrDecode.decode(input, 0, advancedColor = true, allowHdr = true, encodedRgb = true) ?: return -96
     frame.use {
         val color = checkNotNull(frame.sourceEncoding)
@@ -196,7 +196,6 @@ private fun pngColorTags(bytes: ByteBuffer): Pair<Int?, Int>? {
 }
 
 private fun encodePlatformSource(source: Path, name: String, input: ByteBuffer, format: Int, out: File, quality: StillExportQuality, info: IntArray): Int {
-    if (format == 0) return 0
     val ext = name.substringAfterLast('.', "").lowercase()
     val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
     BitmapFactory.decodeStream(StillBufferInputStream(input.slice()), null, bounds)

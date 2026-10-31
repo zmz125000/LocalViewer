@@ -97,8 +97,24 @@ internal object HeifContainer {
         }
 
         private fun image(primary: Item): PrimaryImage? {
-            // MIAF defaults when colr is omitted: BT.709 / sRGB / BT.601 full range.
-            val color = primary.color ?: Color(1, 13, 6, true)
+            // Some HEIC grids (including iPhone 7 and OPPO) attach colr to their
+            // coded tiles rather than to the derived grid. Inherit only a shared
+            // tile encoding; silently assuming sRGB would mislabel the same RGB codes.
+            val tiles = if (primary.type == "grid" && (primary.icc == null || primary.color == null)) {
+                refs.firstOrNull { it.type == "dimg" && it.from == primary.id }?.to
+                    ?.map { items[it] ?: return null }.orEmpty()
+            } else {
+                emptyList()
+            }
+            val tileIcc = tiles.firstNotNullOfOrNull { it.icc }
+            fun sameIcc(a: ByteArray?, b: ByteArray?) = a === b || a != null && b != null && a.contentEquals(b)
+            if (primary.icc == null && tiles.any { it.icc != null && !sameIcc(it.icc, tileIcc) }) return null
+            val tileColor = tiles.firstNotNullOfOrNull { it.color }
+            fun sameColor(a: Color?, b: Color?) = a === b || a != null && b != null &&
+                a.primaries == b.primaries && a.transfer == b.transfer && a.matrix == b.matrix && a.fullRange == b.fullRange
+            if (primary.color == null && tiles.any { it.color != null && !sameColor(it.color, tileColor) }) return null
+            val encoding = primary.color ?: tileColor
+            val color = encoding ?: Color(1, 13, 6, true)
             val laid = layout(primary) ?: return null
             return PrimaryImage(
                 width = laid.width,
@@ -111,8 +127,8 @@ internal object HeifContainer {
                 fullRange = color.fullRange,
                 rotationDegreesCcw = laid.rotation,
                 tiles = laid.tiles,
-                icc = primary.icc,
-                hasNclx = primary.color != null,
+                icc = primary.icc ?: tileIcc,
+                hasNclx = encoding != null,
             )
         }
 
