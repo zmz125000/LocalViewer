@@ -38,6 +38,24 @@ class FolderIndexDiskTest {
     )
 
     @Test
+    fun refreshedPhotosAndEmptyResultsSurviveDiskReload() = withDisk { disk ->
+        val refreshed = FolderGalleryIndex.refreshedPhotoGridListing(
+            comics,
+            "Gal",
+            listOf(RemoteChild("new.webp", false, size = 123, lastModifiedMs = 456)),
+        )
+        assertTrue(disk.writeListing("photos/album", refreshed))
+        val saved = disk.readListing("photos/album")!!
+        assertEquals(listOf("new.webp"), FolderGalleryIndex.namesFromListing("photos/album", saved, "photos/album"))
+        val image = saved.filterIsInstance<BrowseEntryRemote.RegularFile>().single()
+        assertEquals(123L, image.size)
+        assertEquals(456L, image.lastModifiedMs)
+        assertTrue(disk.writeListing("photos/album", FolderGalleryIndex.refreshedPhotoGridListing(saved, "Gal", emptyList())))
+        assertEquals(emptyList<BrowseEntryRemote>(), disk.readListing("photos/album"))
+        assertTrue(FolderIndexDisk.listingFile(disk.sourceDir, "photos/album").isFile)
+    }
+
+    @Test
     fun saveOneFolderDoesNotRewriteSiblingFile() = withDisk { disk ->
         assertTrue(disk.writeMeta("cfg"))
         assertTrue(disk.writeListing("photos", photos))

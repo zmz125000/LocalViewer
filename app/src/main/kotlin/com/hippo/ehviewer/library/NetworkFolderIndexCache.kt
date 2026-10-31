@@ -203,13 +203,34 @@ object NetworkFolderIndexCache {
         }
     }
 
+    /** A successful photo-grid refresh confirms direct images, including an empty set. */
+    suspend fun savePhotoGrid(
+        kind: ExplorerWindows.Kind,
+        sourceId: Long,
+        configKey: String,
+        relativeDir: String,
+        entries: List<BrowseEntryRemote>,
+    ): List<BrowseEntryRemote> = save(
+        when (kind) {
+            ExplorerWindows.Kind.Local -> "local"
+            ExplorerWindows.Kind.Smb -> "smb"
+            ExplorerWindows.Kind.WebDav -> "webdav"
+        },
+        sourceId,
+        configKey,
+        relativeDir,
+        entries,
+        authoritative = true,
+    )
+
     private suspend fun save(
         protocol: String,
         sourceId: Long,
         configKey: String,
         relativeDir: String,
         entries: List<BrowseEntryRemote>,
-        removedChildDirs: Set<String>,
+        removedChildDirs: Set<String> = emptySet(),
+        authoritative: Boolean = false,
     ): List<BrowseEntryRemote> = withContext(Dispatchers.IO) {
         if (!Settings.networkFolderIndexCache.value) return@withContext entries
         lock.withLock {
@@ -222,6 +243,7 @@ object NetworkFolderIndexCache {
                 Settings.browseZipAsDir.value,
                 logKeep = "$protocol/$sourceId",
                 protocol = protocol,
+                authoritative = authoritative,
             )
         }
     }
@@ -365,6 +387,7 @@ object NetworkFolderIndexCache {
         zipAsDir: Boolean,
         logKeep: String,
         protocol: String,
+        authoritative: Boolean = false,
     ): List<BrowseEntryRemote> {
         val key = FolderIndexDisk.normalizeDir(relativeDir)
         val previous = idx.decoded[key] ?: idx.disk.readListing(key)
@@ -379,7 +402,7 @@ object NetworkFolderIndexCache {
                 browseEntryFolderRoot(it) !in removedChildDirs
             }
         }
-        val merge = mergeFolderEntry(previousForMerge, entries, zipAsDir, logKeep, key, protocol).let {
+        val merge = mergeFolderEntry(previousForMerge, entries, zipAsDir, logKeep, key, protocol, authoritative).let {
             // Compare with the actual disk snapshot, not the filtered one, so a
             // deletion-only update still writes the corrected parent listing.
             it.copy(unchanged = previous != null && it.stored == previous)
@@ -414,8 +437,9 @@ object NetworkFolderIndexCache {
         logKeep: String,
         key: String,
         protocol: String,
+        authoritative: Boolean = false,
     ): FolderMerge {
-        val keepPrevious = previous != null &&
+        val keepPrevious = !authoritative && previous != null &&
             shouldKeepPreviousFolderIndex(
                 previous,
                 entries,
@@ -429,7 +453,7 @@ object NetworkFolderIndexCache {
                     "(new listing empty/shallow or dropped every folder)"
             }
             checkNotNull(previous)
-        } else if (previous != null) {
+        } else if (!authoritative && previous != null) {
             preferCompleteFolderGalleries(previous, entries)
         } else {
             entries

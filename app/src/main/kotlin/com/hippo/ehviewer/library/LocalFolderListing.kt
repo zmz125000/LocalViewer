@@ -236,6 +236,10 @@ object LocalFolderListing {
                 pathAlias = parentPath,
             )
         }
+        if (!useCache && configKey != null) {
+            val stored = FolderGalleryIndex.persistPhotoGridListing(ExplorerWindows.Kind.Local, rootId, configKey, virtualDir, tree[treeKey].orEmpty(), zipPath.resolveRelative(inner))
+            BrowseSession.putLocalListing(ramKey, stored, sessionCurrent = true)
+        }
         val remote = BrowseSession.getLocalCachedListing(ramKey)?.entries
             ?: tree[treeKey].orEmpty()
         val materialized = materialize(remote)

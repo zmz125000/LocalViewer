@@ -722,12 +722,10 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
         // Photo-grid open: same complete index the reader uses — no directory scan.
         if (!force && !configChanged && photoGrid) {
             val names = FolderGalleryIndex.loadWebDav(src.id, configKey, loadDir)
-            if (!names.isNullOrEmpty()) {
-                if (listedDir != loadDir || entries.isEmpty()) {
-                    entries = FolderGalleryIndex.photoGridRemoteFiles(names)
-                    listedDir = loadDir
-                    listingSessionCurrent = true
-                }
+            if (names != null) {
+                entries = FolderGalleryIndex.photoGridRemoteFiles(names)
+                listedDir = loadDir
+                listingSessionCurrent = true
                 loading = false
                 refreshing = false
                 error = null
@@ -802,6 +800,15 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                 if (activeListingRequest !== request) return@LaunchedEffect
                 applyCachedListing(loadDir)
                 refreshing = false
+            }
+            if (force && photoGrid && ZipAsDirListing.splitZipBrowsePath(loadDir) == null) {
+                val refreshed = withIOContext {
+                    BrowseSession.peekWebDavRawChildren(sourceId, loadDir)?.let { children ->
+                        FolderGalleryIndex.persistPhotoGridRefresh(ExplorerWindows.Kind.WebDav, sourceId, configKey, loadDir, children)
+                    }
+                }
+                if (activeListingRequest !== request) return@LaunchedEffect
+                if (refreshed != null) entries = refreshed
             }
         } catch (e: kotlinx.coroutines.CancellationException) {
             // Path changed or refreshToken bumped — new effect owns loading state.

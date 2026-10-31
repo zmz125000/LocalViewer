@@ -880,6 +880,24 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                 applyCachedLocalListing(frame)
                 refreshing = false
             }
+            if (force && frame.photoGrid) {
+                val refreshed = withIOContext {
+                    val effective = resolveBrowsePath(frame.path.toPath(), preferMediaStore = frame.preferMediaStore)
+                    BrowseSession.peekLocalRawChildren(BrowseSession.pathKey(effective))?.let { children ->
+                        val stored = FolderGalleryIndex.persistPhotoGridRefresh(
+                            ExplorerWindows.Kind.Local,
+                            frame.rootId,
+                            LocalFolderListing.rootConfigKey(rootPath, frame.preferMediaStore),
+                            frame.relativePath,
+                            children,
+                            effective,
+                        )
+                        materializeLocalEntries(effective, stored)
+                    }
+                }
+                if (!ownsListing()) return
+                if (refreshed != null) entries = refreshed
+            }
         } catch (e: kotlinx.coroutines.CancellationException) {
             // Path change / new reload owns loading — do not clear here (same as SMB).
             throw e
@@ -927,7 +945,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         skipNextListing = false
         val force = forceNextLoad
         forceNextLoad = false
-        reload(force = force)
+        reload(force = force, refreshPhotoGrid = stack.lastOrNull()?.photoGrid == true)
     }
 
     DisposableEffect(Unit) {
@@ -1640,7 +1658,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
             newFrame.relativePath
         }
         val names = if (sameListing) null else localPhotoGridNames(frame, galleryDir)
-        if (sameListing || names != null) {
+        if (sameListing) {
             skipNextListing = true
         }
         updateStack(stack + newFrame)
