@@ -720,10 +720,38 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
 
         val loadDir = if (configChanged) "" else targetDir
         // Photo-grid open: same complete index the reader uses — no directory scan.
+        // Name-only rows drop size/date; stamp them here so this write cannot wipe
+        // a fill that already ran (grid entry never had a file list to keep).
         if (!force && !configChanged && photoGrid) {
             val names = FolderGalleryIndex.loadWebDav(src.id, configKey, loadDir)
             if (names != null) {
-                entries = FolderGalleryIndex.photoGridRemoteFiles(names)
+                val preserved = if (listedDir == loadDir) FolderGalleryIndex.directChildMetadata(entries) else emptyMap()
+                val metadata = withIOContext {
+                    val cached = FolderGalleryIndex.mergeFileMetadata(
+                        preserved,
+                        FolderGalleryIndex.loadWebDavDirectFileMetadata(src.id, configKey, loadDir),
+                    )
+                    val missing = names.any { name ->
+                        val info = cached[name]
+                        info == null || info.size <= 0L || info.lastModifiedMs <= 0L
+                    }
+                    if (!missing) {
+                        cached
+                    } else {
+                        try {
+                            FolderGalleryIndex.mergeFileMetadata(
+                                cached,
+                                WebDavGateway.imageFileMetadata(src, WebDavPasswordStore.get(src.id), loadDir),
+                            )
+                        } catch (e: CancellationException) {
+                            throw e
+                        } catch (_: Exception) {
+                            cached
+                        }
+                    }
+                }
+                if (activeListingRequest !== request) return@LaunchedEffect
+                entries = FolderGalleryIndex.photoGridRemoteFiles(names, metadata)
                 listedDir = loadDir
                 listingSessionCurrent = true
                 loading = false
@@ -3199,6 +3227,9 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                                     allowRemoteFetch = allowRemoteThumbs,
                                     onClick = { openFolderImage(file) },
                                     onLongClick = { openExternalFile(file.fileName) },
+                                    fileName = file.fileName,
+                                    sizeBytes = file.size,
+                                    lastModifiedMs = file.lastModifiedMs,
                                     overflow = fileOverflow(file.fileName, file.size, file.lastModifiedMs),
                                 )
                             }

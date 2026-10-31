@@ -546,10 +546,12 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
             info == null || info.size <= 0L || info.lastModifiedMs <= 0L
         }
         if (missingMetadata && !frame.isZipBrowse) {
-            // One bulk listing supplies size AND mtime; no per-file opens/stats.
+            // One bulk listing supplies size AND mtime for filesystem, SAF, and
+            // MediaStore folders. MediaStore-only queries miss normal directories.
             val path = resolveBrowsePath(frame.path.toPath())
             val wanted = names.toHashSet()
-            for (child in MediaStoreFs.listChildren(path)) {
+            val children = runCatching { path.listBrowseChildrenRaw() }.getOrDefault(emptyList())
+            for (child in children) {
                 if (child.isDirectory || child.name !in wanted) continue
                 val previous = merged[child.name] ?: FolderGalleryIndex.FileMetadata()
                 merged[child.name] = FolderGalleryIndex.FileMetadata(
@@ -561,9 +563,15 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         return merged
     }
 
-    LaunchedEffect(photoGridKey, gridSort.mode) {
-        if (photoGridKey == null || gridSort.mode == BrowseSortMode.Name) return@LaunchedEffect
+    LaunchedEffect(photoGridKey, entries) {
+        if (photoGridKey == null) return@LaunchedEffect
         val frame = stack.lastOrNull() ?: return@LaunchedEffect
+        val missing = entries.any { entry ->
+            entry is BrowseEntry.RegularFile &&
+                isImageFileName(entry.name) &&
+                (entry.size <= 0L || entry.lastModifiedMs <= 0L)
+        }
+        if (!missing) return@LaunchedEffect
         val names = entries.map { it.name }
         val metadata = withIOContext { metadataForLibraryOpen(frame, names) }
         if (metadata.isEmpty()) return@LaunchedEffect
@@ -3654,6 +3662,9 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                     showPhotoThumb = true,
                                     onClick = { openFolderImage(file) },
                                     onLongClick = { openExternalFile(file.path) },
+                                    fileName = file.name,
+                                    sizeBytes = file.size,
+                                    lastModifiedMs = file.lastModifiedMs,
                                     overflow = fileOverflow(
                                         file.path,
                                         sizeBytes = file.size,

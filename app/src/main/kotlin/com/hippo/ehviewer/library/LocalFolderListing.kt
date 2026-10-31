@@ -167,15 +167,10 @@ object LocalFolderListing {
         fun materialize(remote: List<BrowseEntryRemote>): List<BrowseEntry> {
             if (photoGrid) {
                 val names = FolderGalleryIndex.namesFromListing("", remote, "") ?: emptyList()
-                return names.map { name ->
-                    BrowseEntry.RegularFile(
-                        name = name,
-                        path = ZipPaths.encodePath(
-                            zipAbs,
-                            ZipAsDirListing.joinPrefix(inner, name),
-                        ),
-                    )
-                }
+                return FolderGalleryIndex.stampLocalFileMetadata(
+                    FolderGalleryIndex.photoGridLocalFiles(zipAbs, inner, names),
+                    FolderGalleryIndex.directChildMetadata(remote),
+                )
             }
             return ZipAsDirListing.materializeLocal(zipAbs, inner, remote)
         }

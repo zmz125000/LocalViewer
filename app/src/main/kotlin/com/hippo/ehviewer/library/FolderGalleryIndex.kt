@@ -318,7 +318,14 @@ object FolderGalleryIndex {
     }
 
     /** Image rows for a photo-grid overlay; same order as the reader page list. */
-    fun photoGridRemoteFiles(names: List<String>): List<BrowseEntryRemote.RegularFile> = names.map { name -> BrowseEntryRemote.RegularFile(name = name, fileName = name) }
+    fun photoGridRemoteFiles(
+        names: List<String>,
+        metadata: Map<String, FileMetadata> = emptyMap(),
+    ): List<BrowseEntryRemote.RegularFile> {
+        val rows = names.map { name -> BrowseEntryRemote.RegularFile(name = name, fileName = name) }
+        if (metadata.isEmpty()) return rows
+        return stampRemoteFileMetadata(rows, metadata).filterIsInstance<BrowseEntryRemote.RegularFile>()
+    }
 
     /** Direct image/video modified times stored on a classified listing. Nested paths are skipped. */
     fun directChildMtimes(entries: List<BrowseEntryRemote>): Map<String, Long> {
