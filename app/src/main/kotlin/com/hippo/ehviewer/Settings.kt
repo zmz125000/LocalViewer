@@ -451,7 +451,7 @@ object Settings : DataStorePreferences(null) {
     val hideHvEvents = boolPref("hide_hv_events", false)
 
     // Download
-    val mediaScan = boolPref("media_scan", false).observed(::updateWhenKeepMediaStatusChanges)
+    val mediaScan = boolPref("media_scan", true).observed(::updateWhenKeepMediaStatusChanges)
 
     /**
      * SMB concurrent connections **per host** (Advanced). Default: 3.

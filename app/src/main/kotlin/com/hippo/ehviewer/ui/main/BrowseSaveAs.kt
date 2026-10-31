@@ -42,6 +42,7 @@ import com.hippo.ehviewer.smb.SmbGateway
 import com.hippo.ehviewer.smb.SmbPasswordStore
 import com.hippo.ehviewer.smb.SmbRepository
 import com.hippo.ehviewer.ui.OpenFileExternally
+import com.hippo.ehviewer.ui.keepNoMediaFileStatus
 import com.hippo.ehviewer.util.FileUtils
 import com.hippo.ehviewer.util.awaitActivityResult
 import com.hippo.ehviewer.util.displayPath
@@ -330,6 +331,7 @@ object BrowseSaveAs {
     internal suspend fun updateAskWhereToSave(ask: Boolean) {
         if (!ask && configuredConvertDirectory() == null) {
             val directory = pickTreeDir() ?: return
+            withIOContext { keepNoMediaFileStatus(directory) }
             val documentUri = directory.toUri()
             val treeUri = DocumentsContract.buildTreeDocumentUri(
                 documentUri.authority!!,
@@ -338,6 +340,26 @@ object BrowseSaveAs {
             Settings.imageConversionLocation.value = treeUri.toString()
         }
         Settings.browseAskWhereToSave.value = ask
+    }
+
+    /** Like conversion prompts, keep Save to… prompts enabled until a default folder is usable. */
+    context(_: SnackbarHostState, _: Context)
+    internal suspend fun updateAskForSaveDestination(ask: Boolean) {
+        if (!ask) {
+            val configured = try {
+                configuredSaveDirectory()
+            } catch (error: CancellationException) {
+                throw error
+            } catch (_: Exception) {
+                null
+            }
+            if (configured == null) {
+                val directory = pickTreeDir() ?: return
+                withIOContext { keepNoMediaFileStatus(directory) }
+                downloadLocation = directory
+            }
+        }
+        Settings.askWhereToSave.value = ask
     }
 
     /** Same tree picker as Save to… for a folder destination. */
