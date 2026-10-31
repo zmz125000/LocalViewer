@@ -1,6 +1,7 @@
 package com.hippo.ehviewer.ui.settings
 
 import android.content.ActivityNotFoundException
+import android.content.ContentResolver
 import android.content.Context
 import android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION
 import android.content.Intent.FLAG_GRANT_WRITE_URI_PERMISSION
@@ -28,7 +29,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.res.stringResource
-import com.ehviewer.core.files.delete
 import com.ehviewer.core.files.isDirectory
 import com.ehviewer.core.files.toOkioPath
 import com.ehviewer.core.files.toUri
@@ -44,17 +44,24 @@ import com.hippo.ehviewer.ui.keepNoMediaFileStatus
 import com.hippo.ehviewer.ui.main.BrowseSaveAs
 import com.hippo.ehviewer.ui.main.NavigationIcon
 import com.hippo.ehviewer.ui.screen.adaptiveTopAppBarColors
-import com.hippo.ehviewer.ui.tools.awaitConfirmationOrCancel
 import com.hippo.ehviewer.ui.tools.observed
-import com.hippo.ehviewer.util.AppConfig
 import com.hippo.ehviewer.util.displayPath
 import com.ramcosta.composedestinations.annotation.Destination
 import com.ramcosta.composedestinations.annotation.RootGraph
 import com.ramcosta.composedestinations.navigation.DestinationsNavigator
 import moe.tarsin.snackbar
-import okio.Path.Companion.toOkioPath
+import okio.Path
 
 private const val URI_FLAGS = FLAG_GRANT_READ_URI_PERMISSION or FLAG_GRANT_WRITE_URI_PERMISSION
+
+private fun Path.treeUri(): Uri? {
+    val uri = toUri()
+    if (uri.scheme != ContentResolver.SCHEME_CONTENT) return null
+    val authority = uri.authority ?: return null
+    return runCatching {
+        DocumentsContract.buildTreeDocumentUri(authority, DocumentsContract.getTreeDocumentId(uri))
+    }.getOrNull()
+}
 
 @Destination<RootGraph>
 @Composable
@@ -82,50 +89,39 @@ fun AnimatedVisibilityScope.DownloadScreen(navigator: DestinationsNavigator) = S
         ) {
             var downloadLocationState by ::downloadLocation.observed
             val cannotGetDownloadLocation = stringResource(id = R.string.settings_download_cant_get_download_location)
-            val selectDownloadDirLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { treeUri ->
-                treeUri?.run {
-                    launchIO {
-                        contextOf<Context>().contentResolver.runCatching {
-                            persistedUriPermissions.forEach {
-                                releasePersistableUriPermission(it.uri, URI_FLAGS)
-                            }
-                            takePersistableUriPermission(treeUri, URI_FLAGS)
-                            val path = DocumentsContract.buildDocumentUriUsingTree(treeUri, DocumentsContract.getTreeDocumentId(treeUri)).toOkioPath()
-                            check(path.isDirectory) { "$path is not a directory" }
-                            keepNoMediaFileStatus(path) // Check if the directory is writable
-                            downloadLocationState = path
-                        }.onFailure {
-                            logcat(it)
-                            launchSnackbar(cannotGetDownloadLocation)
+            val conversionLocation = Settings.imageConversionLocation.asMutableState()
+            val askWhereToSave = Settings.browseAskWhereToSave.asMutableState()
+            val askForSaveDestination = Settings.askWhereToSave.asMutableState()
+            fun saveDirectory(selectedUri: Uri, previous: Uri?, save: (Path) -> Unit) {
+                launchIO {
+                    val ctx = contextOf<Context>()
+                    runCatching {
+                        ctx.contentResolver.takePersistableUriPermission(selectedUri, URI_FLAGS)
+                        val path = DocumentsContract.buildDocumentUriUsingTree(
+                            selectedUri,
+                            DocumentsContract.getTreeDocumentId(selectedUri),
+                        ).toOkioPath()
+                        check(path.isDirectory) { "$path is not a directory" }
+                        keepNoMediaFileStatus(path)
+                        previous?.takeIf { it != selectedUri }?.let {
+                            runCatching { ctx.contentResolver.releasePersistableUriPermission(it, URI_FLAGS) }
                         }
+                        save(path)
+                    }.onFailure {
+                        logcat(it)
+                        launchSnackbar(cannotGetDownloadLocation)
                     }
                 }
             }
-            val conversionLocation = Settings.imageConversionLocation.asMutableState()
-            val askWhereToSave = Settings.browseAskWhereToSave.asMutableState()
-            val conversionLocationFailed = stringResource(R.string.settings_download_cant_get_download_location)
+            val selectDownloadDirLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { treeUri ->
+                treeUri?.let { selectedUri ->
+                    saveDirectory(selectedUri, downloadLocationState.treeUri()) { downloadLocationState = it }
+                }
+            }
             val selectConversionDirLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { treeUri ->
                 treeUri?.let { selectedUri ->
-                    launchIO {
-                        val ctx = contextOf<Context>()
-                        runCatching {
-                            ctx.contentResolver.takePersistableUriPermission(selectedUri, URI_FLAGS)
-                            val documentUri = DocumentsContract.buildDocumentUriUsingTree(
-                                selectedUri,
-                                DocumentsContract.getTreeDocumentId(selectedUri),
-                            )
-                            val path = documentUri.toOkioPath()
-                            check(path.isDirectory) { "$path is not a directory" }
-                            conversionLocation.value?.let(Uri::parse)?.takeIf { it != selectedUri }?.let { previous ->
-                                runCatching {
-                                    ctx.contentResolver.releasePersistableUriPermission(previous, URI_FLAGS)
-                                }
-                            }
-                            conversionLocation.value = selectedUri.toString()
-                        }.onFailure {
-                            logcat(it)
-                            launchSnackbar(conversionLocationFailed)
-                        }
+                    saveDirectory(selectedUri, conversionLocation.value?.let(Uri::parse)) {
+                        conversionLocation.value = selectedUri.toString()
                     }
                 }
             }
@@ -133,40 +129,21 @@ fun AnimatedVisibilityScope.DownloadScreen(navigator: DestinationsNavigator) = S
                 title = stringResource(id = R.string.settings_download_download_location),
                 summary = downloadLocationState.toUri().displayPath,
             ) {
-                launchIO {
-                    val defaultDownloadDir = AppConfig.defaultDownloadDir
-                    if (defaultDownloadDir?.delete() == false) {
-                        val path = defaultDownloadDir.toOkioPath()
-                        awaitConfirmationOrCancel(
-                            confirmText = R.string.pick_new_download_location,
-                            dismissText = if (downloadLocationState != path) {
-                                R.string.reset_download_location
-                            } else {
-                                android.R.string.cancel
-                            },
-                            title = R.string.waring,
-                            onCancelButtonClick = {
-                                if (downloadLocationState != path) {
-                                    contextOf<Context>().contentResolver.run {
-                                        persistedUriPermissions.forEach {
-                                            releasePersistableUriPermission(it.uri, URI_FLAGS)
-                                        }
-                                    }
-                                    downloadLocationState = path
-                                }
-                            },
-                        ) {
-                            Text(stringResource(id = R.string.default_download_dir_not_empty))
-                        }
-                    }
-                    try {
-                        selectDownloadDirLauncher.launch(null)
-                    } catch (_: ActivityNotFoundException) {
-                        // minSdk 32: no legacy external-storage fallback; SAF only.
-                        launchSnackbar(cannotGetDownloadLocation)
-                    }
+                try {
+                    selectDownloadDirLauncher.launch(null)
+                } catch (_: ActivityNotFoundException) {
+                    launchSnackbar(cannotGetDownloadLocation)
                 }
             }
+            me.zhanghai.compose.preference.SwitchPreference(
+                value = askForSaveDestination.value,
+                onValueChange = { ask ->
+                    launchIO {
+                        with(contextOf<Context>()) { BrowseSaveAs.updateAskForSaveDestination(ask) }
+                    }
+                },
+                title = { Text(stringResource(R.string.ask_where_to_save)) },
+            )
             val conversionLocationSummary = conversionLocation.value?.let { saved ->
                 runCatching {
                     val treeUri = Uri.parse(saved)
@@ -183,7 +160,7 @@ fun AnimatedVisibilityScope.DownloadScreen(navigator: DestinationsNavigator) = S
                 try {
                     selectConversionDirLauncher.launch(null)
                 } catch (_: ActivityNotFoundException) {
-                    launchSnackbar(conversionLocationFailed)
+                    launchSnackbar(cannotGetDownloadLocation)
                 }
             }
             me.zhanghai.compose.preference.SwitchPreference(
@@ -195,13 +172,13 @@ fun AnimatedVisibilityScope.DownloadScreen(navigator: DestinationsNavigator) = S
                 },
                 title = { Text(stringResource(R.string.browse_ask_where_to_save)) },
             )
-            ImageConversionPreferences()
             val mediaScan = Settings.mediaScan.asMutableState()
             SwitchPreference(
                 title = stringResource(id = R.string.settings_download_media_scan),
                 summary = if (mediaScan.value) stringResource(id = R.string.settings_download_media_scan_summary_on) else stringResource(id = R.string.settings_download_media_scan_summary_off),
                 state = mediaScan,
             )
+            ImageConversionPreferences()
             SwitchPreference(
                 title = stringResource(id = R.string.settings_download_save_as_cbz),
                 state = Settings.saveAsCbz.asMutableState(),

@@ -451,7 +451,7 @@ object Settings : DataStorePreferences(null) {
     val hideHvEvents = boolPref("hide_hv_events", false)
 
     // Download
-    val mediaScan = boolPref("media_scan", false).observed(::updateWhenKeepMediaStatusChanges)
+    val mediaScan = boolPref("media_scan", true).observed(::updateWhenKeepMediaStatusChanges)
 
     /**
      * SMB concurrent connections **per host** (Advanced). Default: 3.
@@ -773,6 +773,9 @@ object Settings : DataStorePreferences(null) {
 
     /** Ask for a destination for each conversion instead of using the saved folder. */
     val browseAskWhereToSave = boolPref("browse_ask_where_to_save", true)
+
+    /** Save to… actions use the Download location when prompts are disabled. */
+    val askWhereToSave = boolPref("ask_where_to_save", true)
     val imageConversionLocation = stringOrNullPref("image_conversion_location")
 
     /** 0 lossless (JPEG Q95), 1 high (Q95), 2 mid (Q90), 3 low (Q85), 4 custom. JPEG always uses 4:4:4. */

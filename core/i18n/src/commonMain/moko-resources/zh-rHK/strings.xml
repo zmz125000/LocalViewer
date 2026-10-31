@@ -326,7 +326,7 @@
     <string name="settings_download_download_origin_image_summary">這很危險！勾選此項會導致下載配額迅速流失</string>
     <string name="settings_download_media_scan">允許媒體掃描</string>
     <string name="settings_download_media_scan_summary_on">請避免他人翻看你的圖庫應用</string>
-    <string name="settings_download_media_scan_summary_off">大多數圖庫應用將不會顯示下載目錄中的圖片</string>
+    <string name="settings_download_media_scan_summary_off">大多數圖庫應用將不會顯示下載和影像轉換資料夾中的圖片</string>
     <string name="settings_download_restore_download_items">恢復下載項</string>
     <string name="settings_download_restore_download_items_summary">恢復下載目錄裏的所有下載項</string>
     <string name="settings_download_restore_not_found">未找到可恢復下載項</string>
@@ -568,4 +568,8 @@
     <string name="transfer_item_count">%d 個項目</string>
     <string name="transfer_source_unavailable">此項目忙碌中、正在刪除或已無法使用。請重新整理資料夾後再試。</string>
     <string name="transfer_delete_trash_protected">.trash 內的項目無法刪除。</string>
+    <string name="browse_ask_for_dest">詢問目的地</string>
+    <string name="browse_ask_where_to_save">詢問影像轉換儲存位置</string>
+    <string name="ask_where_to_save">詢問儲存位置</string>
+    <string name="transfer_upload_action">上傳到…</string>
 </resources>

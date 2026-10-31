@@ -141,7 +141,8 @@
     <string name="image_conversion_downsize_gain_map_summary">增益圖像素數為原來的 1/4（寬高各為 1/2），基礎影像保持原尺寸。</string>
     <string name="raw_hdr_conversion">RAW HDR 轉換</string>
     <string name="raw_hdr_conversion_summary">%1$s</string>
-    <string name="browse_ask_where_to_save">詢問儲存位置</string>
+    <string name="browse_ask_for_dest">詢問目的地</string>
+    <string name="browse_ask_where_to_save">詢問影像轉換儲存位置</string>
     <string name="browse_convert_accept_sdr">接受 SDR 格式</string>
     <string name="image_conversion_default_location">圖片轉換資料夾</string>
     <string name="image_conversion_default_location_not_set">尚未選擇資料夾</string>
@@ -675,7 +676,7 @@
     <string name="settings_download_reload_metadata_failed">載入中繼資料失敗: %s</string>
     <string name="settings_download_media_scan">允許其他程式進行媒體掃描</string>
     <string name="settings_download_media_scan_summary_on">請別讓別人看到你的相簿</string>
-    <string name="settings_download_media_scan_summary_off">大部分相簿軟體將會忽略顯示下載路徑中的影像</string>
+    <string name="settings_download_media_scan_summary_off">大部分相簿軟體將不會顯示下載和影像轉換資料夾中的圖片</string>
     <string name="settings_download_restore_download_items">復原下載的檔案</string>
     <string name="settings_download_restore_download_items_summary">復原下載路徑中的所有下載的檔案</string>
     <string name="settings_download_restore_not_found">未尋獲可復原的已下載檔案</string>
@@ -1228,4 +1229,6 @@
     <string name="transfer_item_count">%d 個項目</string>
     <string name="transfer_source_unavailable">此項目忙碌中、正在刪除或已無法使用。請重新整理資料夾後再試。</string>
     <string name="transfer_delete_trash_protected">.trash 內的項目無法刪除。</string>
+    <string name="ask_where_to_save">詢問儲存位置</string>
+    <string name="transfer_upload_action">上傳到…</string>
 </resources>

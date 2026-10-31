@@ -1154,12 +1154,6 @@ private fun FolderSelectSnackbar(snack: SelectionSnack) {
         action = {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 SelectionOverflowControl(snack.folderKey, asText = true)
-                TextButton(
-                    onClick = { FolderSelectHost.showList(snack.folderKey) },
-                    colors = snackbarActionButtonColors(),
-                ) {
-                    Text(stringResource(R.string.browse_list))
-                }
             }
         },
         dismissAction = {
@@ -1178,7 +1172,7 @@ private fun FolderSelectSnackbar(snack: SelectionSnack) {
             } else {
                 stringResource(R.string.browse_selected_in_folder, snack.count, snack.folderName)
             },
-            modifier = Modifier.clickable { FolderSelectHost.showList(snack.folderKey) },
+            modifier = Modifier.fillMaxWidth().clickable { FolderSelectHost.showList(snack.folderKey) },
             maxLines = 2,
             overflow = TextOverflow.Ellipsis,
         )
@@ -1199,12 +1193,6 @@ private fun FolderTaskSnackbar(batch: TaskBatch) {
                         asText = true,
                         selectionActions = batch.folderKey != null,
                     )
-                }
-                TextButton(
-                    onClick = { FolderSelectHost.showTaskList(batch) },
-                    colors = snackbarActionButtonColors(),
-                ) {
-                    Text(stringResource(R.string.browse_task))
                 }
             }
         },
@@ -1246,6 +1234,7 @@ private fun FolderTaskSnackbar(batch: TaskBatch) {
             } else {
                 stringResource(R.string.browse_task_progress_in_folder, progress, name)
             },
+            modifier = Modifier.fillMaxWidth().clickable { FolderSelectHost.showTaskList(batch) },
             maxLines = 2,
             overflow = TextOverflow.Ellipsis,
         )
@@ -1707,7 +1696,7 @@ private fun SelectionOverflowControl(
                 }
                 if (selectionActions && uploadable > 0) {
                     DropdownMenuItem(
-                        text = { Text(stringResource(R.string.transfer_upload)) },
+                        text = { Text(stringResource(R.string.transfer_upload_action)) },
                         onClick = {
                             menu = false
                             val files = picks.mapNotNull { pick ->
@@ -1839,7 +1828,7 @@ private fun SelectionOverflowControl(
                     },
                 )
                 DropdownMenuItem(
-                    text = { Text(stringResource(R.string.browse_ask_where_to_save)) },
+                    text = { Text(stringResource(R.string.browse_ask_for_dest)) },
                     trailingIcon = {
                         Box(Modifier.size(24.dp), contentAlignment = Alignment.Center) {
                             if (askWhereToSave.value) Icon(Icons.Default.Check, contentDescription = null)

@@ -20,6 +20,7 @@ import com.hippo.ehviewer.ui.destinations.FolderBrowserScreenDestination
 import com.hippo.ehviewer.ui.destinations.ReaderScreenDestination
 import com.hippo.ehviewer.ui.destinations.SmbBrowserScreenDestination
 import com.hippo.ehviewer.ui.destinations.WebDavBrowserScreenDestination
+import com.hippo.ehviewer.ui.main.BrowseSaveAs
 import com.hippo.ehviewer.ui.reader.ReaderScreenArgs
 import com.hippo.ehviewer.ui.tools.DialogState
 import com.hippo.ehviewer.ui.tools.awaitConfirmationOrCancel
@@ -41,15 +42,22 @@ private fun ensureNoMediaFile(downloadDir: Path) {
 private val lck = Mutex()
 
 suspend fun keepNoMediaFileStatus(
-    downloadDir: Path = downloadLocation,
+    downloadDir: Path? = null,
     mediaScan: Boolean = Settings.mediaScan.value,
 ) {
-    if (downloadDir.isDirectory) {
-        lck.withLock {
-            if (mediaScan) {
-                removeNoMediaFile(downloadDir)
-            } else {
-                ensureNoMediaFile(downloadDir)
+    val directories = if (downloadDir != null) {
+        listOf(downloadDir)
+    } else {
+        listOfNotNull(downloadLocation, BrowseSaveAs.configuredConvertDirectory()).distinct()
+    }
+    for (directory in directories) {
+        if (directory.isDirectory) {
+            lck.withLock {
+                if (mediaScan) {
+                    removeNoMediaFile(directory)
+                } else {
+                    ensureNoMediaFile(directory)
+                }
             }
         }
     }

@@ -52,6 +52,7 @@ import com.ehviewer.core.files.toOkioPath
 import com.ehviewer.core.i18n.R
 import com.ehviewer.core.util.logcat
 import com.ehviewer.core.util.withIOContext
+import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.library.ExplorerWindows
 import com.hippo.ehviewer.library.TransferLocation
 import com.hippo.ehviewer.library.humanizePathName
@@ -109,10 +110,6 @@ internal fun UploadTransferBars() {
                                     colors = snackbarActionButtonColors(),
                                 ) { Text(stringResource(R.string.transfer_dest)) }
                             }
-                            TextButton(
-                                onClick = { UploadTransfers.panelId = job.id },
-                                colors = snackbarActionButtonColors(),
-                            ) { Text(stringResource(R.string.transfer_show)) }
                             if (state.active) {
                                 TextButton(
                                     onClick = { UploadTransfers.stop(job) },
@@ -131,7 +128,7 @@ internal fun UploadTransferBars() {
                         }
                     },
                 ) {
-                    Column(Modifier.clickable { UploadTransfers.panelId = job.id }) {
+                    Column(Modifier.fillMaxWidth().clickable { UploadTransfers.panelId = job.id }) {
                         if (state.editable) {
                             Text("${stringResource(job.actionLabel)} #${job.id} · ${stringResource(if (job.deleting) R.string.transfer_item_count else R.string.transfer_file_count, state.total)}")
                         } else if (state.phase == UploadPhase.Preparing) {
@@ -366,6 +363,7 @@ internal fun rememberUploadLocalDestinationPicker(onSelected: () -> Unit): () ->
 @Composable
 internal fun rememberSaveToTransferPicker(): (UploadJob) -> Unit {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     var pendingId by remember { mutableStateOf<Long?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
     val launcher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
@@ -389,7 +387,20 @@ internal fun rememberSaveToTransferPicker(): (UploadJob) -> Unit {
         })
     }
     return { job ->
-        pendingId = job.id
-        launcher.launch(null)
+        if (Settings.askWhereToSave.value) {
+            pendingId = job.id
+            launcher.launch(null)
+        } else {
+            scope.launch {
+                try {
+                    val directory = BrowseSaveAs.configuredSaveDirectory()
+                    UploadTransfers.saveDestination(job, TransferLocation(ExplorerWindows.Kind.Local, 0, directory.toString()), directory.toString())
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (failure: Exception) {
+                    error = context.getString(R.string.invalid_download_location)
+                }
+            }
+        }
     }
 }

@@ -286,7 +286,6 @@ internal object UploadTransfers {
             destinationLabel = ".trash/${LocalDate.now()}",
         )
         _jobs.update { it + job }
-        panelId = job.id
         startDelete(job, lease)
         return true
     }
