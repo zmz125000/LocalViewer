@@ -12,6 +12,38 @@ class NetworkSourceGuardTest {
     private fun source(path: String, kind: ExplorerWindows.Kind = ExplorerWindows.Kind.Smb, id: Long = 1) = TransferLocation(kind, id, path)
 
     @Test
+    fun safVolumeRootListingCanRestoreTopLevelFolder() {
+        val guard = NetworkSourceGuard()
+        val root = TransferLocation(ExplorerWindows.Kind.Local, 0, "content:/provider/tree/primary%3A/document/primary%3A")
+        val folder = root.copy(path = "content:/provider/tree/primary%3A/document/primary%3APhotos")
+        val deletion = guard.acquire(listOf(folder), deleting = true)!!
+        deletion.attempted(folder)
+        deletion.close()
+        assertNull(guard.acquire(listOf(folder), deleting = false))
+        guard.listed(root, listOf("Photos"), guard.listingStarted())
+        assertNotNull(guard.acquire(listOf(folder), deleting = false))
+    }
+
+    @Test
+    fun safAliasesShareDeleteOwnershipAndOnlyFreshListingsRestoreThem() {
+        val guard = NetworkSourceGuard()
+        fun local(path: String) = TransferLocation(ExplorerWindows.Kind.Local, 0, path)
+        val folder = local("content:/provider/tree/primary%3APhotos/document/primary%3APhotos/album")
+        val alias = local("content:/provider/tree/primary%3A/document/primary%3APhotos%2Falbum")
+        val oldListing = guard.listingStarted()
+        val deletion = guard.acquire(listOf(folder), deleting = true)!!
+        assertNull(guard.acquire(listOf(alias), deleting = true))
+        assertNull(guard.acquire(listOf(alias.child("a.jpg")), deleting = false))
+        deletion.attempted(folder)
+        deletion.close()
+        val parent = local("content:/provider/tree/primary%3APhotos/document/primary%3APhotos")
+        guard.listed(parent, listOf("album"), oldListing)
+        assertNull(guard.acquire(listOf(alias), deleting = false))
+        guard.listed(parent, listOf("album"), guard.listingStarted())
+        assertNotNull(guard.acquire(listOf(alias), deleting = false))
+    }
+
+    @Test
     fun pendingDeleteBlocksDuplicateDeleteUploadAndDescendantsForBothProtocols() {
         for (kind in listOf(ExplorerWindows.Kind.Smb, ExplorerWindows.Kind.WebDav)) {
             val guard = NetworkSourceGuard()

@@ -195,6 +195,7 @@ import com.ramcosta.composedestinations.annotation.Destination
 import com.ramcosta.composedestinations.annotation.RootGraph
 import com.ramcosta.composedestinations.navigation.DestinationsNavigator
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.first
 import moe.tarsin.snackbar
 import okio.Path
@@ -890,6 +891,10 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
             loading = false
             refreshing = false
         }
+    }
+
+    LaunchedEffect(explorerWindowId) {
+        BrowseSession.localMutations.collectLatest { reload(force = true) }
     }
 
     // Gallery grids opened from Library are part of its live-update surface too.

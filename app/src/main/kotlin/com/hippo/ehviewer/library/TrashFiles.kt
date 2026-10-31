@@ -6,12 +6,40 @@ import com.hippo.ehviewer.smb.SmbRepository
 import com.hippo.ehviewer.webdav.WebDavClient
 import com.hippo.ehviewer.webdav.WebDavPasswordStore
 import com.hippo.ehviewer.webdav.WebDavRepository
+import java.net.URLDecoder
 
 private val trashArchivePath = Regex("(?i)(?:^|/)[^/]+\\.(?:zip|cbz)(?=/|$)")
 
 internal class TrashProtectedException : IllegalArgumentException("Items in .trash cannot be deleted")
 
-internal fun isInsideTrashPath(path: String): Boolean = path.replace('\\', '/').split('/').any { it.equals(".trash", ignoreCase = true) }
+internal fun decodedTrashPath(path: String): String = if (path.startsWith("content:")) {
+    path.split('/').joinToString("/") { part ->
+        runCatching { URLDecoder.decode(part.replace("+", "%2B"), "UTF-8") }.getOrDefault(part)
+    }
+} else {
+    path
+}
+
+internal fun isInsideTrashPath(path: String): Boolean = decodedTrashPath(path).replace('\\', '/').split('/').any {
+    it.substringAfterLast(':').equals(".trash", ignoreCase = true)
+}
+
+internal fun canTrash(source: TransferLocation): Boolean = !isInsideTrashPath(source.path) && when (source.kind) {
+    ExplorerWindows.Kind.Local -> source.path.startsWith("content:") && "/tree/" in source.path && "/document/" in source.path && !ZipPaths.isZipPath(source.path)
+    else -> !isTrashArchiveMember(source.path)
+}
+
+/** The tree root has no granted parent; SAF filesystem document IDs stay inside that tree. */
+internal fun safTrashParentId(treeId: String, sourceId: String): String {
+    requireOutsideTrash(sourceId)
+    val volumeRoot = treeId.endsWith(':')
+    val parent = sourceId.substringBeforeLast('/', if (volumeRoot) treeId else "")
+    val prefix = if (volumeRoot) treeId else "$treeId/"
+    if (sourceId == treeId || !sourceId.startsWith(prefix) || sourceId.split('/').any { it == "." || it == ".." }) {
+        throw UnsupportedOperationException("Cannot move the selected storage root or an opaque document")
+    }
+    return parent
+}
 
 internal fun requireOutsideTrash(path: String) {
     if (isInsideTrashPath(path)) throw TrashProtectedException()
@@ -25,7 +53,7 @@ internal fun isTrashArchiveMember(path: String): Boolean {
 
 /** A trash job contains roots only. Never expand folders or reinterpret ZIP members. */
 internal fun trashSelectionRoots(files: List<TransferFile>): List<TransferFile> {
-    val roots = files.map { it.copy(source = it.source.copy(path = it.source.path.replace('\\', '/').trim('/'))) }.distinctBy { it.source }
+    val roots = files.map { if (it.source.kind == ExplorerWindows.Kind.Local) it else it.copy(source = it.source.copy(path = it.source.path.replace('\\', '/').trim('/'))) }.distinctBy { it.source }
     return roots.filter { file ->
         roots.none { parent ->
             parent !== file && parent.directory && parent.source.kind == file.source.kind &&
@@ -34,7 +62,7 @@ internal fun trashSelectionRoots(files: List<TransferFile>): List<TransferFile> 
         }
     }.map { file ->
         // ZIP-as-directory root is one physical file. A member is never its backing ZIP.
-        val path = file.source.path.replace('\\', '/').trim('/')
+        val path = if (file.source.kind == ExplorerWindows.Kind.Local) file.source.path else file.source.path.replace('\\', '/').trim('/')
         val archive = file.directory && !isTrashArchiveMember(path) &&
             (path.endsWith(".zip", true) || path.endsWith(".cbz", true))
         file.copy(source = file.source.copy(path = path), relative = "${file.source.sourceId}:/$path", directory = file.directory && !archive)
@@ -72,7 +100,7 @@ internal suspend fun moveToTrashWithoutOverwrite(
 internal object TrashFiles {
     suspend fun move(file: TransferFile, date: String, control: TransferControl): String {
         requireOutsideTrash(file.source.path)
-        if (isTrashArchiveMember(file.source.path)) {
+        if (file.source.kind != ExplorerWindows.Kind.Local && isTrashArchiveMember(file.source.path)) {
             throw UnsupportedOperationException("Server-side moves require a physical file or folder")
         }
         return when (file.source.kind) {
@@ -84,7 +112,7 @@ internal object TrashFiles {
                 val source = requireNotNull(WebDavRepository.load(file.source.sourceId)) { "WebDAV source missing" }
                 WebDavClient.moveToTrash(source, WebDavPasswordStore.get(source.id), file.source.path, file.directory, date, control::checkpoint)
             }
-            ExplorerWindows.Kind.Local -> throw UnsupportedOperationException("Only network server-side moves are supported")
+            ExplorerWindows.Kind.Local -> LocalSafTrash.move(file, date, control)
         }
     }
 }

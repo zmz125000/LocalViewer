@@ -1626,7 +1626,7 @@ private fun SelectionOverflowControl(
     val savable = picks.count { it.saveInto != null }
     val uploadable = picks.count { it.uploadSource != null }
     val confirmDelete = rememberNetworkDeleteConfirmation { FolderSelectHost.cancelShownSelection() }
-    val deletable = picks.isNotEmpty() && picks.all { it.uploadSource?.let { source -> source.kind != com.hippo.ehviewer.library.ExplorerWindows.Kind.Local && !com.hippo.ehviewer.library.isInsideTrashPath(source.path) } == true }
+    val deletable = picks.isNotEmpty() && picks.all { it.uploadSource?.let { source -> com.hippo.ehviewer.library.canTrash(source) } == true }
     val canSelectAll = selectionActions &&
         folderKey != null &&
         FolderSelectHost.current?.folderKey == folderKey

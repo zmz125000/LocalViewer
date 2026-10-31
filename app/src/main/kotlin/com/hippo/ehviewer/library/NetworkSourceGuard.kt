@@ -13,14 +13,30 @@ internal class NetworkSourceGuard {
         override fun close() = release(id)
     }
 
-    private fun normalize(source: TransferLocation) = source.copy(path = source.path.replace('\\', '/').trim('/'))
+    private fun normalize(source: TransferLocation): TransferLocation {
+        val path = if (source.kind == ExplorerWindows.Kind.Local && source.path.startsWith("content:") && "/document/" in source.path) {
+            val decoded = decodedTrashPath(source.path)
+            // Different tree grants / synthetic child paths can name the same document.
+            val documentId = decoded.substringAfter("/document/")
+            val identity = if (':' in documentId) {
+                val rest = documentId.substringAfter(':').trimStart('/')
+                documentId.substringBefore(':') + ":" + if (rest.isEmpty()) "" else "/$rest"
+            } else {
+                documentId
+            }
+            source.path.substringBefore("/tree/").substringBefore("/document/").replace("content://", "content:/") + "/document/" + identity
+        } else {
+            source.path
+        }
+        return source.copy(path = path.replace('\\', '/').trim('/'))
+    }
     private fun contains(parent: TransferLocation, child: TransferLocation): Boolean = parent.kind == child.kind && parent.sourceId == child.sourceId &&
         (parent.path == child.path || parent.path.isEmpty() || child.path.startsWith(parent.path + "/"))
 
     /** Upload reads may coexist; a delete excludes overlapping reads and other deletes. */
     @Synchronized
     fun acquire(sources: List<TransferLocation>, deleting: Boolean): Lease? {
-        val roots = sources.filter { it.kind != ExplorerWindows.Kind.Local }.mapTo(HashSet(), ::normalize)
+        val roots = sources.mapTo(HashSet(), ::normalize)
         if (roots.any { source -> unavailable.keys.any { contains(it, source) } }) return null
         if (active.values.any { entry ->
                 (deleting || entry.deleting) && roots.any { source -> entry.roots.any { contains(it, source) || contains(source, it) } }

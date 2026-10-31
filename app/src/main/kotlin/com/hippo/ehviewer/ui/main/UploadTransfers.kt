@@ -165,12 +165,14 @@ internal object UploadTransfers {
     val jobs = _jobs.asStateFlow()
     var panelId by mutableStateOf<Long?>(null)
     var destinationJobId by mutableStateOf<Long?>(null)
+    private var skipDestinationPanelFor: Long? = null
     private var savedUploadDraft by mutableStateOf<SavedUploadDraft?>(null)
     val destinationRequestId get() = savedUploadDraft?.id ?: destinationJobId
     val choosingDestination get() = destinationRequestId != null
 
     fun chooseSavedUploadDestination(file: TransferFile) {
         panelId = null
+        skipDestinationPanelFor = null
         destinationJobId = null
         savedUploadDraft = SavedUploadDraft(ids.getAndIncrement(), uploadRoot(file.source, file.relative, file.directory, file.size, file.mtime))
     }
@@ -327,7 +329,7 @@ internal object UploadTransfers {
                                     BrowseSession.invalidateWebDavListing(parent.sourceId, parent.path)
                                     BrowseSession.invalidateWebDavListingsUnder(row.file.source.sourceId, row.file.source.path)
                                 }
-                                ExplorerWindows.Kind.Local -> Unit
+                                ExplorerWindows.Kind.Local -> BrowseSession.invalidateLocalListing()
                             }
                         } catch (error: CancellationException) {
                             throw error
@@ -365,7 +367,7 @@ internal object UploadTransfers {
         return when {
             causes.any { it is com.hippo.ehviewer.library.TrashProtectedException } -> appCtx.getString(R.string.transfer_delete_trash_protected)
             causes.any { it is UnsupportedOperationException } || status in listOf(0xC00000BBL, 0xC0000010L, 0xC0000002L) -> appCtx.getString(R.string.transfer_delete_unsupported)
-            status in listOf(0xC0000022L, 0xC0000061L) || davStatus == 401 || davStatus == 403 -> appCtx.getString(R.string.transfer_delete_access_denied)
+            causes.any { it is SecurityException } || status in listOf(0xC0000022L, 0xC0000061L) || davStatus == 401 || davStatus == 403 -> appCtx.getString(R.string.transfer_delete_access_denied)
             else -> error.message ?: appCtx.getString(R.string.browse_task_failed)
         }
     }
@@ -379,11 +381,12 @@ internal object UploadTransfers {
     fun remove(job: UploadJob, relative: String) {
         job.state.update { if (it.editable) it.copy(rows = removeUploadSubtree(it.rows, relative)) else it }
     }
-    fun chooseDestination(job: UploadJob) {
+    fun chooseDestination(job: UploadJob, showPanelAfterSelection: Boolean = true) {
         if (!job.state.value.editable && job.state.value.phase != UploadPhase.Preparing) return
         panelId = null
         savedUploadDraft = null
         destinationJobId = job.id
+        skipDestinationPanelFor = job.id.takeUnless { showPanelAfterSelection }
     }
     fun destination(location: TransferLocation, label: String, jobId: Long? = destinationRequestId) {
         savedUploadDraft?.takeIf { it.id == jobId }?.let { draft ->
@@ -395,11 +398,13 @@ internal object UploadTransfers {
         if (!job.state.value.editable && job.state.value.phase != UploadPhase.Preparing) return
         job.state.update { it.copy(destination = location, destinationLabel = label, startWhenReady = it.autoStart) }
         destinationJobId = null
-        panelId = job.id
+        if (skipDestinationPanelFor != job.id) panelId = job.id
+        skipDestinationPanelFor = null
         if (job.state.value.autoStart && job.state.value.editable) start(job)
     }
     fun cancelDestination() {
         destinationJobId = null
+        skipDestinationPanelFor = null
         savedUploadDraft = null
     }
     fun toggleBackground(job: UploadJob) {
@@ -497,7 +502,7 @@ internal object UploadTransfers {
                     when (source.kind) {
                         ExplorerWindows.Kind.Smb -> BrowseSession.notifySmbMutation(source.sourceId, parent)
                         ExplorerWindows.Kind.WebDav -> BrowseSession.notifyWebDavMutation(source.sourceId, parent)
-                        ExplorerWindows.Kind.Local -> Unit
+                        ExplorerWindows.Kind.Local -> BrowseSession.notifyLocalMutation()
                     }
                 }
             }

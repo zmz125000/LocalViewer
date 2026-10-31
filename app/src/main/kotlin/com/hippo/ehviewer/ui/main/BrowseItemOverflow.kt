@@ -342,7 +342,7 @@ fun BrowseItemOverflowButton(
                     onClick = { beginUpload(saveQuick = false) },
                 )
             }
-            if (actions.uploadSource?.let { it.kind != com.hippo.ehviewer.library.ExplorerWindows.Kind.Local && !com.hippo.ehviewer.library.isInsideTrashPath(it.path) } == true) {
+            if (actions.uploadSource?.let { com.hippo.ehviewer.library.canTrash(it) } == true) {
                 DropdownMenuItem(
                     text = { Text(stringResource(R.string.delete)) },
                     onClick = {

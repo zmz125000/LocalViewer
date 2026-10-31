@@ -12,6 +12,37 @@ class TrashFilesTest {
     private fun file(path: String, directory: Boolean = false, sourceId: Long = 1) = TransferFile(TransferLocation(ExplorerWindows.Kind.Smb, sourceId, path), path.substringAfterLast('/'), directory, 123, 456)
 
     @Test
+    fun safDeleteOnlyAcceptsTreeDocumentsOutsideTrash() {
+        fun local(path: String) = TransferLocation(ExplorerWindows.Kind.Local, 0, path)
+        val uri = "content:/provider/tree/primary%3APhotos/document/primary%3APhotos/album"
+        assertTrue(canTrash(local(uri)))
+        assertFalse(canTrash(local("/storage/emulated/0/Photos/a.jpg")))
+        assertFalse(canTrash(local("mediastore:/Photos/a.jpg")))
+        assertFalse(canTrash(local("content:/provider/document/123")))
+        assertFalse(canTrash(local("content:/provider/tree/primary%3APhotos/document/primary%3APhotos%2F.trash%2Fa.jpg")))
+        assertTrue(isInsideTrashPath("content:/provider/tree/primary%3APhotos%2F.trash/document/primary%3APhotos%2F.trash/a.jpg"))
+        assertTrue(isInsideTrashPath("content:/provider/tree/primary%3A/document/primary%3A.trash/a 100%.jpg"))
+        val root = trashSelectionRoots(listOf(TransferFile(local(uri), "album", true, 0, 0))).single()
+        assertEquals(uri, root.source.path)
+    }
+
+    @Test
+    fun safParentMustStayInsideGrantedTreeAndNeverMoveTheRoot() {
+        assertEquals("primary:", safTrashParentId("primary:", "primary:Photos"))
+        assertEquals("primary:Photos", safTrashParentId("primary:", "primary:Photos/album"))
+        assertEquals("primary:Photos", safTrashParentId("primary:Photos", "primary:Photos/album"))
+        assertEquals("primary:Photos/album", safTrashParentId("primary:Photos", "primary:Photos/album/a.jpg"))
+        for (id in listOf("primary:Photos", "primary:Other/a.jpg", "primary:Photos/../Other/a.jpg", "opaque-id")) {
+            try {
+                safTrashParentId("primary:Photos", id)
+                throw AssertionError("Accepted an ungranted SAF parent: $id")
+            } catch (_: UnsupportedOperationException) {
+                // No provider mutation is allowed for the selected tree or unknown parent.
+            }
+        }
+    }
+
+    @Test
     fun trashFolderAndAllDescendantsAreProtectedAcrossPathStyles() {
         for (path in listOf(".trash", "photos/.trash", ".trash/2026-10-30/photo.jpg", "share/photos/.trash/2026-10-30/folder/sub", "share\\photos\\.TRASH\\2026-10-30\\photo.jpg")) {
             assertTrue(path, isInsideTrashPath(path))

@@ -962,7 +962,7 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
                                         val job = UploadTransfers.prepare(listOf(file))
                                         if (job != null) {
                                             UploadTransfers.recordUploadHistory(file)
-                                            UploadTransfers.chooseDestination(job)
+                                            UploadTransfers.chooseDestination(job, showPanelAfterSelection = false)
                                             explorer.open()
                                         }
                                     }
