@@ -1731,7 +1731,7 @@ private fun SelectionOverflowControl(
                 }
                 if (selectionActions && deletable) {
                     DropdownMenuItem(
-                        text = { Text(stringResource(R.string.delete)) },
+                        text = { Text(stringResource(R.string.action_trash)) },
                         onClick = {
                             menu = false
                             scope.launch {

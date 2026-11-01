@@ -1176,6 +1176,9 @@
     <string name="explorer_save_path">パスを保存</string>
     <string name="browse_open_in_new_tab">新しいタブで開く</string>
     <string name="browse_save_to_paths">保存済みパスに追加</string>
+    <string name="explorer_close_all_windows">すべてのウィンドウを閉じる</string>
+    <string name="action_trash">ゴミ箱に移動</string>
+    <string name="explorer_uploads">アップロード一覧</string>
     <string name="explorer_close_window">ウィンドウを閉じる</string>
     <string name="explorer_delete_saved">保存済みパスを削除</string>
     <string name="browse_save_to_upload">クイックアップロードに保存</string>

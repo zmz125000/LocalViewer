@@ -553,6 +553,9 @@
     <string name="explorer_save_path">儲存路徑</string>
     <string name="browse_open_in_new_tab">在新分頁中開啟</string>
     <string name="browse_save_to_paths">儲存至路徑</string>
+    <string name="explorer_close_all_windows">關閉所有視窗</string>
+    <string name="action_trash">移到垃圾桶</string>
+    <string name="explorer_uploads">上傳項目</string>
     <string name="explorer_close_window">關閉視窗</string>
     <string name="explorer_delete_saved">刪除已儲存的路徑</string>
     <string name="browse_save_to_upload">儲存至快速上傳</string>

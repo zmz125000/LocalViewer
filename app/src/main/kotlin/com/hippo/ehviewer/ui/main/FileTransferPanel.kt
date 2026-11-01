@@ -67,7 +67,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 
 private val UploadJob.actionLabel get() = when {
-    deleting -> R.string.delete
+    deleting -> R.string.action_trash
     saving -> R.string.action_save_to
     else -> R.string.transfer_upload
 }
@@ -304,7 +304,7 @@ private fun FileTransferPanel(job: UploadJob) {
                             explorer.open()
                         }) { Text(stringResource(R.string.transfer_destination)) }
                     }
-                    TextButton(onClick = { UploadTransfers.start(job) }, enabled = (job.deleting || state.destination != null) && state.rows.isNotEmpty()) { Text(stringResource(if (job.deleting) R.string.delete else R.string.transfer_start)) }
+                    TextButton(onClick = { UploadTransfers.start(job) }, enabled = (job.deleting || state.destination != null) && state.rows.isNotEmpty()) { Text(stringResource(if (job.deleting) R.string.action_trash else R.string.transfer_start)) }
                 } else {
                     if (!job.deleting) TextButton(onClick = { UploadTransfers.continueTransfer(job) }) { Text(stringResource(R.string.browse_continue)) }
                     TextButton(onClick = { UploadTransfers.dismiss(job) }) { Text(stringResource(R.string.browse_task_done)) }

@@ -20,13 +20,13 @@ internal fun rememberNetworkDeleteConfirmation(onConfirmed: () -> Unit = {}): (L
     pending?.let { files ->
         AlertDialog(
             onDismissRequest = { pending = null },
-            title = { Text(stringResource(R.string.delete)) },
+            title = { Text(stringResource(R.string.action_trash)) },
             text = { Text(stringResource(R.string.transfer_delete_confirm, files.size)) },
             confirmButton = {
                 TextButton(onClick = {
                     pending = null
                     if (UploadTransfers.delete(files)) onConfirmed()
-                }) { Text(stringResource(R.string.delete)) }
+                }) { Text(stringResource(R.string.action_trash)) }
             },
             dismissButton = {
                 TextButton(onClick = { pending = null }) { Text(stringResource(android.R.string.cancel)) }

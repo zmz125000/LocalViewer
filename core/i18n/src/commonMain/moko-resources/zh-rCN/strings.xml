@@ -1248,6 +1248,9 @@
     <string name="explorer_save_path">保存路径</string>
     <string name="browse_open_in_new_tab">在新标签页中打开</string>
     <string name="browse_save_to_paths">保存到路径</string>
+    <string name="explorer_close_all_windows">关闭所有窗口</string>
+    <string name="action_trash">移到回收站</string>
+    <string name="explorer_uploads">上传项目</string>
     <string name="explorer_close_window">关闭窗口</string>
     <string name="explorer_delete_saved">删除已保存的路径</string>
     <string name="browse_save_to_upload">保存到快捷上传</string>

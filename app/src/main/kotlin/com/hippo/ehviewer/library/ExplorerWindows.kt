@@ -215,6 +215,23 @@ object ExplorerWindows {
         return CloseResult.Switched(next)
     }
 
+    /** Close every window without activating intermediate sessions. */
+    fun closeAll() {
+        windows.forEach { NavTabWindows.release(it.id) }
+        windows.clear()
+        activeId = null
+    }
+
+    /** Switch a newly opened folder to the foreground, preserving its navigation origin. */
+    fun activateFolderTab(window: Window) {
+        val previous = active()
+        val tab = NavTabWindows.Tab.entries.firstOrNull { NavTabWindows.id(it) == activeId }
+        activate(window.id) ?: return
+        setOrigin(window.id, previous?.fromHistory == true, previous?.fromLibrary == true)
+        if (previous?.fromSidePanel == true) overrideFromSidePanel(window.id)
+        if (tab != null) NavTabWindows.claim(tab, window.id)
+    }
+
     fun syncLocal(windowId: Long, stack: List<BrowseSession.LocalFrame>) {
         if (activeId != windowId) return
         val index = windows.indexOfFirst { it.id == windowId }

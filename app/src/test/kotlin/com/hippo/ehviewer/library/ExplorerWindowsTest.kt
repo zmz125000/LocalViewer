@@ -100,6 +100,45 @@ class ExplorerWindowsTest {
         assertEquals("photos", copy?.relativePath)
     }
 
+    @Test
+    fun closeAllReleasesBindingsAndLeavesNoActiveWindow() {
+        openLocal("photos")
+        NavTabWindows.claim(NavTabWindows.Tab.Browse, ExplorerWindows.activeId!!)
+        openLocal("videos")
+        NavTabWindows.claim(NavTabWindows.Tab.Library, ExplorerWindows.activeId!!)
+
+        ExplorerWindows.closeAll()
+
+        assertEquals(emptyList<ExplorerWindows.Window>(), ExplorerWindows.windows.toList())
+        assertEquals(null, ExplorerWindows.activeId)
+        assertEquals(null, NavTabWindows.id(NavTabWindows.Tab.Browse))
+        assertEquals(null, NavTabWindows.id(NavTabWindows.Tab.Library))
+    }
+
+    @Test
+    fun foregroundFolderTabPreservesOutgoingPathAndClaimsNavigationOrigin() {
+        openLocal("photos")
+        val original = ExplorerWindows.activeId!!
+        val stack = BrowseSession.localStack
+        ExplorerWindows.setOrigin(original, fromHistory = true, fromLibrary = false)
+        NavTabWindows.claim(NavTabWindows.Tab.History, original)
+        ExplorerWindows.openLocalInBackground(
+            listOf(BrowseSession.LocalFrame(1L, "/root/videos", "videos", "videos")),
+            "Root",
+        )
+        val target = ExplorerWindows.windowOnPath(ExplorerWindows.Kind.Local, 1L, "videos")!!
+
+        ExplorerWindows.activateFolderTab(target)
+
+        assertEquals(target.id, ExplorerWindows.activeId)
+        assertEquals("videos", BrowseSession.localStack.last().relativePath)
+        assertEquals(true, ExplorerWindows.active()?.fromHistory)
+        assertEquals(target.id, NavTabWindows.id(NavTabWindows.Tab.History))
+        ExplorerWindows.activate(original)
+        assertEquals(stack, BrowseSession.localStack)
+        NavTabWindows.release(target.id)
+    }
+
     private fun openLocal(relativePath: String) {
         val leaf = relativePath.substringAfterLast('/').ifEmpty { "Root" }
         ExplorerWindows.prepareSpawn()

@@ -372,7 +372,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
 
     fun dirRelative(name: String): String = if (relativeDir.isEmpty()) name else SmbGateway.joinRelativePath(relativeDir, name)
 
-    fun openRemoteFolderInNewTab(name: String) {
+    fun openRemoteFolderInNewTab(name: String, switchTo: Boolean = false) {
         val segments = dirRelative(name).split('/').filter { it.isNotEmpty() }
         ExplorerWindows.openRemoteInBackground(
             ExplorerWindows.Kind.Smb,
@@ -380,6 +380,10 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
             source?.displayName.orEmpty(),
             segments,
         )
+        if (switchTo) {
+            ExplorerWindows.windowOnPath(ExplorerWindows.Kind.Smb, sourceId, dirRelative(name))
+                ?.let { ExplorerWindows.activateFolderTab(it) }
+        }
     }
 
     fun saveRemoteFolderToPaths(name: String) {
@@ -2913,7 +2917,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                                     name = entry.name,
                                     onClick = { enterDir(entry.relativeName, fromSearch = fromSearch) },
                                     onLongClick = {
-                                        toggleDirFavorite(entry.relativeName, entry.coverFileName)
+                                        openRemoteFolderInNewTab(entry.relativeName, switchTo = true)
                                     },
                                     showFavoriteStar = isDirFavorite(entry.relativeName),
                                     cover = dirCoverFor(entry),
@@ -2934,7 +2938,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                                     name = entry.name,
                                     onClick = { enterDir(entry.relativeName, fromSearch = fromSearch) },
                                     onLongClick = {
-                                        toggleDirFavorite(entry.relativeName, entry.coverFileName)
+                                        openRemoteFolderInNewTab(entry.relativeName, switchTo = true)
                                     },
                                     cover = dirCoverFor(entry),
                                     showFolderThumb = browseFolderThumbs,
@@ -3397,7 +3401,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                                             name = dir.name,
                                             onClick = { enterDir(dir.relativeName) },
                                             onLongClick = {
-                                                toggleDirFavorite(dir.relativeName, dir.coverFileName)
+                                                openRemoteFolderInNewTab(dir.relativeName, switchTo = true)
                                             },
                                             showFavoriteStar = isDirFavorite(dir.relativeName),
                                             cover = dirCoverFor(dir),
@@ -3565,7 +3569,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                                                 name = dir.name,
                                                 onClick = { enterDir(dir.relativeName) },
                                                 onLongClick = {
-                                                    toggleDirFavorite(dir.relativeName, dir.coverFileName)
+                                                    openRemoteFolderInNewTab(dir.relativeName, switchTo = true)
                                                 },
                                                 cover = dirCoverFor(dir),
                                                 showFolderThumb = browseFolderThumbs,

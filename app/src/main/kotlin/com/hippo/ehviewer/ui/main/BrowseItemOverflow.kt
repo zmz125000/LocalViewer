@@ -358,7 +358,7 @@ fun BrowseItemOverflowButton(
             }
             if (actions.uploadSource?.let { com.hippo.ehviewer.library.canTrash(it) } == true) {
                 DropdownMenuItem(
-                    text = { Text(stringResource(R.string.delete)) },
+                    text = { Text(stringResource(R.string.action_trash)) },
                     onClick = {
                         expanded = false
                         actions.uploadSource.let { source ->

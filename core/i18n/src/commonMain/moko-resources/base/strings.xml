@@ -86,6 +86,9 @@
     <string name="browse_open_in_new_tab">Open in new tab</string>
     <string name="browse_save_to_paths">Save to paths</string>
     <string name="browse_save_to_upload">Save to quick upload</string>
+    <string name="explorer_close_all_windows">Close all windows</string>
+    <string name="action_trash">Trash</string>
+    <string name="explorer_uploads">Uploads</string>
     <string name="explorer_close_window">Close window</string>
     <string name="explorer_delete_saved">Delete saved path</string>
     <string name="browse_videos">Videos</string>

@@ -1109,12 +1109,17 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         updateStack(next)
     }
 
-    fun openLocalFolderInNewTab(name: String, path: okio.Path, relativeName: String) {
+    fun openLocalFolderInNewTab(name: String, path: okio.Path, relativeName: String, switchTo: Boolean = false) {
         val next = childStack(name, path, relativeName) ?: return
         ExplorerWindows.openLocalInBackground(
             next,
             next.first().title,
         )
+        if (switchTo) {
+            val frame = next.last()
+            ExplorerWindows.windowOnPath(ExplorerWindows.Kind.Local, frame.rootId, displayRelative(frame))
+                ?.let { ExplorerWindows.activateFolderTab(it) }
+        }
     }
 
     fun saveLocalFolderToPaths(name: String, path: okio.Path, relativeName: String) {
@@ -3224,7 +3229,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                     modifier = itemMod,
                                     name = entry.name,
                                     onClick = { enterDir(entry, fromSearch = fromSearch) },
-                                    onLongClick = { toggleDirFavorite(entry) },
+                                    onLongClick = { openLocalFolderInNewTab(entry.name, entry.path, entry.relativeName, switchTo = true) },
                                     showFavoriteStar = isDirFavorite(entry),
                                     cover = entry.coverPath?.let { directoryBrowseCover(it) },
                                     showFolderThumb = browseFolderThumbs,
@@ -3235,7 +3240,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                     modifier = itemMod,
                                     name = entry.name,
                                     onClick = { enterDir(entry, fromSearch = fromSearch) },
-                                    onLongClick = { toggleDirFavorite(entry) },
+                                    onLongClick = { openLocalFolderInNewTab(entry.name, entry.path, entry.relativeName, switchTo = true) },
                                     cover = entry.coverPath?.let { directoryBrowseCover(it) },
                                     showFolderThumb = browseFolderThumbs,
                                     lastModifiedMs = entry.lastModifiedMs,
@@ -3705,7 +3710,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                             modifier = Modifier.thenIf(animateItems) { animateItem() },
                                             name = dir.name,
                                             onClick = { enterDir(dir) },
-                                            onLongClick = { toggleDirFavorite(dir) },
+                                            onLongClick = { openLocalFolderInNewTab(dir.name, dir.path, dir.relativeName, switchTo = true) },
                                             showFavoriteStar = isDirFavorite(dir),
                                             cover = dir.coverPath?.let { directoryBrowseCover(it) },
                                             showFolderThumb = browseFolderThumbs,
@@ -3870,7 +3875,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                                 modifier = Modifier.thenIf(animateItems) { animateItem() },
                                                 name = dir.name,
                                                 onClick = { enterDir(dir) },
-                                                onLongClick = { toggleDirFavorite(dir) },
+                                                onLongClick = { openLocalFolderInNewTab(dir.name, dir.path, dir.relativeName, switchTo = true) },
                                                 cover = dir.coverPath?.let { directoryBrowseCover(it) },
                                                 showFolderThumb = browseFolderThumbs,
                                                 lastModifiedMs = dir.lastModifiedMs,
