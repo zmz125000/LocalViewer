@@ -76,7 +76,10 @@ Based on [EhViewer](https://github.com/FooIbar/EhViewer)
 With [Material Design 3](https://m3.material.io/)  
 and [Dynamic Color](https://m3.material.io/styles/color/dynamic-color/overview) Support.  
 
-Similar to Perfect Viewer and Kuro Reader, with Hi-Res images support (no downscaling), clean UI and good performance.
+Similar to Perfect Viewer and Kuro Reader, with Hi-Res images support (no downscaling) and good performance.
+
+The desktop version of the image converter in LocalViewer can be found here.  
+https://github.com/zmz125000/JXRConverter
 
 Build with Grok 4.5.
 
