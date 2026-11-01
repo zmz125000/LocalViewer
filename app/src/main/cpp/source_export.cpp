@@ -46,9 +46,9 @@ std::vector<uint8_t> orientation_exif(unsigned value) {
 }
 uhdr_color_gamut_t gamut(int p) { return p == 9 ? UHDR_CG_BT_2100 : p == 12 ? UHDR_CG_DISPLAY_P3 : UHDR_CG_BT_709; }
 int primary(uhdr_color_gamut_t p) { return p == UHDR_CG_BT_2100 ? 9 : p == UHDR_CG_DISPLAY_P3 ? 12 : 1; }
-// AV1 stores 8/10/12-bit samples; only wider sources fall back to the configured AVIF depth.
+// AVIF depth is a maximum; do not promote source precision to the working buffer depth.
 unsigned avif_source_depth(unsigned bits, const StillEncodeQuality& quality) {
-    return bits <= 8 ? 8 : bits <= 10 ? 10 : bits <= 12 ? 12 : quality.avif_depth();
+    return std::min(bits <= 8 ? 8u : bits <= 10 ? 10u : 12u, quality.avif_depth());
 }
 
 Image from_rgb(unsigned w, unsigned h, const void* pixels, bool sixteen, unsigned depth,
@@ -161,6 +161,9 @@ int jpeg_to_jxl(const void* data,size_t size,const char* path,StillEncodeQuality
 Image jxl_image(const uint8_t* data,size_t size,int target,StillEncodeQuality quality,bool keep_exif,std::vector<uint8_t>& icc,
                  std::vector<uint8_t>& exif,bool& unsupported,const char* output,int& encoded_result,jint* output_info) {
     unsupported=false;
+    const bool linear_only = target == 3;
+    if (linear_only) target = 1;
+    bool scrgb = false;
     auto runner=JxlResizableParallelRunnerMake(nullptr);
     auto decoder=JxlDecoderMake(nullptr);if(!decoder || !runner)return Image(nullptr,avifImageDestroy);
     JxlDecoderSetParallelRunner(decoder.get(),JxlResizableParallelRunner,runner.get());
@@ -183,6 +186,13 @@ Image jxl_image(const uint8_t* data,size_t size,int target,StillEncodeQuality qu
                 (info.bits_per_sample<=16?JXL_TYPE_FLOAT16:JXL_TYPE_FLOAT):info.bits_per_sample>8?JXL_TYPE_UINT16:JXL_TYPE_UINT8;
         } else if(status==JXL_DEC_COLOR_ENCODING) {
             structured=JxlDecoderGetColorAsEncodedProfile(decoder.get(),JXL_COLOR_PROFILE_TARGET_ORIGINAL,&color)==JXL_DEC_SUCCESS;
+            scrgb = structured && info.exponent_bits_per_sample > 0 && info.intensity_target == 80.f &&
+                color.color_space == JXL_COLOR_SPACE_RGB && color.white_point == JXL_WHITE_POINT_D65 &&
+                color.primaries == JXL_PRIMARIES_SRGB && color.transfer_function == JXL_TRANSFER_FUNCTION_LINEAR;
+            if ((linear_only && !scrgb) || (target != 1 && scrgb)) {
+                // Decide during the normal color event, before allocating/decoding pixels.
+                unsupported = true; return Image(nullptr, avifImageDestroy);
+            }
             if(target!=1 && info.exponent_bits_per_sample && info.intensity_target>255.f &&
                (!structured || (color.transfer_function!=JXL_TRANSFER_FUNCTION_PQ && color.transfer_function!=JXL_TRANSFER_FUNCTION_HLG))) {
                 unsupported=true;return Image(nullptr,avifImageDestroy);
@@ -234,7 +244,7 @@ Image jxl_image(const uint8_t* data,size_t size,int target,StillEncodeQuality qu
         StillSourceColor source;source.bits=info.bits_per_sample;source.exponent_bits=info.exponent_bits_per_sample;
         source.intensity_target=info.intensity_target;source.primaries=p;source.transfer=t;
         source.icc=icc.data();source.icc_size=icc.size();
-        if((t==16 || t==18) && (p==1 || p==9 || p==12))source.icc_size=0;
+        if (((t==16 || t==18) && (p==1 || p==9 || p==12)) || scrgb) source.icc_size=0;
         quality.exif=exif.data();quality.exif_size=exif.size();
         const int result=encode_jxl_source(info.xsize,info.ysize,pixels.data(),info.bits_per_sample>8,source,output,quality);
         encoded_result=result==0?1:result;
@@ -536,6 +546,7 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_convertSourceEncodedStill(JNIEnv* env,j
     const auto size=env->GetDirectBufferCapacity(input);if(!data||size<=0)return -80;
     ThumbnailOutputPath path(env,output);if(!path.get())return -83;
     StillEncodeQuality quality(preset,distance,codec_quality,avif_depth,downsize==JNI_TRUE);
+    if (target == 3 && kind != 3) return 0;
     Image image(nullptr,avifImageDestroy);Decoder decoder(nullptr,avifDecoderDestroy);
     avifImage* decoded_image=nullptr;
     Uhdr jpeg(nullptr,uhdr_release_decoder);std::vector<uint8_t> exif,icc;

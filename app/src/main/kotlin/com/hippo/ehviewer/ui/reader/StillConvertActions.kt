@@ -215,7 +215,7 @@ private suspend fun encodeStagedCaptured(leaf: String, target: StillExportTarget
     val quality = currentCoroutineContext()[StillExportQuality] ?: StillExportQuality.current()
     withExportSource(localSource, stage) { source, decodeSource ->
         android.util.Log.i("StillConvert", "Start $leaf -> $target source=$decodeSource")
-        StillExportWork.withSource(source, leaf) {
+        StillExportWork.withSource(source, leaf, target) {
             if (target == StillExportTarget.Jxl && (quality.value == 0 || quality.jpegTranscoding) &&
                 leaf.substringAfterLast('.', "").lowercase() in setOf("jpg", "jpeg", "jpe", "jfif")
             ) {
@@ -242,7 +242,7 @@ private suspend fun encodeStagedCaptured(leaf: String, target: StillExportTarget
                 try {
                     success = pixels.writeResolved(target, out, quality, exif?.encode(pixels.width, pixels.height)) && out.length() > 0L
                     if (success) {
-                        EncodedStill(out, target)
+                        EncodedStill(out, if (pixels.scrgb) StillExportTarget.JxlHdr else target)
                     } else {
                         android.util.Log.e("StillConvert", "Encode failed: $leaf -> $target bytes=${out.length()}")
                         null

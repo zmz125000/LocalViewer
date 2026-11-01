@@ -382,7 +382,7 @@ int decode_jxl_to_linear(const uint8_t* data, size_t len, std::vector<Sample>& o
 
     // Floating-point linear sRGB can carry WCG through signed RGB, just like
     // scRGB JXR. Convert before converted_sample clips negative channels. JXL's
-    // own intensity_target remains authoritative; do not apply JXR's 80-nit scale.
+    // own intensity_target remains authoritative; only explicitly tagged scRGB uses 80 nits.
     const bool to_bt2020 = export_bt2020 && info.exponent_bits_per_sample > 0 &&
         cg == UHDR_CG_BT_709 && have_src && is_linear_working_encoding(src_encoding, cg);
     if (to_bt2020) {
@@ -393,7 +393,10 @@ int decode_jxl_to_linear(const uint8_t* data, size_t len, std::vector<Sample>& o
     // BasicInfo.intensity_target: libjxl default for SDR is **255** nits — NOT HDR.
     const float intensity = info.intensity_target;
     const bool intensity_hdr = std::isfinite(intensity) && intensity >= 400.f;
-    const bool declared_hdr = is_pq || is_hlg || intensity_hdr;
+    const bool scrgb = info.exponent_bits_per_sample > 0 && have_src && intensity == 80.f &&
+        src_encoding.color_space == JXL_COLOR_SPACE_RGB && src_encoding.white_point == JXL_WHITE_POINT_D65 &&
+        src_encoding.primaries == JXL_PRIMARIES_SRGB && src_encoding.transfer_function == JXL_TRANSFER_FUNCTION_LINEAR;
+    const bool declared_hdr = is_pq || is_hlg || intensity_hdr || scrgb;
     if (out_force_hdr) *out_force_hdr = declared_hdr;
     if (out_transfer_cicp) {
         if (is_pq) {
@@ -413,8 +416,8 @@ int decode_jxl_to_linear(const uint8_t* data, size_t len, std::vector<Sample>& o
         // linear values relative to intensity_target, not 203-nit SDR white.
         float peak_nits = hdr_cms ? cms_intensity : intensity;
         if (!std::isfinite(peak_nits) || peak_nits < 1.f) peak_nits = 1000.f;
-        if constexpr (std::is_same_v<Sample, float>) scale = std::max(peak_nits / kSdrWhiteNits, 1.f);
-        else scale = std::clamp(peak_nits / kSdrWhiteNits, 1.f, kMaxLinear);
+        if constexpr (std::is_same_v<Sample, float>) scale = scrgb ? 80.f / kSdrWhiteNits : std::max(peak_nits / kSdrWhiteNits, 1.f);
+        else scale = scrgb ? 80.f / kSdrWhiteNits : std::clamp(peak_nits / kSdrWhiteNits, 1.f, kMaxLinear);
     }
 
     const auto converted_sample = [&](size_t i, float* sample) {

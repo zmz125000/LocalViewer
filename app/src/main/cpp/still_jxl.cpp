@@ -291,6 +291,16 @@ int encode_jxl_f32(unsigned w,unsigned h,float* rgba,uhdr_color_gamut_t cg,
         }
     });
     const float intensity=pq?kMaxNits:hdr?peak*kSdrWhiteNits:kSdrWhiteNits;
+    if (pq) {
+        // Float32 processing does not require a float codestream for bounded PQ codes.
+        std::vector<uint16_t> packed(pixels * 4);
+        hdr_parallel_pixels(pixels, hdr_pixel_jobs(pixels), [&](size_t begin, size_t end, unsigned) {
+            for (size_t i = begin * 4; i < end * 4; ++i)
+                packed[i] = static_cast<uint16_t>(std::lround(std::clamp(rgba[i], 0.f, 1.f) * 65535.f));
+        });
+        return encode_jxl_pixels(w, h, packed.data(), cg, path, quality, JXL_TYPE_UINT16,
+            JXL_TRANSFER_FUNCTION_PQ, intensity);
+    }
     return encode_jxl_pixels(w,h,rgba,cg,path,quality,JXL_TYPE_FLOAT,
-        pq?JXL_TRANSFER_FUNCTION_PQ:JXL_TRANSFER_FUNCTION_LINEAR,intensity);
+        JXL_TRANSFER_FUNCTION_LINEAR,intensity);
 }

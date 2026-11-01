@@ -13,15 +13,15 @@ internal fun DirectPixels.writeResolved(resolved: StillExportTarget, out: File, 
         encodeNativeStillExport(
             native, width, height,
             if (f32) {
-                2
+                if (scrgb) 4 else 2
             } else if (f16) {
-                1
+                if (scrgb) 3 else 1
             } else {
                 0
             },
             gamut, resolved.exportMode(), premultiplied,
             out.absolutePath, sdrOffset, quality.value, quality.jxlDistance, quality.codecQuality,
-            quality.avifBitDepth, quality.downsizeGainMap, exif,
+            quality.avifBitDepth, quality.downsizeGainMap, exif, sourceBitDepth,
         )
     } ?: encodeStillExport(
         pixels,
@@ -34,7 +34,7 @@ internal fun DirectPixels.writeResolved(resolved: StillExportTarget, out: File, 
         out.absolutePath,
         sdrOffset,
         quality.value, quality.jxlDistance, quality.codecQuality,
-        quality.avifBitDepth, quality.downsizeGainMap, exif,
+        quality.avifBitDepth, quality.downsizeGainMap, exif, sourceBitDepth,
     )
     if (rc != 0) {
         android.util.Log.e(

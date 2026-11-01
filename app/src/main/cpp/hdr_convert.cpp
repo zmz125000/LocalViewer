@@ -385,7 +385,9 @@ template<class Sample>
 bool decode_jxr_from_memory(const uint8_t* data, size_t len, std::vector<Sample>& out_rgba,
                             unsigned& w, unsigned& h, bool composite_alpha_on_black = true,
                             bool* out_untagged_linear = nullptr, uhdr_color_gamut_t* out_cg = nullptr,
-                            unsigned thumbnail_edge = 0, int* out_source_depth = nullptr) {
+                            unsigned thumbnail_edge = 0, int* out_source_depth = nullptr,
+                            int* out_native_kind = nullptr, bool scrgb_only = false, bool half_only = false) {
+    if (out_native_kind) *out_native_kind = 0;
     if (out_untagged_linear) *out_untagged_linear = false;
     if (out_cg) *out_cg = UHDR_CG_BT_709;
     if (!data || len == 0) return false;
@@ -506,6 +508,15 @@ bool decode_jxr_from_memory(const uint8_t* data, size_t len, std::vector<Sample>
             ALOGI("JXR color context %zu B unparsable — Microsoft default inference",
                   color_ctx.size());
         }
+    }
+    const int native_kind = have_valid_icc ? 0 : pix == JxrPix::RgbaF16 ? 1 :
+        pix == JxrPix::RgbaF32 ? 2 : pix == JxrPix::Fixed16 ? 3 : 0;
+    if (out_native_kind) *out_native_kind = native_kind;
+    if (scrgb_only && (!native_kind || uint64_t(width) * height > 80000000 ||
+                       (half_only && native_kind != 1))) {
+        // Reject from headers, before allocating or decoding a pixel plane.
+        release_all();
+        return false;
     }
     // Expand numeric samples as encoded for skcms; without ICC use default TF.
     const bool expand_as_encoded = have_valid_icc;
@@ -1792,7 +1803,7 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_encodeNativeStillExport(JNIEnv* env, jc
                                                                jint width, jint height, jint format,
                                                                jint gamut, jint mode, jboolean premultiplied,
                                                                jstring jOut, jint sdr_offset, jint quality, jfloat custom_distance, jint custom_quality,
-                                                               jint avif_depth, jboolean downsize_gain_map, jbyteArray jExif) try {
+                                                               jint avif_depth, jboolean downsize_gain_map, jbyteArray jExif, jint source_bits) try {
     std::vector<uint8_t> exif;
     if (jExif) {
         const jsize size = env->GetArrayLength(jExif);
@@ -1805,20 +1816,32 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_encodeNativeStillExport(JNIEnv* env, jc
                                       downsize_gain_map == JNI_TRUE);
     encode_quality.exif = exif.data();
     encode_quality.exif_size = exif.size();
+    encode_quality.source_bits = source_bits > 0 && source_bits <= 32 ? unsigned(source_bits) : 32;
     if (avif_depth != 10 && avif_depth != 12) return -52;
     if (!jPixels || !jOut || width <= 0 || height <= 0 || sdr_offset < 0 || quality < 0 || quality > 4 ||
         (quality == 4 && (!std::isfinite(custom_distance) || custom_distance < 0.f || custom_distance > 3.f ||
                           custom_quality < 1 || custom_quality > 100))) return -52;
     auto* pixels = static_cast<uint8_t*>(env->GetDirectBufferAddress(jPixels));
     const jlong length = env->GetDirectBufferCapacity(jPixels);
-    if (!pixels || length <= 0 || (format && reinterpret_cast<uintptr_t>(pixels) % (format == 2 ? alignof(float) : alignof(uint16_t)))) return -53;
+    if (!pixels || length <= 0 || (format && reinterpret_cast<uintptr_t>(pixels) % (format == 2 || format == 4 ? alignof(float) : alignof(uint16_t)))) return -53;
     const size_t count = size_t(width) * height;
-    if (format < 0 || format > 2 || count > 80000000u) return -51;
+    if (format < 0 || format > 4 || count > 80000000u) return -51;
     if (format == 2 && (premultiplied == JNI_TRUE || size_t(length) < count*16 ||
         (sdr_offset && (size_t(sdr_offset) != count*16 || size_t(length) - count*16 < count*16)))) return -51;
     ThumbnailOutputPath output_path(env, jOut);
     const char* out_path = output_path.get();
     if (!out_path) return -55;
+    if (format == 3 || format == 4) {
+        if ((mode != kExportJxl && mode != kExportJxlHdr) || premultiplied == JNI_TRUE || sdr_offset ||
+            size_t(length) < count * (format == 3 ? 8u : 16u)) return -51;
+        StillSourceColor color;
+        color.bits = format == 3 ? 16 : 32;
+        color.exponent_bits = format == 3 ? 5 : 8;
+        color.primaries = 1;
+        color.transfer = 8;
+        color.intensity_target = 80.f;
+        return encode_jxl_source(unsigned(width), unsigned(height), pixels, true, color, out_path, encode_quality);
+    }
     // The synchronous caller exclusively owns this capture until encoding returns.
     const int rc = format == 2 ? encode_still_export_f32(reinterpret_cast<float*>(pixels),
         unsigned(width), unsigned(height), gamut, mode, out_path, encode_quality,
@@ -1836,7 +1859,7 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_encodeStillExport(JNIEnv* env, jclass, 
                                                            jint width, jint height, jboolean f16,
                                                            jint gamut, jint mode,
                                                            jboolean premultiplied, jstring jOut, jint sdr_offset,
-                                                           jint quality, jfloat custom_distance, jint custom_quality, jint avif_depth, jboolean downsize_gain_map, jbyteArray jExif) {
+                                                           jint quality, jfloat custom_distance, jint custom_quality, jint avif_depth, jboolean downsize_gain_map, jbyteArray jExif, jint source_bits) {
     std::vector<uint8_t> exif;
     if (jExif) {
         const jsize size = env->GetArrayLength(jExif);
@@ -1849,6 +1872,7 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_encodeStillExport(JNIEnv* env, jclass, 
                                       downsize_gain_map == JNI_TRUE);
     encode_quality.exif = exif.data();
     encode_quality.exif_size = exif.size();
+    encode_quality.source_bits = source_bits > 0 && source_bits <= 32 ? unsigned(source_bits) : 32;
     if (avif_depth != 10 && avif_depth != 12) return -52;
     if (!jPixels || !jOut || width <= 0 || height <= 0 || sdr_offset < 0 || quality < 0 || quality > 4 ||
         (quality == 4 && (!std::isfinite(custom_distance) || custom_distance < 0.f || custom_distance > 3.f ||
@@ -2115,6 +2139,33 @@ void fit_untagged_jxr_highlights(std::vector<uint16_t>& rgba, unsigned w, unsign
  * panelBoost: HDR/SDR ceiling for untagged linear highlights. ≤1 leaves them alone.
  * @return pixel bytes or null
  */
+// Direct scRGB export uses original storage and the 80-nit unit. Reader captures
+// never enter this path. Half sources avoid allocating a float32 intermediate.
+static jbyteArray retain_jxr_scrgb(JNIEnv* env, const uint8_t* data, size_t size,
+                                  jintArray info, jfloatArray boost, bool& handled) {
+    handled = false;
+    if (!export_pixels_preserve_scrgb() || env->GetArrayLength(info) < 7) return nullptr;
+    unsigned w = 0, h = 0;
+    int native_kind = 0;
+    std::vector<uint16_t> half;
+    const bool half_ok = decode_jxr_from_memory(data, size, half, w, h, false, nullptr,
+        nullptr, 0, nullptr, &native_kind, true, true);
+    handled = native_kind != 0;
+    if (!handled) return nullptr;
+    std::vector<float> full;
+    const bool is_half = native_kind == 1;
+    if (is_half ? !half_ok : !decode_jxr_from_memory(data, size, full, w, h, false, nullptr,
+        nullptr, 0, nullptr, nullptr, true)) return nullptr;
+    const jint meta[]{jint(w), jint(h), is_half ? 3 : 4, 1, 0, 8, is_half ? 16 : 32};
+    const float headroom = 1.f; // Export does not use a display headroom scan.
+    env->SetIntArrayRegion(info, 0, 7, meta);
+    env->SetFloatArrayRegion(boost, 0, 1, &headroom);
+    auto token = env->NewByteArray(0);
+    if (!token || env->ExceptionCheck()) return nullptr;
+    if (is_half ? !retain_reader_pixels(half) : !retain_reader_pixels(full)) return nullptr;
+    return token;
+}
+
 extern "C" JNIEXPORT jbyteArray JNICALL
 Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeJxrBytesToDirect(JNIEnv* env, jclass,
                                                                 jbyteArray jInput, jint maxEdge,
@@ -2129,6 +2180,15 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeJxrBytesToDirect(JNIEnv* env, jcl
     if (len <= 0) return nullptr;
     jbyte* bytes = env->GetByteArrayElements(jInput, nullptr);
     if (!bytes) return nullptr;
+
+    if (maxEdge <= 0 && export_pixels_preserve_scrgb()) {
+        bool handled = false;
+        auto result = retain_jxr_scrgb(env, reinterpret_cast<const uint8_t*>(bytes), size_t(len), jOutInfo, jOutBoost, handled);
+        if (handled) {
+            env->ReleaseByteArrayElements(jInput, bytes, JNI_ABORT);
+            return result;
+        }
+    }
 
     if (export_pixels_float32() && maxEdge <= 0) {
         std::vector<float> linear;
@@ -2199,6 +2259,12 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeJxrBufferToDirect(JNIEnv* env, jc
     const jlong len = env->GetDirectBufferCapacity(jInput);
     const auto* bytes = static_cast<const uint8_t*>(env->GetDirectBufferAddress(jInput));
     if (!bytes || len <= 0) return nullptr;
+
+    if (maxEdge <= 0 && export_pixels_preserve_scrgb()) {
+        bool handled = false;
+        auto result = retain_jxr_scrgb(env, bytes, size_t(len), jOutInfo, jOutBoost, handled);
+        if (handled) return result;
+    }
 
     if (export_pixels_float32() && maxEdge <= 0) {
         std::vector<float> linear;

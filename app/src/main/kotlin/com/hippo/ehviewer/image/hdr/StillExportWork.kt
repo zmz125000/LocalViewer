@@ -98,7 +98,7 @@ internal object StillExportWork {
         ExportMemoryBudget(exportNativeCapacity(info.totalMem.takeIf { it > 0 } ?: OSUtils.totalMemory, info.availMem, Runtime.getRuntime().maxMemory()))
     }
 
-    suspend fun <T> withSource(file: File, leaf: String, work: suspend () -> T): T {
+    suspend fun <T> withSource(file: File, leaf: String, target: StillExportTarget, work: suspend () -> T): T {
         val raw = isRawStillExtension(leaf.substringAfterLast('.', ""))
         val ext = leaf.substringAfterLast('.', "").lowercase()
         val kind = when {
@@ -126,7 +126,9 @@ internal object StillExportWork {
         val sourceBytes = file.length()
         val quality = currentCoroutineContext()[StillExportQuality] ?: StillExportQuality.current()
         // JXL already decodes to F32; retaining that buffer avoids the extra F16 copy.
-        val floatPixels = ext == "jxl" || quality.float32Processing && (raw || kind == 1 || ext == "avif")
+        val preservingJxr = kind == 1 && !quality.extendedSrgbBt2020 &&
+            (target == StillExportTarget.Jxl || target == StillExportTarget.JxlHdr)
+        val floatPixels = ext == "jxl" || preservingJxr || quality.float32Processing && (raw || kind == 1 || ext == "avif")
         // Codec working buffers live on the native heap, not inside the JVM's
         // maxMemory allowance. Keep both leases through encode, with separate limits.
         return heapBudget.withBytes(exportHeapBytes(width, height, sourceBytes, raw, nativePixels = true, mappedInput = true)) {

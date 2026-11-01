@@ -1053,12 +1053,14 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeAvifBufferToDirect(JNIEnv* env, j
         std::vector<uint8_t> exif;
         unsigned w = 0, h = 0;
         int gain = 0, transfer = 0;
+        DecodedImageInfo source;
         uhdr_color_gamut_t cg = UHDR_CG_BT_709;
         if (decode_avif_to_linear(bytes, size_t(len), rgba, w, h, &gain, &transfer, &cg,
-            0, jOutExif ? &exif : nullptr)) return nullptr;
+            0, jOutExif ? &exif : nullptr, &source)) return nullptr;
         publish_decoded_exif(env, jOutExif, exif, false);
         auto result = retain_export_f32(env, rgba, w, h, cg, transfer == 16 || transfer == 18,
             transfer, jOutInfo, jOutBoost);
+        if (result) source.publish(env, jOutInfo);
         if (result && env->GetArrayLength(jOutInfo) >= 8) env->SetIntArrayRegion(jOutInfo, 7, 1, &gain);
         return result;
     }
