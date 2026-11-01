@@ -111,7 +111,7 @@ float pq_eotf(float n) {
     return 10000.f * std::pow(num / den, 1.f / m1);
 }
 
-// HLG inverse OETF (BT.2100) → relative scene-linear [0, 12] roughly, then scale.
+// HLG inverse OETF (BT.2100) → normalized scene-linear [0, 1].
 float hlg_inv_oetf(float x) {
     if (x <= 0.f) return 0.f;
     if (x >= 1.f) x = 1.f;
@@ -122,6 +122,18 @@ float hlg_inv_oetf(float x) {
         return (x * x) / 3.f;
     }
     return (std::exp((x - c) / a) + b) / 12.f;
+}
+
+// The HLG LUT returns 12 * scene RGB; apply this OOTF before display/export packing.
+void hlg_scene_to_display(float& r, float& g, float& b, uhdr_color_gamut_t gamut) {
+    // BT.2100 reference display: 1000 nits, system gamma 1.2.
+    const float yr = gamut == UHDR_CG_DISPLAY_P3 ? 0.2289746f : gamut == UHDR_CG_BT_2100 ? 0.2627f : 0.2126f;
+    const float yb = gamut == UHDR_CG_DISPLAY_P3 ? 0.0792869f : gamut == UHDR_CG_BT_2100 ? 0.0593f : 0.0722f;
+    const float scene_y = (yr * r + (1.f - yr - yb) * g + yb * b) / 12.f;
+    const float scale = std::pow(std::max(scene_y, 0.f), 0.2f) * (1000.f / (12.f * kSdrWhiteNits));
+    r *= scale;
+    g *= scale;
+    b *= scale;
 }
 
 // RGB conversion produces integer 16-bit codes. Evaluate each transfer once
@@ -607,16 +619,7 @@ int decode_avif_to_linear(const uint8_t* data, size_t len, std::vector<Sample>& 
                 float rl = linear[p[0]], gl = linear[p[1]], bl = linear[p[2]];
 
                 if (is_hlg) {
-                    // LUT values are 12 * scene RGB. BT.2100's reference
-                    // 1000-nit display needs the luminance-dependent OOTF,
-                    // gamma 1.2, before our 203-nit-relative working space.
-                    const float yr = cg == UHDR_CG_DISPLAY_P3 ? 0.2289746f : cg == UHDR_CG_BT_2100 ? 0.2627f : 0.2126f;
-                    const float yb = cg == UHDR_CG_DISPLAY_P3 ? 0.0792869f : cg == UHDR_CG_BT_2100 ? 0.0593f : 0.0722f;
-                    const float scene_y = (yr * rl + (1.f - yr - yb) * gl + yb * bl) / 12.f;
-                    const float scale = std::pow(std::max(scene_y, 0.f), 0.2f) * (1000.f / (12.f * kSdrWhiteNits));
-                    rl *= scale;
-                    gl *= scale;
-                    bl *= scale;
+                    hlg_scene_to_display(rl, gl, bl, cg);
                 }
 
                 // Policy B only: values must match the BT.709 tag. Preserve path never rematrixes.
@@ -1149,12 +1152,17 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_probeAvifBufferHdrKind(JNIEnv* env, jcl
 }
 
 // PNG source samples are straight-alpha integer RGBA16, before Android premultiplication.
-static std::vector<uint16_t> png_hdr_linear_rgba(const uint16_t* codes, size_t count, int transfer) {
+static std::vector<uint16_t> png_hdr_linear_rgba(const uint16_t* codes, size_t count, int transfer,
+                                               uhdr_color_gamut_t gamut) {
     const auto& lut = avif_linear_lut(static_cast<avifTransferCharacteristics>(transfer));
     std::vector<uint16_t> rgba(count * 4);
     hdr_parallel_pixels(count, hdr_pixel_jobs(count), [&](size_t begin, size_t end, unsigned) {
         for (size_t i = begin; i < end; ++i) {
-            for (unsigned c = 0; c < 3; ++c) rgba[i * 4 + c] = float_to_half(lut[codes[i * 4 + c]]);
+            float r = lut[codes[i * 4]], g = lut[codes[i * 4 + 1]], b = lut[codes[i * 4 + 2]];
+            if (transfer == AVIF_TRANSFER_CHARACTERISTICS_HLG) hlg_scene_to_display(r, g, b, gamut);
+            rgba[i * 4] = float_to_half(r);
+            rgba[i * 4 + 1] = float_to_half(g);
+            rgba[i * 4 + 2] = float_to_half(b);
             rgba[i * 4 + 3] = float_to_half(codes[i * 4 + 3] / 65535.f);
         }
     });
@@ -1172,8 +1180,8 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodePngRgbToDirect(
     const auto* codes = static_cast<const uint16_t*>(env->GetDirectBufferAddress(input));
     const size_t count = size_t(width) * height;
     if (!codes || env->GetDirectBufferCapacity(input) < int64_t(count) * 8) return nullptr;
-    auto rgba = png_hdr_linear_rgba(codes, count, transfer);
     const auto gamut = primaries == 9 ? UHDR_CG_BT_2100 : primaries == 12 ? UHDR_CG_DISPLAY_P3 : UHDR_CG_BT_709;
+    auto rgba = png_hdr_linear_rgba(codes, count, transfer, gamut);
     // The common packer premultiplies alpha exactly once and supplies HDR headroom.
     return pack_direct_to_jbyte_array(env, rgba, width, height, true, gamut, true, transfer, out_info, out_boost);
 } catch (...) { return nullptr; }
