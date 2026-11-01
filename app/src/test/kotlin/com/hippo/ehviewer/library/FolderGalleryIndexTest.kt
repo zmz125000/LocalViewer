@@ -100,6 +100,18 @@ class FolderGalleryIndexTest {
     }
 
     @Test
+    fun photoGridNameRowsKeepSuppliedFileMetadata() {
+        val rows = FolderGalleryIndex.photoGridRemoteFiles(
+            listOf("a.jpg", "b.jpg"),
+            mapOf("a.jpg" to FolderGalleryIndex.FileMetadata(12, 34)),
+        )
+        assertEquals(12L, rows[0].size)
+        assertEquals(34L, rows[0].lastModifiedMs)
+        assertEquals(0L, rows[1].size)
+        assertEquals(0L, rows[1].lastModifiedMs)
+    }
+
+    @Test
     fun remotePhotoGridFillsSizeAndDateWithoutLosingExistingValues() {
         val rows = listOf(
             BrowseEntryRemote.RegularFile("a.jpg", size = 10, lastModifiedMs = 20),

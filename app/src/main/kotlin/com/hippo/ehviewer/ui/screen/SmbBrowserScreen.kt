@@ -372,7 +372,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
 
     fun dirRelative(name: String): String = if (relativeDir.isEmpty()) name else SmbGateway.joinRelativePath(relativeDir, name)
 
-    fun openRemoteFolderInNewTab(name: String) {
+    fun openRemoteFolderInNewTab(name: String, switchTo: Boolean = false) {
         val segments = dirRelative(name).split('/').filter { it.isNotEmpty() }
         ExplorerWindows.openRemoteInBackground(
             ExplorerWindows.Kind.Smb,
@@ -380,6 +380,10 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
             source?.displayName.orEmpty(),
             segments,
         )
+        if (switchTo) {
+            ExplorerWindows.windowOnPath(ExplorerWindows.Kind.Smb, sourceId, dirRelative(name))
+                ?.let { ExplorerWindows.activateFolderTab(it) }
+        }
     }
 
     fun saveRemoteFolderToPaths(name: String) {
@@ -824,10 +828,38 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
 
         val loadDir = if (configChanged) "" else targetDir
         // Photo-grid open: same complete index the reader uses — no directory scan.
+        // Name-only rows drop size/date; stamp them here so this write cannot wipe
+        // a fill that already ran (grid entry never had a file list to keep).
         if (!force && !configChanged && photoGrid) {
             val names = FolderGalleryIndex.loadSmb(src.id, configKey, loadDir)
             if (names != null) {
-                entries = FolderGalleryIndex.photoGridRemoteFiles(names)
+                val preserved = if (listedDir == loadDir) FolderGalleryIndex.directChildMetadata(entries) else emptyMap()
+                val metadata = withIOContext {
+                    val cached = FolderGalleryIndex.mergeFileMetadata(
+                        preserved,
+                        FolderGalleryIndex.loadSmbDirectFileMetadata(src.id, configKey, loadDir),
+                    )
+                    val missing = names.any { name ->
+                        val info = cached[name]
+                        info == null || info.size <= 0L || info.lastModifiedMs <= 0L
+                    }
+                    if (!missing) {
+                        cached
+                    } else {
+                        try {
+                            FolderGalleryIndex.mergeFileMetadata(
+                                cached,
+                                SmbGateway.imageFileMetadata(src, SmbPasswordStore.get(src.id), loadDir),
+                            )
+                        } catch (e: CancellationException) {
+                            throw e
+                        } catch (_: Exception) {
+                            cached
+                        }
+                    }
+                }
+                if (activeListingRequest !== request) return@LaunchedEffect
+                entries = FolderGalleryIndex.photoGridRemoteFiles(names, metadata)
                 listedDir = loadDir
                 listingSessionCurrent = true
                 loading = false
@@ -2885,7 +2917,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                                     name = entry.name,
                                     onClick = { enterDir(entry.relativeName, fromSearch = fromSearch) },
                                     onLongClick = {
-                                        toggleDirFavorite(entry.relativeName, entry.coverFileName)
+                                        openRemoteFolderInNewTab(entry.relativeName, switchTo = true)
                                     },
                                     showFavoriteStar = isDirFavorite(entry.relativeName),
                                     cover = dirCoverFor(entry),
@@ -2906,7 +2938,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                                     name = entry.name,
                                     onClick = { enterDir(entry.relativeName, fromSearch = fromSearch) },
                                     onLongClick = {
-                                        toggleDirFavorite(entry.relativeName, entry.coverFileName)
+                                        openRemoteFolderInNewTab(entry.relativeName, switchTo = true)
                                     },
                                     cover = dirCoverFor(entry),
                                     showFolderThumb = browseFolderThumbs,
@@ -3329,6 +3361,9 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                                     allowRemoteFetch = allowRemoteThumbs,
                                     onClick = { openFolderImage(file) },
                                     onLongClick = { openExternalFile(file.fileName) },
+                                    fileName = file.fileName,
+                                    sizeBytes = file.size,
+                                    lastModifiedMs = file.lastModifiedMs,
                                     overflow = fileOverflow(file.fileName, file.size, file.lastModifiedMs),
                                 )
                             }
@@ -3366,7 +3401,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                                             name = dir.name,
                                             onClick = { enterDir(dir.relativeName) },
                                             onLongClick = {
-                                                toggleDirFavorite(dir.relativeName, dir.coverFileName)
+                                                openRemoteFolderInNewTab(dir.relativeName, switchTo = true)
                                             },
                                             showFavoriteStar = isDirFavorite(dir.relativeName),
                                             cover = dirCoverFor(dir),
@@ -3534,7 +3569,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                                                 name = dir.name,
                                                 onClick = { enterDir(dir.relativeName) },
                                                 onLongClick = {
-                                                    toggleDirFavorite(dir.relativeName, dir.coverFileName)
+                                                    openRemoteFolderInNewTab(dir.relativeName, switchTo = true)
                                                 },
                                                 cover = dirCoverFor(dir),
                                                 showFolderThumb = browseFolderThumbs,

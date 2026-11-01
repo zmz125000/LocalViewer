@@ -327,6 +327,8 @@ object Settings : DataStorePreferences(null) {
      *
      * Archive/document covers (ZIP/RAR/7z/PDF/EPUB first page) use [downloadNetworkArchiveThumbs].
      */
+    val useTrashBin = boolPref("use_trash_bin", true)
+
     val downloadRemoteThumbs = boolPref("download_remote_thumbs", true)
 
     /**
@@ -757,6 +759,7 @@ object Settings : DataStorePreferences(null) {
      * When a folder batch finishes with nothing queued, dismiss it as Done (clear selection)
      * instead of waiting for the user to tap Done. Default off.
      */
+    val deletionAutoFinish = boolPref("deletion_auto_finish", false)
     val browseTaskAutoFinish = boolPref("browse_task_auto_finish", false)
 
     val uploadAutoStart = boolPref("upload_auto_start", false)

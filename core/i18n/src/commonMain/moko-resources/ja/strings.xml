@@ -1176,6 +1176,9 @@
     <string name="explorer_save_path">パスを保存</string>
     <string name="browse_open_in_new_tab">新しいタブで開く</string>
     <string name="browse_save_to_paths">保存済みパスに追加</string>
+    <string name="explorer_close_all_windows">すべてのウィンドウを閉じる</string>
+    <string name="action_trash">ゴミ箱に移動</string>
+    <string name="explorer_uploads">アップロード一覧</string>
     <string name="explorer_close_window">ウィンドウを閉じる</string>
     <string name="explorer_delete_saved">保存済みパスを削除</string>
     <string name="browse_save_to_upload">クイックアップロードに保存</string>
@@ -1194,4 +1197,14 @@
     <string name="transfer_delete_trash_protected">.trash 内の項目は削除できません。</string>
     <string name="ask_where_to_save">保存先を毎回確認</string>
     <string name="transfer_upload_action">アップロード先を選択…</string>
+    <string name="settings_use_trash_bin">ゴミ箱を使用</string>
+    <string name="settings_use_trash_bin_summary">フォルダとギャラリーは常に .trash に移動します。オフにするとファイルの完全削除を許可します。</string>
+    <string name="action_empty_trash">ゴミ箱を空にする</string>
+    <string name="permanent_delete_confirm">%1$d 件を完全に削除しますか？この操作は元に戻せません。</string>
+    <string name="empty_trash_confirm">この .trash フォルダとすべての内容を完全に削除しますか？この操作は元に戻せません。</string>
+    <string name="permanent_delete_unsupported">この接続先またはサーバーは、この項目の削除に対応していません。</string>
+    <string name="permanent_delete_access_denied">項目の削除中にアクセスが拒否されました。</string>
+    <string name="mixed_delete_confirm">%1$d 個のファイルを完全に削除し、%2$d 個の項目を .trash に移動しますか？ファイルの削除は元に戻せません。</string>
+    <string name="browse_auto_finish_deletion">自動終了（削除）</string>
+    <string name="gallery_trash_regular_files">%1$d 個の通常ファイルをギャラリーフォルダと一緒にゴミ箱へ移動しました。</string>
 </resources>

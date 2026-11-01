@@ -28,9 +28,12 @@ import androidx.compose.ui.semantics.Role
 import com.ehviewer.core.i18n.R
 import com.ehviewer.core.util.logcat
 import com.ehviewer.core.util.withIOContext
+import com.hippo.ehviewer.Settings
+import com.hippo.ehviewer.collectAsState
 import com.hippo.ehviewer.image.hdr.StillExportTarget
 import com.hippo.ehviewer.image.hdr.isHdrExportFileName
 import com.hippo.ehviewer.image.hdr.visibleForSources
+import com.hippo.ehviewer.library.FileRemovalAction
 import com.hippo.ehviewer.shortcuts.FolderHomeShortcut
 import com.hippo.ehviewer.shortcuts.FolderShortcutTarget
 import com.hippo.ehviewer.ui.LocalSnackBarHostState
@@ -114,7 +117,11 @@ fun BrowseItemOverflowButton(
     val scope = rememberCoroutineScope()
     val snackbar = LocalSnackBarHostState.current
     val saveTransfer = rememberSaveToTransferPicker()
-    val confirmDelete = rememberNetworkDeleteConfirmation()
+    val useTrashBin by Settings.useTrashBin.collectAsState()
+    val galleryRemoval = actions.kind == BrowseOverflowKind.Gallery
+    val removalAction = if (actions.selectFolder || galleryRemoval) FileRemovalAction.Trash else FileRemovalAction.Delete
+    val confirmDelete = rememberNetworkDeleteConfirmation(removalAction)
+    val confirmEmptyTrash = rememberNetworkDeleteConfirmation(FileRemovalAction.EmptyTrash)
     val explorer = LocalExplorerPanel.current
     val galleryConvert = galleryConversionRoot(actions)
     val resolvedGallery = resolvedGalleryConversion(actions)
@@ -356,9 +363,18 @@ fun BrowseItemOverflowButton(
                     onClick = { beginUpload(saveQuick = false) },
                 )
             }
-            if (actions.uploadSource?.let { com.hippo.ehviewer.library.canTrash(it) } == true) {
+            if (actions.uploadSource?.let {
+                    if (galleryRemoval) {
+                        com.hippo.ehviewer.library.canTrash(it)
+                    } else if (actions.selectFolder) {
+                        com.hippo.ehviewer.library.canTrashFolder(it, true)
+                    } else {
+                        !useTrashBin && com.hippo.ehviewer.library.canRemove(it, removalAction)
+                    }
+                } == true
+            ) {
                 DropdownMenuItem(
-                    text = { Text(stringResource(R.string.delete)) },
+                    text = { Text(stringResource(if (actions.selectFolder || galleryRemoval) R.string.action_trash else R.string.delete)) },
                     onClick = {
                         expanded = false
                         actions.uploadSource.let { source ->
@@ -371,15 +387,34 @@ fun BrowseItemOverflowButton(
                                             actions.selectFolder,
                                             actions.listLine?.sizeBytes ?: -1L,
                                             actions.listLine?.lastModifiedMs ?: 0L,
-                                        ) to (actions.kind == BrowseOverflowKind.Gallery && actions.onPhotoGrid != null),
+                                        ) to galleryRemoval,
                                     ),
                                     snackbar,
                                     context,
-                                    GalleryFileAction.Delete,
+                                    GalleryFileAction.Trash,
                                 ) ?: return@launch
                                 confirmDelete(files)
                             }
                         }
+                    },
+                )
+            }
+            if (actions.selectFolder && actions.uploadSource?.let { com.hippo.ehviewer.library.canRemove(it, FileRemovalAction.EmptyTrash) } == true) {
+                DropdownMenuItem(
+                    text = { Text(stringResource(R.string.action_empty_trash)) },
+                    onClick = {
+                        expanded = false
+                        confirmEmptyTrash(
+                            listOf(
+                                com.hippo.ehviewer.library.TransferFile(
+                                    requireNotNull(actions.uploadSource),
+                                    actions.selectTitle ?: ".trash",
+                                    true,
+                                    -1L,
+                                    0L,
+                                ),
+                            ),
+                        )
                     },
                 )
             }

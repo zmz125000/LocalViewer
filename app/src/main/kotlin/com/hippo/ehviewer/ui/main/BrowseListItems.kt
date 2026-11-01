@@ -3,6 +3,7 @@ package com.hippo.ehviewer.ui.main
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -1219,9 +1220,21 @@ fun BrowsePhotoGridImageItem(
     showPhotoThumb: Boolean = true,
     thumbRetryKey: Any? = null,
     allowRemoteFetch: Boolean = true,
+    fileName: String = name,
+    sizeBytes: Long = 0L,
+    lastModifiedMs: Long = 0L,
     overflow: BrowseOverflowActions? = null,
     highlighted: Boolean = false,
 ) {
+    val meta = if (sizeBytes > 0L || lastModifiedMs > 0L) {
+        browseListSupportingLine(
+            typeLabel = browseFileExtensionLabel(fileName),
+            sizeBytes = sizeBytes,
+            lastModifiedMs = lastModifiedMs,
+        )
+    } else {
+        null
+    }
     if (showPhotoThumb && cover != null) {
         BrowseGridCell(
             name = name,
@@ -1230,6 +1243,7 @@ fun BrowsePhotoGridImageItem(
             modifier = modifier,
             overflow = overflow,
             highlighted = highlighted,
+            supporting = meta,
             thumb = {
                 BrowseCoverThumb(
                     cover = cover,
@@ -1251,6 +1265,7 @@ fun BrowsePhotoGridImageItem(
             modifier = modifier,
             overflow = overflow,
             highlighted = highlighted,
+            supporting = meta,
         )
     }
 }
@@ -1420,6 +1435,7 @@ fun BrowseFileGridItem(
     onLongClick: (() -> Unit)? = null,
     overflow: BrowseOverflowActions? = null,
     highlighted: Boolean = false,
+    supporting: String? = null,
 ) {
     BrowseGridCell(
         name = name,
@@ -1428,6 +1444,7 @@ fun BrowseFileGridItem(
         modifier = modifier,
         overflow = overflow,
         highlighted = highlighted,
+        supporting = supporting,
         thumb = {
             Box(
                 modifier = Modifier.fillMaxSize(),
@@ -1453,6 +1470,7 @@ private fun BrowseGridCell(
     onLongClick: (() -> Unit)? = null,
     overflow: BrowseOverflowActions? = null,
     highlighted: Boolean = false,
+    supporting: String? = null,
 ) {
     val longClick = onLongClick ?: onClick
     val tap = folderSelectTap(overflow)
@@ -1477,17 +1495,17 @@ private fun BrowseGridCell(
             }
             // Fixed height so 1-line and 2-line names share the same cell size;
             // text sits on the bottom of the band; overflow sits in the label on the right.
-            Box(
+            Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(nameHeight)
+                    .height(if (supporting.isNullOrEmpty()) nameHeight else nameHeight + 18.dp)
                     .padding(horizontal = namePadH),
-                contentAlignment = Alignment.BottomStart,
+                verticalArrangement = Arrangement.Bottom,
             ) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(bottom = namePadBottom),
+                        .padding(bottom = if (supporting.isNullOrEmpty()) namePadBottom else 0.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(
@@ -1504,6 +1522,16 @@ private fun BrowseGridCell(
                             placement = BrowseOverflowPlacement.GridBottomEnd,
                         )
                     }
+                }
+                if (!supporting.isNullOrEmpty()) {
+                    Text(
+                        text = supporting,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.padding(bottom = namePadBottom),
+                    )
                 }
             }
         }

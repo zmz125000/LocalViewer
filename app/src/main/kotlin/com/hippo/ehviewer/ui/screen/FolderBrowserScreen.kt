@@ -546,10 +546,12 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
             info == null || info.size <= 0L || info.lastModifiedMs <= 0L
         }
         if (missingMetadata && !frame.isZipBrowse) {
-            // One bulk listing supplies size AND mtime; no per-file opens/stats.
+            // One bulk listing supplies size AND mtime for filesystem, SAF, and
+            // MediaStore folders. MediaStore-only queries miss normal directories.
             val path = resolveBrowsePath(frame.path.toPath())
             val wanted = names.toHashSet()
-            for (child in MediaStoreFs.listChildren(path)) {
+            val children = runCatching { path.listBrowseChildrenRaw() }.getOrDefault(emptyList())
+            for (child in children) {
                 if (child.isDirectory || child.name !in wanted) continue
                 val previous = merged[child.name] ?: FolderGalleryIndex.FileMetadata()
                 merged[child.name] = FolderGalleryIndex.FileMetadata(
@@ -561,9 +563,15 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         return merged
     }
 
-    LaunchedEffect(photoGridKey, gridSort.mode) {
-        if (photoGridKey == null || gridSort.mode == BrowseSortMode.Name) return@LaunchedEffect
+    LaunchedEffect(photoGridKey, entries) {
+        if (photoGridKey == null) return@LaunchedEffect
         val frame = stack.lastOrNull() ?: return@LaunchedEffect
+        val missing = entries.any { entry ->
+            entry is BrowseEntry.RegularFile &&
+                isImageFileName(entry.name) &&
+                (entry.size <= 0L || entry.lastModifiedMs <= 0L)
+        }
+        if (!missing) return@LaunchedEffect
         val names = entries.map { it.name }
         val metadata = withIOContext { metadataForLibraryOpen(frame, names) }
         if (metadata.isEmpty()) return@LaunchedEffect
@@ -1101,12 +1109,17 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         updateStack(next)
     }
 
-    fun openLocalFolderInNewTab(name: String, path: okio.Path, relativeName: String) {
+    fun openLocalFolderInNewTab(name: String, path: okio.Path, relativeName: String, switchTo: Boolean = false) {
         val next = childStack(name, path, relativeName) ?: return
         ExplorerWindows.openLocalInBackground(
             next,
             next.first().title,
         )
+        if (switchTo) {
+            val frame = next.last()
+            ExplorerWindows.windowOnPath(ExplorerWindows.Kind.Local, frame.rootId, displayRelative(frame))
+                ?.let { ExplorerWindows.activateFolderTab(it) }
+        }
     }
 
     fun saveLocalFolderToPaths(name: String, path: okio.Path, relativeName: String) {
@@ -3216,7 +3229,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                     modifier = itemMod,
                                     name = entry.name,
                                     onClick = { enterDir(entry, fromSearch = fromSearch) },
-                                    onLongClick = { toggleDirFavorite(entry) },
+                                    onLongClick = { openLocalFolderInNewTab(entry.name, entry.path, entry.relativeName, switchTo = true) },
                                     showFavoriteStar = isDirFavorite(entry),
                                     cover = entry.coverPath?.let { directoryBrowseCover(it) },
                                     showFolderThumb = browseFolderThumbs,
@@ -3227,7 +3240,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                     modifier = itemMod,
                                     name = entry.name,
                                     onClick = { enterDir(entry, fromSearch = fromSearch) },
-                                    onLongClick = { toggleDirFavorite(entry) },
+                                    onLongClick = { openLocalFolderInNewTab(entry.name, entry.path, entry.relativeName, switchTo = true) },
                                     cover = entry.coverPath?.let { directoryBrowseCover(it) },
                                     showFolderThumb = browseFolderThumbs,
                                     lastModifiedMs = entry.lastModifiedMs,
@@ -3654,6 +3667,9 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                     showPhotoThumb = true,
                                     onClick = { openFolderImage(file) },
                                     onLongClick = { openExternalFile(file.path) },
+                                    fileName = file.name,
+                                    sizeBytes = file.size,
+                                    lastModifiedMs = file.lastModifiedMs,
                                     overflow = fileOverflow(
                                         file.path,
                                         sizeBytes = file.size,
@@ -3694,7 +3710,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                             modifier = Modifier.thenIf(animateItems) { animateItem() },
                                             name = dir.name,
                                             onClick = { enterDir(dir) },
-                                            onLongClick = { toggleDirFavorite(dir) },
+                                            onLongClick = { openLocalFolderInNewTab(dir.name, dir.path, dir.relativeName, switchTo = true) },
                                             showFavoriteStar = isDirFavorite(dir),
                                             cover = dir.coverPath?.let { directoryBrowseCover(it) },
                                             showFolderThumb = browseFolderThumbs,
@@ -3859,7 +3875,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                                 modifier = Modifier.thenIf(animateItems) { animateItem() },
                                                 name = dir.name,
                                                 onClick = { enterDir(dir) },
-                                                onLongClick = { toggleDirFavorite(dir) },
+                                                onLongClick = { openLocalFolderInNewTab(dir.name, dir.path, dir.relativeName, switchTo = true) },
                                                 cover = dir.coverPath?.let { directoryBrowseCover(it) },
                                                 showFolderThumb = browseFolderThumbs,
                                                 lastModifiedMs = dir.lastModifiedMs,

@@ -68,7 +68,9 @@
 
 # Description
 
-A High performance Android SMB/WebDAV image viewer/comic reader with network gallery folder support.
+A High performance Android SMB/WebDAV image viewer/comic reader with network gallery folder support.  
+
+The app features advanced image options, including support for RAW, HDR, WCG and fast thumbnails, with a clean interface for daily use.  
 
 Based on [EhViewer](https://github.com/FooIbar/EhViewer)   
 With [Material Design 3](https://m3.material.io/)  

@@ -63,6 +63,9 @@ fun ImageRequest.Builder.coverThumb(
     diskCacheKey("$diskKey@$edge")
     // Instant paint on tab switch / recycle (global ImageLoader still has 120ms for other loads).
     crossfade(false)
+    // The cell supplies its file-type icon beneath the image on cache/decode misses.
+    error { null }
+    fallback { null }
     return this
 }
 

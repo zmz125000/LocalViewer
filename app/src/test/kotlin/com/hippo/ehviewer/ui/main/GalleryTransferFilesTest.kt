@@ -15,27 +15,27 @@ class GalleryTransferFilesTest {
     private fun child(name: String, directory: Boolean = false) = TransferFile(source.child(name), name, directory, 123, 456)
 
     @Test
-    fun galleryDeleteMovesWholeFolderWithFewerThanThreeNonImageFiles() = runBlocking {
+    fun galleryTrashMovesWholeFolderWithUpToThreeNonImageFiles() = runBlocking {
         val images = listOf(child("1.jpg"), child("2.webp"))
-        for (extraCount in 0..2) {
-            val result = collectGalleryTransferFiles(gallery, true, GalleryFileAction.Delete) {
+        for (extraCount in 0..3) {
+            val result = collectGalleryTransferFiles(gallery, true, GalleryFileAction.Trash) {
                 images + (1..extraCount).map { child("sidecar-$it.txt") }
             }
-            assertEquals(listOf(gallery), result)
+            assertEquals(listOf(gallery.copy(galleryTrash = true, galleryRegularFiles = extraCount)), result)
         }
-        val result = collectGalleryTransferFiles(gallery, true, GalleryFileAction.Delete) {
-            images + (1..3).map { child("sidecar-$it.txt") }
+        val result = collectGalleryTransferFiles(gallery, true, GalleryFileAction.Trash) {
+            images + (1..4).map { child("sidecar-$it.txt") }
         }
-        assertEquals(images, result)
+        assertEquals(images.map { it.copy(galleryTrash = true) }, result)
     }
 
     @Test
-    fun galleryDeleteKeepsFolderWhenAnySubfolderExists() = runBlocking {
+    fun galleryTrashKeepsFolderWhenAnySubfolderExists() = runBlocking {
         val image = child("1.jpg")
         for (name in listOf("nested", ".trash")) {
             assertEquals(
-                listOf(image),
-                collectGalleryTransferFiles(gallery, true, GalleryFileAction.Delete) {
+                listOf(image.copy(galleryTrash = true)),
+                collectGalleryTransferFiles(gallery, true, GalleryFileAction.Trash) {
                     listOf(image, child(name, true))
                 },
             )
@@ -45,12 +45,26 @@ class GalleryTransferFilesTest {
     @Test
     fun sourceRootGalleryDeletesImagesInsteadOfTryingToMoveStorageRoot() = runBlocking {
         val image = child("1.jpg")
-        assertEquals(listOf(image), collectGalleryTransferFiles(gallery.copy(source = source.copy(path = "")), true, GalleryFileAction.Delete) { listOf(image) })
+        assertEquals(listOf(image.copy(galleryTrash = true)), collectGalleryTransferFiles(gallery.copy(source = source.copy(path = "")), true, GalleryFileAction.Trash) { listOf(image) })
         val safRoot = TransferLocation(ExplorerWindows.Kind.Local, 0, "content:/provider/tree/primary%3APhotos/document/primary%3APhotos")
-        assertEquals(listOf(image), collectGalleryTransferFiles(gallery.copy(source = safRoot), true, GalleryFileAction.Delete) { listOf(image) })
+        assertEquals(listOf(image.copy(galleryTrash = true)), collectGalleryTransferFiles(gallery.copy(source = safRoot), true, GalleryFileAction.Trash) { listOf(image) })
         val safFolder = safRoot.copy(path = safRoot.path + "/album")
         val folder = gallery.copy(source = safFolder)
-        assertEquals(listOf(folder), collectGalleryTransferFiles(folder, true, GalleryFileAction.Delete) { listOf(image) })
+        assertEquals(listOf(folder.copy(galleryTrash = true)), collectGalleryTransferFiles(folder, true, GalleryFileAction.Trash) { listOf(image) })
+    }
+
+    @Test
+    fun archiveTrashRetainsGalleryRemovalPolicyWithoutListing() = runBlocking {
+        val archive = gallery.copy(source = source.copy(path = "photos/book.zip"))
+        val result = collectGalleryTransferFiles(archive, true, GalleryFileAction.Trash) { error("Archive must not be listed") }.single()
+        assertTrue(result.galleryTrash)
+        assertFalse(result.directory)
+        assertEquals(0, result.galleryRegularFiles)
+    }
+
+    @Test
+    fun emptyGalleryTrashDoesNotMoveItsOtherFiles() = runBlocking {
+        assertTrue(collectGalleryTransferFiles(gallery, true, GalleryFileAction.Trash) { listOf(child("notes.txt")) }.isEmpty())
     }
 
     @Test
@@ -117,6 +131,7 @@ class GalleryTransferFilesTest {
             onUnsupported = {},
         ).selectable("gallery", "Album", isFolder = true, uploadSource = source)
         assertTrue(actions.toPick()!!.gallery)
+        assertTrue(actions.copy(onPhotoGrid = null).toPick()!!.gallery)
         val folder = actions.copy(kind = BrowseOverflowKind.Common).toPick()!!
         assertFalse(folder.gallery)
     }

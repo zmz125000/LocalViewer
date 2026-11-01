@@ -650,6 +650,22 @@ private fun ExplorerPanel(
                         alpha = if (duplicateEnabled) 1f else 0.38f,
                     ),
                 )
+                IconButton(
+                    enabled = windows.isNotEmpty(),
+                    onClick = {
+                        ExplorerWindows.closeAll()
+                        if (isBrowserDestination(currentDestination)) {
+                            returnToNavTab(navigator, navTab)
+                            onNavigated()
+                        }
+                    },
+                ) {
+                    Icon(
+                        Icons.Default.Close,
+                        contentDescription = stringResource(R.string.explorer_close_all_windows),
+                        modifier = Modifier.size(headerIconSize),
+                    )
+                }
             }
         }
         var paneWidth by remember { mutableIntStateOf(0) }
@@ -885,7 +901,7 @@ private fun ExplorerWindowList(
             }
             if (!choosingUpload) {
                 item(key = "uploads-hdr") {
-                    BrowseSectionHeader(stringResource(R.string.transfer_upload), onClick = onToggleMode)
+                    BrowseSectionHeader(stringResource(R.string.explorer_uploads), onClick = onToggleMode)
                 }
                 items(uploads, key = { "upload-${it.id}" }) { upload ->
                     ExplorerPathRow(
