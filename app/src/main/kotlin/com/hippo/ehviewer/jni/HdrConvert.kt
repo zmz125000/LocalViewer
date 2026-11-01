@@ -6,7 +6,7 @@ import java.nio.ByteBuffer
 
 /** Synchronous reader-only capture. Release the handle after copying the returned buffer. */
 internal external fun beginNativeReaderPixels(): Long
-internal external fun beginNativeExportPixels(keepSdrBase: Boolean): Long
+internal external fun beginNativeExportPixels(keepSdrBase: Boolean, float32Processing: Boolean = false): Long
 internal external fun captureExportBitmap(bitmap: Bitmap): ByteArray?
 
 /** In-place linear sRGB F16 to export gamut; alpha association stays unchanged. */
@@ -236,8 +236,8 @@ external fun extractRawPreviewFd(fd: Int, outPath: String, demosaicFallback: Boo
  * [f16] selects linear half-float RGBA (8 bytes per pixel). Otherwise the buffer
  * is sRGB RGBA_8888 (4 bytes, R,G,B,A). [gamut] is 0 BT.709, 1 Display P3, 2 BT.2100.
  * [premultiplied] un-associates alpha before encode. 8-bit JPEG (HDR) is baseline.
- * [sdrOffset] is 0, or the offset of a same-gamut camera-look SDR RGBA8 plane
- * appended to the F16 HDR pixels. Ultra HDR uses this plane as its SDR base.
+ * [sdrOffset] is 0, or the offset of a same-gamut, sRGB-encoded SDR RGBA16 plane
+ * appended to the F16 HDR pixels. JPEG narrows this base to 8-bit at encoding.
  * AVIF modes: 4 SDR, 5 HDR PQ, 6 ISO 21496-1 gain map; JXL mode 7 is HDR PQ.
  * [quality]: 0 lossless (JPEG Q95), 1 high (JPEG Q95), 2 mid (JPEG Q90), 3 low (JPEG Q85), 4 custom.
  * JPEG exports retain 4:4:4 chroma at every quality.
@@ -263,12 +263,12 @@ external fun encodeStillExport(
     exif: ByteArray? = null,
 ): Int
 
-/** Consumes exclusively owned native pixels in place; the capture must outlive this call. */
+/** Consumes owned pixels in place: 0 encoded RGBA8, 1 linear F16, 2 linear F32. Capture outlives encode. */
 internal external fun encodeNativeStillExport(
     pixels: ByteBuffer,
     width: Int,
     height: Int,
-    f16: Boolean,
+    pixelFormat: Int,
     gamut: Int,
     mode: Int,
     premultiplied: Boolean,

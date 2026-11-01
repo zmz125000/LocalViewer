@@ -8,4 +8,8 @@
 bool retain_reader_pixels(std::vector<uint8_t>& pixels);
 bool retain_reader_pixels(std::vector<uint16_t>& pixels);
 bool export_pixels_capture();
+bool export_pixels_float32();
 bool export_pixels_keep_sdr();
+
+// F32 is export-only; never expose it as an Android Bitmap.
+bool retain_reader_pixels(std::vector<float>& pixels);

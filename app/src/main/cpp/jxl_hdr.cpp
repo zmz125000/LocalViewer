@@ -1,3 +1,4 @@
+#include "working_pixels.h"
 /*
  * JPEG XL → one linear RGBA_F16 working contract via libjxl's CMS.
  *
@@ -187,7 +188,8 @@ bool is_linear_working_encoding(const JxlColorEncoding& src, uhdr_color_gamut_t 
  * [composite_alpha_on_black] is true only for JPEG/UHDR destinations.
  * @return 0 OK
  */
-int decode_jxl_to_linear_f16(const uint8_t* data, size_t len, std::vector<uint16_t>& out_rgba,
+template<class Sample>
+int decode_jxl_to_linear(const uint8_t* data, size_t len, std::vector<Sample>& out_rgba,
                              unsigned& w, unsigned& h, uhdr_color_gamut_t* out_cg,
                              bool* out_force_hdr = nullptr, int* out_transfer_cicp = nullptr,
                              bool composite_alpha_on_black = true, unsigned thumbnail_edge = 0,
@@ -392,7 +394,8 @@ int decode_jxl_to_linear_f16(const uint8_t* data, size_t len, std::vector<uint16
         // linear values relative to intensity_target, not 203-nit SDR white.
         float peak_nits = hdr_cms ? cms_intensity : intensity;
         if (!std::isfinite(peak_nits) || peak_nits < 1.f) peak_nits = 1000.f;
-        scale = std::clamp(peak_nits / kSdrWhiteNits, 1.f, kMaxLinear);
+        if constexpr (std::is_same_v<Sample, float>) scale = std::max(peak_nits / kSdrWhiteNits, 1.f);
+        else scale = std::clamp(peak_nits / kSdrWhiteNits, 1.f, kMaxLinear);
     }
 
     const auto converted_sample = [&](size_t i, float* sample) {
@@ -420,9 +423,7 @@ int decode_jxl_to_linear_f16(const uint8_t* data, size_t len, std::vector<uint16
         }
 
         auto clamp_hf = [](float v) {
-            if (!std::isfinite(v) || v < 0.f) return 0.f;
-            if (v > kMaxLinear) return kMaxLinear;
-            return v;
+            return sanitize_working<Sample>(v);
         };
         rl = clamp_hf(rl);
         gl = clamp_hf(gl);
@@ -442,34 +443,44 @@ int decode_jxl_to_linear_f16(const uint8_t* data, size_t len, std::vector<uint16
         out_rgba.resize(static_cast<size_t>(nw) * nh * 4);
         hdr_parallel_pixels(nh, hdr_pixel_jobs(pixels_n), [&](size_t begin, size_t end, unsigned) {
             for (unsigned y = begin; y < end; ++y) {
-                const unsigned sy0 = y * h / nh, sy1 = (y + 1) * h / nh;
+                const double top = double(y)*h/nh, bottom = double(y+1)*h/nh;
+                const unsigned sy0 = unsigned(top), sy1 = std::min(h, unsigned(std::ceil(bottom)));
                 for (unsigned x = 0; x < nw; ++x) {
-                    const unsigned sx0 = x * w / nw, sx1 = (x + 1) * w / nw;
-                    float sum[4]{};
+                    const double left = double(x)*w/nw, right = double(x+1)*w/nw;
+                    const unsigned sx0 = unsigned(left), sx1 = std::min(w, unsigned(std::ceil(right)));
+                    double sum[4]{};
                     for (unsigned sy = sy0; sy < sy1; ++sy) {
                         for (unsigned sx = sx0; sx < sx1; ++sx) {
                             float sample[4];
                             converted_sample(static_cast<size_t>(sy) * w + sx, sample);
-                            for (unsigned c = 0; c < 4; ++c) sum[c] += sample[c];
+                            const double weight = (std::min(bottom, double(sy+1))-std::max(top, double(sy))) *
+                                (std::min(right, double(sx+1))-std::max(left, double(sx)));
+                            for (unsigned c = 0; c < 3; ++c) sum[c] += sample[c]*sample[3]*weight;
+                            sum[3] += sample[3]*weight;
                         }
                     }
-                    const float count = static_cast<float>((sy1 - sy0) * (sx1 - sx0));
+                    const double count = (right-left)*(bottom-top);
                     const size_t offset = (static_cast<size_t>(y) * nw + x) * 4;
-                    for (unsigned c = 0; c < 4; ++c) out_rgba[offset + c] = float_to_half(sum[c] / count);
+                    for (unsigned c = 0; c < 3; ++c) out_rgba[offset+c] = store_working<Sample>(sum[3] > 0 ? float(sum[c]/sum[3]) : 0.f);
+                    out_rgba[offset+3] = store_working<Sample>(float(sum[3]/count));
                 }
             }
         });
         w = nw;
         h = nh;
     } else {
-        out_rgba.resize(pixels_n * 4);
+        if constexpr (!std::is_same_v<Sample, float>) out_rgba.resize(pixels_n * 4);
         hdr_parallel_pixels(pixels_n, hdr_pixel_jobs(pixels_n), [&](size_t begin, size_t end, unsigned) {
             for (size_t i = begin; i < end; ++i) {
                 float sample[4];
                 converted_sample(i, sample);
-                for (unsigned c = 0; c < 4; ++c) out_rgba[i * 4 + c] = float_to_half(sample[c]);
+                for (unsigned c = 0; c < 4; ++c) {
+                    if constexpr (std::is_same_v<Sample, float>) pixels[i*4+c] = sample[c];
+                    else out_rgba[i*4+c] = store_working<Sample>(sample[c]);
+                }
             }
         });
+        if constexpr (std::is_same_v<Sample, float>) out_rgba = std::move(pixels);
     }
 
     ALOGI("JXL CMS %ux%u cg=%d pq=%d hlg=%d original=%d intensity=%.1f scale=%.3f hdr=%d "
@@ -500,7 +511,7 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_convertJxlBytesToUltraHdr(JNIEnv* env, 
     unsigned w = 0, h = 0;
     uhdr_color_gamut_t cg = UHDR_CG_BT_709;
     bool force_hdr = false;
-    int rc = decode_jxl_to_linear_f16(reinterpret_cast<const uint8_t*>(bytes),
+    int rc = decode_jxl_to_linear(reinterpret_cast<const uint8_t*>(bytes),
                                       static_cast<size_t>(len), rgba, w, h, &cg, &force_hdr);
     if (rc != 0) {
         ALOGE("JXL decode failed rc=%d", rc);
@@ -536,7 +547,7 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_convertJxlBufferToUltraHdr(JNIEnv* env,
     unsigned w = 0, h = 0;
     uhdr_color_gamut_t cg = UHDR_CG_BT_709;
     bool force_hdr = false;
-    int rc = decode_jxl_to_linear_f16(reinterpret_cast<const uint8_t*>(bytes),
+    int rc = decode_jxl_to_linear(reinterpret_cast<const uint8_t*>(bytes),
                                       static_cast<size_t>(len), rgba, w, h, &cg, &force_hdr);
     if (rc != 0) {
         ALOGE("JXL decode failed rc=%d", rc);
@@ -571,7 +582,7 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_convertJxlBytesToUltraHdrMaxEdge(
     unsigned w = 0, h = 0;
     uhdr_color_gamut_t cg = UHDR_CG_BT_709;
     bool force_hdr = false;
-    int rc = decode_jxl_to_linear_f16(reinterpret_cast<const uint8_t*>(bytes),
+    int rc = decode_jxl_to_linear(reinterpret_cast<const uint8_t*>(bytes),
                                       static_cast<size_t>(len), rgba, w, h, &cg, &force_hdr, nullptr,
                                       true, maxEdge > 0 ? static_cast<unsigned>(maxEdge) : 0);
     if (rc != 0) {
@@ -607,7 +618,7 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_convertJxlFdToUltraHdrMaxEdge(
     unsigned w = 0, h = 0;
     uhdr_color_gamut_t cg = UHDR_CG_BT_709;
     bool force_hdr = false;
-    int rc = decode_jxl_to_linear_f16(input.data,
+    int rc = decode_jxl_to_linear(input.data,
                                       input.size, rgba, w, h, &cg, &force_hdr, nullptr,
                                       true, maxEdge > 0 ? static_cast<unsigned>(maxEdge) : 0);
     input.reset();
@@ -653,7 +664,7 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeJxlBytesToDirect(JNIEnv* env, jcl
     int transfer_cicp = 0;
     int source_depth = 0;
     jbyteArray result = nullptr;
-    int rc = decode_jxl_to_linear_f16(reinterpret_cast<const uint8_t*>(bytes),
+    int rc = decode_jxl_to_linear(reinterpret_cast<const uint8_t*>(bytes),
                                       static_cast<size_t>(len), rgba, w, h, &cg, &force_hdr,
                                       &transfer_cicp, /*composite_alpha_on_black=*/false, 0,
                                       exportBt2020 == JNI_TRUE && export_pixels_capture(), jOutExif ? &exif : nullptr, &source_depth);
@@ -689,6 +700,21 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeJxlBufferToDirect(JNIEnv* env, jc
     const auto* bytes = static_cast<const uint8_t*>(env->GetDirectBufferAddress(jInput));
     if (!bytes || len <= 0) return nullptr;
 
+    if (export_pixels_capture() && maxEdge <= 0) {
+        std::vector<float> rgba;
+        std::vector<uint8_t> exif;
+        unsigned w = 0, h = 0;
+        uhdr_color_gamut_t cg = UHDR_CG_BT_709;
+        bool hdr = false;
+        int transfer = 0, depth = 0;
+        if (decode_jxl_to_linear(bytes, size_t(len), rgba, w, h, &cg, &hdr, &transfer,
+            false, 0, exportBt2020 == JNI_TRUE, jOutExif ? &exif : nullptr, &depth)) return nullptr;
+        publish_decoded_exif(env, jOutExif, exif, true);
+        auto result = retain_export_f32(env, rgba, w, h, cg, hdr, transfer, jOutInfo, jOutBoost);
+        if (result && env->GetArrayLength(jOutInfo) >= 7) env->SetIntArrayRegion(jOutInfo, 6, 1, &depth);
+        return result;
+    }
+
     std::vector<uint8_t> exif;
     std::vector<uint16_t> rgba;
     unsigned w = 0, h = 0;
@@ -697,7 +723,7 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeJxlBufferToDirect(JNIEnv* env, jc
     int transfer_cicp = 0;
     int source_depth = 0;
     jbyteArray result = nullptr;
-    int rc = decode_jxl_to_linear_f16(reinterpret_cast<const uint8_t*>(bytes),
+    int rc = decode_jxl_to_linear(reinterpret_cast<const uint8_t*>(bytes),
                                       static_cast<size_t>(len), rgba, w, h, &cg, &force_hdr,
                                       &transfer_cicp, /*composite_alpha_on_black=*/false, 0,
                                       exportBt2020 == JNI_TRUE && export_pixels_capture(), jOutExif ? &exif : nullptr, &source_depth);

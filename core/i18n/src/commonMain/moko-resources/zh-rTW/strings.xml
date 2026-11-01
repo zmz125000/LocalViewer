@@ -134,6 +134,8 @@
     <string name="image_conversion_jxl_jpeg_transcoding_summary">將 JPEG 轉為 JPEG XL 時保留原始 JPEG 資料，不受距離設定影響。</string>
     <string name="image_conversion_jxl_distance">JPEG XL 距離</string>
     <string name="image_conversion_jxl_distance_summary">距離越低，品質越高；0 為無損。</string>
+    <string name="image_conversion_float32">Float32 轉換處理 (不安全)</string>
+    <string name="image_conversion_float32_summary">需要時使用更高精度的工作緩衝區，會佔用更多記憶體。</string>
     <string name="image_conversion_custom_codec_quality">JPEG / AVIF 品質</string>
     <string name="image_conversion_avif_12_bit">12 位元 AVIF</string>
     <string name="image_conversion_avif_12_bit_summary">高位元深度來源使用 12 位元而非 10 位元輸出。8 位元輸出保持不變。</string>

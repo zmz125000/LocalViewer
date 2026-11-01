@@ -100,7 +100,7 @@ int encode_avif_u8(unsigned w, unsigned h, const uint8_t* rgba, uhdr_color_gamut
 }
 
 int encode_avif_f16(unsigned w, unsigned h, uint16_t* rgba, uhdr_color_gamut_t gamut,
-                    int mode, const char* path, StillEncodeQuality quality, const uint8_t* sdr_base) {
+                    int mode, const char* path, StillEncodeQuality quality, const uint16_t* sdr_base) {
     if (!rgba || !path || !w || !h || mode < 0 || mode > 2) return -70;
     const size_t pixels = static_cast<size_t>(w) * h;
     const bool pq = mode == 1;
@@ -140,7 +140,7 @@ int encode_avif_f16(unsigned w, unsigned h, uint16_t* rgba, uhdr_color_gamut_t g
             for (unsigned c = 0; c < 3; ++c) {
                 const auto code = rgba[i * 4 + c];
                 encoded[i * 4 + c] = gain_map && sdr_base ?
-                    static_cast<uint16_t>((sdr_base[i * 4 + c] * maximum + 127u) / 255u) : codes[code];
+                    static_cast<uint16_t>((sdr_base[i * 4 + c] * maximum + 32767u) / 65535u) : codes[code];
                 rgba[i * 4 + c] = sanitized[code];
                 luminance[c] = half_to_float(rgba[i * 4 + c]);
                 peak = std::max(peak, luminance[c]);
@@ -205,4 +205,64 @@ int encode_avif_f16(unsigned w, unsigned h, uint16_t* rgba, uhdr_color_gamut_t g
     // YUV and gain-map planes now own all pixels needed by the encoder.
     std::vector<uint16_t>().swap(encoded);
     return write_avif(image.get(), path, quality);
+}
+
+int encode_avif_f32(unsigned w,unsigned h,const float* rgba,uhdr_color_gamut_t gamut,
+                    int mode,const char* path,StillEncodeQuality quality,const float* sdr_base) {
+    if(!rgba||!path||!w||!h||uint64_t(w)*h>80000000||mode<0||mode>2)return -70;
+    const size_t pixels=size_t(w)*h;
+    const bool pq=mode==1,gain_map=mode==2;
+    const unsigned depth=quality.avif_depth(),maximum=(1u<<depth)-1;
+    auto image=make_image(w,h,depth,gamut,pq,quality);
+    if(!image)return -71;
+    if(!pq&&!gain_map&&!set_sdr_profile(image.get(),gamut))return -77;
+    std::vector<uint16_t> encoded(pixels*4),hdr_codes(gain_map?pixels*4:0);
+    std::array<float,8> peaks{};std::array<double,8> averages{};
+    const unsigned jobs=hdr_pixel_jobs(pixels);
+    hdr_parallel_pixels(pixels,jobs,[&](size_t begin,size_t end,unsigned job){
+        float peak=0.f;double sum=0;
+        for(size_t i=begin;i<end;++i) {
+            float luminance=0;
+            for(unsigned c=0;c<3;++c) {
+                float v=rgba[i*4+c];if(!std::isfinite(v))v=0;
+                v=std::clamp(v,0.f,kMaxLinear);
+                peak=std::max(peak,v);luminance+=v/3.f;
+                const float base=gain_map&&sdr_base?sdr_base[i*4+c]:v;
+                const float code=pq?linear_to_pq_code(v):srgb_oetf(base);
+                encoded[i*4+c]=static_cast<uint16_t>(std::lround(code*maximum));
+                if(gain_map)hdr_codes[i*4+c]=static_cast<uint16_t>(std::lround(linear_to_pq_code(v)*65535.f));
+            }
+            sum+=luminance;
+            const float alpha=std::isfinite(rgba[i*4+3])?std::clamp(rgba[i*4+3],0.f,1.f):0.f;
+            encoded[i*4+3]=static_cast<uint16_t>(std::lround(alpha*maximum));
+            if(gain_map)hdr_codes[i*4+3]=static_cast<uint16_t>(std::lround(alpha*65535.f));
+        }
+        peaks[job]=peak;averages[job]=sum;
+    });
+    avifContentLightLevelInformationBox clli{};
+    clli.maxCLL=static_cast<uint16_t>(std::lround(*std::max_element(peaks.begin(),peaks.end())*kSdrWhiteNits));
+    clli.maxPALL=static_cast<uint16_t>(std::lround(std::accumulate(averages.begin(),averages.end(),0.0)/pixels*kSdrWhiteNits));
+    if(pq)image->clli=clli;
+    auto base_rgb=rgb_view(image.get(),reinterpret_cast<uint8_t*>(encoded.data()),depth,2);
+    if(avifImageRGBToYUV(image.get(),&base_rgb)!=AVIF_RESULT_OK)return -75;
+    if(gain_map) {
+        image->gainMap=avifGainMapCreate();if(!image->gainMap)return -71;
+        const unsigned scale=quality.avif_gain_map_scale();
+        auto* map=image->gainMap;
+        map->image=avifImageCreate((w+scale-1)/scale,(h+scale-1)/scale,depth,AVIF_PIXEL_FORMAT_YUV444);
+        if(!map->image)return -71;
+        map->image->matrixCoefficients=quality.avif_lossless()?AVIF_MATRIX_COEFFICIENTS_IDENTITY:AVIF_MATRIX_COEFFICIENTS_BT709;
+        map->image->yuvRange=AVIF_RANGE_FULL;
+        auto hdr_rgb=rgb_view(image.get(),reinterpret_cast<uint8_t*>(hdr_codes.data()),16,2);
+        avifDiagnostics diagnostics{};
+        if(avifRGBImageComputeGainMap(&base_rgb,image->colorPrimaries,AVIF_TRANSFER_CHARACTERISTICS_SRGB,
+            &hdr_rgb,image->colorPrimaries,AVIF_TRANSFER_CHARACTERISTICS_PQ,map,&diagnostics)!=AVIF_RESULT_OK)return -76;
+        map->altColorPrimaries=image->colorPrimaries;
+        map->altTransferCharacteristics=AVIF_TRANSFER_CHARACTERISTICS_PQ;
+        map->altMatrixCoefficients=image->matrixCoefficients;
+        map->altYUVRange=AVIF_RANGE_FULL;map->altDepth=depth;map->altPlaneCount=3;map->altCLLI=clli;
+    }
+    std::vector<uint16_t>().swap(encoded);
+    std::vector<uint16_t>().swap(hdr_codes);
+    return write_avif(image.get(),path,quality);
 }

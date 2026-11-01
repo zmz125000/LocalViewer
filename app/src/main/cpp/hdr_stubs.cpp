@@ -129,7 +129,7 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_probeStillExportSize(JNIEnv*, jclass, j
 
 extern "C" JNIEXPORT jint JNICALL
 Java_com_hippo_ehviewer_jni_HdrConvertKt_encodeNativeStillExport(JNIEnv*, jclass, jobject, jint, jint,
-                                                             jboolean, jint, jint, jboolean, jstring, jint, jint, jfloat, jint, jint, jboolean, jbyteArray) {
+                                                             jint, jint, jint, jboolean, jstring, jint, jint, jfloat, jint, jint, jboolean, jbyteArray) {
     return kUnsupportedAbi;
 }
 

@@ -14,7 +14,11 @@ internal class StillExportQuality(
     val downsizeGainMap: Boolean = false,
     val extendedSrgbBt2020: Boolean = true,
     val keepExif: Boolean = false,
+    float32: Boolean = false,
 ) : AbstractCoroutineContextElement(Key) {
+    /** Custom-only; captured with the job so later setting changes cannot change its buffers. */
+    val float32Processing = value == 4 && float32
+
     companion object Key : CoroutineContext.Key<StillExportQuality> {
         fun current() = StillExportQuality(
             Settings.imageConversionQuality.value.coerceIn(0, 4),
@@ -25,6 +29,7 @@ internal class StillExportQuality(
             Settings.imageConversionDownsizeGainMap.value,
             Settings.imageConversionExtendedSrgbBt2020.value,
             Settings.imageConversionKeepExif.value,
+            Settings.imageConversionFloat32.value,
         )
     }
 }

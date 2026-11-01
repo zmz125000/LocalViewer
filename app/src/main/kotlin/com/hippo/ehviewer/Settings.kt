@@ -790,6 +790,7 @@ object Settings : DataStorePreferences(null) {
     // JXL distance in hundredths: 0 is lossless; lower distances retain more detail.
     val imageConversionJxlDistance = intPref("image_conversion_jxl_distance", 100)
     val imageConversionCustomQuality = intPref("image_conversion_custom_quality", 90)
+    val imageConversionFloat32 = boolPref("image_conversion_float32", false)
     val imageConversionAvif12Bit = boolPref("image_conversion_avif_12_bit", false)
     val imageConversionDownsizeGainMap = boolPref("image_conversion_downsize_gain_map", false)
 

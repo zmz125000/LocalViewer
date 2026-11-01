@@ -345,11 +345,11 @@ int encode_jxl_u8(unsigned w, unsigned h, const uint8_t* rgba, uhdr_color_gamut_
                   const char* path, StillEncodeQuality quality = 1);
 
 /** AVIF: mode 0 SDR, 1 PQ, 2 ISO 21496-1 SDR base + HDR gain map.
- * F16 is linear, straight alpha, with 1.0 = 203 nits; sdr_base is optional RGBA8.
+ * F16 is linear, straight alpha, with 1.0 = 203 nits; sdr_base is optional sRGB-encoded RGBA16.
  * Deep sources use 12 bits for Lossless/High, 10 for Mid/Low, or the custom depth, with 4:4:4 sampling.
  */
 int encode_avif_f16(unsigned w, unsigned h, uint16_t* rgba, uhdr_color_gamut_t cg,
-                    int mode, const char* path, StillEncodeQuality quality, const uint8_t* sdr_base = nullptr);
+                    int mode, const char* path, StillEncodeQuality quality, const uint16_t* sdr_base = nullptr);
 int encode_avif_u8(unsigned w, unsigned h, const uint8_t* rgba, uhdr_color_gamut_t cg,
                    const char* path, StillEncodeQuality quality);
 
@@ -367,3 +367,11 @@ struct StillSourceColor {
 };
 int encode_jxl_source(unsigned w, unsigned h, const void* rgba, bool sixteen,
                       const StillSourceColor& color, const char* path, StillEncodeQuality quality);
+
+/** Export-only F32 pixels. Reader bitmaps and Ultra HDR's input remain F16. */
+int encode_jxl_f32(unsigned, unsigned, float*, uhdr_color_gamut_t, bool, const char*, StillEncodeQuality, bool);
+int encode_avif_f32(unsigned, unsigned, const float*, uhdr_color_gamut_t, int, const char*, StillEncodeQuality, const float* sdr_base = nullptr);
+void scale_rgba_f32_max_edge(std::vector<float>&, unsigned&, unsigned&, unsigned);
+
+jbyteArray retain_export_f32(JNIEnv*, std::vector<float>&, unsigned, unsigned,
+    uhdr_color_gamut_t, bool, int, jintArray, jfloatArray);

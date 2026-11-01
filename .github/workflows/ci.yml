@@ -66,7 +66,18 @@ jobs:
       # libavif LocalDav1d builds dav1d with meson (decode-only AV1 for PQ AVIF).
       # nasm is required for x86_64 asm when -Denable_asm=true (arm64 uses gas).
       - name: Install meson/nasm (dav1d)
-        run: sudo apt-get update && sudo apt-get install -y meson ninja-build nasm
+        id: native-tools
+        run: |
+          sudo apt-get update && sudo apt-get install -y meson ninja-build nasm
+          # Meson's serialized build data must match the runner and host tools.
+          toolchain_hash=$({
+            printf '%s\n' "$ImageOS" "$ImageVersion"
+            python3 --version
+            meson --version
+            ninja --version
+            nasm -v
+          } | sha256sum | cut -d ' ' -f 1)
+          echo "cache-key=$toolchain_hash" >> "$GITHUB_OUTPUT"
 
       - name: Rust Cache
         uses: Swatinem/rust-cache@v2
@@ -84,8 +95,8 @@ jobs:
         uses: actions/cache@v5
         with:
           path: app/.cxx
-          key: cmake-default-${{ hashFiles('rust-toolchain.toml', 'settings.gradle.kts', 'app/src/main/cpp/CMakeLists.txt', 'app/src/main/rust/Cargo.lock') }}
-          restore-keys: cmake-default-
+          key: cmake-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.native-tools.outputs.cache-key }}-default-${{ hashFiles('rust-toolchain.toml', 'settings.gradle.kts', 'app/build.gradle.kts', 'gradle/libs.versions.toml', 'app/src/main/cpp/**', 'app/src/main/rust/Cargo.lock') }}
+          restore-keys: cmake-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.native-tools.outputs.cache-key }}-default-
 
       - name: Build
         run: ./gradlew assembleDefaultRelease

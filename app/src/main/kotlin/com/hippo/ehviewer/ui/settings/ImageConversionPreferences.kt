@@ -37,6 +37,11 @@ internal fun ImageConversionPreferences() {
     )
     AnimatedVisibility(visible = conversionQuality.value == 4) {
         Column {
+            SwitchPreference(
+                title = stringResource(R.string.image_conversion_float32),
+                summary = stringResource(R.string.image_conversion_float32_summary),
+                state = Settings.imageConversionFloat32.asMutableState(),
+            )
             val distance = Settings.imageConversionJxlDistance.asMutableState()
             val sliderDistance = remember { mutableIntStateOf(distance.value.coerceIn(0, 300)) }
             LaunchedEffect(distance.value) {
