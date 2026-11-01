@@ -616,22 +616,6 @@ private fun ExplorerPanel(
                         alpha = if (duplicateEnabled) 1f else 0.38f,
                     ),
                 )
-                IconButton(
-                    enabled = windows.isNotEmpty(),
-                    onClick = {
-                        ExplorerWindows.closeAll()
-                        if (isBrowserDestination(currentDestination)) {
-                            returnToNavTab(navigator, navTab)
-                            onNavigated()
-                        }
-                    },
-                ) {
-                    Icon(
-                        Icons.Default.Close,
-                        contentDescription = stringResource(R.string.explorer_close_all_windows),
-                        modifier = Modifier.size(headerIconSize),
-                    )
-                }
             }
         }
         var paneWidth by remember { mutableIntStateOf(0) }
@@ -775,7 +759,21 @@ private fun ExplorerWindowList(
             }
             if (windows.isNotEmpty()) {
                 item(key = "win-hdr") {
-                    BrowseSectionHeader(stringResource(R.string.explorer_windows), onClick = onToggleMode)
+                    BrowseSectionHeader(
+                        text = stringResource(R.string.explorer_windows),
+                        onClick = onToggleMode,
+                        onLongClick = if (choosingUpload) {
+                            null
+                        } else {
+                            {
+                                ExplorerWindows.closeAll()
+                                if (isBrowserDestination(currentDestination)) {
+                                    returnToNavTab(navigator, navTab)
+                                    onNavigated()
+                                }
+                            }
+                        },
+                    )
                 }
                 items(windows, key = { "w-${it.id}" }) { window ->
                     val source = windowSourceName(window, roots, smb, webDav)
