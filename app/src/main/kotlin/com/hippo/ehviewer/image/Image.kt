@@ -881,6 +881,9 @@ class Image private constructor(
          * (no Coil / UHDR JPEG). Closes [src] when the image is retained.
          */
         fun fromLibDirect(result: LibDirectResult, src: ImageSource, attachHeifGainMap: Boolean = false): Image {
+            // RAW HDR is linear scRGB/BT.2020 with no CICP transfer. PQ/HLG still
+            // report their source curve; this bitmap space is only the fallback.
+            val decodedColorSpace = result.bitmap.colorSpace
             val shown = result.bitmap.presentForReader()
             var coil: CoilImage = shown.asImage()
             // Native ISO AVIF can now retain its base + Gainmap instead of a
@@ -913,12 +916,13 @@ class Image private constructor(
                     transfer = if (result.sourceHasGainmap) {
                         ImageTransfer.GAIN_MAP
                     } else {
-                        ImageTransfer.fromCicp(result.sourceTransfer)
+                        ImageTransfer.fromCicp(result.sourceTransfer) ?: ImageTransfer.fromColorSpace(decodedColorSpace)
                     },
                     rawTransfer = if (result.sourceHasGainmap) {
                         "ISO 21496-1 gain map"
                     } else {
                         result.sourceTransfer.takeIf { code -> code != 0 }?.let { code -> "CICP transfer $code" }
+                            ?: decodedColorSpace.rawTransferDescription()
                     },
                 )
                 it.prepareToDraw()

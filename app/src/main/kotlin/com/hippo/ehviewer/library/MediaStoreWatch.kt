@@ -281,7 +281,9 @@ object MediaStoreWatch {
                 // Parked on [kicks] until a real callback. This delay is the burst
                 // coalesce, not a poll: extra callbacks do not start another wait.
                 delay(COALESCE_MS)
-                while (kicks.tryReceive().isSuccess) Unit
+                while (kicks.tryReceive().isSuccess) {
+                    // Extra callbacks in this burst share the pass above.
+                }
                 if (!libraryResumed || !Settings.libraryLiveUpdate.value) {
                     drain()
                     continue
