@@ -34,6 +34,10 @@ internal object HevcHdrDecode {
         val sourceExif: ByteArray? = null,
         val sourceEncoding: HeifContainer.PrimaryImage? = null,
         val sourceContainer: HeifContainer.Parsed? = null,
+        val sourceWidth: Int? = null,
+        val sourceHeight: Int? = null,
+        val sourceBitDepth: Int? = null,
+        val sourcePrimaries: Int? = null,
     ) : AutoCloseable {
         override fun close() = pixels.close()
     }
@@ -169,14 +173,28 @@ internal object HevcHdrDecode {
             if (icc != null && !linearizeHeifIccBuffer(pixels.buffer, icc, preserveColor)) return null
             val alpha = parsed.alphaImage()
             if (alpha != null && !applyAlpha(pixels, outW, outH, hdr, alpha, encodedRgb)) return null
+            fun frame(buffer: NativeStillBuffer, width: Int, height: Int) = Frame(
+                pixels = buffer,
+                width = width,
+                height = height,
+                gamut = gamut,
+                boost = peak.coerceIn(1f, 64f),
+                isHdr = isHdr,
+                transfer = hdr.transfer,
+                sourceExif = sourceExif,
+                sourceEncoding = hdr.takeIf { encodedRgb },
+                sourceContainer = parsed.takeIf { encodedRgb },
+                sourceWidth = if (hdr.rotationDegreesCcw % 180 != 0) hdr.height else hdr.width,
+                sourceHeight = if (hdr.rotationDegreesCcw % 180 != 0) hdr.width else hdr.height,
+                sourceBitDepth = hdr.tiles.maxOfOrNull { it.bitDepth },
+                sourcePrimaries = hdr.primaries.takeIf { hdr.icc == null || isHdr },
+            )
             if (hdr.rotationDegreesCcw % 360 != 0) {
                 val turned = rotateHalf(pixels, outW, outH, hdr.rotationDegreesCcw)
-                outW = turned.width
-                outH = turned.height
-                return Frame(turned.pixels, outW, outH, gamut, peak.coerceIn(1f, 64f), isHdr, hdr.transfer, sourceExif, hdr.takeIf { encodedRgb }, parsed.takeIf { encodedRgb }).also { result = it }
+                return frame(turned.pixels, turned.width, turned.height).also { result = it }
             }
             Log.i(TAG, "HEIC F16 ${outW}x$outH transfer=${hdr.transfer} boost=$peak tiles=${hdr.tiles.size}")
-            return Frame(pixels, outW, outH, gamut, peak.coerceIn(1f, 64f), isHdr, hdr.transfer, sourceExif, hdr.takeIf { encodedRgb }, parsed.takeIf { encodedRgb }).also { result = it }
+            return frame(pixels, outW, outH).also { result = it }
         } finally {
             if (result?.pixels !== pixels) pixels.close()
         }

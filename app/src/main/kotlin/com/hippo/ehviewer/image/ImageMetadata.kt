@@ -54,6 +54,14 @@ internal fun firstKnownColorSpace(vararg names: String?): String? = names.firstN
     name?.trim()?.takeUnless { it.isEmpty() || it.equals("Unknown", ignoreCase = true) }
 }
 
+internal fun cicpColorSpaceName(primaries: Int?, transfer: Int?): String? = when (primaries) {
+    1 -> if (transfer == 13) "sRGB" else "BT.709"
+    9 -> "BT.2020"
+    11 -> "DCI-P3"
+    12 -> "Display P3"
+    else -> null
+}
+
 /** A coder comment such as "Attrib: GainMap Image" does not describe an attached gain map. */
 internal fun sourceGainmapMarker(header: ByteArray): String? {
     val text = header.toString(Charsets.ISO_8859_1)
@@ -86,9 +94,14 @@ internal fun ImageSource.readMetadata(
     fileName: String? = null,
     decodedExif: ByteArray? = null,
     decodedSourceBitDepth: Int? = null,
+    decodedWidth: Int? = null,
+    decodedHeight: Int? = null,
+    decodedColorSpaceKnown: Boolean = false,
 ): ImageMetadata {
     val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-    runCatching { metadataStream().use { BitmapFactory.decodeStream(it, null, bounds) } }
+    if (decodedWidth == null || decodedHeight == null || !decodedColorSpaceKnown) {
+        runCatching { metadataStream().use { BitmapFactory.decodeStream(it, null, bounds) } }
+    }
     val header = runCatching {
         metadataStream().use { input ->
             val bytes = ByteArray(HeifPrecisionProbe.HEADER_BYTES)
@@ -106,7 +119,11 @@ internal fun ImageSource.readMetadata(
         if (decodedExif != null) exifFromTiff(decodedExif) else readEncodedExif(fileName, header)
     }.getOrNull()
     val heif = HeifPrecisionProbe.probe(header)
-    val dimensions = HeifPrecisionProbe.thumbnailMemory(ByteBuffer.wrap(header))?.dimensions ?: 0L
+    val dimensions = if (decodedWidth == null || decodedHeight == null) {
+        HeifPrecisionProbe.thumbnailMemory(ByteBuffer.wrap(header))?.dimensions ?: 0L
+    } else {
+        0L
+    }
     val extension = fileName?.substringAfterLast('.', "")?.lowercase()
     val kind = when {
         extension == "jxl" -> 0
@@ -114,7 +131,7 @@ internal fun ImageSource.readMetadata(
         isRawStillExtension(extension) -> 2
         else -> -1
     }
-    val nativeDimensions = if (kind >= 0 && bounds.outWidth <= 0) {
+    val nativeDimensions = if (kind >= 0 && bounds.outWidth <= 0 && (decodedWidth == null || decodedHeight == null)) {
         runCatching { nativeDimensions(kind, header) }.getOrDefault(0L)
     } else {
         0L
@@ -131,10 +148,10 @@ internal fun ImageSource.readMetadata(
     val gainmapMarker = sourceGainmapMarker(header)
     val gainmap = gainmapMarker != null
     return ImageMetadata(
-        width = bounds.outWidth.takeIf { it > 0 } ?: (nativeDimensions ushr 32).toInt().takeIf { it > 0 }
+        width = decodedWidth ?: bounds.outWidth.takeIf { it > 0 } ?: (nativeDimensions ushr 32).toInt().takeIf { it > 0 }
             ?: attributeInt(ExifInterface.TAG_PIXEL_X_DIMENSION) ?: attributeInt(ExifInterface.TAG_IMAGE_WIDTH)
             ?: (dimensions ushr 32).toInt().takeIf { it > 0 },
-        height = bounds.outHeight.takeIf { it > 0 } ?: nativeDimensions.toInt().takeIf { it > 0 }
+        height = decodedHeight ?: bounds.outHeight.takeIf { it > 0 } ?: nativeDimensions.toInt().takeIf { it > 0 }
             ?: attributeInt(ExifInterface.TAG_PIXEL_Y_DIMENSION) ?: attributeInt(ExifInterface.TAG_IMAGE_LENGTH)
             ?: dimensions.toInt().takeIf { it > 0 },
         bitDepth = depth,
@@ -151,13 +168,8 @@ internal fun ImageSource.readMetadata(
         }.getOrNull(),
         // CICP primaries describe the source gamut independently of its transfer curve.
         // BitmapFactory can report sRGB here for a BT.2020 AVIF with an sRGB transfer.
-        colorSpace = when (heif?.primaries) {
-            1 -> if (heif.transfer == 13) "sRGB" else "BT.709"
-            9 -> "BT.2020"
-            11 -> "DCI-P3"
-            12 -> "Display P3"
-            else -> firstKnownColorSpace(bounds.outColorSpace?.name, if (attributeInt(ExifInterface.TAG_COLOR_SPACE) == 1) "sRGB" else null)
-        },
+        colorSpace = cicpColorSpaceName(heif?.primaries, heif?.transfer)
+            ?: firstKnownColorSpace(bounds.outColorSpace?.name, if (attributeInt(ExifInterface.TAG_COLOR_SPACE) == 1) "sRGB" else null),
         hdr = when {
             gainmap || heif?.transfer in listOf(16, 18) -> true
             heif?.transfer != null || bounds.outWidth > 0 -> false

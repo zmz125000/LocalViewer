@@ -1,3 +1,4 @@
+#include "decoded_image_info.h"
 #include "working_pixels.h"
 /*
  * JPEG XR / HDR raster → Ultra HDR JPEG via libultrahdr.
@@ -2158,6 +2159,7 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeJxrBytesToDirect(JNIEnv* env, jcl
     uhdr_color_gamut_t cg = UHDR_CG_BT_709;
     if (decode_jxr_from_memory(reinterpret_cast<const uint8_t*>(bytes), static_cast<size_t>(len),
                                rgba, w, h, /*composite_alpha_on_black=*/false, &untagged_linear, &cg, 0, &source_depth)) {
+        const DecodedImageInfo source{jint(w), jint(h), 0, untagged_linear ? 8 : 0, source_depth};
         if (maxEdge > 0) {
             scale_rgba_f16_max_edge(rgba, w, h, static_cast<unsigned>(maxEdge));
         }
@@ -2173,6 +2175,7 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeJxrBytesToDirect(JNIEnv* env, jcl
         result = pack_direct_to_jbyte_array(env, rgba, w, h, /*force_hdr=*/false, cg,
                                             advancedColor == JNI_TRUE, /*transfer_cicp=*/0, jOutInfo,
                                             jOutBoost);
+        if (result) source.publish(env, jOutInfo);
         if (result && env->GetArrayLength(jOutInfo) >= 7) {
             const jint depth = source_depth;
             env->SetIntArrayRegion(jOutInfo, 6, 1, &depth);
@@ -2225,6 +2228,7 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeJxrBufferToDirect(JNIEnv* env, jc
     uhdr_color_gamut_t cg = UHDR_CG_BT_709;
     if (decode_jxr_from_memory(reinterpret_cast<const uint8_t*>(bytes), static_cast<size_t>(len),
                                rgba, w, h, /*composite_alpha_on_black=*/false, &untagged_linear, &cg, 0, &source_depth)) {
+        const DecodedImageInfo source{jint(w), jint(h), 0, untagged_linear ? 8 : 0, source_depth};
         if (maxEdge > 0) {
             scale_rgba_f16_max_edge(rgba, w, h, static_cast<unsigned>(maxEdge));
         }
@@ -2240,6 +2244,7 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeJxrBufferToDirect(JNIEnv* env, jc
         result = pack_direct_to_jbyte_array(env, rgba, w, h, /*force_hdr=*/false, cg,
                                             advancedColor == JNI_TRUE, /*transfer_cicp=*/0, jOutInfo,
                                             jOutBoost);
+        if (result) source.publish(env, jOutInfo);
         if (result && env->GetArrayLength(jOutInfo) >= 7) {
             const jint depth = source_depth;
             env->SetIntArrayRegion(jOutInfo, 6, 1, &depth);

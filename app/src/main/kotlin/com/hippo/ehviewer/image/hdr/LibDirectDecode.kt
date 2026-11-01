@@ -79,6 +79,10 @@ data class LibDirectResult(
     val sourceBitDepth: Int? = null,
     /** Gain map applied during native decoding, even when the returned bitmap is flattened HDR. */
     val sourceHasGainmap: Boolean = false,
+    /** Original source tags, captured before resizing or working-space conversion. */
+    val sourceWidth: Int? = null,
+    val sourceHeight: Int? = null,
+    val sourcePrimaries: Int? = null,
 )
 
 /**
@@ -314,6 +318,10 @@ object LibDirectDecode {
                 sourceExif = packed.sourceExif,
                 sourceBitDepth = packed.outInfo.getOrNull(6)?.takeIf { it in 1..32 },
                 sourceHasGainmap = packed.outInfo.getOrNull(7) == 1,
+                sourceWidth = packed.outInfo.getOrNull(8)?.takeIf { it > 0 },
+                sourceHeight = packed.outInfo.getOrNull(9)?.takeIf { it > 0 },
+                sourcePrimaries = packed.outInfo.getOrNull(10)?.takeIf { it > 0 },
+                sourceTransfer = packed.outInfo.getOrNull(11)?.takeIf { it > 0 } ?: packed.outInfo[5],
             )
         } finally {
             // Upload/copy has completed (or failed); no bitmap references this buffer.
@@ -373,7 +381,7 @@ object LibDirectDecode {
     ): PackedPixels? = withStillInput(src) { buffer ->
         if (!buffer.hasRemaining()) return@withStillInput null
         if (codec == LibCodec.HevcHdr) return@withStillInput decodeHevcHdrPacked(buffer, maxEdge, advanced, export)
-        val outInfo = IntArray(8)
+        val outInfo = IntArray(12)
         val outBoost = FloatArray(1)
         // Existing RAM-backed pages reuse the source array; mapped archive/local
         // inputs go directly to JNI without a compressed Java-array copy.
@@ -542,7 +550,10 @@ object LibDirectDecode {
         val preserveColor = advanced || (Settings.readerHdrDisplay.value && OppoProxdr.looksLike(bytes))
         val frame = HevcHdrDecode.decode(bytes, maxEdge, preserveColor, allowHdr, collectExif = !export) ?: return null
         frame.use {
-            val outInfo = intArrayOf(frame.width, frame.height, 1, if (frame.isHdr) 1 else 0, frame.gamut, frame.transfer)
+            val outInfo = intArrayOf(
+                frame.width, frame.height, 1, if (frame.isHdr) 1 else 0, frame.gamut, frame.transfer,
+                frame.sourceBitDepth ?: 0, 0, frame.sourceWidth ?: 0, frame.sourceHeight ?: 0, frame.sourcePrimaries ?: 0, frame.transfer,
+            )
             val outBoost = floatArrayOf(frame.boost)
             val pixels = frame.pixels.capture() ?: return null
             return PackedPixels(pixels, outInfo, outBoost, premultiplied = true, sourceExif = frame.sourceExif)
@@ -839,7 +850,12 @@ object LibDirectDecode {
                         val packed = decodePngRgbToDirect(pixels.buffer, info.width, info.height, info.primaries, info.transfer, outInfo, boost)
                         val nativePixels = endNativeReaderPixels(handle)
                         if (packed == null) return@use null
-                        bitmapFromPacked(packed, outInfo, boost, nativePixels)?.copy(sourceBitDepth = info.depth)
+                        bitmapFromPacked(packed, outInfo, boost, nativePixels)?.copy(
+                            sourceBitDepth = info.depth,
+                            sourceWidth = info.width,
+                            sourceHeight = info.height,
+                            sourcePrimaries = info.primaries,
+                        )
                     } finally {
                         releaseNativeReaderPixels(handle)
                     }

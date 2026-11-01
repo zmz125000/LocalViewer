@@ -17,6 +17,7 @@
 #include "thumbnail_mapped_input.h"
 #include "still_exif_input.h"
 #include "decoded_exif.h"
+#include "decoded_image_info.h"
 
 #include <algorithm>
 #include <cmath>
@@ -467,7 +468,7 @@ template<class Sample>
 int decode_avif_to_linear(const uint8_t* data, size_t len, std::vector<Sample>& out_rgba,
                               unsigned& w, unsigned& h, int* out_has_gainmap,
                               int* out_transfer /* 16=PQ, 18=HLG, else other */,
-                              uhdr_color_gamut_t* out_cg, unsigned max_edge, std::vector<uint8_t>* out_exif = nullptr) {
+                              uhdr_color_gamut_t* out_cg, unsigned max_edge, std::vector<uint8_t>* out_exif = nullptr, DecodedImageInfo* source = nullptr) {
     if (out_exif) out_exif->clear();
     if (out_has_gainmap) *out_has_gainmap = 0;
     if (out_transfer) *out_transfer = 0;
@@ -522,6 +523,14 @@ int decode_avif_to_linear(const uint8_t* data, size_t len, std::vector<Sample>& 
     if (image->width > 16384 || image->height > 16384 || (std::is_same_v<Sample, float> && uint64_t(image->width)*image->height > 80000000)) {
         avifDecoderDestroy(dec);
         return -7;
+    }
+    if (source) {
+        *source = {jint(image->width), jint(image->height),
+            image->icc.size && image->transferCharacteristics != AVIF_TRANSFER_CHARACTERISTICS_SMPTE2084 &&
+                image->transferCharacteristics != AVIF_TRANSFER_CHARACTERISTICS_HLG ? 0 : jint(image->colorPrimaries),
+            image->icc.size && image->transferCharacteristics != AVIF_TRANSFER_CHARACTERISTICS_SMPTE2084 &&
+                image->transferCharacteristics != AVIF_TRANSFER_CHARACTERISTICS_HLG ? 0 : jint(image->transferCharacteristics),
+            jint(image->depth)};
     }
     if (!scale_avif_to_max_edge(image, max_edge)) {
         avifDecoderDestroy(dec);
@@ -998,11 +1007,12 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeAvifBytesToDirect(JNIEnv* env, jc
     unsigned w = 0, h = 0;
     int has_gm = 0;
     int transfer = 0;
+    DecodedImageInfo source;
     uhdr_color_gamut_t cg = UHDR_CG_BT_709;
     jbyteArray result = nullptr;
     int rc = decode_avif_to_linear(
         reinterpret_cast<const uint8_t*>(bytes), static_cast<size_t>(len), rgba, w, h, &has_gm,
-        &transfer, &cg, maxEdge > 0 ? static_cast<unsigned>(maxEdge) : 0u, jOutExif ? &exif : nullptr);
+        &transfer, &cg, maxEdge > 0 ? static_cast<unsigned>(maxEdge) : 0u, jOutExif ? &exif : nullptr, &source);
     if (rc == 0) {
         publish_decoded_exif(env, jOutExif, exif, false);
         if (maxEdge > 0) {
@@ -1012,6 +1022,7 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeAvifBytesToDirect(JNIEnv* env, jc
         result = pack_direct_to_jbyte_array(env, rgba, w, h, force_hdr, cg,
                                             advancedColor == JNI_TRUE, transfer, jOutInfo,
                                             jOutBoost);
+        if (result) source.publish(env, jOutInfo);
         if (result && env->GetArrayLength(jOutInfo) >= 8) {
             const jint source_has_gainmap = has_gm != 0;
             env->SetIntArrayRegion(jOutInfo, 7, 1, &source_has_gainmap);
@@ -1056,11 +1067,12 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeAvifBufferToDirect(JNIEnv* env, j
     unsigned w = 0, h = 0;
     int has_gm = 0;
     int transfer = 0;
+    DecodedImageInfo source;
     uhdr_color_gamut_t cg = UHDR_CG_BT_709;
     jbyteArray result = nullptr;
     int rc = decode_avif_to_linear(
         reinterpret_cast<const uint8_t*>(bytes), static_cast<size_t>(len), rgba, w, h, &has_gm,
-        &transfer, &cg, maxEdge > 0 ? static_cast<unsigned>(maxEdge) : 0u, jOutExif ? &exif : nullptr);
+        &transfer, &cg, maxEdge > 0 ? static_cast<unsigned>(maxEdge) : 0u, jOutExif ? &exif : nullptr, &source);
     if (rc == 0) {
         publish_decoded_exif(env, jOutExif, exif, false);
         if (maxEdge > 0) {
@@ -1070,6 +1082,7 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeAvifBufferToDirect(JNIEnv* env, j
         result = pack_direct_to_jbyte_array(env, rgba, w, h, force_hdr, cg,
                                             advancedColor == JNI_TRUE, transfer, jOutInfo,
                                             jOutBoost);
+        if (result) source.publish(env, jOutInfo);
         if (result && env->GetArrayLength(jOutInfo) >= 8) {
             const jint source_has_gainmap = has_gm != 0;
             env->SetIntArrayRegion(jOutInfo, 7, 1, &source_has_gainmap);
