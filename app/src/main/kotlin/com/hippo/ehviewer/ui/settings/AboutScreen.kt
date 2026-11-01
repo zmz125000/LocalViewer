@@ -106,6 +106,10 @@ fun AnimatedVisibilityScope.AboutScreen(navigator: DestinationsNavigator) = Scre
                 title = stringResource(id = R.string.settings_about_source),
                 url = REPO_URL,
             )
+            UrlPreference(
+                title = "JXRConverter",
+                url = "https://github.com/zmz125000/JXRConverter",
+            )
             Preference(title = stringResource(id = R.string.license)) {
                 navigate(LicenseScreenDestination)
             }
