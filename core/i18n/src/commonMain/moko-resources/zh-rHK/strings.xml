@@ -590,6 +590,5 @@
     <string name="pref_reader_platform_high_depth">高位深（PNG）</string>
     <string name="pref_reader_platform_high_depth_summary">在進階色彩開啟時：以 float16 解碼高位深 PNG，並保留 PQ/HLG HDR PNG 的來源色彩與 HDR 亮度範圍。占用更多記憶體，隨進階色彩開關同步。</string>
 
-    <string name="image_conversion_jxl_scrgb">線性 HDR JXL 使用 scRGB</string>
-    <string name="image_conversion_jxl_scrgb_summary">直接保留 scRGB 輸入；其他來源轉換為 scRGB。線性 HDR JXL 將忽略「將 scRGB 轉換為 BT.2020」設定。</string>
+    <string name="convert_jxl_scrgb">JPEG XL（HDR scRGB）</string>
 </resources>

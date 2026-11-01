@@ -19,7 +19,7 @@ internal suspend fun sourceEncodedExport(source: Path, name: String, target: Sti
         StillExportTarget.Jpeg -> 0
         StillExportTarget.Jxl -> 1
         StillExportTarget.Avif -> 2
-        StillExportTarget.JxlHdr -> 3 // Only already-linear scRGB JXL can preserve this explicit target.
+        StillExportTarget.JxlHdr, StillExportTarget.JxlScRgb -> 3 // Only already-linear scRGB JXL can preserve this explicit target.
         else -> return null // Explicit RAW/HDR rendering still uses the selected conversion controls.
     }
     val ext = name.substringAfterLast('.', "").lowercase()
@@ -31,7 +31,7 @@ internal suspend fun sourceEncodedExport(source: Path, name: String, target: Sti
         "png", "webp", "gif", "bmp", "ico", "wbmp" -> 3
         else -> return null
     }
-    if (format == 3 && (kind != 4 || quality.extendedSrgbBt2020 && !quality.usesScRgb(target))) return null
+    if (format == 3 && (kind != 4 || quality.extendedSrgbBt2020 && target != StillExportTarget.JxlScRgb)) return null
     if (format == 0 && kind == 4) return null // JXL has no standard gain-map container to retain.
     val out = File.createTempFile("source-out", null, splitties.init.appCtx.cacheDir)
     var success = false
@@ -58,7 +58,7 @@ internal suspend fun sourceEncodedExport(source: Path, name: String, target: Sti
             info[2] != 0 && format == 2 -> StillExportTarget.AvifGainMap
             info[3] == 16 && format == 1 -> StillExportTarget.JxlPq
             info[3] == 16 && format == 2 -> StillExportTarget.AvifPq
-            info[3] == 8 && (info[4] > 255 || info[4] == 80) && format in listOf(1, 3) -> StillExportTarget.JxlHdr
+            info[3] == 8 && (info[4] > 255 || info[4] == 80) && format in listOf(1, 3) -> if (target == StillExportTarget.JxlScRgb) target else StillExportTarget.JxlHdr
             else -> target
         }
         android.util.Log.i("StillConvert", "Kept source color: $name -> $actual transfer=${info[3]} gainmap=${info[2] != 0}")

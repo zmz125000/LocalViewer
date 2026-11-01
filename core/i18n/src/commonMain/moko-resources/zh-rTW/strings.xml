@@ -125,8 +125,6 @@
     <string name="image_conversion_keep_exif">保留 EXIF 中繼資料</string>
     <string name="image_conversion_extended_srgb_bt2020">將 scRGB 轉為 BT.2020</string>
     <string name="image_conversion_extended_srgb_bt2020_summary">匯出 scRGB JXR / JXL 時保留廣色域色彩。</string>
-    <string name="image_conversion_jxl_scrgb">線性 HDR JXL 使用 scRGB</string>
-    <string name="image_conversion_jxl_scrgb_summary">直接保留 scRGB 輸入；其他來源轉換為 scRGB。線性 HDR JXL 將忽略「將 scRGB 轉換為 BT.2020」設定。</string>
     <string name="image_conversion_quality_lossless">無損</string>
     <string name="image_conversion_quality_high">高</string>
     <string name="image_conversion_quality_mid">中</string>
@@ -904,6 +902,7 @@
     <string name="convert_jpeg_hdr">JPEG（HDR）</string>
     <string name="convert_jxl">JPEG XL（SDR）</string>
     <string name="convert_jxl_hdr">JPEG XL（HDR）</string>
+    <string name="convert_jxl_scrgb">JPEG XL（HDR scRGB）</string>
     <string name="convert_jxl_pq">JPEG XL (HDR PQ)</string>
     <string name="convert_avif">AVIF (SDR)</string>
     <string name="convert_avif_pq">AVIF (HDR PQ)</string>

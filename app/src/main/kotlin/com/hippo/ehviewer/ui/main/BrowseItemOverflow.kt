@@ -214,6 +214,7 @@ fun BrowseItemOverflowButton(
 
                     StillExportTarget.Jxl to R.string.convert_jxl,
                     StillExportTarget.JxlHdr to R.string.convert_jxl_hdr,
+                    StillExportTarget.JxlScRgb to R.string.convert_jxl_scrgb,
                     StillExportTarget.JxlPq to R.string.convert_jxl_pq,
 
                     StillExportTarget.Avif to R.string.convert_avif,

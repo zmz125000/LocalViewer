@@ -242,7 +242,7 @@ private suspend fun encodeStagedCaptured(leaf: String, target: StillExportTarget
                 try {
                     success = pixels.writeResolved(target, out, quality, exif?.encode(pixels.width, pixels.height)) && out.length() > 0L
                     if (success) {
-                        EncodedStill(out, if (pixels.scrgb) StillExportTarget.JxlHdr else target)
+                        EncodedStill(out, if (pixels.scrgb && target != StillExportTarget.JxlScRgb) StillExportTarget.JxlHdr else target)
                     } else {
                         android.util.Log.e("StillConvert", "Encode failed: $leaf -> $target bytes=${out.length()}")
                         null

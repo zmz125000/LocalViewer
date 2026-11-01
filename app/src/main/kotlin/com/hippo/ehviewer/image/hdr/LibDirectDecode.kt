@@ -224,15 +224,15 @@ object LibDirectDecode {
         // slot once pixels are ready so encoding can overlap the next decode.
         val parallel = Settings.browseTaskParallel.value || Settings.heavyDecode.value >= HEAVY_DECODE_POOL
         val quality = currentCoroutineContext()[StillExportQuality] ?: StillExportQuality.current()
-        val request = ExportDecode(target, currentCoroutineContext()[RawExportControls] ?: RawExportControls.capture(target), quality.extendedSrgbBt2020 && !quality.usesScRgb(target))
+        val request = ExportDecode(target, currentCoroutineContext()[RawExportControls] ?: RawExportControls.capture(target), quality.extendedSrgbBt2020 && target != StillExportTarget.JxlScRgb)
         var handle = 0L
         try {
             val pixels = heavyDecodeGate.run(parallel) {
                 handle = beginNativeExportPixels(
                     target.needsSdrBase(),
                     quality.float32Processing,
-                    preserveScRgb = maxEdge == 0 && (!quality.extendedSrgbBt2020 || quality.usesScRgb(target)) &&
-                        (target == StillExportTarget.JxlHdr || target == StillExportTarget.Jxl),
+                    preserveScRgb = maxEdge == 0 && (!quality.extendedSrgbBt2020 || target == StillExportTarget.JxlScRgb) &&
+                        (target == StillExportTarget.JxlHdr || target == StillExportTarget.JxlScRgb || target == StillExportTarget.Jxl),
                 )
                 var nativePixels: ByteBuffer? = null
                 val packed = try {
