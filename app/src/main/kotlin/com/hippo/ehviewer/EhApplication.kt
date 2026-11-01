@@ -123,6 +123,10 @@ class EhApplication : Application(), SingletonImageLoader.Factory {
         super.onCreate()
         // onCreate body is `with(lifecycleScope)` — use Application receiver explicitly.
         EasyTierRuntime.init(this@EhApplication)
+        // Older builds scheduled a MediaStore content job. It wakes the process on any
+        // photo or video change, including off the library tab. Live updates are
+        // library-resume only; drop the leftover trigger before this start can run it.
+        MediaStoreWatch.cancelBackgroundTrigger(this@EhApplication)
         runCatching { com.hippo.ehviewer.library.UsbVolumes.start(this@EhApplication) }.onFailure { logcat(it) }
         System.loadLibrary("ehviewer")
         // SMB + WebDAV: pause keep-alive on activity stop (external player); do not drop

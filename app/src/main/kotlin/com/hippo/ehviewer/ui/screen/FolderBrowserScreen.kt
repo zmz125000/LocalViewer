@@ -3667,9 +3667,6 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                     showPhotoThumb = true,
                                     onClick = { openFolderImage(file) },
                                     onLongClick = { openExternalFile(file.path) },
-                                    fileName = file.name,
-                                    sizeBytes = file.size,
-                                    lastModifiedMs = file.lastModifiedMs,
                                     overflow = fileOverflow(
                                         file.path,
                                         sizeBytes = file.size,

@@ -3231,9 +3231,6 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                                     allowRemoteFetch = allowRemoteThumbs,
                                     onClick = { openFolderImage(file) },
                                     onLongClick = { openExternalFile(file.fileName) },
-                                    fileName = file.fileName,
-                                    sizeBytes = file.size,
-                                    lastModifiedMs = file.lastModifiedMs,
                                     overflow = fileOverflow(file.fileName, file.size, file.lastModifiedMs),
                                 )
                             }

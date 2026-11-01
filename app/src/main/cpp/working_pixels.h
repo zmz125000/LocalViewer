@@ -16,8 +16,8 @@ template<class T> inline float read_working(T v) {
 template<class T> constexpr skcms_PixelFormat working_format() {
     return std::is_same_v<T,float>?skcms_PixelFormat_RGBA_ffff:skcms_PixelFormat_RGBA_hhhh;
 }
-template<class T> inline float sanitize_working(float v) {
+template<class T> inline float sanitize_working(float v, bool preserve_extended = false) {
     if(!std::isfinite(v))return 0.f;
     if constexpr(std::is_same_v<T,float>)return v;
-    else return std::clamp(v,0.f,kMaxLinear);
+    else return preserve_extended ? std::clamp(v, -65504.f, 65504.f) : std::clamp(v,0.f,kMaxLinear);
 }

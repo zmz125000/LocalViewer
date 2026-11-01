@@ -1,4 +1,5 @@
 #include "hdr_encode.h"
+#include "working_pixels.h"
 #include "hdr_parallel.h"
 #include "thumbnail_mapped_input.h"
 
@@ -136,12 +137,43 @@ static int encode_jxl_pixels(unsigned w, unsigned h, const void* rgba, uhdr_colo
     return write_jxl_output(encoder.get(), path);
 }
 
+// Match JXRConverter: retain signed/extended RGB and straight alpha. Working
+// linear pixels use 203 nits per unit; scRGB uses 80 nits and BT.709 primaries.
+// Mutate the owned export buffer, avoiding another full-resolution frame.
+template<class Sample>
+static int encode_jxl_scrgb(unsigned w, unsigned h, Sample* rgba, uhdr_color_gamut_t cg,
+                             const char* path, StillEncodeQuality quality) {
+    const size_t pixels = size_t(w) * h;
+    hdr_parallel_pixels(pixels, hdr_pixel_jobs(pixels), [&](size_t begin, size_t end, unsigned) {
+        for (size_t i = begin; i < end; ++i) {
+            float r = read_working(rgba[4*i]), g = read_working(rgba[4*i+1]), b = read_working(rgba[4*i+2]);
+            if (cg == UHDR_CG_BT_2100) linear_bt2020_to_bt709(r, g, b);
+            else if (cg == UHDR_CG_DISPLAY_P3) linear_p3_to_bt709(r, g, b);
+            const float values[]{r, g, b};
+            for (unsigned c = 0; c < 3; ++c) {
+                float v = values[c] * (kSdrWhiteNits / 80.f);
+                if (!std::isfinite(v)) v = 0.f;
+                if constexpr (!std::is_same_v<Sample, float>) v = std::clamp(v, -65504.f, 65504.f);
+                rgba[4*i+c] = store_working<Sample>(v);
+            }
+        }
+    });
+    StillSourceColor color;
+    color.bits = sizeof(Sample) == 4 ? 32 : 16;
+    color.exponent_bits = sizeof(Sample) == 4 ? 8 : 5;
+    color.primaries = 1;
+    color.transfer = 8;
+    color.intensity_target = 80.f;
+    return encode_jxl_source(w, h, rgba, true, color, path, quality);
+}
+
 // The caller owns straight-alpha linear half samples. Normalize HDR to its
 // declared luminance for linear JXL; PQ retains the absolute 10000-nit reference.
 int encode_jxl_f16(unsigned w, unsigned h, uint16_t* rgba, uhdr_color_gamut_t cg,
                    bool hdr, const char* path, StillEncodeQuality quality, bool pq) {
     const size_t pixels = static_cast<size_t>(w) * h;
     if (!rgba || !path || !pixels) return -60;
+    if (hdr && !pq && quality.jxl_scrgb) return encode_jxl_scrgb(w, h, rgba, cg, path, quality);
     float peak = pq ? kMaxLinear : 1.f;
     if (hdr && !pq) {
         std::array<float, 8> peaks{};
@@ -264,6 +296,7 @@ int encode_jxl_f32(unsigned w,unsigned h,float* rgba,uhdr_color_gamut_t cg,
                    bool hdr,const char* path,StillEncodeQuality quality,bool pq) {
     const size_t pixels=static_cast<size_t>(w)*h;
     if(!rgba||!path||!pixels)return -60;
+    if (hdr && !pq && quality.jxl_scrgb) return encode_jxl_scrgb(w, h, rgba, cg, path, quality);
     float peak=pq?kMaxLinear:1.f;
     if(hdr&&!pq) {
         float found=1.f;
@@ -291,6 +324,16 @@ int encode_jxl_f32(unsigned w,unsigned h,float* rgba,uhdr_color_gamut_t cg,
         }
     });
     const float intensity=pq?kMaxNits:hdr?peak*kSdrWhiteNits:kSdrWhiteNits;
+    if (pq) {
+        // Float32 processing does not require a float codestream for bounded PQ codes.
+        std::vector<uint16_t> packed(pixels * 4);
+        hdr_parallel_pixels(pixels, hdr_pixel_jobs(pixels), [&](size_t begin, size_t end, unsigned) {
+            for (size_t i = begin * 4; i < end * 4; ++i)
+                packed[i] = static_cast<uint16_t>(std::lround(std::clamp(rgba[i], 0.f, 1.f) * 65535.f));
+        });
+        return encode_jxl_pixels(w, h, packed.data(), cg, path, quality, JXL_TYPE_UINT16,
+            JXL_TRANSFER_FUNCTION_PQ, intensity);
+    }
     return encode_jxl_pixels(w,h,rgba,cg,path,quality,JXL_TYPE_FLOAT,
-        pq?JXL_TRANSFER_FUNCTION_PQ:JXL_TRANSFER_FUNCTION_LINEAR,intensity);
+        JXL_TRANSFER_FUNCTION_LINEAR,intensity);
 }

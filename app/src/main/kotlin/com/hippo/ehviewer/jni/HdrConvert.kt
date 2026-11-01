@@ -6,7 +6,7 @@ import java.nio.ByteBuffer
 
 /** Synchronous reader-only capture. Release the handle after copying the returned buffer. */
 internal external fun beginNativeReaderPixels(): Long
-internal external fun beginNativeExportPixels(keepSdrBase: Boolean, float32Processing: Boolean = false): Long
+internal external fun beginNativeExportPixels(keepSdrBase: Boolean, float32Processing: Boolean = false, preserveScRgb: Boolean = false): Long
 internal external fun captureExportBitmap(bitmap: Bitmap): ByteArray?
 
 /** In-place linear sRGB F16 to export gamut; alpha association stays unchanged. */
@@ -261,9 +261,11 @@ external fun encodeStillExport(
     customAvifBitDepth: Int = 10,
     customDownsizeGainMap: Boolean = false,
     exif: ByteArray? = null,
+    sourceBitDepth: Int = 32,
+    jxlScRgb: Boolean = false,
 ): Int
 
-/** Consumes owned pixels in place: 0 encoded RGBA8, 1 linear F16, 2 linear F32. Capture outlives encode. */
+/** Owned pixels: 0 RGBA8, 1/2 linear F16/F32 (203 nits), 3/4 source scRGB F16/F32 (80 nits). */
 internal external fun encodeNativeStillExport(
     pixels: ByteBuffer,
     width: Int,
@@ -280,6 +282,8 @@ internal external fun encodeNativeStillExport(
     customAvifBitDepth: Int = 10,
     customDownsizeGainMap: Boolean = false,
     exif: ByteArray? = null,
+    sourceBitDepth: Int = 32,
+    jxlScRgb: Boolean = false,
 ): Int
 
 /** Header-only size probe. Kind: 0 JXL, 1 JXR, 2 RAW; packed width/height, or 0. */

@@ -1,8 +1,6 @@
 package com.hippo.ehviewer.library
 
-import android.app.job.JobInfo
 import android.app.job.JobScheduler
-import android.content.ComponentName
 import android.content.ContentResolver
 import android.content.Context
 import android.database.Cursor
@@ -10,6 +8,7 @@ import android.net.Uri
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.provider.MediaStore
 import com.ehviewer.core.files.mediaStoreParentRelativeDir
 import com.ehviewer.core.util.logcat
@@ -29,14 +28,23 @@ import splitties.init.appCtx
  *
  * The in-process [android.database.ContentObserver] is armed only while the
  * library screen is resumed. Leaving the library (another tab, reader, or app
- * background) drops the observer and arms [MediaStoreWatchJobService]; returning
- * re-registers and catch-up applies rows missed while idle. Deletes and bulk
- * dumps fall back to [LocalLibrary.startupMaintenance] (generation /
- * fingerprint), not a poll.
+ * background) drops it. There is no timer and no background content job.
+ * Returning re-registers and one catch-up applies rows missed while idle.
+ * Deletes and bulk dumps fall back to [LocalLibrary.startupMaintenance]
+ * (generation / fingerprint).
  */
 object MediaStoreWatch {
     private const val JOB_ID = 71021
-    private const val DEBOUNCE_MS = 450L
+
+    /** One wait per notification burst. Idle does not wake on this interval. */
+    private const val COALESCE_MS = 800L
+
+    /**
+     * After a collection callback whose generation did not move, ignore further
+     * collection callbacks for this long. A later one schedules a single recheck
+     * at the end of the window. Item URIs and deletes are not held.
+     */
+    private const val COLLECTION_QUIET_MS = 5_000L
     private const val PENDING_RETRY_LIMIT = 2
     private const val RECENT_LIMIT = 40
     private const val RECENT_LOOKBACK_SEC = 5L
@@ -50,7 +58,13 @@ object MediaStoreWatch {
     private val pendingUris = LinkedHashSet<Uri>()
     private val pendingRetries = HashMap<Uri, Int>()
     private var pendingFlags = 0
+    private var pendingForceRecent = false
     private val gate = Any()
+    private val collectionRecheckArmed = AtomicBoolean(false)
+
+    /** Elapsed realtime. Collection callbacks before this are noise. */
+    @Volatile
+    private var collectionQuietUntilMs = 0L
 
     /** True while [com.hippo.ehviewer.ui.screen.LibraryScreen] is resumed. */
     @Volatile
@@ -64,8 +78,9 @@ object MediaStoreWatch {
 
     private val observer = object : android.database.ContentObserver(Handler(Looper.getMainLooper())) {
         override fun onChange(selfChange: Boolean, uri: Uri?, flags: Int) {
+            if (!libraryResumed || !Settings.libraryLiveUpdate.value) return
             // A null URI is a collection-level signal. Keep a real URI in the
-            // batch so the debounce loop does not drop it.
+            // batch so the coalesce does not drop it.
             enqueue(listOf(uri ?: imagesUri()), flags)
         }
     }
@@ -88,6 +103,7 @@ object MediaStoreWatch {
      */
     fun onLibraryVisible() {
         libraryResumed = true
+        collectionQuietUntilMs = 0L
         if (!Settings.libraryLiveUpdate.value) return
         scope.launch {
             if (!LocalLibrary.hasLibraryRoots()) return@launch
@@ -132,13 +148,12 @@ object MediaStoreWatch {
             generationAtArm = MediaStoreFs.volumeGeneration()
         }
         ensureLoop()
-        scheduleJob(app)
     }
 
     /**
      * Library screen paused or left composition (other destination, tab, or app
      * background). Drop the observer so MediaStore callbacks do not run while
-     * the user is elsewhere; arm the content job for a later process kill.
+     * the user is elsewhere. The next resume catch-up applies missed rows.
      */
     fun onLibraryHidden() {
         libraryResumed = false
@@ -146,23 +161,19 @@ object MediaStoreWatch {
         synchronized(gate) {
             pendingUris.clear()
             pendingFlags = 0
+            pendingForceRecent = false
             pendingRetries.clear()
         }
-        if (!Settings.libraryLiveUpdate.value) return
-        // No library sources: do not arm the content job.
-        scope.launch {
-            if (!LocalLibrary.hasLibraryRoots()) return@launch
-            scheduleJob()
-        }
+        collectionQuietUntilMs = 0L
+        cancelBackgroundTrigger()
     }
 
     /**
-     * App left the foreground. No-op when the library screen already hid itself;
-     * otherwise arm the content job.
+     * App left the foreground. The library screen drops the observer on pause.
+     * Also drop a content job an older build may have left scheduled.
      */
     fun onAppBackgrounded() {
-        if (!Settings.libraryLiveUpdate.value) return
-        scheduleJob()
+        cancelBackgroundTrigger()
     }
 
     /**
@@ -175,12 +186,9 @@ object MediaStoreWatch {
         catchUp()
     }
 
-    /**
-     * Screen off. Arm the job before Doze can freeze or kill the process.
-     */
+    /** Screen off. Do not leave a content job that can wake the device. */
     fun onScreenOff() {
-        if (!Settings.libraryLiveUpdate.value) return
-        scheduleJob()
+        cancelBackgroundTrigger()
     }
 
     /** Screen on. Catch up only while the library list is the active screen. */
@@ -191,17 +199,17 @@ object MediaStoreWatch {
     }
 
     /**
-     * Recents swipe is about to kill the process. The in-process observer dies
-     * with it; the content job has to be armed first.
+     * Recents swipe is about to kill the process. Cancel a leftover content job
+     * so this death does not schedule another wake.
      */
     fun onTaskRemoved() {
-        if (!Settings.libraryLiveUpdate.value) return
-        scheduleJob()
+        cancelBackgroundTrigger()
     }
 
-    /** Collection-level pass: recent rows, then the generation check. */
+    /** One recent-row pass for files added while the library was hidden. */
     private fun catchUp() {
-        enqueue(listOf(imagesUri()), 0)
+        if (!libraryResumed || !Settings.libraryLiveUpdate.value) return
+        enqueue(listOf(imagesUri()), 0, forceRecent = true)
     }
 
     private fun unregisterObservers(context: Context = appCtx) {
@@ -220,70 +228,68 @@ object MediaStoreWatch {
         synchronized(gate) {
             pendingUris.clear()
             pendingFlags = 0
+            pendingForceRecent = false
             pendingRetries.clear()
         }
-        runCatching { context.applicationContext.getSystemService(JobScheduler::class.java)?.cancel(JOB_ID) }
-            .onFailure { logcat(it) }
+        collectionQuietUntilMs = 0L
+        cancelBackgroundTrigger(context)
     }
 
-    /** Re-arm the content trigger. Safe to call at the end of each job run. */
-    fun scheduleJob(context: Context = appCtx) {
-        if (!Settings.libraryLiveUpdate.value) return
-        if (!MediaPermissions.hasMediaAccess(context)) return
-        val app = context.applicationContext
-        scope.launch {
-            if (!LocalLibrary.hasLibraryRoots()) return@launch
-            val scheduler = app.getSystemService(JobScheduler::class.java) ?: return@launch
-            val component = ComponentName(app, MediaStoreWatchJobService::class.java)
-            val info = JobInfo.Builder(JOB_ID, component)
-                .addTriggerContentUri(
-                    JobInfo.TriggerContentUri(
-                        imagesUri(),
-                        JobInfo.TriggerContentUri.FLAG_NOTIFY_FOR_DESCENDANTS,
-                    ),
-                )
-                .addTriggerContentUri(
-                    JobInfo.TriggerContentUri(
-                        videosUri(),
-                        JobInfo.TriggerContentUri.FLAG_NOTIFY_FOR_DESCENDANTS,
-                    ),
-                )
-                .setTriggerContentUpdateDelay(1_000L)
-                .setTriggerContentMaxDelay(5_000L)
-                .build()
-            runCatching { scheduler.schedule(info) }
-                .onFailure { logcat(it) }
+    /**
+     * Cancel the MediaStore content job. Older builds scheduled it, and it wakes
+     * the process on any image or video change whether or not the library is open.
+     */
+    fun cancelBackgroundTrigger(context: Context = appCtx) {
+        runCatching {
+            context.applicationContext.getSystemService(JobScheduler::class.java)?.cancel(JOB_ID)
+        }.onFailure { logcat(it) }
+    }
+
+    fun enqueue(uris: Collection<Uri>, flags: Int, forceRecent: Boolean = false) {
+        if (!Settings.libraryLiveUpdate.value || !libraryResumed) return
+        val delete = flags and ContentResolver.NOTIFY_DELETE != 0
+        val hasItem = uris.any { MediaStoreLiveUpdate.isMediaStoreItemId(it.lastPathSegment) }
+        if (!forceRecent && !hasItem && !delete && SystemClock.elapsedRealtime() < collectionQuietUntilMs) {
+            armCollectionRecheck()
+            return
         }
-    }
-
-    fun enqueue(uris: Collection<Uri>, flags: Int) {
-        if (!Settings.libraryLiveUpdate.value) return
         synchronized(gate) {
             pendingUris.addAll(uris)
             pendingFlags = pendingFlags or flags
+            if (forceRecent) pendingForceRecent = true
         }
         ensureLoop()
         kicks.trySend(Unit)
     }
 
-    /**
-     * Job entry. Item URIs are applied directly; an empty trigger falls through
-     * to the recent-row query. Returns when the library write finishes.
-     */
-    suspend fun handleTriggered(uris: Collection<Uri>, flags: Int = 0) {
-        if (!Settings.libraryLiveUpdate.value) return
-        if (!LocalLibrary.hasLibraryRoots()) return
-        applyBatch(Batch(LinkedHashSet(uris), flags))
+    /** One later collection pass if MediaStore keeps notifying during the quiet window. */
+    private fun armCollectionRecheck() {
+        if (!collectionRecheckArmed.compareAndSet(false, true)) return
+        scope.launch {
+            val wait = (collectionQuietUntilMs - SystemClock.elapsedRealtime()).coerceAtLeast(0L)
+            delay(wait)
+            collectionRecheckArmed.set(false)
+            if (!libraryResumed || !Settings.libraryLiveUpdate.value) return@launch
+            enqueue(listOf(imagesUri()), 0)
+        }
     }
 
     private fun ensureLoop() {
         if (!loopStarted.compareAndSet(false, true)) return
         scope.launch {
             for (kick in kicks) {
-                delay(DEBOUNCE_MS)
-                while (kicks.tryReceive().isSuccess) delay(DEBOUNCE_MS)
+                // Parked on [kicks] until a real callback. This delay is the burst
+                // coalesce, not a poll: extra callbacks do not start another wait.
+                delay(COALESCE_MS)
+                while (kicks.tryReceive().isSuccess) {
+                    // Extra callbacks in this burst share the pass above.
+                }
+                if (!libraryResumed || !Settings.libraryLiveUpdate.value) {
+                    drain()
+                    continue
+                }
                 val batch = drain()
-                if (batch.uris.isEmpty() && batch.flags == 0) continue
+                if (batch.uris.isEmpty() && batch.flags == 0 && !batch.forceRecent) continue
                 runCatching { applyBatch(batch) }.onFailure { logcat(it) }
             }
         }
@@ -291,19 +297,36 @@ object MediaStoreWatch {
 
     private fun drain(): Batch {
         synchronized(gate) {
-            val batch = Batch(LinkedHashSet(pendingUris), pendingFlags)
+            val batch = Batch(LinkedHashSet(pendingUris), pendingFlags, pendingForceRecent)
             pendingUris.clear()
             pendingFlags = 0
+            pendingForceRecent = false
             return batch
         }
     }
 
     private suspend fun applyBatch(batch: Batch) {
-        if (!Settings.libraryLiveUpdate.value) return
+        if (!libraryResumed || !Settings.libraryLiveUpdate.value) return
         if (!LocalLibrary.hasLibraryRoots()) return
         if (!MediaPermissions.hasMediaAccess()) return
         val deleteFlag = batch.flags and ContentResolver.NOTIFY_DELETE != 0
         val items = batch.uris.filter { MediaStoreLiveUpdate.isMediaStoreItemId(it.lastPathSegment) }
+        val generationForSkip = if (items.isEmpty() && !deleteFlag && !batch.forceRecent) {
+            MediaStoreFs.volumeGeneration()
+        } else {
+            MediaStoreIndexStamp.GENERATION_UNKNOWN
+        }
+        if (MediaStoreLiveUpdate.isUnchangedCollectionSignal(
+                itemCount = items.size,
+                delete = deleteFlag,
+                forceRecent = batch.forceRecent,
+                generation = generationForSkip,
+                armedGeneration = generationAtArm,
+            )
+        ) {
+            collectionQuietUntilMs = SystemClock.elapsedRealtime() + COLLECTION_QUIET_MS
+            return
+        }
         val resolved = ArrayList<MediaStoreLiveFile>()
         val gone = ArrayList<Uri>()
         val stillPending = ArrayList<Uri>()
@@ -522,7 +545,11 @@ object MediaStoreWatch {
 
     private fun videosUri(): Uri = MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL)
 
-    private data class Batch(val uris: LinkedHashSet<Uri>, val flags: Int)
+    private data class Batch(
+        val uris: LinkedHashSet<Uri>,
+        val flags: Int,
+        val forceRecent: Boolean = false,
+    )
 
     private data class Row(
         val name: String,

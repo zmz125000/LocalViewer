@@ -83,6 +83,8 @@ data class LibDirectResult(
     val sourceWidth: Int? = null,
     val sourceHeight: Int? = null,
     val sourcePrimaries: Int? = null,
+    /** Explicit floating-point linear sRGB with an 80-nit reference white. */
+    val sourceIsScRgb: Boolean = false,
 )
 
 /**
@@ -105,6 +107,9 @@ data class DirectPixels(
     val nativePixels: ByteBuffer? = null,
     /** Native export working storage; Android display bitmaps never use F32. */
     val f32: Boolean = false,
+    /** Original scRGB samples, with 1.0 = 80 nits; only linear JXL may consume them. */
+    val scrgb: Boolean = false,
+    val sourceBitDepth: Int = 32,
 )
 
 /**
@@ -219,11 +224,16 @@ object LibDirectDecode {
         // slot once pixels are ready so encoding can overlap the next decode.
         val parallel = Settings.browseTaskParallel.value || Settings.heavyDecode.value >= HEAVY_DECODE_POOL
         val quality = currentCoroutineContext()[StillExportQuality] ?: StillExportQuality.current()
-        val request = ExportDecode(target, currentCoroutineContext()[RawExportControls] ?: RawExportControls.capture(target), quality.extendedSrgbBt2020)
+        val request = ExportDecode(target, currentCoroutineContext()[RawExportControls] ?: RawExportControls.capture(target), quality.extendedSrgbBt2020 && !quality.usesScRgb(target))
         var handle = 0L
         try {
             val pixels = heavyDecodeGate.run(parallel) {
-                handle = beginNativeExportPixels(target.needsSdrBase(), quality.float32Processing)
+                handle = beginNativeExportPixels(
+                    target.needsSdrBase(),
+                    quality.float32Processing,
+                    preserveScRgb = maxEdge == 0 && (!quality.extendedSrgbBt2020 || quality.usesScRgb(target)) &&
+                        (target == StillExportTarget.JxlHdr || target == StillExportTarget.Jxl),
+                )
                 var nativePixels: ByteBuffer? = null
                 val packed = try {
                     decodePacked(src, fileNameHint, maxEdge, request)
@@ -277,13 +287,15 @@ object LibDirectDecode {
             pixels = packed.pixels,
             width = w,
             height = h,
-            f16 = packed.outInfo.getOrNull(2) == 1,
+            f16 = packed.outInfo.getOrNull(2) in listOf(1, 3),
             isHdr = packed.outInfo.getOrNull(3) != 0,
             gamut = packed.outInfo.getOrNull(4) ?: 0,
             premultiplied = packed.premultiplied,
             sdrOffset = packed.sdrOffset,
             nativePixels = nativePixels,
-            f32 = packed.outInfo.getOrNull(2) == 2,
+            f32 = packed.outInfo.getOrNull(2) in listOf(2, 4),
+            scrgb = packed.outInfo.getOrNull(2) in listOf(3, 4),
+            sourceBitDepth = packed.outInfo.getOrNull(6)?.takeIf { it in 1..32 } ?: 32,
         )
     }
 
@@ -321,6 +333,7 @@ object LibDirectDecode {
                 sourceWidth = packed.outInfo.getOrNull(8)?.takeIf { it > 0 },
                 sourceHeight = packed.outInfo.getOrNull(9)?.takeIf { it > 0 },
                 sourcePrimaries = packed.outInfo.getOrNull(10)?.takeIf { it > 0 },
+                sourceIsScRgb = packed.outInfo.getOrNull(12) == 1,
                 sourceTransfer = packed.outInfo.getOrNull(11)?.takeIf { it > 0 } ?: packed.outInfo[5],
             )
         } finally {
@@ -381,7 +394,7 @@ object LibDirectDecode {
     ): PackedPixels? = withStillInput(src) { buffer ->
         if (!buffer.hasRemaining()) return@withStillInput null
         if (codec == LibCodec.HevcHdr) return@withStillInput decodeHevcHdrPacked(buffer, maxEdge, advanced, export)
-        val outInfo = IntArray(12)
+        val outInfo = IntArray(13)
         val outBoost = FloatArray(1)
         // Existing RAM-backed pages reuse the source array; mapped archive/local
         // inputs go directly to JNI without a compressed Java-array copy.
@@ -497,7 +510,23 @@ object LibDirectDecode {
             val pixels = captureExportBitmap(bitmap) ?: return null
             return PackedPixels(
                 pixels,
-                intArrayOf(bitmap.width, bitmap.height, if (bitmap.config == Bitmap.Config.RGBA_F16) 1 else 0, 0, gamut, 0),
+                intArrayOf(
+                    bitmap.width,
+                    bitmap.height,
+                    if (bitmap.config == Bitmap.Config.RGBA_F16) 1 else 0,
+                    0,
+                    gamut,
+                    0,
+                    if (png) {
+                        when (PlatformBitDepth.probe(header ?: byteArrayOf(), fileNameHint = fileNameHint)) {
+                            BitDepthClass.HIGH -> 16
+                            BitDepthClass.EIGHT -> 8
+                            else -> 32
+                        }
+                    } else {
+                        8
+                    },
+                ),
                 floatArrayOf(1f),
                 premultiplied = bitmap.isPremultiplied,
                 convertLinearSrgb = convertLinearSrgb,

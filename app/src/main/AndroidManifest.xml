@@ -255,7 +255,7 @@
             android:name="com.hippo.ehviewer.provider.StreamKeepAliveService"
             android:exported="false"
             android:foregroundServiceType="dataSync" />
-        <!-- MediaStore image/video changes while the process is dead. -->
+        <!-- Cancels a content-trigger job left by an older build. Live updates do not schedule it. -->
         <service
             android:name=".library.MediaStoreWatchJobService"
             android:exported="true"

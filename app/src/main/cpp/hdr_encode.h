@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -14,6 +15,8 @@ struct StillEncodeQuality {
     // Borrowed TIFF EXIF for this synchronous encode; never owns image pixels.
     const uint8_t* exif = nullptr;
     size_t exif_size = 0;
+    bool jxl_scrgb = false;
+    unsigned source_bits = 32; // Source precision, independent of working-buffer storage.
     int preset;
     float custom_distance;
     int custom_quality;
@@ -41,7 +44,7 @@ struct StillEncodeQuality {
         return preset == 4 ? custom_distance : values[preset];
     }
     bool avif_lossless() const { return avif() == 100; }
-    unsigned avif_depth() const { return preset == 4 ? custom_avif_depth : (preset == 0 || preset == 1) ? 12 : 10; }
+    unsigned avif_depth() const { return std::min(source_bits <= 8 ? 8u : source_bits <= 10 ? 10u : 12u, unsigned(preset == 4 ? custom_avif_depth : (preset == 0 || preset == 1) ? 12 : 10)); }
     unsigned jpeg_gain_map_scale() const { return gain_map_scale(); }
     unsigned avif_gain_map_scale() const { return gain_map_scale(); }
 
