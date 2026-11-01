@@ -32,6 +32,7 @@
 #include "hdr_encode.h"
 #include "hdr_parallel.h"
 #include "linear_color_profile.h"
+#include "reader_pixels.h"
 #include "ultrahdr_api.h"
 
 #define LOG_TAG "AvifHdr"
