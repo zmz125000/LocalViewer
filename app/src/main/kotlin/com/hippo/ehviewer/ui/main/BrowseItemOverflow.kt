@@ -118,7 +118,8 @@ fun BrowseItemOverflowButton(
     val snackbar = LocalSnackBarHostState.current
     val saveTransfer = rememberSaveToTransferPicker()
     val useTrashBin by Settings.useTrashBin.collectAsState()
-    val removalAction = if (actions.selectFolder) FileRemovalAction.Trash else FileRemovalAction.Delete
+    val galleryRemoval = actions.kind == BrowseOverflowKind.Gallery
+    val removalAction = if (actions.selectFolder || galleryRemoval) FileRemovalAction.Trash else FileRemovalAction.Delete
     val confirmDelete = rememberNetworkDeleteConfirmation(removalAction)
     val confirmEmptyTrash = rememberNetworkDeleteConfirmation(FileRemovalAction.EmptyTrash)
     val explorer = LocalExplorerPanel.current
@@ -362,9 +363,18 @@ fun BrowseItemOverflowButton(
                     onClick = { beginUpload(saveQuick = false) },
                 )
             }
-            if (actions.uploadSource?.let { if (actions.selectFolder) com.hippo.ehviewer.library.canTrashFolder(it, true) else !useTrashBin && com.hippo.ehviewer.library.canRemove(it, removalAction) } == true) {
+            if (actions.uploadSource?.let {
+                    if (galleryRemoval) {
+                        com.hippo.ehviewer.library.canTrash(it)
+                    } else if (actions.selectFolder) {
+                        com.hippo.ehviewer.library.canTrashFolder(it, true)
+                    } else {
+                        !useTrashBin && com.hippo.ehviewer.library.canRemove(it, removalAction)
+                    }
+                } == true
+            ) {
                 DropdownMenuItem(
-                    text = { Text(stringResource(if (actions.selectFolder) R.string.action_trash else R.string.delete)) },
+                    text = { Text(stringResource(if (actions.selectFolder || galleryRemoval) R.string.action_trash else R.string.delete)) },
                     onClick = {
                         expanded = false
                         actions.uploadSource.let { source ->
@@ -377,11 +387,11 @@ fun BrowseItemOverflowButton(
                                             actions.selectFolder,
                                             actions.listLine?.sizeBytes ?: -1L,
                                             actions.listLine?.lastModifiedMs ?: 0L,
-                                        ) to false,
+                                        ) to galleryRemoval,
                                     ),
                                     snackbar,
                                     context,
-                                    GalleryFileAction.Delete,
+                                    GalleryFileAction.Trash,
                                 ) ?: return@launch
                                 confirmDelete(files)
                             }

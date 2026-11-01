@@ -26,6 +26,32 @@ class TrashFilesTest {
     }
 
     @Test
+    fun galleryImagesAndArchivesAlwaysMoveAndDoNotOpenTheDeletePanel() {
+        val image = file("share/image.jpg").copy(galleryTrash = true)
+        val archive = file("share/book.zip").copy(galleryTrash = true)
+        for (item in listOf(image, archive)) {
+            assertEquals(FileRemovalAction.Trash, removalActionFor(item, FileRemovalAction.Delete))
+            assertTrue(canRemoveFile(item, FileRemovalAction.Delete))
+            assertFalse(removalRequiresPanel(listOf(item), FileRemovalAction.Trash))
+        }
+        assertFalse(removalRequiresPanel(listOf(file("share/album", true), image), FileRemovalAction.Trash))
+        assertTrue(removalRequiresPanel(listOf(image, file("share/file.txt")), FileRemovalAction.Delete))
+        assertTrue(removalRequiresPanel(listOf(file("share/.trash", true)), FileRemovalAction.EmptyTrash))
+        val normalized = trashSelectionRoots(listOf(image)).single()
+        assertTrue(normalized.galleryTrash)
+    }
+
+    @Test
+    fun deletionOnlyAcceptsSafDocumentsForLocalSources() {
+        fun local(path: String) = TransferLocation(ExplorerWindows.Kind.Local, 0, path)
+        for (path in listOf("mediastore:/external/images/a.jpg", "/storage/emulated/0/Pictures/a.jpg", "content:/media/external/images/media/1")) {
+            assertFalse(canRemove(local(path), FileRemovalAction.Delete))
+            assertFalse(canTrash(local(path)))
+        }
+        assertTrue(canRemove(local("content:/provider/tree/primary%3APhotos/document/primary%3APhotos%2Fa.jpg"), FileRemovalAction.Delete))
+    }
+
+    @Test
     fun trashOnlyAcceptsPhysicalFolders() {
         val source = file("share/album", true).source
         assertTrue(canTrashFolder(source, true))

@@ -235,7 +235,7 @@ private fun FileTransferPanel(job: UploadJob) {
                             )
                         }
                         DropdownMenuItem(
-                            text = { Text(stringResource(R.string.browse_auto_finish)) },
+                            text = { Text(stringResource(if (job.deleting) R.string.browse_auto_finish_deletion else R.string.browse_auto_finish)) },
                             trailingIcon = { if (state.autoFinish) Icon(Icons.Default.Check, null) },
                             onClick = {
                                 UploadTransfers.toggleAutoFinish(job)

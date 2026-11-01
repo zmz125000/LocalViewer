@@ -391,7 +391,7 @@ fun BrowseOverflowActions.toPick(): FolderPick? {
         saveInto = saveInto,
         listLine = listLine,
         uploadSource = uploadSource,
-        gallery = kind == BrowseOverflowKind.Gallery && onPhotoGrid != null,
+        gallery = kind == BrowseOverflowKind.Gallery,
     )
 }
 
@@ -1625,6 +1625,7 @@ private fun SelectionOverflowControl(
     val picks = FolderSelectHost.selectionPicks
     val runInBackground = Settings.browseTaskForegroundService.asMutableState()
     val autoFinish = Settings.browseTaskAutoFinish.asMutableState()
+    val autoFinishDeletion = Settings.deletionAutoFinish.asMutableState()
     val runInParallel = Settings.browseTaskParallel.asMutableState()
     val askWhereToSave = Settings.browseAskWhereToSave.asMutableState()
     val acceptSdr = Settings.browseConvertAcceptSdr.asMutableState()
@@ -1633,9 +1634,19 @@ private fun SelectionOverflowControl(
     val savable = picks.count { it.saveInto != null }
     val uploadable = picks.count { it.uploadSource != null }
     val useTrashBin = Settings.useTrashBin.asMutableState().value
-    val removalAction = if (picks.all { it.isFolder }) com.hippo.ehviewer.library.FileRemovalAction.Trash else com.hippo.ehviewer.library.FileRemovalAction.Delete
+    val removalAction = if (picks.all { it.isFolder || it.gallery }) com.hippo.ehviewer.library.FileRemovalAction.Trash else com.hippo.ehviewer.library.FileRemovalAction.Delete
     val confirmDelete = rememberNetworkDeleteConfirmation(removalAction) { FolderSelectHost.cancelShownSelection() }
-    val deletable = picks.isNotEmpty() && picks.all { it.uploadSource?.let { source -> if (it.isFolder) com.hippo.ehviewer.library.canTrashFolder(source, true) else !useTrashBin && com.hippo.ehviewer.library.canRemove(source, com.hippo.ehviewer.library.FileRemovalAction.Delete) } == true }
+    val deletable = picks.isNotEmpty() && picks.all {
+        it.uploadSource?.let { source ->
+            if (it.gallery) {
+                com.hippo.ehviewer.library.canTrash(source)
+            } else if (it.isFolder) {
+                com.hippo.ehviewer.library.canTrashFolder(source, true)
+            } else {
+                !useTrashBin && com.hippo.ehviewer.library.canRemove(source, com.hippo.ehviewer.library.FileRemovalAction.Delete)
+            }
+        } == true
+    }
     val canSelectAll = selectionActions &&
         folderKey != null &&
         FolderSelectHost.current?.folderKey == folderKey
@@ -1733,7 +1744,7 @@ private fun SelectionOverflowControl(
                 }
                 if (selectionActions && deletable) {
                     DropdownMenuItem(
-                        text = { Text(stringResource(if (picks.all { it.isFolder }) R.string.action_trash else R.string.delete)) },
+                        text = { Text(stringResource(if (picks.all { it.isFolder || it.gallery }) R.string.action_trash else R.string.delete)) },
                         onClick = {
                             menu = false
                             scope.launch {
@@ -1744,9 +1755,9 @@ private fun SelectionOverflowControl(
                                         pick.isFolder,
                                         pick.listLine?.sizeBytes ?: -1L,
                                         pick.listLine?.lastModifiedMs ?: 0L,
-                                    ) to false
+                                    ) to pick.gallery
                                 }
-                                val files = collectTransferFilesForAction(requests, snackbar, context, GalleryFileAction.Delete) ?: return@launch
+                                val files = collectTransferFilesForAction(requests, snackbar, context, GalleryFileAction.Trash) ?: return@launch
                                 confirmDelete(files)
                             }
                         },
@@ -1823,6 +1834,15 @@ private fun SelectionOverflowControl(
                         }
                     },
                     onClick = { autoFinish.value = !autoFinish.value },
+                )
+                DropdownMenuItem(
+                    text = { Text(stringResource(R.string.browse_auto_finish_deletion)) },
+                    trailingIcon = {
+                        Box(Modifier.size(24.dp), contentAlignment = Alignment.Center) {
+                            if (autoFinishDeletion.value) Icon(Icons.Default.Check, contentDescription = null)
+                        }
+                    },
+                    onClick = { autoFinishDeletion.value = !autoFinishDeletion.value },
                 )
                 DropdownMenuItem(
                     text = { Text(stringResource(R.string.browse_run_in_parallel)) },

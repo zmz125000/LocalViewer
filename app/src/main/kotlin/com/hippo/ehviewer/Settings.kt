@@ -759,6 +759,7 @@ object Settings : DataStorePreferences(null) {
      * When a folder batch finishes with nothing queued, dismiss it as Done (clear selection)
      * instead of waiting for the user to tap Done. Default off.
      */
+    val deletionAutoFinish = boolPref("deletion_auto_finish", false)
     val browseTaskAutoFinish = boolPref("browse_task_auto_finish", false)
 
     val uploadAutoStart = boolPref("upload_auto_start", false)

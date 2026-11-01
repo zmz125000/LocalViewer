@@ -12,6 +12,8 @@ import androidx.compose.ui.res.stringResource
 import com.ehviewer.core.i18n.R
 import com.hippo.ehviewer.library.FileRemovalAction
 import com.hippo.ehviewer.library.TransferFile
+import com.hippo.ehviewer.library.removalActionFor
+import com.hippo.ehviewer.library.removalRequiresPanel
 import com.hippo.ehviewer.library.trashSelectionRoots
 
 /** Both menus confirm an immutable snapshot; dismissing never starts a job. */
@@ -32,7 +34,7 @@ internal fun rememberNetworkDeleteConfirmation(action: FileRemovalAction = FileR
                     if (confirmedAction == FileRemovalAction.EmptyTrash) {
                         stringResource(R.string.empty_trash_confirm)
                     } else {
-                        val folders = files.count { it.directory }
+                        val folders = files.count { removalActionFor(it, confirmedAction) == FileRemovalAction.Trash }
                         val regularFiles = files.size - folders
                         when {
                             regularFiles == 0 -> stringResource(R.string.transfer_delete_confirm, folders)
@@ -57,7 +59,7 @@ internal fun rememberNetworkDeleteConfirmation(action: FileRemovalAction = FileR
         pending = trashSelectionRoots(files).takeIf { it.isNotEmpty() }?.let { roots ->
             roots to if (action == FileRemovalAction.EmptyTrash) {
                 action
-            } else if (roots.all { it.directory }) {
+            } else if (!removalRequiresPanel(roots, action)) {
                 FileRemovalAction.Trash
             } else {
                 FileRemovalAction.Delete

@@ -27,6 +27,7 @@ import com.hippo.ehviewer.library.humanizePathName
 import com.hippo.ehviewer.library.needsLocalTransferMetadata
 import com.hippo.ehviewer.library.networkSourceGuard
 import com.hippo.ehviewer.library.removalActionFor
+import com.hippo.ehviewer.library.removalRequiresPanel
 import com.hippo.ehviewer.library.resolveBrowsePath
 import com.hippo.ehviewer.library.transferBatchParallelism
 import com.hippo.ehviewer.library.trashSelectionRoots
@@ -306,10 +307,12 @@ internal object UploadTransfers {
         job.state.value = job.state.value.copy(
             phase = UploadPhase.Ready,
             deleting = true,
+            autoFinish = Settings.deletionAutoFinish.value,
             rows = roots.map { UploadRow(it) },
-            destinationLabel = if (action != FileRemovalAction.EmptyTrash && roots.any { it.directory }) ".trash/${LocalDate.now()}" else "",
+            destinationLabel = if (action != FileRemovalAction.EmptyTrash && roots.any { removalActionFor(it, action) == FileRemovalAction.Trash }) ".trash/${LocalDate.now()}" else "",
         )
         _jobs.update { it + job }
+        if (removalRequiresPanel(roots, action)) panelId = job.id
         startDelete(job, lease)
         return true
     }
@@ -348,6 +351,11 @@ internal object UploadTransfers {
                             }
                             // Account for committed mutations before observing a later Stop.
                             updateRow(job, row.file.relative, UploadFileStatus.Succeeded, detail)
+                            if (rowAction == FileRemovalAction.Trash && row.file.galleryRegularFiles > 0) {
+                                scope.launch(Dispatchers.Main.immediate) {
+                                    Toast.makeText(appCtx, appCtx.getString(R.string.gallery_trash_regular_files, row.file.galleryRegularFiles), Toast.LENGTH_LONG).show()
+                                }
+                            }
                             when (parent.kind) {
                                 ExplorerWindows.Kind.Smb -> {
                                     BrowseSession.invalidateSmbListing(parent.sourceId, parent.path)
@@ -442,7 +450,11 @@ internal object UploadTransfers {
     }
     fun toggleAutoFinish(job: UploadJob) {
         val state = job.state.updateAndGet { it.copy(autoFinish = !it.autoFinish) }
-        Settings.browseTaskAutoFinish.value = state.autoFinish
+        if (job.deleting) {
+            Settings.deletionAutoFinish.value = state.autoFinish
+        } else {
+            Settings.browseTaskAutoFinish.value = state.autoFinish
+        }
         dismissAutoFinished(job)
     }
     fun toggleAutoStart(job: UploadJob) {

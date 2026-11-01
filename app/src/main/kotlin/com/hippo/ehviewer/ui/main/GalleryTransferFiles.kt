@@ -15,7 +15,7 @@ import com.hippo.ehviewer.library.naturalCompare
 import com.hippo.ehviewer.library.safTrashParentId
 import kotlinx.coroutines.CancellationException
 
-internal enum class GalleryFileAction { Images, Upload, Delete }
+internal enum class GalleryFileAction { Images, Upload, Trash }
 
 /** Storage/share roots have no movable parent; retain image-by-image deletion there. */
 private fun canMoveGalleryFolder(root: TransferFile): Boolean = if (root.source.kind == ExplorerWindows.Kind.Local) {
@@ -40,14 +40,22 @@ internal suspend fun collectGalleryTransferFiles(
 ): List<TransferFile> {
     val root = uploadRoot(file.source, file.relative, file.directory, file.size, file.mtime)
     // ZIP-as-directory roots keep their existing physical-archive transfer behavior.
-    if (!gallery || !root.directory) return listOf(root)
+    if (!gallery || !root.directory) return listOf(root.copy(galleryTrash = gallery && action == GalleryFileAction.Trash))
     val listed = children(root.source)
     val images = listed.filter { !it.directory && isImageFileName(it.relative) }
         .sortedWith { a, b -> naturalCompare(a.relative, b.relative) }
     return when (action) {
         GalleryFileAction.Images -> images
         GalleryFileAction.Upload -> if (images.isEmpty()) emptyList() else listOf(root.copy(galleryImages = images))
-        GalleryFileAction.Delete -> if (canMoveGalleryFolder(root) && listed.none { it.directory } && listed.size < images.size + 3) listOf(root) else images
+        GalleryFileAction.Trash -> {
+            if (images.isEmpty()) {
+                emptyList()
+            } else if (canMoveGalleryFolder(root) && listed.none { it.directory } && listed.size <= images.size + 3) {
+                listOf(root.copy(galleryTrash = true, galleryRegularFiles = listed.size - images.size))
+            } else {
+                images.map { it.copy(galleryTrash = true) }
+            }
+        }
     }
 }
 

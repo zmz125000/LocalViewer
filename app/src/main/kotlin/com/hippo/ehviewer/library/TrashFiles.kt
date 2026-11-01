@@ -129,12 +129,8 @@ internal fun canDelete(source: TransferLocation): Boolean {
     if (path.trim('/').isEmpty() || path.split('/').any { it == "." || it == ".." }) return false
     return when (source.kind) {
         ExplorerWindows.Kind.Local -> !ZipPaths.isZipPath(source.path) &&
-            (
-                source.path.startsWith('/') || (
-                    "/tree/" in path && "/document/" in path &&
-                        path.substringAfter("/tree/").substringBefore("/document/") != path.substringAfter("/document/")
-                    )
-                )
+            source.path.startsWith("content:") && "/tree/" in path && "/document/" in path &&
+            path.substringAfter("/tree/").substringBefore("/document/") != path.substringAfter("/document/")
         else -> !isTrashArchiveMember(path)
     }
 }
@@ -147,12 +143,14 @@ internal fun canTrashFolder(source: TransferLocation, directory: Boolean): Boole
 /** Normal removal always moves folders; permanent folder deletion is reserved for Empty trash. */
 internal fun removalActionFor(file: TransferFile, requested: FileRemovalAction): FileRemovalAction = when {
     requested == FileRemovalAction.EmptyTrash -> FileRemovalAction.EmptyTrash
-    file.directory -> FileRemovalAction.Trash
+    file.directory || file.galleryTrash -> FileRemovalAction.Trash
     else -> FileRemovalAction.Delete
 }
 
+internal fun removalRequiresPanel(files: List<TransferFile>, action: FileRemovalAction): Boolean = files.any { removalActionFor(it, action) != FileRemovalAction.Trash }
+
 internal fun canRemoveFile(file: TransferFile, requested: FileRemovalAction): Boolean = when (removalActionFor(file, requested)) {
-    FileRemovalAction.Trash -> canTrashFolder(file.source, file.directory)
+    FileRemovalAction.Trash -> if (file.galleryTrash) canTrash(file.source) else canTrashFolder(file.source, file.directory)
     FileRemovalAction.Delete -> canRemove(file.source, FileRemovalAction.Delete)
     FileRemovalAction.EmptyTrash -> file.directory && canRemove(file.source, FileRemovalAction.EmptyTrash)
 }
