@@ -35,6 +35,7 @@ import com.hippo.ehviewer.gallery.Page
 import com.hippo.ehviewer.gallery.PageStatus
 import com.hippo.ehviewer.gallery.statusObserved
 import com.hippo.ehviewer.image.ImageTransfer
+import com.hippo.ehviewer.image.simpleColorSpaceName
 import com.hippo.ehviewer.util.FileUtils
 import java.text.DecimalFormat
 import java.text.SimpleDateFormat
@@ -146,12 +147,7 @@ internal fun BoxScope.ReaderScreenWidget(page: Page?, slideshow: Boolean, source
         }
         if (showColorSpace && metadata != null) {
             val colorSpace = metadata.colorSpace?.trim()?.takeUnless { it.isEmpty() || it.equals("Unknown", ignoreCase = true) }?.let {
-                when {
-                    useRawStrings -> it
-                    it.startsWith("sRGB IEC61966-2.1", ignoreCase = true) -> "sRGB"
-                    it.startsWith("scRGB", ignoreCase = true) -> "scRGB"
-                    else -> it
-                }
+                if (useRawStrings) it else simpleColorSpaceName(it)
             }
             val dynamicRange = metadata.hdr?.let { if (it) "HDR" else "SDR" }
             val transfer = if (useRawStrings) {
