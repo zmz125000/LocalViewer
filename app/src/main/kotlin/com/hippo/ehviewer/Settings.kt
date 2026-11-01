@@ -327,6 +327,8 @@ object Settings : DataStorePreferences(null) {
      *
      * Archive/document covers (ZIP/RAR/7z/PDF/EPUB first page) use [downloadNetworkArchiveThumbs].
      */
+    val useTrashBin = boolPref("use_trash_bin", true)
+
     val downloadRemoteThumbs = boolPref("download_remote_thumbs", true)
 
     /**

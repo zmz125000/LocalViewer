@@ -134,6 +134,24 @@ object WebDavClient {
         }
     }
 
+    /** DELETE removes the collection on the server, with no client-side traversal. */
+    suspend fun deleteEntry(source: WebDavSourceEntity, password: String, relative: String, directory: Boolean) = withIOContext {
+        require(relative.trim('/').isNotEmpty()) { "Cannot delete a source root" }
+        val response = trashHttp().request(if (directory) dirUrl(source, relative) else absoluteUrl(source, relative)) {
+            method = HttpMethod.Delete
+            basicAuthHeader(source.username, password)?.let { header(HttpHeaders.Authorization, it) }
+            timeout {
+                connectTimeoutMillis = LIST_CONNECT_MS
+                requestTimeoutMillis = DL_REQUEST_MS
+                socketTimeoutMillis = DL_SOCKET_MS
+            }
+        }
+        val result = if (response.status.value == 207) parseTrashMultiStatus(response.bodyAsText()) else WebDavTrashResponse(response.status.value)
+        if (result.failureStatus != null || result.status !in 200..299) {
+            throw WebDavTrashException(result.failureStatus ?: result.status, "DELETE")
+        }
+    }
+
     /** One server MOVE for a file or complete collection. No transport replay or payload copy. */
     suspend fun moveToTrash(source: WebDavSourceEntity, password: String, relative: String, directory: Boolean, date: String, checkpoint: suspend () -> Unit): String = withIOContext {
         com.hippo.ehviewer.library.requireOutsideTrash(decodeHref(absoluteUrl(source, relative).encodedPath))

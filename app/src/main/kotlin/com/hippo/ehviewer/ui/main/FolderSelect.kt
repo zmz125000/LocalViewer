@@ -1632,8 +1632,10 @@ private fun SelectionOverflowControl(
     val convertible = picks.count { it.convertStill != null }
     val savable = picks.count { it.saveInto != null }
     val uploadable = picks.count { it.uploadSource != null }
-    val confirmDelete = rememberNetworkDeleteConfirmation { FolderSelectHost.cancelShownSelection() }
-    val deletable = picks.isNotEmpty() && picks.all { it.uploadSource?.let { source -> com.hippo.ehviewer.library.canTrash(source) } == true }
+    val useTrashBin = Settings.useTrashBin.asMutableState().value
+    val removalAction = if (picks.all { it.isFolder }) com.hippo.ehviewer.library.FileRemovalAction.Trash else com.hippo.ehviewer.library.FileRemovalAction.Delete
+    val confirmDelete = rememberNetworkDeleteConfirmation(removalAction) { FolderSelectHost.cancelShownSelection() }
+    val deletable = picks.isNotEmpty() && picks.all { it.uploadSource?.let { source -> if (it.isFolder) com.hippo.ehviewer.library.canTrashFolder(source, true) else !useTrashBin && com.hippo.ehviewer.library.canRemove(source, com.hippo.ehviewer.library.FileRemovalAction.Delete) } == true }
     val canSelectAll = selectionActions &&
         folderKey != null &&
         FolderSelectHost.current?.folderKey == folderKey
@@ -1731,7 +1733,7 @@ private fun SelectionOverflowControl(
                 }
                 if (selectionActions && deletable) {
                     DropdownMenuItem(
-                        text = { Text(stringResource(R.string.action_trash)) },
+                        text = { Text(stringResource(if (picks.all { it.isFolder }) R.string.action_trash else R.string.delete)) },
                         onClick = {
                             menu = false
                             scope.launch {
@@ -1742,7 +1744,7 @@ private fun SelectionOverflowControl(
                                         pick.isFolder,
                                         pick.listLine?.sizeBytes ?: -1L,
                                         pick.listLine?.lastModifiedMs ?: 0L,
-                                    ) to pick.gallery
+                                    ) to false
                                 }
                                 val files = collectTransferFilesForAction(requests, snackbar, context, GalleryFileAction.Delete) ?: return@launch
                                 confirmDelete(files)

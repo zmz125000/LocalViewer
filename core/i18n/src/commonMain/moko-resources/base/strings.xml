@@ -1298,4 +1298,12 @@
     <string name="transfer_delete_trash_protected">Items inside .trash cannot be deleted.</string>
     <string name="ask_where_to_save">Ask where to save</string>
     <string name="transfer_upload_action">Upload to…</string>
+    <string name="settings_use_trash_bin">Use trash bin</string>
+    <string name="settings_use_trash_bin_summary">Folders always move to .trash. Turn off to allow permanent file deletion.</string>
+    <string name="action_empty_trash">Empty trash</string>
+    <string name="permanent_delete_confirm">Permanently delete %1$d items? This cannot be undone.</string>
+    <string name="empty_trash_confirm">Permanently delete this .trash folder and all its contents? This cannot be undone.</string>
+    <string name="permanent_delete_unsupported">This source or server does not support deleting this item.</string>
+    <string name="permanent_delete_access_denied">Access denied while deleting the item.</string>
+    <string name="mixed_delete_confirm">Permanently delete %1$d files and move %2$d folders to .trash? File deletion cannot be undone.</string>
 </resources>

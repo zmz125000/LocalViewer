@@ -12,6 +12,56 @@ class TrashFilesTest {
     private fun file(path: String, directory: Boolean = false, sourceId: Long = 1) = TransferFile(TransferLocation(ExplorerWindows.Kind.Smb, sourceId, path), path.substringAfterLast('/'), directory, 123, 456)
 
     @Test
+    fun removalRoutesFilesToDeletionAndFoldersToTrash() {
+        val folder = file("share/album", true)
+        val image = file("share/image.jpg")
+        for (requested in listOf(FileRemovalAction.Trash, FileRemovalAction.Delete)) {
+            assertEquals(FileRemovalAction.Trash, removalActionFor(folder, requested))
+            assertEquals(FileRemovalAction.Delete, removalActionFor(image, requested))
+            assertTrue(canRemoveFile(folder, requested))
+            assertTrue(canRemoveFile(image, requested))
+        }
+        assertEquals(FileRemovalAction.EmptyTrash, removalActionFor(file("share/.trash", true), FileRemovalAction.EmptyTrash))
+        assertFalse(canRemoveFile(image, FileRemovalAction.EmptyTrash))
+    }
+
+    @Test
+    fun trashOnlyAcceptsPhysicalFolders() {
+        val source = file("share/album", true).source
+        assertTrue(canTrashFolder(source, true))
+        assertFalse(canTrashFolder(source, false))
+        assertFalse(canTrashFolder(source.copy(path = "share/album.zip"), true))
+        assertFalse(canTrashFolder(source.copy(path = "share/album.cbz"), true))
+        assertFalse(canTrashFolder(source.copy(path = "share/.trash"), true))
+    }
+
+    @Test
+    fun permanentDeletionRejectsArchiveMembersAndProtectsTrashContents() {
+        val physical = file("share/album/a.jpg").source
+        assertTrue(canRemove(physical, FileRemovalAction.Delete))
+        assertFalse(canRemove(physical.copy(path = "share/book.zip/a.jpg"), FileRemovalAction.Delete))
+        assertFalse(canRemove(physical.copy(path = "share/.trash/a.jpg"), FileRemovalAction.Delete))
+        assertFalse(canRemove(physical.copy(path = "share/../a.jpg"), FileRemovalAction.Delete))
+        assertFalse(canRemove(physical.copy(path = ""), FileRemovalAction.Delete))
+    }
+
+    @Test
+    fun emptyTrashOnlyAcceptsThePhysicalTrashFolder() {
+        val source = file("share/.trash", true).source
+        assertTrue(canRemove(source, FileRemovalAction.EmptyTrash))
+        assertFalse(canRemove(source.copy(path = "share/.trash/2026-11-01"), FileRemovalAction.EmptyTrash))
+        assertFalse(canRemove(source.copy(path = "share/not.trash"), FileRemovalAction.EmptyTrash))
+        assertFalse(canRemove(source.copy(path = "share/book.zip/.trash"), FileRemovalAction.EmptyTrash))
+        val saf = TransferLocation(
+            ExplorerWindows.Kind.Local,
+            0,
+            "content:/provider/tree/primary%3APhotos/document/primary%3APhotos%2F.trash",
+        )
+        assertTrue(canRemove(saf, FileRemovalAction.EmptyTrash))
+        assertFalse(canRemove(saf.copy(path = "content:/provider/tree/primary%3A.trash/document/primary%3A.trash"), FileRemovalAction.EmptyTrash))
+    }
+
+    @Test
     fun safDeleteOnlyAcceptsTreeDocumentsOutsideTrash() {
         fun local(path: String) = TransferLocation(ExplorerWindows.Kind.Local, 0, path)
         val uri = "content:/provider/tree/primary%3APhotos/document/primary%3APhotos/album"

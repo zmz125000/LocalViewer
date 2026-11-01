@@ -67,7 +67,11 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 
 private val UploadJob.actionLabel get() = when {
-    deleting -> R.string.action_trash
+    deleting -> when (removalAction) {
+        com.hippo.ehviewer.library.FileRemovalAction.Trash -> R.string.action_trash
+        com.hippo.ehviewer.library.FileRemovalAction.Delete -> R.string.delete
+        com.hippo.ehviewer.library.FileRemovalAction.EmptyTrash -> R.string.action_empty_trash
+    }
     saving -> R.string.action_save_to
     else -> R.string.transfer_upload
 }
@@ -76,7 +80,9 @@ private val UploadJob.actionLabel get() = when {
 private fun uploadSummary(state: UploadState): String = stringResource(R.string.transfer_counts, state.succeeded, state.skipped, state.failed)
 
 @Composable
-private fun transferSpeed(state: UploadState): String = if (state.deleting) {
+private fun transferSpeed(state: UploadState, job: UploadJob): String = if (state.deleting && job.removalAction != com.hippo.ehviewer.library.FileRemovalAction.Trash) {
+    stringResource(job.actionLabel)
+} else if (state.deleting) {
     stringResource(if (state.rows.all { it.file.source.kind == ExplorerWindows.Kind.Local }) R.string.transfer_local_move else R.string.transfer_server_move)
 } else if (state.serverCopy) {
     stringResource(R.string.transfer_server_copy)
@@ -139,7 +145,7 @@ internal fun UploadTransferBars() {
                             Text(uploadSummary(state))
                         } else if (state.active) {
                             Text("${stringResource(job.actionLabel)} #${job.id} · ${state.succeeded}/${state.total}/${state.skipped}/${state.failed}")
-                            Text(if (job.deleting) transferSpeed(state) else "${transferSize(state)} · ${transferSpeed(state)}")
+                            Text(if (job.deleting) transferSpeed(state, job) else "${transferSize(state)} · ${transferSpeed(state, job)}")
                         } else {
                             Text("${stringResource(job.actionLabel)} #${job.id} · ${job.title}", maxLines = 1, overflow = TextOverflow.Ellipsis)
                             Text(uploadSummary(state))
@@ -249,7 +255,7 @@ private fun FileTransferPanel(job: UploadJob) {
             }
             Text(uploadSummary(state), Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.labelLarge)
 
-            val transferRate = if (state.active) transferSpeed(state) else null
+            val transferRate = if (state.active) transferSpeed(state, job) else null
             Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text(state.destinationLabel, Modifier.weight(1f), maxLines = 2, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall)
                 if (!job.deleting) {
@@ -304,7 +310,7 @@ private fun FileTransferPanel(job: UploadJob) {
                             explorer.open()
                         }) { Text(stringResource(R.string.transfer_destination)) }
                     }
-                    TextButton(onClick = { UploadTransfers.start(job) }, enabled = (job.deleting || state.destination != null) && state.rows.isNotEmpty()) { Text(stringResource(if (job.deleting) R.string.action_trash else R.string.transfer_start)) }
+                    TextButton(onClick = { UploadTransfers.start(job) }, enabled = (job.deleting || state.destination != null) && state.rows.isNotEmpty()) { Text(stringResource(if (job.deleting) job.actionLabel else R.string.transfer_start)) }
                 } else {
                     if (!job.deleting) TextButton(onClick = { UploadTransfers.continueTransfer(job) }) { Text(stringResource(R.string.browse_continue)) }
                     TextButton(onClick = { UploadTransfers.dismiss(job) }) { Text(stringResource(R.string.browse_task_done)) }

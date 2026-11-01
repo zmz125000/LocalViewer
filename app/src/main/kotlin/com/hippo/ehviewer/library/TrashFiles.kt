@@ -7,6 +7,7 @@ import com.hippo.ehviewer.webdav.WebDavClient
 import com.hippo.ehviewer.webdav.WebDavPasswordStore
 import com.hippo.ehviewer.webdav.WebDavRepository
 import java.net.URLDecoder
+import okio.Path.Companion.toPath
 
 private val trashArchivePath = Regex("(?i)(?:^|/)[^/]+\\.(?:zip|cbz)(?=/|$)")
 
@@ -113,6 +114,82 @@ internal object TrashFiles {
                 WebDavClient.moveToTrash(source, WebDavPasswordStore.get(source.id), file.source.path, file.directory, date, control::checkpoint)
             }
             ExplorerWindows.Kind.Local -> LocalSafTrash.move(file, date, control)
+        }
+    }
+}
+
+internal enum class FileRemovalAction { Trash, Delete, EmptyTrash }
+
+internal fun isTrashFolder(source: TransferLocation): Boolean = decodedTrashPath(source.path)
+    .replace('\\', '/').trimEnd('/').substringAfterLast('/').substringAfterLast(':').equals(".trash", true)
+
+/** Virtual archive members and storage roots are never physical deletion targets. */
+internal fun canDelete(source: TransferLocation): Boolean {
+    val path = decodedTrashPath(source.path).replace('\\', '/')
+    if (path.trim('/').isEmpty() || path.split('/').any { it == "." || it == ".." }) return false
+    return when (source.kind) {
+        ExplorerWindows.Kind.Local -> !ZipPaths.isZipPath(source.path) &&
+            (
+                source.path.startsWith('/') || (
+                    "/tree/" in path && "/document/" in path &&
+                        path.substringAfter("/tree/").substringBefore("/document/") != path.substringAfter("/document/")
+                    )
+                )
+        else -> !isTrashArchiveMember(path)
+    }
+}
+
+internal fun canTrashFolder(source: TransferLocation, directory: Boolean): Boolean {
+    val path = decodedTrashPath(source.path).trimEnd('/')
+    return directory && canTrash(source) && !path.endsWith(".zip", true) && !path.endsWith(".cbz", true)
+}
+
+/** Normal removal always moves folders; permanent folder deletion is reserved for Empty trash. */
+internal fun removalActionFor(file: TransferFile, requested: FileRemovalAction): FileRemovalAction = when {
+    requested == FileRemovalAction.EmptyTrash -> FileRemovalAction.EmptyTrash
+    file.directory -> FileRemovalAction.Trash
+    else -> FileRemovalAction.Delete
+}
+
+internal fun canRemoveFile(file: TransferFile, requested: FileRemovalAction): Boolean = when (removalActionFor(file, requested)) {
+    FileRemovalAction.Trash -> canTrashFolder(file.source, file.directory)
+    FileRemovalAction.Delete -> canRemove(file.source, FileRemovalAction.Delete)
+    FileRemovalAction.EmptyTrash -> file.directory && canRemove(file.source, FileRemovalAction.EmptyTrash)
+}
+
+internal fun canRemove(source: TransferLocation, action: FileRemovalAction): Boolean = when (action) {
+    FileRemovalAction.Trash -> canTrash(source)
+    FileRemovalAction.Delete -> canDelete(source) && !isInsideTrashPath(source.path)
+    FileRemovalAction.EmptyTrash -> canDelete(source) && isTrashFolder(source)
+}
+
+/** Use provider/server folder deletion, with the SMB recursive operation where required. */
+internal object PermanentFiles {
+    suspend fun delete(file: TransferFile, action: FileRemovalAction, control: TransferControl) {
+        require(action != FileRemovalAction.Trash && canRemove(file.source, action)) { "Invalid deletion target" }
+        require(action != FileRemovalAction.EmptyTrash || file.directory) { "Trash must be a folder" }
+        require(action == FileRemovalAction.EmptyTrash || !file.directory) { "Folders must be moved to trash" }
+        control.checkpoint()
+        when (file.source.kind) {
+            ExplorerWindows.Kind.Smb -> {
+                val source = requireNotNull(SmbRepository.load(file.source.sourceId))
+                SmbGateway.deleteEntry(
+                    source,
+                    SmbPasswordStore.get(source.id),
+                    file.source.path,
+                    file.directory,
+                    recursive = true,
+                    checkpoint = control::checkpoint,
+                )
+            }
+            ExplorerWindows.Kind.WebDav -> {
+                val source = requireNotNull(WebDavRepository.load(file.source.sourceId))
+                WebDavClient.deleteEntry(source, WebDavPasswordStore.get(source.id), file.source.path, file.directory)
+            }
+            ExplorerWindows.Kind.Local -> {
+                val path = file.source.path.toPath()
+                com.ehviewer.core.files.SystemFileSystem.delete(path, mustExist = true)
+            }
         }
     }
 }

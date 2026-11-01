@@ -3970,6 +3970,26 @@ object SmbGateway {
         }
     }
 
+    /** SMB requires a recursive client operation to remove a nonempty directory. */
+    suspend fun deleteEntry(source: SmbSourceEntity, password: String, relative: String, directory: Boolean, recursive: Boolean, checkpoint: suspend () -> Unit) = withIOContext {
+        val loc = resolveLocation(source, relative)
+        require(loc.pathInShare.isNotBlank()) { "Cannot delete a share root" }
+        val host = endpointHost(source)
+        trackSource(source)
+        ensureHostNotCoolingDown(host, source.port)
+        val credential = credKey(source, password)
+        // A lost delete acknowledgement must not cause an automatic transport replay.
+        hostPoolFor(host, source.port).borrowForShare(
+            credential,
+            loc.share,
+            ShareOp.Data,
+            openSession = { reserved -> openSession(source, password, credential, reservedForList = reserved) },
+        ) { share ->
+            checkpoint()
+            if (directory) share.rmdir(loc.pathInShare, recursive) else share.rm(loc.pathInShare)
+        }
+    }
+
     /** One SMB rename for a file or entire directory; never fall back to copy/delete. */
     suspend fun moveToTrash(
         source: SmbSourceEntity,
