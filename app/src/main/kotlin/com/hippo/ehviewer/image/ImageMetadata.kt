@@ -54,6 +54,33 @@ internal fun firstKnownColorSpace(vararg names: String?): String? = names.firstN
     name?.trim()?.takeUnless { it.isEmpty() || it.equals("Unknown", ignoreCase = true) }
 }
 
+/** Match the leading gamut name, never a transfer name later in an ICC description. */
+internal fun simpleColorSpaceName(name: String): String? {
+    val compact = name.lowercase(Locale.ROOT).filter { it in 'a'..'z' || it in '0'..'9' }
+        .removePrefix("linear").removePrefix("lin")
+    return when {
+        compact.startsWith("scrgb") || compact.startsWith("extendedsrgb") -> "scRGB"
+        compact.startsWith("srgb") -> "sRGB"
+        compact.startsWith("adobergb") -> "Adobe RGB"
+        compact.startsWith("prophoto") || compact.startsWith("rommrgb") -> "ProPhoto RGB"
+        compact.startsWith("displayp3") -> "Display P3"
+        compact.startsWith("dcip3") || compact.startsWith("smpterp431") -> "DCI-P3"
+        compact.startsWith("bt2020") || compact.startsWith("rec2020") ||
+            compact.startsWith("r2020") || compact.startsWith("iturbt2020") || compact.startsWith("reciturbt2020") -> "BT.2020"
+        compact.startsWith("bt709") || compact.startsWith("rec709") ||
+            compact.startsWith("iturbt709") || compact.startsWith("reciturbt709") -> "BT.709"
+        compact.startsWith("bt601") || compact.startsWith("rec601") -> "BT.601"
+        compact.startsWith("ntsc") -> "NTSC"
+        compact.startsWith("pal") || compact.startsWith("secam") -> "PAL/SECAM"
+        compact.startsWith("smptec") -> "SMPTE-C"
+        compact.startsWith("acescg") -> "ACEScg"
+        compact.startsWith("aces") -> "ACES"
+        compact.startsWith("ciexyz") || compact.startsWith("genericxyz") -> "CIE XYZ"
+        compact.startsWith("cielab") || compact.startsWith("genericlab") -> "CIE Lab"
+        else -> null
+    }
+}
+
 internal fun cicpColorSpaceName(primaries: Int?, transfer: Int?): String? = when (primaries) {
     1 -> if (transfer == 13) "sRGB" else "BT.709"
     9 -> "BT.2020"
