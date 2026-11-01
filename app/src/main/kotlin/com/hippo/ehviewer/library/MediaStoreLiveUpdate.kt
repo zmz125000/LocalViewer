@@ -52,6 +52,21 @@ object MediaStoreLiveUpdate {
     }
 
     /**
+     * A collection-wide MediaStore callback whose volume generation has not moved.
+     * Item URIs, deletes, and an explicit resume catch-up are real work.
+     */
+    fun isUnchangedCollectionSignal(
+        itemCount: Int,
+        delete: Boolean,
+        forceRecent: Boolean,
+        generation: Long,
+        armedGeneration: Long,
+    ): Boolean {
+        if (itemCount > 0 || delete || forceRecent) return false
+        return generation > 0L && generation == armedGeneration
+    }
+
+    /**
      * Skip dot files (unless [includeHidden]), sample clips, and non-media names.
      * A hidden parent folder is skipped too when [includeHidden] is off — matching
      * [LibraryScanner] which only descends into those trees when scan-hidden is on.

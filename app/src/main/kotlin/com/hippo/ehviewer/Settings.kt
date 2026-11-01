@@ -395,7 +395,7 @@ object Settings : DataStorePreferences(null) {
     /**
      * When true (default), [com.hippo.ehviewer.library.MediaStoreWatch] applies new
      * MediaStore images and videos while the library screen is resumed, without
-     * waiting for the next startup scan.
+     * waiting for the next startup scan. It does not listen in the background.
      */
     val libraryLiveUpdate = boolPref("library_live_update", true)
         .observed(::updateWhenLibraryLiveUpdateChanges)

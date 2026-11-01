@@ -213,8 +213,8 @@ object StreamKeepAlivePolicy {
     fun shutdownAndKillProcess(reason: String) {
         if (!processExiting.compareAndSet(false, true)) return
         logcat("StreamKeepAlive") { "shutdownAndKillProcess ($reason) ${runtimeSnapshot()}" }
-        // Arm the MediaStore content job before the process dies. Recents swipe
-        // drops the in-process observer; JobScheduler is what starts the next update.
+        // Drop a leftover MediaStore content job. The next library visit catch-up
+        // applies rows missed while the process was dead.
         runCatching { MediaStoreWatch.onTaskRemoved() }
         runCatching { StreamKeepAliveService.stop(appCtx) }
         runCatching { ExternalHttpStreamServer.shutdown(reason) }

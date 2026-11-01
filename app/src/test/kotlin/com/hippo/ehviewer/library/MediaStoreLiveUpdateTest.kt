@@ -21,6 +21,64 @@ class MediaStoreLiveUpdateTest {
     }
 
     @Test
+    fun `unchanged collection signal is not a library change`() {
+        assertTrue(
+            MediaStoreLiveUpdate.isUnchangedCollectionSignal(
+                itemCount = 0,
+                delete = false,
+                forceRecent = false,
+                generation = 4L,
+                armedGeneration = 4L,
+            ),
+        )
+        assertFalse(
+            MediaStoreLiveUpdate.isUnchangedCollectionSignal(
+                itemCount = 1,
+                delete = false,
+                forceRecent = false,
+                generation = 4L,
+                armedGeneration = 4L,
+            ),
+        )
+        assertFalse(
+            MediaStoreLiveUpdate.isUnchangedCollectionSignal(
+                itemCount = 0,
+                delete = true,
+                forceRecent = false,
+                generation = 4L,
+                armedGeneration = 4L,
+            ),
+        )
+        assertFalse(
+            MediaStoreLiveUpdate.isUnchangedCollectionSignal(
+                itemCount = 0,
+                delete = false,
+                forceRecent = true,
+                generation = 4L,
+                armedGeneration = 4L,
+            ),
+        )
+        assertFalse(
+            MediaStoreLiveUpdate.isUnchangedCollectionSignal(
+                itemCount = 0,
+                delete = false,
+                forceRecent = false,
+                generation = 5L,
+                armedGeneration = 4L,
+            ),
+        )
+        assertFalse(
+            MediaStoreLiveUpdate.isUnchangedCollectionSignal(
+                itemCount = 0,
+                delete = false,
+                forceRecent = false,
+                generation = -1L,
+                armedGeneration = -1L,
+            ),
+        )
+    }
+
+    @Test
     fun `empty or pending media is not a library row`() {
         assertFalse(MediaStoreLiveUpdate.isReadyMediaRow(pending = true, sizeBytes = 100))
         assertFalse(MediaStoreLiveUpdate.isReadyMediaRow(pending = false, sizeBytes = 0))
