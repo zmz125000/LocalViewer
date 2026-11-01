@@ -23,25 +23,8 @@ internal fun ImageConversionPreferences() {
         entryValueRes = com.hippo.ehviewer.R.array.image_conversion_quality_values,
         state = conversionQuality,
     )
-    SwitchPreference(
-        title = stringResource(R.string.image_conversion_keep_exif),
-        state = Settings.imageConversionKeepExif.asMutableState(),
-    )
-    SwitchPreference(
-        title = stringResource(R.string.image_conversion_extended_srgb_bt2020),
-        state = Settings.imageConversionExtendedSrgbBt2020.asMutableState(),
-    )
-    SwitchPreference(
-        title = stringResource(R.string.image_conversion_jxl_jpeg_transcoding),
-        state = Settings.imageConversionJxlJpegTranscoding.asMutableState(),
-    )
     AnimatedVisibility(visible = conversionQuality.value == 4) {
         Column {
-            SwitchPreference(
-                title = stringResource(R.string.image_conversion_float32),
-                summary = stringResource(R.string.image_conversion_float32_summary),
-                state = Settings.imageConversionFloat32.asMutableState(),
-            )
             val distance = Settings.imageConversionJxlDistance.asMutableState()
             val sliderDistance = remember { mutableIntStateOf(distance.value.coerceIn(0, 300)) }
             LaunchedEffect(distance.value) {
@@ -69,6 +52,11 @@ internal fun ImageConversionPreferences() {
                 title = stringResource(R.string.image_conversion_downsize_gain_map),
                 state = Settings.imageConversionDownsizeGainMap.asMutableState(),
             )
+            SwitchPreference(
+                title = stringResource(R.string.image_conversion_float32),
+                summary = stringResource(R.string.image_conversion_float32_summary),
+                state = Settings.imageConversionFloat32.asMutableState(),
+            )
         }
     }
     val rawHdrMode = Settings.rawHdrConversionMode.asMutableState()
@@ -79,5 +67,17 @@ internal fun ImageConversionPreferences() {
         entry = com.hippo.ehviewer.R.array.raw_hdr_conversion_entries,
         entryValueRes = com.hippo.ehviewer.R.array.raw_hdr_conversion_values,
         state = rawHdrMode,
+    )
+    SwitchPreference(
+        title = stringResource(R.string.image_conversion_keep_exif),
+        state = Settings.imageConversionKeepExif.asMutableState(),
+    )
+    SwitchPreference(
+        title = stringResource(R.string.image_conversion_extended_srgb_bt2020),
+        state = Settings.imageConversionExtendedSrgbBt2020.asMutableState(),
+    )
+    SwitchPreference(
+        title = stringResource(R.string.image_conversion_jxl_jpeg_transcoding),
+        state = Settings.imageConversionJxlJpegTranscoding.asMutableState(),
     )
 }
