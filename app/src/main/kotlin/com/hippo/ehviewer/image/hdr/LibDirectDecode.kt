@@ -95,10 +95,12 @@ data class DirectPixels(
     val gamut: Int,
     /** Platform bitmap exports retain associated alpha; native export packs are straight. */
     val premultiplied: Boolean,
-    /** Optional camera-look SDR RGBA8 plane appended after the F16 HDR pixels. */
+    /** Optional paired SDR plane: linear F32 after F32 HDR, otherwise encoded RGBA8 after F16. */
     val sdrOffset: Int = 0,
     /** Valid only during the synchronous export callback; never escapes its native capture. */
     val nativePixels: ByteBuffer? = null,
+    /** Native export working storage; Android display bitmaps never use F32. */
+    val f32: Boolean = false,
 )
 
 /**
@@ -277,6 +279,7 @@ object LibDirectDecode {
             premultiplied = packed.premultiplied,
             sdrOffset = packed.sdrOffset,
             nativePixels = nativePixels,
+            f32 = packed.outInfo.getOrNull(2) == 2,
         )
     }
 
@@ -722,7 +725,7 @@ object LibDirectDecode {
             outInfo,
             outBoost,
             premultiplied = export == null,
-            sdrOffset = if (present >= 3 && export?.target?.needsSdrBase() != false) outInfo[0] * outInfo[1] * 8 else 0,
+            sdrOffset = if (present >= 3 && export?.target?.needsSdrBase() != false) outInfo[0] * outInfo[1] * (if (outInfo[2] == 2) 16 else 8) else 0,
         )
     }
 

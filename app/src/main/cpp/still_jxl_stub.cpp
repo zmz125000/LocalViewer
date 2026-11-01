@@ -23,3 +23,5 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_transcodeJpegBufferToJxl(JNIEnv*, jclas
 int encode_jxl_source(unsigned, unsigned, const void*, bool, const StillSourceColor&, const char*, StillEncodeQuality) {
     return -100;
 }
+
+int encode_jxl_f32(unsigned, unsigned, float*, uhdr_color_gamut_t, bool, const char*, StillEncodeQuality, bool) { return -100; }

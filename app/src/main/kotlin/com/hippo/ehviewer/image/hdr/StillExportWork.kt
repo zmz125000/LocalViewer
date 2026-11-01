@@ -52,11 +52,19 @@ internal class ExportMemoryBudget(private val capacity: Long) {
     }
 }
 
-internal fun exportWorkingBytes(width: Long, height: Long, sourceBytes: Long, raw: Boolean): Long {
+internal fun exportWorkingBytes(width: Long, height: Long, sourceBytes: Long, raw: Boolean, floatPixels: Boolean = false): Long {
     if (width <= 0 || height <= 0 || width > 65536 || height > 65536) return Long.MAX_VALUE
-    // JXL decoding includes float RGBA + half RGBA + JNI; RAW also holds sensor
-    // and demosaic buffers. Include the encoder, not just the final 8-byte pixel.
-    return width * height * (if (raw) 128 else 80) + sourceBytes.coerceAtLeast(0).coerceAtMost(1024L * 1024 * 1024) * 2 + 16L * 1024 * 1024
+    // Linear exports may retain F32 RGBA through encode; RAW also retains its
+    // F32 camera-look base, sensor and demosaic buffers. Include codec scratch.
+    return width * height * (
+        if (raw) {
+            160
+        } else if (floatPixels) {
+            112
+        } else {
+            80
+        }
+        ) + sourceBytes.coerceAtLeast(0).coerceAtMost(1024L * 1024 * 1024) * 2 + 16L * 1024 * 1024
 }
 
 /** Native exports keep pixel planes outside the Java heap; fallbacks retain their previous budget. */
@@ -119,7 +127,7 @@ internal object StillExportWork {
         // Codec working buffers live on the native heap, not inside the JVM's
         // maxMemory allowance. Keep both leases through encode, with separate limits.
         return heapBudget.withBytes(exportHeapBytes(width, height, sourceBytes, raw, nativePixels = true, mappedInput = true)) {
-            nativeBudget.withBytes(exportWorkingBytes(width, height, sourceBytes, raw), work)
+            nativeBudget.withBytes(exportWorkingBytes(width, height, sourceBytes, raw, floatPixels = kind >= 0 || ext == "avif"), work)
         }
     }
 }

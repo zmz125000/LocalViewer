@@ -263,12 +263,12 @@ external fun encodeStillExport(
     exif: ByteArray? = null,
 ): Int
 
-/** Consumes exclusively owned native pixels in place; the capture must outlive this call. */
+/** Consumes owned pixels in place: 0 encoded RGBA8, 1 linear F16, 2 linear F32. Capture outlives encode. */
 internal external fun encodeNativeStillExport(
     pixels: ByteBuffer,
     width: Int,
     height: Int,
-    f16: Boolean,
+    pixelFormat: Int,
     gamut: Int,
     mode: Int,
     premultiplied: Boolean,

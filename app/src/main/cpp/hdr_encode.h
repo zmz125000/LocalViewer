@@ -367,3 +367,11 @@ struct StillSourceColor {
 };
 int encode_jxl_source(unsigned w, unsigned h, const void* rgba, bool sixteen,
                       const StillSourceColor& color, const char* path, StillEncodeQuality quality);
+
+/** Export-only F32 pixels. Reader bitmaps and Ultra HDR's input remain F16. */
+int encode_jxl_f32(unsigned, unsigned, float*, uhdr_color_gamut_t, bool, const char*, StillEncodeQuality, bool);
+int encode_avif_f32(unsigned, unsigned, const float*, uhdr_color_gamut_t, int, const char*, StillEncodeQuality, const float* sdr_base = nullptr);
+void scale_rgba_f32_max_edge(std::vector<float>&, unsigned&, unsigned&, unsigned);
+
+jbyteArray retain_export_f32(JNIEnv*, std::vector<float>&, unsigned, unsigned,
+    uhdr_color_gamut_t, bool, int, jintArray, jfloatArray);

@@ -15,6 +15,7 @@ namespace {
 struct ReaderPixels {
     std::vector<uint8_t> bytes;
     std::vector<uint16_t> halves;
+    std::vector<float> floats;
     ReaderPixels* previous = nullptr;
     bool exporting = false;
     bool keep_sdr = true;
@@ -22,8 +23,8 @@ struct ReaderPixels {
     size_t owned_size = 0;
     void drop_owned() { free(owned); owned = nullptr; owned_size = 0; }
     ~ReaderPixels() { drop_owned(); }
-    void* data() { return owned ? owned : halves.empty() ? static_cast<void*>(bytes.data()) : halves.data(); }
-    size_t size() const { return owned ? owned_size : halves.empty() ? bytes.size() : halves.size() * sizeof(uint16_t); }
+    void* data() { if (!floats.empty()) return floats.data(); return owned ? owned : halves.empty() ? static_cast<void*>(bytes.data()) : halves.data(); }
+    size_t size() const { if (!floats.empty()) return floats.size() * sizeof(float); return owned ? owned_size : halves.empty() ? bytes.size() : halves.size() * sizeof(uint16_t); }
 };
 
 // decodePacked is synchronous and never suspends or switches threads. Separate
@@ -37,6 +38,7 @@ void throw_argument(JNIEnv* env, const char* message) {
 
 bool retain_reader_pixels(std::vector<uint8_t>& pixels) {
     if (!active) return false;
+    active->floats.clear();
     active->drop_owned();
     active->bytes = std::move(pixels);
     active->halves.clear();
@@ -45,9 +47,19 @@ bool retain_reader_pixels(std::vector<uint8_t>& pixels) {
 
 bool retain_reader_pixels(std::vector<uint16_t>& pixels) {
     if (!active) return false;
+    active->floats.clear();
     active->drop_owned();
     active->halves = std::move(pixels);
     active->bytes.clear();
+    return true;
+}
+
+bool retain_reader_pixels(std::vector<float>& pixels) {
+    if (!active || !active->exporting) return false;
+    active->drop_owned();
+    active->floats = std::move(pixels);
+    active->bytes.clear();
+    active->halves.clear();
     return true;
 }
 
@@ -224,6 +236,7 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_captureStillPixels(JNIEnv* env, jclass,
     // Allocate the success token before adopting; failure leaves ownership with Kotlin.
     jbyteArray token = env->NewByteArray(0);
     if (!token) return nullptr;
+    active->floats.clear();
     active->drop_owned();
     active->bytes.clear();
     active->halves.clear();

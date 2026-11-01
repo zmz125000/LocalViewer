@@ -276,6 +276,7 @@ uint16_t float_to_half(float value) {
 }
 
 struct Decoded {
+    std::vector<float> linear;
     std::vector<uint8_t> pixels;
     int w = 0;
     int h = 0;
@@ -449,6 +450,7 @@ bool pack_image(const libraw_processed_image_t* img, int max_edge, int present, 
     int dw = 0;
     int dh = 0;
     dst_size(sw, sh, max_edge, dw, dh);
+    const bool float_output = deep && max_edge == 0 && export_pixels_capture();
     const size_t bytes = static_cast<size_t>(dw) * static_cast<size_t>(dh) * (deep ? 8u : 4u);
     if (bytes == 0 || bytes > 400u * 1024u * 1024u) return false;
 
@@ -474,14 +476,14 @@ bool pack_image(const libraw_processed_image_t* img, int max_edge, int present, 
         base_at_anchor = look && !linear_hdr ? rawlook::tone_map(*look, anchor) : anchor;
     }
 
-    // Export HDR retains the camera-look SDR render in the same gamut. Append
-    // RGBA8 after the F16 plane so decode/encode share one JNI array and demosaic.
+    // Export keeps both renders linear F32. Only JPEG quantizes the SDR base to 8-bit.
     const bool keep_sdr = present >= 3 && export_pixels_keep_sdr();
     const size_t sdr_bytes = keep_sdr ? static_cast<size_t>(dw) * dh * 4u : 0u;
-    out.pixels.assign(bytes + sdr_bytes, 0);
+    if (float_output) out.linear.resize(size_t(dw)*dh*4*(keep_sdr ? 2 : 1));
+    else out.pixels.assign(bytes + sdr_bytes, 0);
     out.w = dw;
     out.h = dh;
-    out.format = deep ? 1 : 0;
+    out.format = float_output ? 2 : deep ? 1 : 0;
     out.is_hdr = hdr ? 1 : 0;
     // 0 is sRGB: 8-bit after the transfer, or HDR linear scRGB (values above 1, and
     // negatives for colors outside sRGB). 1 is linear Display P3, clamped to 0..1.
@@ -533,10 +535,14 @@ bool pack_image(const libraw_processed_image_t* img, int max_edge, int present, 
                         float base[3] = {rgb[0], rgb[1], rgb[2]};
                         apply_raw_zones(base[0], base[1], base[2], shadows, midtones, highlights);
                         const size_t sdr = bytes + (static_cast<size_t>(y) * dw + x) * 4u;
-                        for (int c = 0; c < 3; ++c) {
-                            out.pixels[sdr + c] = static_cast<uint8_t>(std::lround(rawlook::srgb_encode(base[c]) * 255.f));
+                        if (float_output) {
+                            const size_t base_pixel = size_t(dw)*dh*4 + (size_t(y)*dw+x)*4;
+                            for (int c = 0; c < 3; ++c) out.linear[base_pixel+c] = base[c];
+                            out.linear[base_pixel+3] = 1.f;
+                        } else {
+                            for (int c = 0; c < 3; ++c) out.pixels[sdr+c] = static_cast<uint8_t>(std::lround(rawlook::srgb_encode(base[c])*255.f));
+                            out.pixels[sdr+3] = 255;
                         }
-                        out.pixels[sdr + 3] = 255;
                     }
                     if (hdr && look && !linear_hdr && hdr_shoulder > 0.f) {
                         // The curve's shoulder moves highlights toward white. Put the
@@ -584,10 +590,12 @@ bool pack_image(const libraw_processed_image_t* img, int max_edge, int present, 
                         for (int c = 0; c < 3; ++c) {
                             float v = hdr ? rgb[c] : raw_linear_sample(rgb[c], 0.f, highlight_stops, cap);
                             peak = std::max(peak, v);
+                            if (float_output) { out.linear[(size_t(y)*dw+x)*4+c] = v; continue; }
                             uint16_t half = float_to_half(v);
                             out.pixels[o + static_cast<size_t>(c) * 2] = static_cast<uint8_t>(half & 0xff);
                             out.pixels[o + static_cast<size_t>(c) * 2 + 1] = static_cast<uint8_t>(half >> 8);
                         }
+                        if (float_output) { out.linear[(size_t(y)*dw+x)*4+3] = 1.f; continue; }
                         uint16_t alpha = 0x3c00;
                         out.pixels[o + 6] = static_cast<uint8_t>(alpha & 0xff);
                         out.pixels[o + 7] = static_cast<uint8_t>(alpha >> 8);
@@ -998,6 +1006,11 @@ jbyteArray decoded_to_java(JNIEnv* env, Decoded& decoded, jintArray j_info, jflo
     env->SetIntArrayRegion(j_info, 0, 6, meta);
     if (env->GetArrayLength(j_info) >= 7) env->SetIntArrayRegion(j_info, 6, 1, &source_depth);
     env->SetFloatArrayRegion(j_boost, 0, 1, &decoded.boost);
+    if (decoded.format == 2) {
+        jbyteArray token = env->NewByteArray(0);
+        if (!token || env->ExceptionCheck() || !retain_reader_pixels(decoded.linear)) return nullptr;
+        return token;
+    }
     if (decoded.pixels.size() > static_cast<size_t>(std::numeric_limits<jsize>::max())) return nullptr;
     if (retain_reader_pixels(decoded.pixels)) return env->NewByteArray(0);
     jbyteArray arr = env->NewByteArray(static_cast<jsize>(decoded.pixels.size()));
