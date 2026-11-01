@@ -299,6 +299,7 @@ void avif_parallel_rows(unsigned width, unsigned height, int max_threads, Work w
 template<class Sample>
 bool apply_iso_gain_map_fast(const avifImage* image, std::vector<Sample>& out_rgba,
                              int threads) {
+    const bool preserve_extended = export_pixels_preserve_scrgb();
     const avifGainMap* gm = image->gainMap;
     if (!gm || !gm->image || image->icc.size || gm->altICC.size ||
         image->transferCharacteristics != AVIF_TRANSFER_CHARACTERISTICS_SRGB ||
@@ -370,7 +371,7 @@ bool apply_iso_gain_map_fast(const avifImage* image, std::vector<Sample>& out_rg
                 };
                 for (int c = 0; c < 3; ++c) {
                     const float v = (p3[c] + base_offset[c]) * boost[c][g[c]] - alt_offset[c];
-                    dst[c] = store_working<Sample>(sanitize_working<Sample>(v));
+                    dst[c] = store_working<Sample>(sanitize_working<Sample>(v, preserve_extended));
                 }
                 dst[3] = store_working<Sample>(b[3] / float(base_max));
             }
@@ -388,6 +389,7 @@ bool apply_iso_gain_map_fast(const avifImage* image, std::vector<Sample>& out_rg
 template<class Sample>
 bool apply_iso_gain_map(const avifImage* image, std::vector<Sample>& out_rgba, int* out_has_gainmap,
                         int* out_transfer, uhdr_color_gamut_t* out_cg) {
+    const bool preserve_extended = export_pixels_preserve_scrgb();
     if (image->gainMap == nullptr || image->gainMap->image == nullptr) return false;
     const float headroom = unsigned_frac(image->gainMap->alternateHdrHeadroom);
     if (!(headroom > 0.05f)) return false;
@@ -438,8 +440,8 @@ bool apply_iso_gain_map(const avifImage* image, std::vector<Sample>& out_rgba, i
             const float gl = pq_eotf(p[1] / 65535.f) / kSdrWhiteNits;
             const float bl = pq_eotf(p[2] / 65535.f) / kSdrWhiteNits;
             float an = p[3] / 65535.f;
-            auto clamp_hf = [](float v) {
-                return sanitize_working<Sample>(v);
+            auto clamp_hf = [&](float v) {
+                return sanitize_working<Sample>(v, preserve_extended);
             };
             if (an < 0.f) an = 0.f;
             if (an > 1.f) an = 1.f;
@@ -470,6 +472,7 @@ int decode_avif_to_linear(const uint8_t* data, size_t len, std::vector<Sample>& 
                               unsigned& w, unsigned& h, int* out_has_gainmap,
                               int* out_transfer /* 16=PQ, 18=HLG, else other */,
                               uhdr_color_gamut_t* out_cg, unsigned max_edge, std::vector<uint8_t>* out_exif = nullptr, DecodedImageInfo* source = nullptr) {
+    const bool preserve_extended = export_pixels_preserve_scrgb();
     if (out_exif) out_exif->clear();
     if (out_has_gainmap) *out_has_gainmap = 0;
     if (out_transfer) *out_transfer = 0;
@@ -638,8 +641,8 @@ int decode_avif_to_linear(const uint8_t* data, size_t len, std::vector<Sample>& 
                 }
 
                 // Display adapters bound F16; export retains finite extended values.
-                auto clamp_hf = [](float v) {
-                    return sanitize_working<Sample>(v);
+                auto clamp_hf = [&](float v) {
+                    return sanitize_working<Sample>(v, preserve_extended);
                 };
                 rl = clamp_hf(rl);
                 gl = clamp_hf(gl);

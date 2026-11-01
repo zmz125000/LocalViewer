@@ -235,6 +235,7 @@ JxrPix classify_guid(const PKPixelFormatGUID& g) {
 template<class Sample>
 bool apply_jxr_color_context(std::vector<Sample>& rgba, size_t npx, const uint8_t* icc,
                              size_t icc_len) {
+    const bool preserve_extended = export_pixels_preserve_scrgb();
     if (!icc || icc_len < 128 || npx == 0) return false;
     skcms_ICCProfile src{};
     if (!skcms_Parse(icc, icc_len, &src)) {
@@ -255,7 +256,7 @@ bool apply_jxr_color_context(std::vector<Sample>& rgba, size_t npx, const uint8_
         return false;
     }
     for (size_t i = 0; i < npx; i++) {
-        auto clamp01p = [](float v) { return sanitize_working<Sample>(v); };
+        auto clamp01p = [&](float v) { return sanitize_working<Sample>(v, preserve_extended); };
         rgba[i * 4 + 0] = store_working<Sample>(clamp01p(read_working(rgba[i * 4 + 0])));
         rgba[i * 4 + 1] = store_working<Sample>(clamp01p(read_working(rgba[i * 4 + 1])));
         rgba[i * 4 + 2] = store_working<Sample>(clamp01p(read_working(rgba[i * 4 + 2])));
@@ -1379,6 +1380,7 @@ int pack_linear_f16_for_direct(std::vector<uint16_t>& rgba, unsigned w, unsigned
         uint16_t max_half = float_to_half(kMaxLinear);
         if (half_to_float(max_half) > kMaxLinear) --max_half;
         const bool associate_alpha = !export_pixels_capture();
+        const bool preserve_extended = export_pixels_preserve_scrgb();
         hdr_parallel_pixels(pixels, jobs, [&](size_t begin, size_t end, unsigned) {
             for (size_t i = begin; i < end; i++) {
                 // Most stills are opaque and already valid linear half samples.
@@ -1393,10 +1395,13 @@ int pack_linear_f16_for_direct(std::vector<uint16_t>& rgba, unsigned w, unsigned
                 if (a > 1.f) a = 1.f;
                 // Keep the existing black RGB for invisible pixels, including
                 // when an output format drops alpha entirely.
-                const float association = associate_alpha || a <= 0.f ? a : 1.f;
-                rgba[i * 4 + 0] = float_to_half(clamp_nonneg(r) * association);
-                rgba[i * 4 + 1] = float_to_half(clamp_nonneg(g) * association);
-                rgba[i * 4 + 2] = float_to_half(clamp_nonneg(b) * association);
+                const float association = associate_alpha || (!preserve_extended && a <= 0.f) ? a : 1.f;
+                auto bound = [&](float v) {
+                    return preserve_extended ? sanitize_working<uint16_t>(v, true) : clamp_nonneg(v);
+                };
+                rgba[i * 4 + 0] = float_to_half(bound(r) * association);
+                rgba[i * 4 + 1] = float_to_half(bound(g) * association);
+                rgba[i * 4 + 2] = float_to_half(bound(b) * association);
                 rgba[i * 4 + 3] = float_to_half(a);
             }
         });
@@ -1803,7 +1808,7 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_encodeNativeStillExport(JNIEnv* env, jc
                                                                jint width, jint height, jint format,
                                                                jint gamut, jint mode, jboolean premultiplied,
                                                                jstring jOut, jint sdr_offset, jint quality, jfloat custom_distance, jint custom_quality,
-                                                               jint avif_depth, jboolean downsize_gain_map, jbyteArray jExif, jint source_bits) try {
+                                                               jint avif_depth, jboolean downsize_gain_map, jbyteArray jExif, jint source_bits, jboolean jxl_scrgb) try {
     std::vector<uint8_t> exif;
     if (jExif) {
         const jsize size = env->GetArrayLength(jExif);
@@ -1816,6 +1821,7 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_encodeNativeStillExport(JNIEnv* env, jc
                                       downsize_gain_map == JNI_TRUE);
     encode_quality.exif = exif.data();
     encode_quality.exif_size = exif.size();
+    encode_quality.jxl_scrgb = jxl_scrgb == JNI_TRUE;
     encode_quality.source_bits = source_bits > 0 && source_bits <= 32 ? unsigned(source_bits) : 32;
     if (avif_depth != 10 && avif_depth != 12) return -52;
     if (!jPixels || !jOut || width <= 0 || height <= 0 || sdr_offset < 0 || quality < 0 || quality > 4 ||
@@ -1859,7 +1865,7 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_encodeStillExport(JNIEnv* env, jclass, 
                                                            jint width, jint height, jboolean f16,
                                                            jint gamut, jint mode,
                                                            jboolean premultiplied, jstring jOut, jint sdr_offset,
-                                                           jint quality, jfloat custom_distance, jint custom_quality, jint avif_depth, jboolean downsize_gain_map, jbyteArray jExif, jint source_bits) {
+                                                           jint quality, jfloat custom_distance, jint custom_quality, jint avif_depth, jboolean downsize_gain_map, jbyteArray jExif, jint source_bits, jboolean jxl_scrgb) {
     std::vector<uint8_t> exif;
     if (jExif) {
         const jsize size = env->GetArrayLength(jExif);
@@ -1872,6 +1878,7 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_encodeStillExport(JNIEnv* env, jclass, 
                                       downsize_gain_map == JNI_TRUE);
     encode_quality.exif = exif.data();
     encode_quality.exif_size = exif.size();
+    encode_quality.jxl_scrgb = jxl_scrgb == JNI_TRUE;
     encode_quality.source_bits = source_bits > 0 && source_bits <= 32 ? unsigned(source_bits) : 32;
     if (avif_depth != 10 && avif_depth != 12) return -52;
     if (!jPixels || !jOut || width <= 0 || height <= 0 || sdr_offset < 0 || quality < 0 || quality > 4 ||

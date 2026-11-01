@@ -262,6 +262,7 @@ external fun encodeStillExport(
     customDownsizeGainMap: Boolean = false,
     exif: ByteArray? = null,
     sourceBitDepth: Int = 32,
+    jxlScRgb: Boolean = false,
 ): Int
 
 /** Owned pixels: 0 RGBA8, 1/2 linear F16/F32 (203 nits), 3/4 source scRGB F16/F32 (80 nits). */
@@ -282,6 +283,7 @@ internal external fun encodeNativeStillExport(
     customDownsizeGainMap: Boolean = false,
     exif: ByteArray? = null,
     sourceBitDepth: Int = 32,
+    jxlScRgb: Boolean = false,
 ): Int
 
 /** Header-only size probe. Kind: 0 JXL, 1 JXR, 2 RAW; packed width/height, or 0. */

@@ -113,7 +113,7 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_linearizeHeifIcc(JNIEnv*, jclass, jbyte
 
 extern "C" JNIEXPORT jint JNICALL
 Java_com_hippo_ehviewer_jni_HdrConvertKt_encodeStillExport(JNIEnv*, jclass, jbyteArray, jint, jint,
-                                                           jboolean, jint, jint, jboolean, jstring, jint, jint, jfloat, jint, jint, jboolean, jbyteArray, jint) {
+                                                           jboolean, jint, jint, jboolean, jstring, jint, jint, jfloat, jint, jint, jboolean, jbyteArray, jint, jboolean) {
     return kUnsupportedAbi;
 }
 
@@ -129,7 +129,7 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_probeStillExportSize(JNIEnv*, jclass, j
 
 extern "C" JNIEXPORT jint JNICALL
 Java_com_hippo_ehviewer_jni_HdrConvertKt_encodeNativeStillExport(JNIEnv*, jclass, jobject, jint, jint,
-                                                             jint, jint, jint, jboolean, jstring, jint, jint, jfloat, jint, jint, jboolean, jbyteArray, jint) {
+                                                             jint, jint, jint, jboolean, jstring, jint, jint, jfloat, jint, jint, jboolean, jbyteArray, jint, jboolean) {
     return kUnsupportedAbi;
 }
 

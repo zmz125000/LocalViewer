@@ -195,6 +195,7 @@ int decode_jxl_to_linear(const uint8_t* data, size_t len, std::vector<Sample>& o
                              bool* out_force_hdr = nullptr, int* out_transfer_cicp = nullptr,
                              bool composite_alpha_on_black = true, unsigned thumbnail_edge = 0,
                              bool export_bt2020 = false, std::vector<uint8_t>* out_exif = nullptr, int* out_source_depth = nullptr, DecodedImageInfo* source = nullptr) {
+    const bool preserve_extended = export_pixels_preserve_scrgb();
     if (out_source_depth) *out_source_depth = 0;
     if (out_exif) out_exif->clear();
     if (out_cg) *out_cg = UHDR_CG_BT_709;
@@ -380,16 +381,6 @@ int decode_jxl_to_linear(const uint8_t* data, size_t len, std::vector<Sample>& o
         return -13;
     }
 
-    // Floating-point linear sRGB can carry WCG through signed RGB, just like
-    // scRGB JXR. Convert before converted_sample clips negative channels. JXL's
-    // own intensity_target remains authoritative; only explicitly tagged scRGB uses 80 nits.
-    const bool to_bt2020 = export_bt2020 && info.exponent_bits_per_sample > 0 &&
-        cg == UHDR_CG_BT_709 && have_src && is_linear_working_encoding(src_encoding, cg);
-    if (to_bt2020) {
-        cg = UHDR_CG_BT_2100;
-        if (out_cg) *out_cg = cg;
-    }
-
     // BasicInfo.intensity_target: libjxl default for SDR is **255** nits — NOT HDR.
     const float intensity = info.intensity_target;
     const bool intensity_hdr = std::isfinite(intensity) && intensity >= 400.f;
@@ -397,6 +388,19 @@ int decode_jxl_to_linear(const uint8_t* data, size_t len, std::vector<Sample>& o
         src_encoding.color_space == JXL_COLOR_SPACE_RGB && src_encoding.white_point == JXL_WHITE_POINT_D65 &&
         src_encoding.primaries == JXL_PRIMARIES_SRGB && src_encoding.transfer_function == JXL_TRANSFER_FUNCTION_LINEAR;
     if (source) source->scrgb = scrgb;
+
+    // Floating-point linear sRGB can carry WCG through signed RGB, just like
+    // scRGB JXR. Convert before converted_sample clips negative channels. JXL's
+    // own intensity_target remains authoritative; only explicitly tagged scRGB uses 80 nits.
+    // For display, recover WCG from signed scRGB before the F16 pack bounds RGB.
+    const bool to_bt2020 = (export_bt2020 || (scrgb && !export_pixels_capture())) &&
+        info.exponent_bits_per_sample > 0 &&
+        cg == UHDR_CG_BT_709 && have_src && is_linear_working_encoding(src_encoding, cg);
+    if (to_bt2020) {
+        cg = UHDR_CG_BT_2100;
+        if (out_cg) *out_cg = cg;
+    }
+
     const bool declared_hdr = is_pq || is_hlg || intensity_hdr || scrgb;
     if (out_force_hdr) *out_force_hdr = declared_hdr;
     if (out_transfer_cicp) {
@@ -445,8 +449,8 @@ int decode_jxl_to_linear(const uint8_t* data, size_t len, std::vector<Sample>& o
             a = 1.f;
         }
 
-        auto clamp_hf = [](float v) {
-            return sanitize_working<Sample>(v);
+        auto clamp_hf = [&](float v) {
+            return sanitize_working<Sample>(v, preserve_extended);
         };
         rl = clamp_hf(rl);
         gl = clamp_hf(gl);

@@ -15,9 +15,12 @@ internal class StillExportQuality(
     val extendedSrgbBt2020: Boolean = true,
     val keepExif: Boolean = false,
     float32: Boolean = false,
+    val jxlScRgb: Boolean = false,
 ) : AbstractCoroutineContextElement(Key) {
     /** Custom-only; captured with the job so later setting changes cannot change its buffers. */
     val float32Processing = value == 4 && float32
+
+    fun usesScRgb(target: StillExportTarget): Boolean = jxlScRgb && target == StillExportTarget.JxlHdr
 
     companion object Key : CoroutineContext.Key<StillExportQuality> {
         fun current() = StillExportQuality(
@@ -30,6 +33,7 @@ internal class StillExportQuality(
             Settings.imageConversionExtendedSrgbBt2020.value,
             Settings.imageConversionKeepExif.value,
             Settings.imageConversionFloat32.value,
+            Settings.imageConversionJxlScRgb.value,
         )
     }
 }

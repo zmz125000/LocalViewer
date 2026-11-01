@@ -126,7 +126,7 @@ internal object StillExportWork {
         val sourceBytes = file.length()
         val quality = currentCoroutineContext()[StillExportQuality] ?: StillExportQuality.current()
         // JXL already decodes to F32; retaining that buffer avoids the extra F16 copy.
-        val preservingJxr = kind == 1 && !quality.extendedSrgbBt2020 &&
+        val preservingJxr = kind == 1 && (!quality.extendedSrgbBt2020 || quality.usesScRgb(target)) &&
             (target == StillExportTarget.Jxl || target == StillExportTarget.JxlHdr)
         val floatPixels = ext == "jxl" || preservingJxr || quality.float32Processing && (raw || kind == 1 || ext == "avif")
         // Codec working buffers live on the native heap, not inside the JVM's

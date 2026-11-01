@@ -15,6 +15,7 @@ struct StillEncodeQuality {
     // Borrowed TIFF EXIF for this synchronous encode; never owns image pixels.
     const uint8_t* exif = nullptr;
     size_t exif_size = 0;
+    bool jxl_scrgb = false;
     unsigned source_bits = 32; // Source precision, independent of working-buffer storage.
     int preset;
     float custom_distance;
