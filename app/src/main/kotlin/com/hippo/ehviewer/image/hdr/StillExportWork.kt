@@ -6,6 +6,7 @@ import com.hippo.ehviewer.jni.probeStillExportSize
 import com.hippo.ehviewer.util.OSUtils
 import java.io.File
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.sync.Mutex
@@ -54,11 +55,10 @@ internal class ExportMemoryBudget(private val capacity: Long) {
 
 internal fun exportWorkingBytes(width: Long, height: Long, sourceBytes: Long, raw: Boolean, floatPixels: Boolean = false): Long {
     if (width <= 0 || height <= 0 || width > 65536 || height > 65536) return Long.MAX_VALUE
-    // Linear exports may retain F32 RGBA through encode; RAW also retains its
-    // F32 camera-look base, sensor and demosaic buffers. Include codec scratch.
+    // Account for selected working precision, RAW's paired SDR base and codec scratch.
     return width * height * (
         if (raw) {
-            160
+            if (floatPixels) 160 else 136
         } else if (floatPixels) {
             112
         } else {
@@ -124,10 +124,13 @@ internal object StillExportWork {
         val width = size ushr 32
         val height = size and 0xffffffffL
         val sourceBytes = file.length()
+        val quality = currentCoroutineContext()[StillExportQuality] ?: StillExportQuality.current()
+        // JXL already decodes to F32; retaining that buffer avoids the extra F16 copy.
+        val floatPixels = ext == "jxl" || quality.float32Processing && (raw || kind == 1 || ext == "avif")
         // Codec working buffers live on the native heap, not inside the JVM's
         // maxMemory allowance. Keep both leases through encode, with separate limits.
         return heapBudget.withBytes(exportHeapBytes(width, height, sourceBytes, raw, nativePixels = true, mappedInput = true)) {
-            nativeBudget.withBytes(exportWorkingBytes(width, height, sourceBytes, raw, floatPixels = kind >= 0 || ext == "avif"), work)
+            nativeBudget.withBytes(exportWorkingBytes(width, height, sourceBytes, raw, floatPixels = floatPixels), work)
         }
     }
 }

@@ -95,7 +95,7 @@ data class DirectPixels(
     val gamut: Int,
     /** Platform bitmap exports retain associated alpha; native export packs are straight. */
     val premultiplied: Boolean,
-    /** Optional paired SDR plane: linear F32 after F32 HDR, otherwise encoded RGBA8 after F16. */
+    /** Optional paired SDR plane: linear F32 after F32 HDR, otherwise encoded RGBA16 after F16. */
     val sdrOffset: Int = 0,
     /** Valid only during the synchronous export callback; never escapes its native capture. */
     val nativePixels: ByteBuffer? = null,
@@ -219,7 +219,7 @@ object LibDirectDecode {
         var handle = 0L
         try {
             val pixels = heavyDecodeGate.run(parallel) {
-                handle = beginNativeExportPixels(target.needsSdrBase())
+                handle = beginNativeExportPixels(target.needsSdrBase(), quality.float32Processing)
                 var nativePixels: ByteBuffer? = null
                 val packed = try {
                     decodePacked(src, fileNameHint, maxEdge, request)

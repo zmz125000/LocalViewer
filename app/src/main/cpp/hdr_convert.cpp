@@ -1680,7 +1680,7 @@ int encode_still_export(const uint8_t* src, size_t src_len, unsigned w, unsigned
     const size_t pixels = static_cast<size_t>(w) * static_cast<size_t>(h);
     const size_t bpp = f16 ? 8u : 4u;
     if (pixels == 0 || pixels > 80000000u || src_len < pixels * bpp) return -51;
-    if (sdr_offset && (!f16 || sdr_offset != pixels * 8u || sdr_offset > src_len || pixels * 4u > src_len - sdr_offset)) return -51;
+    if (sdr_offset && (!f16 || sdr_offset != pixels * 8u || sdr_offset > src_len || pixels * 8u > src_len - sdr_offset)) return -51;
     const uhdr_color_gamut_t cg = export_gamut(gamut);
     if (f16) {
         std::vector<uint16_t> rgba_storage;
@@ -1693,7 +1693,7 @@ int encode_still_export(const uint8_t* src, size_t src_len, unsigned w, unsigned
         if (premultiplied) unpremultiply_f16(rgba, pixels);
         if (mode >= kExportAvif && mode <= kExportAvifGainMap) {
             return encode_avif_f16(w, h, rgba, cg, mode - kExportAvif, out_path, quality,
-                                   sdr_offset ? src + sdr_offset : nullptr);
+                                   sdr_offset ? reinterpret_cast<const uint16_t*>(src + sdr_offset) : nullptr);
         }
         if (mode == kExportJpegHdr) {
             bool transparent = false;
@@ -1706,8 +1706,20 @@ int encode_still_export(const uint8_t* src, size_t src_len, unsigned w, unsigned
                     rgba[4*i+3] = 0x3c00;
                 }
             }
+            // JPEG's base is inherently 8-bit; retain the paired RAW render at
+            // 16-bit until this codec boundary. AVIF consumes it directly above.
+            std::vector<uint8_t> base(sdr_offset ? pixels*4 : 0);
+            if (sdr_offset) {
+                const auto* source_base = reinterpret_cast<const uint16_t*>(src + sdr_offset);
+                hdr_parallel_pixels(pixels, hdr_pixel_jobs(pixels), [&](size_t begin, size_t end, unsigned) {
+                    for (size_t i = begin; i < end; ++i) {
+                        for (unsigned c = 0; c < 3; ++c) base[i*4+c] = static_cast<uint8_t>((source_base[i*4+c]*255u+32767u)/65535u);
+                        base[i*4+3] = 255;
+                    }
+                });
+            }
             return encode_linear_rgba_f16_to_uhdr(w, h, rgba, out_path, cg, 0.f, true,
-                                                  sdr_offset ? src + sdr_offset : nullptr, quality);
+                                                  sdr_offset ? base.data() : nullptr, quality);
         }
         if (mode == kExportJxl || mode == kExportJxlHdr || mode == kExportJxlPq) {
             return encode_jxl_f16(w, h, rgba, cg, mode != kExportJxl, out_path, quality, mode == kExportJxlPq);
@@ -2117,7 +2129,7 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeJxrBytesToDirect(JNIEnv* env, jcl
     jbyte* bytes = env->GetByteArrayElements(jInput, nullptr);
     if (!bytes) return nullptr;
 
-    if (export_pixels_capture() && maxEdge <= 0) {
+    if (export_pixels_float32() && maxEdge <= 0) {
         std::vector<float> linear;
         unsigned w = 0, h = 0;
         bool untagged = false;
@@ -2185,7 +2197,7 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeJxrBufferToDirect(JNIEnv* env, jc
     const auto* bytes = static_cast<const uint8_t*>(env->GetDirectBufferAddress(jInput));
     if (!bytes || len <= 0) return nullptr;
 
-    if (export_pixels_capture() && maxEdge <= 0) {
+    if (export_pixels_float32() && maxEdge <= 0) {
         std::vector<float> linear;
         unsigned w = 0, h = 0;
         bool untagged = false;

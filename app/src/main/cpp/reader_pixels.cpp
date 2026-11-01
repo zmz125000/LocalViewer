@@ -19,6 +19,7 @@ struct ReaderPixels {
     ReaderPixels* previous = nullptr;
     bool exporting = false;
     bool keep_sdr = true;
+    bool float32 = false;
     void* owned = nullptr;
     size_t owned_size = 0;
     void drop_owned() { free(owned); owned = nullptr; owned_size = 0; }
@@ -63,6 +64,7 @@ bool retain_reader_pixels(std::vector<float>& pixels) {
     return true;
 }
 
+bool export_pixels_float32() { return active && active->exporting && active->float32; }
 bool export_pixels_capture() { return active && active->exporting; }
 bool export_pixels_keep_sdr() { return !active || !active->exporting || active->keep_sdr; }
 
@@ -106,7 +108,7 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_captureStillBitmap(JNIEnv* env, jclass,
 }
 
 extern "C" JNIEXPORT jlong JNICALL
-Java_com_hippo_ehviewer_jni_HdrConvertKt_beginNativeExportPixels(JNIEnv* env, jclass, jboolean keep_sdr) {
+Java_com_hippo_ehviewer_jni_HdrConvertKt_beginNativeExportPixels(JNIEnv* env, jclass, jboolean keep_sdr, jboolean float32) {
     auto* pixels = new (std::nothrow) ReaderPixels;
     if (!pixels) {
         env->ThrowNew(env->FindClass("java/lang/OutOfMemoryError"), "Native export pixels");
@@ -115,6 +117,7 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_beginNativeExportPixels(JNIEnv* env, jc
     pixels->previous = active;
     pixels->exporting = true;
     pixels->keep_sdr = keep_sdr == JNI_TRUE;
+    pixels->float32 = float32 == JNI_TRUE;
     active = pixels;
     return reinterpret_cast<jlong>(pixels);
 }

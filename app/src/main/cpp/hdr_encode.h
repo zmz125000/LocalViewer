@@ -345,11 +345,11 @@ int encode_jxl_u8(unsigned w, unsigned h, const uint8_t* rgba, uhdr_color_gamut_
                   const char* path, StillEncodeQuality quality = 1);
 
 /** AVIF: mode 0 SDR, 1 PQ, 2 ISO 21496-1 SDR base + HDR gain map.
- * F16 is linear, straight alpha, with 1.0 = 203 nits; sdr_base is optional RGBA8.
+ * F16 is linear, straight alpha, with 1.0 = 203 nits; sdr_base is optional sRGB-encoded RGBA16.
  * Deep sources use 12 bits for Lossless/High, 10 for Mid/Low, or the custom depth, with 4:4:4 sampling.
  */
 int encode_avif_f16(unsigned w, unsigned h, uint16_t* rgba, uhdr_color_gamut_t cg,
-                    int mode, const char* path, StillEncodeQuality quality, const uint8_t* sdr_base = nullptr);
+                    int mode, const char* path, StillEncodeQuality quality, const uint16_t* sdr_base = nullptr);
 int encode_avif_u8(unsigned w, unsigned h, const uint8_t* rgba, uhdr_color_gamut_t cg,
                    const char* path, StillEncodeQuality quality);
 

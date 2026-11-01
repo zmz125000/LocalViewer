@@ -450,7 +450,7 @@ bool pack_image(const libraw_processed_image_t* img, int max_edge, int present, 
     int dw = 0;
     int dh = 0;
     dst_size(sw, sh, max_edge, dw, dh);
-    const bool float_output = deep && max_edge == 0 && export_pixels_capture();
+    const bool float_output = deep && max_edge == 0 && export_pixels_float32();
     const size_t bytes = static_cast<size_t>(dw) * static_cast<size_t>(dh) * (deep ? 8u : 4u);
     if (bytes == 0 || bytes > 400u * 1024u * 1024u) return false;
 
@@ -476,9 +476,10 @@ bool pack_image(const libraw_processed_image_t* img, int max_edge, int present, 
         base_at_anchor = look && !linear_hdr ? rawlook::tone_map(*look, anchor) : anchor;
     }
 
-    // Export keeps both renders linear F32. Only JPEG quantizes the SDR base to 8-bit.
+    // Export SDR base is encoded RGBA16 alongside F16 HDR, or linear F32 alongside F32 HDR.
+    // Both retain gradients until the final AVIF/JPEG quantization.
     const bool keep_sdr = present >= 3 && export_pixels_keep_sdr();
-    const size_t sdr_bytes = keep_sdr ? static_cast<size_t>(dw) * dh * 4u : 0u;
+    const size_t sdr_bytes = keep_sdr ? static_cast<size_t>(dw) * dh * 8u : 0u;
     if (float_output) out.linear.resize(size_t(dw)*dh*4*(keep_sdr ? 2 : 1));
     else out.pixels.assign(bytes + sdr_bytes, 0);
     out.w = dw;
@@ -534,14 +535,18 @@ bool pack_image(const libraw_processed_image_t* img, int max_edge, int present, 
                     if (keep_sdr) {
                         float base[3] = {rgb[0], rgb[1], rgb[2]};
                         apply_raw_zones(base[0], base[1], base[2], shadows, midtones, highlights);
-                        const size_t sdr = bytes + (static_cast<size_t>(y) * dw + x) * 4u;
+                        const size_t sdr = bytes + (static_cast<size_t>(y) * dw + x) * 8u;
                         if (float_output) {
                             const size_t base_pixel = size_t(dw)*dh*4 + (size_t(y)*dw+x)*4;
                             for (int c = 0; c < 3; ++c) out.linear[base_pixel+c] = base[c];
                             out.linear[base_pixel+3] = 1.f;
                         } else {
-                            for (int c = 0; c < 3; ++c) out.pixels[sdr+c] = static_cast<uint8_t>(std::lround(rawlook::srgb_encode(base[c])*255.f));
-                            out.pixels[sdr+3] = 255;
+                            for (int c = 0; c < 3; ++c) {
+                                const uint16_t code = static_cast<uint16_t>(std::lround(rawlook::srgb_encode(base[c])*65535.f));
+                                out.pixels[sdr+c*2] = static_cast<uint8_t>(code & 255);
+                                out.pixels[sdr+c*2+1] = static_cast<uint8_t>(code >> 8);
+                            }
+                            out.pixels[sdr+6] = out.pixels[sdr+7] = 255;
                         }
                     }
                     if (hdr && look && !linear_hdr && hdr_shoulder > 0.f) {

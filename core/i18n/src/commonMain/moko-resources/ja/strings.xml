@@ -136,6 +136,8 @@
     <string name="image_conversion_jxl_jpeg_transcoding_summary">JPEG から JPEG XL への変換時に、距離設定に関係なく元の JPEG データを保持します。</string>
     <string name="image_conversion_jxl_distance">JPEG XL 距離</string>
     <string name="image_conversion_jxl_distance_summary">距離が小さいほど高画質です。0 は可逆圧縮です。</string>
+    <string name="image_conversion_float32">Float32 変換処理 (安全でない)</string>
+    <string name="image_conversion_float32_summary">必要に応じて高精度の作業バッファを使用します。RAM 使用量が増えます。</string>
     <string name="image_conversion_custom_codec_quality">JPEG / AVIF 画質</string>
     <string name="image_conversion_avif_12_bit">12ビット AVIF</string>
     <string name="image_conversion_avif_12_bit_summary">高ビット深度の入力を10ビットではなく12ビットで出力します。8ビット出力は変更しません。</string>

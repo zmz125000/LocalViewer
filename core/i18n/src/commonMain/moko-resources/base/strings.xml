@@ -148,6 +148,8 @@
     <string name="image_conversion_jxl_jpeg_transcoding_summary">Preserve original JPEG data when converting JPEG to JPEG XL, regardless of distance.</string>
     <string name="image_conversion_jxl_distance">JPEG XL distance</string>
     <string name="image_conversion_jxl_distance_summary">Lower distance means higher quality; 0 is lossless.</string>
+    <string name="image_conversion_float32">Float32 processing (unsafe)</string>
+    <string name="image_conversion_float32_summary">Use higher-precision working buffers where needed. Uses more RAM.</string>
     <string name="image_conversion_custom_codec_quality">JPEG / AVIF quality</string>
     <string name="image_conversion_avif_12_bit">12-bit AVIF</string>
     <string name="image_conversion_avif_12_bit_summary">Use 12-bit instead of 10-bit for high-depth sources. 8-bit output stays unchanged.</string>

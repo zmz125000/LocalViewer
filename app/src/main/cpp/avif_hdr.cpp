@@ -1033,7 +1033,7 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeAvifBufferToDirect(JNIEnv* env, j
     const auto* bytes = static_cast<const uint8_t*>(env->GetDirectBufferAddress(jInput));
     if (!bytes || len <= 0) return nullptr;
 
-    if (export_pixels_capture() && maxEdge <= 0) {
+    if (export_pixels_float32() && maxEdge <= 0) {
         std::vector<float> rgba;
         std::vector<uint8_t> exif;
         unsigned w = 0, h = 0;

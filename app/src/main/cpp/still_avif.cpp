@@ -100,7 +100,7 @@ int encode_avif_u8(unsigned w, unsigned h, const uint8_t* rgba, uhdr_color_gamut
 }
 
 int encode_avif_f16(unsigned w, unsigned h, uint16_t* rgba, uhdr_color_gamut_t gamut,
-                    int mode, const char* path, StillEncodeQuality quality, const uint8_t* sdr_base) {
+                    int mode, const char* path, StillEncodeQuality quality, const uint16_t* sdr_base) {
     if (!rgba || !path || !w || !h || mode < 0 || mode > 2) return -70;
     const size_t pixels = static_cast<size_t>(w) * h;
     const bool pq = mode == 1;
@@ -140,7 +140,7 @@ int encode_avif_f16(unsigned w, unsigned h, uint16_t* rgba, uhdr_color_gamut_t g
             for (unsigned c = 0; c < 3; ++c) {
                 const auto code = rgba[i * 4 + c];
                 encoded[i * 4 + c] = gain_map && sdr_base ?
-                    static_cast<uint16_t>((sdr_base[i * 4 + c] * maximum + 127u) / 255u) : codes[code];
+                    static_cast<uint16_t>((sdr_base[i * 4 + c] * maximum + 32767u) / 65535u) : codes[code];
                 rgba[i * 4 + c] = sanitized[code];
                 luminance[c] = half_to_float(rgba[i * 4 + c]);
                 peak = std::max(peak, luminance[c]);
