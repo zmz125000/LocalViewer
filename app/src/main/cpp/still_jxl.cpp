@@ -137,6 +137,48 @@ static int encode_jxl_pixels(unsigned w, unsigned h, const void* rgba, uhdr_colo
     return write_jxl_output(encoder.get(), path);
 }
 
+// Processed SDR still uses integer output. Color management may require a
+// floating-point working buffer, but that does not make the source float data.
+template<class Sample>
+static int encode_jxl_sdr(unsigned w, unsigned h, Sample* rgba, uhdr_color_gamut_t cg,
+                           const char* path, StillEncodeQuality quality) {
+    const size_t pixels = size_t(w) * h;
+    const bool deep = quality.source_bits > 8;
+    const auto& half_curve = half_srgb_table();
+    std::vector<uint8_t> bytes(deep ? 0 : pixels * 4);
+    std::vector<uint16_t> integers;
+    uint16_t* words = nullptr;
+    if (deep) {
+        if constexpr (std::is_same_v<Sample, uint16_t>) words = rgba;
+        else { integers.resize(pixels * 4); words = integers.data(); }
+    }
+    const float maximum = deep ? 65535.f : 255.f;
+    hdr_parallel_pixels(pixels, hdr_pixel_jobs(pixels), [&](size_t begin, size_t end, unsigned) {
+        for (size_t i = begin; i < end; ++i) {
+            for (unsigned c = 0; c < 4; ++c) {
+                float code;
+                if (c == 3) {
+                    code = read_working(rgba[i*4+c]);
+                    code = std::isfinite(code) ? std::clamp(code, 0.f, 1.f) : 0.f;
+                } else {
+                    if constexpr (std::is_same_v<Sample, uint16_t>) code = half_curve[rgba[i*4+c]];
+                    else code = srgb_oetf(rgba[i*4+c]);
+                }
+                const auto value = static_cast<uint16_t>(std::lround(code * maximum));
+                if (deep) words[i*4+c] = value;
+                else bytes[i*4+c] = static_cast<uint8_t>(value);
+            }
+        }
+    });
+    StillSourceColor color;
+    color.bits = deep ? 16 : 8;
+    color.primaries = cg == UHDR_CG_BT_2100 ? 9 : cg == UHDR_CG_DISPLAY_P3 ? 12 : 1;
+    color.transfer = 13;
+    color.intensity_target = kSdrWhiteNits;
+    return encode_jxl_source(w, h, deep ? static_cast<const void*>(words) : bytes.data(),
+                             deep, color, path, quality);
+}
+
 // Match JXRConverter: retain signed/extended RGB and straight alpha. Working
 // linear pixels use 203 nits per unit; scRGB uses 80 nits and BT.709 primaries.
 // Mutate the owned export buffer, avoiding another full-resolution frame.
@@ -173,6 +215,7 @@ int encode_jxl_f16(unsigned w, unsigned h, uint16_t* rgba, uhdr_color_gamut_t cg
                    bool hdr, const char* path, StillEncodeQuality quality, bool pq) {
     const size_t pixels = static_cast<size_t>(w) * h;
     if (!rgba || !path || !pixels) return -60;
+    if (!hdr && !pq) return encode_jxl_sdr(w, h, rgba, cg, path, quality);
     if (hdr && !pq && quality.jxl_scrgb) return encode_jxl_scrgb(w, h, rgba, cg, path, quality);
     float peak = pq ? kMaxLinear : 1.f;
     if (hdr && !pq) {
@@ -296,6 +339,7 @@ int encode_jxl_f32(unsigned w,unsigned h,float* rgba,uhdr_color_gamut_t cg,
                    bool hdr,const char* path,StillEncodeQuality quality,bool pq) {
     const size_t pixels=static_cast<size_t>(w)*h;
     if(!rgba||!path||!pixels)return -60;
+    if (!hdr && !pq) return encode_jxl_sdr(w, h, rgba, cg, path, quality);
     if (hdr && !pq && quality.jxl_scrgb) return encode_jxl_scrgb(w, h, rgba, cg, path, quality);
     float peak=pq?kMaxLinear:1.f;
     if(hdr&&!pq) {
