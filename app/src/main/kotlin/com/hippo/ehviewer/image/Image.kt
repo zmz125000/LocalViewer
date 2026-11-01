@@ -828,6 +828,15 @@ class Image private constructor(
             checkExtraneousAds: Boolean = false,
             forceOriginal: Boolean = false,
         ): Image {
+            if (Settings.readerAdvancedColor.value && Settings.readerPlatformHighDepth.value) {
+                try {
+                    LibDirectDecode.decodeHdrPng(src)?.let { return fromLibDirect(it, src) }
+                } catch (error: kotlinx.coroutines.CancellationException) {
+                    throw error
+                } catch (error: Exception) {
+                    Log.w("ReaderColor", "HDR PNG decode failed; using platform PNG decoder", error)
+                }
+            }
             val image = when (src) {
                 is PathSource -> {
                     // Pre-U GIF rewrite via mmap (platform animated decoder on U+ is fine).
