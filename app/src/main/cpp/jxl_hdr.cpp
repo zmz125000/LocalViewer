@@ -13,6 +13,7 @@
 #include "thumbnail_mapped_input.h"
 #include "still_exif_input.h"
 #include "decoded_exif.h"
+#include "decoded_image_info.h"
 
 #include <algorithm>
 #include <atomic>
@@ -193,7 +194,7 @@ int decode_jxl_to_linear(const uint8_t* data, size_t len, std::vector<Sample>& o
                              unsigned& w, unsigned& h, uhdr_color_gamut_t* out_cg,
                              bool* out_force_hdr = nullptr, int* out_transfer_cicp = nullptr,
                              bool composite_alpha_on_black = true, unsigned thumbnail_edge = 0,
-                             bool export_bt2020 = false, std::vector<uint8_t>* out_exif = nullptr, int* out_source_depth = nullptr) {
+                             bool export_bt2020 = false, std::vector<uint8_t>* out_exif = nullptr, int* out_source_depth = nullptr, DecodedImageInfo* source = nullptr) {
     if (out_source_depth) *out_source_depth = 0;
     if (out_exif) out_exif->clear();
     if (out_cg) *out_cg = UHDR_CG_BT_709;
@@ -283,7 +284,13 @@ int decode_jxl_to_linear(const uint8_t* data, size_t len, std::vector<Sample>& o
             if (out_source_depth) *out_source_depth = static_cast<int>(info.bits_per_sample);
             w = info.xsize;
             h = info.ysize;
-            if (w == 0 || h == 0 || w > 16384 || h > 16384) return -8;
+            if (source) {
+                source->width = jint(w);
+                source->height = jint(h);
+                source->depth = jint(info.bits_per_sample);
+            }
+            if (w == 0 || h == 0 || w > 16384 || h > 16384 ||
+                (std::is_same_v<Sample, float> && uint64_t(w) * h > 80000000)) return -8;
             JxlResizableParallelRunnerSetThreads(
                 runner.get(), std::min<size_t>(JxlResizableParallelRunnerSuggestThreads(w, h), hdr_pixel_jobs(static_cast<size_t>(w) * h)));
         } else if (status == JXL_DEC_COLOR_ENCODING) {
@@ -293,6 +300,18 @@ int decode_jxl_to_linear(const uint8_t* data, size_t len, std::vector<Sample>& o
             if (have_src) {
                 is_pq = src_encoding.transfer_function == JXL_TRANSFER_FUNCTION_PQ;
                 is_hlg = src_encoding.transfer_function == JXL_TRANSFER_FUNCTION_HLG;
+            }
+            if (source && have_src) {
+                source->primaries = src_encoding.primaries == JXL_PRIMARIES_SRGB ? 1 :
+                    src_encoding.primaries == JXL_PRIMARIES_2100 ? 9 :
+                    src_encoding.primaries == JXL_PRIMARIES_P3 ?
+                        (src_encoding.white_point == JXL_WHITE_POINT_DCI ? 11 :
+                         src_encoding.white_point == JXL_WHITE_POINT_D65 ? 12 : 0) : 0;
+                if (src_encoding.white_point != JXL_WHITE_POINT_D65 &&
+                    source->primaries != 11) source->primaries = 0;
+                // GAMMA is libjxl's sentinel, not a CICP transfer identifier.
+                source->transfer = src_encoding.transfer_function == JXL_TRANSFER_FUNCTION_GAMMA ?
+                    0 : jint(src_encoding.transfer_function);
             }
             JxlColorEncoding linear_output{};
             choose_linear_output(have_src ? &src_encoding : nullptr, have_src, is_pq, is_hlg,
@@ -663,11 +682,12 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeJxlBytesToDirect(JNIEnv* env, jcl
     bool force_hdr = false;
     int transfer_cicp = 0;
     int source_depth = 0;
+    DecodedImageInfo source;
     jbyteArray result = nullptr;
     int rc = decode_jxl_to_linear(reinterpret_cast<const uint8_t*>(bytes),
                                       static_cast<size_t>(len), rgba, w, h, &cg, &force_hdr,
                                       &transfer_cicp, /*composite_alpha_on_black=*/false, 0,
-                                      exportBt2020 == JNI_TRUE && export_pixels_capture(), jOutExif ? &exif : nullptr, &source_depth);
+                                      exportBt2020 == JNI_TRUE && export_pixels_capture(), jOutExif ? &exif : nullptr, &source_depth, &source);
     if (rc == 0) {
         publish_decoded_exif(env, jOutExif, exif, true);
         if (maxEdge > 0) {
@@ -676,6 +696,7 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeJxlBytesToDirect(JNIEnv* env, jcl
         result = pack_direct_to_jbyte_array(env, rgba, w, h, force_hdr, cg,
                                             advancedColor == JNI_TRUE, transfer_cicp, jOutInfo,
                                             jOutBoost);
+        if (result) source.publish(env, jOutInfo);
         if (result && env->GetArrayLength(jOutInfo) >= 7) {
             const jint depth = source_depth;
             env->SetIntArrayRegion(jOutInfo, 6, 1, &depth);
@@ -722,11 +743,12 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeJxlBufferToDirect(JNIEnv* env, jc
     bool force_hdr = false;
     int transfer_cicp = 0;
     int source_depth = 0;
+    DecodedImageInfo source;
     jbyteArray result = nullptr;
     int rc = decode_jxl_to_linear(reinterpret_cast<const uint8_t*>(bytes),
                                       static_cast<size_t>(len), rgba, w, h, &cg, &force_hdr,
                                       &transfer_cicp, /*composite_alpha_on_black=*/false, 0,
-                                      exportBt2020 == JNI_TRUE && export_pixels_capture(), jOutExif ? &exif : nullptr, &source_depth);
+                                      exportBt2020 == JNI_TRUE && export_pixels_capture(), jOutExif ? &exif : nullptr, &source_depth, &source);
     if (rc == 0) {
         publish_decoded_exif(env, jOutExif, exif, true);
         if (maxEdge > 0) {
@@ -735,6 +757,7 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeJxlBufferToDirect(JNIEnv* env, jc
         result = pack_direct_to_jbyte_array(env, rgba, w, h, force_hdr, cg,
                                             advancedColor == JNI_TRUE, transfer_cicp, jOutInfo,
                                             jOutBoost);
+        if (result) source.publish(env, jOutInfo);
         if (result && env->GetArrayLength(jOutInfo) >= 7) {
             const jint depth = source_depth;
             env->SetIntArrayRegion(jOutInfo, 6, 1, &depth);

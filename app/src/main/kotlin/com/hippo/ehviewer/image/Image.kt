@@ -881,7 +881,6 @@ class Image private constructor(
          * (no Coil / UHDR JPEG). Closes [src] when the image is retained.
          */
         fun fromLibDirect(result: LibDirectResult, src: ImageSource, attachHeifGainMap: Boolean = false): Image {
-            val decodedColorSpace = result.bitmap.colorSpace
             val shown = result.bitmap.presentForReader()
             var coil: CoilImage = shown.asImage()
             // Native ISO AVIF can now retain its base + Gainmap instead of a
@@ -906,18 +905,20 @@ class Image private constructor(
                 isWideGamutDirect = result.isWideGamutSource,
             ).also {
                 it.metadata = ImageMetadata(
-                    colorSpace = decodedColorSpace?.name,
-                    hdr = result.isHdrContent,
+                    width = result.sourceWidth,
+                    height = result.sourceHeight,
+                    bitDepth = result.sourceBitDepth,
+                    colorSpace = cicpColorSpaceName(result.sourcePrimaries, result.sourceTransfer),
+                    hdr = result.isHdrContent || result.sourceHasGainmap || result.sourceTransfer in listOf(16, 18),
                     transfer = if (result.sourceHasGainmap) {
                         ImageTransfer.GAIN_MAP
                     } else {
-                        ImageTransfer.fromCicp(result.sourceTransfer) ?: ImageTransfer.fromColorSpace(decodedColorSpace)
+                        ImageTransfer.fromCicp(result.sourceTransfer)
                     },
                     rawTransfer = if (result.sourceHasGainmap) {
                         "ISO 21496-1 gain map"
                     } else {
                         result.sourceTransfer.takeIf { code -> code != 0 }?.let { code -> "CICP transfer $code" }
-                            ?: decodedColorSpace.rawTransferDescription()
                     },
                 )
                 it.prepareToDraw()

@@ -153,23 +153,21 @@ internal fun BoxScope.ReaderScreenWidget(page: Page?, slideshow: Boolean, source
                     else -> it
                 }
             }
-            val colorInfo = colorSpace?.let { space ->
-                val dynamicRange = metadata.hdr?.let { if (it) "HDR" else "SDR" }
-                val transfer = if (useRawStrings) {
-                    metadata.rawTransfer ?: metadata.transfer?.name
-                } else {
-                    when (metadata.transfer) {
-                        ImageTransfer.PQ -> "PQ"
-                        ImageTransfer.HLG -> "HLG"
-                        ImageTransfer.SRGB -> "sRGB"
-                        ImageTransfer.LINEAR -> stringResource(R.string.slideshow_info_transfer_linear)
-                        ImageTransfer.GAIN_MAP -> stringResource(R.string.slideshow_info_transfer_gain_map)
-                        null -> null
-                    }
+            val dynamicRange = metadata.hdr?.let { if (it) "HDR" else "SDR" }
+            val transfer = if (useRawStrings) {
+                metadata.rawTransfer ?: metadata.transfer?.name
+            } else {
+                when (metadata.transfer) {
+                    ImageTransfer.PQ -> "PQ"
+                    ImageTransfer.HLG -> "HLG"
+                    ImageTransfer.SRGB -> "sRGB"
+                    ImageTransfer.LINEAR -> stringResource(R.string.slideshow_info_transfer_linear)
+                    ImageTransfer.GAIN_MAP -> stringResource(R.string.slideshow_info_transfer_gain_map)
+                    null -> null
                 }
-                listOfNotNull(space, dynamicRange, transfer).joinToString(" · ")
             }
-            colorInfo?.let { Text(it, style = style, fontSize = 16.sp, lineHeight = 22.sp) }
+            val colorInfo = listOfNotNull(colorSpace, dynamicRange, transfer).joinToString(" · ")
+            if (colorInfo.isNotEmpty()) Text(colorInfo, style = style, fontSize = 16.sp, lineHeight = 22.sp)
         }
         if (showFileName) {
             sourceName?.replace('\\', '/')?.substringAfterLast('/')?.takeIf { it.isNotBlank() }?.let {

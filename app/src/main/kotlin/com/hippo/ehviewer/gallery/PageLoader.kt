@@ -28,6 +28,7 @@ import com.hippo.ehviewer.image.hdr.DisplaySource
 import com.hippo.ehviewer.image.hdr.HdrConvertCache
 import com.hippo.ehviewer.image.hdr.LibCodec
 import com.hippo.ehviewer.image.hdr.LibDirectDecode
+import com.hippo.ehviewer.image.hdr.LibDirectResult
 import com.hippo.ehviewer.image.hdr.PlatformHeifDecode
 import com.hippo.ehviewer.image.hdr.StillRoute
 import com.hippo.ehviewer.image.hdr.classify
@@ -240,9 +241,17 @@ abstract class PageLoader(
 
     private suspend fun decodeOpened(index: Int, raw: ImageSource, forceOriginal: Boolean): Image {
         var metadata = ImageMetadata()
-        fun readSourceMetadata(decodedExif: ByteArray? = null, decodedSourceBitDepth: Int? = null) {
+        fun readSourceMetadata(decoded: LibDirectResult? = null) {
             metadata = runCatching {
-                raw.readMetadata(runCatching { getOriginalImageDate(index) }.getOrNull(), sourceLeafName(index), decodedExif, decodedSourceBitDepth)
+                raw.readMetadata(
+                    runCatching { getOriginalImageDate(index) }.getOrNull(),
+                    sourceLeafName(index),
+                    decoded?.sourceExif,
+                    decoded?.sourceBitDepth,
+                    decoded?.sourceWidth,
+                    decoded?.sourceHeight,
+                    decoded?.sourcePrimaries in listOf(1, 9, 11, 12),
+                )
             }.getOrDefault(ImageMetadata()).let { sourceMetadata ->
                 sourceMetadata.copy(fileSize = runCatching { getOriginalImageSize(index) }.getOrNull() ?: sourceMetadata.fileSize)
             }
@@ -273,16 +282,17 @@ abstract class PageLoader(
         val transfer = when {
             // A gain map describes HDR reconstruction; the base may still use sRGB.
             image.hasGainmap || metadata.transfer == ImageTransfer.GAIN_MAP || image.metadata.transfer == ImageTransfer.GAIN_MAP -> ImageTransfer.GAIN_MAP
-            metadata.transfer == ImageTransfer.PQ || metadata.transfer == ImageTransfer.HLG -> metadata.transfer
-            image.metadata.transfer == ImageTransfer.PQ || image.metadata.transfer == ImageTransfer.HLG -> image.metadata.transfer
-            else -> metadata.transfer ?: image.metadata.transfer
+            else -> image.metadata.transfer ?: metadata.transfer
         }
         image.metadata = metadata.copy(
-            colorSpace = firstKnownColorSpace(metadata.colorSpace, image.metadata.colorSpace, image.decodedColorSpace?.name),
+            width = image.metadata.width ?: metadata.width,
+            height = image.metadata.height ?: metadata.height,
+            bitDepth = image.metadata.bitDepth ?: metadata.bitDepth,
+            colorSpace = firstKnownColorSpace(image.metadata.colorSpace, metadata.colorSpace, image.decodedColorSpace?.name),
             hdr = if (image.isHdrContent) {
                 true
             } else {
-                metadata.hdr ?: image.metadata.hdr
+                image.metadata.hdr ?: metadata.hdr
                     ?: image.decodedColorSpace?.let { false }
             },
             transfer = transfer,
@@ -290,8 +300,8 @@ abstract class PageLoader(
                 transfer == ImageTransfer.GAIN_MAP -> metadata.rawTransfer.takeIf { metadata.transfer == ImageTransfer.GAIN_MAP }
                     ?: image.metadata.rawTransfer.takeIf { image.metadata.transfer == ImageTransfer.GAIN_MAP }
                     ?: "Gainmap"
-                transfer == metadata.transfer -> metadata.rawTransfer
                 transfer == image.metadata.transfer -> image.metadata.rawTransfer
+                transfer == metadata.transfer -> metadata.rawTransfer
                 else -> null
             },
         )
@@ -312,7 +322,7 @@ abstract class PageLoader(
         raw: ImageSource,
         forceOriginal: Boolean,
         hint: String,
-        readSourceMetadata: (ByteArray?, Int?) -> Unit,
+        readSourceMetadata: (LibDirectResult) -> Unit,
     ): Image? {
         val pathName = (raw as? PathSource)?.source?.name.orEmpty()
         val pageExt = getImageExtension(index)
@@ -353,7 +363,7 @@ abstract class PageLoader(
         }
         // Read from the still-open original before Image takes ownership/closes it.
         // Native JXL/AVIF have already collected EXIF while decoding.
-        readSourceMetadata(direct.sourceExif, direct.sourceBitDepth)
+        readSourceMetadata(direct)
         thumbSoftwareBitmapBeforeHardware(index, raw, direct.bitmap)
         return Image.fromLibDirect(direct, raw, attachHeifGainMap = hevcHdr && Settings.preferNativeHeifAvif.value).also {
             it.noteHiResPreview(Image.hiResPreviewCapEdge(forceOriginal) > 0)

@@ -62,7 +62,11 @@ internal object PlatformHeifDecode {
                     is ByteBufferSource -> ImageDecoder.createSource(src.source.asReadOnlyBuffer())
                     is PathSource -> ImageDecoder.createSource(appCtx.contentResolver, src.source.toUri())
                 }
+                var sourceWidth: Int? = null
+                var sourceHeight: Int? = null
                 val bitmap = ImageDecoder.decodeBitmap(source) { decoder, image, _ ->
+                    sourceWidth = image.size.width
+                    sourceHeight = image.size.height
                     decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
                     decoder.memorySizePolicy = ImageDecoder.MEMORY_POLICY_DEFAULT
                     decoder.setTargetColorSpace(ColorSpace.get(ColorSpace.Named.LINEAR_EXTENDED_SRGB))
@@ -85,6 +89,11 @@ internal object PlatformHeifDecode {
                     isHdrContent = false,
                     contentHdrBoost = 1f,
                     isWideGamutSource = true,
+                    sourceBitDepth = info.bitDepth,
+                    sourcePrimaries = info.primaries,
+                    sourceTransfer = info.transfer ?: 0,
+                    sourceWidth = sourceWidth,
+                    sourceHeight = sourceHeight,
                 )
             }.onFailure { Log.w("ReaderColor", "Platform high-depth decode failed; using native codec", it) }.getOrNull()
         }
