@@ -1132,3 +1132,33 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_probeAvifBufferHdrKind(JNIEnv* env, jcl
     }
     return result;
 }
+
+// PNG source samples are straight-alpha integer RGBA16, before Android premultiplication.
+static std::vector<uint16_t> png_hdr_linear_rgba(const uint16_t* codes, size_t count, int transfer) {
+    const auto& lut = avif_linear_lut(static_cast<avifTransferCharacteristics>(transfer));
+    std::vector<uint16_t> rgba(count * 4);
+    hdr_parallel_pixels(count, hdr_pixel_jobs(count), [&](size_t begin, size_t end, unsigned) {
+        for (size_t i = begin; i < end; ++i) {
+            for (unsigned c = 0; c < 3; ++c) rgba[i * 4 + c] = float_to_half(lut[codes[i * 4 + c]]);
+            rgba[i * 4 + 3] = float_to_half(codes[i * 4 + 3] / 65535.f);
+        }
+    });
+    return rgba;
+}
+
+// PNG cICP uses the same PQ/HLG transfer and RGB primaries as absolute-HDR AVIF.
+extern "C" JNIEXPORT jbyteArray JNICALL
+Java_com_hippo_ehviewer_jni_HdrConvertKt_decodePngRgbToDirect(
+        JNIEnv* env, jclass, jobject input, jint width, jint height, jint primaries,
+        jint transfer, jintArray out_info, jfloatArray out_boost) try {
+    if (!input || !out_info || !out_boost || env->GetArrayLength(out_info) < 6 || env->GetArrayLength(out_boost) < 1 ||
+        width <= 0 || height <= 0 || uint64_t(width) * height > 80000000 ||
+        (primaries != 1 && primaries != 9 && primaries != 12) || (transfer != 16 && transfer != 18)) return nullptr;
+    const auto* codes = static_cast<const uint16_t*>(env->GetDirectBufferAddress(input));
+    const size_t count = size_t(width) * height;
+    if (!codes || env->GetDirectBufferCapacity(input) < int64_t(count) * 8) return nullptr;
+    auto rgba = png_hdr_linear_rgba(codes, count, transfer);
+    const auto gamut = primaries == 9 ? UHDR_CG_BT_2100 : primaries == 12 ? UHDR_CG_DISPLAY_P3 : UHDR_CG_BT_709;
+    // The common packer premultiplies alpha exactly once and supplies HDR headroom.
+    return pack_direct_to_jbyte_array(env, rgba, width, height, true, gamut, true, transfer, out_info, out_boost);
+} catch (...) { return nullptr; }

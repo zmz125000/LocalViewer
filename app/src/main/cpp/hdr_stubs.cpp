@@ -243,3 +243,7 @@ extern "C" JNIEXPORT jint JNICALL
 Java_com_hippo_ehviewer_jni_HdrConvertKt_encodeSourceRgb(
     JNIEnv*,jclass,jobject,jint,jint,jint,jint,jint,jbyteArray,jint,jint,jstring,jint,jfloat,jint,jint,jboolean,jbyteArray,
     jobject,jint,jint,jboolean,jfloatArray,jintArray) { return -100; }
+
+extern "C" JNIEXPORT jbyteArray JNICALL
+Java_com_hippo_ehviewer_jni_HdrConvertKt_decodePngRgbToDirect(
+    JNIEnv*, jclass, jobject, jint, jint, jint, jint, jintArray, jfloatArray) { return nullptr; }

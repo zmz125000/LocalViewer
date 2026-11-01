@@ -21,3 +21,16 @@ target_include_directories(avif_hdr_benchmark PRIVATE include ${JNI_INCLUDE_DIRS
 target_compile_options(avif_hdr_benchmark PRIVATE -ffunction-sections -fdata-sections)
 target_link_options(avif_hdr_benchmark PRIVATE -Wl,--gc-sections)
 target_link_libraries(avif_hdr_benchmark PRIVATE avif pthread)
+
+# Optional PNG reader regression using the app's cached skcms headers.
+set(SKCMS_SOURCE_DIR "${AVIF_SOURCE_DIR}/../libjxl-src/third_party/skcms" CACHE PATH "skcms headers from the app native dependency cache")
+if(EXISTS "${SKCMS_SOURCE_DIR}/skcms.h")
+    target_include_directories(avif_hdr_benchmark PRIVATE "${SKCMS_SOURCE_DIR}")
+    add_executable(png_hdr_test png_hdr_test.cpp)
+    target_compile_features(png_hdr_test PRIVATE cxx_std_17)
+    target_include_directories(png_hdr_test PRIVATE include ${JNI_INCLUDE_DIRS} "${UHDR_SOURCE_DIR}"
+        "${AVIF_SOURCE_DIR}/include" "${SKCMS_SOURCE_DIR}")
+    target_compile_options(png_hdr_test PRIVATE -ffunction-sections -fdata-sections)
+    target_link_options(png_hdr_test PRIVATE -Wl,--gc-sections)
+    target_link_libraries(png_hdr_test PRIVATE pthread)
+endif()

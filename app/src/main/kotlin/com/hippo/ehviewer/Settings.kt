@@ -1113,7 +1113,9 @@ object Settings : DataStorePreferences(null) {
     val readerOppoProxdr = boolPref("pref_reader_oppo_proxdr", false)
 
     /**
-     * Platform high bit depth for **PNG/APNG** under [readerAdvancedColor].
+     * High bit depth for **PNG/APNG** under [readerAdvancedColor].
+     * Still PQ/HLG PNG cICP uses the native linear HDR pack with source primaries
+     * and content headroom; SDR PNG retains the platform F16 path. APNG stays animated.
      *
      * When on **and** advanced color is on: bypass Coil hardware-direct for high-depth
      * PNG → [BitmapFactory] preferred [Bitmap.Config.RGBA_F16] in linear extended sRGB,

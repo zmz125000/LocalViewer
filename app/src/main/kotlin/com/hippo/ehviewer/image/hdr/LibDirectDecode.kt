@@ -34,6 +34,7 @@ import com.hippo.ehviewer.jni.decodeJxlBufferToDirect
 import com.hippo.ehviewer.jni.decodeJxlBytesToDirect
 import com.hippo.ehviewer.jni.decodeJxrBufferToDirect
 import com.hippo.ehviewer.jni.decodeJxrBytesToDirect
+import com.hippo.ehviewer.jni.decodePngRgbToDirect
 import com.hippo.ehviewer.jni.decodeRawBufferToDirect
 import com.hippo.ehviewer.jni.decodeRawBytesToDirect
 import com.hippo.ehviewer.jni.decodeRawFdToDirect
@@ -809,6 +810,39 @@ object LibDirectDecode {
         val display = appCtx.getSystemService(DisplayManager::class.java)
             ?.getDisplay(Display.DEFAULT_DISPLAY)
         return HdrDisplayInfo.hdrCapabilityBoost(display)
+    }
+
+    /** Preserve PNG cICP instead of letting BitmapFactory treat HDR codes as SDR. */
+    internal suspend fun decodeHdrPng(src: ImageSource): LibDirectResult? = withContext(Dispatchers.IO) {
+        // 32-bit ABIs link the HDR JNI stub; avoid allocating PNG scratch before that fallback.
+        if (!android.os.Process.is64Bit()) return@withContext null
+        val signature = when (src) {
+            is ByteBufferSource -> src.source.slice()
+            is PathSource -> src.source.read {
+                val bytes = ByteArray(8)
+                val count = readAtMostTo(bytes)
+                ByteBuffer.wrap(bytes, 0, count.coerceAtLeast(0))
+            }
+        }
+        if (!PngHdrMetadata.isPng(signature)) return@withContext null
+        withHeavyDecode {
+            withStillInput(src) { input ->
+                val info = PngHdrMetadata.probe(input) ?: return@withStillInput null
+                pngSourcePixels(input, info.width, info.height)?.use { pixels ->
+                    val handle = beginNativeReaderPixels()
+                    try {
+                        val outInfo = IntArray(6)
+                        val boost = FloatArray(1)
+                        val packed = decodePngRgbToDirect(pixels.buffer, info.width, info.height, info.primaries, info.transfer, outInfo, boost)
+                        val nativePixels = endNativeReaderPixels(handle)
+                        if (packed == null) return@use null
+                        bitmapFromPacked(packed, outInfo, boost, nativePixels)?.copy(sourceBitDepth = info.depth)
+                    } finally {
+                        releaseNativeReaderPixels(handle)
+                    }
+                }
+            }
+        }
     }
 
     private fun bitmapFromPacked(
