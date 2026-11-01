@@ -2,6 +2,7 @@ package com.hippo.ehviewer.ui.main
 
 import android.content.Context
 import android.view.WindowManager
+import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -104,6 +105,7 @@ import kotlinx.coroutines.withContext
 import moe.tarsin.snackbar
 import okio.Path
 import okio.Path.Companion.toPath
+import splitties.init.appCtx
 
 /**
  * Live selection for the folder browser on screen.
@@ -610,6 +612,8 @@ object FolderSelectHost {
     private fun autoFinishEnabled(): Boolean = autoFinishForTest
         ?: runCatching { Settings.browseTaskAutoFinish.value }.getOrDefault(false)
 
+    private fun canAutoFinish(running: TaskBatch): Boolean = autoFinishEnabled() && running.jobs.all { it.status == TaskStatus.Done }
+
     internal fun currentParallelSlots(): Int {
         parallelSlotsForTest?.let { return it.coerceAtLeast(1) }
         val enabled = runCatching { Settings.browseTaskParallel.value }.getOrDefault(false)
@@ -970,9 +974,16 @@ object FolderSelectHost {
                     executeJobs(running, dir)
                     if (running.end != null) break
                     running.finishedRun = true
+                    val succeeded = running.jobs.count { it.status == TaskStatus.Done }
+                    val failed = running.jobs.count { it.status == TaskStatus.Failed }
+                    Toast.makeText(
+                        appCtx,
+                        appCtx.getString(R.string.browse_task_finished_summary, succeeded, running.jobs.size, failed),
+                        Toast.LENGTH_LONG,
+                    ).show()
                     syncTaskFgs()
                     when {
-                        autoFinishEnabled() -> {
+                        canAutoFinish(running) -> {
                             // Clear this selection; finishBatch starts any queued batch next.
                             running.end = BatchEnd.Done
                         }
@@ -1007,7 +1018,7 @@ object FolderSelectHost {
     private fun advanceFinishedBatch(running: TaskBatch, executeQueued: Boolean = true) {
         if (batch !== running || running.end != null) return
         running.finishedRun = true
-        running.end = if (autoFinishEnabled()) BatchEnd.Done else BatchEnd.Continue
+        running.end = if (canAutoFinish(running)) BatchEnd.Done else BatchEnd.Continue
         running.wake()
         // Finish here: the runner may be waiting on awaitSignal, or be a test Job() with
         // no collector. finishBatch is idempotent once [batch] moves on.

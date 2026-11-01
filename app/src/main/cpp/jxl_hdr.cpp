@@ -396,6 +396,7 @@ int decode_jxl_to_linear(const uint8_t* data, size_t len, std::vector<Sample>& o
     const bool scrgb = info.exponent_bits_per_sample > 0 && have_src && intensity == 80.f &&
         src_encoding.color_space == JXL_COLOR_SPACE_RGB && src_encoding.white_point == JXL_WHITE_POINT_D65 &&
         src_encoding.primaries == JXL_PRIMARIES_SRGB && src_encoding.transfer_function == JXL_TRANSFER_FUNCTION_LINEAR;
+    if (source) source->scrgb = scrgb;
     const bool declared_hdr = is_pq || is_hlg || intensity_hdr || scrgb;
     if (out_force_hdr) *out_force_hdr = declared_hdr;
     if (out_transfer_cicp) {

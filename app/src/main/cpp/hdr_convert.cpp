@@ -2219,7 +2219,8 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeJxrBytesToDirect(JNIEnv* env, jcl
     uhdr_color_gamut_t cg = UHDR_CG_BT_709;
     if (decode_jxr_from_memory(reinterpret_cast<const uint8_t*>(bytes), static_cast<size_t>(len),
                                rgba, w, h, /*composite_alpha_on_black=*/false, &untagged_linear, &cg, 0, &source_depth)) {
-        const DecodedImageInfo source{jint(w), jint(h), 0, untagged_linear ? 8 : 0, source_depth};
+        const DecodedImageInfo source{jint(w), jint(h), untagged_linear ? 1 : 0,
+                                      untagged_linear ? 8 : 0, source_depth, untagged_linear};
         if (maxEdge > 0) {
             scale_rgba_f16_max_edge(rgba, w, h, static_cast<unsigned>(maxEdge));
         }
@@ -2294,7 +2295,8 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeJxrBufferToDirect(JNIEnv* env, jc
     uhdr_color_gamut_t cg = UHDR_CG_BT_709;
     if (decode_jxr_from_memory(reinterpret_cast<const uint8_t*>(bytes), static_cast<size_t>(len),
                                rgba, w, h, /*composite_alpha_on_black=*/false, &untagged_linear, &cg, 0, &source_depth)) {
-        const DecodedImageInfo source{jint(w), jint(h), 0, untagged_linear ? 8 : 0, source_depth};
+        const DecodedImageInfo source{jint(w), jint(h), untagged_linear ? 1 : 0,
+                                      untagged_linear ? 8 : 0, source_depth, untagged_linear};
         if (maxEdge > 0) {
             scale_rgba_f16_max_edge(rgba, w, h, static_cast<unsigned>(maxEdge));
         }

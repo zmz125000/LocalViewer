@@ -1161,6 +1161,7 @@
     <string name="transfer_ready">開始待ち</string>
     <string name="transfer_paused">一時停止中</string>
     <string name="transfer_upload_stopped_summary">%1$d/%2$d/%3$d/%4$d ファイル転送済み。アップロードを停止しました。</string>
+    <string name="browse_task_finished_summary">タスク完了：%1$d/%2$d 件成功、%3$d 件失敗。</string>
     <string name="transfer_upload_finished_summary">%1$d/%2$d/%3$d/%4$d ファイルのアップロードが完了しました。</string>
     <string name="transfer_stopped">停止済み</string>
     <string name="transfer_skipped">スキップ済み</string>
@@ -1201,7 +1202,7 @@
     <string name="transfer_upload_action">アップロード先を選択…</string>
     <string name="settings_use_trash_bin">ゴミ箱を使用</string>
     <string name="settings_use_trash_bin_summary">フォルダとギャラリーは常に .trash に移動します。オフにするとファイルの完全削除を許可します。</string>
-    <string name="action_empty_trash">ゴミ箱を空にする</string>
+    <string name="action_empty_trash">ゴミ箱を削除</string>
     <string name="permanent_delete_confirm">%1$d 件を完全に削除しますか？この操作は元に戻せません。</string>
     <string name="empty_trash_confirm">この .trash フォルダとすべての内容を完全に削除しますか？この操作は元に戻せません。</string>
     <string name="permanent_delete_unsupported">この接続先またはサーバーは、この項目の削除に対応していません。</string>

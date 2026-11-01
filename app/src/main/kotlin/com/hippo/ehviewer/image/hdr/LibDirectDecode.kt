@@ -83,6 +83,8 @@ data class LibDirectResult(
     val sourceWidth: Int? = null,
     val sourceHeight: Int? = null,
     val sourcePrimaries: Int? = null,
+    /** Explicit floating-point linear sRGB with an 80-nit reference white. */
+    val sourceIsScRgb: Boolean = false,
 )
 
 /**
@@ -331,6 +333,7 @@ object LibDirectDecode {
                 sourceWidth = packed.outInfo.getOrNull(8)?.takeIf { it > 0 },
                 sourceHeight = packed.outInfo.getOrNull(9)?.takeIf { it > 0 },
                 sourcePrimaries = packed.outInfo.getOrNull(10)?.takeIf { it > 0 },
+                sourceIsScRgb = packed.outInfo.getOrNull(12) == 1,
                 sourceTransfer = packed.outInfo.getOrNull(11)?.takeIf { it > 0 } ?: packed.outInfo[5],
             )
         } finally {
@@ -391,7 +394,7 @@ object LibDirectDecode {
     ): PackedPixels? = withStillInput(src) { buffer ->
         if (!buffer.hasRemaining()) return@withStillInput null
         if (codec == LibCodec.HevcHdr) return@withStillInput decodeHevcHdrPacked(buffer, maxEdge, advanced, export)
-        val outInfo = IntArray(12)
+        val outInfo = IntArray(13)
         val outBoost = FloatArray(1)
         // Existing RAM-backed pages reuse the source array; mapped archive/local
         // inputs go directly to JNI without a compressed Java-array copy.

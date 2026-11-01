@@ -1276,6 +1276,7 @@
     <string name="transfer_ready">Ready</string>
     <string name="transfer_paused">Paused</string>
     <string name="transfer_upload_stopped_summary">%1$d/%2$d/%3$d/%4$d files transferred. Upload stopped.</string>
+    <string name="browse_task_finished_summary">Tasks finished: %1$d/%2$d succeeded, %3$d failed.</string>
     <string name="transfer_upload_finished_summary">%1$d/%2$d/%3$d/%4$d File upload finished.</string>
     <string name="transfer_stopped">Stopped</string>
     <string name="transfer_skipped">Skipped</string>
@@ -1302,7 +1303,7 @@
     <string name="transfer_upload_action">Upload to…</string>
     <string name="settings_use_trash_bin">Use trash bin</string>
     <string name="settings_use_trash_bin_summary">Folders and galleries always move to .trash. Turn off to allow permanent file deletion.</string>
-    <string name="action_empty_trash">Empty trash</string>
+    <string name="action_empty_trash">Delete trash</string>
     <string name="permanent_delete_confirm">Permanently delete %1$d items? This cannot be undone.</string>
     <string name="empty_trash_confirm">Permanently delete this .trash folder and all its contents? This cannot be undone.</string>
     <string name="permanent_delete_unsupported">This source or server does not support deleting this item.</string>

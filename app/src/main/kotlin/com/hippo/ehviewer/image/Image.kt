@@ -911,7 +911,7 @@ class Image private constructor(
                     width = result.sourceWidth,
                     height = result.sourceHeight,
                     bitDepth = result.sourceBitDepth,
-                    colorSpace = cicpColorSpaceName(result.sourcePrimaries, result.sourceTransfer),
+                    colorSpace = if (result.sourceIsScRgb) "scRGB (linear)" else cicpColorSpaceName(result.sourcePrimaries, result.sourceTransfer),
                     hdr = result.isHdrContent || result.sourceHasGainmap || result.sourceTransfer in listOf(16, 18),
                     transfer = if (result.sourceHasGainmap) {
                         ImageTransfer.GAIN_MAP
