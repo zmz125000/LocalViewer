@@ -118,6 +118,7 @@ internal fun ImageSource.readMetadata(
     val exif = runCatching {
         if (decodedExif != null) exifFromTiff(decodedExif) else readEncodedExif(fileName, header)
     }.getOrNull()
+    val sourceColor = encodedColorMetadata(header)
     val heif = HeifPrecisionProbe.probe(header)
     val dimensions = if (decodedWidth == null || decodedHeight == null) {
         HeifPrecisionProbe.thumbnailMemory(ByteBuffer.wrap(header))?.dimensions ?: 0L
@@ -169,6 +170,7 @@ internal fun ImageSource.readMetadata(
         // CICP primaries describe the source gamut independently of its transfer curve.
         // BitmapFactory can report sRGB here for a BT.2020 AVIF with an sRGB transfer.
         colorSpace = cicpColorSpaceName(heif?.primaries, heif?.transfer)
+            ?: sourceColor?.colorSpace
             ?: firstKnownColorSpace(bounds.outColorSpace?.name, if (attributeInt(ExifInterface.TAG_COLOR_SPACE) == 1) "sRGB" else null),
         hdr = when {
             gainmap || heif?.transfer in listOf(16, 18) -> true
@@ -179,10 +181,11 @@ internal fun ImageSource.readMetadata(
             ImageTransfer.GAIN_MAP
         } else {
             ImageTransfer.fromCicp(heif?.transfer)
+                ?: sourceColor?.transfer
                 ?: ImageTransfer.fromColorSpace(bounds.outColorSpace)
         },
         rawTransfer = gainmapMarker ?: heif?.transfer?.let { "CICP transfer $it" }
-            ?: bounds.outColorSpace.rawTransferDescription(),
+            ?: sourceColor?.rawTransfer ?: bounds.outColorSpace.rawTransferDescription(),
         date = exif?.photoDate() ?: fileDate?.takeIf { it > 0 },
         cameraModel = exif?.getAttribute(ExifInterface.TAG_MODEL)?.trim()?.takeIf { it.isNotEmpty() },
         lensModel = exif?.getAttribute(ExifInterface.TAG_LENS_MODEL)?.trim()?.takeIf { it.isNotEmpty() },

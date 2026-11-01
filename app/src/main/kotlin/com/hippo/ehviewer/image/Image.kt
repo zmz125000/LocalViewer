@@ -106,6 +106,7 @@ class Image private constructor(
      * the platform blit.
      */
     val displayScaler: Boolean = false,
+    private val decodedColorSpaceIsSource: Boolean = true,
 ) {
     var metadata: ImageMetadata = ImageMetadata()
         internal set
@@ -245,7 +246,7 @@ class Image private constructor(
 
     /** Color tag fallback for formats without platform header metadata, including JXR/JXL. */
     internal val decodedColorSpace: ColorSpace?
-        get() = (innerImage as? BitmapImage)?.bitmap?.colorSpace
+        get() = if (decodedColorSpaceIsSource) (innerImage as? BitmapImage)?.bitmap?.colorSpace else null
 
     private fun bitmapIsWideGamut(image: CoilImage): Boolean {
         if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.O) return false
@@ -404,6 +405,7 @@ class Image private constructor(
             val image: CoilImage,
             val capped: Boolean,
             val previewEdge: Int = HI_RES_PREVIEW_EDGE,
+            val platformHbd: Boolean = false,
         )
 
         private suspend fun Either<ByteBufferSource, PathSource>.decodeCoilOnce(
@@ -808,9 +810,9 @@ class Image private constructor(
             // Annotate gain map when the hardware path skipped MapExtraInfoInterceptor.
             val bitmapImage = image.asBitmapImage()
             if (bitmapImage != null && image !is BitmapImageWithExtraInfo && bitmapImage.detectGainmap()) {
-                return CoilDecoded(BitmapImageWithExtraInfo(image = bitmapImage, hasGainmap = true), capped, previewEdge)
+                return CoilDecoded(BitmapImageWithExtraInfo(image = bitmapImage, hasGainmap = true), capped, previewEdge, platformHbd)
             }
-            return CoilDecoded(image, capped, previewEdge)
+            return CoilDecoded(image, capped, previewEdge, platformHbd)
         }
 
         /**
@@ -873,6 +875,7 @@ class Image private constructor(
                 image.image,
                 src,
                 displayScaler = image.image.allowsDisplayScaler(),
+                decodedColorSpaceIsSource = !image.platformHbd,
             ).also { it.noteHiResPreview(image.capped, image.previewEdge) }
         }
 
