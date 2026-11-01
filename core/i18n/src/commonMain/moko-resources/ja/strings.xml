@@ -127,8 +127,6 @@
     <string name="image_conversion_keep_exif">EXIF メタデータを保持</string>
     <string name="image_conversion_extended_srgb_bt2020">scRGB を BT.2020 に変換</string>
     <string name="image_conversion_extended_srgb_bt2020_summary">scRGB JXR / JXL の変換時に広色域の色を保持します。</string>
-    <string name="image_conversion_jxl_scrgb">リニア HDR JXL に scRGB を使用</string>
-    <string name="image_conversion_jxl_scrgb_summary">scRGB 入力を直接保持し、他の入力を scRGB に変換します。リニア HDR JXL では scRGB から BT.2020 への変換設定より優先します。</string>
 
     <string name="image_conversion_quality_lossless">可逆圧縮</string>
     <string name="image_conversion_quality_high">高</string>
@@ -1103,6 +1101,7 @@
     <string name="convert_jpeg_hdr">JPEG（HDR）</string>
     <string name="convert_jxl">JPEG XL（SDR）</string>
     <string name="convert_jxl_hdr">JPEG XL（HDR）</string>
+    <string name="convert_jxl_scrgb">JPEG XL（HDR scRGB）</string>
     <string name="convert_jxl_pq">JPEG XL (HDR PQ)</string>
     <string name="convert_avif">AVIF (SDR)</string>
     <string name="convert_avif_pq">AVIF (HDR PQ)</string>

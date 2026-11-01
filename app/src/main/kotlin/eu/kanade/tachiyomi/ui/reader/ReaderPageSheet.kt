@@ -71,6 +71,7 @@ fun ReaderPageSheetMeta(
                 StillExportTarget.JpegHdr to R.string.convert_jpeg_hdr,
                 StillExportTarget.Jxl to R.string.convert_jxl,
                 StillExportTarget.JxlHdr to R.string.convert_jxl_hdr,
+                StillExportTarget.JxlScRgb to R.string.convert_jxl_scrgb,
                 StillExportTarget.JxlPq to R.string.convert_jxl_pq,
                 StillExportTarget.Avif to R.string.convert_avif,
                 StillExportTarget.AvifGainMap to R.string.convert_avif_gain_map,

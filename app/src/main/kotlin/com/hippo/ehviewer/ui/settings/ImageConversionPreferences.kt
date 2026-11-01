@@ -77,11 +77,6 @@ internal fun ImageConversionPreferences() {
         state = Settings.imageConversionExtendedSrgbBt2020.asMutableState(),
     )
     SwitchPreference(
-        title = stringResource(R.string.image_conversion_jxl_scrgb),
-        summary = stringResource(R.string.image_conversion_jxl_scrgb_summary),
-        state = Settings.imageConversionJxlScRgb.asMutableState(),
-    )
-    SwitchPreference(
         title = stringResource(R.string.image_conversion_jxl_jpeg_transcoding),
         state = Settings.imageConversionJxlJpegTranscoding.asMutableState(),
     )

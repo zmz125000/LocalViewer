@@ -10,13 +10,14 @@ enum class StillExportTarget {
     JpegHdr,
     Jxl,
     JxlHdr,
+    JxlScRgb,
     JxlPq,
     Avif,
     AvifPq,
     AvifGainMap,
     ;
 
-    private val jpegXl: Boolean get() = this == Jxl || this == JxlHdr || this == JxlPq
+    private val jpegXl: Boolean get() = this == Jxl || this == JxlHdr || this == JxlScRgb || this == JxlPq
 
     val available: Boolean get() = BuildConfig.JXL_ENCODER_ENABLED || !jpegXl
 }
@@ -42,7 +43,7 @@ internal fun StillExportTarget.forSource(name: String, acceptSdr: Boolean): Stil
     if (!acceptSdr) return null
     return when (this) {
         StillExportTarget.JpegHdr -> StillExportTarget.Jpeg
-        StillExportTarget.JxlHdr, StillExportTarget.JxlPq -> StillExportTarget.Jxl
+        StillExportTarget.JxlHdr, StillExportTarget.JxlScRgb, StillExportTarget.JxlPq -> StillExportTarget.Jxl
         StillExportTarget.AvifPq, StillExportTarget.AvifGainMap -> StillExportTarget.Avif
         else -> this
     }
@@ -63,7 +64,7 @@ internal fun StillExportTarget.needsSdrBase(): Boolean = this == StillExportTarg
 fun StillExportTarget.exportMode(): Int = when (this) {
     StillExportTarget.JpegHdr -> 1
     StillExportTarget.Jxl -> 2
-    StillExportTarget.JxlHdr -> 3
+    StillExportTarget.JxlHdr, StillExportTarget.JxlScRgb -> 3
     StillExportTarget.JxlPq -> 7
     StillExportTarget.Avif -> 4
     StillExportTarget.AvifPq -> 5
@@ -72,13 +73,13 @@ fun StillExportTarget.exportMode(): Int = when (this) {
 }
 
 fun StillExportTarget.fileExtension(): String = when (this) {
-    StillExportTarget.Jxl, StillExportTarget.JxlHdr, StillExportTarget.JxlPq -> "jxl"
+    StillExportTarget.Jxl, StillExportTarget.JxlHdr, StillExportTarget.JxlScRgb, StillExportTarget.JxlPq -> "jxl"
     StillExportTarget.Avif, StillExportTarget.AvifPq, StillExportTarget.AvifGainMap -> "avif"
     else -> "jpg"
 }
 
 fun StillExportTarget.mimeType(): String = when (this) {
-    StillExportTarget.Jxl, StillExportTarget.JxlHdr, StillExportTarget.JxlPq -> "image/jxl"
+    StillExportTarget.Jxl, StillExportTarget.JxlHdr, StillExportTarget.JxlScRgb, StillExportTarget.JxlPq -> "image/jxl"
     StillExportTarget.Avif, StillExportTarget.AvifPq, StillExportTarget.AvifGainMap -> "image/avif"
     else -> "image/jpeg"
 }
@@ -91,6 +92,7 @@ fun stillExportFileName(sourceName: String, target: StillExportTarget, encoding:
         StillExportTarget.JpegHdr, StillExportTarget.AvifGainMap -> "gainmap"
         StillExportTarget.JxlPq, StillExportTarget.AvifPq -> "pq"
         StillExportTarget.JxlHdr -> "linear"
+        StillExportTarget.JxlScRgb -> "scrgb"
     }
     return FileUtils.sanitizeFilename("${stem}_$type.${target.fileExtension()}")
 }

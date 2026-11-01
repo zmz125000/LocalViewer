@@ -139,8 +139,6 @@
     <string name="image_conversion_keep_exif">Keep EXIF metadata</string>
     <string name="image_conversion_extended_srgb_bt2020">Convert scRGB to BT.2020</string>
     <string name="image_conversion_extended_srgb_bt2020_summary">Preserve wide-gamut colors when exporting scRGB JXR / JXL.</string>
-    <string name="image_conversion_jxl_scrgb">Use scRGB for linear HDR JXL</string>
-    <string name="image_conversion_jxl_scrgb_summary">Preserve scRGB inputs directly; convert other sources to scRGB. Overrides Convert scRGB to BT.2020 for linear HDR JXL.</string>
     <string name="image_conversion_quality_lossless">Lossless</string>
     <string name="image_conversion_quality_high">High</string>
     <string name="image_conversion_quality_mid">Mid</string>
@@ -1201,6 +1199,7 @@
     <string name="convert_jpeg_hdr">JPEG (HDR)</string>
     <string name="convert_jxl">JPEG XL (SDR)</string>
     <string name="convert_jxl_hdr">JPEG XL (HDR)</string>
+    <string name="convert_jxl_scrgb">JPEG XL (HDR scRGB)</string>
     <string name="convert_jxl_pq">JPEG XL (HDR PQ)</string>
     <string name="convert_avif">AVIF (SDR)</string>
     <string name="convert_avif_pq">AVIF (HDR PQ)</string>
