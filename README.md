@@ -78,7 +78,7 @@ and [Dynamic Color](https://m3.material.io/styles/color/dynamic-color/overview) 
 
 Similar to Perfect Viewer and Kuro Reader, with Hi-Res images support (no downscaling) and good performance.
 
-The desktop version of the image converter in LocalViewer can be found here.  
+The desktop version of LocalViewer's HDR image converter is here.  
 https://github.com/zmz125000/JXRConverter
 
 Build with Grok 4.5.

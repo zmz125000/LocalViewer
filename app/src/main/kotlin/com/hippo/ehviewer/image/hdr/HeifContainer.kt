@@ -625,7 +625,7 @@ internal fun appleHeadroomFromExif(payload: ByteArray): Float? {
 }
 
 private fun appleHeadroomFromTiff(exif: ByteArray, tiffAt: Int): Float? {
-    val be = exif[tiffAt] == 'M'.code.toByte()
+    var be = exif[tiffAt] == 'M'.code.toByte()
     var offsetToIfd = readU32(exif, tiffAt + 4, be) ?: return null
     var maker33 = 0.0
     var maker48 = 0.0
@@ -654,6 +654,12 @@ private fun appleHeadroomFromTiff(exif: ByteArray, tiffAt: Int): Float? {
             if (!inMaker && tag == 0x927c) {
                 val maker = tiffAt + value
                 if (maker >= 0 && maker + 14 <= exif.size && ascii(exif, maker, 10) == "Apple iOS\u0000") {
+                    // Apple MakerNotes carry their own byte order, independent of TIFF.
+                    be = when (ascii(exif, maker + 12, 2)) {
+                        "MM" -> true
+                        "II" -> false
+                        else -> return null
+                    }
                     next = value + 14
                     inMaker = true
                     jumped = true
@@ -663,10 +669,14 @@ private fun appleHeadroomFromTiff(exif: ByteArray, tiffAt: Int): Float? {
             if (inMaker && makerStart >= 0 && (tag == 33 || tag == 48) && (format == 5 || format == 10)) {
                 val pos = makerStart + value
                 if (pos < 0 || pos + 8 > exif.size) continue
-                val num = readS32(exif, pos, true) ?: continue
-                val den = readU32(exif, pos + 4, true) ?: continue
+                val num = readS32(exif, pos, be) ?: continue
+                val den = readS32(exif, pos + 4, be) ?: continue
                 if (den == 0) continue
-                val rational = num.toDouble() / den.toDouble()
+                val rational = if (format == 5) {
+                    (num.toLong() and 0xffffffffL).toDouble() / (den.toLong() and 0xffffffffL).toDouble()
+                } else {
+                    num.toDouble() / den.toDouble()
+                }
                 if (tag == 33) maker33 = rational else maker48 = rational
                 have = true
             }
