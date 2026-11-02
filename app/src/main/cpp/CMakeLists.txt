@@ -271,6 +271,7 @@ if (EHVIEWER_HDR_CODECS)
             GIT_SHALLOW 1
     )
     FetchContent_MakeAvailable(libultrahdr)
+    include("${CMAKE_CURRENT_LIST_DIR}/cmake/UltraHdrMetadata.cmake")
 
     # ── libavif: dav1d reader + encode-only libaom exports ──────────────
     # Keep dav1d as the sole decoder. libaom supplies 8/10/12-bit AV1 encode.
