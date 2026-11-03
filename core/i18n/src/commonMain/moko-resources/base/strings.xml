@@ -139,6 +139,8 @@
     <string name="image_conversion_keep_exif">Keep EXIF metadata</string>
     <string name="image_conversion_extended_srgb_bt2020">Convert scRGB to BT.2020</string>
     <string name="image_conversion_extended_srgb_bt2020_summary">Preserve wide-gamut colors when exporting scRGB JXR / JXL.</string>
+    <string name="image_conversion_srgb_clamp">sRGB clamp</string>
+    <string name="image_conversion_srgb_clamp_summary">Convert to sRGB/BT.709 and clamp negative colors during pixel-processing exports. HDR brightness and transfer are preserved.</string>
     <string name="image_conversion_quality_lossless">Lossless</string>
     <string name="image_conversion_quality_high">High</string>
     <string name="image_conversion_quality_mid">Mid</string>

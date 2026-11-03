@@ -232,6 +232,7 @@ object LibDirectDecode {
                     target.needsSdrBase(),
                     quality.float32Processing,
                     preserveScRgb = maxEdge == 0 && (!quality.extendedSrgbBt2020 || target == StillExportTarget.JxlScRgb) &&
+                        (!quality.srgbClamp || target == StillExportTarget.JxlScRgb) &&
                         (target == StillExportTarget.JxlHdr || target == StillExportTarget.JxlScRgb || target == StillExportTarget.Jxl),
                 )
                 var nativePixels: ByteBuffer? = null

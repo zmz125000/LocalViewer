@@ -125,6 +125,8 @@
     <string name="image_conversion_keep_exif">保留 EXIF 中繼資料</string>
     <string name="image_conversion_extended_srgb_bt2020">將 scRGB 轉為 BT.2020</string>
     <string name="image_conversion_extended_srgb_bt2020_summary">匯出 scRGB JXR / JXL 時保留廣色域色彩。</string>
+    <string name="image_conversion_srgb_clamp">sRGB 鉗制</string>
+    <string name="image_conversion_srgb_clamp_summary">逐像素轉換匯出時轉為 sRGB/BT.709 並裁切負色彩值，同時保留 HDR 亮度和傳遞函數。</string>
     <string name="image_conversion_quality_lossless">無損</string>
     <string name="image_conversion_quality_high">高</string>
     <string name="image_conversion_quality_mid">中</string>
