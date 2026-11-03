@@ -785,6 +785,7 @@ object Settings : DataStorePreferences(null) {
     val imageConversionQuality = intPref("image_conversion_quality", 2)
     val imageConversionKeepExif = boolPref("image_conversion_keep_exif", true)
     val imageConversionExtendedSrgbBt2020 = boolPref("image_conversion_scrgb_bt2020", true)
+    val imageConversionSrgbClamp = boolPref("image_conversion_srgb_clamp", false)
     val imageConversionJxlJpegTranscoding = boolPref("image_conversion_jxl_jpeg_transcoding", false)
 
     // JXL distance in hundredths: 0 is lossless; lower distances retain more detail.

@@ -372,7 +372,7 @@ int decode_jxl_to_linear(const uint8_t* data, size_t len, std::vector<Sample>& o
     const size_t pixels_n = static_cast<size_t>(w) * static_cast<size_t>(h);
     const bool original_profile = info.uses_original_profile == JXL_TRUE;
     const bool hdr_cms = original_profile && (is_pq || is_hlg);
-    const float cms_intensity = std::clamp(std::isfinite(info.intensity_target) && info.intensity_target > 0.f ? info.intensity_target : 1000.f, kSdrWhiteNits, kMaxNits);
+    const float cms_intensity = std::clamp(std::isfinite(info.intensity_target) && info.intensity_target > 0.f ? info.intensity_target : 1000.f, is_pq ? 1.f : kSdrWhiteNits, kMaxNits);
     if (hdr_cms) {
         const size_t channels = have_src && src_encoding.color_space == JXL_COLOR_SPACE_GRAY ? 1 : 3;
         if (!transform_original_hdr_to_linear(pixels, pixels_n, source_icc, cg, channels, cms_intensity)) return -13;
@@ -421,7 +421,10 @@ int decode_jxl_to_linear(const uint8_t* data, size_t len, std::vector<Sample>& o
         // linear values relative to intensity_target, not 203-nit SDR white.
         float peak_nits = hdr_cms ? cms_intensity : intensity;
         if (!std::isfinite(peak_nits) || peak_nits < 1.f) peak_nits = 1000.f;
-        if constexpr (std::is_same_v<Sample, float>) scale = scrgb ? 80.f / kSdrWhiteNits : std::max(peak_nits / kSdrWhiteNits, 1.f);
+        // PQ content peaks can be below SDR white; undo its CMS normalization
+        // exactly without raising the decoded brightness.
+        if (is_pq) scale = peak_nits / kSdrWhiteNits;
+        else if constexpr (std::is_same_v<Sample, float>) scale = scrgb ? 80.f / kSdrWhiteNits : std::max(peak_nits / kSdrWhiteNits, 1.f);
         else scale = scrgb ? 80.f / kSdrWhiteNits : std::clamp(peak_nits / kSdrWhiteNits, 1.f, kMaxLinear);
     }
 

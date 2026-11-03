@@ -127,6 +127,8 @@
     <string name="image_conversion_keep_exif">EXIF メタデータを保持</string>
     <string name="image_conversion_extended_srgb_bt2020">scRGB を BT.2020 に変換</string>
     <string name="image_conversion_extended_srgb_bt2020_summary">scRGB JXR / JXL の変換時に広色域の色を保持します。</string>
+    <string name="image_conversion_srgb_clamp">sRGB クランプ</string>
+    <string name="image_conversion_srgb_clamp_summary">ピクセル処理による書き出し時に sRGB/BT.709 へ変換し、負の色成分を制限します。HDR の明るさと伝達関数は維持します。</string>
 
     <string name="image_conversion_quality_lossless">可逆圧縮</string>
     <string name="image_conversion_quality_high">高</string>

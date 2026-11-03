@@ -16,6 +16,7 @@ struct StillEncodeQuality {
     const uint8_t* exif = nullptr;
     size_t exif_size = 0;
     bool jxl_scrgb = false;
+    bool srgb_clamp = false;
     unsigned source_bits = 32; // Source precision, independent of working-buffer storage.
     int preset;
     float custom_distance;
@@ -288,6 +289,15 @@ inline void linear_bt2020_to_bt709(float& r, float& g, float& b) {
     r = nr;
     g = ng;
     b = nb;
+}
+
+/** Convert linear RGB to BT.709 and discard only colors outside its negative range. */
+inline void clamp_linear_rgb_to_bt709(float& r, float& g, float& b, int gamut) {
+    if (gamut == 1) linear_p3_to_bt709(r, g, b);
+    else if (gamut == 2) linear_bt2020_to_bt709(r, g, b);
+    if (!std::isfinite(r) || r < 0.f) r = 0.f;
+    if (!std::isfinite(g) || g < 0.f) g = 0.f;
+    if (!std::isfinite(b) || b < 0.f) b = 0.f;
 }
 
 /**

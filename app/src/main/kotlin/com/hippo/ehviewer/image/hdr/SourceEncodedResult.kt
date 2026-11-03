@@ -15,6 +15,7 @@ internal data class SourceEncodedResult(val file: File, val target: StillExportT
 
 /** Regular-format exports keep the decoded source encoding, independent of reader/display settings. */
 internal suspend fun sourceEncodedExport(source: Path, name: String, target: StillExportTarget, quality: StillExportQuality): SourceEncodedResult? {
+    if (quality.srgbClamp && target != StillExportTarget.JxlScRgb) return null
     val format = when (target) {
         StillExportTarget.Jpeg -> 0
         StillExportTarget.Jxl -> 1
