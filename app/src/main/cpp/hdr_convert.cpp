@@ -1098,6 +1098,19 @@ int encode_linear_rgba_f16_to_uhdr(unsigned w, unsigned h, const uint16_t* rgba,
         return -2;
     }
 
+    if (quality.exif_size) {
+        std::vector<uint8_t> payload = {'E', 'x', 'i', 'f', 0, 0};
+        payload.insert(payload.end(), quality.exif, quality.exif + quality.exif_size);
+        uhdr_mem_block_t metadata{};
+        metadata.data = payload.data();
+        metadata.data_sz = metadata.capacity = payload.size();
+        err = uhdr_enc_set_exif_data(enc, &metadata);
+        if (err.error_code != UHDR_CODEC_OK) {
+            uhdr_release_encoder(enc);
+            return -6;
+        }
+    }
+
     // Quality: base + multi-channel gain map (libultrahdr default is 95/95).
     err = uhdr_enc_set_quality(enc, export_jpeg_quality(quality), UHDR_BASE_IMG);
     if (err.error_code != UHDR_CODEC_OK) {
