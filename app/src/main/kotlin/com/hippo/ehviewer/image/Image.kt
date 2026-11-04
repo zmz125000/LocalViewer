@@ -437,7 +437,9 @@ class Image private constructor(
             val kernelDownscale = kernelRequested && encodedSizeNeedsDownscale(mode, longEdgeCap, comicRendering)
             val request = with(appCtx) {
                 imageRequest {
-                    onLeft { data(it.source) }
+                    // Keep the original page view available for the gain-map
+                    // trailer attachment and metadata reads after Coil decoding.
+                    onLeft { data(it.source.asReadOnlyBuffer()) }
                     onRight { data(it.source.toUri()) }
                     when {
                         kernelDownscale -> {
@@ -674,13 +676,12 @@ class Image private constructor(
             return dstW to dstH
         }
 
-        /** WCG + HBD sub-toggle, not gain-map, PNG/APNG with HIGH or UNKNOWN probe. */
+        /** Advanced color enabled, not gain-map, PNG/APNG with HIGH or UNKNOWN probe. */
         private fun Either<ByteBufferSource, PathSource>.resolvePlatformHbd(
             gainMap: Boolean,
         ): Boolean {
             if (gainMap) return false
             if (!Settings.readerAdvancedColor.value) return false
-            if (!Settings.readerPlatformHighDepth.value) return false
             val hint = fileNameHint()
             return shouldPlatformHighDepthDecode(probeBitDepth(hint), hint)
         }
@@ -830,14 +831,12 @@ class Image private constructor(
             checkExtraneousAds: Boolean = false,
             forceOriginal: Boolean = false,
         ): Image {
-            if (Settings.readerAdvancedColor.value && Settings.readerPlatformHighDepth.value) {
-                try {
-                    LibDirectDecode.decodeHdrPng(src)?.let { return fromLibDirect(it, src) }
-                } catch (error: kotlinx.coroutines.CancellationException) {
-                    throw error
-                } catch (error: Exception) {
-                    Log.w("ReaderColor", "HDR PNG decode failed; using platform PNG decoder", error)
-                }
+            try {
+                LibDirectDecode.decodeColorPng(src)?.let { return fromLibDirect(it, src) }
+            } catch (error: kotlinx.coroutines.CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                Log.w("ReaderColor", "Color PNG decode failed; using platform PNG decoder", error)
             }
             val image = when (src) {
                 is PathSource -> {
@@ -1077,6 +1076,7 @@ private fun ByteArray.containsHdrGainMapMarker(length: Int = size): Boolean {
         indexOfAscii("GainMap", n) >= 0 ||
         indexOfAscii("hdrgm", n) >= 0 ||
         indexOfAscii("HDRGainMap", n) >= 0 ||
+        indexOfAscii("urn:iso:std:iso:ts:21496:-1", n) >= 0 ||
         indexOfAscii("tmap", n) >= 0
 }
 

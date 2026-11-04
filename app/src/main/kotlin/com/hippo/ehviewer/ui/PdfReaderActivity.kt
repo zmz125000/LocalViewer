@@ -2241,7 +2241,6 @@ private fun PdfReaderScreen(
                 readerDecodeScaler.changesFlow(),
                 readerHiResSoftwareDownscale.changesFlow(),
                 readerAdvancedColor.changesFlow(),
-                readerPlatformHighDepth.changesFlow(),
                 readerOppoProxdr.changesFlow(),
             ).collect {
                 loader.restart()

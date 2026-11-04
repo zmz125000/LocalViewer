@@ -49,12 +49,6 @@ fun ReaderGeneralSetting(
         title = stringResource(id = R.string.pref_reader_advanced_color),
         field = advancedColor,
     )
-    AnimatedVisibility(visible = advancedColor.value) {
-        SwitchChoice(
-            title = stringResource(id = R.string.pref_reader_platform_high_depth),
-            field = Settings.readerPlatformHighDepth.asMutableState(),
-        )
-    }
     SwitchChoice(
         title = stringResource(id = R.string.pref_reader_camera_raw),
         field = Settings.readerCameraRaw.asMutableState(),

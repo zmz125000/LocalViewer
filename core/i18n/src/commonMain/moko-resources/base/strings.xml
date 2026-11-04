@@ -1019,8 +1019,6 @@
     <string name="pref_reader_oppo_proxdr_summary">Attach OnePlus/OPPO/realme ProXDR gain maps after HEIC decode (same platform Gainmap path as Ultra HDR; no re-encode). Requires Android 14+. Experimental.</string>
     <string name="pref_reader_advanced_color">Advanced color (WCG / high bit depth)</string>
     <string name="pref_reader_advanced_color_summary">On wide-gamut displays, enable window wide color mode and prefer higher-precision bitmaps. Uses more GPU and memory. HDR mode still takes priority for HDR pages.</string>
-    <string name="pref_reader_platform_high_depth">High bit depth (PNG)</string>
-    <string name="pref_reader_platform_high_depth_summary">Under advanced color: decode high-depth PNG as float16 and render PQ/HLG HDR PNG with its source colors and HDR headroom. Uses more memory. Follows the advanced-color switch.</string>
     <string name="pref_reader_camera_raw">RAW images</string>
     <string name="pref_reader_camera_raw_summary">Decode the sensor data. Off uses the embedded preview, then an 8-bit decode.</string>
     <string name="pref_reader_raw_exposure">Exposure</string>

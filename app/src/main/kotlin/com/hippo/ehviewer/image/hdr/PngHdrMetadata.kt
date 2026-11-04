@@ -3,8 +3,12 @@ package com.hippo.ehviewer.image.hdr
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 
-/** Only still PNG with explicit, supported HDR cICP takes the native reader path. */
+/** Still PNG with supported SDR or HDR cICP takes the color-managed native reader path. */
 internal data class PngHdrMetadata(val width: Int, val height: Int, val depth: Int, val primaries: Int, val transfer: Int) {
+    // Ordinary 8-bit sRGB stays on Android's normal decoder. Wide-gamut cICP
+    // needs explicit color handling even at 8 bits; PQ/HLG also needs its EOTF.
+    val needsNativeReader: Boolean get() = depth > 8 || primaries != 1 || transfer != 13
+
     companion object {
         fun isPng(input: ByteBuffer): Boolean {
             val bytes = input.slice().order(ByteOrder.BIG_ENDIAN)
@@ -34,11 +38,11 @@ internal data class PngHdrMetadata(val width: Int, val height: Int, val depth: I
                 if (size > bytes.remaining() - 4L) return null
                 when (type) {
                     0x6163544c -> return null // acTL: preserve animation, including its default image.
-                    0x63494350 -> { // cICP: RGB matrix, full-range samples, PQ or HLG.
+                    0x63494350 -> { // cICP: RGB matrix, full-range samples, sRGB, PQ or HLG.
                         if (size != 4L || colorTags != null) return null
                         val p = bytes.get(bytes.position()).toInt() and 255
                         val t = bytes.get(bytes.position() + 1).toInt() and 255
-                        if (p !in listOf(1, 9, 12) || t !in listOf(16, 18) ||
+                        if (p !in listOf(1, 9, 12) || t !in listOf(13, 16, 18) ||
                             bytes.get(bytes.position() + 2).toInt() != 0 || bytes.get(bytes.position() + 3).toInt() != 1
                         ) {
                             return null

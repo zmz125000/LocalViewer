@@ -29,7 +29,7 @@ fun isPlatformHighDepthCandidateExtension(ext: String?): Boolean {
 
 /**
  * True when the reader should take the platform HBD decode path for this name
- * under active prefs (caller checks WCG + HBD toggles and gain-map exclusion).
+ * under active prefs (caller checks advanced color and gain-map exclusion).
  *
  * - [BitDepthClass.HIGH] → yes, including confirmed PNG bytes without a filename
  * - [BitDepthClass.EIGHT] → no (keep normal HW/8888)

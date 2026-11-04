@@ -54,6 +54,21 @@ target_compile_options(still_export_test PRIVATE -ffunction-sections -fdata-sect
 target_link_options(still_export_test PRIVATE -Wl,--gc-sections)
 target_link_libraries(still_export_test PRIVATE pthread uhdr ${HOST_JXL} ${HOST_JXL_THREADS} ${HOST_JXL_CMS})
 
+# Optional direct AVIF ICC regression. Supply a host libavif and any static
+# dependencies (e.g. libaom) as a semicolon-separated list.
+set(AVIF_PROFILE_LIBRARIES "" CACHE STRING "Host libavif libraries for ICC regression")
+if(AVIF_PROFILE_LIBRARIES)
+    add_executable(avif_profile_test avif_profile_test.cpp)
+    target_compile_features(avif_profile_test PRIVATE cxx_std_17)
+    get_target_property(STILL_TEST_INCLUDES still_export_test INCLUDE_DIRECTORIES)
+    target_include_directories(avif_profile_test PRIVATE ${STILL_TEST_INCLUDES} "${HDR_DEPS_DIR}/libavif-src/include")
+    target_compile_options(avif_profile_test PRIVATE -ffunction-sections -fdata-sections)
+    target_link_options(avif_profile_test PRIVATE -Wl,--gc-sections)
+    target_link_libraries(avif_profile_test PRIVATE pthread uhdr ${AVIF_PROFILE_LIBRARIES})
+    enable_testing()
+    add_test(NAME avif_icc_fallback COMMAND avif_profile_test)
+endif()
+
 add_executable(raw_export_test raw_export_test.cpp)
 target_compile_features(raw_export_test PRIVATE cxx_std_17)
 target_compile_definitions(raw_export_test PRIVATE EHVIEWER_HDR_CODECS)

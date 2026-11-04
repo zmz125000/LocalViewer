@@ -535,8 +535,6 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
                 readerHiResSoftwareDownscale.changesFlow(),
                 // Advanced color changes F16 pack / CS for lib-direct — re-decode.
                 readerAdvancedColor.changesFlow(),
-                // Platform HBD (nested under WCG): software F16 + AHB wrap path.
-                readerPlatformHighDepth.changesFlow(),
                 // ProXDR HEIC → UHDR convert path changes display file.
                 readerOppoProxdr.changesFlow(),
                 // HDR display changes whether a non-original decode is redone at

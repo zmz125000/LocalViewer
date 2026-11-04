@@ -365,7 +365,9 @@ abstract class PageLoader(
         // Native JXL/AVIF have already collected EXIF while decoding.
         readSourceMetadata(direct)
         thumbSoftwareBitmapBeforeHardware(index, raw, direct.bitmap)
-        return Image.fromLibDirect(direct, raw, attachHeifGainMap = hevcHdr && Settings.preferNativeHeifAvif.value).also {
+        // Native decoding can be selected for precision/codec support even when
+        // the preference is off. Its SDR base still needs the OEM/Apple map.
+        return Image.fromLibDirect(direct, raw, attachHeifGainMap = hevcHdr || (deepHeif && precision?.avif == false)).also {
             it.noteHiResPreview(Image.hiResPreviewCapEdge(forceOriginal) > 0)
         }
     }

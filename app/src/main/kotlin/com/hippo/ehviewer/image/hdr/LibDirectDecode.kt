@@ -316,10 +316,12 @@ object LibDirectDecode {
             is PathSource -> classifyPath(src.source, fileNameHint)
             is ByteBufferSource -> classify(src.source, fileNameHint)
         }
-        // Reconstruct ISO AVIF gain maps natively into the single HDR F16 frame.
-        // Retaining a software F16 gain-map bitmap can add a full-resolution
-        // second frame (even when maxEdge caps the base), then stall RenderThread
-        // uploading it. Keep that experimental handoff out of the reader path.
+        // Keep eligible ISO bases and gain maps separate, like platform JPEG /
+        // HEIC gain maps. Flattening at full source headroom makes AVIF brighter
+        // on displays where Android would apply only part of the gain map.
+        if ((route as? StillRoute.Lib)?.codec == LibCodec.AvifPq) {
+            AvifGainmapDecode.decode(src, maxEdge)?.let { return it }
+        }
         // This entire scope is synchronous on the same decode thread. Native
         // packers move their final vector into the capture instead of a Java array.
         // Exports use their own capture and keep straight alpha through encoding.
@@ -881,8 +883,11 @@ object LibDirectDecode {
         return HdrDisplayInfo.hdrCapabilityBoost(display)
     }
 
-    /** Preserve PNG cICP instead of letting BitmapFactory treat HDR codes as SDR. */
-    internal suspend fun decodeHdrPng(src: ImageSource): LibDirectResult? = withContext(Dispatchers.IO) {
+    /** Honor PNG cICP before the platform decoder can assume sRGB or report its working space. */
+    internal suspend fun decodeColorPng(src: ImageSource): LibDirectResult? = withContext(Dispatchers.IO) {
+        // Advanced color off restores normal system decoding. Source metadata is
+        // read separately, so its gamut label never comes from the working bitmap.
+        if (!Settings.readerAdvancedColor.value) return@withContext null
         // 32-bit ABIs link the HDR JNI stub; avoid allocating PNG scratch before that fallback.
         if (!android.os.Process.is64Bit()) return@withContext null
         val signature = when (src) {
@@ -897,12 +902,15 @@ object LibDirectDecode {
         withHeavyDecode {
             withStillInput(src) { input ->
                 val info = PngHdrMetadata.probe(input) ?: return@withStillInput null
+                if (!info.needsNativeReader) return@withStillInput null
+                val advancedColor = Settings.readerAdvancedColor.value
+                if (!advancedColor) return@withStillInput null
                 pngSourcePixels(input, info.width, info.height)?.use { pixels ->
                     val handle = beginNativeReaderPixels()
                     try {
                         val outInfo = IntArray(6)
                         val boost = FloatArray(1)
-                        val packed = decodePngRgbToDirect(pixels.buffer, info.width, info.height, info.primaries, info.transfer, outInfo, boost)
+                        val packed = decodePngRgbToDirect(pixels.buffer, info.width, info.height, info.primaries, info.transfer, advancedColor, outInfo, boost)
                         val nativePixels = endNativeReaderPixels(handle)
                         if (packed == null) return@use null
                         bitmapFromPacked(packed, outInfo, boost, nativePixels)?.copy(
@@ -910,6 +918,8 @@ object LibDirectDecode {
                             sourceWidth = info.width,
                             sourceHeight = info.height,
                             sourcePrimaries = info.primaries,
+                            sourceTransfer = info.transfer,
+                            isWideGamutSource = info.primaries in listOf(9, 12),
                         )
                     } finally {
                         releaseNativeReaderPixels(handle)

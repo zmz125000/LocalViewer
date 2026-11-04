@@ -5,8 +5,11 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.zip.InflaterInputStream
 
-/** Source ICC descriptions from the existing bounded metadata header; never opens the source. */
+/** Source color tags from the existing bounded metadata header; never opens the source. */
 internal fun encodedColorMetadata(header: ByteArray): ImageMetadata? = runCatching {
+    // PNG cICP takes precedence over iCCP, regardless of chunk order. In particular,
+    // a decoder's extended-sRGB working bitmap does not describe BT.2020 SDR input.
+    pngCicpColorMetadata(header)?.let { return@runCatching it }
     val bytes = ByteBuffer.wrap(header).order(ByteOrder.BIG_ENDIAN)
     val profile = when {
         header.size >= 8 && bytes.getInt(0) == 0x89504e47.toInt() && bytes.getInt(4) == 0x0d0a1a0a -> {
@@ -117,3 +120,37 @@ internal fun encodedColorMetadata(header: ByteArray): ImageMetadata? = runCatchi
         rawTransfer = gamma?.let { "ICC gamma $it" },
     )
 }.getOrNull()
+
+private fun pngCicpColorMetadata(header: ByteArray): ImageMetadata? {
+    val bytes = ByteBuffer.wrap(header).order(ByteOrder.BIG_ENDIAN)
+    if (header.size < 33 || bytes.getInt(0) != 0x89504e47.toInt() || bytes.getInt(4) != 0x0d0a1a0a) return null
+    var offset = 8
+    var tags: Pair<Int, Int>? = null
+    while (offset <= header.size - 8) {
+        val size = bytes.getInt(offset)
+        val type = bytes.getInt(offset + 4)
+        // A bounded header need not contain the first compressed pixel chunk.
+        if (type == 0x49444154 || type == 0x49454e44) break
+        if (size < 0 || size > header.size - offset - 12) break
+        if (type == 0x63494350) {
+            if (size != 4 || tags != null) return null
+            val p = header[offset + 8].toInt() and 255
+            val t = header[offset + 9].toInt() and 255
+            if (p !in listOf(1, 9, 12) || t !in listOf(13, 16, 18) ||
+                header[offset + 10] != 0.toByte() || header[offset + 11] != 1.toByte()
+            ) {
+                return null
+            }
+            tags = p to t
+        }
+        offset += size + 12
+    }
+    return tags?.let { (p, t) ->
+        ImageMetadata(
+            colorSpace = cicpColorSpaceName(p, t),
+            hdr = t == 16 || t == 18,
+            transfer = ImageTransfer.fromCicp(t),
+            rawTransfer = "CICP transfer $t",
+        )
+    }
+}

@@ -86,7 +86,6 @@ internal fun ImageConversionPreferences() {
     AnimatedVisibility(visible = !srgbClamp.value) {
         SwitchPreference(
             title = stringResource(R.string.image_conversion_extended_srgb_bt2020),
-            summary = stringResource(R.string.image_conversion_extended_srgb_bt2020_summary),
             state = Settings.imageConversionExtendedSrgbBt2020.asMutableState(),
         )
     }

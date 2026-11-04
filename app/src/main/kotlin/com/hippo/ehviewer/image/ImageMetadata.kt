@@ -92,7 +92,7 @@ internal fun cicpColorSpaceName(primaries: Int?, transfer: Int?): String? = when
 /** A coder comment such as "Attrib: GainMap Image" does not describe an attached gain map. */
 internal fun sourceGainmapMarker(header: ByteArray): String? {
     val text = header.toString(Charsets.ISO_8859_1)
-    return listOf("hdrgm:", "urn:com:apple:photo:2020:aux:hdrgainmap").firstOrNull { it in text }
+    return listOf("hdrgm:", "urn:com:apple:photo:2020:aux:hdrgainmap", "urn:iso:std:iso:ts:21496:-1").firstOrNull { it in text }
 }
 
 /** Original encoded metadata; color tags may fall back to the decoded bitmap when unavailable. */
@@ -201,6 +201,7 @@ internal fun ImageSource.readMetadata(
             ?: firstKnownColorSpace(bounds.outColorSpace?.name, if (attributeInt(ExifInterface.TAG_COLOR_SPACE) == 1) "sRGB" else null),
         hdr = when {
             gainmap || heif?.transfer in listOf(16, 18) -> true
+            sourceColor?.hdr != null -> sourceColor.hdr
             heif?.transfer != null || bounds.outWidth > 0 -> false
             else -> null
         },

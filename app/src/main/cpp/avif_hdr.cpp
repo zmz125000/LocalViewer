@@ -911,6 +911,40 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_convertAvifFdToUltraHdrMaxEdge(
  * outBoost float[1]: contentHdrBoost
  * advancedColor: WCG preserve + high bit depth
  */
+// Android Gainmap uses linear ratios and a decoding exponent; ISO metadata
+// stores log2 ratios and the encoding exponent. Preserve the display transition.
+static bool android_gainmap_metadata(const avifGainMap* gm, float metadata[17]) {
+    for (int c = 0; c < 3; ++c) {
+        if (!gm->gainMapMin[c].d || !gm->gainMapMax[c].d || !gm->gainMapGamma[c].d ||
+            !gm->gainMapGamma[c].n || !gm->baseOffset[c].d || !gm->alternateOffset[c].d) return false;
+        metadata[c] = std::exp2(float(gm->gainMapMin[c].n) / gm->gainMapMin[c].d);
+        metadata[3 + c] = std::exp2(float(gm->gainMapMax[c].n) / gm->gainMapMax[c].d);
+        // ISO stores encoding gamma; Android expects the decoding exponent.
+        metadata[6 + c] = float(gm->gainMapGamma[c].d) / gm->gainMapGamma[c].n;
+        metadata[9 + c] = float(gm->baseOffset[c].n) / gm->baseOffset[c].d;
+        metadata[12 + c] = float(gm->alternateOffset[c].n) / gm->alternateOffset[c].d;
+        if (!(metadata[c] > 0.f) || metadata[3 + c] < metadata[c] ||
+            metadata[9 + c] < 0.f || metadata[12 + c] < 0.f) return false;
+    }
+    metadata[15] = 1.f;
+    metadata[16] = std::exp2(unsigned_frac(gm->alternateHdrHeadroom));
+    for (unsigned i = 0; i < 17; ++i) if (!std::isfinite(metadata[i])) return false;
+    if (!(metadata[16] > 1.f)) return false;
+
+    return true;
+}
+
+static size_t avif_gainmap_alpha8_stride(const avifImage* image) {
+    return image->yuvFormat == AVIF_PIXEL_FORMAT_YUV400 && image->depth == 8 &&
+        image->yuvRange == AVIF_RANGE_FULL ? (size_t(image->width) + 3) & ~size_t(3) : 0;
+}
+
+static void copy_avif_gainmap_alpha8(const avifImage* image, uint8_t* output, size_t stride) {
+    for (unsigned y = 0; y < image->height; ++y)
+        std::memcpy(output + size_t(y) * stride,
+            image->yuvPlanes[AVIF_CHAN_Y] + size_t(y) * image->yuvRowBytes[AVIF_CHAN_Y], image->width);
+}
+
 // Reader-only handoff: Android applies the ISO gain map on the GPU instead of
 // allocating and reconstructing a full-resolution linear HDR frame on the CPU.
 // Export and thumbnail paths continue to use the complete reconstruction above.
@@ -918,7 +952,7 @@ extern "C" JNIEXPORT jobjectArray JNICALL
 Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeAvifGainmap(
         JNIEnv* env, jclass, jobject jInput, jbyteArray jBytes, jint maxEdge,
         jboolean alternatePrimaries, jintArray jInfo, jfloatArray jMetadata) try {
-    if (!jInfo || !jMetadata || env->GetArrayLength(jInfo) < 7 ||
+    if (!jInfo || !jMetadata || env->GetArrayLength(jInfo) < 11 ||
         env->GetArrayLength(jMetadata) < 17) return nullptr;
     std::unique_ptr<ThumbnailJniBytes> array;
     const uint8_t* data = nullptr;
@@ -949,15 +983,17 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeAvifGainmap(
 
     avifImage* image = dec->image;
     const avifGainMap* gm = image ? image->gainMap : nullptr;
+    const unsigned sourceWidth = image ? image->width : 0, sourceHeight = image ? image->height : 0;
     const auto known_primaries = [](avifColorPrimaries p) {
         return p == AVIF_COLOR_PRIMARIES_BT709 || p == AVIF_COLOR_PRIMARIES_SMPTE432 || p == AVIF_COLOR_PRIMARIES_BT2020;
     };
     // Restrict the handoff to opaque SDR bases with directly representable
-    // color metadata. ICC, HDR bases, 12-bit planes, and transformed items retain
-    // the general F16 path. Normalized F16 retains at least 10-bit code precision.
+    // color metadata. ICC, HDR bases and transformed items retain the general
+    // path. F16 is presentation storage for 8/10/12-bit codes; it can round
+    // 12-bit samples slightly but must not apply a transfer curve to the map.
     if (!gm || !gm->image || image->icc.size || gm->altICC.size || dec->alphaPresent || dec->imageCount != 1 ||
         image->transformFlags || gm->image->transformFlags ||
-        image->depth > 10 || gm->image->depth > 10 ||
+        image->depth > 12 || gm->image->depth > 12 ||
         !known_primaries(image->colorPrimaries) ||
         (image->transferCharacteristics != AVIF_TRANSFER_CHARACTERISTICS_SRGB &&
          image->transferCharacteristics != AVIF_TRANSFER_CHARACTERISTICS_BT709) ||
@@ -969,22 +1005,7 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeAvifGainmap(
         (math_primaries != image->colorPrimaries && alternatePrimaries != JNI_TRUE)) return nullptr;
 
     jfloat metadata[17]{};
-    for (int c = 0; c < 3; ++c) {
-        if (!gm->gainMapMin[c].d || !gm->gainMapMax[c].d || !gm->gainMapGamma[c].d ||
-            !gm->gainMapGamma[c].n || !gm->baseOffset[c].d || !gm->alternateOffset[c].d) return nullptr;
-        metadata[c] = std::exp2(float(gm->gainMapMin[c].n) / gm->gainMapMin[c].d);
-        metadata[3 + c] = std::exp2(float(gm->gainMapMax[c].n) / gm->gainMapMax[c].d);
-        // ISO stores encoding gamma; Android expects the decoding exponent.
-        metadata[6 + c] = float(gm->gainMapGamma[c].d) / gm->gainMapGamma[c].n;
-        metadata[9 + c] = float(gm->baseOffset[c].n) / gm->baseOffset[c].d;
-        metadata[12 + c] = float(gm->alternateOffset[c].n) / gm->alternateOffset[c].d;
-        if (!(metadata[c] > 0.f) || metadata[3 + c] < metadata[c] ||
-            metadata[9 + c] < 0.f || metadata[12 + c] < 0.f) return nullptr;
-    }
-    metadata[15] = 1.f;
-    metadata[16] = std::exp2(unsigned_frac(gm->alternateHdrHeadroom));
-    for (float value : metadata) if (!std::isfinite(value)) return nullptr;
-    if (!(metadata[16] > 1.f)) return nullptr;
+    if (!android_gainmap_metadata(gm, metadata)) return nullptr;
 
     // Eligibility is checked before reconstructing any AV1 pixels, so fallback
     // costs a metadata parse rather than a second full image decode.
@@ -1015,19 +1036,27 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeAvifGainmap(
     };
     auto base = convert(image);
     if (!base) return nullptr;
-    auto gain = convert(gm->image);
+    // Android's ALPHA_8 gain maps use one channel without a color transform.
+    // Keep full-range 8-bit monochrome codes exact, with bitmap row alignment.
+    const size_t alphaStride = avif_gainmap_alpha8_stride(gm->image);
+    const bool alpha8 = alphaStride != 0;
+    const size_t gainStride = alpha8 ? alphaStride : size_t(gm->image->width) * 8;
+    const size_t gainSize = gainStride * gm->image->height;
+    auto gain = alpha8 ? decltype(base)(calloc(1, gainSize), free) : convert(gm->image);
     if (!gain) return nullptr;
+    if (alpha8) copy_avif_gainmap_alpha8(gm->image, static_cast<uint8_t*>(gain.get()), gainStride);
     const jint info[]{static_cast<jint>(image->width), static_cast<jint>(image->height),
         static_cast<jint>(gm->image->width), static_cast<jint>(gm->image->height),
-        image->colorPrimaries, image->transferCharacteristics, math_primaries};
-    env->SetIntArrayRegion(jInfo, 0, 7, info);
+        image->colorPrimaries, image->transferCharacteristics, math_primaries,
+        alpha8 ? 1 : 0, static_cast<jint>(image->depth), static_cast<jint>(sourceWidth), static_cast<jint>(sourceHeight)};
+    env->SetIntArrayRegion(jInfo, 0, 11, info);
     env->SetFloatArrayRegion(jMetadata, 0, 17, metadata);
     jclass bufferClass = env->FindClass("java/nio/ByteBuffer");
     if (!bufferClass || env->ExceptionCheck()) return nullptr;
     jobjectArray result = env->NewObjectArray(2, bufferClass, nullptr);
     if (!result) return nullptr;
     jobject b = env->NewDirectByteBuffer(base.get(), jlong(image->width) * image->height * 8);
-    jobject g = env->NewDirectByteBuffer(gain.get(), jlong(gm->image->width) * gm->image->height * 8);
+    jobject g = env->NewDirectByteBuffer(gain.get(), static_cast<jlong>(gainSize));
     if (!b || !g || env->ExceptionCheck()) return nullptr;
     env->SetObjectArrayElement(result, 0, b);
     env->SetObjectArrayElement(result, 1, g);
@@ -1219,8 +1248,8 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_probeAvifBufferHdrKind(JNIEnv* env, jcl
 }
 
 // PNG source samples are straight-alpha integer RGBA16, before Android premultiplication.
-static std::vector<uint16_t> png_hdr_linear_rgba(const uint16_t* codes, size_t count, int transfer,
-                                               uhdr_color_gamut_t gamut) {
+static std::vector<uint16_t> png_linear_rgba(const uint16_t* codes, size_t count, int transfer,
+                                           uhdr_color_gamut_t gamut) {
     const auto& lut = avif_linear_lut(static_cast<avifTransferCharacteristics>(transfer));
     std::vector<uint16_t> rgba(count * 4);
     hdr_parallel_pixels(count, hdr_pixel_jobs(count), [&](size_t begin, size_t end, unsigned) {
@@ -1236,19 +1265,20 @@ static std::vector<uint16_t> png_hdr_linear_rgba(const uint16_t* codes, size_t c
     return rgba;
 }
 
-// PNG cICP uses the same PQ/HLG transfer and RGB primaries as absolute-HDR AVIF.
+// PNG cICP uses the same SDR/PQ/HLG transfer and RGB primaries as AVIF.
 extern "C" JNIEXPORT jbyteArray JNICALL
 Java_com_hippo_ehviewer_jni_HdrConvertKt_decodePngRgbToDirect(
         JNIEnv* env, jclass, jobject input, jint width, jint height, jint primaries,
-        jint transfer, jintArray out_info, jfloatArray out_boost) try {
+        jint transfer, jboolean advanced_color, jintArray out_info, jfloatArray out_boost) try {
     if (!input || !out_info || !out_boost || env->GetArrayLength(out_info) < 6 || env->GetArrayLength(out_boost) < 1 ||
         width <= 0 || height <= 0 || uint64_t(width) * height > 80000000 ||
-        (primaries != 1 && primaries != 9 && primaries != 12) || (transfer != 16 && transfer != 18)) return nullptr;
+        (primaries != 1 && primaries != 9 && primaries != 12) || (transfer != 13 && transfer != 16 && transfer != 18)) return nullptr;
     const auto* codes = static_cast<const uint16_t*>(env->GetDirectBufferAddress(input));
     const size_t count = size_t(width) * height;
     if (!codes || env->GetDirectBufferCapacity(input) < int64_t(count) * 8) return nullptr;
     const auto gamut = primaries == 9 ? UHDR_CG_BT_2100 : primaries == 12 ? UHDR_CG_DISPLAY_P3 : UHDR_CG_BT_709;
-    auto rgba = png_hdr_linear_rgba(codes, count, transfer, gamut);
+    auto rgba = png_linear_rgba(codes, count, transfer, gamut);
     // The common packer premultiplies alpha exactly once and supplies HDR headroom.
-    return pack_direct_to_jbyte_array(env, rgba, width, height, true, gamut, true, transfer, out_info, out_boost);
+    const bool hdr = transfer == 16 || transfer == 18;
+    return pack_direct_to_jbyte_array(env, rgba, width, height, hdr, gamut, advanced_color == JNI_TRUE, transfer, out_info, out_boost);
 } catch (...) { return nullptr; }

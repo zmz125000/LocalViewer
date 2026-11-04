@@ -1117,21 +1117,6 @@ object Settings : DataStorePreferences(null) {
     val readerOppoProxdr = boolPref("pref_reader_oppo_proxdr", false)
 
     /**
-     * High bit depth for **PNG/APNG** under [readerAdvancedColor].
-     * Still PQ/HLG PNG cICP uses the native linear HDR pack with source primaries
-     * and content headroom; SDR PNG retains the platform F16 path. APNG stays animated.
-     *
-     * When on **and** advanced color is on: bypass Coil hardware-direct for high-depth
-     * PNG → [BitmapFactory] preferred [Bitmap.Config.RGBA_F16] in linear extended sRGB,
-     * then optional FP16 [HardwareBuffer] wrap. The decoder maps embedded WCG profiles into
-     * extended scRGB values without a post-decode pixel loop. AVIF/HEIF stay on the normal
-     * platform path. Default off (2× RAM). When
-     * WCG/[readerAdvancedColor] changes, this value is forced to match (WCG drives
-     * sub-toggle; sub-toggle never drives WCG).
-     */
-    val readerPlatformHighDepth = boolPref("pref_reader_platform_high_depth", false)
-
-    /**
      * Reader wide color + high bit depth master (default **on**).
      *
      * When on and the display supports WCG:
@@ -1140,17 +1125,15 @@ object Settings : DataStorePreferences(null) {
      * - Platform stills: ImageDecoder keeps embedded ICC (sRGB stays sRGB-tagged;
      *   P3 stays P3 — no forced target ColorSpace).
      * - Lib-direct: preserve P3/BT.2020 and extra F16 for SDR-709.
-     * - Drives [readerPlatformHighDepth] one-way: every WCG change copies into the
-     *   platform-HBD sub-toggle (user may still turn HBD off while WCG stays on).
+     * - High-depth PNG uses F16 automatically; ordinary 8-bit PNG keeps the system path.
+     *   Supported wide-gamut/HDR cICP PNG uses native color management.
      *
-     * When off: platform sRGB conversion; lib rematrix wide→709; no WCG window; HBD off.
+     * When off: PNG uses the normal system decoder; other lib paths rematrix wide→709;
+     * no WCG window or forced high-depth PNG decode.
      * Camera RAW uses this as deep color only while [readerHdrDisplay] is off.
      * HDR display on ignores this switch and still decodes the deep-color bitmap.
      */
-    val readerAdvancedColor = boolPref("pref_reader_advanced_color", true).observed { wcg ->
-        // WCG always updates sub-toggle; sub-toggle must never write back to WCG.
-        readerPlatformHighDepth.value = wcg
-    }
+    val readerAdvancedColor = boolPref("pref_reader_advanced_color", true)
 
     /**
      * Decode camera RAW sensor data in the reader. Off shows the embedded preview,

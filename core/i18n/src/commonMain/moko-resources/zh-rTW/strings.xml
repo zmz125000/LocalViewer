@@ -970,8 +970,6 @@
     <string name="pref_reader_hdr_display_summary">在 HDR 螢幕上為 Ultra HDR／增益圖頁面啟用視窗 HDR 色彩模式。HDR 檔案的轉換與解碼一律進行；關閉後僅以 SDR 基底顯示。</string>
     <string name="pref_reader_advanced_color">進階色彩（廣色域／高位深）</string>
     <string name="pref_reader_advanced_color_summary">在廣色域螢幕上啟用視窗廣色域模式，並優先使用更高精度點陣圖。會占用更多 GPU 與記憶體。HDR 頁面仍優先使用 HDR 視窗模式。</string>
-    <string name="pref_reader_platform_high_depth">高位深（PNG）</string>
-    <string name="pref_reader_platform_high_depth_summary">在進階色彩開啟時：以 float16 解碼高位深 PNG，並保留 PQ/HLG HDR PNG 的來源色彩與 HDR 亮度範圍。占用更多記憶體，隨進階色彩開關同步。</string>
     <string name="pref_reader_camera_raw">RAW 影像</string>
     <string name="pref_reader_camera_raw_summary">解碼感光元件資料。關閉時使用內嵌預覽，沒有預覽時用 8 位元解碼。</string>
     <string name="pref_reader_raw_exposure">曝光</string>
