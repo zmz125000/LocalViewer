@@ -1,4 +1,5 @@
 #include "hdr_encode.h"
+#include "avif_color_profile.h"
 #include "hdr_parallel.h"
 #include "thumbnail_mapped_input.h"
 #include "ultrahdr/jpegdecoderhelper.h"
@@ -333,6 +334,7 @@ bool gain_map_cicp(avifImage* image) {
 int write_avif_source(avifImage* image,const char* path,StillEncodeQuality quality) {
     if((image->transferCharacteristics==16 || image->transferCharacteristics==18) &&
        (image->colorPrimaries==1 || image->colorPrimaries==9 || image->colorPrimaries==12))avifRWDataFree(&image->icc);
+    if(!ensure_avif_sdr_profile(image))return -81;
     if (quality.exif_size && avifImageSetMetadataExif(image,quality.exif,quality.exif_size)!=AVIF_RESULT_OK) return -81;
     std::unique_ptr<avifEncoder,decltype(&avifEncoderDestroy)> encoder(avifEncoderCreate(),avifEncoderDestroy);
     if(!encoder)return -81;
