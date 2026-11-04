@@ -3,6 +3,24 @@
 #include <stdexcept>
 bool export_pixels_preserve_scrgb() { return false; }
 static void check(bool value, const char* text) { if (!value) throw std::runtime_error(text); }
+static void check_f16_codes() {
+    double worst = 0.;
+    for (unsigned depth : {8u, 10u, 12u}) {
+        const unsigned maximum = (1u << depth) - 1;
+        for (unsigned code = 0; code <= maximum; ++code) {
+            const float original = code / float(maximum);
+            const float packed = half_to_float(float_to_half(original));
+            check(std::abs(original - packed) <= .000245f, "F16 code precision");
+            for (double exponent : {.5, 1., 2.}) {
+                const double reference = std::pow(64., std::pow(original, exponent));
+                const double actual = std::pow(64., std::pow(packed, exponent));
+                worst = std::max(worst, std::abs(actual / reference - 1.));
+            }
+        }
+    }
+    std::printf("F16 gain quantization relative error=%.6f\n", worst);
+    check(worst < .0021, "F16 gain rounding changed brightness excessively");
+}
 static void check_alpha8() {
     std::unique_ptr<avifImage, decltype(&avifImageDestroy)> image(avifImageCreate(7, 5, 8, AVIF_PIXEL_FORMAT_YUV400), avifImageDestroy);
     image->yuvRange = AVIF_RANGE_FULL;
@@ -36,7 +54,11 @@ static void compare_android(avifImage* image) {
         const double weight = std::clamp(std::log(display/meta[15])/std::log(meta[16]/meta[15]), 0.f, 1.f);
         double worst = 0.;
         for (unsigned y=0; y<image->height; ++y) for (unsigned x=0; x<image->width; ++x) for (unsigned c=0; c<3; ++c) {
-            auto sample = [&](const avifRGBImage& rgb) { const auto* row=rgb.pixels+size_t(y)*rgb.rowBytes; return rgb.depth>8 ? reinterpret_cast<const uint16_t*>(row)[x*4+c]/double((1u<<rgb.depth)-1) : row[x*4+c]/255.; };
+            auto sample = [&](const avifRGBImage& rgb) {
+                const auto* row = rgb.pixels + size_t(y) * rgb.rowBytes;
+                const float code = rgb.depth > 8 ? reinterpret_cast<const uint16_t*>(row)[x*4+c] / float((1u<<rgb.depth)-1) : row[x*4+c]/255.f;
+                return half_to_float(float_to_half(code)); // Actual Android F16 presentation storage.
+            };
             const double b = srgb_eotf(sample(base.rgb));
             const double g = std::pow(sample(gain.rgb), meta[6+c]);
             const double logGain = (1.-g)*std::log(meta[c])+g*std::log(meta[3+c]);
@@ -51,6 +73,7 @@ static void compare_android(avifImage* image) {
 }
 int main(int argc, char** argv) try {
     check_alpha8();
+    check_f16_codes();
     check(argc == 2, "pass a gain-map AVIF sample");
     std::unique_ptr<avifDecoder, decltype(&avifDecoderDestroy)> decoder(avifDecoderCreate(), avifDecoderDestroy);
     decoder->imageContentToDecode = AVIF_IMAGE_CONTENT_ALL;

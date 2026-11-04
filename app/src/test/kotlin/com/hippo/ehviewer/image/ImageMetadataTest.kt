@@ -53,6 +53,12 @@ class ImageMetadataTest {
     }
 
     @Test
+    fun isoOnlyGainmapDoesNotRequireAdobeXmp() {
+        val marker = "urn:iso:std:iso:ts:21496:-1"
+        assertEquals(marker, sourceGainmapMarker(byteArrayOf(-1, -40, -1, -30) + "$marker\u0000".toByteArray()))
+    }
+
+    @Test
     fun sdrSampleIsNotTaggedAsGainmapByItsEncoderComment() {
         val sample = listOf(File("samples/20220423_085935_sdr.jpg"), File("../samples/20220423_085935_sdr.jpg"))
             .firstOrNull { it.isFile } ?: return

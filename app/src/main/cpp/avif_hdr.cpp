@@ -988,11 +988,12 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeAvifGainmap(
         return p == AVIF_COLOR_PRIMARIES_BT709 || p == AVIF_COLOR_PRIMARIES_SMPTE432 || p == AVIF_COLOR_PRIMARIES_BT2020;
     };
     // Restrict the handoff to opaque SDR bases with directly representable
-    // color metadata. ICC, HDR bases, 12-bit planes, and transformed items retain
-    // the general F16 path. Normalized F16 retains at least 10-bit code precision.
+    // color metadata. ICC, HDR bases and transformed items retain the general
+    // path. F16 is presentation storage for 8/10/12-bit codes; it can round
+    // 12-bit samples slightly but must not apply a transfer curve to the map.
     if (!gm || !gm->image || image->icc.size || gm->altICC.size || dec->alphaPresent || dec->imageCount != 1 ||
         image->transformFlags || gm->image->transformFlags ||
-        image->depth > 10 || gm->image->depth > 10 ||
+        image->depth > 12 || gm->image->depth > 12 ||
         !known_primaries(image->colorPrimaries) ||
         (image->transferCharacteristics != AVIF_TRANSFER_CHARACTERISTICS_SRGB &&
          image->transferCharacteristics != AVIF_TRANSFER_CHARACTERISTICS_BT709) ||

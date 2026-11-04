@@ -437,7 +437,9 @@ class Image private constructor(
             val kernelDownscale = kernelRequested && encodedSizeNeedsDownscale(mode, longEdgeCap, comicRendering)
             val request = with(appCtx) {
                 imageRequest {
-                    onLeft { data(it.source) }
+                    // Keep the original page view available for the gain-map
+                    // trailer attachment and metadata reads after Coil decoding.
+                    onLeft { data(it.source.asReadOnlyBuffer()) }
                     onRight { data(it.source.toUri()) }
                     when {
                         kernelDownscale -> {
@@ -1074,6 +1076,7 @@ private fun ByteArray.containsHdrGainMapMarker(length: Int = size): Boolean {
         indexOfAscii("GainMap", n) >= 0 ||
         indexOfAscii("hdrgm", n) >= 0 ||
         indexOfAscii("HDRGainMap", n) >= 0 ||
+        indexOfAscii("urn:iso:std:iso:ts:21496:-1", n) >= 0 ||
         indexOfAscii("tmap", n) >= 0
 }
 

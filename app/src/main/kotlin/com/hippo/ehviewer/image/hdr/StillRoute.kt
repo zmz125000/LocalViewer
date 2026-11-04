@@ -229,12 +229,27 @@ fun classifyPath(path: Path, fileNameHint: String? = null, maxBytes: Int = HDR_S
 }
 
 fun classify(buffer: ByteBuffer, fileNameHint: String? = null): StillRoute {
+    // SMB/archive RAM pages retain the whole file. Match the path classifier's
+    // tail probe before reducing this view to the bounded header sniff.
+    if (hasProxdrHeifTrailer(buffer, fileNameHint) && !Settings.preferNativeHeifAvif.value && Settings.readerOppoProxdr.value) {
+        return StillRoute.OppoProxdr
+    }
     val dup = buffer.asReadOnlyBuffer()
     val n = minOf(dup.remaining(), HDR_SNIFF_BYTES)
     if (n <= 0) return StillRoute.Platform
     val bytes = ByteArray(n)
     dup.get(bytes)
     return classify(bytes, n, fileNameHint)
+}
+
+/** Probe a borrowed page without copying its payload or changing position/limit. */
+internal fun hasProxdrHeifTrailer(buffer: ByteBuffer, fileNameHint: String? = null): Boolean {
+    if (!OppoProxdr.looksLike(buffer)) return false
+    val ext = fileNameHint?.substringAfterLast('.', "")?.lowercase()
+    if (isHeicImageExtension(ext)) return true
+    val head = buffer.asReadOnlyBuffer()
+    val bytes = ByteArray(minOf(head.remaining(), 64)).also { head.get(it) }
+    return isHeifFamily(bytes, bytes.size) && !isAvifBrand(bytes, bytes.size)
 }
 
 /**
