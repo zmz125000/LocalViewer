@@ -194,7 +194,8 @@ int decode_jxl_to_linear(const uint8_t* data, size_t len, std::vector<Sample>& o
                              unsigned& w, unsigned& h, uhdr_color_gamut_t* out_cg,
                              bool* out_force_hdr = nullptr, int* out_transfer_cicp = nullptr,
                              bool composite_alpha_on_black = true, unsigned thumbnail_edge = 0,
-                             bool export_bt2020 = false, std::vector<uint8_t>* out_exif = nullptr, int* out_source_depth = nullptr, DecodedImageInfo* source = nullptr) {
+                             bool export_bt2020 = false, std::vector<uint8_t>* out_exif = nullptr, int* out_source_depth = nullptr, DecodedImageInfo* source = nullptr,
+                             bool progressive_preview = true) {
     const bool preserve_extended = export_pixels_preserve_scrgb();
     if (out_source_depth) *out_source_depth = 0;
     if (out_exif) out_exif->clear();
@@ -219,14 +220,14 @@ int decode_jxl_to_linear(const uint8_t* data, size_t len, std::vector<Sample>& o
     (void)JxlDecoderSetUnpremultiplyAlpha(dec.get(), JXL_TRUE);
 
     const int events = JXL_DEC_BASIC_INFO | JXL_DEC_COLOR_ENCODING | JXL_DEC_FULL_IMAGE |
-        (thumbnail_edge > 0 ? JXL_DEC_FRAME_PROGRESSION : 0) |
+        (thumbnail_edge > 0 && progressive_preview ? JXL_DEC_FRAME_PROGRESSION : 0) |
         (out_exif ? JXL_DEC_BOX | JXL_DEC_BOX_COMPLETE : 0);
     if (JxlDecoderSubscribeEvents(dec.get(), events) !=
         JXL_DEC_SUCCESS) {
         return -4;
     }
     if (out_exif && JxlDecoderSetDecompressBoxes(dec.get(), JXL_TRUE) != JXL_DEC_SUCCESS) return -4;
-    if (thumbnail_edge > 0 &&
+    if (thumbnail_edge > 0 && progressive_preview &&
         JxlDecoderSetProgressiveDetail(dec.get(), kLastPasses) != JXL_DEC_SUCCESS) return -4;
     JxlDecoderSetParallelRunner(dec.get(), JxlResizableParallelRunner, runner.get());
 
@@ -351,7 +352,7 @@ int decode_jxl_to_linear(const uint8_t* data, size_t len, std::vector<Sample>& o
                 JXL_DEC_SUCCESS) {
                 return -11;
             }
-        } else if (status == JXL_DEC_FRAME_PROGRESSION && thumbnail_edge > 0) {
+        } else if (status == JXL_DEC_FRAME_PROGRESSION && thumbnail_edge > 0 && progressive_preview) {
             const size_t ratio = JxlDecoderGetIntendedDownsamplingRatio(dec.get());
             // Finish the first progressive rendition with enough source detail.
             // Files without suitable steps simply continue to the complete frame.
@@ -695,10 +696,15 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeJxlBytesToDirect(JNIEnv* env, jcl
     int source_depth = 0;
     DecodedImageInfo source;
     jbyteArray result = nullptr;
+    // Resize linear float samples in parallel before allocating display F16.
+    // Reader pages finish all passes and trailing EXIF; preview flushing is thumb-only.
+    // Exports retain the existing full-resolution F16 + explicit resize path.
     int rc = decode_jxl_to_linear(reinterpret_cast<const uint8_t*>(bytes),
                                       static_cast<size_t>(len), rgba, w, h, &cg, &force_hdr,
-                                      &transfer_cicp, /*composite_alpha_on_black=*/false, 0,
-                                      exportBt2020 == JNI_TRUE && export_pixels_capture(), jOutExif ? &exif : nullptr, &source_depth, &source);
+                                      &transfer_cicp, /*composite_alpha_on_black=*/false,
+                                      !export_pixels_capture() && maxEdge > 0 ? static_cast<unsigned>(maxEdge) : 0u,
+                                      exportBt2020 == JNI_TRUE && export_pixels_capture(), jOutExif ? &exif : nullptr,
+                                      &source_depth, &source, /*progressive_preview=*/false);
     if (rc == 0) {
         publish_decoded_exif(env, jOutExif, exif, true);
         if (maxEdge > 0) {
@@ -756,10 +762,15 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeJxlBufferToDirect(JNIEnv* env, jc
     int source_depth = 0;
     DecodedImageInfo source;
     jbyteArray result = nullptr;
+    // Resize linear float samples in parallel before allocating display F16.
+    // Reader pages finish all passes and trailing EXIF; preview flushing is thumb-only.
+    // Exports retain the existing full-resolution F16 + explicit resize path.
     int rc = decode_jxl_to_linear(reinterpret_cast<const uint8_t*>(bytes),
                                       static_cast<size_t>(len), rgba, w, h, &cg, &force_hdr,
-                                      &transfer_cicp, /*composite_alpha_on_black=*/false, 0,
-                                      exportBt2020 == JNI_TRUE && export_pixels_capture(), jOutExif ? &exif : nullptr, &source_depth, &source);
+                                      &transfer_cicp, /*composite_alpha_on_black=*/false,
+                                      !export_pixels_capture() && maxEdge > 0 ? static_cast<unsigned>(maxEdge) : 0u,
+                                      exportBt2020 == JNI_TRUE && export_pixels_capture(), jOutExif ? &exif : nullptr,
+                                      &source_depth, &source, /*progressive_preview=*/false);
     if (rc == 0) {
         publish_decoded_exif(env, jOutExif, exif, true);
         if (maxEdge > 0) {
