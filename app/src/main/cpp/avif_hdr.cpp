@@ -20,6 +20,7 @@
 #include "decoded_image_info.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
@@ -259,6 +260,53 @@ bool scale_avif_to_max_edge(avifImage* image, unsigned max_edge) {
     return true;
 }
 
+// libavif serializes 4:2:0 bilinear upsampling because adjacent rows share
+// chroma. Convert bounded strips with a two-row halo instead: each worker reads
+// the same neighbours as the full-frame converter and copies only its own rows.
+// Keep libavif's conversion/rounding, including alpha and high-depth samples.
+avifResult avif_yuv_to_rgb(const avifImage* image, avifRGBImage* rgb) {
+    const bool bilinear = rgb->chromaUpsampling == AVIF_CHROMA_UPSAMPLING_AUTOMATIC ||
+        rgb->chromaUpsampling == AVIF_CHROMA_UPSAMPLING_BEST_QUALITY ||
+        rgb->chromaUpsampling == AVIF_CHROMA_UPSAMPLING_BILINEAR;
+    const unsigned jobs = hdr_pixel_jobs(size_t(image->width) * image->height, std::max(1, rgb->maxThreads));
+    if (image->yuvFormat != AVIF_PIXEL_FORMAT_YUV420 || !bilinear || jobs == 1 || !rgb->pixels ||
+        rgb->width != image->width || rgb->height != image->height) return avifImageYUVToRGB(image, rgb);
+    constexpr unsigned rows = 128; // even: every strip keeps the original chroma phase
+    const size_t row_bytes = size_t(image->width) * avifRGBImagePixelSize(rgb);
+    if (rgb->rowBytes < row_bytes) return avifImageYUVToRGB(image, rgb);
+    std::array<std::vector<uint8_t>, 8> scratch;
+    try {
+        for (unsigned j = 0; j < jobs; ++j) scratch[j].resize(row_bytes * (rows + 4));
+    } catch (const std::bad_alloc&) {
+        return avifImageYUVToRGB(image, rgb);
+    }
+    std::array<avifResult, 8> results{};
+    hdr_parallel_pixels(jobs, jobs, [&](size_t, size_t, unsigned job) {
+        for (unsigned y = rows * job; y < image->height; y += rows * jobs) {
+            const unsigned end = std::min(y + rows, image->height);
+            const unsigned top = y ? y - 2 : 0;
+            const unsigned bottom = std::min(end + 2, image->height);
+            avifImage view{}; // borrowed plane pointers, no owned metadata or planes
+            const avifCropRect rect{0, top, image->width, bottom - top};
+            results[job] = avifImageSetViewRect(&view, image, &rect);
+            if (results[job] != AVIF_RESULT_OK) return;
+            avifRGBImage strip = *rgb;
+            strip.height = bottom - top;
+            strip.pixels = scratch[job].data();
+            strip.rowBytes = static_cast<uint32_t>(row_bytes);
+            strip.maxThreads = 1;
+            results[job] = avifImageYUVToRGB(&view, &strip);
+            if (results[job] != AVIF_RESULT_OK) return;
+            for (unsigned row = y; row < end; ++row) {
+                std::memcpy(rgb->pixels + size_t(row) * rgb->rowBytes,
+                    strip.pixels + size_t(row - top) * strip.rowBytes, row_bytes);
+            }
+        }
+    });
+    for (unsigned j = 0; j < jobs; ++j) if (results[j] != AVIF_RESULT_OK) return results[j];
+    return AVIF_RESULT_OK;
+}
+
 // Own RGB buffers even when conversion fails. The fast path leaves the decoder's
 // YUV planes untouched so unsupported inputs can still use libavif's tone mapper.
 struct ScopedAvifRgb {
@@ -271,7 +319,7 @@ struct ScopedAvifRgb {
     ~ScopedAvifRgb() { avifRGBImageFreePixels(&rgb); }
     bool convert(const avifImage* image) {
         return avifRGBImageAllocatePixels(&rgb) == AVIF_RESULT_OK &&
-               avifImageYUVToRGB(image, &rgb) == AVIF_RESULT_OK;
+               avif_yuv_to_rgb(image, &rgb) == AVIF_RESULT_OK;
     }
 };
 
@@ -583,7 +631,7 @@ int decode_avif_to_linear(const uint8_t* data, size_t len, std::vector<Sample>& 
         avifDecoderDestroy(dec);
         return -8;
     }
-    r = avifImageYUVToRGB(image, &rgb);
+    r = avif_yuv_to_rgb(image, &rgb);
     if (r != AVIF_RESULT_OK) {
         ALOGE("avifImageYUVToRGB: %s", avifResultToString(r));
         avifRGBImageFreePixels(&rgb);
@@ -962,7 +1010,7 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeAvifGainmap(
         rgb.maxThreads = dec->maxThreads;
         rgb.rowBytes = input->width * 8;
         rgb.pixels = static_cast<uint8_t*>(pixels.get());
-        if (avifImageYUVToRGB(input, &rgb) != AVIF_RESULT_OK) pixels.reset();
+        if (avif_yuv_to_rgb(input, &rgb) != AVIF_RESULT_OK) pixels.reset();
         return pixels;
     };
     auto base = convert(image);

@@ -140,7 +140,7 @@
     <string name="image_conversion_extended_srgb_bt2020">Convert scRGB to BT.2020</string>
     <string name="image_conversion_extended_srgb_bt2020_summary">Preserve wide-gamut colors when exporting scRGB JXR / JXL.</string>
     <string name="image_conversion_srgb_clamp">sRGB clamp</string>
-    <string name="image_conversion_srgb_clamp_summary">Convert to sRGB/BT.709 and clamp negative colors during pixel-processing exports. HDR brightness and transfer are preserved.</string>
+    <string name="image_conversion_srgb_clamp_summary">Convert to sRGB/BT.709 and clamp negative colors during pixel-processing exports. Overrides scRGB to BT.2020; HDR brightness and transfer are preserved.</string>
     <string name="image_conversion_quality_lossless">Lossless</string>
     <string name="image_conversion_quality_high">High</string>
     <string name="image_conversion_quality_mid">Mid</string>
@@ -160,9 +160,11 @@
     <string name="raw_hdr_conversion">RAW HDR conversion</string>
     <string name="raw_hdr_conversion_summary">%1$s</string>
     <string name="browse_task_progress_for_item">%1$s · %2$s</string>
-    <string name="raw_hdr_conversion_hdr">HDR</string>
+    <string name="raw_hdr_conversion_hdr">Source headroom</string>
     <string name="raw_hdr_conversion_boost">HDR boost</string>
     <string name="raw_hdr_conversion_custom">HDR custom</string>
+    <string name="raw_hdr_auto_exposure">RAW auto exposure</string>
+    <string name="raw_hdr_auto_exposure_summary">Meter the linear RAW image to 18% gray before the camera look and HDR boost. Automatic correction is limited to ±6 EV.</string>
     <string name="browse_ask_for_dest">Ask for dest</string>
     <string name="browse_ask_where_to_save">Ask for image conversion dest</string>
     <string name="browse_convert_accept_sdr">Accept SDR formats</string>
@@ -1044,12 +1046,14 @@
     <string name="pref_reader_raw_highlight_summary">Pull bright areas toward paper white.</string>
     <string name="pref_reader_raw_camera_look">Camera look</string>
     <string name="pref_reader_raw_camera_look_summary">Apply tone curve to RAW SDR</string>
+    <string name="pref_reader_raw_auto_exposure">Auto exposure</string>
+    <string name="pref_reader_raw_auto_exposure_summary">Meter the linear RAW image to 18% gray before the camera look. Exposure adds compensation; automatic correction is limited to ±6 EV.</string>
     <string name="pref_reader_raw_hdr_linear">HDR linear Rec.2020</string>
     <string name="pref_reader_raw_hdr_linear_summary">HDR RAW skips the camera look and stays linear Rec.2020.</string>
     <string name="pref_reader_raw_hdr_target_nits">HDR boost target</string>
     <string name="pref_reader_raw_hdr_target_nits_summary">Sets the target for RAW HDR highlight expansion. Estimated panel target: %1$d nits.</string>
     <string name="pref_reader_raw_shoulder">HDR shoulder</string>
-    <string name="pref_reader_raw_shoulder_summary">Opens HDR highlights for camera look and linear HDR. 0 leaves them, 50 is halfway, 100 reaches the HDR target.</string>
+    <string name="pref_reader_raw_shoulder_summary">Controls HDR highlight boost. 0 disables the boost; 100 reaches the HDR target.</string>
     <string name="pref_custom_brightness">Custom brightness</string>
     <string name="pref_comic_filter_sepia">Sepia</string>
     <string name="pref_comic_filter_contrast">Contrast</string>

@@ -102,6 +102,7 @@ Build with Grok 4.5.
 * Material Design 3 Navigation bar.
 * Highly optimized network image loading, with high-quality rendering.
 * HDR, Wide Color Gamut and 10-bit color mode support.
+* Image info widget (dimensions, bit depth, color space, exif).
 * Instant local archive reading with mmap.
 * ZIP/RAR/CBZ/CBR/CBT/PDF/EPUB support over network share.
 * PDF/EPUB/MOBI/FB2/TXT/AZW3/Markdown Ebook support with text formatting.

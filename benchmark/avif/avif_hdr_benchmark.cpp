@@ -6,7 +6,7 @@
 // Run:
 //   avif_hdr_benchmark [--max-edge=768] samples/iphone18/*.avif
 // Reports codec and HDR processing separately. Compares against libavif's PQ
-// output, checks parallel determinism, and rejects a >0.3% relative difference
+// output, checks exact strip/full-frame RGB parity and parallel determinism, and rejects a >0.3% relative difference
 // (with a 0.01 linear-light floor around black for PQ quantization).
 #include "../../app/src/main/cpp/avif_hdr.cpp"
 
@@ -16,6 +16,9 @@
 #include <stdexcept>
 #include <string>
 
+// Host reader capture has no export request.
+bool export_pixels_preserve_scrgb() { return false; }
+
 using Clock = std::chrono::steady_clock;
 
 static double elapsed_ms(Clock::time_point start) {
@@ -24,6 +27,55 @@ static double elapsed_ms(Clock::time_point start) {
 
 static void require(bool condition, const char* message) {
     if (!condition) throw std::runtime_error(message);
+}
+
+static void check_rgb_strips(const avifImage* image) {
+    for (unsigned depth : {8u, 10u, 12u, 16u}) {
+        for (bool floating : {false, true}) {
+            if (floating && depth != 16) continue;
+            for (bool premultiplied : {false, true}) {
+                ScopedAvifRgb reference(image, 1), strips(image, 4);
+                reference.rgb.depth = strips.rgb.depth = depth;
+                reference.rgb.isFloat = strips.rgb.isFloat = floating;
+                reference.rgb.alphaPremultiplied = strips.rgb.alphaPremultiplied = premultiplied;
+                require(avifRGBImageAllocatePixels(&reference.rgb) == AVIF_RESULT_OK &&
+                    avifRGBImageAllocatePixels(&strips.rgb) == AVIF_RESULT_OK, "RGB allocation failed");
+                require(avifImageYUVToRGB(image, &reference.rgb) == AVIF_RESULT_OK &&
+                    avif_yuv_to_rgb(image, &strips.rgb) == AVIF_RESULT_OK, "RGB conversion failed");
+                require(reference.rgb.rowBytes == strips.rgb.rowBytes &&
+                    std::memcmp(reference.rgb.pixels, strips.rgb.pixels,
+                        size_t(reference.rgb.rowBytes) * image->height) == 0,
+                    "strip conversion differs from full-frame libavif");
+            }
+        }
+    }
+}
+
+static void check_rgb_fixture() {
+    // Odd dimensions and non-opaque alpha exercise strip/chroma borders.
+    for (unsigned depth : {8u, 10u, 12u}) {
+        std::unique_ptr<avifImage, decltype(&avifImageDestroy)> image(
+            avifImageCreate(1025, 1027, depth, AVIF_PIXEL_FORMAT_YUV420), avifImageDestroy);
+        require(bool(image), "fixture allocation failed");
+        image->matrixCoefficients = AVIF_MATRIX_COEFFICIENTS_BT709;
+        require(avifImageAllocatePlanes(image.get(), AVIF_PLANES_ALL) == AVIF_RESULT_OK, "plane allocation failed");
+        for (unsigned plane = 0; plane < 4; ++plane) {
+            const bool alpha = plane == 3;
+            auto* bytes = alpha ? image->alphaPlane : image->yuvPlanes[plane];
+            const auto stride = alpha ? image->alphaRowBytes : image->yuvRowBytes[plane];
+            const unsigned width = plane == 0 || alpha ? image->width : (image->width + 1) / 2;
+            const unsigned height = plane == 0 || alpha ? image->height : (image->height + 1) / 2;
+            for (unsigned y = 0; y < height; ++y) for (unsigned x = 0; x < width; ++x) {
+                const unsigned code = (x * 71 + y * 43 + plane * 17) % (1u << depth);
+                if (depth == 8) bytes[size_t(y) * stride + x] = code;
+                else reinterpret_cast<uint16_t*>(bytes + size_t(y) * stride)[x] = code;
+            }
+        }
+        for (auto range : {AVIF_RANGE_FULL, AVIF_RANGE_LIMITED}) {
+            image->yuvRange = range;
+            check_rgb_strips(image.get());
+        }
+    }
 }
 
 static void check_fallbacks(avifImage* image) {
@@ -89,6 +141,7 @@ static void compare(avifImage* image, const char* name, double decode_ms) {
 
 int main(int argc, char** argv) {
     try {
+        check_rgb_fixture();
         unsigned max_edge = 0;
         int first = 1;
         if (argc > 1 && std::string(argv[1]).find("--max-edge=") == 0) {
@@ -108,6 +161,8 @@ int main(int argc, char** argv) {
             const double decode_ms = elapsed_ms(start);
             auto* image = decoder->image;
             require(scale_avif_to_max_edge(image, max_edge), "cannot scale sample");
+            check_rgb_strips(image);
+            check_rgb_strips(image->gainMap->image);
             compare(image, argv[a], decode_ms);
             check_fallbacks(image);
             // Exercise non-unit gain gamma and non-opaque alpha on a small frame.

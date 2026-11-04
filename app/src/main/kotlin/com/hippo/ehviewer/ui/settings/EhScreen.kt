@@ -322,7 +322,6 @@ fun AnimatedVisibilityScope.EhScreen(navigator: DestinationsNavigator) = Screen(
             )
             SwitchPreference(
                 title = stringResource(R.string.settings_use_trash_bin),
-                summary = stringResource(R.string.settings_use_trash_bin_summary),
                 state = Settings.useTrashBin.asMutableState(),
             )
             val showSmallGalleries = Settings.browseShowSmallGalleries.asMutableState()

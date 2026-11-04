@@ -17,6 +17,7 @@ import com.hippo.ehviewer.asMutableState
 @Composable
 internal fun ImageConversionPreferences() {
     val conversionQuality = Settings.imageConversionQuality.asMutableState()
+    val srgbClamp = Settings.imageConversionSrgbClamp.asMutableState()
     SimpleMenuPreferenceInt(
         title = stringResource(id = R.string.image_conversion_quality),
         entry = com.hippo.ehviewer.R.array.image_conversion_quality_entries,
@@ -68,17 +69,26 @@ internal fun ImageConversionPreferences() {
         entryValueRes = com.hippo.ehviewer.R.array.raw_hdr_conversion_values,
         state = rawHdrMode,
     )
+    AnimatedVisibility(visible = rawHdrMode.value.coerceIn(0, 2) != 2) {
+        SwitchPreference(
+            title = stringResource(R.string.raw_hdr_auto_exposure),
+            summary = stringResource(R.string.raw_hdr_auto_exposure_summary),
+            state = Settings.rawHdrConversionAutoExposure.asMutableState(),
+        )
+    }
     SwitchPreference(
         title = stringResource(R.string.image_conversion_keep_exif),
         state = Settings.imageConversionKeepExif.asMutableState(),
     )
     SwitchPreference(
         title = stringResource(R.string.image_conversion_extended_srgb_bt2020),
+        summary = stringResource(R.string.image_conversion_extended_srgb_bt2020_summary),
         state = Settings.imageConversionExtendedSrgbBt2020.asMutableState(),
+        enabled = !srgbClamp.value,
     )
     SwitchPreference(
         title = stringResource(R.string.image_conversion_srgb_clamp),
-        state = Settings.imageConversionSrgbClamp.asMutableState(),
+        state = srgbClamp,
     )
     SwitchPreference(
         title = stringResource(R.string.image_conversion_jxl_jpeg_transcoding),

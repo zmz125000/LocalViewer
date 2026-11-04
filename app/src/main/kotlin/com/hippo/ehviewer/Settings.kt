@@ -797,6 +797,7 @@ object Settings : DataStorePreferences(null) {
 
     /** RAW HDR exports: 0 source headroom, 1 default controls boost, 2 current controls. */
     val rawHdrConversionMode = intPref("raw_hdr_conversion_mode", 1)
+    val rawHdrConversionAutoExposure = boolPref("raw_hdr_conversion_auto_exposure", false)
 
     val hardwareBitmapThreshold = intPref("hardware_bitmap_threshold", 16384)
     val preloadThumbAggressively = boolPref("preload_thumb_aggressively", false)
@@ -1193,6 +1194,7 @@ object Settings : DataStorePreferences(null) {
      * HDR ignores this and uses [readerRawHdrLinear].
      */
     val readerRawCameraLook = boolPref("pref_reader_raw_camera_look", true)
+    val readerRawAutoExposure = boolPref("pref_reader_raw_auto_exposure", false)
 
     /**
      * HDR RAW stays linear Rec.2020 and skips the camera look.
@@ -1215,6 +1217,7 @@ object Settings : DataStorePreferences(null) {
         readerRawWhiteBalance.value = 0
         readerRawKelvin.value = 5200
         readerRawCameraLook.value = true
+        readerRawAutoExposure.value = false
         readerRawHdrLinear.value = false
         readerRawShoulder.value = 50
         readerRawHdrTargetNits.value = 1500

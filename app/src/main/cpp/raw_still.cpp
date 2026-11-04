@@ -835,6 +835,34 @@ float dng_baseline_ev(const LibRaw& raw) {
     return ev;
 }
 
+// Meter the white-balanced, developed linear image before the camera look and
+// HDR rendering. Ignore black, trim 1% at each end, and cap correction at ±6 EV.
+float metered_exposure_ev(const libraw_processed_image_t* img, float camera_white, float baseline_ev, int space) {
+    if (!img || img->bits != 16 || !(camera_white > 0.f)) return 0.f;
+    const size_t count = static_cast<size_t>(img->width) * img->height;
+    if (!count) return 0.f;
+    const size_t step = std::max<size_t>(1, (count + 49999) / 50000);
+    const float yr = space == 2 ? .2627f : space == 1 ? .2289746f : .2126f;
+    const float yb = space == 2 ? .0593f : space == 1 ? .0792869f : .0722f;
+    std::vector<float> logs;
+    logs.reserve(std::min<size_t>(count, 50000));
+    for (size_t i = 0; i < count; i += step) {
+        const int x = static_cast<int>(i % img->width), y = static_cast<int>(i / img->width);
+        const float r = sample_component(img->data, 16, img->colors, x, y, img->width, 0);
+        const float g = img->colors > 1 ? sample_component(img->data, 16, img->colors, x, y, img->width, 1) : r;
+        const float b = img->colors > 2 ? sample_component(img->data, 16, img->colors, x, y, img->width, 2) : r;
+        const float luma = yr * r + (1.f - yr - yb) * g + yb * b;
+        if (std::isfinite(luma) && luma >= 1.f) logs.push_back(std::log2(luma / camera_white));
+    }
+    if (logs.empty()) return 0.f;
+    std::sort(logs.begin(), logs.end());
+    const size_t trim = logs.size() / 100;
+    double sum = 0;
+    for (size_t i = trim; i < logs.size() - trim; ++i) sum += logs[i];
+    const float mean = static_cast<float>(sum / (logs.size() - 2 * trim));
+    return std::clamp(std::log2(.18f) - mean - baseline_ev, -6.f, 6.f);
+}
+
 void configure_process(LibRaw& raw, int present, int max_edge, int demosaic_qual, int wb_mode, int kelvin) {
     auto& p = raw.imgdata.params;
     configure_white_balance(raw, wb_mode, kelvin);
@@ -922,7 +950,7 @@ float highlight_fit(const LibRaw& raw, float sat_fit) {
 bool process_open_raw(HeadroomRaw& raw, const uint8_t* tiff, size_t tiff_len, int max_edge, int present, float panel_boost,
                       int demosaic_qual, int wb_mode, float exposure_ev, float highlight_stops, int kelvin,
                       bool hdr_linear, bool camera_look, float shoulder, float shadows, float midtones, float highlights,
-                      Decoded& out) {
+                      Decoded& out, bool auto_exposure = false) {
     configure_process(raw, present, max_edge, demosaic_qual, wb_mode, kelvin);
     if (raw.unpack() != LIBRAW_SUCCESS) return false;
     if (raw.dcraw_process() != LIBRAW_SUCCESS) return false;
@@ -934,14 +962,20 @@ bool process_open_raw(HeadroomRaw& raw, const uint8_t* tiff, size_t tiff_len, in
         if (img) LibRaw::dcraw_clear_mem(img);
         return false;
     }
+    // dcraw_make_mem_image() copies the rendered pixels out of LibRaw. Release
+    // LibRaw's full-size demosaic buffer before allocating the final packed
+    // output; keeping both buffers through packing needlessly raises peak RAM.
+    raw.free_image();
     // Linear HDR skips the camera look, and so does SDR when the look is off.
     // Baseline exposure lives inside the look, so those paths skip it too.
     // HDR still uses the look unless linear HDR is on.
     const bool linear_hdr = present >= 2 && hdr_linear;
     const bool skip_look = linear_hdr || (present < 2 && !camera_look);
     const float user_ev = std::isfinite(exposure_ev) ? exposure_ev : 0.f;
-    const float pack_ev = skip_look ? user_ev : user_ev + dng_baseline_ev(raw);
+    const float baseline_ev = skip_look ? 0.f : dng_baseline_ev(raw);
     int space = present >= 2 ? 2 : (present == 1 ? 1 : 0);
+    const float auto_ev = auto_exposure ? metered_exposure_ev(img, camera_white, baseline_ev, space) : 0.f;
+    const float pack_ev = baseline_ev + auto_ev + user_ev;
     float temp = 5500.f;
     if (wb_mode == 8) {
         temp = static_cast<float>(kelvin);
@@ -1027,7 +1061,7 @@ jbyteArray decoded_to_java(JNIEnv* env, Decoded& decoded, jintArray j_info, jflo
 
 jbyteArray decode_raw_buffer(JNIEnv* env, const uint8_t* data, size_t len, jint max_edge, jint present,
                              jfloat panel_boost, jfloat exposure_ev, jint wb_mode, jint kelvin, jfloat highlight_stops,
-                             jboolean hdr_linear, jboolean camera_look, jfloat shoulder, jfloat shadows,
+                             jboolean hdr_linear, jboolean camera_look, jboolean auto_exposure, jfloat shoulder, jfloat shadows,
                              jfloat midtones, jfloat highlights, jintArray j_info, jfloatArray j_boost) {
     jbyteArray result = nullptr;
     const int wb = std::clamp(static_cast<int>(wb_mode), 0, 8);
@@ -1046,7 +1080,7 @@ jbyteArray decode_raw_buffer(JNIEnv* env, const uint8_t* data, size_t len, jint 
             float shoulder_amount = std::isfinite(shoulder) ? std::clamp(shoulder, 0.f, 1.f) : 0.5f;
             if (process_open_raw(raw, data, len, max_edge, mode, panel_boost, /*demosaic_qual=*/3, wb, exposure,
                                  stops, temp, hdr_linear == JNI_TRUE, camera_look == JNI_TRUE, shoulder_amount,
-                                 zone(shadows), zone(midtones), zone(highlights), decoded)) {
+                                 zone(shadows), zone(midtones), zone(highlights), decoded, auto_exposure == JNI_TRUE)) {
                 result = decoded_to_java(env, decoded, j_info, j_boost, source_depth);
             }
         }
@@ -1094,7 +1128,7 @@ extern "C" JNIEXPORT jbyteArray JNICALL
 Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeRawFileToDirect(JNIEnv* env, jclass, jstring j_path, jint max_edge,
                                                                jint present, jfloat panel_boost, jfloat exposure_ev,
                                                                jint wb_mode, jint kelvin, jfloat highlight_stops,
-                                                               jboolean hdr_linear, jboolean camera_look, jfloat shoulder,
+                                                               jboolean hdr_linear, jboolean camera_look, jboolean auto_exposure, jfloat shoulder,
                                                                jfloat shadows, jfloat midtones, jfloat highlights,
                                                                jintArray j_info, jfloatArray j_boost) {
 #if !defined(EHVIEWER_HDR_CODECS)
@@ -1109,6 +1143,7 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeRawFileToDirect(JNIEnv* env, jcla
     (void)highlight_stops;
     (void)hdr_linear;
     (void)camera_look;
+    (void)auto_exposure;
     (void)shoulder;
     (void)shadows;
     (void)midtones;
@@ -1141,7 +1176,7 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeRawFileToDirect(JNIEnv* env, jcla
             float shoulder_amount = std::isfinite(shoulder) ? std::clamp(shoulder, 0.f, 1.f) : 0.5f;
             if (process_open_raw(raw, tiff, tiff_len, max_edge, mode, panel_boost, /*demosaic_qual=*/3, wb, exposure,
                                  stops, temp, hdr_linear == JNI_TRUE, camera_look == JNI_TRUE, shoulder_amount,
-                                 zone(shadows), zone(midtones), zone(highlights), decoded)) {
+                                 zone(shadows), zone(midtones), zone(highlights), decoded, auto_exposure == JNI_TRUE)) {
                 result = decoded_to_java(env, decoded, j_info, j_boost, source_depth);
             }
         }
@@ -1158,7 +1193,7 @@ extern "C" JNIEXPORT jbyteArray JNICALL
 Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeRawBytesToDirect(JNIEnv* env, jclass, jbyteArray j_input,
                                                                 jint max_edge, jint present, jfloat panel_boost,
                                                                 jfloat exposure_ev, jint wb_mode, jint kelvin,
-                                                                jfloat highlight_stops, jboolean hdr_linear, jboolean camera_look,
+                                                                jfloat highlight_stops, jboolean hdr_linear, jboolean camera_look, jboolean auto_exposure,
                                                                 jfloat shoulder, jfloat shadows, jfloat midtones,
                                                                 jfloat highlights, jintArray j_info, jfloatArray j_boost) {
 #if !defined(EHVIEWER_HDR_CODECS)
@@ -1173,6 +1208,7 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeRawBytesToDirect(JNIEnv* env, jcl
     (void)highlight_stops;
     (void)hdr_linear;
     (void)camera_look;
+    (void)auto_exposure;
     (void)shoulder;
     (void)shadows;
     (void)midtones;
@@ -1188,7 +1224,7 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeRawBytesToDirect(JNIEnv* env, jcl
     if (!bytes) return nullptr;
     jbyteArray result = decode_raw_buffer(env, reinterpret_cast<const uint8_t*>(bytes), static_cast<size_t>(len),
                                           max_edge, present, panel_boost, exposure_ev, wb_mode, kelvin,
-                                          highlight_stops, hdr_linear, camera_look, shoulder, shadows, midtones,
+                                          highlight_stops, hdr_linear, camera_look, auto_exposure, shoulder, shadows, midtones,
                                           highlights, j_info, j_boost);
     env->ReleaseByteArrayElements(j_input, bytes, JNI_ABORT);
     return result;
@@ -1199,7 +1235,7 @@ extern "C" JNIEXPORT jbyteArray JNICALL
 Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeRawBufferToDirect(JNIEnv* env, jclass, jobject j_input,
                                                                 jint max_edge, jint present, jfloat panel_boost,
                                                                 jfloat exposure_ev, jint wb_mode, jint kelvin,
-                                                                jfloat highlight_stops, jboolean hdr_linear, jboolean camera_look,
+                                                                jfloat highlight_stops, jboolean hdr_linear, jboolean camera_look, jboolean auto_exposure,
                                                                 jfloat shoulder, jfloat shadows, jfloat midtones,
                                                                 jfloat highlights, jintArray j_info, jfloatArray j_boost) {
 #if !defined(EHVIEWER_HDR_CODECS)
@@ -1214,6 +1250,7 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeRawBufferToDirect(JNIEnv* env, jc
     (void)highlight_stops;
     (void)hdr_linear;
     (void)camera_look;
+    (void)auto_exposure;
     (void)shoulder;
     (void)shadows;
     (void)midtones;
@@ -1228,7 +1265,7 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeRawBufferToDirect(JNIEnv* env, jc
     if (!bytes || len <= 0) return nullptr;
     jbyteArray result = decode_raw_buffer(env, reinterpret_cast<const uint8_t*>(bytes), static_cast<size_t>(len),
                                           max_edge, present, panel_boost, exposure_ev, wb_mode, kelvin,
-                                          highlight_stops, hdr_linear, camera_look, shoulder, shadows, midtones,
+                                          highlight_stops, hdr_linear, camera_look, auto_exposure, shoulder, shadows, midtones,
                                           highlights, j_info, j_boost);
     return result;
 #endif
@@ -1269,7 +1306,7 @@ extern "C" JNIEXPORT jbyteArray JNICALL
 Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeRawFdToDirect(JNIEnv* env, jclass, jint fd, jint max_edge, jint present,
                                                              jfloat panel_boost, jfloat exposure_ev, jint wb_mode,
                                                              jint kelvin, jfloat highlight_stops, jboolean hdr_linear,
-                                                             jboolean camera_look, jfloat shoulder, jfloat shadows,
+                                                             jboolean camera_look, jboolean auto_exposure, jfloat shoulder, jfloat shadows,
                                                              jfloat midtones, jfloat highlights, jintArray j_info,
                                                              jfloatArray j_boost) {
 #if !defined(EHVIEWER_HDR_CODECS)
@@ -1284,6 +1321,7 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeRawFdToDirect(JNIEnv* env, jclass
     (void)highlight_stops;
     (void)hdr_linear;
     (void)camera_look;
+    (void)auto_exposure;
     (void)shoulder;
     (void)shadows;
     (void)midtones;
@@ -1296,7 +1334,7 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeRawFdToDirect(JNIEnv* env, jclass
     MappedFile file(static_cast<int>(fd));
     if (!file.data) return nullptr;
     return decode_raw_buffer(env, file.data, file.size, max_edge, present, panel_boost, exposure_ev, wb_mode, kelvin,
-                             highlight_stops, hdr_linear, camera_look, shoulder, shadows, midtones, highlights, j_info,
+                             highlight_stops, hdr_linear, camera_look, auto_exposure, shoulder, shadows, midtones, highlights, j_info,
                              j_boost);
 #endif
 }
