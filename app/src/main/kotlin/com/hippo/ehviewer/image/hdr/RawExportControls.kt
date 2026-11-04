@@ -40,9 +40,15 @@ internal data class RawExportControls(
 
         fun capture(target: StillExportTarget): RawExportControls {
             val mode = if (target.rawHdr()) Settings.rawHdrConversionMode.value.coerceIn(0, 2) else 0
-            return (if (mode == 2) current() else RawExportControls(
-                autoExposure = Settings.rawHdrConversionAutoExposure.value,
-            )).copy(hdrMode = mode)
+            return (
+                if (mode == 2) {
+                    current()
+                } else {
+                    RawExportControls(
+                        autoExposure = Settings.rawHdrConversionAutoExposure.value,
+                    )
+                }
+                ).copy(hdrMode = mode)
         }
     }
 }

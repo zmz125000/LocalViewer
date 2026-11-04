@@ -962,6 +962,10 @@ bool process_open_raw(HeadroomRaw& raw, const uint8_t* tiff, size_t tiff_len, in
         if (img) LibRaw::dcraw_clear_mem(img);
         return false;
     }
+    // dcraw_make_mem_image() copies the rendered pixels out of LibRaw. Release
+    // LibRaw's full-size demosaic buffer before allocating the final packed
+    // output; keeping both buffers through packing needlessly raises peak RAM.
+    raw.free_image();
     // Linear HDR skips the camera look, and so does SDR when the look is off.
     // Baseline exposure lives inside the look, so those paths skip it too.
     // HDR still uses the look unless linear HDR is on.
