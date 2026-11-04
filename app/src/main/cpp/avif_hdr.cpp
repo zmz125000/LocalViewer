@@ -648,13 +648,22 @@ int decode_avif_to_linear(const uint8_t* data, size_t len, std::vector<Sample>& 
     // For SDR the complete ICC (TRC, white point and primaries) takes priority.
     // PQ/HLG use CICP explicitly: HDR ICCs can contain an SDR fallback TRC.
     if (image->icc.size && !is_pq && !is_hlg) {
-        skcms_ICCProfile source{}, destination{};
+        skcms_ICCProfile source_profile{}, destination{};
         bool ok = image->icc.size <= 16u * 1024u * 1024u &&
-            skcms_Parse(image->icc.data, image->icc.size, &source) &&
+            skcms_Parse(image->icc.data, image->icc.size, &source_profile) &&
             make_linear_bt2020_profile(&destination);
+        // Keep the encoded ICC transfer separate from the linear working pixels.
+        // Otherwise the reader widget labels ICC SDR input as linear after decode.
+        if (ok && source) {
+            if (skcms_TRCs_AreApproximateInverse(&source_profile, skcms_sRGB_Inverse_TransferFunction())) {
+                source->transfer = AVIF_TRANSFER_CHARACTERISTICS_SRGB;
+            } else if (skcms_TRCs_AreApproximateInverse(&source_profile, skcms_Identity_TransferFunction())) {
+                source->transfer = AVIF_TRANSFER_CHARACTERISTICS_LINEAR;
+            }
+        }
         for (unsigned y = 0; ok && y < h; ++y) {
             ok = skcms_Transform(row_base + static_cast<size_t>(y) * row_bytes,
-                skcms_PixelFormat_RGBA_16161616LE, skcms_AlphaFormat_Unpremul, &source,
+                skcms_PixelFormat_RGBA_16161616LE, skcms_AlphaFormat_Unpremul, &source_profile,
                 out_rgba.data() + static_cast<size_t>(y) * w * 4,
                 working_format<Sample>(), skcms_AlphaFormat_Unpremul, &destination, w);
         }
