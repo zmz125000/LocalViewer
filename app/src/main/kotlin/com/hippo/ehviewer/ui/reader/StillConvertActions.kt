@@ -21,6 +21,7 @@ import com.hippo.ehviewer.gallery.ReaderOriginalFile
 import com.hippo.ehviewer.gallery.ReaderSession
 import com.hippo.ehviewer.image.PathSource
 import com.hippo.ehviewer.image.hdr.LibDirectDecode
+import com.hippo.ehviewer.image.hdr.RawExportControls
 import com.hippo.ehviewer.image.hdr.StillExportExif
 import com.hippo.ehviewer.image.hdr.StillExportQuality
 import com.hippo.ehviewer.image.hdr.StillExportTarget
@@ -95,7 +96,7 @@ suspend fun exportStillToDirectory(
     return try {
         val encoded = encodeStaged(leaf, target, stage, localSource) ?: return false
         try {
-            withIOContext { BrowseSaveAs.writeConvertFile(dir, stillExportFileName(leaf, encoded.target, encoded.encoding), encoded.file) }
+            withIOContext { BrowseSaveAs.writeConvertFile(dir, encoded.outputName(leaf), encoded.file) }
         } finally {
             encoded.file.delete()
         }
@@ -129,7 +130,7 @@ private suspend fun convertStagedUnchecked(leaf: String, target: StillExportTarg
         val encoded = encodeStaged(leaf, target, stage) ?: return
         try {
             val dest = withIOContext {
-                BrowseSaveAs.writeConvertFile(dir, stillExportFileName(leaf, encoded.target, encoded.encoding), encoded.file)
+                BrowseSaveAs.writeConvertFile(dir, encoded.outputName(leaf), encoded.file)
             }
             snackbar(string(R.string.image_saved, dest.toUri().displayPath ?: dest.toString()))
             true
@@ -150,7 +151,12 @@ private suspend fun pickAndWrite(
     val ok = runSuspendCatching {
         val uri = awaitActivityResult(
             ActivityResultContracts.CreateDocument(resolved.mimeType()),
-            stillExportFileName(leaf, resolved),
+            stillExportFileName(
+                leaf,
+                resolved,
+                srgbClamp = (currentCoroutineContext()[StillExportQuality] ?: StillExportQuality.current()).srgbClamp,
+                autoExposure = (currentCoroutineContext()[RawExportControls] ?: RawExportControls.capture(resolved)).autoExposure,
+            ),
         )
         if (uri == null) return@runSuspendCatching true
         picked = true
@@ -203,11 +209,25 @@ private fun Context.discardUnpublished(uri: Uri) {
     runCatching { DocumentsContract.deleteDocument(contentResolver, uri) }
 }
 
-private data class EncodedStill(val file: File, val target: StillExportTarget, val encoding: String? = null)
+private data class EncodedStill(
+    val file: File,
+    val target: StillExportTarget,
+    val encoding: String? = null,
+    val srgbClamp: Boolean = false,
+    val autoExposure: Boolean = false,
+) {
+    fun outputName(leaf: String) = stillExportFileName(leaf, target, encoding, srgbClamp, autoExposure)
+}
 
 /** Download/stage first; retain the memory lease until encoding releases its pixels. */
 private suspend fun encodeStaged(leaf: String, target: StillExportTarget, stage: suspend () -> File, localSource: Path? = null): EncodedStill? = withRawExportControls(target) {
-    encodeStagedCaptured(leaf, target, stage, localSource)
+    val context = currentCoroutineContext()
+    val quality = checkNotNull(context[StillExportQuality])
+    val raw = checkNotNull(context[RawExportControls])
+    encodeStagedCaptured(leaf, target, stage, localSource)?.copy(
+        srgbClamp = quality.srgbClamp,
+        autoExposure = raw.autoExposure,
+    )
 }
 
 private suspend fun encodeStagedCaptured(leaf: String, target: StillExportTarget, stage: suspend () -> File, localSource: Path?): EncodedStill? = withIOContext {

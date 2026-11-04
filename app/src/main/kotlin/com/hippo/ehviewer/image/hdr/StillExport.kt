@@ -84,7 +84,13 @@ fun StillExportTarget.mimeType(): String = when (this) {
     else -> "image/jpeg"
 }
 
-fun stillExportFileName(sourceName: String, target: StillExportTarget, encoding: String? = null): String {
+fun stillExportFileName(
+    sourceName: String,
+    target: StillExportTarget,
+    encoding: String? = null,
+    srgbClamp: Boolean = false,
+    autoExposure: Boolean = false,
+): String {
     val leaf = sourceName.substringAfterLast('/').substringAfterLast('\\')
     val stem = FileUtils.getNameFromFilename(leaf)?.takeIf { it.isNotBlank() } ?: "image"
     val type = encoding ?: when (target) {
@@ -94,5 +100,7 @@ fun stillExportFileName(sourceName: String, target: StillExportTarget, encoding:
         StillExportTarget.JxlHdr -> "linear"
         StillExportTarget.JxlScRgb -> "scrgb"
     }
-    return FileUtils.sanitizeFilename("${stem}_$type.${target.fileExtension()}")
+    val srgb = if (srgbClamp) "_srgb" else ""
+    val ae = if (autoExposure && isRawStillExtension(FileUtils.getExtensionFromFilename(leaf))) "_ae" else ""
+    return FileUtils.sanitizeFilename("${stem}_$type$srgb$ae.${target.fileExtension()}")
 }
