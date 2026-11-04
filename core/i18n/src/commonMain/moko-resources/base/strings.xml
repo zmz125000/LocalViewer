@@ -163,6 +163,8 @@
     <string name="raw_hdr_conversion_hdr">Source headroom</string>
     <string name="raw_hdr_conversion_boost">HDR boost</string>
     <string name="raw_hdr_conversion_custom">HDR custom</string>
+    <string name="raw_ae_protect_highlights">AE Protect highlights</string>
+    <string name="raw_ae_protect_highlights_summary">Limit automatic RAW brightening using bright RGB highlights. Applies to the reader and conversion. Manual exposure compensation is added afterward.</string>
     <string name="raw_hdr_auto_exposure">RAW auto exposure</string>
     <string name="raw_hdr_auto_exposure_summary">Meter the linear RAW image to 18% gray before the camera look and HDR boost. Automatic correction is limited to ±6 EV.</string>
     <string name="browse_ask_for_dest">Ask for dest</string>

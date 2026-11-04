@@ -20,6 +20,7 @@ internal data class RawExportControls(
     val highlights: Float = 0f,
     val cameraLook: Boolean = true,
     val autoExposure: Boolean = false,
+    val protectHighlights: Boolean = true,
     val linearHdr: Boolean = false,
 ) : AbstractCoroutineContextElement(Key) {
     companion object Key : CoroutineContext.Key<RawExportControls> {
@@ -35,6 +36,7 @@ internal data class RawExportControls(
             highlights = (Settings.readerRawHighlights.value / 100f).coerceIn(-1f, 1f),
             cameraLook = Settings.readerRawCameraLook.value,
             autoExposure = Settings.readerRawAutoExposure.value,
+            protectHighlights = Settings.rawAutoExposureProtectHighlights.value,
             linearHdr = Settings.readerRawHdrLinear.value,
         )
 
@@ -46,6 +48,7 @@ internal data class RawExportControls(
                 } else {
                     RawExportControls(
                         autoExposure = Settings.rawHdrConversionAutoExposure.value,
+                        protectHighlights = Settings.rawAutoExposureProtectHighlights.value,
                     )
                 }
                 ).copy(hdrMode = mode)

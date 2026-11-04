@@ -797,6 +797,7 @@ object Settings : DataStorePreferences(null) {
 
     /** RAW HDR exports: 0 source headroom, 1 default controls boost, 2 current controls. */
     val rawHdrConversionMode = intPref("raw_hdr_conversion_mode", 1)
+    val rawAutoExposureProtectHighlights = boolPref("raw_auto_exposure_protect_highlights", true)
     val rawHdrConversionAutoExposure = boolPref("raw_hdr_conversion_auto_exposure", false)
 
     val hardwareBitmapThreshold = intPref("hardware_bitmap_threshold", 16384)
