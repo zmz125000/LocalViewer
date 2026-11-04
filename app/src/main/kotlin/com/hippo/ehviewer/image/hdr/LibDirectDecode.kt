@@ -316,10 +316,12 @@ object LibDirectDecode {
             is PathSource -> classifyPath(src.source, fileNameHint)
             is ByteBufferSource -> classify(src.source, fileNameHint)
         }
-        // Reconstruct ISO AVIF gain maps natively into the single HDR F16 frame.
-        // Retaining a software F16 gain-map bitmap can add a full-resolution
-        // second frame (even when maxEdge caps the base), then stall RenderThread
-        // uploading it. Keep that experimental handoff out of the reader path.
+        // Keep eligible ISO bases and gain maps separate, like platform JPEG /
+        // HEIC gain maps. Flattening at full source headroom makes AVIF brighter
+        // on displays where Android would apply only part of the gain map.
+        if ((route as? StillRoute.Lib)?.codec == LibCodec.AvifPq) {
+            AvifGainmapDecode.decode(src, maxEdge)?.let { return it }
+        }
         // This entire scope is synchronous on the same decode thread. Native
         // packers move their final vector into the capture instead of a Java array.
         // Exports use their own capture and keep straight alpha through encoding.

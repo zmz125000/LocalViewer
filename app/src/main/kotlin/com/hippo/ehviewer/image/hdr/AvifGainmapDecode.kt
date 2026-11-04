@@ -15,13 +15,13 @@ import com.hippo.ehviewer.jni.releaseStillBuffer
 /** Reader-only ISO gain-map presentation; exports retain native HDR reconstruction. */
 internal object AvifGainmapDecode {
     fun decode(source: ImageSource, maxEdge: Int): LibDirectResult? {
-        if (Build.VERSION.SDK_INT < 34 || !Settings.readerHdrDisplay.value) return null
+        if (Build.VERSION.SDK_INT < 34 || !Settings.readerHdrDisplay.value || !Settings.readerAdvancedColor.value) return null
         return decodeSupported(source, maxEdge)
     }
 
     @RequiresApi(34)
     private fun decodeSupported(source: ImageSource, maxEdge: Int): LibDirectResult? = withStillInput(source) { input ->
-        val info = IntArray(7)
+        val info = IntArray(11)
         val metadata = FloatArray(17)
         val buffers = decodeAvifGainmap(
             input.takeIf { it.isDirect },
@@ -42,9 +42,22 @@ internal object AvifGainmapDecode {
                     base = it
                     it.copyPixelsFromBuffer(buffers[0])
                 }
-            gain = Bitmap.createBitmap(info[2], info[3], Bitmap.Config.RGBA_F16, true, ColorSpace.get(ColorSpace.Named.LINEAR_SRGB))
-            gain.copyPixelsFromBuffer(buffers[1])
-            val gainmap = Gainmap(gain).apply {
+            gain = if (info[7] != 0) {
+                // Monochrome 8-bit maps stay one byte per pixel, rather than a
+                // second F16 RGBA frame that is expensive to retain and upload.
+                Bitmap.createBitmap(info[2], info[3], Bitmap.Config.ALPHA_8).also {
+                    gain = it
+                    it.copyPixelsFromBuffer(buffers[1])
+                }
+            } else {
+                val linear = ColorSpace.get(ColorSpace.Named.LINEAR_SRGB)
+                tryHardwareF16FromPixels(byteArrayOf(), info[2], info[3], linear, buffers[1])
+                    ?: Bitmap.createBitmap(info[2], info[3], Bitmap.Config.RGBA_F16, true, linear).also {
+                        gain = it
+                        it.copyPixelsFromBuffer(buffers[1])
+                    }
+            }
+            val gainmap = Gainmap(checkNotNull(gain)).apply {
                 setRatioMin(metadata[0], metadata[1], metadata[2])
                 setRatioMax(metadata[3], metadata[4], metadata[5])
                 setGamma(metadata[6], metadata[7], metadata[8])
@@ -63,6 +76,12 @@ internal object AvifGainmapDecode {
                 isHdrContent = false, // The attached Gainmap drives automatic HDR headroom.
                 contentHdrBoost = metadata[16],
                 isWideGamutSource = colorSpace.isWideGamut || info[6] != 1,
+                sourceHasGainmap = true,
+                sourceBitDepth = info[8],
+                sourceWidth = info[9],
+                sourceHeight = info[10],
+                sourcePrimaries = info[4],
+                sourceTransfer = info[5],
             ).also { retained = true }
         } catch (error: Exception) {
             Log.w("AvifGainmap", "GPU handoff failed; using native F16 reconstruction", error)
