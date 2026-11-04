@@ -7,8 +7,10 @@ import android.graphics.ImageDecoder
 import android.hardware.display.DisplayManager
 import android.os.Build
 import android.os.ParcelFileDescriptor
+import android.os.SystemClock
 import android.system.Os
 import android.system.OsConstants
+import android.util.Log
 import android.view.Display
 import com.ehviewer.core.files.openFileDescriptor
 import com.ehviewer.core.files.read
@@ -204,7 +206,11 @@ object LibDirectDecode {
         knownRoute: StillRoute? = null,
     ): LibDirectResult? = withContext(Dispatchers.IO) {
         // Gate before allocating decoder scratch, packed pixels, and the GPU buffer.
+        // adb shell setprop log.tag.ReaderDecode DEBUG; adb logcat -s ReaderDecode:D
+        val trace = Log.isLoggable("ReaderDecode", Log.DEBUG)
+        val waiting = if (trace) SystemClock.elapsedRealtime() else 0L
         withHeavyDecode {
+            if (trace) Log.d("ReaderDecode", "native gate wait=${SystemClock.elapsedRealtime() - waiting}ms")
             decodeUnlocked(src, fileNameHint, maxEdge, knownRoute)
         }
     }
@@ -318,11 +324,14 @@ object LibDirectDecode {
         // packers move their final vector into the capture instead of a Java array.
         // Exports use their own capture and keep straight alpha through encoding.
         val handle = beginNativeReaderPixels()
+        val trace = Log.isLoggable("ReaderDecode", Log.DEBUG)
+        val started = if (trace) SystemClock.elapsedRealtime() else 0L
         try {
             val packed = decodePacked(src, fileNameHint, maxEdge, knownRoute = route)
             val nativePixels = endNativeReaderPixels(handle)
             if (packed == null) return null
-            return bitmapFromPacked(
+            val decoded = if (trace) SystemClock.elapsedRealtime() else 0L
+            val result = bitmapFromPacked(
                 packed.pixels,
                 packed.outInfo,
                 packed.outBoost,
@@ -337,6 +346,12 @@ object LibDirectDecode {
                 sourceIsScRgb = packed.outInfo.getOrNull(12) == 1,
                 sourceTransfer = packed.outInfo.getOrNull(11)?.takeIf { it > 0 } ?: packed.outInfo[5],
             )
+            if (trace) Log.d(
+                "ReaderDecode",
+                "$route ${packed.outInfo[0]}x${packed.outInfo[1]} decode+pack=${decoded - started}ms " +
+                    "present=${SystemClock.elapsedRealtime() - decoded}ms hardware=${result?.bitmap?.config == Bitmap.Config.HARDWARE}",
+            )
+            return result
         } finally {
             // Upload/copy has completed (or failed); no bitmap references this buffer.
             releaseNativeReaderPixels(handle)
