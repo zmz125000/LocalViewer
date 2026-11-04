@@ -28,7 +28,7 @@ internal class StillExportQuality(
             Settings.imageConversionJxlJpegTranscoding.value,
             if (Settings.imageConversionAvif12Bit.value) 12 else 10,
             Settings.imageConversionDownsizeGainMap.value,
-            Settings.imageConversionExtendedSrgbBt2020.value,
+            Settings.imageConversionExtendedSrgbBt2020.value && !Settings.imageConversionSrgbClamp.value,
             Settings.imageConversionKeepExif.value,
             Settings.imageConversionFloat32.value,
             Settings.imageConversionSrgbClamp.value,

@@ -126,7 +126,7 @@
     <string name="image_conversion_extended_srgb_bt2020">將 scRGB 轉為 BT.2020</string>
     <string name="image_conversion_extended_srgb_bt2020_summary">匯出 scRGB JXR / JXL 時保留廣色域色彩。</string>
     <string name="image_conversion_srgb_clamp">sRGB 鉗制</string>
-    <string name="image_conversion_srgb_clamp_summary">逐像素轉換匯出時轉為 sRGB/BT.709 並裁切負色彩值，同時保留 HDR 亮度和傳遞函數。</string>
+    <string name="image_conversion_srgb_clamp_summary">逐像素轉換匯出時轉為 sRGB/BT.709 並裁切負色彩值。此選項優先於 scRGB 轉 BT.2020，同時保留 HDR 亮度和傳遞函數。</string>
     <string name="image_conversion_quality_lossless">無損</string>
     <string name="image_conversion_quality_high">高</string>
     <string name="image_conversion_quality_mid">中</string>
@@ -151,7 +151,7 @@
     <string name="image_conversion_default_location">圖片轉換資料夾</string>
     <string name="image_conversion_default_location_not_set">尚未選擇資料夾</string>
     <string name="browse_task_progress_for_item">%1$s · %2$s</string>
-    <string name="raw_hdr_conversion_hdr">HDR</string>
+    <string name="raw_hdr_conversion_hdr">原始高光</string>
     <string name="raw_hdr_conversion_boost">HDR 增強</string>
     <string name="raw_hdr_conversion_custom">HDR 自訂</string>
     <string name="settings_default_video_player">預設影片播放器</string>
@@ -1000,7 +1000,7 @@
     <string name="pref_reader_raw_hdr_target_nits">HDR 增強目標</string>
     <string name="pref_reader_raw_hdr_target_nits_summary">設定 RAW HDR 高光擴展的目標亮度。估計螢幕目標：%1$d 尼特。</string>
     <string name="pref_reader_raw_shoulder">HDR 肩部</string>
-    <string name="pref_reader_raw_shoulder_summary">展開相機風格和線性 HDR 的高光。0 保持原樣，50 展開一半，100 展開到 HDR 目標亮度。</string>
+    <string name="pref_reader_raw_shoulder_summary">控制 HDR 高光增強。0 可停用增強；100 達到 HDR 目標亮度。</string>
     <string name="pref_custom_brightness">自訂亮度</string>
     <string name="pref_custom_color_filter">色彩濾鏡</string>
     <string name="pref_keep_screen_on">保持螢幕恆亮</string>

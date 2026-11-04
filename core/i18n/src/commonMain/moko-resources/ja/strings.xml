@@ -128,7 +128,7 @@
     <string name="image_conversion_extended_srgb_bt2020">scRGB を BT.2020 に変換</string>
     <string name="image_conversion_extended_srgb_bt2020_summary">scRGB JXR / JXL の変換時に広色域の色を保持します。</string>
     <string name="image_conversion_srgb_clamp">sRGB クランプ</string>
-    <string name="image_conversion_srgb_clamp_summary">ピクセル処理による書き出し時に sRGB/BT.709 へ変換し、負の色成分を制限します。HDR の明るさと伝達関数は維持します。</string>
+    <string name="image_conversion_srgb_clamp_summary">ピクセル処理による書き出し時に sRGB/BT.709 へ変換し、負の色成分を制限します。scRGB から BT.2020 への変換に優先し、HDR の明るさと伝達関数は維持します。</string>
 
     <string name="image_conversion_quality_lossless">可逆圧縮</string>
     <string name="image_conversion_quality_high">高</string>
@@ -154,7 +154,7 @@
     <string name="image_conversion_default_location">画像変換フォルダー</string>
     <string name="image_conversion_default_location_not_set">フォルダー未選択</string>
     <string name="browse_task_progress_for_item">%1$s · %2$s</string>
-    <string name="raw_hdr_conversion_hdr">HDR</string>
+    <string name="raw_hdr_conversion_hdr">ソースのハイライトヘッドルーム</string>
     <string name="raw_hdr_conversion_boost">HDR ブースト</string>
     <string name="raw_hdr_conversion_custom">HDR カスタム</string>
     <string name="settings_use_media3_player_for_library">ライブラリは Media3 プレーヤー</string>
@@ -374,7 +374,7 @@
     <string name="pref_reader_raw_hdr_target_nits">HDR ブースト目標</string>
     <string name="pref_reader_raw_hdr_target_nits_summary">RAW HDR ハイライト拡張の目標輝度を設定します。推定パネル目標：%1$d nits。</string>
     <string name="pref_reader_raw_shoulder">HDR ショルダー</string>
-    <string name="pref_reader_raw_shoulder_summary">カメラルックとリニア HDR のハイライトを開きます。0 はそのまま、50 は半分、100 は HDR の目標輝度です。</string>
+    <string name="pref_reader_raw_shoulder_summary">HDR ハイライトブーストを調整します。0 で無効になり、100 で HDR の目標輝度に達します。</string>
     <string name="pref_eink_refresh">電子ペーパー表示のリフレッシュ</string>
     <string name="pref_eink_refresh_summary">ページ切替後に画面をフラッシュし、電子ペーパーの残像を減らします。ギャラリーモードのみ。</string>
     <string name="pref_eink_refresh_duration">リフレッシュ点滅時間</string>
