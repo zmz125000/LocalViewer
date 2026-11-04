@@ -72,7 +72,6 @@ internal fun ImageConversionPreferences() {
     AnimatedVisibility(visible = rawHdrMode.value.coerceIn(0, 2) != 2) {
         SwitchPreference(
             title = stringResource(R.string.raw_hdr_auto_exposure),
-            summary = stringResource(R.string.raw_hdr_auto_exposure_summary),
             state = Settings.rawHdrConversionAutoExposure.asMutableState(),
         )
     }
@@ -80,12 +79,13 @@ internal fun ImageConversionPreferences() {
         title = stringResource(R.string.image_conversion_keep_exif),
         state = Settings.imageConversionKeepExif.asMutableState(),
     )
-    SwitchPreference(
-        title = stringResource(R.string.image_conversion_extended_srgb_bt2020),
-        summary = stringResource(R.string.image_conversion_extended_srgb_bt2020_summary),
-        state = Settings.imageConversionExtendedSrgbBt2020.asMutableState(),
-        enabled = !srgbClamp.value,
-    )
+    AnimatedVisibility(visible = !srgbClamp.value) {
+        SwitchPreference(
+            title = stringResource(R.string.image_conversion_extended_srgb_bt2020),
+            summary = stringResource(R.string.image_conversion_extended_srgb_bt2020_summary),
+            state = Settings.imageConversionExtendedSrgbBt2020.asMutableState(),
+        )
+    }
     SwitchPreference(
         title = stringResource(R.string.image_conversion_srgb_clamp),
         state = srgbClamp,
