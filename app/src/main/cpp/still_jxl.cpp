@@ -62,7 +62,11 @@ static int encode_jxl_pixels(unsigned w, unsigned h, const void* rgba, uhdr_colo
     info.alpha_premultiplied = JXL_FALSE;
     const float distance = quality.jxl_distance();
     const bool compression = distance > 0.f;
-    info.uses_original_profile = compression ? JXL_FALSE : JXL_TRUE;
+    // Keep source ICC bytes instead of letting libjxl replace a representable
+    // profile with structured color metadata. ICC lossy frames use Modular;
+    // lossless and no-ICC lossy frames retain their existing coding choices.
+    const bool keep_icc = source && source->icc_size > 0;
+    info.uses_original_profile = (!compression || keep_icc) ? JXL_TRUE : JXL_FALSE;
     info.intensity_target = intensity;
     JxlColorEncoding color{};
     color.color_space = gray ? JXL_COLOR_SPACE_GRAY : JXL_COLOR_SPACE_RGB;
@@ -102,11 +106,13 @@ static int encode_jxl_pixels(unsigned w, unsigned h, const void* rgba, uhdr_colo
             JxlEncoderSetICCProfile(encoder.get(), source->icc, source->icc_size) :
             JxlEncoderSetColorEncoding(encoder.get(), &color)) != JXL_ENC_SUCCESS) return -62;
     auto* frame = JxlEncoderFrameSettingsCreate(encoder.get(), nullptr);
-    // Lossless keeps original-profile / fast-decode coding. High/mid/low use
-    // perceptual XYB at distances 0.5/1.0/1.5, preserving primaries, transfer
-    // and HDR intensity target. Alpha remains lossless in every preset.
+    // Lossless and ICC-preserving lossy use original-profile / Modular coding.
+    // High/mid/low without an ICC use perceptual XYB at distances 0.5/1.0/1.5,
+    // preserving primaries, transfer and HDR intensity target. Alpha remains
+    // lossless in every preset.
     if (!frame || JxlEncoderSetFrameLossless(frame, compression ? JXL_FALSE : JXL_TRUE) != JXL_ENC_SUCCESS ||
         JxlEncoderSetFrameDistance(frame, distance) != JXL_ENC_SUCCESS ||
+        (compression && keep_icc && JxlEncoderFrameSettingsSetOption(frame, JXL_ENC_FRAME_SETTING_MODULAR, 1) != JXL_ENC_SUCCESS) ||
         (alpha && JxlEncoderSetExtraChannelDistance(frame, 0, 0.f) != JXL_ENC_SUCCESS) ||
         JxlEncoderFrameSettingsSetOption(frame, JXL_ENC_FRAME_SETTING_EFFORT, compression ? 5 : 3) != JXL_ENC_SUCCESS ||
         JxlEncoderFrameSettingsSetOption(frame, JXL_ENC_FRAME_SETTING_DECODING_SPEED, compression ? 0 : 2) != JXL_ENC_SUCCESS) return -63;
