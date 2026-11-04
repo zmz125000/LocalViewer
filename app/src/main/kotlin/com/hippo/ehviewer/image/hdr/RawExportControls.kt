@@ -19,6 +19,7 @@ internal data class RawExportControls(
     val midtones: Float = 0f,
     val highlights: Float = 0f,
     val cameraLook: Boolean = true,
+    val autoExposure: Boolean = false,
     val linearHdr: Boolean = false,
 ) : AbstractCoroutineContextElement(Key) {
     companion object Key : CoroutineContext.Key<RawExportControls> {
@@ -33,12 +34,15 @@ internal data class RawExportControls(
             midtones = (Settings.readerRawMidtones.value / 100f).coerceIn(-1f, 1f),
             highlights = (Settings.readerRawHighlights.value / 100f).coerceIn(-1f, 1f),
             cameraLook = Settings.readerRawCameraLook.value,
+            autoExposure = Settings.readerRawAutoExposure.value,
             linearHdr = Settings.readerRawHdrLinear.value,
         )
 
         fun capture(target: StillExportTarget): RawExportControls {
             val mode = if (target.rawHdr()) Settings.rawHdrConversionMode.value.coerceIn(0, 2) else 0
-            return (if (mode == 2) current() else RawExportControls()).copy(hdrMode = mode)
+            return (if (mode == 2) current() else RawExportControls(
+                autoExposure = Settings.rawHdrConversionAutoExposure.value,
+            )).copy(hdrMode = mode)
         }
     }
 }

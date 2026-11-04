@@ -163,6 +163,8 @@
     <string name="raw_hdr_conversion_hdr">Source headroom</string>
     <string name="raw_hdr_conversion_boost">HDR boost</string>
     <string name="raw_hdr_conversion_custom">HDR custom</string>
+    <string name="raw_hdr_auto_exposure">RAW auto exposure</string>
+    <string name="raw_hdr_auto_exposure_summary">Meter the linear RAW image to 18% gray before the camera look and HDR boost. Automatic correction is limited to ±6 EV.</string>
     <string name="browse_ask_for_dest">Ask for dest</string>
     <string name="browse_ask_where_to_save">Ask for image conversion dest</string>
     <string name="browse_convert_accept_sdr">Accept SDR formats</string>
@@ -1042,6 +1044,8 @@
     <string name="pref_reader_raw_highlight_summary">Pull bright areas toward paper white.</string>
     <string name="pref_reader_raw_camera_look">Camera look</string>
     <string name="pref_reader_raw_camera_look_summary">Apply tone curve to RAW SDR</string>
+    <string name="pref_reader_raw_auto_exposure">Auto exposure</string>
+    <string name="pref_reader_raw_auto_exposure_summary">Meter the linear RAW image to 18% gray before the camera look. Exposure adds compensation; automatic correction is limited to ±6 EV.</string>
     <string name="pref_reader_raw_hdr_linear">HDR linear Rec.2020</string>
     <string name="pref_reader_raw_hdr_linear_summary">HDR RAW skips the camera look and stays linear Rec.2020.</string>
     <string name="pref_reader_raw_hdr_target_nits">HDR boost target</string>

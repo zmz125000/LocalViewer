@@ -69,6 +69,13 @@ internal fun ImageConversionPreferences() {
         entryValueRes = com.hippo.ehviewer.R.array.raw_hdr_conversion_values,
         state = rawHdrMode,
     )
+    AnimatedVisibility(visible = rawHdrMode.value.coerceIn(0, 2) != 2) {
+        SwitchPreference(
+            title = stringResource(R.string.raw_hdr_auto_exposure),
+            summary = stringResource(R.string.raw_hdr_auto_exposure_summary),
+            state = Settings.rawHdrConversionAutoExposure.asMutableState(),
+        )
+    }
     SwitchPreference(
         title = stringResource(R.string.image_conversion_keep_exif),
         state = Settings.imageConversionKeepExif.asMutableState(),

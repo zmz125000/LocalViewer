@@ -141,6 +141,8 @@
     <string name="image_conversion_downsize_gain_map_summary">增益图像素数为原来的 1/4（宽高各为 1/2），基础图像保持原尺寸。</string>
     <string name="raw_hdr_conversion">RAW HDR 转换</string>
     <string name="raw_hdr_conversion_summary">%1$s</string>
+    <string name="raw_hdr_auto_exposure">RAW 自动曝光</string>
+    <string name="raw_hdr_auto_exposure_summary">在相机风格和 HDR 提升前，将线性 RAW 画面测光至 18% 灰。自动校正范围为 ±6 EV。</string>
     <string name="browse_ask_for_dest">询问目标位置</string>
     <string name="browse_ask_where_to_save">询问图像转换保存位置</string>
     <string name="browse_convert_accept_sdr">接受 SDR 格式</string>
@@ -1020,6 +1022,8 @@
     <string name="pref_reader_raw_highlight_summary">把亮部拉向纸白。</string>
     <string name="pref_reader_raw_camera_look">相机风格</string>
     <string name="pref_reader_raw_camera_look_summary">对 RAW SDR 应用色调曲线</string>
+    <string name="pref_reader_raw_auto_exposure">自动曝光</string>
+    <string name="pref_reader_raw_auto_exposure_summary">在相机风格前，将线性 RAW 画面测光至 18% 灰。曝光滑块用于调整补偿，自动校正范围为 ±6 EV。</string>
     <string name="pref_reader_raw_hdr_linear">HDR 线性 Rec.2020</string>
     <string name="pref_reader_raw_hdr_linear_summary">HDR RAW 跳过相机风格，保持线性 Rec.2020。</string>
     <string name="pref_reader_raw_hdr_target_nits">HDR 增强目标</string>

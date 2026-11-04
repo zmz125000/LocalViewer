@@ -142,6 +142,11 @@ private fun CameraRawSetting() = Column {
         )
     }
     SwitchChoice(
+        title = stringResource(id = R.string.pref_reader_raw_auto_exposure),
+        summary = stringResource(id = R.string.pref_reader_raw_auto_exposure_summary),
+        field = Settings.readerRawAutoExposure.asMutableState(),
+    )
+    SwitchChoice(
         title = stringResource(id = R.string.pref_reader_raw_camera_look),
         summary = stringResource(id = R.string.pref_reader_raw_camera_look_summary),
         field = Settings.readerRawCameraLook.asMutableState(),
