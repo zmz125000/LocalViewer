@@ -76,6 +76,10 @@ internal fun ImageConversionPreferences() {
         )
     }
     SwitchPreference(
+        title = stringResource(R.string.raw_ae_protect_highlights),
+        state = Settings.rawAutoExposureProtectHighlights.asMutableState(),
+    )
+    SwitchPreference(
         title = stringResource(R.string.image_conversion_keep_exif),
         state = Settings.imageConversionKeepExif.asMutableState(),
     )

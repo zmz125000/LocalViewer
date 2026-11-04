@@ -559,6 +559,7 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
                 readerRawHighlight.changesFlow().filter { pageLoader.containsRawStill() },
                 readerRawCameraLook.changesFlow().filter { pageLoader.containsRawStill() },
                 readerRawAutoExposure.changesFlow().filter { pageLoader.containsRawStill() },
+                rawAutoExposureProtectHighlights.changesFlow().filter { pageLoader.containsRawStill() },
                 readerRawHdrLinear.changesFlow().filter { pageLoader.containsRawStill() },
                 readerRawShoulder.changesFlow().filter { pageLoader.containsRawStill() },
                 readerRawHdrTargetNits.changesFlow().filter { pageLoader.containsRawStill() },

@@ -346,11 +346,13 @@ object LibDirectDecode {
                 sourceIsScRgb = packed.outInfo.getOrNull(12) == 1,
                 sourceTransfer = packed.outInfo.getOrNull(11)?.takeIf { it > 0 } ?: packed.outInfo[5],
             )
-            if (trace) Log.d(
-                "ReaderDecode",
-                "$route ${packed.outInfo[0]}x${packed.outInfo[1]} decode+pack=${decoded - started}ms " +
-                    "present=${SystemClock.elapsedRealtime() - decoded}ms hardware=${result?.bitmap?.config == Bitmap.Config.HARDWARE}",
-            )
+            if (trace) {
+                Log.d(
+                    "ReaderDecode",
+                    "$route ${packed.outInfo[0]}x${packed.outInfo[1]} decode+pack=${decoded - started}ms " +
+                        "present=${SystemClock.elapsedRealtime() - decoded}ms hardware=${result?.bitmap?.config == Bitmap.Config.HARDWARE}",
+                )
+            }
             return result
         } finally {
             // Upload/copy has completed (or failed); no bitmap references this buffer.
@@ -708,6 +710,7 @@ object LibDirectDecode {
                 controls.linearHdr && mode == RawPresent.Hdr,
                 controls.cameraLook,
                 controls.autoExposure,
+                controls.protectHighlights,
                 shoulder,
                 shadows,
                 midtones,
@@ -727,6 +730,7 @@ object LibDirectDecode {
                 controls.linearHdr && mode == RawPresent.Hdr,
                 controls.cameraLook,
                 controls.autoExposure,
+                controls.protectHighlights,
                 shoulder,
                 shadows,
                 midtones,
@@ -748,6 +752,7 @@ object LibDirectDecode {
                         controls.linearHdr && mode == RawPresent.Hdr,
                         controls.cameraLook,
                         controls.autoExposure,
+                        controls.protectHighlights,
                         shoulder,
                         shadows,
                         midtones,
@@ -769,6 +774,7 @@ object LibDirectDecode {
                         controls.linearHdr && mode == RawPresent.Hdr,
                         controls.cameraLook,
                         controls.autoExposure,
+                        controls.protectHighlights,
                         shoulder,
                         shadows,
                         midtones,

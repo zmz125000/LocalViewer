@@ -141,6 +141,8 @@
     <string name="image_conversion_downsize_gain_map_summary">增益图像素数为原来的 1/4（宽高各为 1/2），基础图像保持原尺寸。</string>
     <string name="raw_hdr_conversion">RAW HDR 转换</string>
     <string name="raw_hdr_conversion_summary">%1$s</string>
+    <string name="raw_ae_protect_highlights">AE 保护高光</string>
+    <string name="raw_ae_protect_highlights_summary">根据明亮的 RGB 高光限制 RAW 自动提亮。适用于阅读器和转换，手动曝光补偿在其后叠加。</string>
     <string name="raw_hdr_auto_exposure">RAW 自动曝光</string>
     <string name="raw_hdr_auto_exposure_summary">在相机风格和 HDR 提升前，将线性 RAW 画面测光至 18% 灰。自动校正范围为 ±6 EV。</string>
     <string name="browse_ask_for_dest">询问目标位置</string>
