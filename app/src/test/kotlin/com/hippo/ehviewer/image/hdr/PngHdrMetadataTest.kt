@@ -6,13 +6,27 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.zip.CRC32
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class PngHdrMetadataTest {
     @Test
-    fun pqAndHlgPreservePrimariesAndBothSourcePrecisions() {
-        for (transfer in listOf(16, 18)) {
+    fun ordinaryEightBitPngKeepsSystemDecodeWhileDeepAndWidePngUseColorManagement() {
+        assertFalse(PngHdrMetadata(2, 1, 8, 1, 13).needsNativeReader)
+        assertTrue(PngHdrMetadata(2, 1, 16, 1, 13).needsNativeReader)
+        for (depth in listOf(8, 16)) {
+            assertTrue(PngHdrMetadata(2, 1, depth, 9, 13).needsNativeReader)
+            assertTrue(PngHdrMetadata(2, 1, depth, 12, 13).needsNativeReader)
+            assertTrue(PngHdrMetadata(2, 1, depth, 1, 16).needsNativeReader)
+            assertTrue(PngHdrMetadata(2, 1, depth, 1, 18).needsNativeReader)
+        }
+    }
+
+    @Test
+    fun sdrPqAndHlgPreservePrimariesAndBothSourcePrecisions() {
+        for (transfer in listOf(13, 16, 18)) {
             for (primaries in listOf(1, 9, 12)) {
                 for (depth in listOf(8, 16)) {
                     assertEquals(PngHdrMetadata(2, 1, depth, primaries, transfer), PngHdrMetadata.probe(png(depth, tags(primaries, transfer))))
@@ -22,22 +36,23 @@ class PngHdrMetadataTest {
     }
 
     @Test
-    fun sdrAndUntaggedDeepPngKeepThePlatformPath() {
+    fun untaggedDeepPngKeepsThePlatformPath() {
         assertNull(PngHdrMetadata.probe(png(16)))
-        assertNull(PngHdrMetadata.probe(png(16, tags(9, 13))))
         assertNull(PngHdrMetadata.probe(ByteBuffer.wrap(ByteArray(64))))
     }
 
     @Test
     fun animatedPngIsNeverFlattenedEvenWithHdrTags() {
         val animation = chunk("acTL", ByteArray(8))
-        assertNull(PngHdrMetadata.probe(png(16, tags(9, 16), animation)))
-        assertNull(PngHdrMetadata.probe(png(16, animation, tags(9, 16))))
+        for (transfer in listOf(13, 16, 18)) {
+            assertNull(PngHdrMetadata.probe(png(16, tags(9, transfer), animation)))
+            assertNull(PngHdrMetadata.probe(png(16, animation, tags(9, transfer))))
+        }
     }
 
     @Test
     fun invalidCicpAndDuplicateTagsDoNotSelectHdr() {
-        for (data in listOf(byteArrayOf(9, 16, 1, 1), byteArrayOf(9, 16, 0, 0), byteArrayOf(2, 16, 0, 1), byteArrayOf(9, 16, 0))) {
+        for (data in listOf(byteArrayOf(9, 2, 0, 1), byteArrayOf(9, 16, 1, 1), byteArrayOf(9, 16, 0, 0), byteArrayOf(2, 16, 0, 1), byteArrayOf(9, 16, 0))) {
             assertNull(PngHdrMetadata.probe(png(16, chunk("cICP", data))))
         }
         assertNull(PngHdrMetadata.probe(png(16, tags(9, 16), tags(9, 18))))

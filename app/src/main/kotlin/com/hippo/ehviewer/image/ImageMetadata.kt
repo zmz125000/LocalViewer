@@ -201,6 +201,7 @@ internal fun ImageSource.readMetadata(
             ?: firstKnownColorSpace(bounds.outColorSpace?.name, if (attributeInt(ExifInterface.TAG_COLOR_SPACE) == 1) "sRGB" else null),
         hdr = when {
             gainmap || heif?.transfer in listOf(16, 18) -> true
+            sourceColor?.hdr != null -> sourceColor.hdr
             heif?.transfer != null || bounds.outWidth > 0 -> false
             else -> null
         },

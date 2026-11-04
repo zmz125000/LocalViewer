@@ -674,13 +674,12 @@ class Image private constructor(
             return dstW to dstH
         }
 
-        /** WCG + HBD sub-toggle, not gain-map, PNG/APNG with HIGH or UNKNOWN probe. */
+        /** Advanced color enabled, not gain-map, PNG/APNG with HIGH or UNKNOWN probe. */
         private fun Either<ByteBufferSource, PathSource>.resolvePlatformHbd(
             gainMap: Boolean,
         ): Boolean {
             if (gainMap) return false
             if (!Settings.readerAdvancedColor.value) return false
-            if (!Settings.readerPlatformHighDepth.value) return false
             val hint = fileNameHint()
             return shouldPlatformHighDepthDecode(probeBitDepth(hint), hint)
         }
@@ -830,14 +829,12 @@ class Image private constructor(
             checkExtraneousAds: Boolean = false,
             forceOriginal: Boolean = false,
         ): Image {
-            if (Settings.readerAdvancedColor.value && Settings.readerPlatformHighDepth.value) {
-                try {
-                    LibDirectDecode.decodeHdrPng(src)?.let { return fromLibDirect(it, src) }
-                } catch (error: kotlinx.coroutines.CancellationException) {
-                    throw error
-                } catch (error: Exception) {
-                    Log.w("ReaderColor", "HDR PNG decode failed; using platform PNG decoder", error)
-                }
+            try {
+                LibDirectDecode.decodeColorPng(src)?.let { return fromLibDirect(it, src) }
+            } catch (error: kotlinx.coroutines.CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                Log.w("ReaderColor", "Color PNG decode failed; using platform PNG decoder", error)
             }
             val image = when (src) {
                 is PathSource -> {

@@ -8,9 +8,17 @@ static void near(float actual, float expected, const char* message) {
 }
 
 int main() try {
+    // SDR uses an sRGB curve even with BT.2020 primaries. Applying a linear
+    // scRGB interpretation here would turn middle gray from ~0.214 into ~0.5.
+    const uint16_t sdr[] = {32768, 65535, 0, 32768};
+    auto sdr_pixels = png_linear_rgba(sdr, 1, 13, UHDR_CG_BT_2100);
+    near(half_to_float(sdr_pixels[0]), 0.2140482f, "SDR sRGB middle gray");
+    near(half_to_float(sdr_pixels[1]), 1.f, "SDR reference white has no HDR scale");
+    near(half_to_float(sdr_pixels[2]), 0.f, "SDR black");
+    near(half_to_float(sdr_pixels[3]), .5f, "SDR alpha stays straight and linear");
     const auto white = static_cast<uint16_t>(std::lround(linear_to_pq_code(1.f) * 65535.f));
     const uint16_t pq[] = {0, white, 65535, 32768};
-    auto pixels = png_hdr_linear_rgba(pq, 1, 16, UHDR_CG_BT_2100);
+    auto pixels = png_linear_rgba(pq, 1, 16, UHDR_CG_BT_2100);
     near(half_to_float(pixels[0]), 0, "PQ black");
     near(half_to_float(pixels[1]), 1, "PQ 203-nit reference white");
     near(half_to_float(pixels[2]), 10000.f / 203.f, "PQ retains HDR headroom");
@@ -25,7 +33,7 @@ int main() try {
     const float green_y[] = {0.7152f, 0.6917385f, 0.6780f};
     const float blue_y[] = {0.0722f, 0.0792869f, 0.0593f};
     for (unsigned gamut = 0; gamut < 3; ++gamut) {
-        pixels = png_hdr_linear_rgba(hlg, 3, 18, gamuts[gamut]);
+        pixels = png_linear_rgba(hlg, 3, 18, gamuts[gamut]);
         for (unsigned channel = 0; channel < 3; ++channel) {
             near(half_to_float(pixels[channel]), 0, "HLG black");
             near(half_to_float(pixels[4 + channel]), 1000.f / 203.f, "HLG 1000-nit neutral white");
@@ -39,7 +47,7 @@ int main() try {
         near(half_to_float(pixels[10]), scale, "HLG colored sample blue uses source luminance");
         near(half_to_float(pixels[11]), .5f, "HLG alpha stays linear and RGB stays straight");
     }
-    std::puts("PNG PQ/HLG transfer and alpha tests passed");
+    std::puts("PNG SDR/PQ/HLG transfer and alpha tests passed");
 } catch (const std::exception& error) {
     std::fprintf(stderr, "%s\n", error.what());
     return 1;

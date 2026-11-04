@@ -402,5 +402,5 @@ internal external fun encodeSourceRgb(
     outInfo: IntArray,
 ): Int
 
-/** Straight PNG RGBA16 codes → the reader's linear HDR float16 pack. */
-internal external fun decodePngRgbToDirect(pixels: ByteBuffer, width: Int, height: Int, primaries: Int, transfer: Int, outInfo: IntArray, outBoost: FloatArray): ByteArray?
+/** Straight PNG RGBA16 codes → the reader's color-managed SDR/HDR pack. */
+internal external fun decodePngRgbToDirect(pixels: ByteBuffer, width: Int, height: Int, primaries: Int, transfer: Int, advancedColor: Boolean, outInfo: IntArray, outBoost: FloatArray): ByteArray?
