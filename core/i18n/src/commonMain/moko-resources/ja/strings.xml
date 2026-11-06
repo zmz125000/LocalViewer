@@ -1209,8 +1209,10 @@
     <string name="ask_where_to_save">保存先を毎回確認</string>
     <string name="transfer_upload_action">アップロード先を選択…</string>
     <string name="settings_use_trash_bin">ゴミ箱を使用</string>
-    <string name="settings_use_trash_bin_summary">フォルダとギャラリーは常に .trash に移動します。オフにするとファイルの完全削除を許可します。</string>
+    <string name="settings_use_trash_bin_summary">ファイルとフォルダを .trash に移動します。オフにすると完全に削除します。ギャラリーは常に .trash に移動します。</string>
     <string name="action_empty_trash">ゴミ箱を削除</string>
+    <string name="trash_named_confirm">「%1$s」を .trash フォルダに移動しますか？</string>
+    <string name="delete_named_confirm">「%1$s」を完全に削除しますか？この操作は元に戻せません。</string>
     <string name="permanent_delete_confirm">%1$d 件を完全に削除しますか？この操作は元に戻せません。</string>
     <string name="empty_trash_confirm">この .trash フォルダとすべての内容を完全に削除しますか？この操作は元に戻せません。</string>
     <string name="permanent_delete_unsupported">この接続先またはサーバーは、この項目の削除に対応していません。</string>

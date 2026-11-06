@@ -21,6 +21,7 @@ import com.hippo.ehviewer.library.TransferFiles
 import com.hippo.ehviewer.library.TransferLocation
 import com.hippo.ehviewer.library.TrashFiles
 import com.hippo.ehviewer.library.canRemoveFile
+import com.hippo.ehviewer.library.collectRemovalFiles
 import com.hippo.ehviewer.library.forEachPreparedTransfer
 import com.hippo.ehviewer.library.forEachTransferLane
 import com.hippo.ehviewer.library.humanizePathName
@@ -289,8 +290,8 @@ internal object UploadTransfers {
         return job
     }
 
-    /** Confirmation is supplied by the item/selection menu. No directory enumeration. */
-    fun delete(files: List<TransferFile>, action: FileRemovalAction = FileRemovalAction.Trash): Boolean {
+    /** Selection/folder jobs are prepared for review and wait for an explicit Start. */
+    fun delete(files: List<TransferFile>, action: FileRemovalAction = FileRemovalAction.Trash, review: Boolean = false): Boolean {
         val roots = trashSelectionRoots(files)
         if (roots.isEmpty()) return false
         if (roots.any { !canRemoveFile(it, action) }) {
@@ -303,17 +304,34 @@ internal object UploadTransfers {
             sourceUnavailable()
             return false
         }
+        val needsReview = review || removalRequiresPanel(roots, action)
         val job = UploadJob(ids.getAndIncrement(), roots.first().relative, deleting = true, removalAction = action)
         job.state.value = job.state.value.copy(
-            phase = UploadPhase.Ready,
+            phase = if (needsReview) UploadPhase.Preparing else UploadPhase.Ready,
             deleting = true,
             autoFinish = Settings.deletionAutoFinish.value,
             rows = roots.map { UploadRow(it) },
             destinationLabel = if (action != FileRemovalAction.EmptyTrash && roots.any { removalActionFor(it, action) == FileRemovalAction.Trash }) ".trash/${LocalDate.now()}" else "",
         )
         _jobs.update { it + job }
-        if (removalRequiresPanel(roots, action)) panelId = job.id
-        startDelete(job, lease)
+        if (needsReview) {
+            panelId = job.id
+            job.worker = scope.launch {
+                try {
+                    val collected = collectRemovalFiles(roots, action, job.control::checkpoint)
+                    job.control.checkpoint()
+                    job.state.update { it.copy(phase = UploadPhase.Ready, rows = collected.map { file -> UploadRow(file) }) }
+                } catch (error: CancellationException) {
+                    throw error
+                } catch (error: Throwable) {
+                    logcat("FileDelete", error)
+                    job.state.update { it.copy(phase = UploadPhase.Failed, error = error.message) }
+                }
+            }
+            trackWorker(job, lease, notifyDeletion = false)
+        } else {
+            startDelete(job, lease)
+        }
         return true
     }
 
@@ -531,18 +549,21 @@ internal object UploadTransfers {
     private fun syncForeground() {
         StreamKeepAlivePolicy.setUploadActive(_jobs.value.any { it.state.value.active && it.state.value.background })
     }
-    private fun trackWorker(job: UploadJob, lease: NetworkSourceGuard.Lease? = null) {
+    private fun trackWorker(job: UploadJob, lease: NetworkSourceGuard.Lease? = null, notifyDeletion: Boolean = true) {
         // Cancellation can arrive before the IO dispatcher starts the coroutine,
         // in which case its try/finally never runs.
         job.worker?.invokeOnCompletion { cause ->
             lease?.close()
-            if (job.deleting) {
-                job.state.value.rows.map { it.file.source }.distinct().forEach { source ->
-                    val parent = source.path.substringBeforeLast('/', "")
-                    when (source.kind) {
-                        ExplorerWindows.Kind.Smb -> BrowseSession.notifySmbMutation(source.sourceId, parent)
-                        ExplorerWindows.Kind.WebDav -> BrowseSession.notifyWebDavMutation(source.sourceId, parent)
-                        ExplorerWindows.Kind.Local -> BrowseSession.notifyLocalMutation()
+            if (job.deleting && notifyDeletion) {
+                val parents = job.state.value.rows.map { row ->
+                    row.file.source.let { it.copy(path = it.path.substringBeforeLast('/', "")) }
+                }.distinct()
+                if (parents.any { it.kind == ExplorerWindows.Kind.Local }) BrowseSession.notifyLocalMutation()
+                parents.forEach { parent ->
+                    when (parent.kind) {
+                        ExplorerWindows.Kind.Smb -> BrowseSession.notifySmbMutation(parent.sourceId, parent.path)
+                        ExplorerWindows.Kind.WebDav -> BrowseSession.notifyWebDavMutation(parent.sourceId, parent.path)
+                        ExplorerWindows.Kind.Local -> Unit
                     }
                 }
             }
@@ -562,7 +583,16 @@ internal object UploadTransfers {
         }
     }
     fun start(job: UploadJob) {
-        if (job.deleting) return
+        if (job.deleting) {
+            val state = job.state.value
+            if (!state.editable || state.rows.isEmpty()) return
+            val lease = networkSourceGuard.acquire(state.rows.map { it.file.source }, deleting = true) ?: run {
+                sourceUnavailable()
+                return
+            }
+            startDelete(job, lease)
+            return
+        }
         val state = job.state.value
         if (!state.editable || state.destination == null || state.rows.isEmpty()) return
         val lease = networkSourceGuard.acquire(state.rows.map { it.file.source }, deleting = false) ?: run {

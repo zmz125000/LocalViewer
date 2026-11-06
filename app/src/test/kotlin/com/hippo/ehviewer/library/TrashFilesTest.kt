@@ -12,12 +12,12 @@ class TrashFilesTest {
     private fun file(path: String, directory: Boolean = false, sourceId: Long = 1) = TransferFile(TransferLocation(ExplorerWindows.Kind.Smb, sourceId, path), path.substringAfterLast('/'), directory, 123, 456)
 
     @Test
-    fun removalRoutesFilesToDeletionAndFoldersToTrash() {
+    fun removalUsesTheChosenActionForFilesAndFolders() {
         val folder = file("share/album", true)
         val image = file("share/image.jpg")
         for (requested in listOf(FileRemovalAction.Trash, FileRemovalAction.Delete)) {
-            assertEquals(FileRemovalAction.Trash, removalActionFor(folder, requested))
-            assertEquals(FileRemovalAction.Delete, removalActionFor(image, requested))
+            assertEquals(requested, removalActionFor(folder, requested))
+            assertEquals(requested, removalActionFor(image, requested))
             assertTrue(canRemoveFile(folder, requested))
             assertTrue(canRemoveFile(image, requested))
         }
@@ -34,11 +34,63 @@ class TrashFilesTest {
             assertTrue(canRemoveFile(item, FileRemovalAction.Delete))
             assertFalse(removalRequiresPanel(listOf(item), FileRemovalAction.Trash))
         }
-        assertFalse(removalRequiresPanel(listOf(file("share/album", true), image), FileRemovalAction.Trash))
+        assertTrue(removalRequiresPanel(listOf(file("share/album", true), image), FileRemovalAction.Trash))
         assertTrue(removalRequiresPanel(listOf(image, file("share/file.txt")), FileRemovalAction.Delete))
         assertTrue(removalRequiresPanel(listOf(file("share/.trash", true)), FileRemovalAction.EmptyTrash))
         val normalized = trashSelectionRoots(listOf(image)).single()
         assertTrue(normalized.galleryTrash)
+    }
+
+    @Test
+    fun folderDeletionCollectsChildrenBeforeParentsWithoutDeletingAnything() = runBlocking {
+        val album = file("share/album", true)
+        val sub = file("share/album/sub", true)
+        val calls = mutableListOf<String>()
+        val result = collectRemovalFiles(listOf(album), FileRemovalAction.Delete, children = { location ->
+            calls += location.path
+            when (location.path) {
+                album.source.path -> listOf(sub, file("share/album/cover.jpg"))
+                sub.source.path -> listOf(file("share/album/sub/page.jpg"))
+                else -> error("Unexpected enumeration")
+            }
+        })
+        assertEquals(listOf("share/album", "share/album/sub"), calls)
+        assertEquals(listOf("share/album/sub/page.jpg", "share/album/sub", "share/album/cover.jpg", "share/album"), result.map { it.source.path })
+        assertTrue(removalRequiresPanel(listOf(album), FileRemovalAction.Delete))
+        assertTrue(removalRequiresPanel(listOf(album), FileRemovalAction.Trash))
+        assertFalse(removalRequiresPanel(listOf(file("share/a.jpg")), FileRemovalAction.Delete))
+    }
+
+    @Test
+    fun movingFoldersToTrashDoesNotExpandTheirContents() = runBlocking {
+        val album = file("share/album", true)
+        val result = collectRemovalFiles(listOf(album), FileRemovalAction.Trash, children = { error("Must move whole folder") })
+        assertEquals(listOf(album), result)
+    }
+
+    @Test
+    fun recursiveCollectionRejectsProtectedTrashAndCyclesBeforeStart() = runBlocking {
+        val album = file("share/album", true)
+        for (child in listOf(file("share/album/.trash", true), album)) {
+            try {
+                collectRemovalFiles(listOf(album), FileRemovalAction.Delete, children = { listOf(child) })
+                throw AssertionError("Accepted unsafe recursive deletion")
+            } catch (_: IllegalArgumentException) {
+                // Protected .trash is rejected before the panel can enable Start.
+            } catch (_: IllegalStateException) {
+                // Repeated directory identity is a cycle.
+            }
+        }
+    }
+
+    @Test
+    fun cancelledCollectionNeverReturnsAPartialDeletionPlan() = runBlocking {
+        try {
+            collectRemovalFiles(listOf(file("share/album", true)), FileRemovalAction.Delete, children = { throw CancellationException("Stopped") })
+            throw AssertionError("Returned a partial plan")
+        } catch (_: CancellationException) {
+            // Start stays disabled when preparation is cancelled.
+        }
     }
 
     @Test

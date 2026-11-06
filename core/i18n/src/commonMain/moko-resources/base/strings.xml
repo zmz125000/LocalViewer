@@ -1309,8 +1309,10 @@
     <string name="ask_where_to_save">Ask where to save</string>
     <string name="transfer_upload_action">Upload to…</string>
     <string name="settings_use_trash_bin">Use trash bin</string>
-    <string name="settings_use_trash_bin_summary">Folders and galleries always move to .trash. Turn off to allow permanent file deletion.</string>
+    <string name="settings_use_trash_bin_summary">Move files and folders to .trash. Turn off to permanently delete them. Galleries always move to .trash.</string>
     <string name="action_empty_trash">Delete trash</string>
+    <string name="trash_named_confirm">Move “%1$s” to the .trash folder?</string>
+    <string name="delete_named_confirm">Permanently delete “%1$s”? This cannot be undone.</string>
     <string name="permanent_delete_confirm">Permanently delete %1$d items? This cannot be undone.</string>
     <string name="empty_trash_confirm">Permanently delete this .trash folder and all its contents? This cannot be undone.</string>
     <string name="permanent_delete_unsupported">This source or server does not support deleting this item.</string>

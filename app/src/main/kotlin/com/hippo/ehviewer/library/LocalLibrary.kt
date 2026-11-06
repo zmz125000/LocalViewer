@@ -88,6 +88,18 @@ object LocalLibrary {
         coverPath: String?,
     ) = db.localGalleryDao().updatePageAndCoverByContentPath(contentPath, pageCount, coverPath)
 
+    /** A successful photo-grid listing is authoritative for this folder's library count/cover. */
+    suspend fun refreshFolderGallery(rootId: Long, relativeDir: String, names: List<String>) = withIOContext {
+        val relative = FolderGalleryIndex.normalizeGalleryRelativeDir(relativeDir).ifEmpty { "." }
+        val row = db.localGalleryDao().load(stableGalleryId(rootId, relative)) ?: return@withIOContext
+        if (row.kind != LOCAL_GALLERY_KIND_FOLDER || row.rootId != rootId || row.relativePath != relative) return@withIOContext
+        if (names.isEmpty()) {
+            db.localGalleryDao().deleteByIds(listOf(row.id))
+        } else {
+            db.localGalleryDao().updatePageAndCover(row.id, names.size, (row.contentPath.toPath() / names.first()).toString())
+        }
+    }
+
     /**
      * Local archive confirmed to have no playable images:
      * mark [EmptyArchiveRegistry] (browse demotes gallery → regular file) and delete the library row.

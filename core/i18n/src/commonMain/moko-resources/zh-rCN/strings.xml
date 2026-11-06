@@ -1280,8 +1280,10 @@
     <string name="ask_where_to_save">询问保存位置</string>
     <string name="transfer_upload_action">上传到…</string>
     <string name="settings_use_trash_bin">使用回收站</string>
-    <string name="settings_use_trash_bin_summary">文件夹和画廊始终移到 .trash。关闭后允许永久删除文件。</string>
+    <string name="settings_use_trash_bin_summary">将文件和文件夹移到 .trash。关闭后永久删除。画廊始终移到 .trash。</string>
     <string name="action_empty_trash">删除回收站</string>
+    <string name="trash_named_confirm">将“%1$s”移到 .trash 文件夹？</string>
+    <string name="delete_named_confirm">永久删除“%1$s”？此操作无法撤销。</string>
     <string name="permanent_delete_confirm">永久删除 %1$d 个项目？此操作无法撤销。</string>
     <string name="empty_trash_confirm">永久删除此 .trash 文件夹及其所有内容？此操作无法撤销。</string>
     <string name="permanent_delete_unsupported">此来源或服务器不支持删除此项目。</string>

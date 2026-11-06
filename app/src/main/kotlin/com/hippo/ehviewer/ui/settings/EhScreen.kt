@@ -113,6 +113,10 @@ fun AnimatedVisibilityScope.EhScreen(navigator: DestinationsNavigator) = Screen(
                 state = Settings.showReadingProgress.asMutableState(),
             )
             SwitchPreference(
+                title = stringResource(R.string.settings_use_trash_bin),
+                state = Settings.useTrashBin.asMutableState(),
+            )
+            SwitchPreference(
                 title = stringResource(id = R.string.browse_folder_thumbs),
                 state = Settings.browseFolderThumbs.asMutableState(),
             )
@@ -319,10 +323,6 @@ fun AnimatedVisibilityScope.EhScreen(navigator: DestinationsNavigator) = Screen(
             SwitchPreference(
                 title = stringResource(id = R.string.settings_external_video_randomize_token),
                 state = Settings.externalVideoRandomizeToken.asMutableState(),
-            )
-            SwitchPreference(
-                title = stringResource(R.string.settings_use_trash_bin),
-                state = Settings.useTrashBin.asMutableState(),
             )
             val showSmallGalleries = Settings.browseShowSmallGalleries.asMutableState()
             SwitchPreference(
