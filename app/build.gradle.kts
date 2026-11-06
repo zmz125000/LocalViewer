@@ -79,9 +79,9 @@ android {
         applicationId = "moe.tarsin.localviewer"
         versionCode = 38
         versionName = if (snapshot) {
-            "1.13.26-SNAPSHOT"
+            "1.13.27-SNAPSHOT"
         } else {
-            "1.13.26"
+            "1.13.27"
         }
         buildConfigField("boolean", "SNAPSHOT", "$snapshot")
         buildConfigField("boolean", "JXL_ENCODER_ENABLED", "$jxlEncoderEnabled")

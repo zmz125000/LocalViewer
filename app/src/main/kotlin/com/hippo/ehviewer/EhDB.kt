@@ -40,6 +40,7 @@ import com.ehviewer.core.model.GalleryInfo
 import com.ehviewer.core.util.logcat
 import com.hippo.ehviewer.library.HistoryHidePersist
 import com.hippo.ehviewer.library.LocalHistory
+import com.hippo.ehviewer.library.RemovableHistory
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import okio.Path
@@ -270,6 +271,7 @@ object EhDB {
     suspend fun putHistoryInfo(galleryInfo: GalleryInfo) {
         // Master + nested file/gallery gates (browse-dir always allowed when master on).
         if (!LocalHistory.isHistoryWriteAllowed(galleryInfo)) return
+        if (RemovableHistory.blocksWrite(galleryInfo)) return
         // Locked folders skip new rows. Already stored history is left in place.
         if (HistoryHidePersist.blocksWrite(galleryInfo)) return
         val entity = galleryInfo.asEntity()

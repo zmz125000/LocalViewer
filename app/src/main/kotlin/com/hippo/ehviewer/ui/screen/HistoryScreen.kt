@@ -65,6 +65,7 @@ import com.hippo.ehviewer.library.HistoryHidePersist
 import com.hippo.ehviewer.library.LocalHistory
 import com.hippo.ehviewer.library.LocalHistoryTarget
 import com.hippo.ehviewer.library.LocalLibrary
+import com.hippo.ehviewer.library.RemovableHistory
 import com.hippo.ehviewer.library.libraryBrowseRelative
 import com.hippo.ehviewer.smb.SmbRepository
 import com.hippo.ehviewer.ui.ExplorerGestureEnabled
@@ -117,7 +118,7 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
         mutableStateOf(emptyList<GalleryEntity>()).also { state ->
             viewModelScope.launch {
                 combine(
-                    EhDB.historyListFlow,
+                    RemovableHistory.visibleRowsFlow(),
                     Settings.historyHideFolders.valueFlow(),
                 ) { rows, stored -> rows to stored }
                     .collect { (rows, stored) ->

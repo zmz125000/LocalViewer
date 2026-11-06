@@ -101,9 +101,17 @@ fun AnimatedVisibilityScope.PrivacyScreen(navigator: DestinationsNavigator) = Sc
                 title = stringResource(id = R.string.settings_privacy_save_history),
                 state = saveHistory,
             )
-            // Nested file / video / ebook / gallery toggles.
+            // Nested storage and file-type history toggles.
             AnimatedVisibility(visible = saveHistory.value) {
                 Column {
+                    SwitchPreference(
+                        title = stringResource(R.string.settings_privacy_save_usb_history),
+                        state = Settings.saveUsbHistory.asMutableState(),
+                    )
+                    SwitchPreference(
+                        title = stringResource(R.string.settings_privacy_save_sd_card_history),
+                        state = Settings.saveSdCardHistory.asMutableState(),
+                    )
                     SwitchPreference(
                         title = stringResource(id = R.string.settings_privacy_save_file_history),
                         state = Settings.saveFileHistory.asMutableState(),
@@ -138,12 +146,10 @@ fun AnimatedVisibilityScope.PrivacyScreen(navigator: DestinationsNavigator) = Sc
             }
             SwitchPreference(
                 title = stringResource(R.string.settings_privacy_library_accept_otg),
-                summary = stringResource(R.string.settings_privacy_library_removable_summary),
                 state = Settings.libraryAcceptOtg.asMutableState(),
             )
             SwitchPreference(
                 title = stringResource(R.string.settings_privacy_library_accept_sd_card),
-                summary = stringResource(R.string.settings_privacy_library_removable_summary),
                 state = Settings.libraryAcceptSdCard.asMutableState(),
             )
             val scanHiddenFiles = Settings.scanHiddenFiles.asMutableState()
