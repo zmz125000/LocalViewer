@@ -1321,7 +1321,7 @@
     <string name="settings_privacy_library_accept_otg">Allow USB / OTG media in Library</string>
     <string name="settings_privacy_library_accept_sd_card">Allow SD card media in Library</string>
     <string name="settings_privacy_library_removable_summary">Applies only to MediaStore sources. Device media folders remain available for browsing.</string>
-    <string name="library_live_update_stopped">Library live updates paused while removable storage is connected</string>
+    <string name="library_live_update_stopped">USB / OTG connected. Library live updates paused until you refresh or restart the app.</string>
     <string name="library_live_update_resume">Resume</string>
     <string name="settings_privacy_save_usb_history">Save USB / OTG history</string>
     <string name="settings_privacy_save_sd_card_history">Save SD card history</string>

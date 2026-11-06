@@ -808,6 +808,7 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
         launch {
             refreshing = true
             runCatching { LocalLibrary.rescanAll() }
+            MediaStoreWatch.resumeAfterManualRefresh()
             refreshing = false
         }
     }

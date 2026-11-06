@@ -743,7 +743,7 @@ class MainActivity : AppCompatActivity() {
                 }
                 showTabRoot(navigator, item.direction)
             }
-            UsbDriveHost(navigator, snackbarState)
+            UsbDriveHost(navigator)
             CompositionLocalProvider(
                 LocalExplorerPanel provides explorerPanel,
                 LocalFolderExitHistory provides folderExitHistory,

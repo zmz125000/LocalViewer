@@ -380,6 +380,10 @@ object LocalLibrary {
             clearRootGalleries(root.id)
             return
         }
+        if (!UsbVolumes.isPathAvailable(root.treeUri)) {
+            logcat("LocalLibrary") { "Skip disconnected library source ${root.id}" }
+            return
+        }
         val path = rootPath(root) ?: run {
             logcat("LocalLibrary") { "Library root not accessible: ${root.treeUri}" }
             if (db.libraryRootDao().load(root.id) != null) {
@@ -390,6 +394,7 @@ object LocalLibrary {
         // MediaStore virtual root is always a directory tree; skip FileSystem metadata check
         // which can mis-classify synthetic paths.
         if (!isMediaStoreRootUri(root.treeUri) && !path.isDirectory) {
+            if (!UsbVolumes.isPathAvailable(root.treeUri)) return
             logcat("LocalLibrary") { "Library root is not a directory: $path" }
             if (db.libraryRootDao().load(root.id) != null) {
                 clearRootGalleries(root.id)
@@ -451,6 +456,8 @@ object LocalLibrary {
             knownArchives = knownArchives,
             walkDirectories = !skipIfUnchanged || previous.isEmpty(),
         )
+        // A detach during the walk must not overwrite the source's saved index with partial results.
+        if (!UsbVolumes.isPathAvailable(root.treeUri)) return
         // Drop results if the root was removed while scanning (belt-and-suspenders with mutex).
         if (db.libraryRootDao().load(root.id) == null) {
             logcat("LocalLibrary") { "Skip scan write for deleted root ${root.id}" }

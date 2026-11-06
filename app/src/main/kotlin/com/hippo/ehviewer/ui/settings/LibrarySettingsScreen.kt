@@ -63,6 +63,7 @@ import com.ehviewer.core.util.logcat
 import com.hippo.ehviewer.library.AddRootResult
 import com.hippo.ehviewer.library.LocalLibrary
 import com.hippo.ehviewer.library.MediaPermissions
+import com.hippo.ehviewer.library.MediaStoreWatch
 import com.hippo.ehviewer.library.displayNameForTreeUri
 import com.hippo.ehviewer.library.isMediaStoreRootUri
 import com.hippo.ehviewer.library.safFolderLabel
@@ -260,7 +261,15 @@ fun AnimatedVisibilityScope.LibrarySettingsScreen(navigator: DestinationsNavigat
                 navigationIcon = { NavigationIcon() },
                 actions = {
                     IconButton(
-                        onClick = { launchIO { LocalLibrary.rescanAll() } },
+                        onClick = {
+                            launchIO {
+                                try {
+                                    LocalLibrary.rescanAll()
+                                } finally {
+                                    MediaStoreWatch.resumeAfterManualRefresh()
+                                }
+                            }
+                        },
                         enabled = !scanning && libraryRoots.isNotEmpty(),
                         shapes = IconButtonDefaults.shapes(),
                     ) {

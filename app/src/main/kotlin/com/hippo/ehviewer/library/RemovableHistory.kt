@@ -4,7 +4,6 @@ import com.ehviewer.core.database.model.GalleryEntity
 import com.ehviewer.core.model.GalleryInfo
 import com.hippo.ehviewer.EhDB
 import com.hippo.ehviewer.Settings
-import java.net.URLDecoder
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -29,7 +28,7 @@ object RemovableHistory {
         val path = storagePath(info)
             // Only missing identity needs the previous row; known internal paths need no fallback query.
             ?: EhDB.loadGalleryInfo(info.gid)?.let { storagePath(it) }
-        val volume = path?.let(::removableVolumeInHistoryPath)
+        val volume = path?.let(::removableStorageVolumeId)
         return !removableHistoryWriteAllowed(volume, UsbVolumes.mounted.value, saveUsb, saveSd)
     }
 
@@ -98,7 +97,7 @@ internal fun <T : GalleryInfo> connectedHistoryRows(
     libraryPaths: Map<Long, String>,
 ): List<T> {
     val index = HistoryStorageIndex(rows) { info ->
-        historyStoragePath(info, rootUris, libraryPaths)?.let(::removableVolumeInHistoryPath)
+        historyStoragePath(info, rootUris, libraryPaths)?.let(::removableStorageVolumeId)
     }
     return index.connectedRows(mountedVolumeIds)
 }
@@ -106,7 +105,7 @@ internal fun <T : GalleryInfo> connectedHistoryRows(
 /** Reuse record identity across timestamp/reordering changes; discard removed records. */
 internal class HistoryStorageIndexer(
     private val volumeOf: (GalleryInfo, Map<Long, String>, Map<Long, String>) -> String? = { info, roots, paths ->
-        historyStoragePath(info, roots, paths)?.let(::removableVolumeInHistoryPath)
+        historyStoragePath(info, roots, paths)?.let(::removableStorageVolumeId)
     },
 ) {
     private var rootsRef: Map<Long, String>? = null
@@ -160,37 +159,4 @@ private fun historyStoragePath(info: GalleryInfo, rootUris: Map<Long, String>, l
     }
     // A scanned gallery can disappear from the index on unplug; its stored cover retains identity.
     return path ?: info.thumbKey
-}
-
-internal fun removableVolumeInHistoryPath(raw: String): String? {
-    val path = raw.removePrefix("vid-local:").let { ZipPaths.parse(it)?.first ?: it }
-    if (path.startsWith("mediastore:")) {
-        val relative = path.removePrefix("mediastore://external").removePrefix("mediastore:").trim('/')
-        return MediaStoreVolumePath.volume(relative)
-    }
-    val normalized = if (path.startsWith("content://")) path else path.replaceFirst("content:/", "content://")
-    if (normalized.startsWith("content://")) {
-        // Stored Okio SAF children may contain raw spaces; parse identity before URI encoding.
-        val content = normalized.removePrefix("content://")
-        val authority = content.substringBefore('/')
-        val uriPath = content.substringAfter('/', "")
-        return when (authority) {
-            "com.android.externalstorage.documents" -> {
-                val id = safTreeDocumentId(normalized) ?: runCatching {
-                    URLDecoder.decode(uriPath.substringAfter("document/", "").substringBefore('/').replace("+", "%2B"), "UTF-8")
-                }.getOrNull() ?: return null
-                externalStorageVolumeId(id)
-            }
-            "media" -> uriPath.substringBefore('/').takeUnless {
-                it.isEmpty() || it == "external" || it == "internal" || it == MediaStoreVolumePath.PRIMARY
-            }
-            "mediastore" -> MediaStoreVolumePath.volume(uriPath)
-            else -> null
-        }
-    }
-    val physical = path.removePrefix("file://")
-    val prefix = listOf("/storage/", "/mnt/media_rw/").firstOrNull { physical.startsWith(it) } ?: return null
-    return physical.removePrefix(prefix).substringBefore('/').takeUnless {
-        it.isEmpty() || it in setOf("emulated", "self", "primary", "sdcard0")
-    }
 }
