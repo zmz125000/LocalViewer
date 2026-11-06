@@ -12,6 +12,7 @@ import android.provider.DocumentsContract
 import android.provider.MediaStore
 import androidx.core.content.ContextCompat
 import com.ehviewer.core.files.mediaStoreParentRelativeDir
+import com.ehviewer.core.files.resolveMediaStorePathToContentUri
 import com.ehviewer.core.files.toUri
 import com.hippo.ehviewer.Settings
 import java.io.IOException
@@ -513,55 +514,11 @@ object MediaStoreFs {
     /**
      * Resolve a virtual file path to a MediaStore content URI for open/decode.
      */
-    fun resolveContentUri(path: Path): Uri? {
-        if (!path.isMediaStorePath()) return null
-        val s = path.toString().removePrefix("mediastore:").trimStart('/')
-        if (s.isEmpty()) return null
-        val fileName = s.substringAfterLast('/')
-        val relativeDir = s.substringBeforeLast('/', missingDelimiterValue = "").trimEnd('/')
-        if (fileName.isEmpty()) return null
-        val preferImage = isImageFileName(fileName)
-        val preferVideo = isVideoFileName(fileName) || !preferImage
-
-        fun tryCollection(collection: Uri): Uri? = queryMediaId(collection, relativeDir, fileName)?.let { contentUriFor(collection, it) }
-
-        if (preferVideo && MediaPermissions.hasVideoPermission()) {
-            tryCollection(MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL))?.let { return it }
-        }
-        if (preferImage && MediaPermissions.hasImagePermission()) {
-            tryCollection(MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL))?.let { return it }
-        }
-        if (MediaPermissions.hasMediaAccess()) {
-            tryCollection(MediaStore.Files.getContentUri(MediaStore.VOLUME_EXTERNAL))?.let { return it }
-        }
-        if (preferVideo && MediaPermissions.hasImagePermission()) {
-            tryCollection(MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL))?.let { return it }
-        }
-        if (preferImage && MediaPermissions.hasVideoPermission()) {
-            tryCollection(MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL))?.let { return it }
-        }
-        return null
+    fun resolveContentUri(path: Path): Uri? = if (path.isMediaStorePath()) {
+        resolveMediaStorePathToContentUri(path.toString())
+    } else {
+        null
     }
-
-    private fun contentUriFor(collection: Uri, id: Long): Uri = collection.buildUpon().appendPath(id.toString()).build()
-
-    private fun queryMediaId(collection: Uri, relativeDir: String, fileName: String): Long? {
-        val projection = arrayOf(MediaStore.MediaColumns._ID)
-        queryMediaIdOnce(collection, projection, MediaStorePathQuery.resolveByRelativePathSelection(relativeDir, fileName))
-            ?.let { return it }
-        // OEM rows that leave RELATIVE_PATH empty.
-        return queryMediaIdOnce(collection, projection, MediaStorePathQuery.resolveByDataSelection(relativeDir, fileName))
-    }
-
-    private fun queryMediaIdOnce(
-        collection: Uri,
-        projection: Array<String>,
-        filter: Pair<String, Array<String>>,
-    ): Long? = runCatching {
-        appCtx.contentResolver.query(collection, projection, filter.first, filter.second, null)?.use { c ->
-            if (c.moveToFirst()) c.getLong(0) else null
-        }
-    }.getOrNull()
 
     private fun listChildrenRelative(relativeDir: String): List<Child> {
         val dirs = linkedMapOf<String, Path>()

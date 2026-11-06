@@ -1,25 +1,12 @@
 package com.hippo.ehviewer.library
 
-/** Stable virtual directory per physical volume; labels may change between mounts. */
+/** Shared path identity plus the app's removable-storage privacy policy. */
 object MediaStoreVolumePath {
-    private const val PREFIX = "@volume-"
-    const val PRIMARY = "external_primary"
+    const val PRIMARY = com.ehviewer.core.files.MediaStoreVolumePath.PRIMARY
 
-    fun volume(relative: String): String? = relative.trim('/').substringBefore('/')
-        .takeIf { it.startsWith(PREFIX) }?.removePrefix(PREFIX)?.takeIf { it.isNotEmpty() }
-
-    fun local(relative: String): String = if (volume(relative) == null) {
-        relative.trim('/')
-    } else {
-        relative.trim('/').substringAfter('/', "")
-    }
-
-    fun parent(volume: String?, relative: String): String {
-        val rel = relative.trim('/')
-        if (volume.isNullOrBlank() || volume == PRIMARY) return rel
-        val root = "$PREFIX${volume.lowercase()}"
-        return if (rel.isEmpty()) root else "$root/$rel"
-    }
+    fun volume(relative: String): String? = com.ehviewer.core.files.MediaStoreVolumePath.volume(relative)
+    fun local(relative: String): String = com.ehviewer.core.files.MediaStoreVolumePath.local(relative)
+    fun parent(volume: String?, relative: String): String = com.ehviewer.core.files.MediaStoreVolumePath.parent(volume, relative)
 
     fun accepts(relative: String, volumes: List<UsbVolume>, acceptUsb: Boolean, acceptSd: Boolean): Boolean {
         val id = volume(relative) ?: return true
