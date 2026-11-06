@@ -1,6 +1,8 @@
 package com.hippo.ehviewer.ui.main
 
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.os.Process
 import android.provider.DocumentsContract
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -48,14 +50,19 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.core.net.toUri
 import com.ehviewer.core.files.toOkioPath
+import com.ehviewer.core.files.toUri
 import com.ehviewer.core.i18n.R
 import com.ehviewer.core.util.logcat
 import com.ehviewer.core.util.withIOContext
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.library.ExplorerWindows
+import com.hippo.ehviewer.library.LocalLibrary
 import com.hippo.ehviewer.library.TransferLocation
 import com.hippo.ehviewer.library.humanizePathName
+import com.hippo.ehviewer.library.isMediaStoreRootUri
+import com.hippo.ehviewer.library.resolveRelative
 import com.hippo.ehviewer.ui.screen.LocalExplorerPanel
 import com.hippo.ehviewer.ui.theme.snackbarActionButtonColors
 import com.hippo.ehviewer.ui.theme.snackbarContainerColor
@@ -320,9 +327,9 @@ private fun FileTransferPanel(job: UploadJob) {
     }
 }
 
-/** The local explorer row always delegates write access to the SAF tree picker. */
+/** Reuse writable SAF sources; the generic local row and ungranted folders open the picker. */
 @Composable
-internal fun rememberUploadLocalDestinationPicker(onSelected: () -> Unit): () -> Unit {
+internal fun rememberUploadLocalDestinationPicker(onSelected: () -> Unit): (Long?, String, String) -> Unit {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var pendingId by rememberSaveable { mutableStateOf<Long?>(null) }
@@ -359,9 +366,63 @@ internal fun rememberUploadLocalDestinationPicker(onSelected: () -> Unit): () ->
             TextButton(onClick = { error.value = null }) { Text(stringResource(android.R.string.ok)) }
         })
     }
-    return {
-        pendingId = UploadTransfers.destinationRequestId
-        launcher.launch(null)
+    return { sourceId, relative, destinationLabel ->
+        val jobId = UploadTransfers.destinationRequestId
+        if (jobId != null) {
+            if (sourceId == null) {
+                pendingId = jobId
+                launcher.launch(null)
+            } else {
+                scope.launch {
+                    val location = withIOContext {
+                        grantedLocalUploadDestination(sourceId, relative)
+                    }
+                    // A different transfer may have requested a destination during the lookup.
+                    if (UploadTransfers.destinationRequestId == jobId) {
+                        if (location != null) {
+                            UploadTransfers.destination(location, destinationLabel, jobId)
+                            onSelected()
+                        } else {
+                            pendingId = jobId
+                            launcher.launch(null)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/** Run off the main thread: checking provider metadata can block on removable storage. */
+private suspend fun grantedLocalUploadDestination(sourceId: Long, relative: String): TransferLocation? {
+    return runCatching {
+        val root = LocalLibrary.loadRoot(sourceId) ?: return null
+        if (isMediaStoreRootUri(root.treeUri)) return null
+        val segments = relative.replace('\\', '/').trim('/').split('/').filter { it.isNotEmpty() }
+        if (segments.any { it == "." || it == ".." }) return null
+        val context = splitties.init.appCtx
+        val tree = root.treeUri.toUri()
+        if (!DocumentsContract.isTreeUri(tree)) return null
+        val directory = DocumentsContract.buildDocumentUriUsingTree(tree, DocumentsContract.getTreeDocumentId(tree))
+            .toOkioPath().resolveRelative(segments.joinToString("/"))
+        val document = directory.toUri()
+        val flags = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+        if (context.checkUriPermission(document, Process.myPid(), Process.myUid(), flags) != PackageManager.PERMISSION_GRANTED) return null
+        val canCreate = context.contentResolver.query(
+            document,
+            arrayOf(DocumentsContract.Document.COLUMN_MIME_TYPE, DocumentsContract.Document.COLUMN_FLAGS),
+            null,
+            null,
+            null,
+        )?.use { cursor ->
+            cursor.moveToFirst() && cursor.getString(0) == DocumentsContract.Document.MIME_TYPE_DIR &&
+                cursor.getInt(1) and DocumentsContract.Document.FLAG_DIR_SUPPORTS_CREATE != 0
+        } == true
+        if (canCreate) TransferLocation(ExplorerWindows.Kind.Local, sourceId, directory.toString()) else null
+    }.getOrElse {
+        if (it is CancellationException) throw it
+        logcat("FileTransfer", it)
+        null
     }
 }
 
