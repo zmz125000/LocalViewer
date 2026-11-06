@@ -392,6 +392,13 @@ object Settings : DataStorePreferences(null) {
      */
     val libraryStartupScan = boolPref("library_startup_scan", false)
 
+    val libraryVolumePathsMigrated = boolPref("library_volume_paths_migrated", false)
+
+    val libraryAcceptOtg = boolPref("library_accept_otg", false)
+        .observed { updateWhenLibraryRemovablePolicyChanges() }
+    val libraryAcceptSdCard = boolPref("library_accept_sd_card", false)
+        .observed { updateWhenLibraryRemovablePolicyChanges() }
+
     /**
      * When true (default), [com.hippo.ehviewer.library.MediaStoreWatch] applies new
      * MediaStore images and videos while the library screen is resumed, without

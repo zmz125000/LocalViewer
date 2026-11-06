@@ -304,6 +304,7 @@ object LibraryScanner {
         folderPages: MutableMap<String, List<String>>,
         folderVideos: MutableMap<String, List<String>>,
     ) {
+        if (dir.isMediaStorePath() && !MediaStoreFs.acceptsLibraryPath(dir.mediaStoreRelativeDir())) return
         val children = runCatching {
             // Overlay re-queries MediaStore in every folder; the library scan already
             // indexed image folders. Light SAF meta when those dates come from MediaStore

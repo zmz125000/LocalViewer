@@ -743,10 +743,11 @@ private fun ExplorerWindowList(
     }
     val viewingBrowser = isBrowserDestination(currentDestination)
     val choosingUpload = UploadTransfers.choosingDestination
-    val pickLocal = rememberUploadLocalDestinationPicker(onNavigated)
+    val selectLocal = rememberUploadLocalDestinationPicker(onNavigated)
+    val pickLocal = { selectLocal(null, "", "") }
     fun chooseUpload(kind: ExplorerWindows.Kind, sourceId: Long, relative: String, label: String) {
         if (kind == ExplorerWindows.Kind.Local) {
-            pickLocal()
+            selectLocal(sourceId, relative, label)
         } else {
             UploadTransfers.destination(TransferLocation(kind, sourceId, relative), label)
             onNavigated()

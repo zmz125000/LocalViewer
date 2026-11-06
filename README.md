@@ -81,12 +81,12 @@ Similar to Perfect Viewer and Kuro Reader, with Hi-Res images support (no downsc
 The desktop version of LocalViewer's HDR image converter is here.  
 https://github.com/zmz125000/JXRConverter
 
-Build with Grok 4.5.
-
 <a href="https://github.com/zmz125000/LocalViewer/releases">
 <img alt="Get it on GitHub" src="https://github.com/zmz125000/LocalViewer-art/blob/master/get-it-on-github.svg" width="200px"/>
 </a>
 
+![LocalViewer screenshot main](https://github.com/zmz125000/LocalViewer-art/blob/master/screenshots-04.webp)
+RAW images from [rawsamples.ch](https://www.rawsamples.ch/index.php/en/canon).
 ## Features
 * Webtoon gallery reader.
 * Local and network libraries for photo/video/comic/ebook.
@@ -101,14 +101,14 @@ Build with Grok 4.5.
 * Native Android app (Kotlin + Jetpack Compose).
 * Material Design 3 Navigation bar.
 * Highly optimized network image loading, with high-quality rendering.
-* HDR, Wide Color Gamut and 10-bit color mode support.
+* HDR, Wide Color Gamut and 16-bit color mode support.
 * Image info widget (dimensions, bit depth, color space, exif).
 * Instant local archive reading with mmap.
 * ZIP/RAR/CBZ/CBR/CBT/PDF/EPUB support over network share.
 * PDF/EPUB/MOBI/FB2/TXT/AZW3/Markdown Ebook support with text formatting.
-* JXL/JXR/JPG/AVIF/HEIC HDR support.
+* JXL/JXR/JPG/PNG/AVIF/HEIC HDR support.
 * PQ/HLG HEIF software decoding with preserved high bit depth on 64-bit builds.
-* 14-Bit RAW formats decoding with true HDR output.
+* 16-Bit RAW formats decoding with true HDR output.
 * RAW formats support dng/cr2/cr3/nef/nrw/arw/raf/orf/rw2/pef/srw/raw.
 * Batch convert JXL/JXR/RAW to JPEG, JPEG XL, AVIF in both SDR and HDR.
 * Compatible with Oppo/OnePlus ProXDR HEIC format.
@@ -147,18 +147,6 @@ Build with Grok 4.5.
 <a href="https://github.com/zmz125000/LocalViewer/releases">
 <img alt="Get it on GitHub" src="https://github.com/zmz125000/LocalViewer-art/blob/master/get-it-on-github.svg" width="200px"/>
 </a>
-
-## HDR Image Conversion
-
-LocalViewer supports converting JXR, JXL and RAW formats to Ultra HDR JPEG, AVIF and JXL with multiple HDR transfer options (ISO 21496-1 gain map, Linear, PQ).
-
-| Target | Output depth | Transfer |
-|---|---|---|
-| JXL HDR | 16-bit float | Linear, with luminance metadata |
-| JXL HDR PQ | 16-bit integer | PQ |
-| JPEG HDR | 8-bit base + gain map | sRGB base, HDR reconstruction |
-| AVIF HDR | 10-bit; 12-bit at Lossless | sRGB base + ISO gain map |
-| AVIF HDR PQ | 10-bit; 12-bit at Lossless | PQ |
 
 # Screenshot
 

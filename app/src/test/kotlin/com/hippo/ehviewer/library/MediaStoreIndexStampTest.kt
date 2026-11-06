@@ -29,10 +29,9 @@ class MediaStoreIndexStampTest {
     }
 
     @Test
-    fun `size column does not invalidate existing indexes`() {
-        val expected = 7L to MediaStoreIndexStamp(42L, 1200, 1700000000L, 43981L)
-        assertEquals(expected, MediaStoreIndexStamp.parse("7:42:1200:1700000000:43981:2"))
-        assertEquals(expected, MediaStoreIndexStamp.parse("7:42:1200:1700000000:43981:3"))
+    fun `old indexes must be rebuilt with volume identities and privacy policy`() {
+        assertNull(MediaStoreIndexStamp.parse("7:42:1200:1700000000:43981:2"))
+        assertNull(MediaStoreIndexStamp.parse("7:42:1200:1700000000:43981:3"))
     }
 
     @Test

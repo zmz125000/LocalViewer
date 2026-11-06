@@ -220,6 +220,7 @@ class AndroidFileSystem(context: Context) : FileSystem() {
             MediaStore.MediaColumns.DISPLAY_NAME,
             MediaStore.MediaColumns.RELATIVE_PATH,
             MediaStore.MediaColumns.DATA,
+            MediaStore.MediaColumns.VOLUME_NAME,
         )
         val collections = listOf(
             MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL),
@@ -240,9 +241,12 @@ class AndroidFileSystem(context: Context) : FileSystem() {
                     while (c.moveToNext()) {
                         val displayName = c.getString(nameIdx) ?: continue
                         if (displayName.startsWith('.')) continue
-                        val relPath = mediaStoreParentRelativeDir(
-                            c.getString(pathIdx),
-                            if (dataIdx < 0) null else c.getString(dataIdx),
+                        val relPath = MediaStoreVolumePath.parent(
+                            c.getString(c.getColumnIndexOrThrow(MediaStore.MediaColumns.VOLUME_NAME)),
+                            mediaStoreParentRelativeDir(
+                                c.getString(pathIdx),
+                                if (dataIdx < 0) null else c.getString(dataIdx),
+                            ),
                         )
                         if (relativeDir.isEmpty()) {
                             if (relPath.isEmpty()) {

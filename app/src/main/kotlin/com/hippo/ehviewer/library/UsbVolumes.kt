@@ -46,6 +46,7 @@ object UsbVolumes {
             logcat(it)
             emptyList()
         }
+        MediaStoreWatch.onVolumesChanged(next)
         _mounted.value = next
     }
 

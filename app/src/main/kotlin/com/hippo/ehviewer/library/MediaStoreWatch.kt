@@ -20,6 +20,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import splitties.init.appCtx
 
@@ -34,6 +36,33 @@ import splitties.init.appCtx
  * (generation / fingerprint).
  */
 object MediaStoreWatch {
+    private val _pausedVolumes = MutableStateFlow<Set<String>>(emptySet())
+    val pausedVolumes = _pausedVolumes.asStateFlow()
+    private var mountedIds = emptySet<String>()
+    private val updatesEnabled: Boolean
+        get() = Settings.libraryLiveUpdate.value && _pausedVolumes.value.isEmpty()
+
+    /** Pause once for each connection. Resume stays effective until another device connects. */
+    @Synchronized
+    fun onVolumesChanged(volumes: List<UsbVolume>) {
+        val ids = volumes.map { it.uuid.lowercase() }.toSet()
+        val added = ids - mountedIds
+        mountedIds = ids
+        val wasPaused = _pausedVolumes.value.isNotEmpty()
+        _pausedVolumes.value = (_pausedVolumes.value.intersect(ids)) + added
+        if (_pausedVolumes.value.isNotEmpty()) {
+            stop()
+        } else if (wasPaused) {
+            onPrefEnabled()
+        }
+    }
+
+    @Synchronized
+    fun resumeAfterVolumeConnection() {
+        _pausedVolumes.value = emptySet()
+        onPrefEnabled()
+    }
+
     private const val JOB_ID = 71021
 
     /** One wait per notification burst. Idle does not wake on this interval. */
@@ -78,7 +107,7 @@ object MediaStoreWatch {
 
     private val observer = object : android.database.ContentObserver(Handler(Looper.getMainLooper())) {
         override fun onChange(selfChange: Boolean, uri: Uri?, flags: Int) {
-            if (!libraryResumed || !Settings.libraryLiveUpdate.value) return
+            if (!libraryResumed || !updatesEnabled) return
             // A null URI is a collection-level signal. Keep a real URI in the
             // batch so the coalesce does not drop it.
             enqueue(listOf(uri ?: imagesUri()), flags)
@@ -86,7 +115,7 @@ object MediaStoreWatch {
     }
 
     fun start(context: Context = appCtx) {
-        if (!Settings.libraryLiveUpdate.value) return
+        if (!updatesEnabled) return
         // Permission grant / pref toggle may call start off the library screen;
         // only register while the list is resumed.
         if (!libraryResumed) return
@@ -104,7 +133,7 @@ object MediaStoreWatch {
     fun onLibraryVisible() {
         libraryResumed = true
         collectionQuietUntilMs = 0L
-        if (!Settings.libraryLiveUpdate.value) return
+        if (!updatesEnabled) return
         scope.launch {
             if (!LocalLibrary.hasLibraryRoots()) return@launch
             armObservers()
@@ -114,7 +143,7 @@ object MediaStoreWatch {
 
     /** Pref toggled on. No-op unless the library screen is already resumed. */
     fun onPrefEnabled() {
-        if (!libraryResumed || !Settings.libraryLiveUpdate.value) return
+        if (!libraryResumed || !updatesEnabled) return
         scope.launch {
             if (!LocalLibrary.hasLibraryRoots()) return@launch
             armObservers()
@@ -129,14 +158,14 @@ object MediaStoreWatch {
                 stop()
                 return@launch
             }
-            if (!libraryResumed || !Settings.libraryLiveUpdate.value) return@launch
+            if (!libraryResumed || !updatesEnabled) return@launch
             armObservers()
             catchUp()
         }
     }
 
     private fun armObservers(context: Context = appCtx) {
-        if (!Settings.libraryLiveUpdate.value || !libraryResumed) return
+        if (!updatesEnabled || !libraryResumed) return
         val app = context.applicationContext
         if (MediaPermissions.hasImagePermission(app) && imagesRegistered.compareAndSet(false, true)) {
             app.contentResolver.registerContentObserver(imagesUri(), true, observer)
@@ -181,7 +210,7 @@ object MediaStoreWatch {
      * library screen calls [onLibraryVisible] on its own resume.
      */
     fun onAppForegrounded() {
-        if (!Settings.libraryLiveUpdate.value || !libraryResumed) return
+        if (!updatesEnabled || !libraryResumed) return
         start()
         catchUp()
     }
@@ -193,7 +222,7 @@ object MediaStoreWatch {
 
     /** Screen on. Catch up only while the library list is the active screen. */
     fun onScreenOn() {
-        if (!Settings.libraryLiveUpdate.value || !libraryResumed) return
+        if (!updatesEnabled || !libraryResumed) return
         start()
         catchUp()
     }
@@ -208,7 +237,7 @@ object MediaStoreWatch {
 
     /** One recent-row pass for files added while the library was hidden. */
     private fun catchUp() {
-        if (!libraryResumed || !Settings.libraryLiveUpdate.value) return
+        if (!libraryResumed || !updatesEnabled) return
         enqueue(listOf(imagesUri()), 0, forceRecent = true)
     }
 
@@ -246,7 +275,7 @@ object MediaStoreWatch {
     }
 
     fun enqueue(uris: Collection<Uri>, flags: Int, forceRecent: Boolean = false) {
-        if (!Settings.libraryLiveUpdate.value || !libraryResumed) return
+        if (!updatesEnabled || !libraryResumed) return
         val delete = flags and ContentResolver.NOTIFY_DELETE != 0
         val hasItem = uris.any { MediaStoreLiveUpdate.isMediaStoreItemId(it.lastPathSegment) }
         if (!forceRecent && !hasItem && !delete && SystemClock.elapsedRealtime() < collectionQuietUntilMs) {
@@ -269,7 +298,7 @@ object MediaStoreWatch {
             val wait = (collectionQuietUntilMs - SystemClock.elapsedRealtime()).coerceAtLeast(0L)
             delay(wait)
             collectionRecheckArmed.set(false)
-            if (!libraryResumed || !Settings.libraryLiveUpdate.value) return@launch
+            if (!libraryResumed || !updatesEnabled) return@launch
             enqueue(listOf(imagesUri()), 0)
         }
     }
@@ -284,7 +313,7 @@ object MediaStoreWatch {
                 while (kicks.tryReceive().isSuccess) {
                     // Extra callbacks in this burst share the pass above.
                 }
-                if (!libraryResumed || !Settings.libraryLiveUpdate.value) {
+                if (!libraryResumed || !updatesEnabled) {
                     drain()
                     continue
                 }
@@ -306,7 +335,7 @@ object MediaStoreWatch {
     }
 
     private suspend fun applyBatch(batch: Batch) {
-        if (!libraryResumed || !Settings.libraryLiveUpdate.value) return
+        if (!libraryResumed || !updatesEnabled) return
         if (!LocalLibrary.hasLibraryRoots()) return
         if (!MediaPermissions.hasMediaAccess()) return
         val deleteFlag = batch.flags and ContentResolver.NOTIFY_DELETE != 0
@@ -353,6 +382,7 @@ object MediaStoreWatch {
             }
             resolved += recent
         }
+        if (!updatesEnabled || !libraryResumed) return
         var applied = 0
         if (resolved.isNotEmpty()) {
             applied = LocalLibrary.applyObservedMedia(resolved)
@@ -373,6 +403,7 @@ object MediaStoreWatch {
     }
 
     private suspend fun reconcile(reason: String) {
+        if (!updatesEnabled || !libraryResumed) return
         logcat("MediaStoreWatch") { "Reconcile library ($reason)" }
         LocalLibrary.startupMaintenance(forceMediaDump = true)
         generationAtArm = MediaStoreFs.volumeGeneration()
@@ -510,7 +541,10 @@ object MediaStoreWatch {
         }
         return Row(
             name = name,
-            parentRelative = mediaStoreParentRelativeDir(rel, data),
+            parentRelative = MediaStoreVolumePath.parent(
+                c.getString(c.getColumnIndexOrThrow(MediaStore.MediaColumns.VOLUME_NAME)),
+                mediaStoreParentRelativeDir(rel, data),
+            ),
             modifiedMs = modifiedMs,
             addedSec = addedSec,
             pending = pending,
@@ -520,6 +554,7 @@ object MediaStoreWatch {
 
     private fun rowProjection(includeData: Boolean): Array<String> = if (includeData) {
         arrayOf(
+            MediaStore.MediaColumns.VOLUME_NAME,
             MediaStore.MediaColumns.DISPLAY_NAME,
             MediaStore.MediaColumns.RELATIVE_PATH,
             MediaStore.MediaColumns.DATA,
@@ -530,6 +565,7 @@ object MediaStoreWatch {
         )
     } else {
         arrayOf(
+            MediaStore.MediaColumns.VOLUME_NAME,
             MediaStore.MediaColumns.DISPLAY_NAME,
             MediaStore.MediaColumns.RELATIVE_PATH,
             MediaStore.MediaColumns.DATE_MODIFIED,
