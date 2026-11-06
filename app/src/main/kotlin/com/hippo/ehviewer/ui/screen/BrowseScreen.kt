@@ -164,9 +164,8 @@ fun AnimatedVisibilityScope.BrowseScreen(navigator: DestinationsNavigator) = Scr
     val favoriteKeys by Settings.favoriteBrowseSources.collectAsState()
     val mountedStorage by UsbVolumes.mounted.collectAsState()
     val storageVolumes = remember(mountedStorage) {
-        mountedStorage.sortedWith(
-            compareBy<UsbVolume> { it.kind != ExternalStorageKind.SdCard }
-                .thenBy(String.CASE_INSENSITIVE_ORDER) { it.label },
+        mountedStorage.filter { it.kind == ExternalStorageKind.UsbDrive }.sortedWith(
+            compareBy(String.CASE_INSENSITIVE_ORDER) { it.label },
         )
     }
     val gridView by Settings.gridView.collectAsState()

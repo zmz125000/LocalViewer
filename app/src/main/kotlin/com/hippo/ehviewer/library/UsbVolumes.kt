@@ -21,6 +21,7 @@ object UsbVolumes {
     private val _openRequests = MutableSharedFlow<UsbVolume>(extraBufferCapacity = 4)
     val openRequests = _openRequests.asSharedFlow()
 
+    private var initialized = false
     private var callback: StorageManager.StorageVolumeCallback? = null
 
     fun start(context: Context) {
@@ -46,9 +47,17 @@ object UsbVolumes {
             logcat(it)
             emptyList()
         }
-        MediaStoreWatch.onVolumesChanged(next)
         _mounted.value = next
+        if (!initialized) {
+            initialized = true
+            MediaStoreWatch.onAppStarted(next)
+        } else {
+            MediaStoreWatch.onVolumesChanged(next)
+        }
     }
+
+    /** In-memory mount snapshot only; never probes a document provider or filesystem. */
+    fun isPathAvailable(path: String): Boolean = isStoragePathAvailable(path, _mounted.value)
 
     fun listMounted(context: Context): List<UsbVolume> {
         val manager = context.getSystemService(StorageManager::class.java) ?: return emptyList()

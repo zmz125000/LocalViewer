@@ -67,7 +67,7 @@ class RemovableHistoryTest {
             "content://mediastore/@volume-$usb/1-06/000.jpg",
         )
         for (path in paths) {
-            assertEquals(path, usb, removableVolumeInHistoryPath(path)?.lowercase())
+            assertEquals(path, usb, removableStorageVolumeId(path)?.lowercase())
         }
         val archive = row(1, LOCAL_ARCHIVE_TOKEN, paths[3])
         assertEquals(emptyList<BaseGalleryInfo>(), visible(listOf(archive)))
@@ -85,7 +85,7 @@ class RemovableHistoryTest {
             "content://media/external/images/media/42",
             "content://com.android.externalstorage.documents/tree/primary%3APictures/document/primary%3APictures%2F000.jpg",
         )) {
-            assertNull(path, removableVolumeInHistoryPath(path))
+            assertNull(path, removableStorageVolumeId(path))
         }
         val network = listOf(
             row(1, SMB_FILE_TOKEN, "2\u0000@volume-$usb/000.jpg"),

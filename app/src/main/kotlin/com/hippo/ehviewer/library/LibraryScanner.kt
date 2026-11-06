@@ -271,6 +271,7 @@ object LibraryScanner {
         if (knownArchives.isEmpty()) return emptyList()
         val out = ArrayList<LocalGalleryEntity>()
         for ((path, rows) in knownArchives) {
+            if (!UsbVolumes.isPathAvailable(path)) continue
             if (EmptyArchiveRegistry.isMarked(path)) continue
             if (!archiveFileExists(path)) continue
             out += rows
@@ -304,6 +305,7 @@ object LibraryScanner {
         folderPages: MutableMap<String, List<String>>,
         folderVideos: MutableMap<String, List<String>>,
     ) {
+        if (!UsbVolumes.isPathAvailable(dir.toString())) return
         if (dir.isMediaStorePath() && !MediaStoreFs.acceptsLibraryPath(dir.mediaStoreRelativeDir())) return
         val children = runCatching {
             // Overlay re-queries MediaStore in every folder; the library scan already

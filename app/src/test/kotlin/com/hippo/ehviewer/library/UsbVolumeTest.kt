@@ -2,7 +2,9 @@ package com.hippo.ehviewer.library
 
 import com.ehviewer.core.database.model.LibraryRootEntity
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class UsbVolumeTest {
@@ -56,6 +58,37 @@ class UsbVolumeTest {
         val usb = shown.first() as FavoriteBrowseSource.Usb
         assertEquals(9L, usb.root?.id)
         assertEquals(1, shown.count { it is FavoriteBrowseSource.Local })
+    }
+
+    @Test
+    fun scanAvailabilityUsesOnlyTheMountSnapshotForSafMediaStoreAndPhysicalPaths() {
+        val mounted = listOf(UsbVolume("ABCD-1234", "USB"))
+        for (path in listOf(
+            "content://com.android.externalstorage.documents/tree/ABCD-1234%3AAlbum",
+            "content:/com.android.externalstorage.documents/tree/ABCD-1234%3A/document/ABCD-1234%3A/Trip photos/book.cbz",
+            "mediastore://external/@volume-abcd-1234/Album",
+            "mediastore:/@volume-abcd-1234/Album",
+            "/storage/ABCD-1234/this-path-does-not-exist/book.zip",
+        )) {
+            assertFalse(path, isStoragePathAvailable(path, emptyList()))
+            assertTrue(path, isStoragePathAvailable(path, mounted))
+        }
+    }
+
+    @Test
+    fun scanAvailabilityKeepsInternalSourcesAndChecksSdIndependently() {
+        val sd = UsbVolume("5678-90AB", "SD", ExternalStorageKind.SdCard)
+        assertFalse(isStoragePathAvailable("/storage/5678-90AB/Photos", emptyList()))
+        assertTrue(isStoragePathAvailable("/storage/5678-90AB/Photos", listOf(sd)))
+        assertFalse(isStoragePathAvailable("/storage/ABCD-1234/Photos", listOf(sd)))
+        for (path in listOf(
+            MEDIASTORE_ROOT_URI,
+            "mediastore:/Pictures",
+            "/storage/emulated/0/Pictures",
+            "content://com.android.externalstorage.documents/tree/primary%3APictures",
+        )) {
+            assertTrue(path, isStoragePathAvailable(path, emptyList()))
+        }
     }
 
     private fun root(id: Long, treeUri: String) = LibraryRootEntity(

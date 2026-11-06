@@ -140,17 +140,17 @@ internal fun canTrashFolder(source: TransferLocation, directory: Boolean): Boole
     return directory && canTrash(source) && !path.endsWith(".zip", true) && !path.endsWith(".cbz", true)
 }
 
-/** Normal removal always moves folders; permanent folder deletion is reserved for Empty trash. */
+/** Gallery removal preserves its move-to-trash behavior; other targets follow the chosen action. */
 internal fun removalActionFor(file: TransferFile, requested: FileRemovalAction): FileRemovalAction = when {
     requested == FileRemovalAction.EmptyTrash -> FileRemovalAction.EmptyTrash
-    file.directory || file.galleryTrash -> FileRemovalAction.Trash
-    else -> FileRemovalAction.Delete
+    file.galleryTrash -> FileRemovalAction.Trash
+    else -> requested
 }
 
-internal fun removalRequiresPanel(files: List<TransferFile>, action: FileRemovalAction): Boolean = files.any { removalActionFor(it, action) != FileRemovalAction.Trash }
+internal fun removalRequiresPanel(files: List<TransferFile>, action: FileRemovalAction): Boolean = files.size > 1 || files.any { it.directory || action == FileRemovalAction.EmptyTrash }
 
 internal fun canRemoveFile(file: TransferFile, requested: FileRemovalAction): Boolean = when (removalActionFor(file, requested)) {
-    FileRemovalAction.Trash -> if (file.galleryTrash) canTrash(file.source) else canTrashFolder(file.source, file.directory)
+    FileRemovalAction.Trash -> canRemove(file.source, FileRemovalAction.Trash) && canDelete(file.source)
     FileRemovalAction.Delete -> canRemove(file.source, FileRemovalAction.Delete)
     FileRemovalAction.EmptyTrash -> file.directory && canRemove(file.source, FileRemovalAction.EmptyTrash)
 }
@@ -161,13 +161,41 @@ internal fun canRemove(source: TransferLocation, action: FileRemovalAction): Boo
     FileRemovalAction.EmptyTrash -> canDelete(source) && isTrashFolder(source)
 }
 
+/** Enumerate permanent folder deletion before enabling Start; children precede their parents. */
+internal suspend fun collectRemovalFiles(
+    roots: List<TransferFile>,
+    action: FileRemovalAction,
+    checkpoint: suspend () -> Unit = {},
+    children: suspend (TransferLocation) -> List<TransferFile> = { TransferFiles.children(it) },
+): List<TransferFile> {
+    val collected = ArrayList<TransferFile>()
+    val visited = HashSet<TransferLocation>()
+    suspend fun walk(file: TransferFile, depth: Int) {
+        checkpoint()
+        check(depth < 256) { "Folder nesting is too deep" }
+        check(visited.add(file.source)) { "Folder cycle: ${file.relative}" }
+        require(canRemoveFile(file, action)) { "Invalid deletion target: ${file.relative}" }
+        if (file.directory && removalActionFor(file, action) == FileRemovalAction.Delete) {
+            for (child in children(file.source)) {
+                require(child.relative.isNotEmpty() && child.relative != "." && child.relative != ".." && '/' !in child.relative && '\\' !in child.relative)
+                walk(child.copy(relative = "${file.relative}/${child.relative}"), depth + 1)
+            }
+        }
+        collected += file
+    }
+    for (root in roots) walk(root, 0)
+    return collected
+}
+
 /** Use provider/server folder deletion, with the SMB recursive operation where required. */
 internal object PermanentFiles {
     suspend fun delete(file: TransferFile, action: FileRemovalAction, control: TransferControl) {
         require(action != FileRemovalAction.Trash && canRemove(file.source, action)) { "Invalid deletion target" }
         require(action != FileRemovalAction.EmptyTrash || file.directory) { "Trash must be a folder" }
-        require(action == FileRemovalAction.EmptyTrash || !file.directory) { "Folders must be moved to trash" }
         control.checkpoint()
+        if (file.directory && action == FileRemovalAction.Delete) {
+            check(TransferFiles.children(file.source).isEmpty()) { "Folder is not empty: ${file.relative}" }
+        }
         when (file.source.kind) {
             ExplorerWindows.Kind.Smb -> {
                 val source = requireNotNull(SmbRepository.load(file.source.sourceId))
@@ -176,7 +204,7 @@ internal object PermanentFiles {
                     SmbPasswordStore.get(source.id),
                     file.source.path,
                     file.directory,
-                    recursive = true,
+                    recursive = action == FileRemovalAction.EmptyTrash,
                     checkpoint = control::checkpoint,
                 )
             }

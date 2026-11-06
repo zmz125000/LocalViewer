@@ -38,18 +38,25 @@ import splitties.init.appCtx
 object MediaStoreWatch {
     private val _pausedVolumes = MutableStateFlow<Set<String>>(emptySet())
     val pausedVolumes = _pausedVolumes.asStateFlow()
-    private var mountedIds = emptySet<String>()
+    private val pauseState = OtgLiveUpdatePause()
+    private val _pauseNoticeVolumes = MutableStateFlow<Set<String>>(emptySet())
+    val pauseNoticeVolumes = _pauseNoticeVolumes.asStateFlow()
     private val updatesEnabled: Boolean
         get() = Settings.libraryLiveUpdate.value && _pausedVolumes.value.isEmpty()
 
-    /** Pause once for each connection. Resume stays effective until another device connects. */
+    /** Devices already present at process start do not pause the new session. */
+    @Synchronized
+    fun onAppStarted(volumes: List<UsbVolume>) {
+        pauseState.start(volumes)
+        publishPauseState()
+        onPrefEnabled()
+    }
+
     @Synchronized
     fun onVolumesChanged(volumes: List<UsbVolume>) {
-        val ids = volumes.map { it.uuid.lowercase() }.toSet()
-        val added = ids - mountedIds
-        mountedIds = ids
         val wasPaused = _pausedVolumes.value.isNotEmpty()
-        _pausedVolumes.value = (_pausedVolumes.value.intersect(ids)) + added
+        pauseState.update(volumes)
+        publishPauseState()
         if (_pausedVolumes.value.isNotEmpty()) {
             stop()
         } else if (wasPaused) {
@@ -58,9 +65,22 @@ object MediaStoreWatch {
     }
 
     @Synchronized
-    fun resumeAfterVolumeConnection() {
-        _pausedVolumes.value = emptySet()
+    fun dismissVolumePauseNotice() {
+        pauseState.acknowledge()
+        publishPauseState()
+    }
+
+    /** A manual refresh resumes observers even while the same OTG drive remains attached. */
+    @Synchronized
+    fun resumeAfterManualRefresh() {
+        pauseState.resume()
+        publishPauseState()
         onPrefEnabled()
+    }
+
+    private fun publishPauseState() {
+        _pausedVolumes.value = pauseState.pausedIds
+        _pauseNoticeVolumes.value = pauseState.noticeIds
     }
 
     private const val JOB_ID = 71021

@@ -2,11 +2,9 @@ package com.hippo.ehviewer.ui.main
 
 import android.content.Intent
 import android.os.storage.StorageManager
+import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.material3.SnackbarDuration
-import androidx.compose.material3.SnackbarHostState
-import androidx.compose.material3.SnackbarResult
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -26,6 +24,7 @@ import com.ehviewer.core.util.withIOContext
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.asMutableState
 import com.hippo.ehviewer.library.AddRootResult
+import com.hippo.ehviewer.library.ExternalStorageKind
 import com.hippo.ehviewer.library.LocalLibrary
 import com.hippo.ehviewer.library.MediaStoreWatch
 import com.hippo.ehviewer.library.UsbVolume
@@ -37,14 +36,11 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 
 /**
- * Snackbar when a removable volume is mounted, and the opener shared with the
+ * Auto-dismissing OTG connection toast, and the opener shared with the
  * Library favourites pin. An already granted tree reuses that root id.
  */
 @Composable
-fun UsbDriveHost(
-    navigator: DestinationsNavigator,
-    snackbarState: SnackbarHostState,
-) {
+fun UsbDriveHost(navigator: DestinationsNavigator) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val roots by produceState(emptyList<LibraryRootEntity>()) {
@@ -118,16 +114,12 @@ fun UsbDriveHost(
         picker.launch(intent)
     }
 
-    val pausedVolumes by MediaStoreWatch.pausedVolumes.collectAsState()
+    val noticeVolumes by MediaStoreWatch.pauseNoticeVolumes.collectAsState()
     val liveUpdateEnabled by Settings.libraryLiveUpdate.asMutableState()
-    LaunchedEffect(pausedVolumes, liveUpdateEnabled) {
-        if (pausedVolumes.isNotEmpty() && liveUpdateEnabled) {
-            val result = snackbarState.showSnackbar(
-                message = context.getString(R.string.library_live_update_stopped),
-                actionLabel = context.getString(R.string.library_live_update_resume),
-                duration = SnackbarDuration.Indefinite,
-            )
-            if (result == SnackbarResult.ActionPerformed) MediaStoreWatch.resumeAfterVolumeConnection()
+    LaunchedEffect(noticeVolumes, liveUpdateEnabled) {
+        if (noticeVolumes.isNotEmpty() && liveUpdateEnabled) {
+            Toast.makeText(context, R.string.library_live_update_stopped, Toast.LENGTH_LONG).show()
+            MediaStoreWatch.dismissVolumePauseNotice()
         }
     }
 
@@ -142,17 +134,15 @@ fun UsbDriveHost(
             val previous = seen
             seen = ids
             if (previous == null) return@collectLatest
-            if (MediaStoreWatch.pausedVolumes.value.isNotEmpty() && Settings.libraryLiveUpdate.value) return@collectLatest
+            // The pause notice owns connection feedback when live updates are enabled.
+            if (Settings.libraryLiveUpdate.value) return@collectLatest
             for (volume in volumes) {
-                if (volume.uuid in previous) continue
-                val result = snackbarState.showSnackbar(
-                    message = context.getString(R.string.usb_drive_connected, volume.label),
-                    actionLabel = context.getString(R.string.usb_drive_open),
-                    duration = SnackbarDuration.Long,
-                )
-                if (result == SnackbarResult.ActionPerformed) {
-                    openVolumeNow.value(volume)
-                }
+                if (volume.kind != ExternalStorageKind.UsbDrive || volume.uuid in previous) continue
+                Toast.makeText(
+                    context,
+                    context.getString(R.string.usb_drive_connected, volume.label),
+                    Toast.LENGTH_LONG,
+                ).show()
             }
         }
     }

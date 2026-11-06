@@ -88,6 +88,18 @@ object LocalLibrary {
         coverPath: String?,
     ) = db.localGalleryDao().updatePageAndCoverByContentPath(contentPath, pageCount, coverPath)
 
+    /** A successful photo-grid listing is authoritative for this folder's library count/cover. */
+    suspend fun refreshFolderGallery(rootId: Long, relativeDir: String, names: List<String>) = withIOContext {
+        val relative = FolderGalleryIndex.normalizeGalleryRelativeDir(relativeDir).ifEmpty { "." }
+        val row = db.localGalleryDao().load(stableGalleryId(rootId, relative)) ?: return@withIOContext
+        if (row.kind != LOCAL_GALLERY_KIND_FOLDER || row.rootId != rootId || row.relativePath != relative) return@withIOContext
+        if (names.isEmpty()) {
+            db.localGalleryDao().deleteByIds(listOf(row.id))
+        } else {
+            db.localGalleryDao().updatePageAndCover(row.id, names.size, (row.contentPath.toPath() / names.first()).toString())
+        }
+    }
+
     /**
      * Local archive confirmed to have no playable images:
      * mark [EmptyArchiveRegistry] (browse demotes gallery → regular file) and delete the library row.
@@ -380,6 +392,10 @@ object LocalLibrary {
             clearRootGalleries(root.id)
             return
         }
+        if (!UsbVolumes.isPathAvailable(root.treeUri)) {
+            logcat("LocalLibrary") { "Skip disconnected library source ${root.id}" }
+            return
+        }
         val path = rootPath(root) ?: run {
             logcat("LocalLibrary") { "Library root not accessible: ${root.treeUri}" }
             if (db.libraryRootDao().load(root.id) != null) {
@@ -390,6 +406,7 @@ object LocalLibrary {
         // MediaStore virtual root is always a directory tree; skip FileSystem metadata check
         // which can mis-classify synthetic paths.
         if (!isMediaStoreRootUri(root.treeUri) && !path.isDirectory) {
+            if (!UsbVolumes.isPathAvailable(root.treeUri)) return
             logcat("LocalLibrary") { "Library root is not a directory: $path" }
             if (db.libraryRootDao().load(root.id) != null) {
                 clearRootGalleries(root.id)
@@ -451,6 +468,8 @@ object LocalLibrary {
             knownArchives = knownArchives,
             walkDirectories = !skipIfUnchanged || previous.isEmpty(),
         )
+        // A detach during the walk must not overwrite the source's saved index with partial results.
+        if (!UsbVolumes.isPathAvailable(root.treeUri)) return
         // Drop results if the root was removed while scanning (belt-and-suspenders with mutex).
         if (db.libraryRootDao().load(root.id) == null) {
             logcat("LocalLibrary") { "Skip scan write for deleted root ${root.id}" }

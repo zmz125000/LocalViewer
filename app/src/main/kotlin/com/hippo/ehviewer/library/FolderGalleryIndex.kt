@@ -126,6 +126,10 @@ object FolderGalleryIndex {
                 putRam(ancestor, saved, alias, current)
             }
         }
+        if (kind == ExplorerWindows.Kind.Local) {
+            LocalLibrary.refreshFolderGallery(sourceId, relativeDir, names)
+            _localRevision.update { it + 1 }
+        }
         stored
     }
 

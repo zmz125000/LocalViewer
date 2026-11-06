@@ -16,9 +16,10 @@ import com.hippo.ehviewer.library.removalActionFor
 import com.hippo.ehviewer.library.removalRequiresPanel
 import com.hippo.ehviewer.library.trashSelectionRoots
 
-/** Both menus confirm an immutable snapshot; dismissing never starts a job. */
+/** Single files confirm by name; selections and folders open a panel that waits for Start. */
 @Composable
-internal fun rememberNetworkDeleteConfirmation(action: FileRemovalAction = FileRemovalAction.Trash, onConfirmed: () -> Unit = {}): (List<TransferFile>) -> Unit {
+internal fun rememberNetworkDeleteConfirmation(action: FileRemovalAction = FileRemovalAction.Trash, review: Boolean = false, onConfirmed: () -> Unit = {}): (List<TransferFile>) -> Unit {
+    var itemName by remember { mutableStateOf("") }
     var pending by remember { mutableStateOf<Pair<List<TransferFile>, FileRemovalAction>?>(null) }
     pending?.let { (files, confirmedAction) ->
         val label = when (confirmedAction) {
@@ -37,6 +38,10 @@ internal fun rememberNetworkDeleteConfirmation(action: FileRemovalAction = FileR
                         val folders = files.count { removalActionFor(it, confirmedAction) == FileRemovalAction.Trash }
                         val regularFiles = files.size - folders
                         when {
+                            files.size == 1 -> stringResource(
+                                if (folders == 1) R.string.trash_named_confirm else R.string.delete_named_confirm,
+                                itemName,
+                            )
                             regularFiles == 0 -> stringResource(R.string.transfer_delete_confirm, folders)
                             folders == 0 -> stringResource(R.string.permanent_delete_confirm, regularFiles)
                             else -> stringResource(R.string.mixed_delete_confirm, regularFiles, folders)
@@ -56,13 +61,13 @@ internal fun rememberNetworkDeleteConfirmation(action: FileRemovalAction = FileR
         )
     }
     return { files ->
-        pending = trashSelectionRoots(files).takeIf { it.isNotEmpty() }?.let { roots ->
-            roots to if (action == FileRemovalAction.EmptyTrash) {
-                action
-            } else if (!removalRequiresPanel(roots, action)) {
-                FileRemovalAction.Trash
+        val roots = trashSelectionRoots(files)
+        if (roots.isNotEmpty()) {
+            if (review || removalRequiresPanel(roots, action)) {
+                if (UploadTransfers.delete(roots, action, review = true)) onConfirmed()
             } else {
-                FileRemovalAction.Delete
+                itemName = files.single().relative.substringAfterLast('/')
+                pending = roots to action
             }
         }
     }

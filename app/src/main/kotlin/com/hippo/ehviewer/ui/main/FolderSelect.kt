@@ -1645,17 +1645,12 @@ private fun SelectionOverflowControl(
     val savable = picks.count { it.saveInto != null }
     val uploadable = picks.count { it.uploadSource != null }
     val useTrashBin = Settings.useTrashBin.asMutableState().value
-    val removalAction = if (picks.all { it.isFolder || it.gallery }) com.hippo.ehviewer.library.FileRemovalAction.Trash else com.hippo.ehviewer.library.FileRemovalAction.Delete
-    val confirmDelete = rememberNetworkDeleteConfirmation(removalAction) { FolderSelectHost.cancelShownSelection() }
+    val removalAction = if (useTrashBin || picks.all { it.gallery }) com.hippo.ehviewer.library.FileRemovalAction.Trash else com.hippo.ehviewer.library.FileRemovalAction.Delete
+    val confirmDelete = rememberNetworkDeleteConfirmation(removalAction, review = true) { FolderSelectHost.cancelShownSelection() }
     val deletable = picks.isNotEmpty() && picks.all {
         it.uploadSource?.let { source ->
-            if (it.gallery) {
-                com.hippo.ehviewer.library.canTrash(source)
-            } else if (it.isFolder) {
-                com.hippo.ehviewer.library.canTrashFolder(source, true)
-            } else {
-                !useTrashBin && com.hippo.ehviewer.library.canRemove(source, com.hippo.ehviewer.library.FileRemovalAction.Delete)
-            }
+            val action = if (it.gallery) com.hippo.ehviewer.library.FileRemovalAction.Trash else removalAction
+            com.hippo.ehviewer.library.canRemove(source, action) && com.hippo.ehviewer.library.canDelete(source)
         } == true
     }
     val canSelectAll = selectionActions &&
@@ -1755,7 +1750,7 @@ private fun SelectionOverflowControl(
                 }
                 if (selectionActions && deletable) {
                     DropdownMenuItem(
-                        text = { Text(stringResource(if (picks.all { it.isFolder || it.gallery }) R.string.action_trash else R.string.delete)) },
+                        text = { Text(stringResource(if (removalAction == com.hippo.ehviewer.library.FileRemovalAction.Trash) R.string.action_trash else R.string.delete)) },
                         onClick = {
                             menu = false
                             scope.launch {

@@ -2965,8 +2965,12 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                             onClick = {
                                 launch {
                                     refreshing = true
-                                    reload(force = true)
-                                    refreshing = false
+                                    try {
+                                        reload(force = true)
+                                    } finally {
+                                        MediaStoreWatch.resumeAfterManualRefresh()
+                                        refreshing = false
+                                    }
                                 }
                             },
                             shapes = IconButtonDefaults.shapes(),
@@ -3023,8 +3027,12 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
             onRefresh = {
                 launch {
                     refreshing = true
-                    reload(force = true)
-                    refreshing = false
+                    try {
+                        reload(force = true)
+                    } finally {
+                        MediaStoreWatch.resumeAfterManualRefresh()
+                        refreshing = false
+                    }
                 }
             },
             modifier = Modifier

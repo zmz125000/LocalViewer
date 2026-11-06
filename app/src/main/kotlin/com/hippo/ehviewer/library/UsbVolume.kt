@@ -110,3 +110,42 @@ fun libraryFavoritesWithUsb(
     }
     return head + rest
 }
+
+/** Availability checks share history's volume identity without touching the device. */
+internal fun isStoragePathAvailable(path: String, volumes: List<UsbVolume>): Boolean {
+    val id = removableStorageVolumeId(path) ?: return true
+    return volumes.any { it.uuid.equals(id, ignoreCase = true) }
+}
+
+internal fun removableStorageVolumeId(raw: String): String? {
+    val path = raw.removePrefix("vid-local:").let { ZipPaths.parse(it)?.first ?: it }
+    if (path.startsWith("mediastore:")) {
+        val relative = path.removePrefix("mediastore://external").removePrefix("mediastore:").trim('/')
+        return MediaStoreVolumePath.volume(relative)
+    }
+    val normalized = if (path.startsWith("content://")) path else path.replaceFirst("content:/", "content://")
+    if (normalized.startsWith("content://")) {
+        // Stored Okio SAF children may contain raw spaces; parse identity before URI encoding.
+        val content = normalized.removePrefix("content://")
+        val authority = content.substringBefore('/')
+        val uriPath = content.substringAfter('/', "")
+        return when (authority) {
+            "com.android.externalstorage.documents" -> {
+                val id = safTreeDocumentId(normalized) ?: runCatching {
+                    URLDecoder.decode(uriPath.substringAfter("document/", "").substringBefore('/').replace("+", "%2B"), "UTF-8")
+                }.getOrNull() ?: return null
+                externalStorageVolumeId(id)
+            }
+            "media" -> uriPath.substringBefore('/').takeUnless {
+                it.isEmpty() || it == "external" || it == "internal" || it == MediaStoreVolumePath.PRIMARY
+            }
+            "mediastore" -> MediaStoreVolumePath.volume(uriPath)
+            else -> null
+        }
+    }
+    val physical = path.removePrefix("file://")
+    val prefix = listOf("/storage/", "/mnt/media_rw/").firstOrNull { physical.startsWith(it) } ?: return null
+    return physical.removePrefix(prefix).substringBefore('/').takeUnless {
+        it.isEmpty() || it in setOf("emulated", "self", "primary", "sdcard0")
+    }
+}
