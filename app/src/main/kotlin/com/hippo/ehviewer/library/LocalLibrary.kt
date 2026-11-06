@@ -14,6 +14,7 @@ import com.ehviewer.core.database.model.LOCAL_GALLERY_KIND_ARCHIVE
 import com.ehviewer.core.database.model.LOCAL_GALLERY_KIND_FOLDER
 import com.ehviewer.core.database.model.LibraryRootEntity
 import com.ehviewer.core.database.model.LocalGalleryEntity
+import com.ehviewer.core.database.model.LocalGalleryStoragePath
 import com.ehviewer.core.database.roomDb
 import com.ehviewer.core.files.isDirectory
 import com.ehviewer.core.files.toOkioPath
@@ -59,6 +60,8 @@ object LocalLibrary {
     fun folderOnlyRootsFlow(): Flow<List<LibraryRootEntity>> = db.libraryRootDao().listByRoleFlow(LIBRARY_ROOT_ROLE_FOLDER)
 
     fun galleriesFlow(): Flow<List<LocalGalleryEntity>> = db.localGalleryDao().listFlow()
+
+    fun galleryStoragePathsFlow(): Flow<List<LocalGalleryStoragePath>> = db.localGalleryDao().storagePathsFlow()
 
     fun searchGalleriesFlow(keyword: String): Flow<List<LocalGalleryEntity>> = db.localGalleryDao().searchFlow(keyword)
 

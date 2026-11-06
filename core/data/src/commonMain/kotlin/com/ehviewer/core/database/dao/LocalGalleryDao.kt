@@ -6,12 +6,17 @@ import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import androidx.room.Transaction
 import com.ehviewer.core.database.model.LocalGalleryEntity
+import com.ehviewer.core.database.model.LocalGalleryStoragePath
 import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface LocalGalleryDao {
     @Query("SELECT * FROM LOCAL_GALLERIES ORDER BY TITLE COLLATE NOCASE ASC")
     fun listFlow(): Flow<List<LocalGalleryEntity>>
+
+    /** Availability filtering needs no covers, counts, titles, or title sorting. */
+    @Query("SELECT ID AS id, CONTENT_PATH AS contentPath FROM LOCAL_GALLERIES")
+    fun storagePathsFlow(): Flow<List<LocalGalleryStoragePath>>
 
     @Query("SELECT * FROM LOCAL_GALLERIES WHERE TITLE LIKE '%' || :keyword || '%' ORDER BY TITLE COLLATE NOCASE ASC")
     fun searchFlow(keyword: String): Flow<List<LocalGalleryEntity>>
