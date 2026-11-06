@@ -9,6 +9,7 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.SnackbarResult
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
@@ -22,13 +23,17 @@ import com.ehviewer.core.database.model.LIBRARY_ROOT_ROLE_FOLDER
 import com.ehviewer.core.database.model.LibraryRootEntity
 import com.ehviewer.core.i18n.R
 import com.ehviewer.core.util.withIOContext
+import com.hippo.ehviewer.Settings
+import com.hippo.ehviewer.asMutableState
 import com.hippo.ehviewer.library.AddRootResult
 import com.hippo.ehviewer.library.LocalLibrary
+import com.hippo.ehviewer.library.MediaStoreWatch
 import com.hippo.ehviewer.library.UsbVolume
 import com.hippo.ehviewer.library.UsbVolumes
 import com.hippo.ehviewer.library.matchUsbRoot
 import com.hippo.ehviewer.ui.openLocalBrowseDir
 import com.ramcosta.composedestinations.navigation.DestinationsNavigator
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 
 /**
@@ -113,17 +118,31 @@ fun UsbDriveHost(
         picker.launch(intent)
     }
 
+    val pausedVolumes by MediaStoreWatch.pausedVolumes.collectAsState()
+    val liveUpdateEnabled by Settings.libraryLiveUpdate.asMutableState()
+    LaunchedEffect(pausedVolumes, liveUpdateEnabled) {
+        if (pausedVolumes.isNotEmpty() && liveUpdateEnabled) {
+            val result = snackbarState.showSnackbar(
+                message = context.getString(R.string.library_live_update_stopped),
+                actionLabel = context.getString(R.string.library_live_update_resume),
+                duration = SnackbarDuration.Indefinite,
+            )
+            if (result == SnackbarResult.ActionPerformed) MediaStoreWatch.resumeAfterVolumeConnection()
+        }
+    }
+
     val openVolumeNow = rememberUpdatedState(::openVolume)
     LaunchedEffect(Unit) {
         UsbVolumes.openRequests.collect { openVolumeNow.value(it) }
     }
     LaunchedEffect(Unit) {
         var seen: Set<String>? = null
-        UsbVolumes.mounted.collect { volumes ->
+        UsbVolumes.mounted.collectLatest { volumes ->
             val ids = volumes.map { it.uuid }.toSet()
             val previous = seen
             seen = ids
-            if (previous == null) return@collect
+            if (previous == null) return@collectLatest
+            if (MediaStoreWatch.pausedVolumes.value.isNotEmpty() && Settings.libraryLiveUpdate.value) return@collectLatest
             for (volume in volumes) {
                 if (volume.uuid in previous) continue
                 val result = snackbarState.showSnackbar(

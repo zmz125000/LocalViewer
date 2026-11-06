@@ -686,12 +686,35 @@ object LocalFolderListing {
         zipInteriors: MutableMap<String, List<BrowseEntryRemote>>? = null,
     ): List<BrowseEntryRemote> {
         val zipListings = zipRootListings(dir, children, zipInteriors)
-        return ZipAsDirListing.classifyListingWithZipAsDirs(
+        val deviceRoots = if (dir.isMediaStorePath() && dir.mediaStoreRelativeDir().isEmpty()) {
+            children.filter { it.isDirectory && MediaStoreVolumePath.volume(it.name) != null }
+        } else {
+            emptyList()
+        }
+        val classified = ZipAsDirListing.classifyListingWithZipAsDirs(
             currentDirName = dirName,
             children = children,
             childPeeks = childPeeks,
             grandPeeks = grandPeeks,
         ) { zipListings[it] }
+        if (deviceRoots.isEmpty()) return classified
+        val deviceNames = deviceRoots.map { it.name }.toSet()
+        return classified.filterNot {
+            val relative = when (it) {
+                is BrowseEntryRemote.Directory -> it.relativeName
+                is BrowseEntryRemote.FolderGallery -> it.relativeName
+                else -> it.name
+            }
+            relative.substringBefore('/') in deviceNames
+        } +
+            deviceRoots.map { child ->
+                BrowseEntryRemote.Directory(
+                    name = child.name,
+                    hasVideo = true,
+                    hasGallery = true,
+                    presence = DirPresence.Navigable,
+                )
+            }
     }
 
     private suspend fun zipRootListings(
@@ -1107,7 +1130,8 @@ internal object LocalListingJobs {
 }
 
 /** SAF tree roots expose the encoded document id as [Path.name]. Keep the folder label. */
-internal fun localFolderTitle(dir: Path): String = humanizePathName(dir.name).ifEmpty { "Gallery" }
+internal fun localFolderTitle(dir: Path): String = (if (dir.isMediaStorePath()) MediaStoreFs.volumeLabel(dir.mediaStoreRelativeDir()) else null)
+    ?: humanizePathName(dir.name).ifEmpty { "Gallery" }
 
 /** Join relative segments onto [base] (accepts `/` or `\`). */
 fun Path.resolveRelative(relative: String): Path {
@@ -1154,7 +1178,11 @@ fun materializeLocalEntries(
                     }
                 }
                 BrowseEntry.Directory(
-                    name = entry.name,
+                    name = if (path.isMediaStorePath()) {
+                        MediaStoreFs.volumeLabel(path.mediaStoreRelativeDir()) ?: entry.name
+                    } else {
+                        entry.name
+                    },
                     path = path,
                     relativeName = entry.relativeName,
                     hasVideo = entry.hasVideo,

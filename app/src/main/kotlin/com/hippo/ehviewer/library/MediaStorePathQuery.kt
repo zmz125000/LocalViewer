@@ -16,33 +16,40 @@ object MediaStorePathQuery {
      * (whole Images table — device media root).
      */
     fun descendantRelativePathSelection(relativeDir: String): Pair<String, Array<String>>? {
-        val root = relativeDir.replace('\\', '/').trim('/')
-        if (root.isEmpty()) return null
+        val virtualRoot = relativeDir.replace('\\', '/').trim('/')
+        if (virtualRoot.isEmpty()) return null
+        val root = MediaStoreVolumePath.local(virtualRoot)
+        val volume = MediaStoreVolumePath.volume(virtualRoot) ?: MediaStoreVolumePath.PRIMARY
+        if (root.isEmpty()) return "volume_name = ?" to arrayOf(volume)
         val selection =
             "$RELATIVE_PATH = ? OR $RELATIVE_PATH = ? OR $RELATIVE_PATH LIKE ?"
-        return selection to arrayOf("$root/", root, "$root/%")
+        return "($selection) AND volume_name = ?" to arrayOf("$root/", root, "$root/%", volume)
     }
 
     /** OEM rows that leave [RELATIVE_PATH] empty; pair with [DATA] in the projection. */
     fun emptyRelativePathSelection(): String = "$RELATIVE_PATH IS NULL OR $RELATIVE_PATH = '' OR $RELATIVE_PATH = '/'"
 
     fun resolveByRelativePathSelection(relativeDir: String, fileName: String): Pair<String, Array<String>> {
-        val relWithSlash = if (relativeDir.isEmpty()) "" else "$relativeDir/"
-        return if (relativeDir.isEmpty()) {
-            "(${emptyRelativePathSelection()}) AND $DISPLAY_NAME = ?" to arrayOf(fileName)
+        val volume = MediaStoreVolumePath.volume(relativeDir) ?: MediaStoreVolumePath.PRIMARY
+        val localDir = MediaStoreVolumePath.local(relativeDir)
+        val relWithSlash = if (localDir.isEmpty()) "" else "$localDir/"
+        return if (localDir.isEmpty()) {
+            "(${emptyRelativePathSelection()}) AND $DISPLAY_NAME = ? AND volume_name = ?" to arrayOf(fileName, volume)
         } else {
-            "($RELATIVE_PATH = ? OR $RELATIVE_PATH = ?) AND $DISPLAY_NAME = ?" to
-                arrayOf(relWithSlash, relativeDir, fileName)
+            "($RELATIVE_PATH = ? OR $RELATIVE_PATH = ?) AND $DISPLAY_NAME = ? AND volume_name = ?" to
+                arrayOf(relWithSlash, localDir, fileName, volume)
         }
     }
 
     /** Last-resort open lookup for OEM rows with empty [RELATIVE_PATH]. */
     fun resolveByDataSelection(relativeDir: String, fileName: String): Pair<String, Array<String>> {
-        val like = if (relativeDir.isEmpty()) {
+        val volume = MediaStoreVolumePath.volume(relativeDir) ?: MediaStoreVolumePath.PRIMARY
+        val localDir = MediaStoreVolumePath.local(relativeDir)
+        val like = if (localDir.isEmpty()) {
             "%/$fileName"
         } else {
-            "%/$relativeDir/$fileName"
+            "%/$localDir/$fileName"
         }
-        return "$DATA LIKE ? AND $DISPLAY_NAME = ?" to arrayOf(like, fileName)
+        return "$DATA LIKE ? AND $DISPLAY_NAME = ? AND volume_name = ?" to arrayOf(like, fileName, volume)
     }
 }

@@ -283,6 +283,24 @@ object LocalLibrary {
         }
     }
 
+    /** Rebuild only MediaStore-backed sources after a privacy policy or path-model change. */
+    suspend fun refreshMediaStoreSources() = withNonCancellableContext {
+        withIOContext {
+            scanMutex.withLock {
+                _scanning.value = true
+                try {
+                    for (root in db.libraryRootDao().listByRole(LIBRARY_ROOT_ROLE_LIBRARY)) {
+                        val path = rootPath(root) ?: continue
+                        if (!path.isMediaStorePath()) continue
+                        scanRootLocked(root, reuseKnownArchives = true)
+                    }
+                } finally {
+                    _scanning.value = false
+                }
+            }
+        }
+    }
+
     suspend fun rescanAll() = withNonCancellableContext {
         withIOContext {
             scanMutex.withLock {
@@ -571,6 +589,7 @@ object LocalLibrary {
                 val mediaRelative = msRoot.mediaStoreRelativeDir()
                 val configKey = LocalFolderListing.rootConfigKey(path, root.prefersMediaStore)
                 for (file in files) {
+                    if (!MediaStoreFs.acceptsLibraryPath(file.parentRelative)) continue
                     val folderRel = SafMediaStoreListing.relativeUnderRoot(
                         mediaRelative,
                         file.parentRelative,

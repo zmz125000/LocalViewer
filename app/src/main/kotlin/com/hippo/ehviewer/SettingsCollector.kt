@@ -54,6 +54,11 @@ suspend fun updateWhenThemeChanges(theme: Int) {
     applyNightMode(theme)
 }
 
+suspend fun updateWhenLibraryRemovablePolicyChanges() {
+    Settings.libraryMediaStoreStamps.value = emptySet()
+    com.hippo.ehviewer.library.LocalLibrary.refreshMediaStoreSources()
+}
+
 suspend fun updateWhenLibraryLiveUpdateChanges(enabled: Boolean) {
     withIOContext {
         // Arms only if the library screen is already resumed; otherwise the next

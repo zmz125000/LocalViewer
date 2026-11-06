@@ -170,8 +170,14 @@ class EhApplication : Application(), SingletonImageLoader.Factory {
             // Library: skip unchanged MediaStore roots; archive sources rescan with known zips.
             // MediaStoreWatch arms from LibraryScreen resume (library-scoped).
             launch {
-                if (!Settings.libraryStartupScan.value) return@launch
-                runCatching { LocalLibrary.startupMaintenance() }.onFailure { logcat(it) }
+                runCatching {
+                    // Remove old merged removable rows once, even when startup scanning is off.
+                    if (!Settings.libraryVolumePathsMigrated.value) {
+                        LocalLibrary.refreshMediaStoreSources()
+                        Settings.libraryVolumePathsMigrated.value = true
+                    }
+                    if (Settings.libraryStartupScan.value) LocalLibrary.startupMaintenance()
+                }.onFailure { logcat(it) }
             }
             launch {
                 if (Settings.clearHistoryOnStartup.value) {

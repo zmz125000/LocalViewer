@@ -13,6 +13,7 @@ import android.provider.MediaStore
 import androidx.core.content.ContextCompat
 import com.ehviewer.core.files.mediaStoreParentRelativeDir
 import com.ehviewer.core.files.toUri
+import com.hippo.ehviewer.Settings
 import java.io.IOException
 import okio.Path
 import okio.Path.Companion.toPath
@@ -75,6 +76,7 @@ fun tryMediaStoreTreeUriFromSaf(treeUri: Uri): String? {
     }.getOrNull() ?: return null
     val colon = docId.indexOf(':')
     if (colon <= 0) return null
+    if (!isPrimaryExternalDocument(docId)) return null
     val relative = docId.substring(colon + 1).replace('\\', '/').trim('/')
     return mediaStoreTreeUriFromRelative(relative)
 }
@@ -213,6 +215,7 @@ object MediaPermissions {
  * Path model:
  * - Directory: `mediastore:/Pictures/Comics`
  * - File: `mediastore:/Pictures/Comics/001.jpg` (DISPLAY_NAME; resolved to content:// on open)
+ * - Removable volume: `mediastore:/@volume-abcd-1234/Pictures` (stable UUID, displayed as device name)
  *
  * Archives (cbz/zip) are **not** visible — MediaStore only indexes images and videos.
  */
@@ -225,6 +228,19 @@ object MediaStoreFs {
         val lastModifiedMs: Long = 0L,
         val mimeType: String? = null,
     )
+
+    fun acceptsLibraryPath(relative: String): Boolean = MediaStoreVolumePath.accepts(
+        relative,
+        UsbVolumes.mounted.value,
+        Settings.libraryAcceptOtg.value,
+        Settings.libraryAcceptSdCard.value,
+    )
+
+    fun volumeLabel(relative: String): String? {
+        val id = MediaStoreVolumePath.volume(relative) ?: return null
+        if (MediaStoreVolumePath.local(relative).isNotEmpty()) return null
+        return UsbVolumes.mounted.value.firstOrNull { it.uuid.equals(id, ignoreCase = true) }?.label ?: id
+    }
 
     fun listChildren(dir: Path): List<Child> {
         if (!dir.isMediaStorePath()) return emptyList()
@@ -410,6 +426,8 @@ object MediaStoreFs {
                 selectionArgs = pathFilter?.second,
                 sortOrder = "${MediaStore.MediaColumns._ID} ASC",
             ) { c ->
+                val volume = c.getString(c.getColumnIndexOrThrow(MediaStore.MediaColumns.VOLUME_NAME))
+                if (!acceptsLibraryPath(MediaStoreVolumePath.parent(volume, ""))) return@queryMediaPaged false
                 val id = c.getLong(0)
                 if (!seenIds.add(id)) return@queryMediaPaged false
                 count++
@@ -466,11 +484,15 @@ object MediaStoreFs {
             val name = c.getString(nameIdx) ?: return@queryMediaPaged false
             val relCol = c.getString(pathIdx)
             if (!includeData && relCol.isNullOrBlank()) return@queryMediaPaged false
-            val relPath = mediaStoreParentRelativeDir(
-                relCol,
-                if (dataIdx < 0) null else c.getString(dataIdx),
+            val relPath = MediaStoreVolumePath.parent(
+                c.getString(c.getColumnIndexOrThrow(MediaStore.MediaColumns.VOLUME_NAME)),
+                mediaStoreParentRelativeDir(
+                    relCol,
+                    if (dataIdx < 0) null else c.getString(dataIdx),
+                ),
             )
             if (SafMediaStoreListing.relativeUnderRoot(root, relPath) == null) return@queryMediaPaged false
+            if (!acceptsLibraryPath(relPath)) return@queryMediaPaged false
             val key = "$relPath/$name"
             if (!seen.add(key)) return@queryMediaPaged false
             val lastMod = if (modIdx < 0 || c.isNull(modIdx)) {
@@ -648,9 +670,12 @@ object MediaStoreFs {
                 val displayName = c.getString(nameIdx) ?: return@queryMediaPaged false
                 val relCol = c.getString(pathIdx)
                 if (!includeData && relCol.isNullOrBlank()) return@queryMediaPaged false
-                val relPath = mediaStoreParentRelativeDir(
-                    relCol,
-                    if (dataIdx < 0) null else c.getString(dataIdx),
+                val relPath = MediaStoreVolumePath.parent(
+                    c.getString(c.getColumnIndexOrThrow(MediaStore.MediaColumns.VOLUME_NAME)),
+                    mediaStoreParentRelativeDir(
+                        relCol,
+                        if (dataIdx < 0) null else c.getString(dataIdx),
+                    ),
                 )
                 val key = "$relPath/$displayName"
                 if (!seen.add(key)) return@queryMediaPaged false
@@ -687,10 +712,10 @@ object MediaStoreFs {
             // library scan already gets from Images + Video.
         }
 
-        // RELATIVE_PATH prefix only (no DATA LIKE). Empty-path OEM rows: only at
-        // the media root — nested browse must not scan the whole volume for them.
+        // RELATIVE_PATH prefix only (no DATA LIKE). Fill empty-path OEM rows only
+        // at device/volume roots; placement keeps each row in its physical volume.
         absorbAll(pathFilter?.first, pathFilter?.second, includeData = false)
-        if (relativeDir.isEmpty()) {
+        if (MediaStoreVolumePath.local(relativeDir).isEmpty()) {
             absorbAll(
                 MediaStorePathQuery.emptyRelativePathSelection(),
                 pathArgs = null,
@@ -707,7 +732,8 @@ object MediaStoreFs {
 
     /**
      * Page through MediaStore so a folder with thousands of files is not truncated
-     * by the ~2 MB cursor window. [onRow] returns true when the row was new.
+     * by the ~2 MB cursor window. Track physical row ids before filtering so a page
+     * of excluded removable media cannot hide later internal media.
      * Stops when a page is short, empty of new rows (OEM ignored OFFSET), or
      * the provider returned more than [MEDIA_QUERY_PAGE] (LIMIT ignored).
      * Library scans require successful, complete queries; filtered rows still
@@ -723,7 +749,9 @@ object MediaStoreFs {
         onRow: (Cursor) -> Boolean,
     ) {
         var offset = 0
-        val seenIds = if (requireSuccess) HashSet<Long>() else null
+        val seenIds = HashSet<String>()
+        val rowProjection = (projection + MediaStore.MediaColumns.VOLUME_NAME + MediaStore.MediaColumns._ID)
+            .distinct().toTypedArray()
         while (offset < MEDIA_QUERY_MAX_ROWS) {
             val extras = Bundle().apply {
                 if (selection != null) {
@@ -741,21 +769,18 @@ object MediaStoreFs {
             var pageRows = 0
             var newRows = 0
             runCatching {
-                val cursor = appCtx.contentResolver.query(collection, projection, extras, null)
+                val cursor = appCtx.contentResolver.query(collection, rowProjection, extras, null)
                 if (cursor == null && requireSuccess) {
                     throw IOException("MediaStore query returned no cursor: $collection")
                 }
                 cursor?.use { c ->
-                    val idIndex = if (requireSuccess) c.getColumnIndexOrThrow(MediaStore.MediaColumns._ID) else -1
+                    val idIndex = c.getColumnIndexOrThrow(MediaStore.MediaColumns._ID)
                     while (c.moveToNext()) {
                         pageRows++
-                        if (seenIds != null) {
-                            if (!seenIds.add(c.getLong(idIndex))) continue
-                            newRows++
-                            onRow(c)
-                        } else if (onRow(c)) {
-                            newRows++
-                        }
+                        val volume = c.getString(c.getColumnIndexOrThrow(MediaStore.MediaColumns.VOLUME_NAME))
+                        if (!seenIds.add("$volume:${c.getLong(idIndex)}")) continue
+                        newRows++
+                        onRow(c)
                     }
                 }
             }.getOrElse { if (requireSuccess) throw it }
