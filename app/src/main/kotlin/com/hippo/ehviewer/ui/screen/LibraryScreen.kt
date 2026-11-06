@@ -105,6 +105,7 @@ import com.hippo.ehviewer.library.LocalLibrary
 import com.hippo.ehviewer.library.MediaStoreWatch
 import com.hippo.ehviewer.library.ReaderGalleryPlaylist
 import com.hippo.ehviewer.library.ReaderImageList
+import com.hippo.ehviewer.library.RemovableHistory
 import com.hippo.ehviewer.library.UsbVolumes
 import com.hippo.ehviewer.library.VideoThumbnail
 import com.hippo.ehviewer.library.ZipAsDirListing
@@ -291,7 +292,7 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
     val historyRows by rememberInVM {
         mutableStateOf(emptyList<GalleryEntity>()).also { state ->
             viewModelScope.launch {
-                EhDB.historyListFlow.collect {
+                RemovableHistory.visibleRowsFlow().collect {
                     state.value = it
                     historyLoaded = true
                 }

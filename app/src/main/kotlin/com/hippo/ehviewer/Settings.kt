@@ -558,6 +558,10 @@ object Settings : DataStorePreferences(null) {
      */
     val saveHistory = boolPref("save_history", true)
 
+    /** Storage-specific history gates, applied in addition to master and file-type switches. */
+    val saveUsbHistory = boolPref("save_usb_history", true)
+    val saveSdCardHistory = boolPref("save_sd_card_history", true)
+
     /**
      * When [saveHistory] is on: record opened **files** (archives, stream archives,
      * and other non-dir files, including library archive galleries). Default on.

@@ -37,6 +37,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.painter.ColorPainter
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.layout.ContentScale
@@ -201,8 +203,12 @@ internal fun CoverImage(
         }
         val request = coverRequest(cover, sizePx)
         if (request != null) {
+            // Override the loader's broken-image drawable. The type icon beneath remains visible.
+            val missingCover = remember { ColorPainter(Color.Transparent) }
             AsyncImage(
                 model = request,
+                error = missingCover,
+                fallback = missingCover,
                 contentDescription = null,
                 modifier = Modifier.fillMaxSize(),
                 contentScale = ContentScale.Crop,
