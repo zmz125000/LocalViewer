@@ -1,5 +1,6 @@
 package com.hippo.ehviewer.library
 
+import android.provider.DocumentsContract
 import android.provider.DocumentsContract.Document
 import com.ehviewer.core.files.toUri
 import com.ehviewer.core.util.logcat
@@ -564,13 +565,14 @@ object LocalFolderListing {
         cached: List<BrowseEntryRemote>,
         children: List<RemoteChild>,
     ): Set<String> {
-        val live = children.filter { it.isDirectory }.mapTo(HashSet()) { it.name }
-        if (Settings.browseZipAsDir.value) live += ZipAsDirListing.zipFileNames(children)
-        val missing = cachedDirectDirectoryNames(cached) - live
+        val missing = missingLocalDirectoryRoots(cached, children)
         if (missing.isEmpty()) return emptySet()
         // MediaStore folders are virtual: absence from the refreshed media index
         // removes the row, even if an empty physical directory remains.
         if (dir.isMediaStorePath()) return missing
+        if (dir.toString().startsWith("content:")) {
+            return confirmedMissingLocalDirectoryRoots(cached, children) { safChildNamesForDeletionCheck(dir) }
+        }
         val parentFile = dir.readableDirectoryFile()?.takeIf { it.canRead() }
         val removed = ConcurrentHashMap.newKeySet<String>()
         runParallel(missing.toList()) { name ->
@@ -594,6 +596,27 @@ object LocalFolderListing {
             if (gone) removed += name
         }
         return removed
+    }
+
+    /** Never invent a document ID from a display name to establish that it was deleted. */
+    private fun safChildNamesForDeletionCheck(dir: Path): Set<String>? = try {
+        val uri = dir.toUri()
+        var id = DocumentsContract.getDocumentId(uri)
+        if (uri.authority == "com.wa2c.android.cifsdocumentsprovider.documents") id += '/'
+        val childrenUri = DocumentsContract.buildChildDocumentsUriUsingTree(uri, id)
+        appCtx.contentResolver.query(childrenUri, arrayOf(Document.COLUMN_DISPLAY_NAME), null, null, null)?.use { cursor ->
+            if (cursor.extras.getBoolean(DocumentsContract.EXTRA_LOADING, false)) return@use null
+            val names = HashSet<String>()
+            while (cursor.moveToNext()) {
+                if (cursor.isNull(0)) return@use null
+                names += cursor.getString(0)
+            }
+            if (cursor.extras.getBoolean(DocumentsContract.EXTRA_LOADING, false)) null else names
+        }
+    } catch (error: CancellationException) {
+        throw error
+    } catch (_: Exception) {
+        null
     }
 
     /**
@@ -808,6 +831,7 @@ object LocalFolderListing {
             refresh.entries,
             refresh.zipInteriors,
             persistEntries = refresh.entries != filledRemote || refresh.zipInteriors.isNotEmpty(),
+            removedChildDirs = refresh.removedDirectoryNames,
         )
         BrowseSession.mutationRefresh.complete(mutation)
         return materializeLocalEntries(effective, toKeep)
@@ -893,6 +917,7 @@ object LocalFolderListing {
         entries: List<BrowseEntryRemote>,
         zipInteriors: Map<String, List<BrowseEntryRemote>>,
         persistEntries: Boolean,
+        removedChildDirs: Set<String> = emptySet(),
     ): List<BrowseEntryRemote> = withContext(NonCancellable) {
         val stored = if (persistEntries) {
             persistParentAndZipInteriors(
@@ -901,6 +926,7 @@ object LocalFolderListing {
                 dirKey,
                 entries,
                 zipInteriors,
+                removedChildDirs,
             )
         } else {
             entries
@@ -964,8 +990,15 @@ object LocalFolderListing {
         relativeDir: String,
         parentEntries: List<BrowseEntryRemote>,
         interiors: Map<String, List<BrowseEntryRemote>>,
+        removedChildDirs: Set<String> = emptySet(),
     ): List<BrowseEntryRemote> {
+        val parent = if (removedChildDirs.isNotEmpty()) {
+            NetworkFolderIndexCache.saveLocal(rootId, configKey, relativeDir, parentEntries, removedChildDirs)
+        } else {
+            parentEntries
+        }
         if (interiors.isEmpty()) {
+            if (removedChildDirs.isNotEmpty()) return parent
             return NetworkFolderIndexCache.saveLocal(rootId, configKey, relativeDir, parentEntries)
         }
         val stored = ZipAsDirListing.persistFolderIndexes(
@@ -981,9 +1014,9 @@ object LocalFolderListing {
                     sessionCurrent = true,
                 )
             },
-            parentEntries = parentEntries,
+            parentEntries = parent,
         )
-        return stored[relativeDir.replace('\\', '/').trim('/')] ?: parentEntries
+        return stored[relativeDir.replace('\\', '/').trim('/')] ?: parent
     }
 
     private suspend fun parentListingForZip(
@@ -1027,7 +1060,9 @@ object LocalFolderListing {
     ): List<RemoteChild> {
         val path = resolveBrowsePath(dir, preferMediaStore = preferMediaStore)
         return BrowseSession.rememberLocalRawChildren(BrowseSession.pathKey(path)) {
-            path.listBrowseChildrenRaw().map { it.toRemoteChild() }
+            // A SAF root must not resurrect moved/deleted children from a stale
+            // MediaStore overlay when the user chose filesystem browsing.
+            path.listBrowseChildrenRaw(overlayMediaStore = preferMediaStore).map { it.toRemoteChild() }
         }
     }
 
