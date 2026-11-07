@@ -112,10 +112,17 @@ fun AnimatedVisibilityScope.EhScreen(navigator: DestinationsNavigator) = Screen(
                 title = stringResource(id = R.string.settings_eh_show_reading_progress),
                 state = Settings.showReadingProgress.asMutableState(),
             )
+            val enableFileDeletion = Settings.enableFileDeletion.asMutableState()
             SwitchPreference(
-                title = stringResource(R.string.settings_use_trash_bin),
-                state = Settings.useTrashBin.asMutableState(),
+                title = stringResource(R.string.settings_enable_file_deletion),
+                state = enableFileDeletion,
             )
+            if (enableFileDeletion.value) {
+                SwitchPreference(
+                    title = stringResource(R.string.settings_use_trash_bin),
+                    state = Settings.useTrashBin.asMutableState(),
+                )
+            }
             SwitchPreference(
                 title = stringResource(id = R.string.browse_folder_thumbs),
                 state = Settings.browseFolderThumbs.asMutableState(),

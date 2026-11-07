@@ -52,6 +52,44 @@ internal fun isTrashArchiveMember(path: String): Boolean {
     return archive.range.last < normalized.lastIndex
 }
 
+/** Local folder rows use a physical ZIP path for browsing; retain their member for removal. */
+internal fun localFolderRemovalPath(path: String, relative: String, zipInner: String?, gallery: Boolean, zipAsDir: Boolean): String {
+    if (ZipPaths.isZipPath(path)) return path
+    val member = if (zipInner != null) {
+        if (gallery) relative else listOf(zipInner.trim('/'), relative.trim('/')).filter { it.isNotEmpty() }.joinToString("/")
+    } else {
+        if (!zipAsDir) return path
+        ZipAsDirListing.splitZipBrowsePath(relative)?.second?.takeIf { it.isNotEmpty() } ?: return path
+    }
+    return ZipPaths.encode(path, member.ifEmpty { "." })
+}
+
+/** ZIP members cannot be mutated individually; removal targets their physical archive. */
+internal fun zipRemovalArchive(source: TransferLocation): TransferLocation? {
+    if (source.kind == ExplorerWindows.Kind.Local) return ZipPaths.parse(source.path)?.first?.let { source.copy(path = it) }
+    val path = source.path.replace('\\', '/').trim('/')
+    val archive = trashArchivePath.find(path) ?: return null
+    return if (archive.range.last < path.lastIndex) source.copy(path = path.take(archive.range.last + 1)) else null
+}
+
+internal fun removalTarget(file: TransferFile): TransferFile = zipRemovalArchive(file.source)?.let { archive ->
+    file.copy(source = archive, relative = decodedTrashPath(archive.path).substringAfterLast('/'), directory = false, galleryTrash = true)
+} ?: file
+
+internal fun removalTargets(files: List<TransferFile>): List<TransferFile> {
+    val explicit = files.filter { zipRemovalArchive(it.source) == null }.mapTo(HashSet()) { it.source }
+    return files.filter { file -> zipRemovalArchive(file.source)?.let { it !in explicit } ?: true }.map(::removalTarget)
+}
+
+internal fun canRemoveItem(source: TransferLocation, action: FileRemovalAction): Boolean {
+    val archive = zipRemovalArchive(source)
+    return if (archive != null) {
+        canRemove(archive, FileRemovalAction.Trash) && canDelete(archive)
+    } else {
+        canRemove(source, action) && (action == FileRemovalAction.Restore || canDelete(source))
+    }
+}
+
 /** A trash job contains roots only. Never expand folders or reinterpret ZIP members. */
 internal fun trashSelectionRoots(files: List<TransferFile>): List<TransferFile> {
     val roots = files.map { if (it.source.kind == ExplorerWindows.Kind.Local) it else it.copy(source = it.source.copy(path = it.source.path.replace('\\', '/').trim('/'))) }.distinctBy { it.source }
@@ -118,7 +156,7 @@ internal object TrashFiles {
     }
 }
 
-internal enum class FileRemovalAction { Trash, Delete, EmptyTrash }
+internal enum class FileRemovalAction { Trash, Delete, EmptyTrash, Restore }
 
 internal fun isTrashFolder(source: TransferLocation): Boolean = decodedTrashPath(source.path)
     .replace('\\', '/').trimEnd('/').substringAfterLast('/').substringAfterLast(':').equals(".trash", true)
@@ -140,25 +178,27 @@ internal fun canTrashFolder(source: TransferLocation, directory: Boolean): Boole
     return directory && canTrash(source) && !path.endsWith(".zip", true) && !path.endsWith(".cbz", true)
 }
 
-/** Gallery removal preserves its move-to-trash behavior; other targets follow the chosen action. */
+/** ZIP-member fallback and precollected trash images move; other targets follow the chosen action. */
 internal fun removalActionFor(file: TransferFile, requested: FileRemovalAction): FileRemovalAction = when {
-    requested == FileRemovalAction.EmptyTrash -> FileRemovalAction.EmptyTrash
+    requested == FileRemovalAction.EmptyTrash || requested == FileRemovalAction.Restore -> requested
     file.galleryTrash -> FileRemovalAction.Trash
     else -> requested
 }
 
-internal fun removalRequiresPanel(files: List<TransferFile>, action: FileRemovalAction): Boolean = files.size > 1 || files.any { it.directory || action == FileRemovalAction.EmptyTrash }
+internal fun removalRequiresPanel(files: List<TransferFile>, action: FileRemovalAction): Boolean = action != FileRemovalAction.Restore && (files.size > 1 || files.any { it.directory || action == FileRemovalAction.EmptyTrash })
 
 internal fun canRemoveFile(file: TransferFile, requested: FileRemovalAction): Boolean = when (removalActionFor(file, requested)) {
     FileRemovalAction.Trash -> canRemove(file.source, FileRemovalAction.Trash) && canDelete(file.source)
     FileRemovalAction.Delete -> canRemove(file.source, FileRemovalAction.Delete)
     FileRemovalAction.EmptyTrash -> file.directory && canRemove(file.source, FileRemovalAction.EmptyTrash)
+    FileRemovalAction.Restore -> canRestore(file.source)
 }
 
 internal fun canRemove(source: TransferLocation, action: FileRemovalAction): Boolean = when (action) {
     FileRemovalAction.Trash -> canTrash(source)
     FileRemovalAction.Delete -> canDelete(source) && !isInsideTrashPath(source.path)
     FileRemovalAction.EmptyTrash -> canDelete(source) && isTrashFolder(source)
+    FileRemovalAction.Restore -> canRestore(source)
 }
 
 /** Enumerate permanent folder deletion before enabling Start; children precede their parents. */
@@ -190,7 +230,7 @@ internal suspend fun collectRemovalFiles(
 /** Use provider/server folder deletion, with the SMB recursive operation where required. */
 internal object PermanentFiles {
     suspend fun delete(file: TransferFile, action: FileRemovalAction, control: TransferControl) {
-        require(action != FileRemovalAction.Trash && canRemove(file.source, action)) { "Invalid deletion target" }
+        require((action == FileRemovalAction.Delete || action == FileRemovalAction.EmptyTrash) && canRemove(file.source, action)) { "Invalid deletion target" }
         require(action != FileRemovalAction.EmptyTrash || file.directory) { "Trash must be a folder" }
         control.checkpoint()
         if (file.directory && action == FileRemovalAction.Delete) {

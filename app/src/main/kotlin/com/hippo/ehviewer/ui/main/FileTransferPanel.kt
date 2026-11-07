@@ -78,6 +78,7 @@ private val UploadJob.actionLabel get() = when {
         com.hippo.ehviewer.library.FileRemovalAction.Trash -> R.string.action_trash
         com.hippo.ehviewer.library.FileRemovalAction.Delete -> R.string.delete
         com.hippo.ehviewer.library.FileRemovalAction.EmptyTrash -> R.string.action_empty_trash
+        com.hippo.ehviewer.library.FileRemovalAction.Restore -> R.string.action_restore_from_trash
     }
     saving -> R.string.action_save_to
     else -> R.string.transfer_upload

@@ -320,6 +320,9 @@ object Settings : DataStorePreferences(null) {
      */
     val gridCellSize = intPref("grid_cell_size", GRID_CELL_DEFAULT_DP)
 
+    val enableFileDeletion = boolPref("enable_file_deletion", true)
+    val useTrashBin = boolPref("use_trash_bin", true)
+
     /**
      * When false, SMB/WebDAV **folder gallery** image covers are not downloaded
      * (already-cached thumbs still show). Useful for remote / metered access.
@@ -327,8 +330,6 @@ object Settings : DataStorePreferences(null) {
      *
      * Archive/document covers (ZIP/RAR/7z/PDF/EPUB first page) use [downloadNetworkArchiveThumbs].
      */
-    val useTrashBin = boolPref("use_trash_bin", true)
-
     val downloadRemoteThumbs = boolPref("download_remote_thumbs", true)
 
     /**

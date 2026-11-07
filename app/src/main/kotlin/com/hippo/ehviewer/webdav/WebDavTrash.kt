@@ -28,6 +28,31 @@ internal suspend fun moveWebDavToTrash(
     val path = relative.replace('\\', '/').trim('/')
     val destination = trashDestinationDirectory(path, date)
 
+    return moveWebDavEntry(path, directory, destination, listOf(destination.substringBeforeLast('/'), destination), checkpoint, request)
+}
+
+internal suspend fun restoreWebDavFromTrash(
+    relative: String,
+    directory: Boolean,
+    checkpoint: suspend () -> Unit,
+    request: suspend (WebDavTrashRequest) -> WebDavTrashResponse,
+): String {
+    val restored = requireNotNull(com.hippo.ehviewer.library.trashRestorePath(relative)) { "Not a restorable trash item" }
+    val parent = restored.substringBeforeLast('/', "")
+    val parts = parent.split('/').filter { it.isNotEmpty() }
+    val directories = parts.indices.map { parts.take(it + 1).joinToString("/") }
+    val name = moveWebDavEntry(relative, directory, parent, directories, checkpoint, request)
+    return listOf(parent, name).filter { it.isNotEmpty() }.joinToString("/")
+}
+
+private suspend fun moveWebDavEntry(
+    path: String,
+    directory: Boolean,
+    destination: String,
+    directories: List<String>,
+    checkpoint: suspend () -> Unit,
+    request: suspend (WebDavTrashRequest) -> WebDavTrashResponse,
+): String {
     fun failure(action: String, result: WebDavTrashResponse): Nothing {
         val status = result.failureStatus ?: result.status
         if (status == 405 || status == 501) throw UnsupportedOperationException("WebDAV $action is not supported (HTTP $status)")
@@ -48,11 +73,10 @@ internal suspend fun moveWebDavToTrash(
         failure("MKCOL", created)
     }
 
-    ensureDirectory(destination.substringBeforeLast('/'))
-    ensureDirectory(destination)
+    for (parent in directories) ensureDirectory(parent)
     return moveToTrashWithoutOverwrite(path.substringAfterLast('/'), directory) { candidate ->
         checkpoint()
-        val moved = request(WebDavTrashRequest("MOVE", path, directory, "$destination/$candidate", "F", if (directory) "infinity" else null))
+        val moved = request(WebDavTrashRequest("MOVE", path, directory, listOf(destination, candidate).filter { it.isNotEmpty() }.joinToString("/"), "F", if (directory) "infinity" else null))
         if (moved.status == 412) throw TransferNameConflict(candidate)
         // A collection's 207 can mean only some children moved. Never report it as success.
         if (moved.status != 201 && moved.status != 204) failure("MOVE", moved)

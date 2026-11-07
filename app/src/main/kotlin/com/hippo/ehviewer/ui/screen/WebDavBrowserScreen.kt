@@ -2154,6 +2154,11 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
         shareHttp = webDavShareFolderStart(entry.relativeName, entry.name),
         saveInto = webDavSaveFolderInto(entry.relativeName, entry.name),
         uploadSource = TransferLocation(ExplorerWindows.Kind.WebDav, sourceId, WebDavGateway.joinRelative(relativeDir, entry.relativeName)),
+        removalSource = if (browseZipAsDir && entry.relativeName.isEmpty() && isZipArchiveFileName(relativeDir.substringAfterLast('/'))) {
+            TransferLocation(ExplorerWindows.Kind.WebDav, sourceId, "$relativeDir/.")
+        } else {
+            null
+        },
         listLine = BrowseListLine(
             typeLabel = browseZipAsDirTypeLabel(entry.relativeName, entry.name) ?: "Folder",
             sizeBytes = entry.size,

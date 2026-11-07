@@ -1308,8 +1308,12 @@
     <string name="transfer_delete_trash_protected">Items inside .trash cannot be deleted.</string>
     <string name="ask_where_to_save">Ask where to save</string>
     <string name="transfer_upload_action">Upload to…</string>
+    <string name="settings_enable_file_deletion">Enable file deletion</string>
+    <string name="action_restore_from_trash">Restore from .trash</string>
+    <string name="zip_removal_confirm">This item is from a ZIP folder. Move the ZIP file “%1$s” to .trash instead?</string>
+    <string name="restore_finished_summary">Restored %1$d/%2$d items · skipped %3$d · failed %4$d</string>
     <string name="settings_use_trash_bin">Use trash bin</string>
-    <string name="settings_use_trash_bin_summary">Move files and folders to .trash. Turn off to permanently delete them. Galleries always move to .trash.</string>
+    <string name="settings_use_trash_bin_summary">Move files and folders to .trash. Turn off to permanently delete them. Gallery removal affects direct image files only.</string>
     <string name="action_empty_trash">Delete trash</string>
     <string name="trash_named_confirm">Move “%1$s” to the .trash folder?</string>
     <string name="delete_named_confirm">Permanently delete “%1$s”? This cannot be undone.</string>

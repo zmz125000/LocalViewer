@@ -2280,6 +2280,11 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
         shareHttp = smbShareFolderStart(entry.relativeName, entry.name),
         saveInto = smbSaveFolderInto(entry.relativeName, entry.name),
         uploadSource = TransferLocation(ExplorerWindows.Kind.Smb, sourceId, SmbGateway.joinRelativePath(relativeDir, entry.relativeName)),
+        removalSource = if (browseZipAsDir && entry.relativeName.isEmpty() && isZipArchiveFileName(relativeDir.substringAfterLast('/'))) {
+            TransferLocation(ExplorerWindows.Kind.Smb, sourceId, "$relativeDir/.")
+        } else {
+            null
+        },
         listLine = BrowseListLine(
             typeLabel = browseZipAsDirTypeLabel(entry.relativeName, entry.name) ?: "Folder",
             sizeBytes = entry.size,

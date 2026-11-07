@@ -152,36 +152,42 @@ object WebDavClient {
         }
     }
 
-    /** One server MOVE for a file or complete collection. No transport replay or payload copy. */
+    /** One exclusive server MOVE, shared by trash and restore. */
     suspend fun moveToTrash(source: WebDavSourceEntity, password: String, relative: String, directory: Boolean, date: String, checkpoint: suspend () -> Unit): String = withIOContext {
         com.hippo.ehviewer.library.requireOutsideTrash(decodeHref(absoluteUrl(source, relative).encodedPath))
+        moveWebDavToTrash(relative, directory, date, checkpoint) { moveEntryRequest(source, password, it) }
+    }
+
+    suspend fun restoreFromTrash(source: WebDavSourceEntity, password: String, relative: String, directory: Boolean, checkpoint: suspend () -> Unit): String = withIOContext {
+        restoreWebDavFromTrash(relative, directory, checkpoint) { moveEntryRequest(source, password, it) }
+    }
+
+    private suspend fun moveEntryRequest(source: WebDavSourceEntity, password: String, operation: WebDavTrashRequest): WebDavTrashResponse {
         val client = trashHttp()
         val auth = basicAuthHeader(source.username, password)
-        moveWebDavToTrash(relative, directory, date, checkpoint) { operation ->
-            val url = if (operation.directory) dirUrl(source, operation.path) else absoluteUrl(source, operation.path)
-            val response = client.request(url) {
-                method = HttpMethod(operation.method)
-                auth?.let { header(HttpHeaders.Authorization, it) }
-                operation.depth?.let { header("Depth", it) }
-                operation.overwrite?.let { header("Overwrite", it) }
-                operation.destination?.let {
-                    header("Destination", (if (operation.directory) dirUrl(source, it) else absoluteUrl(source, it)).toString())
-                }
-                if (operation.method == "PROPFIND") {
-                    contentType(ContentType.Application.Xml)
-                    setBody("<d:propfind xmlns:d=\"DAV:\"><d:prop><d:resourcetype/></d:prop></d:propfind>")
-                }
-                timeout {
-                    connectTimeoutMillis = LIST_CONNECT_MS
-                    requestTimeoutMillis = DL_REQUEST_MS
-                    socketTimeoutMillis = DL_SOCKET_MS
-                }
+        val url = if (operation.directory) dirUrl(source, operation.path) else absoluteUrl(source, operation.path)
+        val response = client.request(url) {
+            method = HttpMethod(operation.method)
+            auth?.let { header(HttpHeaders.Authorization, it) }
+            operation.depth?.let { header("Depth", it) }
+            operation.overwrite?.let { header("Overwrite", it) }
+            operation.destination?.let {
+                header("Destination", (if (operation.directory) dirUrl(source, it) else absoluteUrl(source, it)).toString())
             }
-            if (response.status.value == 207) {
-                parseTrashMultiStatus(response.bodyAsText())
-            } else {
-                WebDavTrashResponse(response.status.value)
+            if (operation.method == "PROPFIND") {
+                contentType(ContentType.Application.Xml)
+                setBody("<d:propfind xmlns:d=\"DAV:\"><d:prop><d:resourcetype/></d:prop></d:propfind>")
             }
+            timeout {
+                connectTimeoutMillis = LIST_CONNECT_MS
+                requestTimeoutMillis = DL_REQUEST_MS
+                socketTimeoutMillis = DL_SOCKET_MS
+            }
+        }
+        return if (response.status.value == 207) {
+            parseTrashMultiStatus(response.bodyAsText())
+        } else {
+            WebDavTrashResponse(response.status.value)
         }
     }
 

@@ -2654,6 +2654,12 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         }
     }
 
+    fun localRemovalSource(path: okio.Path, relative: String, gallery: Boolean): TransferLocation = TransferLocation(
+        ExplorerWindows.Kind.Local,
+        0L,
+        com.hippo.ehviewer.library.localFolderRemovalPath(path.toString(), relative, stack.lastOrNull()?.zipInnerRel, gallery, browseZipAsDir),
+    )
+
     fun dirOverflow(dir: BrowseEntry.Directory) = BrowseOverflowActions(
         kind = BrowseOverflowKind.Common,
         favorited = isDirFavorite(dir),
@@ -2681,6 +2687,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         shareHttp = localShareFolderStart(dir.path, dir.name, dir.relativeName),
         saveInto = localSaveFolderInto(dir.path, dir.name, dir.relativeName),
         uploadSource = TransferLocation(ExplorerWindows.Kind.Local, 0L, dir.path.toString()),
+        removalSource = localRemovalSource(dir.path, dir.relativeName, gallery = false),
         listLine = BrowseListLine(
             typeLabel = browseZipAsDirTypeLabel(dir.relativeName, dir.name) ?: "Dir",
             sizeBytes = dir.size,
@@ -2717,6 +2724,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         shareHttp = localShareFolderStart(entry.path, entry.name, entry.relativeName),
         saveInto = localSaveFolderInto(entry.path, entry.name, entry.relativeName),
         uploadSource = TransferLocation(ExplorerWindows.Kind.Local, 0L, entry.path.toString()),
+        removalSource = localRemovalSource(entry.path, entry.relativeName, gallery = true),
         listLine = BrowseListLine(
             typeLabel = browseZipAsDirTypeLabel(entry.relativeName, entry.name) ?: "Folder",
             sizeBytes = entry.size,

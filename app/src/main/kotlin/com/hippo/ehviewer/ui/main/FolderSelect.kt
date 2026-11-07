@@ -359,6 +359,7 @@ data class FolderPick(
     /** Extension, size, and the rest of the folder-list second line. */
     val listLine: BrowseListLine? = null,
     val uploadSource: com.hippo.ehviewer.library.TransferLocation? = null,
+    val removalSource: com.hippo.ehviewer.library.TransferLocation? = null,
     val gallery: Boolean = false,
 )
 
@@ -371,6 +372,7 @@ fun BrowseOverflowActions.selectable(
     saveInto: (suspend (Path) -> Boolean)? = null,
     listLine: BrowseListLine? = null,
     uploadSource: com.hippo.ehviewer.library.TransferLocation? = null,
+    removalSource: com.hippo.ehviewer.library.TransferLocation? = null,
 ): BrowseOverflowActions = copy(
     selectKey = key,
     selectTitle = title,
@@ -380,6 +382,7 @@ fun BrowseOverflowActions.selectable(
     selectFolder = isFolder,
     listLine = listLine,
     uploadSource = uploadSource,
+    removalSource = removalSource,
 )
 
 fun BrowseOverflowActions.toPick(): FolderPick? {
@@ -393,6 +396,7 @@ fun BrowseOverflowActions.toPick(): FolderPick? {
         saveInto = saveInto,
         listLine = listLine,
         uploadSource = uploadSource,
+        removalSource = removalSource,
         gallery = kind == BrowseOverflowKind.Gallery,
     )
 }
@@ -1645,12 +1649,12 @@ private fun SelectionOverflowControl(
     val savable = picks.count { it.saveInto != null }
     val uploadable = picks.count { it.uploadSource != null }
     val useTrashBin = Settings.useTrashBin.asMutableState().value
-    val removalAction = if (useTrashBin || picks.all { it.gallery }) com.hippo.ehviewer.library.FileRemovalAction.Trash else com.hippo.ehviewer.library.FileRemovalAction.Delete
+    val removalAction = if (useTrashBin) com.hippo.ehviewer.library.FileRemovalAction.Trash else com.hippo.ehviewer.library.FileRemovalAction.Delete
     val confirmDelete = rememberNetworkDeleteConfirmation(removalAction, review = true) { FolderSelectHost.cancelShownSelection() }
-    val deletable = picks.isNotEmpty() && picks.all {
-        it.uploadSource?.let { source ->
-            val action = if (it.gallery) com.hippo.ehviewer.library.FileRemovalAction.Trash else removalAction
-            com.hippo.ehviewer.library.canRemove(source, action) && com.hippo.ehviewer.library.canDelete(source)
+    val enableFileDeletion = Settings.enableFileDeletion.asMutableState().value
+    val deletable = enableFileDeletion && picks.isNotEmpty() && picks.all {
+        (it.removalSource ?: it.uploadSource)?.let { source ->
+            com.hippo.ehviewer.library.canRemoveItem(source, removalAction)
         } == true
     }
     val canSelectAll = selectionActions &&
@@ -1756,14 +1760,14 @@ private fun SelectionOverflowControl(
                             scope.launch {
                                 val requests = picks.map { pick ->
                                     com.hippo.ehviewer.library.TransferFile(
-                                        requireNotNull(pick.uploadSource),
+                                        requireNotNull(pick.removalSource ?: pick.uploadSource),
                                         pick.title,
                                         pick.isFolder,
                                         pick.listLine?.sizeBytes ?: -1L,
                                         pick.listLine?.lastModifiedMs ?: 0L,
                                     ) to pick.gallery
                                 }
-                                val files = collectTransferFilesForAction(requests, snackbar, context, GalleryFileAction.Trash) ?: return@launch
+                                val files = collectTransferFilesForAction(requests, snackbar, context, if (removalAction == com.hippo.ehviewer.library.FileRemovalAction.Trash) GalleryFileAction.Trash else GalleryFileAction.Delete) ?: return@launch
                                 confirmDelete(files)
                             }
                         },

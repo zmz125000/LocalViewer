@@ -47,7 +47,7 @@ data class TransferFile(
     val mtime: Long,
     /** A gallery directory carries only its collected direct images, never a recursive scan. */
     val galleryImages: List<TransferFile>? = null,
-    /** Gallery removal always moves its collected images/archive rather than deleting them. */
+    /** Force trash for precollected trash images and ZIP-member archive fallback. */
     val galleryTrash: Boolean = false,
     /** Non-image files included when moving a whole gallery directory. */
     val galleryRegularFiles: Int = 0,

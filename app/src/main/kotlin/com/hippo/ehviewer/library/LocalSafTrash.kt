@@ -55,7 +55,31 @@ internal object LocalSafTrash {
         if (original.flags and Document.FLAG_SUPPORTS_MOVE == 0) throw UnsupportedOperationException("Provider does not support document moves")
         control.checkpoint()
         val target = directory(directory(parent, ".trash"), date)
-        moveToTrashWithoutOverwrite(original.name, original.directory) { candidate ->
+        moveDocument(source, parent, target, original, control)
+    }
+
+    suspend fun restore(file: TransferFile, control: TransferControl): String = lock.withLock {
+        require(canRestore(file.source)) { "Not a restorable SAF document" }
+        val source = file.source.path.toPath().toUri()
+        val treeId = DocumentsContract.getTreeDocumentId(source)
+        val sourceId = DocumentsContract.getDocumentId(source)
+        val restored = requireNotNull(safRestorePath(treeId, sourceId))
+        val destinationParentId = restored.substringBeforeLast('/', treeId)
+        var target = document(source, treeId)
+        val relativeParent = destinationParentId.removePrefix(treeId).trimStart('/')
+        for (part in relativeParent.split('/').filter { it.isNotEmpty() }) {
+            control.checkpoint()
+            target = directory(target, part)
+        }
+        val original = entry(source)
+        if (original.flags and Document.FLAG_SUPPORTS_MOVE == 0) throw UnsupportedOperationException("Provider does not support document moves")
+        val name = moveDocument(source, document(source, sourceId.substringBeforeLast('/')), target, original, control)
+        "$destinationParentId/$name"
+    }
+
+    private suspend fun moveDocument(initialSource: Uri, parent: Uri, target: Uri, original: Entry, control: TransferControl): String {
+        var source = initialSource
+        return moveToTrashWithoutOverwrite(original.name, original.directory) { candidate ->
             control.checkpoint()
             if (children(target).any { it.name == candidate }) throw TransferNameConflict(candidate)
             var renamed = false

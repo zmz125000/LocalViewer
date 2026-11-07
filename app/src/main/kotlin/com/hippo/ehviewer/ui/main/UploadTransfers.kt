@@ -14,6 +14,7 @@ import com.hippo.ehviewer.library.LocalHistory
 import com.hippo.ehviewer.library.LocalLibrary
 import com.hippo.ehviewer.library.NetworkSourceGuard
 import com.hippo.ehviewer.library.PermanentFiles
+import com.hippo.ehviewer.library.RestoreFiles
 import com.hippo.ehviewer.library.SavedUploads
 import com.hippo.ehviewer.library.TransferControl
 import com.hippo.ehviewer.library.TransferFile
@@ -29,7 +30,9 @@ import com.hippo.ehviewer.library.needsLocalTransferMetadata
 import com.hippo.ehviewer.library.networkSourceGuard
 import com.hippo.ehviewer.library.removalActionFor
 import com.hippo.ehviewer.library.removalRequiresPanel
+import com.hippo.ehviewer.library.removalTargets
 import com.hippo.ehviewer.library.resolveBrowsePath
+import com.hippo.ehviewer.library.restoreLocation
 import com.hippo.ehviewer.library.transferBatchParallelism
 import com.hippo.ehviewer.library.trashSelectionRoots
 import com.hippo.ehviewer.provider.StreamKeepAlivePolicy
@@ -292,7 +295,8 @@ internal object UploadTransfers {
 
     /** Selection/folder jobs are prepared for review and wait for an explicit Start. */
     fun delete(files: List<TransferFile>, action: FileRemovalAction = FileRemovalAction.Trash, review: Boolean = false): Boolean {
-        val roots = trashSelectionRoots(files)
+        if (action != FileRemovalAction.Restore && !Settings.enableFileDeletion.value) return false
+        val roots = trashSelectionRoots(if (action == FileRemovalAction.Restore || action == FileRemovalAction.EmptyTrash) files else removalTargets(files))
         if (roots.isEmpty()) return false
         if (roots.any { !canRemoveFile(it, action) }) {
             scope.launch(Dispatchers.Main.immediate) {
@@ -300,7 +304,7 @@ internal object UploadTransfers {
             }
             return false
         }
-        val lease = networkSourceGuard.acquire(roots.map { it.source }, deleting = true) ?: run {
+        val lease = networkSourceGuard.acquire(roots.flatMap { listOfNotNull(it.source, if (action == FileRemovalAction.Restore) restoreLocation(it.source) else null) }, deleting = true) ?: run {
             sourceUnavailable()
             return false
         }
@@ -361,11 +365,13 @@ internal object UploadTransfers {
                         val rowAction = removalActionFor(row.file, job.removalAction)
                         try {
                             lease.attempted(row.file.source)
-                            val detail = if (rowAction == FileRemovalAction.Trash) {
-                                "$date/${TrashFiles.move(row.file, date, job.control)}"
-                            } else {
-                                PermanentFiles.delete(row.file, rowAction, job.control)
-                                null
+                            val detail = when (rowAction) {
+                                FileRemovalAction.Trash -> "$date/${TrashFiles.move(row.file, date, job.control)}"
+                                FileRemovalAction.Restore -> RestoreFiles.move(row.file, job.control)
+                                else -> {
+                                    PermanentFiles.delete(row.file, rowAction, job.control)
+                                    null
+                                }
                             }
                             // Account for committed mutations before observing a later Stop.
                             updateRow(job, row.file.relative, UploadFileStatus.Succeeded, detail)
@@ -395,7 +401,7 @@ internal object UploadTransfers {
                     }
                     job.state.update { it.copy(phase = UploadPhase.Finished) }
                     val finished = job.state.value
-                    val summary = appCtx.getString(R.string.transfer_delete_finished_summary, finished.succeeded, finished.total, finished.skipped, finished.failed)
+                    val summary = appCtx.getString(if (job.removalAction == FileRemovalAction.Restore) R.string.restore_finished_summary else R.string.transfer_delete_finished_summary, finished.succeeded, finished.total, finished.skipped, finished.failed)
                     val failures = finished.rows.filter { it.status == UploadFileStatus.Failed }.mapNotNull { it.detail }.distinct().take(3)
                     scope.launch(Dispatchers.Main.immediate) {
                         Toast.makeText(appCtx, (listOf(summary) + failures).joinToString("\n"), Toast.LENGTH_LONG).show()
@@ -415,6 +421,7 @@ internal object UploadTransfers {
     }
 
     private fun deleteFailureMessage(error: Throwable, action: FileRemovalAction): String {
+        if (action == FileRemovalAction.Restore) return error.message ?: error.toString()
         val causes = generateSequence(error) { it.cause }.take(8).toList()
         val status = causes.filterIsInstance<com.hierynomus.mssmb2.SMBApiException>().firstOrNull()?.statusCode
         val davStatus = causes.filterIsInstance<com.hippo.ehviewer.webdav.WebDavTrashException>().firstOrNull()?.status
@@ -515,7 +522,11 @@ internal object UploadTransfers {
         scope.launch(Dispatchers.Main.immediate) {
             Toast.makeText(
                 appCtx,
-                appCtx.getString(if (job.deleting) R.string.transfer_delete_stopped_summary else R.string.transfer_upload_stopped_summary, state.succeeded, state.total, state.skipped, state.failed),
+                if (job.deleting && job.removalAction == FileRemovalAction.Restore) {
+                    appCtx.getString(R.string.transfer_stopped) + " · " + appCtx.getString(R.string.restore_finished_summary, state.succeeded, state.total, state.skipped, state.failed)
+                } else {
+                    appCtx.getString(if (job.deleting) R.string.transfer_delete_stopped_summary else R.string.transfer_upload_stopped_summary, state.succeeded, state.total, state.skipped, state.failed)
+                },
                 Toast.LENGTH_LONG,
             ).show()
         }
@@ -555,9 +566,9 @@ internal object UploadTransfers {
         job.worker?.invokeOnCompletion { cause ->
             lease?.close()
             if (job.deleting && notifyDeletion) {
-                val parents = job.state.value.rows.map { row ->
-                    row.file.source.let { it.copy(path = it.path.substringBeforeLast('/', "")) }
-                }.distinct()
+                val parents = job.state.value.rows.flatMap { row ->
+                    listOfNotNull(row.file.source, if (job.removalAction == FileRemovalAction.Restore) restoreLocation(row.file.source) else null)
+                }.map { it.copy(path = it.path.substringBeforeLast('/', "")) }.distinct()
                 if (parents.any { it.kind == ExplorerWindows.Kind.Local }) BrowseSession.notifyLocalMutation()
                 parents.forEach { parent ->
                     when (parent.kind) {
@@ -584,6 +595,7 @@ internal object UploadTransfers {
     }
     fun start(job: UploadJob) {
         if (job.deleting) {
+            if (job.removalAction != FileRemovalAction.Restore && !Settings.enableFileDeletion.value) return
             val state = job.state.value
             if (!state.editable || state.rows.isEmpty()) return
             val lease = networkSourceGuard.acquire(state.rows.map { it.file.source }, deleting = true) ?: run {

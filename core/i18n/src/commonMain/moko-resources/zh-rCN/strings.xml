@@ -1279,8 +1279,12 @@
     <string name="transfer_delete_trash_protected">.trash 内的项目不能删除。</string>
     <string name="ask_where_to_save">询问保存位置</string>
     <string name="transfer_upload_action">上传到…</string>
+    <string name="settings_enable_file_deletion">启用文件删除</string>
+    <string name="action_restore_from_trash">从 .trash 还原</string>
+    <string name="zip_removal_confirm">此项目来自 ZIP 文件夹。改将 ZIP 文件“%1$s”移到 .trash？</string>
+    <string name="restore_finished_summary">已还原 %1$d/%2$d 个项目 · 跳过 %3$d · 失败 %4$d</string>
     <string name="settings_use_trash_bin">使用回收站</string>
-    <string name="settings_use_trash_bin_summary">将文件和文件夹移到 .trash。关闭后永久删除。画廊始终移到 .trash。</string>
+    <string name="settings_use_trash_bin_summary">将文件和文件夹移到 .trash。关闭后永久删除。画廊移除仅影响其中的直接图片文件。</string>
     <string name="action_empty_trash">删除回收站</string>
     <string name="trash_named_confirm">将“%1$s”移到 .trash 文件夹？</string>
     <string name="delete_named_confirm">永久删除“%1$s”？此操作无法撤销。</string>

@@ -10,5 +10,5 @@ internal fun smbTrashDirectories(dateDirectory: String): Pair<String, String> {
 
 internal fun smbTrashTarget(directory: String, name: String): String {
     require(name.isNotEmpty() && name != "." && name != ".." && '/' !in name && '\\' !in name)
-    return directory.replace('/', '\\').trim('\\') + "\\" + name
+    return listOf(directory.replace('/', '\\').trim('\\'), name).filter { it.isNotEmpty() }.joinToString("\\")
 }

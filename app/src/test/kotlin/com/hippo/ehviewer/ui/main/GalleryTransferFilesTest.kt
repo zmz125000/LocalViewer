@@ -15,13 +15,13 @@ class GalleryTransferFilesTest {
     private fun child(name: String, directory: Boolean = false) = TransferFile(source.child(name), name, directory, 123, 456)
 
     @Test
-    fun galleryTrashMovesWholeFolderWithUpToThreeNonImageFiles() = runBlocking {
+    fun galleryTrashOnlyCollectsImagesEvenWhenFolderCouldBeMoved() = runBlocking {
         val images = listOf(child("1.jpg"), child("2.webp"))
         for (extraCount in 0..3) {
             val result = collectGalleryTransferFiles(gallery, true, GalleryFileAction.Trash) {
                 images + (1..extraCount).map { child("sidecar-$it.txt") }
             }
-            assertEquals(listOf(gallery.copy(galleryTrash = true, galleryRegularFiles = extraCount)), result)
+            assertEquals(images.map { it.copy(galleryTrash = true) }, result)
         }
         val result = collectGalleryTransferFiles(gallery, true, GalleryFileAction.Trash) {
             images + (1..4).map { child("sidecar-$it.txt") }
@@ -50,16 +50,40 @@ class GalleryTransferFilesTest {
         assertEquals(listOf(image.copy(galleryTrash = true)), collectGalleryTransferFiles(gallery.copy(source = safRoot), true, GalleryFileAction.Trash) { listOf(image) })
         val safFolder = safRoot.copy(path = safRoot.path + "/album")
         val folder = gallery.copy(source = safFolder)
-        assertEquals(listOf(folder.copy(galleryTrash = true)), collectGalleryTransferFiles(folder, true, GalleryFileAction.Trash) { listOf(image) })
+        assertEquals(listOf(image.copy(galleryTrash = true)), collectGalleryTransferFiles(folder, true, GalleryFileAction.Trash) { listOf(image) })
     }
 
     @Test
     fun archiveTrashRetainsGalleryRemovalPolicyWithoutListing() = runBlocking {
         val archive = gallery.copy(source = source.copy(path = "photos/book.zip"))
         val result = collectGalleryTransferFiles(archive, true, GalleryFileAction.Trash) { error("Archive must not be listed") }.single()
-        assertTrue(result.galleryTrash)
+        assertFalse(result.galleryTrash)
         assertFalse(result.directory)
         assertEquals(0, result.galleryRegularFiles)
+    }
+
+    @Test
+    fun galleryDeletionLeavesFolderSidecarsVideosAndSubfoldersAlone() = runBlocking {
+        val images = listOf(child("1.jpg"), child("2.webp"))
+        val result = collectGalleryTransferFiles(gallery, true, GalleryFileAction.Delete) {
+            images.reversed() + child("notes.txt") + child("clip.mp4") + child("nested", true)
+        }
+        assertEquals(images, result)
+        assertTrue(result.all { !it.directory && !it.galleryTrash })
+        val empty = collectGalleryTransferFiles(gallery, true, GalleryFileAction.Delete) { listOf(child("notes.txt")) }
+        assertTrue(empty.isEmpty())
+    }
+
+    @Test
+    fun zipMemberRemovalRetainsIdentityForTheWarningAndArchiveFallback() = runBlocking {
+        for (action in listOf(GalleryFileAction.Delete, GalleryFileAction.Trash)) {
+            val member = gallery.copy(source = source.copy(path = "photos/book.zip/chapter"))
+            assertEquals(listOf(member), collectGalleryTransferFiles(member, true, action) { error("Must not enumerate ZIP") })
+        }
+        val archive = gallery.copy(source = source.copy(path = "photos/book.zip"))
+        val result = collectGalleryTransferFiles(archive, true, GalleryFileAction.Delete) { error("Must not enumerate ZIP") }.single()
+        assertFalse(result.directory)
+        assertFalse(result.galleryTrash)
     }
 
     @Test
@@ -121,6 +145,15 @@ class GalleryTransferFilesTest {
         val result = collectGalleryTransferFiles(zip, true) { error("Unexpected archive listing") }.single()
         assertEquals("photos/album.zip", result.source.path)
         assertFalse(result.directory)
+    }
+
+    @Test
+    fun removalMemberIdentitySurvivesSelectionWithoutChangingUploadSource() {
+        val member = source.copy(kind = ExplorerWindows.Kind.Local, path = "zipfile:content:/provider/book.zip!chapter")
+        val actions = BrowseOverflowActions(kind = BrowseOverflowKind.Gallery, onUnsupported = {})
+            .selectable("gallery", "Chapter", isFolder = true, uploadSource = source, removalSource = member)
+        assertEquals(source, actions.toPick()!!.uploadSource)
+        assertEquals(member, actions.toPick()!!.removalSource)
     }
 
     @Test
