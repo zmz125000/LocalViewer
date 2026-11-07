@@ -48,6 +48,7 @@ object WebDavRepository {
             easytierHost = source.easytierHost.trim(),
             pathPrefix = source.pathPrefix.trim().trim('/'),
         )
+        WebDavClient.invalidateConnection(source)
         dao.update(normalized)
         if (password != null) {
             WebDavPasswordStore.set(source.id, password)
@@ -57,6 +58,7 @@ object WebDavRepository {
     }
 
     suspend fun delete(source: WebDavSourceEntity) = withIOContext {
+        WebDavClient.invalidateConnection(source)
         runCatching { LocalHistory.deleteHistoryForWebDavSource(source.id) }.onFailure { logcat(it) }
         BrowseSession.invalidateWebDavListing(source.id)
         BrowseSession.clearWebDavSegments(source.id)

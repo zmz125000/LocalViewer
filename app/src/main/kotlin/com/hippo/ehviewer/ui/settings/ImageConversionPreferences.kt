@@ -13,7 +13,7 @@ import com.ehviewer.core.i18n.R
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.asMutableState
 
-/** Shared by General and Download settings so conversion preferences stay identical. */
+/** Image conversion controls in Download settings. */
 @Composable
 internal fun ImageConversionPreferences() {
     val conversionQuality = Settings.imageConversionQuality.asMutableState()

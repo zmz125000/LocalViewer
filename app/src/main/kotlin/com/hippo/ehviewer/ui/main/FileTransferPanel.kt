@@ -4,6 +4,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Process
 import android.provider.DocumentsContract
+import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
@@ -18,20 +19,31 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.toggleable
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.InsertDriveFile
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.DriveFileRenameOutline
+import androidx.compose.material.icons.filled.FindReplace
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.BasicAlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Snackbar
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -48,6 +60,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.net.toUri
@@ -57,13 +70,17 @@ import com.ehviewer.core.i18n.R
 import com.ehviewer.core.util.logcat
 import com.ehviewer.core.util.withIOContext
 import com.hippo.ehviewer.Settings
+import com.hippo.ehviewer.asMutableState
+import com.hippo.ehviewer.collectAsState
 import com.hippo.ehviewer.library.ExplorerWindows
 import com.hippo.ehviewer.library.LocalLibrary
+import com.hippo.ehviewer.library.TransferConflictPolicy
 import com.hippo.ehviewer.library.TransferLocation
 import com.hippo.ehviewer.library.humanizePathName
 import com.hippo.ehviewer.library.isMediaStoreRootUri
 import com.hippo.ehviewer.library.resolveRelative
 import com.hippo.ehviewer.ui.screen.LocalExplorerPanel
+import com.hippo.ehviewer.ui.screen.SourceAccessOption
 import com.hippo.ehviewer.ui.theme.snackbarActionButtonColors
 import com.hippo.ehviewer.ui.theme.snackbarContainerColor
 import com.hippo.ehviewer.ui.theme.snackbarDismissButtonColors
@@ -78,6 +95,7 @@ private val UploadJob.actionLabel get() = when {
         com.hippo.ehviewer.library.FileRemovalAction.Trash -> R.string.action_trash
         com.hippo.ehviewer.library.FileRemovalAction.Delete -> R.string.delete
         com.hippo.ehviewer.library.FileRemovalAction.EmptyTrash -> R.string.action_empty_trash
+        com.hippo.ehviewer.library.FileRemovalAction.Restore -> R.string.action_restore_from_trash
     }
     saving -> R.string.action_save_to
     else -> R.string.transfer_upload
@@ -102,19 +120,50 @@ private fun transferSize(state: UploadState): String = "${FileUtils.humanReadabl
 @Composable
 internal fun UploadTransferBars() {
     val explorer = LocalExplorerPanel.current
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     val jobs by UploadTransfers.jobs.collectAsState()
     Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         jobs.forEach { job ->
             key(job.id) {
                 val state by job.state.collectAsState()
+                var resolvingCurrent by remember { mutableStateOf(false) }
                 val finished = !state.active && !state.editable && state.phase != UploadPhase.Preparing
                 Snackbar(
                     modifier = Modifier.padding(bottom = 8.dp),
+                    actionOnNewLine = state.editable && !job.deleting,
                     containerColor = snackbarContainerColor(),
                     contentColor = snackbarDismissContentColor(),
                     action = {
                         Row {
                             if (state.editable && !job.deleting) {
+                                TextButton(
+                                    enabled = !resolvingCurrent,
+                                    onClick = {
+                                        val current = FolderSelectHost.current
+                                        val place = current?.place
+                                        val title = current?.folderName.orEmpty()
+                                        resolvingCurrent = true
+                                        scope.launch {
+                                            try {
+                                                val location = withIOContext { currentUploadDestination(place) }
+                                                if (location == null) {
+                                                    Toast.makeText(context, R.string.transfer_current_not_folder, Toast.LENGTH_LONG).show()
+                                                } else if (UploadTransfers.job(job.id) === job && job.state.value.editable) {
+                                                    UploadTransfers.saveDestination(job, location, title.ifBlank { location.path })
+                                                }
+                                            } catch (error: CancellationException) {
+                                                throw error
+                                            } catch (error: Exception) {
+                                                logcat("FileTransfer", error)
+                                                Toast.makeText(context, R.string.transfer_current_not_folder, Toast.LENGTH_LONG).show()
+                                            } finally {
+                                                resolvingCurrent = false
+                                            }
+                                        }
+                                    },
+                                    colors = snackbarActionButtonColors(),
+                                ) { Text(stringResource(R.string.transfer_current)) }
                                 TextButton(
                                     onClick = {
                                         UploadTransfers.chooseDestination(job)
@@ -163,11 +212,115 @@ internal fun UploadTransferBars() {
         }
     }
     UploadTransfers.job(UploadTransfers.panelId)?.let { FileTransferPanel(it) }
+    val conflict by UploadTransfers.conflict.collectAsState()
+    conflict?.let { UploadConflictDialog(it) }
+}
+
+/** Virtual ZIP folders and views without an attached browser cannot receive files. */
+internal fun currentUploadFolderPath(place: FolderPlace?): String? {
+    place ?: return null
+    val relative = place.relativePath.replace('\\', '/').trim('/')
+    if (relative.split('/').any { it == "." || it == ".." }) return null
+    if (com.hippo.ehviewer.library.ZipAsDirListing.splitZipBrowsePath(relative) != null) return null
+    if (place.kind == ExplorerWindows.Kind.Local && place.rootPath?.let {
+            isMediaStoreRootUri(it) || com.hippo.ehviewer.library.ZipPaths.isZipPath(it) ||
+                com.hippo.ehviewer.library.ZipAsDirListing.splitZipBrowsePath(it) != null
+        } == true
+    ) {
+        return null
+    }
+    return relative
+}
+
+private suspend fun currentUploadDestination(place: FolderPlace?): TransferLocation? {
+    val relative = currentUploadFolderPath(place) ?: return null
+    val folder = requireNotNull(place)
+    return when (folder.kind) {
+        ExplorerWindows.Kind.Local -> grantedLocalUploadDestination(folder.sourceId, relative)
+        ExplorerWindows.Kind.Smb -> {
+            val source = com.hippo.ehviewer.smb.SmbRepository.load(folder.sourceId) ?: return null
+            if (relative.isEmpty() && com.hippo.ehviewer.smb.SmbGateway.isServerRootSource(source)) return null
+            TransferLocation(folder.kind, folder.sourceId, relative)
+        }
+        ExplorerWindows.Kind.WebDav -> {
+            com.hippo.ehviewer.webdav.WebDavRepository.load(folder.sourceId) ?: return null
+            TransferLocation(folder.kind, folder.sourceId, relative)
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun UploadConflictDialog(request: UploadConflict) {
+    val deletionEnabled by Settings.enableFileDeletion.collectAsState()
+    var rememberChoice by Settings.uploadConflictRemember.asMutableState()
+    fun size(bytes: Long?) = bytes?.takeIf { it >= 0 }?.let(FileUtils::humanReadableByteCount) ?: "?"
+    BasicAlertDialog(onDismissRequest = { UploadTransfers.stop(request.job) }) {
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(24.dp),
+            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+            tonalElevation = 3.dp,
+        ) {
+            Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(16.dp)) {
+                Text(
+                    stringResource(R.string.transfer_conflict_title),
+                    style = MaterialTheme.typography.titleLarge,
+                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 4.dp),
+                )
+                Text(
+                    request.file.relative.substringBeforeLast('/', "").let { if (it.isEmpty()) request.name else "$it/${request.name}" },
+                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 4.dp),
+                )
+                Text(
+                    stringResource(R.string.transfer_conflict_sizes, size(request.file.size), size(request.existing?.size)),
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.padding(horizontal = 4.dp),
+                )
+                Column(Modifier.fillMaxWidth().padding(top = 10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    for (option in TransferConflictPolicy.entries) {
+                        if (option == TransferConflictPolicy.Replace && !deletionEnabled) continue
+                        SourceAccessOption(
+                            icon = when (option) {
+                                TransferConflictPolicy.Skip -> Icons.Default.SkipNext
+                                TransferConflictPolicy.Rename -> Icons.Default.DriveFileRenameOutline
+                                TransferConflictPolicy.Replace -> Icons.Default.FindReplace
+                            },
+                            title = stringResource(
+                                when (option) {
+                                    TransferConflictPolicy.Skip -> R.string.transfer_skip_existing
+                                    TransferConflictPolicy.Rename -> R.string.transfer_rename_conflicts
+                                    TransferConflictPolicy.Replace -> R.string.transfer_replace_existing
+                                },
+                            ),
+                            iconBackground = false,
+                            onClick = { UploadTransfers.resolveConflict(request, option, rememberChoice) },
+                        )
+                    }
+                }
+                Row(
+                    Modifier.fillMaxWidth().toggleable(
+                        value = rememberChoice,
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                        role = Role.Switch,
+                        onValueChange = { rememberChoice = it },
+                    )
+                        .padding(horizontal = 4.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(stringResource(R.string.transfer_conflict_remember), Modifier.weight(1f))
+                    Switch(checked = rememberChoice, onCheckedChange = null)
+                }
+            }
+        }
+    }
 }
 
 @Composable
 private fun FileTransferPanel(job: UploadJob) {
     val state by job.state.collectAsState()
+    val deletionEnabled by Settings.enableFileDeletion.collectAsState()
     val explorer = LocalExplorerPanel.current
     var menu by remember(job.id) { mutableStateOf(false) }
     TaskStyledDialog(onDismiss = { UploadTransfers.panelId = null }) { tablet ->
@@ -232,11 +385,44 @@ private fun FileTransferPanel(job: UploadJob) {
                                 },
                             )
                             DropdownMenuItem(
-                                text = { Text(stringResource(R.string.transfer_skip_existing)) },
-                                enabled = state.editable,
-                                trailingIcon = { if (state.skipExisting) Icon(Icons.Default.Check, null) },
+                                text = { Text(stringResource(R.string.transfer_conflict_dialog)) },
+                                enabled = state.settingsEditable,
+                                trailingIcon = { if (state.conflictDialog) Icon(Icons.Default.Check, null) },
                                 onClick = {
-                                    UploadTransfers.toggleSkipExisting(job)
+                                    UploadTransfers.toggleConflictDialog(job)
+                                    menu = false
+                                },
+                            )
+                            if (!state.conflictDialog) {
+                                for (policy in TransferConflictPolicy.entries) {
+                                    if (policy == TransferConflictPolicy.Replace && !deletionEnabled) continue
+                                    DropdownMenuItem(
+                                        text = {
+                                            Text(
+                                                stringResource(
+                                                    when (policy) {
+                                                        TransferConflictPolicy.Skip -> R.string.transfer_skip_existing
+                                                        TransferConflictPolicy.Rename -> R.string.transfer_rename_conflicts
+                                                        TransferConflictPolicy.Replace -> R.string.transfer_replace_existing
+                                                    },
+                                                ),
+                                            )
+                                        },
+                                        enabled = state.settingsEditable,
+                                        trailingIcon = { if (state.conflictPolicy.allowed(deletionEnabled) == policy) Icon(Icons.Default.Check, null) },
+                                        onClick = {
+                                            UploadTransfers.setConflictPolicy(job, policy)
+                                            menu = false
+                                        },
+                                    )
+                                }
+                            }
+                            DropdownMenuItem(
+                                text = { Text(stringResource(R.string.transfer_preserve_date)) },
+                                enabled = state.settingsEditable,
+                                trailingIcon = { if (state.preserveDate) Icon(Icons.Default.Check, null) },
+                                onClick = {
+                                    UploadTransfers.togglePreserveDate(job)
                                     menu = false
                                 },
                             )

@@ -59,6 +59,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.repeatOnLifecycle
 import com.ehviewer.core.database.model.WebDavSourceEntity
 import com.ehviewer.core.i18n.R
 import com.ehviewer.core.model.BaseGalleryInfo
@@ -189,6 +190,7 @@ import com.hippo.ehviewer.ui.tools.awaitConfirmationOrCancel
 import com.hippo.ehviewer.util.LocalNetworkPermission
 import com.hippo.ehviewer.util.addTextToClipboard
 import com.hippo.ehviewer.util.ensureLocalNetworkPermission
+import com.hippo.ehviewer.webdav.WebDavClient
 import com.hippo.ehviewer.webdav.WebDavGateway
 import com.hippo.ehviewer.webdav.WebDavPasswordStore
 import com.hippo.ehviewer.webdav.WebDavRepository
@@ -196,6 +198,8 @@ import com.ramcosta.composedestinations.annotation.Destination
 import com.ramcosta.composedestinations.annotation.RootGraph
 import com.ramcosta.composedestinations.navigation.DestinationsNavigator
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import moe.tarsin.snackbar
 import moe.tarsin.string
 
@@ -293,6 +297,10 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
     val browseFolderThumbs by Settings.browseFolderThumbs.collectAsState()
     val browseZipAsDir by Settings.browseZipAsDir.collectAsState()
     val photoGridMode by Settings.photoGridMode.collectAsState()
+    val connectedWebDavSources by WebDavClient.connectedSources.collectAsState()
+    val sourceConnectionKey = source?.let(WebDavGateway::sourceConfigKey)
+    // Like SMB, the toolbar icon indicates reachability; pull-to-refresh remains the retry.
+    val refreshEnabled = sourceConnectionKey in connectedWebDavSources
     val relativeDirForMode = segments.joinToString("/")
     val zipPlainFolder = isZipPlainFolderListing(
         relativeDirForMode,
@@ -646,7 +654,11 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
 
     LaunchedEffect(sourceId, relativeDir) {
         BrowseSession.webDavMutations.collect { (changedSource, parent) ->
-            if (changedSource == sourceId && parent == relativeDir.trim('/')) requestForceReload()
+            val current = relativeDir.trim('/')
+            if (changedSource == sourceId && (current.isEmpty() || parent == current || parent.startsWith("$current/"))) {
+                activeListingRequest = null
+                refreshToken++
+            }
         }
     }
 
@@ -723,10 +735,11 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
         }
 
         val loadDir = if (configChanged) "" else targetDir
+        val mutationRefresh = BrowseSession.mutationRefresh.snapshot(TransferLocation(ExplorerWindows.Kind.WebDav, sourceId, loadDir)).pending
         // Photo-grid open: same complete index the reader uses — no directory scan.
         // Name-only rows drop size/date; stamp them here so this write cannot wipe
         // a fill that already ran (grid entry never had a file list to keep).
-        if (!force && !configChanged && photoGrid) {
+        if (!force && !mutationRefresh && !configChanged && photoGrid) {
             val names = FolderGalleryIndex.loadWebDav(src.id, configKey, loadDir)
             if (names != null) {
                 val preserved = if (listedDir == loadDir) FolderGalleryIndex.directChildMetadata(entries) else emptyMap()
@@ -833,7 +846,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                 applyCachedListing(loadDir)
                 refreshing = false
             }
-            if (force && photoGrid && ZipAsDirListing.splitZipBrowsePath(loadDir) == null) {
+            if ((force || mutationRefresh) && photoGrid && ZipAsDirListing.splitZipBrowsePath(loadDir) == null) {
                 val refreshed = withIOContext {
                     BrowseSession.peekWebDavRawChildren(sourceId, loadDir)?.let { children ->
                         FolderGalleryIndex.persistPhotoGridRefresh(ExplorerWindows.Kind.WebDav, sourceId, configKey, loadDir, children)
@@ -873,6 +886,23 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
     // Resume after Manage-sources edit or app background: soft refresh current path only.
     // Must not call a free-floating reload that races path changes (see LaunchedEffect above).
     val lifecycleOwner = LocalLifecycleOwner.current
+    LaunchedEffect(lifecycleOwner, sourceConnectionKey) {
+        val src = source ?: return@LaunchedEffect
+        lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+            if (!ensureLocalNetworkPermission()) return@repeatOnLifecycle
+            // Cache hits need a real HTTP check too. Retry sequentially only while unreachable.
+            // Recheck on each resume because HTTP has no persistent session to inspect.
+            var first = true
+            while (isActive) {
+                if (first || sourceConnectionKey !in WebDavClient.connectedSources.value) {
+                    first = false
+                    val password = withIOContext { WebDavPasswordStore.get(src.id) }
+                    WebDavClient.refreshConnectionSignal(src, password)
+                }
+                delay(15_000L)
+            }
+        }
+    }
     DisposableEffect(lifecycleOwner, sourceId) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
@@ -2127,6 +2157,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
 
     fun folderGalleryOverflow(entry: BrowseEntryRemote.FolderGallery) = BrowseOverflowActions(
         kind = BrowseOverflowKind.Gallery,
+        galleryImageNames = entry.imageFileNames.takeIf { it.isNotEmpty() },
         favorited = isDirFavorite(entry.relativeName),
         onFavorite = { toggleDirFavorite(entry.relativeName, entry.coverFileName) },
         onRead = { openFolderGallery(entry) },
@@ -2154,6 +2185,11 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
         shareHttp = webDavShareFolderStart(entry.relativeName, entry.name),
         saveInto = webDavSaveFolderInto(entry.relativeName, entry.name),
         uploadSource = TransferLocation(ExplorerWindows.Kind.WebDav, sourceId, WebDavGateway.joinRelative(relativeDir, entry.relativeName)),
+        removalSource = if (browseZipAsDir && entry.relativeName.isEmpty() && isZipArchiveFileName(relativeDir.substringAfterLast('/'))) {
+            TransferLocation(ExplorerWindows.Kind.WebDav, sourceId, "$relativeDir/.")
+        } else {
+            null
+        },
         listLine = BrowseListLine(
             typeLabel = browseZipAsDirTypeLabel(entry.relativeName, entry.name) ?: "Folder",
             sizeBytes = entry.size,
@@ -2480,6 +2516,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                             onEphemeralLayout = if (photoGrid) gridSort.onUseList else null,
                         )
                         IconButton(
+                            enabled = refreshEnabled,
                             onClick = {
                                 refreshing = true
                                 requestForceReload()

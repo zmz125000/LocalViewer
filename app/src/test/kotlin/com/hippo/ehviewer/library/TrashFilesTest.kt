@@ -12,6 +12,72 @@ class TrashFilesTest {
     private fun file(path: String, directory: Boolean = false, sourceId: Long = 1) = TransferFile(TransferLocation(ExplorerWindows.Kind.Smb, sourceId, path), path.substringAfterLast('/'), directory, 123, 456)
 
     @Test
+    fun galleryCleanupKeepsImagePlanAndNeverRecursivelyCollectsOtherContents() = runBlocking {
+        val image = file("share/album/1.jpg")
+        val cleanup = file("share/album", true).copy(deleteIfEmpty = true)
+        val roots = trashSelectionRoots(listOf(image, cleanup))
+        assertEquals(listOf(image.source, cleanup.source), roots.map { it.source })
+        val result = collectRemovalFiles(roots, FileRemovalAction.Delete, children = { error("Gallery cleanup must not collect other contents") })
+        assertEquals(listOf(image.source, cleanup.source), result.map { it.source })
+        assertTrue(result.last().deleteIfEmpty)
+    }
+
+    @Test
+    fun galleryCleanupDeletesOnlyAfterFreshEmptyListing() = runBlocking {
+        val cleanup = file("share/album", true).copy(deleteIfEmpty = true)
+        val calls = mutableListOf<String>()
+        assertTrue(
+            PermanentFiles.delete(
+                cleanup,
+                FileRemovalAction.Delete,
+                TransferControl(),
+                onDelete = { calls += "attempt" },
+                isEmpty = {
+                    assertEquals(cleanup.source, it)
+                    calls += "list"
+                    true
+                },
+                remove = { calls += "delete" },
+            ),
+        )
+        assertEquals(listOf("list", "attempt", "delete"), calls)
+    }
+
+    @Test
+    fun galleryCleanupSkipsAnyRemainingFileOrSubfolderWithoutMarkingUnavailable() = runBlocking {
+        val cleanup = file("share/album", true).copy(deleteIfEmpty = true)
+        for (remaining in listOf(file("share/album/notes.txt"), file("share/album/failed.jpg"), file("share/album/empty-subfolder", true), file("share/album/.trash", true))) {
+            assertFalse(
+                PermanentFiles.delete(
+                    cleanup,
+                    FileRemovalAction.Delete,
+                    TransferControl(),
+                    onDelete = { error("Skipped cleanup must not mark source unavailable") },
+                    isEmpty = { listOf(remaining).isEmpty() },
+                    remove = { error("Must preserve remaining contents") },
+                ),
+            )
+        }
+    }
+
+    @Test
+    fun galleryCleanupDoesNotDeleteWhenFreshListingFails() = runBlocking {
+        try {
+            PermanentFiles.delete(
+                file("share/album", true).copy(deleteIfEmpty = true),
+                FileRemovalAction.Delete,
+                TransferControl(),
+                onDelete = { error("Listing failure must not mark source unavailable") },
+                isEmpty = { throw IOException("Listing denied") },
+                remove = { error("Cannot assume folder is empty") },
+            )
+            throw AssertionError("Listing must fail")
+        } catch (_: IOException) {
+            // An unreadable folder is never assumed empty.
+        }
+    }
+
+    @Test
     fun removalUsesTheChosenActionForFilesAndFolders() {
         val folder = file("share/album", true)
         val image = file("share/image.jpg")

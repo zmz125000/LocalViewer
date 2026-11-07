@@ -320,6 +320,9 @@ object Settings : DataStorePreferences(null) {
      */
     val gridCellSize = intPref("grid_cell_size", GRID_CELL_DEFAULT_DP)
 
+    val enableFileDeletion = boolPref("enable_file_deletion", true)
+    val useTrashBin = boolPref("use_trash_bin", true)
+
     /**
      * When false, SMB/WebDAV **folder gallery** image covers are not downloaded
      * (already-cached thumbs still show). Useful for remote / metered access.
@@ -327,8 +330,6 @@ object Settings : DataStorePreferences(null) {
      *
      * Archive/document covers (ZIP/RAR/7z/PDF/EPUB first page) use [downloadNetworkArchiveThumbs].
      */
-    val useTrashBin = boolPref("use_trash_bin", true)
-
     val downloadRemoteThumbs = boolPref("download_remote_thumbs", true)
 
     /**
@@ -776,7 +777,11 @@ object Settings : DataStorePreferences(null) {
     val uploadAutoStart = boolPref("upload_auto_start", false)
     val uploadParallel = boolPref("upload_parallel", true)
     val uploadSmbMultiplex = boolPref("upload_smb_multiplex", true)
-    val uploadSkipExisting = boolPref("upload_skip_existing", true)
+    val uploadSkipExisting = boolPref("upload_skip_existing", true) // Legacy preference for migration.
+    val uploadConflictPolicy = intPref("upload_conflict_policy", -1)
+    val uploadPreserveDate = boolPref("upload_preserve_date", true)
+    val uploadConflictDialog = boolPref("upload_conflict_dialog", true)
+    val uploadConflictRemember = boolPref("upload_conflict_remember", false)
 
     /**
      * Run more than one save/convert job at a time. Slot count follows the CPU

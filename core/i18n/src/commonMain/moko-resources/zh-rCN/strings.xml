@@ -1318,6 +1318,13 @@
     <string name="transfer_upload_to">上传到</string>
     <string name="transfer_auto_start">自动开始</string>
     <string name="transfer_skip_existing">跳过已存在的文件</string>
+    <string name="transfer_rename_conflicts">冲突时重命名</string>
+    <string name="transfer_replace_existing">替换已存在的文件</string>
+    <string name="transfer_preserve_date">保留原始日期</string>
+    <string name="transfer_conflict_dialog">文件冲突对话框</string>
+    <string name="transfer_conflict_title">文件已存在</string>
+    <string name="transfer_conflict_sizes">来源：%1$s · 已存在：%2$s</string>
+    <string name="transfer_conflict_remember">记住选择</string>
     <string name="transfer_dest">目的地</string>
     <string name="transfer_destination">目的地</string>
     <string name="transfer_start">开始</string>
@@ -1361,12 +1368,17 @@
     <string name="transfer_local_move">本地移动</string>
     <string name="transfer_server_move">服务器端移动</string>
     <string name="transfer_item_count">%d 项</string>
-    <string name="transfer_source_unavailable">此项目正忙、正在删除或已不可用。请刷新文件夹后重试。</string>
+    <string name="transfer_source_unavailable">此项目可能已被移动或删除。请刷新其上级文件夹后重试。</string>
+    <string name="transfer_source_busy">其他传输正在使用此项目或其目标位置。请等待传输完成或停止传输后重试。</string>
     <string name="transfer_delete_trash_protected">.trash 内的项目不能删除。</string>
     <string name="ask_where_to_save">询问保存位置</string>
     <string name="transfer_upload_action">上传到…</string>
+    <string name="settings_enable_file_deletion">启用文件删除</string>
+    <string name="action_restore_from_trash">从 .trash 还原</string>
+    <string name="zip_removal_confirm">此项目来自 ZIP 文件夹。改将 ZIP 文件“%1$s”移到 .trash？</string>
+    <string name="restore_finished_summary">已还原 %1$d/%2$d 个项目 · 跳过 %3$d · 失败 %4$d</string>
     <string name="settings_use_trash_bin">使用回收站</string>
-    <string name="settings_use_trash_bin_summary">将文件和文件夹移到 .trash。关闭后永久删除。画廊始终移到 .trash。</string>
+    <string name="settings_use_trash_bin_summary">将文件和文件夹移到 .trash。关闭后永久删除。画廊移除仅影响其中的直接图片文件。</string>
     <string name="action_empty_trash">删除回收站</string>
     <string name="trash_named_confirm">将“%1$s”移到 .trash 文件夹？</string>
     <string name="delete_named_confirm">永久删除“%1$s”？此操作无法撤销。</string>
@@ -1377,4 +1389,7 @@
     <string name="mixed_delete_confirm">永久删除 %1$d 个文件，并将 %2$d 个项目移到 .trash？文件删除后无法恢复。</string>
     <string name="browse_auto_finish_deletion">自动结束（删除）</string>
     <string name="gallery_trash_regular_files">%1$d 个普通文件已随画廊文件夹移到回收站。</string>
+    <string name="transfer_current">当前</string>
+    <string name="transfer_current_not_folder">请打开可写入的文件夹以使用“当前”。</string>
+    <string name="transfer_same_destination">目标是源文件夹，或会将项目复制到自身。请选择其他文件夹。</string>
 </resources>

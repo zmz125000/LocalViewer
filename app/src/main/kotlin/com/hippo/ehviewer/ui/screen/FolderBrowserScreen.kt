@@ -714,12 +714,13 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
             error = null
             return
         }
+        val mutationRefresh = BrowseSession.mutationRefresh.snapshot(TransferLocation(ExplorerWindows.Kind.Local, 0, frame.path)).pending
         // Leave→enter folder must not wait on previous path’s stuck MMR workers.
         notifyLocalThumbFolder(frame)
         val targetPath = frameListKey(frame)
         fun ownsListing(): Boolean = activeListingRequest === request && stack.lastOrNull() == frame
         // Photo-grid open: same complete index the reader uses — no directory scan.
-        if (!force && frame.photoGrid) {
+        if (!force && !mutationRefresh && frame.photoGrid) {
             val shownImages = entries.filter { it is BrowseEntry.RegularFile && isImageFileName(it.name) }
             val alreadyShown = listedPath == targetPath && shownImages.isNotEmpty()
             val missingMetadata = shownImages.any { it.size <= 0L || it.lastModifiedMs <= 0L }
@@ -760,7 +761,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
             }
         }
         // Video-folder overlay: library index / DB file list — no browse classify scan.
-        if (!force && frame.videoFolder && !frame.isZipBrowse) {
+        if (!force && !mutationRefresh && frame.videoFolder && !frame.isZipBrowse) {
             val shownVideos = entries.filterIsInstance<BrowseEntry.VideoFile>()
             val alreadyShown = listedPath == targetPath && shownVideos.isNotEmpty()
             if (alreadyShown) {
@@ -787,7 +788,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                 return
             }
         }
-        if (!force && applyCachedLocalListing(frame) && isLocalListingSessionCurrent(frame)) {
+        if (!force && !mutationRefresh && applyCachedLocalListing(frame) && isLocalListingSessionCurrent(frame)) {
             loading = false
             refreshing = false
             return
@@ -888,7 +889,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                 applyCachedLocalListing(frame)
                 refreshing = false
             }
-            if (force && frame.photoGrid) {
+            if ((force || mutationRefresh) && frame.photoGrid) {
                 val refreshed = withIOContext {
                     val effective = resolveBrowsePath(frame.path.toPath(), preferMediaStore = frame.preferMediaStore)
                     BrowseSession.peekLocalRawChildren(BrowseSession.pathKey(effective))?.let { children ->
@@ -920,7 +921,12 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
     }
 
     LaunchedEffect(explorerWindowId) {
-        BrowseSession.localMutations.collectLatest { reload(force = true) }
+        BrowseSession.localMutations.collectLatest {
+            val frame = stack.lastOrNull() ?: return@collectLatest
+            if (BrowseSession.mutationRefresh.snapshot(TransferLocation(ExplorerWindows.Kind.Local, 0, frame.path)).pending) {
+                reload(refreshPhotoGrid = true)
+            }
+        }
     }
 
     // Gallery grids opened from Library are part of its live-update surface too.
@@ -2654,6 +2660,12 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         }
     }
 
+    fun localRemovalSource(path: okio.Path, relative: String, gallery: Boolean): TransferLocation = TransferLocation(
+        ExplorerWindows.Kind.Local,
+        0L,
+        com.hippo.ehviewer.library.localFolderRemovalPath(path.toString(), relative, stack.lastOrNull()?.zipInnerRel, gallery, browseZipAsDir),
+    )
+
     fun dirOverflow(dir: BrowseEntry.Directory) = BrowseOverflowActions(
         kind = BrowseOverflowKind.Common,
         favorited = isDirFavorite(dir),
@@ -2681,6 +2693,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         shareHttp = localShareFolderStart(dir.path, dir.name, dir.relativeName),
         saveInto = localSaveFolderInto(dir.path, dir.name, dir.relativeName),
         uploadSource = TransferLocation(ExplorerWindows.Kind.Local, 0L, dir.path.toString()),
+        removalSource = localRemovalSource(dir.path, dir.relativeName, gallery = false),
         listLine = BrowseListLine(
             typeLabel = browseZipAsDirTypeLabel(dir.relativeName, dir.name) ?: "Dir",
             sizeBytes = dir.size,
@@ -2690,6 +2703,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
 
     fun folderGalleryOverflow(entry: BrowseEntry.FolderGallery) = BrowseOverflowActions(
         kind = BrowseOverflowKind.Gallery,
+        galleryImageNames = entry.imageFileNames.takeIf { it.isNotEmpty() },
         favorited = isFolderGalleryFavorite(entry),
         onFavorite = { toggleFolderGalleryFavorite(entry) },
         onRead = { openFolderGallery(entry) },
@@ -2717,6 +2731,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         shareHttp = localShareFolderStart(entry.path, entry.name, entry.relativeName),
         saveInto = localSaveFolderInto(entry.path, entry.name, entry.relativeName),
         uploadSource = TransferLocation(ExplorerWindows.Kind.Local, 0L, entry.path.toString()),
+        removalSource = localRemovalSource(entry.path, entry.relativeName, gallery = true),
         listLine = BrowseListLine(
             typeLabel = browseZipAsDirTypeLabel(entry.relativeName, entry.name) ?: "Folder",
             sizeBytes = entry.size,

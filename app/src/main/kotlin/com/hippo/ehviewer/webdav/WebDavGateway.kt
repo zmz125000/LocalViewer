@@ -5,6 +5,7 @@ import com.ehviewer.core.util.logcat
 import com.ehviewer.core.util.withIOContext
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.library.BrowseEntryRemote
+import com.hippo.ehviewer.library.BrowseMutationRefresh
 import com.hippo.ehviewer.library.BrowseSession
 import com.hippo.ehviewer.library.ExplorerWindows
 import com.hippo.ehviewer.library.FolderGalleryIndex
@@ -13,6 +14,7 @@ import com.hippo.ehviewer.library.NetworkFolderIndexCache
 import com.hippo.ehviewer.library.RemoteChild
 import com.hippo.ehviewer.library.RemoteDirectorySlimPlan
 import com.hippo.ehviewer.library.SMB_PROMOTE_MAX_LEAVES
+import com.hippo.ehviewer.library.TransferLocation
 import com.hippo.ehviewer.library.ZipAsDirListing
 import com.hippo.ehviewer.library.ZipCdParse
 import com.hippo.ehviewer.library.ZipCentralDirectory
@@ -90,6 +92,15 @@ object WebDavGateway {
         listJobs[BrowseSession.webDavListingKey(sourceId, relativeDir)]?.join()
     }
 
+    internal fun cancelListingsForMutation(sourceId: Long, parent: String) {
+        var dir = parent.replace('\\', '/').trim('/')
+        while (true) {
+            listJobs.remove(BrowseSession.webDavListingKey(sourceId, dir))?.cancel()
+            if (dir.isEmpty()) break
+            dir = dir.substringBeforeLast('/', "")
+        }
+    }
+
     suspend fun listDirectory(
         source: WebDavSourceEntity,
         password: String,
@@ -111,6 +122,7 @@ object WebDavGateway {
                 )
             }
         }
+        val mutation = BrowseSession.mutationRefresh.snapshot(TransferLocation(ExplorerWindows.Kind.WebDav, source.id, relativeDir))
         val configKey = sourceConfigKey(source)
         val jobKey = BrowseSession.webDavListingKey(source.id, relativeDir)
         if (useCache && isListJobActive(jobKey)) {
@@ -167,7 +179,7 @@ object WebDavGateway {
                 )
                 publishCachedOnMain(presented, onCached)
                 val shouldQuickScan =
-                    Settings.networkFolderIndexQuickScan.value && !cached.sessionCurrent
+                    mutation.pending || (Settings.networkFolderIndexQuickScan.value && !cached.sessionCurrent)
                 if (!shouldQuickScan) return presented
                 if (isShallowIncompleteListing(cached.entries)) {
                     return listDirectoryShallowThenDeep(
@@ -186,6 +198,7 @@ object WebDavGateway {
                             relativeDir,
                             cached.entries,
                             configKey,
+                            mutation,
                         )
                         if (!refresh.persist) {
                             logcat("FolderIndex") {
@@ -195,7 +208,7 @@ object WebDavGateway {
                             return@startListJob presented
                         }
                         removeDeletedDirectoryCaches(source.id, relativeDir, refresh.removedDirectoryNames)
-                        val toKeep = if (refresh.persist &&
+                        val toKeep = if (!mutation.pending && refresh.persist &&
                             (refresh.entries != cached.entries || refresh.zipInteriors.isNotEmpty())
                         ) {
                             persistParentAndZipInteriors(
@@ -209,14 +222,21 @@ object WebDavGateway {
                         } else {
                             refresh.entries
                         }
+                        val refreshedEntries = if (mutation.pending) {
+                            NetworkFolderIndexCache.saveMutationRefresh(ExplorerWindows.Kind.WebDav, source.id, configKey, relativeDir, refresh.entries)
+                            persistParentAndZipInteriors(source, configKey, relativeDir, refresh.entries, refresh.zipInteriors, refresh.removedDirectoryNames)
+                        } else {
+                            toKeep
+                        }
                         val slimmed = presentListingForZipAsDirToggle(
                             source,
                             configKey,
                             relativeDir,
-                            toKeep,
+                            refreshedEntries,
                             sessionCurrent = true,
                             previousForZipNames = cached.entries,
                         )
+                        BrowseSession.mutationRefresh.complete(mutation)
                         publishCachedOnMain(slimmed, onCached)
                         slimmed
                     } catch (e: kotlinx.coroutines.CancellationException) {
@@ -490,6 +510,7 @@ object WebDavGateway {
         relativeDir: String,
         cached: List<BrowseEntryRemote>,
         configKey: String,
+        mutation: BrowseMutationRefresh.Snapshot,
     ): SlimDirectoryRefresh {
         BrowseSession.invalidateWebDavRawChildren(source.id, relativeDir)
         val children = listChildrenForRelativeDir(source, password, relativeDir)
@@ -498,9 +519,9 @@ object WebDavGateway {
         }
         val retained = if (deleted.isEmpty()) cached else cached.filter { browseEntryFolderRoot(it) !in deleted }
         val plan = planRemoteDirectorySlimRefresh(retained, children)
-        val preserveCachedFiles = isUntrustedSlimLiveFileListing(retained, children) &&
+        val preserveCachedFiles = !mutation.currentChanged && isUntrustedSlimLiveFileListing(retained, children) &&
             plan.addedDirectories.isNotEmpty()
-        if (isUntrustedSlimLiveListing(retained, children) && !preserveCachedFiles) {
+        if (!mutation.currentChanged && isUntrustedSlimLiveListing(retained, children) && !preserveCachedFiles) {
             return SlimDirectoryRefresh(retained, deleted, persist = deleted.isNotEmpty())
         }
         if (preserveCachedFiles) {
@@ -522,7 +543,10 @@ object WebDavGateway {
         } else {
             emptyList()
         }
-        val mtimeChanged = directoriesNeedingDeepScanOnMtimeChange(retained, children)
+        val mtimeChanged = (
+            directoriesNeedingDeepScanOnMtimeChange(retained, children) +
+                mutation.changedChildren(children)
+            ).distinctBy { it.name }
         val reclassifyNames = (deepHidden.asSequence() + mtimeChanged.asSequence())
             .mapTo(HashSet()) { it.name }
         val cachedZipAsDir = if (zipFileNames.isEmpty()) {

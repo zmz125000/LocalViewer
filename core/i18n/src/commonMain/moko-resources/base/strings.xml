@@ -1361,6 +1361,13 @@
     <string name="transfer_upload_to">Upload to</string>
     <string name="transfer_auto_start">Auto start</string>
     <string name="transfer_skip_existing">Skip existing files</string>
+    <string name="transfer_rename_conflicts">Rename if conflict</string>
+    <string name="transfer_replace_existing">Replace existing files</string>
+    <string name="transfer_preserve_date">Preserve original date</string>
+    <string name="transfer_conflict_dialog">File conflict dialog</string>
+    <string name="transfer_conflict_title">File already exists</string>
+    <string name="transfer_conflict_sizes">Source: %1$s · Existing: %2$s</string>
+    <string name="transfer_conflict_remember">Remember</string>
     <string name="transfer_dest">Dest</string>
     <string name="transfer_destination">Destination</string>
     <string name="transfer_start">Start</string>
@@ -1390,12 +1397,17 @@
     <string name="transfer_local_move">Storage move</string>
     <string name="transfer_server_move">Server move</string>
     <string name="transfer_item_count">%d items</string>
-    <string name="transfer_source_unavailable">This item is busy, being deleted, or no longer available. Refresh the folder before trying again.</string>
+    <string name="transfer_source_unavailable">This item may have moved or been deleted. Refresh its parent folder before trying again.</string>
+    <string name="transfer_source_busy">Another transfer is using this item or its destination. Wait for it to finish or stop it, then try again.</string>
     <string name="transfer_delete_trash_protected">Items inside .trash cannot be deleted.</string>
     <string name="ask_where_to_save">Ask where to save</string>
     <string name="transfer_upload_action">Upload to…</string>
+    <string name="settings_enable_file_deletion">Enable file deletion</string>
+    <string name="action_restore_from_trash">Restore from .trash</string>
+    <string name="zip_removal_confirm">This item is from a ZIP folder. Move the ZIP file “%1$s” to .trash instead?</string>
+    <string name="restore_finished_summary">Restored %1$d/%2$d items · skipped %3$d · failed %4$d</string>
     <string name="settings_use_trash_bin">Use trash bin</string>
-    <string name="settings_use_trash_bin_summary">Move files and folders to .trash. Turn off to permanently delete them. Galleries always move to .trash.</string>
+    <string name="settings_use_trash_bin_summary">Move files and folders to .trash. Turn off to permanently delete them. Gallery removal affects direct image files only.</string>
     <string name="action_empty_trash">Delete trash</string>
     <string name="trash_named_confirm">Move “%1$s” to the .trash folder?</string>
     <string name="delete_named_confirm">Permanently delete “%1$s”? This cannot be undone.</string>
@@ -1413,4 +1425,7 @@
     <string name="library_live_update_resume">Resume</string>
     <string name="settings_privacy_save_usb_history">Save USB / OTG history</string>
     <string name="settings_privacy_save_sd_card_history">Save SD card history</string>
+    <string name="transfer_current">Current</string>
+    <string name="transfer_current_not_folder">Open a writable folder to use Current.</string>
+    <string name="transfer_same_destination">The destination is the source folder or would copy an item onto itself. Choose another folder.</string>
 </resources>

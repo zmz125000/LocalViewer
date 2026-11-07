@@ -22,6 +22,7 @@ import com.hierynomus.smbj.share.DiskShare
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.easytier.EasyTierPath
 import com.hippo.ehviewer.library.BrowseEntryRemote
+import com.hippo.ehviewer.library.BrowseMutationRefresh
 import com.hippo.ehviewer.library.BrowseSession
 import com.hippo.ehviewer.library.DirPresence
 import com.hippo.ehviewer.library.ExplorerWindows
@@ -32,6 +33,7 @@ import com.hippo.ehviewer.library.RemoteChild
 import com.hippo.ehviewer.library.RemoteDirectorySlimPlan
 import com.hippo.ehviewer.library.RemoteFileStat
 import com.hippo.ehviewer.library.SMB_PROMOTE_MAX_LEAVES
+import com.hippo.ehviewer.library.TransferLocation
 import com.hippo.ehviewer.library.ZipAsDirListing
 import com.hippo.ehviewer.library.ZipCdParse
 import com.hippo.ehviewer.library.ZipCentralDirectory
@@ -1945,6 +1947,15 @@ object SmbGateway {
         listJobs[BrowseSession.smbListingKey(sourceId, relativeDir)]?.join()
     }
 
+    internal fun cancelListingsForMutation(sourceId: Long, parent: String) {
+        var dir = parent.replace('\\', '/').trim('/')
+        while (true) {
+            listJobs.remove(BrowseSession.smbListingKey(sourceId, dir))?.cancel()
+            if (dir.isEmpty()) break
+            dir = dir.substringBeforeLast('/', "")
+        }
+    }
+
     suspend fun listDirectory(
         source: SmbSourceEntity,
         password: String,
@@ -1967,6 +1978,7 @@ object SmbGateway {
             }
         }
         val cacheKey = BrowseSession.smbListingKey(source.id, relativeDir)
+        val mutation = BrowseSession.mutationRefresh.snapshot(TransferLocation(ExplorerWindows.Kind.Smb, source.id, relativeDir))
         val configKey = sourceConfigKey(source)
         if (useCache && isListJobActive(cacheKey)) {
             BrowseSession.getSmbCachedListing(source.id, relativeDir)?.let { ram ->
@@ -2024,9 +2036,11 @@ object SmbGateway {
                 publishCachedOnMain(presented, onCached)
                 // Quick scan only for old (non-current) listings — every directory independently,
                 // including subfolders hydrated from disk later in the same process.
-                val shouldQuickScan = Settings.networkFolderIndexQuickScan.value &&
-                    !cached.sessionCurrent &&
-                    isSourceConnected(source)
+                val shouldQuickScan = mutation.pending || (
+                    Settings.networkFolderIndexQuickScan.value &&
+                        !cached.sessionCurrent &&
+                        isSourceConnected(source)
+                    )
                 if (!shouldQuickScan) return presented
                 // In-progress shallow stubs must not use slim (would skip peeks forever).
                 if (isShallowIncompleteListing(cached.entries)) {
@@ -2049,6 +2063,7 @@ object SmbGateway {
                             relativeDir,
                             cached.entries,
                             configKey,
+                            mutation,
                         )
                         if (!refresh.persist) {
                             logcat("FolderIndex") {
@@ -2059,7 +2074,7 @@ object SmbGateway {
                         }
                         removeDeletedDirectoryCaches(source.id, relativeDir, refresh.removedDirectoryNames)
                         // Successful slim marks this exact directory current (even if unchanged).
-                        val toKeep = if (refresh.persist &&
+                        val toKeep = if (!mutation.pending && refresh.persist &&
                             (refresh.entries != cached.entries || refresh.zipInteriors.isNotEmpty())
                         ) {
                             persistParentAndZipInteriors(
@@ -2073,14 +2088,21 @@ object SmbGateway {
                         } else {
                             refresh.entries
                         }
+                        val refreshedEntries = if (mutation.pending) {
+                            NetworkFolderIndexCache.saveMutationRefresh(ExplorerWindows.Kind.Smb, source.id, configKey, relativeDir, refresh.entries)
+                            persistParentAndZipInteriors(source, configKey, relativeDir, refresh.entries, refresh.zipInteriors, refresh.removedDirectoryNames)
+                        } else {
+                            toKeep
+                        }
                         val slimmed = presentListingForZipAsDirToggle(
                             source,
                             configKey,
                             relativeDir,
-                            toKeep,
+                            refreshedEntries,
                             sessionCurrent = true,
                             previousForZipNames = cached.entries,
                         )
+                        BrowseSession.mutationRefresh.complete(mutation)
                         publishCachedOnMain(slimmed, onCached)
                         slimmed
                     } catch (e: kotlinx.coroutines.CancellationException) {
@@ -2391,6 +2413,7 @@ object SmbGateway {
         relativeDir: String,
         cached: List<BrowseEntryRemote>,
         configKey: String,
+        mutation: BrowseMutationRefresh.Snapshot,
     ): SlimDirectoryRefresh {
         if (isServerRootSource(source) && relativeDir.isBlank()) {
             val children = listShareRootEntries(source, password).map {
@@ -2414,9 +2437,9 @@ object SmbGateway {
         }
         val retained = if (deleted.isEmpty()) cached else cached.filter { browseEntryFolderRoot(it) !in deleted }
         val plan = planRemoteDirectorySlimRefresh(retained, children)
-        val preserveCachedFiles = isUntrustedSlimLiveFileListing(retained, children) &&
+        val preserveCachedFiles = !mutation.currentChanged && isUntrustedSlimLiveFileListing(retained, children) &&
             plan.addedDirectories.isNotEmpty()
-        if (isUntrustedSlimLiveListing(retained, children) && !preserveCachedFiles) {
+        if (!mutation.currentChanged && isUntrustedSlimLiveListing(retained, children) && !preserveCachedFiles) {
             return SlimDirectoryRefresh(retained, deleted, persist = deleted.isNotEmpty())
         }
         if (preserveCachedFiles) {
@@ -2441,7 +2464,10 @@ object SmbGateway {
         } else {
             emptyList()
         }
-        val mtimeChanged = directoriesNeedingDeepScanOnMtimeChange(retained, children)
+        val mtimeChanged = (
+            directoriesNeedingDeepScanOnMtimeChange(retained, children) +
+                mutation.changedChildren(children)
+            ).distinctBy { it.name }
         val reclassifyNames = (deepHidden.asSequence() + mtimeChanged.asSequence())
             .mapTo(HashSet()) { it.name }
         val cachedZipAsDir = if (zipFileNames.isEmpty()) {
@@ -2702,7 +2728,11 @@ object SmbGateway {
         if (zips.isEmpty()) return emptyMap()
         val out = ConcurrentHashMap<String, ZipAsDirListing.ZipRootListing>()
         val interiors = ConcurrentHashMap<String, List<BrowseEntryRemote>>()
-        val gate = Semaphore(maxConcurrentOpsPerHost().coerceAtLeast(1))
+        // Each synchronous CD parser waits on a separate KeepOpenSmbFileSource IO
+        // worker (and possibly pipelined reads). The handle budget can be 45 by
+        // default, or hundreds with custom settings: using it here exhausts the
+        // shared IO dispatcher before those workers can run.
+        val gate = Semaphore(smbZipProbeParallelism(maxConcurrentOpsPerHost()))
         val t0 = System.nanoTime()
         coroutineScope {
             zips.map { child ->
@@ -3997,11 +4027,26 @@ object SmbGateway {
         relative: String,
         date: String,
         checkpoint: suspend () -> Unit,
+    ): String = moveEntryWithoutOverwrite(source, password, relative, com.hippo.ehviewer.library.trashDestinationDirectory(relative, date), checkpoint)
+
+    suspend fun restoreFromTrash(source: SmbSourceEntity, password: String, relative: String, checkpoint: suspend () -> Unit): String {
+        val restored = requireNotNull(com.hippo.ehviewer.library.trashRestorePath(relative)) { "Not a restorable trash item" }
+        val parent = restored.substringBeforeLast('/', "")
+        val name = moveEntryWithoutOverwrite(source, password, relative, parent, checkpoint, restoring = true)
+        return listOf(parent, name).filter { it.isNotEmpty() }.joinToString("/")
+    }
+
+    private suspend fun moveEntryWithoutOverwrite(
+        source: SmbSourceEntity,
+        password: String,
+        relative: String,
+        destinationDirectory: String,
+        checkpoint: suspend () -> Unit,
+        restoring: Boolean = false,
     ): String = withIOContext {
-        val trash = com.hippo.ehviewer.library.trashDestinationDirectory(relative, date)
         val origin = resolveLocation(source, relative)
-        val destination = resolveLocation(source, trash)
-        com.hippo.ehviewer.library.requireOutsideTrash(origin.pathInShare)
+        val destination = resolveLocation(source, destinationDirectory)
+        if (!restoring) com.hippo.ehviewer.library.requireOutsideTrash(origin.pathInShare)
         require(origin.pathInShare.isNotBlank() && origin.share == destination.share) { "Cannot move a share root" }
         val host = endpointHost(source)
         trackSource(source)
@@ -4023,9 +4068,17 @@ object SmbGateway {
                     if (error.status != NtStatus.STATUS_OBJECT_NAME_COLLISION || !share.folderExists(path)) throw error
                 }
             }
-            val (trashRoot, datedTrash) = smbTrashDirectories(destination.pathInShare)
-            ensureDirectory(trashRoot)
-            ensureDirectory(datedTrash)
+            if (restoring) {
+                var parent = ""
+                for (part in destination.pathInShare.replace('\\', '/').split('/').filter { it.isNotEmpty() }) {
+                    parent = listOf(parent, part).filter { it.isNotEmpty() }.joinToString("/")
+                    ensureDirectory(parent)
+                }
+            } else {
+                val (trashRoot, datedTrash) = smbTrashDirectories(destination.pathInShare)
+                ensureDirectory(trashRoot)
+                ensureDirectory(datedTrash)
+            }
             checkpoint()
             // DiskShare.open accepts either a file or a directory. FILE_OPEN never creates it.
             val entry = share.open(
@@ -4041,7 +4094,7 @@ object SmbGateway {
                 val name = relative.replace('\\', '/').trim('/').substringAfterLast('/')
                 com.hippo.ehviewer.library.moveToTrashWithoutOverwrite(name, directory) { candidate ->
                     checkpoint()
-                    val target = smbTrashTarget(datedTrash, candidate)
+                    val target = smbTrashTarget(destination.pathInShare, candidate)
                     if (share.fileExists(target) || share.folderExists(target)) {
                         throw com.hippo.ehviewer.library.TransferNameConflict(candidate)
                     }
@@ -4061,7 +4114,7 @@ object SmbGateway {
         }
     }
 
-    /** FILE_CREATE never overwrites a collision. One dedicated session avoids nested pool borrows. */
+    /** Exclusive create by default; replacement uploads stage before committing with rename. */
     suspend fun transferWrite(
         source: SmbSourceEntity,
         destination: String,
@@ -4073,8 +4126,15 @@ object SmbGateway {
         copySource: SmbSourceEntity = source,
         onServerCopy: (Boolean) -> Unit = {},
         connection: UploadConnection,
+        replaceExisting: Boolean = false,
     ) {
         val dest = resolveLocation(source, destination)
+        val outputPath = if (replaceExisting) {
+            val parent = dest.pathInShare.substringBeforeLast('\\', "")
+            listOf(parent, ".upload-${java.util.UUID.randomUUID()}").filter { it.isNotEmpty() }.joinToString("\\")
+        } else {
+            dest.pathInShare
+        }
         val origin = copyFrom?.let { resolveLocation(copySource, it) }
         connection.withShare(dest.share) { share ->
             val originShare = origin?.let {
@@ -4086,7 +4146,7 @@ object SmbGateway {
             }
             val output = try {
                 share.openFile(
-                    dest.pathInShare,
+                    outputPath,
                     EnumSet.of(AccessMask.GENERIC_WRITE, AccessMask.FILE_READ_ATTRIBUTES, AccessMask.DELETE),
                     null,
                     SMB2ShareAccess.ALL,
@@ -4209,6 +4269,10 @@ object SmbGateway {
                     }
                     checkpoint()
                     target.setFileInformation(com.hierynomus.msfscc.fileinformation.FileDispositionInformation(false))
+                    if (replaceExisting) {
+                        if (!Settings.enableFileDeletion.value) throw com.hippo.ehviewer.library.TransferReplacementDisabled()
+                        target.rename(dest.pathInShare, true)
+                    }
                 } catch (e: Throwable) {
                     runCatching { target.deleteOnClose() }
                     throw e
@@ -4579,6 +4643,9 @@ internal sealed interface SmbDataPlacement {
     data object Grow : SmbDataPlacement
     data object Wait : SmbDataPlacement
 }
+
+/** Bound parser/worker pairs independently of TCP multiplex and connection settings. */
+internal fun smbZipProbeParallelism(maxHostOps: Int): Int = maxHostOps.coerceIn(1, 4)
 
 internal fun smbPlaceDataOp(
     outstanding: IntArray,

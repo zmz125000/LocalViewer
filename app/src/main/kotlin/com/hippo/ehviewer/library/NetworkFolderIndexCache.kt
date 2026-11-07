@@ -203,6 +203,15 @@ object NetworkFolderIndexCache {
         }
     }
 
+    /** A successful mutation refresh confirms the resulting listing, including an empty set. */
+    internal suspend fun saveMutationRefresh(
+        kind: ExplorerWindows.Kind,
+        sourceId: Long,
+        configKey: String,
+        relativeDir: String,
+        entries: List<BrowseEntryRemote>,
+    ): List<BrowseEntryRemote> = savePhotoGrid(kind, sourceId, configKey, relativeDir, entries)
+
     /** A successful photo-grid refresh confirms direct images, including an empty set. */
     suspend fun savePhotoGrid(
         kind: ExplorerWindows.Kind,

@@ -1161,6 +1161,13 @@
     <string name="transfer_upload_to">アップロード先</string>
     <string name="transfer_auto_start">自動開始</string>
     <string name="transfer_skip_existing">既存のファイルをスキップ</string>
+    <string name="transfer_rename_conflicts">名前が競合する場合は変更</string>
+    <string name="transfer_replace_existing">既存のファイルを置き換える</string>
+    <string name="transfer_preserve_date">元の日時を保持</string>
+    <string name="transfer_conflict_dialog">ファイル競合ダイアログ</string>
+    <string name="transfer_conflict_title">ファイルは既に存在します</string>
+    <string name="transfer_conflict_sizes">転送元: %1$s · 既存: %2$s</string>
+    <string name="transfer_conflict_remember">選択を記憶</string>
     <string name="transfer_dest">転送先</string>
     <string name="transfer_destination">転送先</string>
     <string name="transfer_start">開始</string>
@@ -1204,12 +1211,17 @@
     <string name="transfer_local_move">ストレージ内の移動</string>
     <string name="transfer_server_move">サーバー側の移動</string>
     <string name="transfer_item_count">%d 件</string>
-    <string name="transfer_source_unavailable">この項目は処理中、削除中、または利用できなくなっています。フォルダを更新してからもう一度お試しください。</string>
+    <string name="transfer_source_unavailable">この項目は移動または削除された可能性があります。親フォルダを更新してから再試行してください。</string>
+    <string name="transfer_source_busy">別の転送がこの項目または転送先を使用しています。転送の完了を待つか停止してから再試行してください。</string>
     <string name="transfer_delete_trash_protected">.trash 内の項目は削除できません。</string>
     <string name="ask_where_to_save">保存先を毎回確認</string>
     <string name="transfer_upload_action">アップロード先を選択…</string>
+    <string name="settings_enable_file_deletion">ファイル削除を有効にする</string>
+    <string name="action_restore_from_trash">.trash から復元</string>
+    <string name="zip_removal_confirm">この項目は ZIP フォルダ内にあります。代わりに ZIP ファイル「%1$s」を .trash に移動しますか？</string>
+    <string name="restore_finished_summary">%1$d/%2$d 件を復元 · スキップ %3$d · 失敗 %4$d</string>
     <string name="settings_use_trash_bin">ゴミ箱を使用</string>
-    <string name="settings_use_trash_bin_summary">ファイルとフォルダを .trash に移動します。オフにすると完全に削除します。ギャラリーは常に .trash に移動します。</string>
+    <string name="settings_use_trash_bin_summary">ファイルとフォルダを .trash に移動します。オフにすると完全に削除します。ギャラリーの削除は直下の画像ファイルのみが対象です。</string>
     <string name="action_empty_trash">ゴミ箱を削除</string>
     <string name="trash_named_confirm">「%1$s」を .trash フォルダに移動しますか？</string>
     <string name="delete_named_confirm">「%1$s」を完全に削除しますか？この操作は元に戻せません。</string>
@@ -1220,4 +1232,7 @@
     <string name="mixed_delete_confirm">%1$d 個のファイルを完全に削除し、%2$d 個の項目を .trash に移動しますか？ファイルの削除は元に戻せません。</string>
     <string name="browse_auto_finish_deletion">自動終了（削除）</string>
     <string name="gallery_trash_regular_files">%1$d 個の通常ファイルをギャラリーフォルダと一緒にゴミ箱へ移動しました。</string>
+    <string name="transfer_current">現在</string>
+    <string name="transfer_current_not_folder">「現在」を使うには、書き込み可能なフォルダを開いてください。</string>
+    <string name="transfer_same_destination">転送先が元のフォルダ、または項目自身と重なっています。別のフォルダを選択してください。</string>
 </resources>

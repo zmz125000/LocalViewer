@@ -5,6 +5,11 @@ import org.junit.Test
 
 class SmbTrashPathsTest {
     @Test
+    fun restoreToShareRootUsesRelativeRenameTarget() {
+        assertEquals("photo.jpg", smbTrashTarget("", "photo.jpg"))
+    }
+
+    @Test
     fun trashRootIsCreatedBeforeItsDateDirectoryForEveryPathStyle() {
         for ((input, expectedRoot) in listOf(
             ".trash/2026-10-30" to ".trash",

@@ -57,7 +57,7 @@ enum class BrowseOverflowPlacement {
 /**
  * Overflow actions for a browse list/grid cell.
  * Null callbacks still appear in the menu and call [onUnsupported] (toast),
- * except Share and Open in other app, which are hidden when unset.
+ * except Favorite, Share and Open in other app, which are hidden when unset.
  */
 data class BrowseOverflowActions(
     val kind: BrowseOverflowKind = BrowseOverflowKind.Common,
@@ -71,9 +71,9 @@ data class BrowseOverflowActions(
     val onOpenInNewTab: (() -> Unit)? = null,
     /** Remember this folder under explorer saved paths. Null hides the row. */
     val onSaveToPaths: (() -> Unit)? = null,
-    val onInfo: (() -> Unit)? = null,
     val onRead: (() -> Unit)? = null,
     val onPhotoGrid: (() -> Unit)? = null,
+    val galleryImageNames: List<String>? = null,
     val onPlay: (() -> Unit)? = null,
     val onExternalPlayer: (() -> Unit)? = null,
     val onCopyUrl: (() -> Unit)? = null,
@@ -100,6 +100,8 @@ data class BrowseOverflowActions(
     /** Extension, size, and the rest of the folder-list second line. */
     val listLine: BrowseListLine? = null,
     val uploadSource: com.hippo.ehviewer.library.TransferLocation? = null,
+    /** Keeps ZIP-member identity for removal when upload uses the backing archive. */
+    val removalSource: com.hippo.ehviewer.library.TransferLocation? = null,
     val resolveUpload: (suspend () -> com.hippo.ehviewer.library.TransferFile?)? = null,
     /** History write for Upload and Convert to, same as tapping the row open. */
     val recordOpen: (() -> Unit)? = null,
@@ -118,8 +120,10 @@ fun BrowseItemOverflowButton(
     val snackbar = LocalSnackBarHostState.current
     val saveTransfer = rememberSaveToTransferPicker()
     val useTrashBin by Settings.useTrashBin.collectAsState()
+    val enableFileDeletion by Settings.enableFileDeletion.collectAsState()
+    val removalSource = actions.removalSource ?: actions.uploadSource
     val galleryRemoval = actions.kind == BrowseOverflowKind.Gallery
-    val removalAction = if (useTrashBin || galleryRemoval) FileRemovalAction.Trash else FileRemovalAction.Delete
+    val removalAction = if (useTrashBin) FileRemovalAction.Trash else FileRemovalAction.Delete
     val confirmDelete = rememberNetworkDeleteConfirmation(removalAction)
     val confirmEmptyTrash = rememberNetworkDeleteConfirmation(FileRemovalAction.EmptyTrash)
     val explorer = LocalExplorerPanel.current
@@ -325,20 +329,22 @@ fun BrowseItemOverflowButton(
                 }
                 BrowseOverflowKind.Common -> Unit
             }
-            DropdownMenuItem(
-                text = {
-                    Text(
-                        stringResource(
-                            if (actions.favorited) {
-                                R.string.remove_from_favourites
-                            } else {
-                                R.string.add_to_favourites
-                            },
-                        ),
-                    )
-                },
-                onClick = { run(actions.onFavorite) },
-            )
+            if (actions.onFavorite != null) {
+                DropdownMenuItem(
+                    text = {
+                        Text(
+                            stringResource(
+                                if (actions.favorited) {
+                                    R.string.remove_from_favourites
+                                } else {
+                                    R.string.add_to_favourites
+                                },
+                            ),
+                        )
+                    },
+                    onClick = { run(actions.onFavorite) },
+                )
+            }
             DropdownMenuItem(
                 text = { Text(stringResource(R.string.action_save_to)) },
                 onClick = {
@@ -364,15 +370,15 @@ fun BrowseItemOverflowButton(
                     onClick = { beginUpload(saveQuick = false) },
                 )
             }
-            if (actions.uploadSource?.let {
-                    com.hippo.ehviewer.library.canRemove(it, removalAction) && com.hippo.ehviewer.library.canDelete(it)
+            if (enableFileDeletion && removalSource?.let {
+                    com.hippo.ehviewer.library.canRemoveItem(it, removalAction)
                 } == true
             ) {
                 DropdownMenuItem(
                     text = { Text(stringResource(if (removalAction == FileRemovalAction.Trash) R.string.action_trash else R.string.delete)) },
                     onClick = {
                         expanded = false
-                        actions.uploadSource.let { source ->
+                        removalSource.let { source ->
                             scope.launch {
                                 val files = collectTransferFilesForAction(
                                     listOf(
@@ -382,11 +388,12 @@ fun BrowseItemOverflowButton(
                                             actions.selectFolder,
                                             actions.listLine?.sizeBytes ?: -1L,
                                             actions.listLine?.lastModifiedMs ?: 0L,
+                                            galleryImageNames = actions.galleryImageNames,
                                         ) to galleryRemoval,
                                     ),
                                     snackbar,
                                     context,
-                                    GalleryFileAction.Trash,
+                                    if (removalAction == FileRemovalAction.Trash) GalleryFileAction.Trash else GalleryFileAction.Delete,
                                 ) ?: return@launch
                                 confirmDelete(files)
                             }
@@ -394,7 +401,20 @@ fun BrowseItemOverflowButton(
                     },
                 )
             }
-            if (actions.selectFolder && actions.uploadSource?.let { com.hippo.ehviewer.library.canRemove(it, FileRemovalAction.EmptyTrash) } == true) {
+            if (removalSource?.let { com.hippo.ehviewer.library.canRestore(it) } == true) {
+                DropdownMenuItem(
+                    text = { Text(stringResource(R.string.action_restore_from_trash)) },
+                    onClick = {
+                        expanded = false
+                        val source = requireNotNull(removalSource)
+                        UploadTransfers.delete(
+                            listOf(uploadRoot(source, actions.selectTitle ?: source.path.substringAfterLast('/'), actions.selectFolder, -1L, 0L)),
+                            FileRemovalAction.Restore,
+                        )
+                    },
+                )
+            }
+            if (enableFileDeletion && actions.selectFolder && removalSource?.let { com.hippo.ehviewer.library.canRemove(it, FileRemovalAction.EmptyTrash) } == true) {
                 DropdownMenuItem(
                     text = { Text(stringResource(R.string.action_empty_trash)) },
                     onClick = {
@@ -402,7 +422,7 @@ fun BrowseItemOverflowButton(
                         confirmEmptyTrash(
                             listOf(
                                 com.hippo.ehviewer.library.TransferFile(
-                                    requireNotNull(actions.uploadSource),
+                                    requireNotNull(removalSource),
                                     actions.selectTitle ?: ".trash",
                                     true,
                                     -1L,
@@ -474,10 +494,6 @@ fun BrowseItemOverflowButton(
                     onClick = { run(actions.onOpenWith) },
                 )
             }
-            DropdownMenuItem(
-                text = { Text(stringResource(R.string.browse_item_info)) },
-                onClick = { run(actions.onInfo) },
-            )
         }
     }
 }

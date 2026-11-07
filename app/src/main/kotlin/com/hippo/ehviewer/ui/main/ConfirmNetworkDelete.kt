@@ -14,11 +14,14 @@ import com.hippo.ehviewer.library.FileRemovalAction
 import com.hippo.ehviewer.library.TransferFile
 import com.hippo.ehviewer.library.removalActionFor
 import com.hippo.ehviewer.library.removalRequiresPanel
+import com.hippo.ehviewer.library.removalTargets
 import com.hippo.ehviewer.library.trashSelectionRoots
+import com.hippo.ehviewer.library.zipRemovalArchive
 
 /** Single files confirm by name; selections and folders open a panel that waits for Start. */
 @Composable
 internal fun rememberNetworkDeleteConfirmation(action: FileRemovalAction = FileRemovalAction.Trash, review: Boolean = false, onConfirmed: () -> Unit = {}): (List<TransferFile>) -> Unit {
+    var zipItem by remember { mutableStateOf(false) }
     var itemName by remember { mutableStateOf("") }
     var pending by remember { mutableStateOf<Pair<List<TransferFile>, FileRemovalAction>?>(null) }
     pending?.let { (files, confirmedAction) ->
@@ -26,13 +29,16 @@ internal fun rememberNetworkDeleteConfirmation(action: FileRemovalAction = FileR
             FileRemovalAction.Trash -> R.string.action_trash
             FileRemovalAction.Delete -> R.string.delete
             FileRemovalAction.EmptyTrash -> R.string.action_empty_trash
+            FileRemovalAction.Restore -> R.string.action_restore_from_trash
         }
         AlertDialog(
             onDismissRequest = { pending = null },
             title = { Text(stringResource(label)) },
             text = {
                 Text(
-                    if (confirmedAction == FileRemovalAction.EmptyTrash) {
+                    if (zipItem) {
+                        stringResource(R.string.zip_removal_confirm, itemName)
+                    } else if (confirmedAction == FileRemovalAction.EmptyTrash) {
                         stringResource(R.string.empty_trash_confirm)
                     } else {
                         val folders = files.count { removalActionFor(it, confirmedAction) == FileRemovalAction.Trash }
@@ -61,13 +67,15 @@ internal fun rememberNetworkDeleteConfirmation(action: FileRemovalAction = FileR
         )
     }
     return { files ->
-        val roots = trashSelectionRoots(files)
+        val fromZip = files.any { zipRemovalArchive(it.source) != null }
+        val roots = trashSelectionRoots(removalTargets(files))
         if (roots.isNotEmpty()) {
             if (review || removalRequiresPanel(roots, action)) {
                 if (UploadTransfers.delete(roots, action, review = true)) onConfirmed()
             } else {
-                itemName = files.single().relative.substringAfterLast('/')
-                pending = roots to action
+                zipItem = fromZip
+                itemName = if (fromZip) roots.single().source.path.let { com.hippo.ehviewer.library.decodedTrashPath(it).substringAfterLast('/').substringAfterLast(':') } else files.single().relative.substringAfterLast('/')
+                pending = roots to if (fromZip) FileRemovalAction.Trash else action
             }
         }
     }

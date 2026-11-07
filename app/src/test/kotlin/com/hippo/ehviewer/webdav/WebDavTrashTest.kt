@@ -11,6 +11,97 @@ import org.junit.Test
 
 class WebDavTrashTest {
     @Test
+    fun restoreRecreatesRelativeParentsAndRenamesConflictsWithoutOverwrite() = runBlocking {
+        val operations = mutableListOf<WebDavTrashRequest>()
+        var moves = 0
+        val result = restoreWebDavFromTrash("photos/.trash/2026-11-07/album/sub/photo.jpg", false, {}) {
+            operations += it
+            when (it.method) {
+                "MKCOL" -> WebDavTrashResponse(201)
+                "MOVE" -> WebDavTrashResponse(if (++moves == 1) 412 else 201)
+                else -> error("Unexpected request")
+            }
+        }
+        assertEquals("photos/album/sub/photo (2).jpg", result)
+        assertEquals(listOf("photos", "photos/album", "photos/album/sub"), operations.filter { it.method == "MKCOL" }.map { it.path })
+        assertEquals("photos/album/sub/photo (2).jpg", operations.last().destination)
+        assertTrue(operations.filter { it.method == "MOVE" }.all { it.overwrite == "F" && it.path == "photos/.trash/2026-11-07/album/sub/photo.jpg" })
+    }
+
+    @Test
+    fun rootRestoreDoesNotCreateAnEmptyDirectoryOrAbsoluteDestination() = runBlocking {
+        val operations = mutableListOf<WebDavTrashRequest>()
+        val result = restoreWebDavFromTrash(".trash/2026-11-07/book.zip", false, {}) {
+            operations += it
+            WebDavTrashResponse(201)
+        }
+        assertEquals("book.zip", result)
+        assertEquals(1, operations.size)
+        assertEquals("book.zip", operations.single().destination)
+    }
+
+    @Test
+    fun restoreMovesWholeFolderAndKeepsDotsWhenRenamingConflicts() = runBlocking {
+        var moves = 0
+        val result = restoreWebDavFromTrash("photos/.trash/2026-11-07/album.v1", true, {}) {
+            if (it.method != "MOVE") return@restoreWebDavFromTrash WebDavTrashResponse(201)
+            assertEquals("infinity", it.depth)
+            assertEquals("F", it.overwrite)
+            WebDavTrashResponse(if (++moves == 1) 412 else 201)
+        }
+        assertEquals("photos/album.v1 (2)", result)
+    }
+
+    @Test
+    fun failedRestoreNeverRetriesOrDeletesSource() = runBlocking {
+        for (status in listOf(403, 207, 500)) {
+            val operations = mutableListOf<WebDavTrashRequest>()
+            try {
+                restoreWebDavFromTrash("photos/.trash/2026-11-07/a.jpg", false, {}) {
+                    operations += it
+                    WebDavTrashResponse(if (it.method == "MOVE") status else 201)
+                }
+                fail("Restore must fail")
+            } catch (_: WebDavTrashException) {
+                assertEquals(1, operations.count { it.method == "MOVE" })
+                assertTrue(operations.none { it.method == "DELETE" || it.method == "PUT" })
+            }
+        }
+    }
+
+    @Test
+    fun unsupportedRestoreMoveRejectsWithoutPayloadFallbackOrRetry() = runBlocking {
+        for (directory in listOf(false, true)) {
+            for (status in listOf(405, 501)) {
+                val operations = mutableListOf<WebDavTrashRequest>()
+                try {
+                    restoreWebDavFromTrash(".trash/2026-11-07/album", directory, {}) {
+                        operations += it
+                        WebDavTrashResponse(status)
+                    }
+                    fail("Unsupported MOVE must be rejected")
+                } catch (_: UnsupportedOperationException) {
+                    assertEquals(listOf("MOVE"), operations.map { it.method })
+                    assertEquals("F", operations.single().overwrite)
+                    assertEquals("album", operations.single().destination)
+                }
+            }
+        }
+    }
+
+    @Test
+    fun restoreRejectsInfrastructureBeforeContactingServer() = runBlocking {
+        for (path in listOf(".trash", ".trash/2026-11-07", "photos/a.jpg")) {
+            try {
+                restoreWebDavFromTrash(path, false, {}) { error("Must not contact server") }
+                fail("Invalid restoration target")
+            } catch (_: IllegalArgumentException) {
+                // No server request before validating the restore path.
+            }
+        }
+    }
+
+    @Test
     fun protectedTrashItemsAreRejectedBeforeAnyServerRequest() = runBlocking {
         for (path in listOf(".trash", "photos/.trash/2026-10-30/photo.jpg", "photos/.TRASH/album")) {
             var requests = 0

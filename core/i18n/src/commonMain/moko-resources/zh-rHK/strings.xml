@@ -528,6 +528,13 @@
     <string name="transfer_upload_to">上傳到</string>
     <string name="transfer_auto_start">自動開始</string>
     <string name="transfer_skip_existing">略過已存在的檔案</string>
+    <string name="transfer_rename_conflicts">衝突時重新命名</string>
+    <string name="transfer_replace_existing">取代已存在的檔案</string>
+    <string name="transfer_preserve_date">保留原始日期</string>
+    <string name="transfer_conflict_dialog">檔案衝突對話框</string>
+    <string name="transfer_conflict_title">檔案已存在</string>
+    <string name="transfer_conflict_sizes">來源：%1$s · 已存在：%2$s</string>
+    <string name="transfer_conflict_remember">記住選擇</string>
     <string name="transfer_dest">目的地</string>
     <string name="transfer_destination">目的地</string>
     <string name="transfer_start">開始</string>
@@ -571,14 +578,19 @@
     <string name="transfer_local_move">本機移動</string>
     <string name="transfer_server_move">伺服器端移動</string>
     <string name="transfer_item_count">%d 個項目</string>
-    <string name="transfer_source_unavailable">此項目忙碌中、正在刪除或已無法使用。請重新整理資料夾後再試。</string>
+    <string name="transfer_source_unavailable">此項目可能已移動或刪除。請重新整理其上層資料夾後再試。</string>
+    <string name="transfer_source_busy">其他傳輸正在使用此項目或其目的地。請等待傳輸完成或停止傳輸後再試。</string>
     <string name="transfer_delete_trash_protected">.trash 內的項目無法刪除。</string>
     <string name="browse_ask_for_dest">詢問目的地</string>
     <string name="browse_ask_where_to_save">詢問影像轉換儲存位置</string>
     <string name="ask_where_to_save">詢問儲存位置</string>
     <string name="transfer_upload_action">上傳到…</string>
+    <string name="settings_enable_file_deletion">啟用檔案刪除</string>
+    <string name="action_restore_from_trash">從 .trash 還原</string>
+    <string name="zip_removal_confirm">此項目來自 ZIP 資料夾。改將 ZIP 檔案「%1$s」移到 .trash？</string>
+    <string name="restore_finished_summary">已還原 %1$d/%2$d 個項目 · 略過 %3$d · 失敗 %4$d</string>
     <string name="settings_use_trash_bin">使用垃圾桶</string>
-    <string name="settings_use_trash_bin_summary">將檔案和資料夾移到 .trash。關閉後永久刪除。畫廊一律移到 .trash。</string>
+    <string name="settings_use_trash_bin_summary">將檔案和資料夾移到 .trash。關閉後永久刪除。畫廊移除僅影響其中的直接圖片檔案。</string>
     <string name="action_empty_trash">刪除垃圾桶</string>
     <string name="trash_named_confirm">將「%1$s」移到 .trash 資料夾？</string>
     <string name="delete_named_confirm">永久刪除「%1$s」？此操作無法復原。</string>
@@ -591,4 +603,7 @@
     <string name="gallery_trash_regular_files">%1$d 個一般檔案已隨畫廊資料夾移到垃圾桶。</string>
 
     <string name="convert_jxl_scrgb">JPEG XL（HDR scRGB）</string>
+    <string name="transfer_current">目前</string>
+    <string name="transfer_current_not_folder">請開啟可寫入的資料夾以使用「目前」。</string>
+    <string name="transfer_same_destination">目的地是來源資料夾，或會將項目複製到自身。請選擇其他資料夾。</string>
 </resources>
