@@ -2728,7 +2728,11 @@ object SmbGateway {
         if (zips.isEmpty()) return emptyMap()
         val out = ConcurrentHashMap<String, ZipAsDirListing.ZipRootListing>()
         val interiors = ConcurrentHashMap<String, List<BrowseEntryRemote>>()
-        val gate = Semaphore(maxConcurrentOpsPerHost().coerceAtLeast(1))
+        // Each synchronous CD parser waits on a separate KeepOpenSmbFileSource IO
+        // worker (and possibly pipelined reads). The handle budget can be 45 by
+        // default, or hundreds with custom settings: using it here exhausts the
+        // shared IO dispatcher before those workers can run.
+        val gate = Semaphore(smbZipProbeParallelism(maxConcurrentOpsPerHost()))
         val t0 = System.nanoTime()
         coroutineScope {
             zips.map { child ->
@@ -4639,6 +4643,9 @@ internal sealed interface SmbDataPlacement {
     data object Grow : SmbDataPlacement
     data object Wait : SmbDataPlacement
 }
+
+/** Bound parser/worker pairs independently of TCP multiplex and connection settings. */
+internal fun smbZipProbeParallelism(maxHostOps: Int): Int = maxHostOps.coerceIn(1, 4)
 
 internal fun smbPlaceDataOp(
     outstanding: IntArray,
