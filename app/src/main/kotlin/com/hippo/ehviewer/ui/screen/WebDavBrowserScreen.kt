@@ -59,6 +59,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.repeatOnLifecycle
 import com.ehviewer.core.database.model.WebDavSourceEntity
 import com.ehviewer.core.i18n.R
 import com.ehviewer.core.model.BaseGalleryInfo
@@ -189,6 +190,7 @@ import com.hippo.ehviewer.ui.tools.awaitConfirmationOrCancel
 import com.hippo.ehviewer.util.LocalNetworkPermission
 import com.hippo.ehviewer.util.addTextToClipboard
 import com.hippo.ehviewer.util.ensureLocalNetworkPermission
+import com.hippo.ehviewer.webdav.WebDavClient
 import com.hippo.ehviewer.webdav.WebDavGateway
 import com.hippo.ehviewer.webdav.WebDavPasswordStore
 import com.hippo.ehviewer.webdav.WebDavRepository
@@ -196,6 +198,8 @@ import com.ramcosta.composedestinations.annotation.Destination
 import com.ramcosta.composedestinations.annotation.RootGraph
 import com.ramcosta.composedestinations.navigation.DestinationsNavigator
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import moe.tarsin.snackbar
 import moe.tarsin.string
 
@@ -293,6 +297,10 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
     val browseFolderThumbs by Settings.browseFolderThumbs.collectAsState()
     val browseZipAsDir by Settings.browseZipAsDir.collectAsState()
     val photoGridMode by Settings.photoGridMode.collectAsState()
+    val connectedWebDavSources by WebDavClient.connectedSources.collectAsState()
+    val sourceConnectionKey = source?.let(WebDavGateway::sourceConfigKey)
+    // Like SMB, the toolbar icon indicates reachability; pull-to-refresh remains the retry.
+    val refreshEnabled = sourceConnectionKey in connectedWebDavSources
     val relativeDirForMode = segments.joinToString("/")
     val zipPlainFolder = isZipPlainFolderListing(
         relativeDirForMode,
@@ -873,6 +881,23 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
     // Resume after Manage-sources edit or app background: soft refresh current path only.
     // Must not call a free-floating reload that races path changes (see LaunchedEffect above).
     val lifecycleOwner = LocalLifecycleOwner.current
+    LaunchedEffect(lifecycleOwner, sourceConnectionKey) {
+        val src = source ?: return@LaunchedEffect
+        lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+            if (!ensureLocalNetworkPermission()) return@repeatOnLifecycle
+            // Cache hits need a real HTTP check too. Retry sequentially only while unreachable.
+            // Recheck on each resume because HTTP has no persistent session to inspect.
+            var first = true
+            while (isActive) {
+                if (first || sourceConnectionKey !in WebDavClient.connectedSources.value) {
+                    first = false
+                    val password = withIOContext { WebDavPasswordStore.get(src.id) }
+                    WebDavClient.refreshConnectionSignal(src, password)
+                }
+                delay(15_000L)
+            }
+        }
+    }
     DisposableEffect(lifecycleOwner, sourceId) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
@@ -2485,6 +2510,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                             onEphemeralLayout = if (photoGrid) gridSort.onUseList else null,
                         )
                         IconButton(
+                            enabled = refreshEnabled,
                             onClick = {
                                 refreshing = true
                                 requestForceReload()

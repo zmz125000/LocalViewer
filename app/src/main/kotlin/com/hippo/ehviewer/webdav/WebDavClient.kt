@@ -21,6 +21,8 @@ import io.ktor.client.engine.okhttp.OkHttp
 import io.ktor.client.plugins.HttpRequestTimeoutException
 import io.ktor.client.plugins.HttpTimeout
 import io.ktor.client.plugins.HttpTimeoutConfig
+import io.ktor.client.plugins.api.Send
+import io.ktor.client.plugins.api.createClientPlugin
 import io.ktor.client.plugins.timeout
 import io.ktor.client.request.header
 import io.ktor.client.request.prepareGet
@@ -37,6 +39,7 @@ import io.ktor.http.Url
 import io.ktor.http.contentType
 import io.ktor.http.encodedPath
 import io.ktor.http.takeFrom
+import io.ktor.util.AttributeKey
 import io.ktor.utils.io.jvm.javaio.toInputStream
 import io.ktor.utils.io.writeFully
 import java.io.IOException
@@ -59,6 +62,7 @@ import javax.net.ssl.SSLContext
 import javax.net.ssl.TrustManager
 import javax.net.ssl.X509TrustManager
 import kotlin.coroutines.coroutineContext
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.sync.Semaphore
@@ -86,6 +90,52 @@ import org.xmlpull.v1.XmlPullParserFactory
  * TLS: system trust by default. [Settings.webDavInsecureTls] → trust-all for self-signed LAN.
  */
 object WebDavClient {
+    private val connections = WebDavConnectionState()
+    val connectedSources = connections.sources
+    private val connectionSource = AttributeKey<String>("WebDavConnectionSource")
+    private val connectionSignal = createClientPlugin("WebDavConnectionSignal") {
+        on(Send) { request ->
+            val key = request.attributes.getOrNull(connectionSource)
+            val signal = key?.let(connections::begin)
+            try {
+                proceed(request).also { call ->
+                    signal?.let { connections.response(it, call.response.status.value) }
+                }
+            } catch (error: Throwable) {
+                // Navigation and leaving the foreground cancel work without implying a disconnect.
+                if (error !is CancellationException) signal?.let(connections::failed)
+                throw error
+            }
+        }
+    }
+
+    fun invalidateConnection(source: WebDavSourceEntity) {
+        connections.invalidate(WebDavGateway.sourceConfigKey(source))
+    }
+
+    /** Depth zero checks the source without enumerating or changing cached folder contents. */
+    suspend fun refreshConnectionSignal(source: WebDavSourceEntity, password: String) = withIOContext {
+        try {
+            http().request(dirUrl(source, "")) {
+                method = PropFind
+                header("Depth", "0")
+                attributes.put(connectionSource, WebDavGateway.sourceConfigKey(source))
+                basicAuthHeader(source.username, password)?.let { header(HttpHeaders.Authorization, it) }
+                contentType(ContentType.Application.Xml)
+                setBody(PropfindBody)
+                timeout {
+                    connectTimeoutMillis = LIST_CONNECT_MS
+                    requestTimeoutMillis = LIST_REQUEST_MS
+                    socketTimeoutMillis = LIST_SOCKET_MS
+                }
+            }.bodyAsText()
+        } catch (error: CancellationException) {
+            throw error
+        } catch (_: Exception) {
+            // The HTTP hook publishes failure; a probe never changes the listing or shows an error.
+        }
+    }
+
     /** Scope the HTTP response to the whole streaming transfer; no replay into a partial sink. */
     suspend fun <T> transferRead(
         source: WebDavSourceEntity,
@@ -94,6 +144,7 @@ object WebDavClient {
         block: suspend (java.io.InputStream) -> T,
     ): T = withIOContext {
         http().prepareGet(absoluteUrl(source, relative)) {
+            attributes.put(connectionSource, WebDavGateway.sourceConfigKey(source))
             basicAuthHeader(source.username, password)?.let { header(HttpHeaders.Authorization, it) }
             timeout {
                 requestTimeoutMillis = HttpTimeoutConfig.INFINITE_TIMEOUT_MS
@@ -108,6 +159,7 @@ object WebDavClient {
     suspend fun transferExists(source: WebDavSourceEntity, password: String, relative: String): Boolean = withIOContext {
         val response = http().request(absoluteUrl(source, relative)) {
             method = HttpMethod.Head
+            attributes.put(connectionSource, WebDavGateway.sourceConfigKey(source))
             basicAuthHeader(source.username, password)?.let { header(HttpHeaders.Authorization, it) }
         }
         when (response.status.value) {
@@ -120,6 +172,7 @@ object WebDavClient {
     suspend fun transferMkdir(source: WebDavSourceEntity, password: String, relative: String) = withIOContext {
         val response = http().request(dirUrl(source, relative)) {
             method = HttpMethod("MKCOL")
+            attributes.put(connectionSource, WebDavGateway.sourceConfigKey(source))
             basicAuthHeader(source.username, password)?.let { header(HttpHeaders.Authorization, it) }
         }
         if (response.status.value == 405) {
@@ -139,6 +192,7 @@ object WebDavClient {
         require(relative.trim('/').isNotEmpty()) { "Cannot delete a source root" }
         val response = trashHttp().request(if (directory) dirUrl(source, relative) else absoluteUrl(source, relative)) {
             method = HttpMethod.Delete
+            attributes.put(connectionSource, WebDavGateway.sourceConfigKey(source))
             basicAuthHeader(source.username, password)?.let { header(HttpHeaders.Authorization, it) }
             timeout {
                 connectTimeoutMillis = LIST_CONNECT_MS
@@ -168,6 +222,7 @@ object WebDavClient {
         val url = if (operation.directory) dirUrl(source, operation.path) else absoluteUrl(source, operation.path)
         val response = client.request(url) {
             method = HttpMethod(operation.method)
+            attributes.put(connectionSource, WebDavGateway.sourceConfigKey(source))
             auth?.let { header(HttpHeaders.Authorization, it) }
             operation.depth?.let { header("Depth", it) }
             operation.overwrite?.let { header("Overwrite", it) }
@@ -242,6 +297,7 @@ object WebDavClient {
                     requestTimeoutMillis = HttpTimeoutConfig.INFINITE_TIMEOUT_MS
                     socketTimeoutMillis = DL_SOCKET_MS
                 }
+                attributes.put(connectionSource, WebDavGateway.sourceConfigKey(source))
                 auth?.let { header(HttpHeaders.Authorization, it) }
                 if (mtimeMs > 0) header("X-OC-Mtime", (mtimeMs / 1000).toString())
                 header(HttpHeaders.IfNoneMatch, "*")
@@ -268,6 +324,7 @@ object WebDavClient {
                 runCatching {
                     http().request(absoluteUrl(source, temp)) {
                         method = HttpMethod("PROPPATCH")
+                        attributes.put(connectionSource, WebDavGateway.sourceConfigKey(source))
                         auth?.let { header(HttpHeaders.Authorization, it) }
                         contentType(ContentType.Application.Xml)
                         setBody("<d:propertyupdate xmlns:d=\"DAV:\"><d:set><d:prop><d:getlastmodified>$date</d:getlastmodified></d:prop></d:set></d:propertyupdate>")
@@ -277,6 +334,7 @@ object WebDavClient {
             checkpoint()
             val moved = http().request(absoluteUrl(source, temp)) {
                 method = HttpMethod("MOVE")
+                attributes.put(connectionSource, WebDavGateway.sourceConfigKey(source))
                 auth?.let { header(HttpHeaders.Authorization, it) }
                 header("Destination", absoluteUrl(source, relative).toString())
                 header("Overwrite", "F")
@@ -301,6 +359,7 @@ object WebDavClient {
                                         requestTimeoutMillis = 3000
                                         socketTimeoutMillis = 3000
                                     }
+                                    attributes.put(connectionSource, WebDavGateway.sourceConfigKey(source))
                                     auth?.let { header(HttpHeaders.Authorization, it) }
                                 }.status.value
                             },
@@ -552,6 +611,7 @@ object WebDavClient {
     }
 
     private fun io.ktor.client.HttpClientConfig<*>.installListDownloadTimeout() {
+        install(connectionSignal)
         install(HttpTimeout) {
             requestTimeoutMillis = DL_REQUEST_MS
             connectTimeoutMillis = DL_CONNECT_MS
@@ -615,6 +675,7 @@ object WebDavClient {
         val prev = lastPathChangeMs.getAndSet(now)
         if (prev != 0L && now - prev < PATH_CHANGE_DEBOUNCE_MS) return
         logcat { "WebDavClient: network path changed ($reason) — reset browse + sticky clients" }
+        connections.invalidate()
         resetClient()
         resetStickyClient()
         BrowseSession.invalidateAllWebDavListings()
@@ -796,6 +857,7 @@ object WebDavClient {
                         requestTimeoutMillis = DL_REQUEST_MS
                         socketTimeoutMillis = DL_SOCKET_MS
                     }
+                    attributes.put(connectionSource, WebDavGateway.sourceConfigKey(source))
                     auth?.let { header(HttpHeaders.Authorization, it) }
                 }.execute { response ->
                     if (response.status.value !in 200..299) {
@@ -840,6 +902,7 @@ object WebDavClient {
                         requestTimeoutMillis = DL_REQUEST_MS
                         socketTimeoutMillis = DL_SOCKET_MS
                     }
+                    attributes.put(connectionSource, WebDavGateway.sourceConfigKey(source))
                     auth?.let { header(HttpHeaders.Authorization, it) }
                     header(HttpHeaders.Range, "bytes=0-$end")
                 }.execute { response ->
@@ -951,6 +1014,7 @@ object WebDavClient {
                             requestTimeoutMillis = LIST_REQUEST_MS
                             socketTimeoutMillis = LIST_SOCKET_MS
                         }
+                        attributes.put(connectionSource, WebDavGateway.sourceConfigKey(source))
                         auth?.let { header(HttpHeaders.Authorization, it) }
                         header(HttpHeaders.Range, "bytes=0-0")
                     }.execute { resp ->
@@ -1012,6 +1076,7 @@ object WebDavClient {
                                 requestTimeoutMillis = LIST_REQUEST_MS
                                 socketTimeoutMillis = LIST_SOCKET_MS
                             }
+                            attributes.put(connectionSource, WebDavGateway.sourceConfigKey(source))
                             auth?.let { header(HttpHeaders.Authorization, it) }
                         }
                         if (response.status.value in 200..299) {
@@ -1032,6 +1097,7 @@ object WebDavClient {
                             socketTimeoutMillis = LIST_SOCKET_MS
                         }
                         header("Depth", "0")
+                        attributes.put(connectionSource, WebDavGateway.sourceConfigKey(source))
                         auth?.let { header(HttpHeaders.Authorization, it) }
                         contentType(ContentType.Application.Xml)
                         setBody(PropfindBody)
@@ -1071,6 +1137,7 @@ object WebDavClient {
                         socketTimeoutMillis = LIST_SOCKET_MS
                     }
                     header("Depth", "0")
+                    attributes.put(connectionSource, WebDavGateway.sourceConfigKey(source))
                     basicAuthHeader(source.username, password)?.let { header(HttpHeaders.Authorization, it) }
                     contentType(ContentType.Application.Xml)
                     setBody(PropfindBody)
@@ -1160,6 +1227,7 @@ object WebDavClient {
                         requestTimeoutMillis = DL_REQUEST_MS
                         socketTimeoutMillis = DL_SOCKET_MS
                     }
+                    attributes.put(connectionSource, WebDavGateway.sourceConfigKey(source))
                     auth?.let { header(HttpHeaders.Authorization, it) }
                     header(HttpHeaders.Range, "bytes=$fileOffset-$end")
                 }.execute { response ->
@@ -1239,6 +1307,7 @@ object WebDavClient {
                     socketTimeoutMillis = LIST_SOCKET_MS
                 }
                 header("Depth", "1")
+                attributes.put(connectionSource, WebDavGateway.sourceConfigKey(source))
                 auth?.let { header(HttpHeaders.Authorization, it) }
                 contentType(ContentType.Application.Xml)
                 setBody(PropfindBody)
