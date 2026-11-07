@@ -63,15 +63,27 @@ class GalleryTransferFilesTest {
     }
 
     @Test
-    fun galleryDeletionLeavesFolderSidecarsVideosAndSubfoldersAlone() = runBlocking {
+    fun galleryDeletionCollectsOnlyImagesThenChecksFolderForCleanup() = runBlocking {
         val images = listOf(child("1.jpg"), child("2.webp"))
         val result = collectGalleryTransferFiles(gallery, true, GalleryFileAction.Delete) {
             images.reversed() + child("notes.txt") + child("clip.mp4") + child("nested", true)
         }
-        assertEquals(images, result)
-        assertTrue(result.all { !it.directory && !it.galleryTrash })
+        assertEquals(images, result.dropLast(1))
+        assertTrue(result.dropLast(1).all { !it.directory && !it.galleryTrash })
+        assertEquals(gallery.copy(deleteIfEmpty = true), result.last())
         val empty = collectGalleryTransferFiles(gallery, true, GalleryFileAction.Delete) { listOf(child("notes.txt")) }
-        assertTrue(empty.isEmpty())
+        assertEquals(listOf(gallery.copy(deleteIfEmpty = true)), empty)
+    }
+
+    @Test
+    fun galleryDeletionNeverAddsStorageRootCleanup() = runBlocking {
+        val image = child("1.jpg")
+        for (root in listOf(
+            source.copy(path = ""),
+            TransferLocation(ExplorerWindows.Kind.Local, 0, "content:/provider/tree/primary%3APhotos/document/primary%3APhotos"),
+        )) {
+            assertEquals(listOf(image), collectGalleryTransferFiles(gallery.copy(source = root), true, GalleryFileAction.Delete) { listOf(image) })
+        }
     }
 
     @Test

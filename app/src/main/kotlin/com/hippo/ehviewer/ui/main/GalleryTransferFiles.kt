@@ -8,6 +8,7 @@ import com.ehviewer.core.util.withIOContext
 import com.hippo.ehviewer.library.TransferFile
 import com.hippo.ehviewer.library.TransferFiles
 import com.hippo.ehviewer.library.TransferLocation
+import com.hippo.ehviewer.library.canDelete
 import com.hippo.ehviewer.library.isImageFileName
 import com.hippo.ehviewer.library.naturalCompare
 import com.hippo.ehviewer.library.zipRemovalArchive
@@ -35,7 +36,7 @@ internal suspend fun collectGalleryTransferFiles(
         GalleryFileAction.Images -> images
         GalleryFileAction.Upload -> if (images.isEmpty()) emptyList() else listOf(root.copy(galleryImages = images))
         GalleryFileAction.Trash -> images.map { it.copy(galleryTrash = true) }
-        GalleryFileAction.Delete -> images
+        GalleryFileAction.Delete -> images + if (canDelete(root.source)) listOf(root.copy(deleteIfEmpty = true)) else emptyList()
     }
 }
 

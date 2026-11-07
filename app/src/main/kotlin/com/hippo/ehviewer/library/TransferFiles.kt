@@ -51,6 +51,8 @@ data class TransferFile(
     val galleryTrash: Boolean = false,
     /** Non-image files included when moving a whole gallery directory. */
     val galleryRegularFiles: Int = 0,
+    /** Gallery cleanup runs after image deletion and leaves any remaining contents alone. */
+    val deleteIfEmpty: Boolean = false,
 )
 
 class TransferControl {
@@ -121,6 +123,16 @@ object TransferFiles {
                 TransferFile(location.child(it.name), it.name, it.isDirectory, it.size, it.lastModifiedMs)
             }
         }
+    }
+
+    /** A failed SAF query must never be interpreted as an empty folder before deletion. */
+    internal suspend fun isDirectoryEmpty(location: TransferLocation): Boolean {
+        if (location.kind != ExplorerWindows.Kind.Local) return children(location).isEmpty()
+        val uri = location.path.toPath().toUri()
+        val childrenUri = DocumentsContract.buildChildDocumentsUriUsingTree(uri, DocumentsContract.getDocumentId(uri))
+        return appCtx.contentResolver.query(childrenUri, arrayOf(DocumentsContract.Document.COLUMN_DOCUMENT_ID), null, null, null)?.use {
+            !it.moveToFirst()
+        } ?: throw java.io.IOException("Cannot list folder: ${location.path}")
     }
 
     suspend fun stat(file: TransferFile): TransferFile {

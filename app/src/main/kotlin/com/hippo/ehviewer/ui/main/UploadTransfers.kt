@@ -421,12 +421,20 @@ internal object UploadTransfers {
                         // Refresh attempted network parents even when the acknowledgement is lost.
                         val rowAction = removalActionFor(row.file, job.removalAction)
                         try {
-                            lease.attempted(row.file.source)
                             val detail = when (rowAction) {
-                                FileRemovalAction.Trash -> "$date/${TrashFiles.move(row.file, date, job.control)}"
-                                FileRemovalAction.Restore -> RestoreFiles.move(row.file, job.control)
+                                FileRemovalAction.Trash -> {
+                                    lease.attempted(row.file.source)
+                                    "$date/${TrashFiles.move(row.file, date, job.control)}"
+                                }
+                                FileRemovalAction.Restore -> {
+                                    lease.attempted(row.file.source)
+                                    RestoreFiles.move(row.file, job.control)
+                                }
                                 else -> {
-                                    PermanentFiles.delete(row.file, rowAction, job.control)
+                                    if (!PermanentFiles.delete(row.file, rowAction, job.control, onDelete = { lease.attempted(row.file.source) })) {
+                                        updateRow(job, row.file.relative, UploadFileStatus.Skipped)
+                                        continue
+                                    }
                                     null
                                 }
                             }

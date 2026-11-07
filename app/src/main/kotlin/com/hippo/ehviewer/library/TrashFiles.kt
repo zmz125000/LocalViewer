@@ -95,7 +95,7 @@ internal fun trashSelectionRoots(files: List<TransferFile>): List<TransferFile> 
     val roots = files.map { if (it.source.kind == ExplorerWindows.Kind.Local) it else it.copy(source = it.source.copy(path = it.source.path.replace('\\', '/').trim('/'))) }.distinctBy { it.source }
     return roots.filter { file ->
         roots.none { parent ->
-            parent !== file && parent.directory && parent.source.kind == file.source.kind &&
+            parent !== file && parent.directory && !parent.deleteIfEmpty && parent.source.kind == file.source.kind &&
                 parent.source.sourceId == file.source.sourceId &&
                 file.source.path.trim('/').startsWith(parent.source.path.trim('/') + "/")
         }
@@ -215,7 +215,7 @@ internal suspend fun collectRemovalFiles(
         check(depth < 256) { "Folder nesting is too deep" }
         check(visited.add(file.source)) { "Folder cycle: ${file.relative}" }
         require(canRemoveFile(file, action)) { "Invalid deletion target: ${file.relative}" }
-        if (file.directory && removalActionFor(file, action) == FileRemovalAction.Delete) {
+        if (file.directory && !file.deleteIfEmpty && removalActionFor(file, action) == FileRemovalAction.Delete) {
             for (child in children(file.source)) {
                 require(child.relative.isNotEmpty() && child.relative != "." && child.relative != ".." && '/' !in child.relative && '\\' !in child.relative)
                 walk(child.copy(relative = "${file.relative}/${child.relative}"), depth + 1)
@@ -229,13 +229,30 @@ internal suspend fun collectRemovalFiles(
 
 /** Use provider/server folder deletion, with the SMB recursive operation where required. */
 internal object PermanentFiles {
-    suspend fun delete(file: TransferFile, action: FileRemovalAction, control: TransferControl) {
+    suspend fun delete(
+        file: TransferFile,
+        action: FileRemovalAction,
+        control: TransferControl,
+        onDelete: () -> Unit = {},
+        isEmpty: suspend (TransferLocation) -> Boolean = { TransferFiles.isDirectoryEmpty(it) },
+        remove: suspend () -> Unit = { deleteEntry(file, action, control) },
+    ): Boolean {
         require((action == FileRemovalAction.Delete || action == FileRemovalAction.EmptyTrash) && canRemove(file.source, action)) { "Invalid deletion target" }
         require(action != FileRemovalAction.EmptyTrash || file.directory) { "Trash must be a folder" }
         control.checkpoint()
         if (file.directory && action == FileRemovalAction.Delete) {
-            check(TransferFiles.children(file.source).isEmpty()) { "Folder is not empty: ${file.relative}" }
+            if (!isEmpty(file.source)) {
+                if (file.deleteIfEmpty) return false
+                error("Folder is not empty: ${file.relative}")
+            }
         }
+        control.checkpoint()
+        onDelete()
+        remove()
+        return true
+    }
+
+    private suspend fun deleteEntry(file: TransferFile, action: FileRemovalAction, control: TransferControl) {
         when (file.source.kind) {
             ExplorerWindows.Kind.Smb -> {
                 val source = requireNotNull(SmbRepository.load(file.source.sourceId))
