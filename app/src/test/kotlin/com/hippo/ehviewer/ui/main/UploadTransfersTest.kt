@@ -1,6 +1,7 @@
 package com.hippo.ehviewer.ui.main
 
 import com.hippo.ehviewer.library.ExplorerWindows
+import com.hippo.ehviewer.library.TransferConflictPolicy
 import com.hippo.ehviewer.library.TransferControl
 import com.hippo.ehviewer.library.TransferFile
 import com.hippo.ehviewer.library.TransferLocation
@@ -25,7 +26,8 @@ class UploadTransfersTest {
                 row("denied", true).copy(status = UploadFileStatus.Failed),
                 row("pending", true),
             ),
-            skipExisting = false,
+            conflictPolicy = TransferConflictPolicy.Rename,
+            preserveDate = true,
             background = false,
             autoFinish = false,
             autoStart = false,
@@ -41,14 +43,16 @@ class UploadTransfersTest {
     @Test
     fun `continue clears transfer results and retains the manifest and destination`() {
         for (phase in listOf(UploadPhase.Finished, UploadPhase.Stopped, UploadPhase.Failed)) {
-            for (enabled in listOf(false, true)) {
+            for (policy in TransferConflictPolicy.entries) {
+                val enabled = policy != TransferConflictPolicy.Rename
                 val rows = UploadFileStatus.entries.map { row("$it.jpg").copy(status = it, detail = "old result") }
                 val state = UploadState(
                     phase = phase,
                     rows = rows,
                     destination = rows.first().file.source,
                     destinationLabel = "destination",
-                    skipExisting = enabled,
+                    conflictPolicy = policy,
+                    preserveDate = enabled,
                     background = enabled,
                     autoFinish = enabled,
                     autoStart = enabled,
@@ -70,7 +74,8 @@ class UploadTransfersTest {
                 assertEquals(0L, reset.speedBps)
                 assertFalse(reset.serverCopy)
                 assertFalse(reset.startWhenReady)
-                assertEquals(enabled, reset.skipExisting)
+                assertEquals(state.conflictPolicy, reset.conflictPolicy)
+                assertEquals(enabled, reset.preserveDate)
                 assertEquals(enabled, reset.background)
                 assertEquals(enabled, reset.autoFinish)
                 assertEquals(enabled, reset.autoStart)
@@ -229,7 +234,8 @@ class UploadTransfersTest {
     @Test
     fun `progress counts files independently of folders and pending work`() {
         val state = UploadState(
-            skipExisting = true,
+            conflictPolicy = TransferConflictPolicy.Skip,
+            preserveDate = true,
             background = false,
             autoFinish = false,
             autoStart = false,

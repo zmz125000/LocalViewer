@@ -16,6 +16,7 @@ import com.hippo.ehviewer.library.NetworkSourceGuard
 import com.hippo.ehviewer.library.PermanentFiles
 import com.hippo.ehviewer.library.RestoreFiles
 import com.hippo.ehviewer.library.SavedUploads
+import com.hippo.ehviewer.library.TransferConflictPolicy
 import com.hippo.ehviewer.library.TransferControl
 import com.hippo.ehviewer.library.TransferFile
 import com.hippo.ehviewer.library.TransferFiles
@@ -70,7 +71,8 @@ internal data class UploadState(
     val rows: List<UploadRow> = emptyList(),
     val destination: TransferLocation? = null,
     val destinationLabel: String = "",
-    val skipExisting: Boolean = Settings.uploadSkipExisting.value,
+    val conflictPolicy: TransferConflictPolicy = TransferConflictPolicy.fromPreference(Settings.uploadConflictPolicy.value, Settings.uploadSkipExisting.value),
+    val preserveDate: Boolean = Settings.uploadPreserveDate.value,
     val background: Boolean = Settings.browseTaskForegroundService.value,
     val autoFinish: Boolean = Settings.browseTaskAutoFinish.value,
     val autoStart: Boolean = Settings.uploadAutoStart.value,
@@ -503,10 +505,15 @@ internal object UploadTransfers {
         val state = job.state.value
         if (state.autoFinish && state.phase == UploadPhase.Finished && state.failed == 0) dismiss(job)
     }
-    fun toggleSkipExisting(job: UploadJob) {
+    fun setConflictPolicy(job: UploadJob, policy: TransferConflictPolicy) {
         if (!job.state.value.editable) return
-        val state = job.state.updateAndGet { if (it.editable) it.copy(skipExisting = !it.skipExisting) else it }
-        Settings.uploadSkipExisting.value = state.skipExisting
+        val state = job.state.updateAndGet { if (it.editable) it.copy(conflictPolicy = policy) else it }
+        Settings.uploadConflictPolicy.value = state.conflictPolicy.ordinal
+    }
+    fun togglePreserveDate(job: UploadJob) {
+        if (!job.state.value.editable) return
+        val state = job.state.updateAndGet { if (it.editable) it.copy(preserveDate = !it.preserveDate) else it }
+        Settings.uploadPreserveDate.value = state.preserveDate
     }
     fun togglePause(job: UploadJob) {
         val paused = !job.control.paused.get()
@@ -656,7 +663,7 @@ internal object UploadTransfers {
                                 if (file.directory) {
                                     val created = com.hippo.ehviewer.library.createTransferWithoutOverwrite(
                                         name = name,
-                                        skipExisting = state.skipExisting,
+                                        skipExisting = state.conflictPolicy == TransferConflictPolicy.Skip,
                                         checkpoint = job.control::checkpoint,
                                         exists = { false }, // mkdir merges existing directories, rejects files.
                                         create = { TransferFiles.mkdir(parent, it, connection) },
@@ -680,9 +687,9 @@ internal object UploadTransfers {
                                     return
                                 }
                                 val currentFile = prepared?.getOrThrow() ?: if (file.size >= 0 && file.mtime > 0) file else TransferFiles.stat(file)
-                                val result = com.hippo.ehviewer.library.createTransferWithoutOverwrite(
+                                val result = com.hippo.ehviewer.library.createTransferFile(
                                     name = name,
-                                    skipExisting = state.skipExisting,
+                                    policy = state.conflictPolicy,
                                     checkpoint = job.control::checkpoint,
                                     exists = { candidate ->
                                         // SAF document ids are opaque; match display names.
@@ -700,25 +707,8 @@ internal object UploadTransfers {
                                             TransferFiles.exists(parent.child(candidate), connection)
                                         }
                                     },
-                                    matchesExisting = { candidate ->
-                                        try {
-                                            // Reuse destination metadata across the batch's conflicts.
-                                            val existing = safListing.withLock { destinationFiles(parent, connection)[candidate] }
-                                                ?: TransferFiles.find(parent, candidate, connection)
-                                            if (existing == null || existing.directory) {
-                                                false
-                                            } else {
-                                                val metadata = if (existing.size >= 0 && existing.mtime > 0) existing else TransferFiles.stat(existing)
-                                                com.hippo.ehviewer.library.transferMetadataMatches(currentFile, metadata)
-                                            }
-                                        } catch (e: CancellationException) {
-                                            throw e
-                                        } catch (e: Throwable) {
-                                            logcat("FileTransfer", e)
-                                            false // Unreadable metadata keeps the existing rename policy.
-                                        }
-                                    },
-                                    create = { candidate ->
+                                    create = { candidate, replace ->
+                                        val existing = if (replace) safListing.withLock { destinationFiles(parent, connection)[candidate] } else null
                                         TransferFiles.write(
                                             currentFile,
                                             parent,
@@ -727,6 +717,9 @@ internal object UploadTransfers {
                                             connection,
                                             onServerCopy = { serverCopy -> job.state.update { it.copy(serverCopy = serverCopy) } },
                                             destinationChecked = parent.kind == ExplorerWindows.Kind.Local && !parent.path.startsWith('/'),
+                                            replaceExisting = replace,
+                                            preserveDate = state.preserveDate,
+                                            existingDestination = existing,
                                         ) { job.bytes.addAndGet(it) }
                                     },
                                 )
@@ -737,13 +730,24 @@ internal object UploadTransfers {
                                 val outputName = result.name
                                 val preserved = result.value
                                 safListing.withLock {
-                                    destinationEntries[parent]?.put(outputName, currentFile.copy(relative = outputName, source = parent.child(outputName), mtime = if (preserved) currentFile.mtime else 0))
+                                    destinationEntries[parent]?.let { cached ->
+                                        val previous = cached[outputName]
+                                        // Preserve actual SAF document IDs. A display-name child is
+                                        // not a usable overwrite target for providers with opaque IDs.
+                                        if (previous != null || parent.kind != ExplorerWindows.Kind.Local || parent.path.startsWith('/')) {
+                                            cached[outputName] = currentFile.copy(
+                                                relative = outputName,
+                                                source = previous?.source ?: parent.child(outputName),
+                                                mtime = if (state.preserveDate && preserved) currentFile.mtime else 0,
+                                            )
+                                        }
+                                    }
                                 }
                                 updateRow(
                                     job,
                                     file.relative,
                                     UploadFileStatus.Succeeded,
-                                    if (!preserved || currentFile.mtime <= 0) {
+                                    if (state.preserveDate && (!preserved || currentFile.mtime <= 0)) {
                                         "Modification time could not be preserved"
                                     } else if (outputName != name) {
                                         outputName

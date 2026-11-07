@@ -1161,6 +1161,9 @@
     <string name="transfer_upload_to">アップロード先</string>
     <string name="transfer_auto_start">自動開始</string>
     <string name="transfer_skip_existing">既存のファイルをスキップ</string>
+    <string name="transfer_rename_conflicts">名前が競合する場合は変更</string>
+    <string name="transfer_replace_existing">既存のファイルを置き換える</string>
+    <string name="transfer_preserve_date">元の日時を保持</string>
     <string name="transfer_dest">転送先</string>
     <string name="transfer_destination">転送先</string>
     <string name="transfer_start">開始</string>

@@ -1275,6 +1275,9 @@
     <string name="transfer_upload_to">Upload to</string>
     <string name="transfer_auto_start">Auto start</string>
     <string name="transfer_skip_existing">Skip existing files</string>
+    <string name="transfer_rename_conflicts">Rename if conflict</string>
+    <string name="transfer_replace_existing">Replace existing files</string>
+    <string name="transfer_preserve_date">Preserve original date</string>
     <string name="transfer_dest">Dest</string>
     <string name="transfer_destination">Destination</string>
     <string name="transfer_start">Start</string>

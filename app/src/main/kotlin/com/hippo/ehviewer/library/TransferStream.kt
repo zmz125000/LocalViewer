@@ -114,6 +114,33 @@ class TransferNameConflict(name: String) : java.io.IOException("Destination alre
 
 internal data class TransferCreation<T>(val name: String, val value: T)
 
+internal enum class TransferConflictPolicy {
+    Skip,
+    Rename,
+    Replace,
+    ;
+
+    companion object {
+        fun fromPreference(value: Int, legacySkip: Boolean): TransferConflictPolicy = entries.getOrNull(value)
+            ?: if (legacySkip) Skip else Rename
+    }
+}
+
+/** Replacement is explicit; skip and rename retain exclusive creation, including race handling. */
+internal suspend fun <T> createTransferFile(
+    name: String,
+    policy: TransferConflictPolicy,
+    checkpoint: suspend () -> Unit,
+    exists: suspend (String) -> Boolean,
+    create: suspend (String, Boolean) -> T,
+): TransferCreation<T>? {
+    if (policy == TransferConflictPolicy.Replace) {
+        checkpoint()
+        return TransferCreation(name, create(name, true))
+    }
+    return createTransferWithoutOverwrite(name, policy == TransferConflictPolicy.Skip, checkpoint, exists) { create(it, false) }
+}
+
 internal fun transferMetadataMatches(source: TransferFile, destination: TransferFile): Boolean = !source.directory && !destination.directory && source.size >= 0 && destination.size == source.size &&
     source.mtime > 0 && destination.mtime > 0 && source.mtime - destination.mtime in -1999L..1999L
 

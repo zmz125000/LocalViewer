@@ -225,7 +225,9 @@ object TransferFiles {
     }
 
     /** Returns false only when the destination cannot preserve the source timestamp. */
-    suspend fun write(file: TransferFile, parent: TransferLocation, name: String, control: TransferControl, connection: SmbGateway.UploadConnection?, onServerCopy: (Boolean) -> Unit = {}, destinationChecked: Boolean = false, progress: (Long) -> Unit): Boolean {
+    suspend fun write(file: TransferFile, parent: TransferLocation, name: String, control: TransferControl, connection: SmbGateway.UploadConnection?, onServerCopy: (Boolean) -> Unit = {}, destinationChecked: Boolean = false, replaceExisting: Boolean = false, preserveDate: Boolean = true, existingDestination: TransferFile? = null, progress: (Long) -> Unit): Boolean {
+        check(!replaceExisting || existingDestination?.directory != true) { "Cannot replace a folder with a file: $name" }
+        val timestamp = if (preserveDate) file.mtime else 0L
         onServerCopy(false)
         val target = parent.child(name)
         if (target.kind == ExplorerWindows.Kind.Smb && file.source.kind == target.kind) {
@@ -234,14 +236,42 @@ object TransferFiles {
             val sourcePassword = SmbPasswordStore.get(source.id)
             val destinationPassword = SmbPasswordStore.get(destination.id)
             if (SmbGateway.canTransferCopy(source, sourcePassword, destination, destinationPassword)) {
-                SmbGateway.transferWrite(destination, target.path, file.mtime, null, file.source.path, control::checkpoint, progress, copySource = source, onServerCopy = onServerCopy, connection = requireNotNull(connection))
+                SmbGateway.transferWrite(destination, target.path, timestamp, null, file.source.path, control::checkpoint, progress, copySource = source, onServerCopy = onServerCopy, connection = requireNotNull(connection), replaceExisting = replaceExisting)
                 return true
             }
         }
         if (target.kind == ExplorerWindows.Kind.Local) {
-            val created = if (parent.path.startsWith('/')) {
-                if (!File(target.path).createNewFile()) throw TransferNameConflict(name)
-                target.path.toPath()
+            val absolute = parent.path.startsWith('/')
+            val existing = if (replaceExisting && !absolute) existingDestination ?: find(parent, name) else null
+            check(existing?.directory != true) { "Cannot replace a folder with a file: $name" }
+            if (existing != null && file.source.kind == ExplorerWindows.Kind.Local) {
+                val sourceUri = file.source.path.toPath().toUri()
+                val destinationUri = existing.source.path.toPath().toUri()
+                val sameDocument = sourceUri.authority == destinationUri.authority &&
+                    DocumentsContract.isDocumentUri(appCtx, sourceUri) &&
+                    DocumentsContract.getDocumentId(sourceUri) == DocumentsContract.getDocumentId(destinationUri)
+                val sameFile = runCatching {
+                    file.source.path.toPath().openFileDescriptor("r").use { input ->
+                        existing.source.path.toPath().openFileDescriptor("r").use { output ->
+                            val origin = Os.fstat(input.fileDescriptor)
+                            val destination = Os.fstat(output.fileDescriptor)
+                            OsConstants.S_ISREG(origin.st_mode) && OsConstants.S_ISREG(destination.st_mode) &&
+                                origin.st_ino != 0L && origin.st_dev == destination.st_dev && origin.st_ino == destination.st_ino
+                        }
+                    }
+                }.getOrDefault(false)
+                check(!sameDocument && !sameFile) { "Source and destination are the same file" }
+            }
+            val created = if (absolute) {
+                if (replaceExisting) {
+                    check(!File(target.path).isDirectory) { "Cannot replace a folder with a file: $name" }
+                    File.createTempFile(".upload-", ".tmp", File(parent.path)).path.toPath()
+                } else {
+                    if (!File(target.path).createNewFile()) throw TransferNameConflict(name)
+                    target.path.toPath()
+                }
+            } else if (existing != null) {
+                existing.source.path.toPath()
             } else {
                 if (!destinationChecked && find(parent, name) != null) throw TransferNameConflict(name)
                 val mime = mimeTypeForFileName(name).takeUnless { it == GENERIC_FILE_MIME } ?: "application/octet-stream"
@@ -266,36 +296,45 @@ object TransferFiles {
                     counted.output = it
                     read(file, counted, control)
                 }
-                when {
-                    file.mtime <= 0 -> true
-                    created.toString().startsWith('/') -> File(created.toString()).setLastModified(file.mtime)
+                val preserved = when {
+                    timestamp <= 0 -> true
+                    created.toString().startsWith('/') -> File(created.toString()).setLastModified(timestamp)
                     else -> {
                         val preserved = runCatching {
-                            created.openFileDescriptor("rw").use { File("/proc/self/fd/${it.fd}").setLastModified(file.mtime) }
+                            created.openFileDescriptor("rw").use { File("/proc/self/fd/${it.fd}").setLastModified(timestamp) }
                         }.getOrDefault(false)
                         if (!preserved) {
                             runCatching {
-                                appCtx.contentResolver.update(created.toUri(), ContentValues().apply { put(DocumentsContract.Document.COLUMN_LAST_MODIFIED, file.mtime) }, null, null)
+                                appCtx.contentResolver.update(created.toUri(), ContentValues().apply { put(DocumentsContract.Document.COLUMN_LAST_MODIFIED, timestamp) }, null, null)
                             }
                         }
-                        created.metadataOrNull()?.lastModifiedAtMillis?.let { kotlin.math.abs(it - file.mtime) < 2000 } == true
+                        created.metadataOrNull()?.lastModifiedAtMillis?.let { kotlin.math.abs(it - timestamp) < 2000 } == true
                     }
                 }
+                if (absolute && replaceExisting) {
+                    control.checkpoint()
+                    check(!File(target.path).isDirectory) { "Cannot replace a folder with a file: $name" }
+                    java.nio.file.Files.move(File(created.toString()).toPath(), File(target.path).toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING)
+                }
+                preserved
             } catch (e: Throwable) {
-                runCatching {
-                    val deleted = if (created.toString().startsWith('/')) {
-                        File(created.toString()).let { it.delete() || !it.exists() }
-                    } else {
-                        DocumentsContract.deleteDocument(appCtx.contentResolver, created.toUri())
-                    }
-                    check(deleted) { "Cannot delete unfinished transfer: $created" }
-                }.onFailure { logcat("FileTransfer", it) }
+                // An existing SAF document belongs to the user even after a failed overwrite.
+                if (existing == null) {
+                    runCatching {
+                        val deleted = if (created.toString().startsWith('/')) {
+                            File(created.toString()).let { it.delete() || !it.exists() }
+                        } else {
+                            DocumentsContract.deleteDocument(appCtx.contentResolver, created.toUri())
+                        }
+                        check(deleted) { "Cannot delete unfinished transfer: $created" }
+                    }.onFailure { logcat("FileTransfer", it) }
+                }
                 throw e
             }
             // Index only completed images, after preserving their source timestamp.
             // A scanner failure must not delete an otherwise successful transfer.
             if (mimeTypeForFileName(name).startsWith("image/")) {
-                runCatching { MediaStorePublish.indexConvertedFile(created) }
+                runCatching { MediaStorePublish.indexConvertedFile(if (absolute && replaceExisting) target.path.toPath() else created) }
                     .onFailure { logcat("FileTransfer", it) }
             }
             return timestampPreserved
@@ -316,12 +355,12 @@ object TransferFiles {
             when (target.kind) {
                 ExplorerWindows.Kind.Smb -> {
                     val source = smb(target.sourceId)
-                    SmbGateway.transferWrite(source, target.path, file.mtime, checked, null, control::checkpoint, progress, connection = requireNotNull(connection))
+                    SmbGateway.transferWrite(source, target.path, timestamp, checked, null, control::checkpoint, progress, connection = requireNotNull(connection), replaceExisting = replaceExisting)
                     true
                 }
                 ExplorerWindows.Kind.WebDav -> {
                     val source = dav(target.sourceId)
-                    WebDavClient.transferWrite(source, WebDavPasswordStore.get(source.id), target.path, checked, file.size, file.mtime, control::checkpoint, progress)
+                    WebDavClient.transferWrite(source, WebDavPasswordStore.get(source.id), target.path, checked, file.size, timestamp, control::checkpoint, progress, replaceExisting = replaceExisting)
                 }
             }
         }

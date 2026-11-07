@@ -4084,7 +4084,7 @@ object SmbGateway {
         }
     }
 
-    /** FILE_CREATE never overwrites a collision. One dedicated session avoids nested pool borrows. */
+    /** Exclusive create by default; replacement uploads stage before committing with rename. */
     suspend fun transferWrite(
         source: SmbSourceEntity,
         destination: String,
@@ -4096,8 +4096,15 @@ object SmbGateway {
         copySource: SmbSourceEntity = source,
         onServerCopy: (Boolean) -> Unit = {},
         connection: UploadConnection,
+        replaceExisting: Boolean = false,
     ) {
         val dest = resolveLocation(source, destination)
+        val outputPath = if (replaceExisting) {
+            val parent = dest.pathInShare.substringBeforeLast('\\', "")
+            listOf(parent, ".upload-${java.util.UUID.randomUUID()}").filter { it.isNotEmpty() }.joinToString("\\")
+        } else {
+            dest.pathInShare
+        }
         val origin = copyFrom?.let { resolveLocation(copySource, it) }
         connection.withShare(dest.share) { share ->
             val originShare = origin?.let {
@@ -4109,7 +4116,7 @@ object SmbGateway {
             }
             val output = try {
                 share.openFile(
-                    dest.pathInShare,
+                    outputPath,
                     EnumSet.of(AccessMask.GENERIC_WRITE, AccessMask.FILE_READ_ATTRIBUTES, AccessMask.DELETE),
                     null,
                     SMB2ShareAccess.ALL,
@@ -4232,6 +4239,7 @@ object SmbGateway {
                     }
                     checkpoint()
                     target.setFileInformation(com.hierynomus.msfscc.fileinformation.FileDispositionInformation(false))
+                    if (replaceExisting) target.rename(dest.pathInShare, true)
                 } catch (e: Throwable) {
                     runCatching { target.deleteOnClose() }
                     throw e

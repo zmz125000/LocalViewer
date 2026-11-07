@@ -777,7 +777,9 @@ object Settings : DataStorePreferences(null) {
     val uploadAutoStart = boolPref("upload_auto_start", false)
     val uploadParallel = boolPref("upload_parallel", true)
     val uploadSmbMultiplex = boolPref("upload_smb_multiplex", true)
-    val uploadSkipExisting = boolPref("upload_skip_existing", true)
+    val uploadSkipExisting = boolPref("upload_skip_existing", true) // Legacy preference for migration.
+    val uploadConflictPolicy = intPref("upload_conflict_policy", -1)
+    val uploadPreserveDate = boolPref("upload_preserve_date", true)
 
     /**
      * Run more than one save/convert job at a time. Slot count follows the CPU

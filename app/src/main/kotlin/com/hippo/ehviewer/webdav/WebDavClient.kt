@@ -283,6 +283,7 @@ object WebDavClient {
         mtimeMs: Long,
         checkpoint: suspend () -> Unit,
         progress: (Long) -> Unit,
+        replaceExisting: Boolean = false,
     ): Boolean = withIOContext {
         val parent = relative.substringBeforeLast('/', "")
         val temp = (if (parent.isEmpty()) "" else "$parent/") + ".upload-${java.util.UUID.randomUUID()}"
@@ -337,7 +338,7 @@ object WebDavClient {
                 attributes.put(connectionSource, WebDavGateway.sourceConfigKey(source))
                 auth?.let { header(HttpHeaders.Authorization, it) }
                 header("Destination", absoluteUrl(source, relative).toString())
-                header("Overwrite", "F")
+                header("Overwrite", if (replaceExisting) "T" else "F")
             }
             if (moved.status.value == 412) throw com.hippo.ehviewer.library.TransferNameConflict(relative)
             check(moved.status.value in 200..299) { "WebDAV MOVE: ${moved.status}" }

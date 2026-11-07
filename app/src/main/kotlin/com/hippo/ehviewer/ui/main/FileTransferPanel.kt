@@ -59,6 +59,7 @@ import com.ehviewer.core.util.withIOContext
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.library.ExplorerWindows
 import com.hippo.ehviewer.library.LocalLibrary
+import com.hippo.ehviewer.library.TransferConflictPolicy
 import com.hippo.ehviewer.library.TransferLocation
 import com.hippo.ehviewer.library.humanizePathName
 import com.hippo.ehviewer.library.isMediaStoreRootUri
@@ -232,12 +233,33 @@ private fun FileTransferPanel(job: UploadJob) {
                                     menu = false
                                 },
                             )
+                            for (policy in TransferConflictPolicy.entries) {
+                                DropdownMenuItem(
+                                    text = {
+                                        Text(
+                                            stringResource(
+                                                when (policy) {
+                                                    TransferConflictPolicy.Skip -> R.string.transfer_skip_existing
+                                                    TransferConflictPolicy.Rename -> R.string.transfer_rename_conflicts
+                                                    TransferConflictPolicy.Replace -> R.string.transfer_replace_existing
+                                                },
+                                            ),
+                                        )
+                                    },
+                                    enabled = state.editable,
+                                    trailingIcon = { if (state.conflictPolicy == policy) Icon(Icons.Default.Check, null) },
+                                    onClick = {
+                                        UploadTransfers.setConflictPolicy(job, policy)
+                                        menu = false
+                                    },
+                                )
+                            }
                             DropdownMenuItem(
-                                text = { Text(stringResource(R.string.transfer_skip_existing)) },
+                                text = { Text(stringResource(R.string.transfer_preserve_date)) },
                                 enabled = state.editable,
-                                trailingIcon = { if (state.skipExisting) Icon(Icons.Default.Check, null) },
+                                trailingIcon = { if (state.preserveDate) Icon(Icons.Default.Check, null) },
                                 onClick = {
-                                    UploadTransfers.toggleSkipExisting(job)
+                                    UploadTransfers.togglePreserveDate(job)
                                     menu = false
                                 },
                             )
