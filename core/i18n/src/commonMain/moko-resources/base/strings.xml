@@ -1339,4 +1339,7 @@
     <string name="library_live_update_resume">Resume</string>
     <string name="settings_privacy_save_usb_history">Save USB / OTG history</string>
     <string name="settings_privacy_save_sd_card_history">Save SD card history</string>
+    <string name="transfer_current">Current</string>
+    <string name="transfer_current_not_folder">Open a writable folder to use Current.</string>
+    <string name="transfer_same_destination">The destination is the source folder or would copy an item onto itself. Choose another folder.</string>
 </resources>

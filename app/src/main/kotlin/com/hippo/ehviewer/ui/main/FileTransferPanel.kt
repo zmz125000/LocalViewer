@@ -4,6 +4,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Process
 import android.provider.DocumentsContract
+import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
@@ -119,19 +120,50 @@ private fun transferSize(state: UploadState): String = "${FileUtils.humanReadabl
 @Composable
 internal fun UploadTransferBars() {
     val explorer = LocalExplorerPanel.current
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     val jobs by UploadTransfers.jobs.collectAsState()
     Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         jobs.forEach { job ->
             key(job.id) {
                 val state by job.state.collectAsState()
+                var resolvingCurrent by remember { mutableStateOf(false) }
                 val finished = !state.active && !state.editable && state.phase != UploadPhase.Preparing
                 Snackbar(
                     modifier = Modifier.padding(bottom = 8.dp),
+                    actionOnNewLine = state.editable && !job.deleting,
                     containerColor = snackbarContainerColor(),
                     contentColor = snackbarDismissContentColor(),
                     action = {
                         Row {
                             if (state.editable && !job.deleting) {
+                                TextButton(
+                                    enabled = !resolvingCurrent,
+                                    onClick = {
+                                        val current = FolderSelectHost.current
+                                        val place = current?.place
+                                        val title = current?.folderName.orEmpty()
+                                        resolvingCurrent = true
+                                        scope.launch {
+                                            try {
+                                                val location = withIOContext { currentUploadDestination(place) }
+                                                if (location == null) {
+                                                    Toast.makeText(context, R.string.transfer_current_not_folder, Toast.LENGTH_LONG).show()
+                                                } else if (UploadTransfers.job(job.id) === job && job.state.value.editable) {
+                                                    UploadTransfers.saveDestination(job, location, title.ifBlank { location.path })
+                                                }
+                                            } catch (error: CancellationException) {
+                                                throw error
+                                            } catch (error: Exception) {
+                                                logcat("FileTransfer", error)
+                                                Toast.makeText(context, R.string.transfer_current_not_folder, Toast.LENGTH_LONG).show()
+                                            } finally {
+                                                resolvingCurrent = false
+                                            }
+                                        }
+                                    },
+                                    colors = snackbarActionButtonColors(),
+                                ) { Text(stringResource(R.string.transfer_current)) }
                                 TextButton(
                                     onClick = {
                                         UploadTransfers.chooseDestination(job)
@@ -182,6 +214,39 @@ internal fun UploadTransferBars() {
     UploadTransfers.job(UploadTransfers.panelId)?.let { FileTransferPanel(it) }
     val conflict by UploadTransfers.conflict.collectAsState()
     conflict?.let { UploadConflictDialog(it) }
+}
+
+/** Virtual ZIP folders and views without an attached browser cannot receive files. */
+internal fun currentUploadFolderPath(place: FolderPlace?): String? {
+    place ?: return null
+    val relative = place.relativePath.replace('\\', '/').trim('/')
+    if (relative.split('/').any { it == "." || it == ".." }) return null
+    if (com.hippo.ehviewer.library.ZipAsDirListing.splitZipBrowsePath(relative) != null) return null
+    if (place.kind == ExplorerWindows.Kind.Local && place.rootPath?.let {
+            isMediaStoreRootUri(it) || com.hippo.ehviewer.library.ZipPaths.isZipPath(it) ||
+                com.hippo.ehviewer.library.ZipAsDirListing.splitZipBrowsePath(it) != null
+        } == true
+    ) {
+        return null
+    }
+    return relative
+}
+
+private suspend fun currentUploadDestination(place: FolderPlace?): TransferLocation? {
+    val relative = currentUploadFolderPath(place) ?: return null
+    val folder = requireNotNull(place)
+    return when (folder.kind) {
+        ExplorerWindows.Kind.Local -> grantedLocalUploadDestination(folder.sourceId, relative)
+        ExplorerWindows.Kind.Smb -> {
+            val source = com.hippo.ehviewer.smb.SmbRepository.load(folder.sourceId) ?: return null
+            if (relative.isEmpty() && com.hippo.ehviewer.smb.SmbGateway.isServerRootSource(source)) return null
+            TransferLocation(folder.kind, folder.sourceId, relative)
+        }
+        ExplorerWindows.Kind.WebDav -> {
+            com.hippo.ehviewer.webdav.WebDavRepository.load(folder.sourceId) ?: return null
+            TransferLocation(folder.kind, folder.sourceId, relative)
+        }
+    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)

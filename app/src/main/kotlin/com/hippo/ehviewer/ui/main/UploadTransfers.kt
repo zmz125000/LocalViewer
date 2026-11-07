@@ -503,6 +503,10 @@ internal object UploadTransfers {
     }
 
     fun saveDestination(job: UploadJob, location: TransferLocation, label: String) {
+        if (destinationJobId == job.id) {
+            destinationJobId = null
+            skipDestinationPanelFor = null
+        }
         job.state.update { it.copy(destination = location, destinationLabel = label, startWhenReady = true) }
         if (job.state.value.editable) start(job)
     }
@@ -711,7 +715,18 @@ internal object UploadTransfers {
                     lastTime = now
                 }
             }
+            var destinationTouched = false
             try {
+                val roots = state.rows.map { it.file }.filter { '/' !in it.relative }
+                if (com.hippo.ehviewer.library.uploadDestinationOverlapsSource(roots, state.destination)) {
+                    val message = appCtx.getString(R.string.transfer_same_destination)
+                    job.state.update { it.copy(phase = UploadPhase.Ready, error = message, startWhenReady = false) }
+                    scope.launch(Dispatchers.Main.immediate) {
+                        Toast.makeText(appCtx, message, Toast.LENGTH_LONG).show()
+                    }
+                    return@launch
+                }
+                destinationTouched = true
                 TransferFiles.withUploadConnection(state.destination, multiplex = state.smbMultiplex) { connection ->
                     slots.withPermit {
                         val conflicts = TransferConflictResolver()
@@ -914,10 +929,12 @@ internal object UploadTransfers {
                 meter.cancel()
                 job.state.update { it.copy(bytesTransferred = job.bytes.get(), speedBps = 0) }
                 val dest = state.destination
-                when (dest.kind) {
-                    ExplorerWindows.Kind.Local -> BrowseSession.invalidateLocalListing()
-                    ExplorerWindows.Kind.Smb -> BrowseSession.invalidateSmbListing(dest.sourceId, dest.path)
-                    ExplorerWindows.Kind.WebDav -> BrowseSession.invalidateWebDavListing(dest.sourceId, dest.path)
+                if (destinationTouched) {
+                    when (dest.kind) {
+                        ExplorerWindows.Kind.Local -> BrowseSession.invalidateLocalListing()
+                        ExplorerWindows.Kind.Smb -> BrowseSession.invalidateSmbListing(dest.sourceId, dest.path)
+                        ExplorerWindows.Kind.WebDav -> BrowseSession.invalidateWebDavListing(dest.sourceId, dest.path)
+                    }
                 }
                 syncForeground()
             }
