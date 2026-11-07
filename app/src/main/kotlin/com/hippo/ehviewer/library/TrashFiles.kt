@@ -139,6 +139,11 @@ internal suspend fun moveToTrashWithoutOverwrite(
 internal object TrashFiles {
     suspend fun move(file: TransferFile, date: String, control: TransferControl): String {
         requireOutsideTrash(file.source.path)
+        if (file.directory && file.galleryImageNames != null) {
+            check(galleryContentsMatch(file.galleryImageNames, TransferFiles.children(file.source))) {
+                "Gallery contents changed. Refresh the folder before trying again."
+            }
+        }
         if (file.source.kind != ExplorerWindows.Kind.Local && isTrashArchiveMember(file.source.path)) {
             throw UnsupportedOperationException("Server-side moves require a physical file or folder")
         }
@@ -155,6 +160,10 @@ internal object TrashFiles {
         }
     }
 }
+
+internal fun galleryContentsMatch(expected: List<String>?, listed: List<TransferFile>): Boolean = !expected.isNullOrEmpty() && listed.size == expected.size &&
+    listed.all { !it.directory && isImageFileName(it.relative) } &&
+    listed.mapTo(HashSet()) { it.relative } == expected.toSet()
 
 internal enum class FileRemovalAction { Trash, Delete, EmptyTrash, Restore }
 

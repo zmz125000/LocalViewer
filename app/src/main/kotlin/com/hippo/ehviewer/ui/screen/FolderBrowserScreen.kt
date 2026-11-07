@@ -2703,6 +2703,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
 
     fun folderGalleryOverflow(entry: BrowseEntry.FolderGallery) = BrowseOverflowActions(
         kind = BrowseOverflowKind.Gallery,
+        galleryImageNames = entry.imageFileNames.takeIf { it.isNotEmpty() },
         favorited = isFolderGalleryFavorite(entry),
         onFavorite = { toggleFolderGalleryFavorite(entry) },
         onRead = { openFolderGallery(entry) },

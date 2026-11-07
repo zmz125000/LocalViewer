@@ -113,6 +113,7 @@ sealed interface BrowseEntry {
         override val size: Long = 0L,
         override val hidden: Boolean = false,
         override val virtual: Boolean = false,
+        val imageFileNames: List<String> = emptyList(),
     ) : BrowseEntry
 
     data class ArchiveGallery(

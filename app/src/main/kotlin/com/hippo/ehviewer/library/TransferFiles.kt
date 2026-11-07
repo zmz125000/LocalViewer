@@ -53,6 +53,8 @@ data class TransferFile(
     val galleryRegularFiles: Int = 0,
     /** Gallery cleanup runs after image deletion and leaves any remaining contents alone. */
     val deleteIfEmpty: Boolean = false,
+    /** Image names from the gallery row, used to verify whole-folder trash. */
+    val galleryImageNames: List<String>? = null,
 )
 
 class TransferControl {

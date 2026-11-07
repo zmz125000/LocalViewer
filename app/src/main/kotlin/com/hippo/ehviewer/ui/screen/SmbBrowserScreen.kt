@@ -2258,6 +2258,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
 
     fun folderGalleryOverflow(entry: BrowseEntryRemote.FolderGallery) = BrowseOverflowActions(
         kind = BrowseOverflowKind.Gallery,
+        galleryImageNames = entry.imageFileNames.takeIf { it.isNotEmpty() },
         favorited = isDirFavorite(entry.relativeName),
         onFavorite = { toggleDirFavorite(entry.relativeName, entry.coverFileName) },
         onRead = { openFolderGallery(entry) },

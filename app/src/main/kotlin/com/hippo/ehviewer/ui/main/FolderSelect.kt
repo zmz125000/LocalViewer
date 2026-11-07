@@ -361,6 +361,7 @@ data class FolderPick(
     val uploadSource: com.hippo.ehviewer.library.TransferLocation? = null,
     val removalSource: com.hippo.ehviewer.library.TransferLocation? = null,
     val gallery: Boolean = false,
+    val galleryImageNames: List<String>? = null,
 )
 
 fun BrowseOverflowActions.selectable(
@@ -398,6 +399,7 @@ fun BrowseOverflowActions.toPick(): FolderPick? {
         uploadSource = uploadSource,
         removalSource = removalSource,
         gallery = kind == BrowseOverflowKind.Gallery,
+        galleryImageNames = galleryImageNames,
     )
 }
 
@@ -1765,6 +1767,7 @@ private fun SelectionOverflowControl(
                                         pick.isFolder,
                                         pick.listLine?.sizeBytes ?: -1L,
                                         pick.listLine?.lastModifiedMs ?: 0L,
+                                        galleryImageNames = pick.galleryImageNames,
                                     ) to pick.gallery
                                 }
                                 val files = collectTransferFilesForAction(requests, snackbar, context, if (removalAction == com.hippo.ehviewer.library.FileRemovalAction.Trash) GalleryFileAction.Trash else GalleryFileAction.Delete) ?: return@launch

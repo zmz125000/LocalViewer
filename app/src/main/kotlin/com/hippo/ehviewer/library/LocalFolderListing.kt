@@ -1280,6 +1280,7 @@ fun materializeLocalEntries(
                     pageCount = entry.pageCount,
                     pageCountCapped = entry.pageCountCapped,
                     coverPath = cover,
+                    imageFileNames = entry.imageFileNames,
                     lastModifiedMs = entry.lastModifiedMs,
                     size = entry.size,
                     hidden = entry.hidden,
