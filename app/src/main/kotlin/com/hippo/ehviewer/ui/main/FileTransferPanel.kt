@@ -69,6 +69,7 @@ import com.ehviewer.core.i18n.R
 import com.ehviewer.core.util.logcat
 import com.ehviewer.core.util.withIOContext
 import com.hippo.ehviewer.Settings
+import com.hippo.ehviewer.asMutableState
 import com.hippo.ehviewer.collectAsState
 import com.hippo.ehviewer.library.ExplorerWindows
 import com.hippo.ehviewer.library.LocalLibrary
@@ -187,7 +188,7 @@ internal fun UploadTransferBars() {
 @Composable
 private fun UploadConflictDialog(request: UploadConflict) {
     val deletionEnabled by Settings.enableFileDeletion.collectAsState()
-    var rememberChoice by remember(request) { mutableStateOf(false) }
+    var rememberChoice by Settings.uploadConflictRemember.asMutableState()
     fun size(bytes: Long?) = bytes?.takeIf { it >= 0 }?.let(FileUtils::humanReadableByteCount) ?: "?"
     BasicAlertDialog(onDismissRequest = { UploadTransfers.stop(request.job) }) {
         Surface(

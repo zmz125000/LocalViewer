@@ -57,7 +57,7 @@ enum class BrowseOverflowPlacement {
 /**
  * Overflow actions for a browse list/grid cell.
  * Null callbacks still appear in the menu and call [onUnsupported] (toast),
- * except Share and Open in other app, which are hidden when unset.
+ * except Favorite, Share and Open in other app, which are hidden when unset.
  */
 data class BrowseOverflowActions(
     val kind: BrowseOverflowKind = BrowseOverflowKind.Common,
@@ -71,7 +71,6 @@ data class BrowseOverflowActions(
     val onOpenInNewTab: (() -> Unit)? = null,
     /** Remember this folder under explorer saved paths. Null hides the row. */
     val onSaveToPaths: (() -> Unit)? = null,
-    val onInfo: (() -> Unit)? = null,
     val onRead: (() -> Unit)? = null,
     val onPhotoGrid: (() -> Unit)? = null,
     val onPlay: (() -> Unit)? = null,
@@ -329,20 +328,22 @@ fun BrowseItemOverflowButton(
                 }
                 BrowseOverflowKind.Common -> Unit
             }
-            DropdownMenuItem(
-                text = {
-                    Text(
-                        stringResource(
-                            if (actions.favorited) {
-                                R.string.remove_from_favourites
-                            } else {
-                                R.string.add_to_favourites
-                            },
-                        ),
-                    )
-                },
-                onClick = { run(actions.onFavorite) },
-            )
+            if (actions.onFavorite != null) {
+                DropdownMenuItem(
+                    text = {
+                        Text(
+                            stringResource(
+                                if (actions.favorited) {
+                                    R.string.remove_from_favourites
+                                } else {
+                                    R.string.add_to_favourites
+                                },
+                            ),
+                        )
+                    },
+                    onClick = { run(actions.onFavorite) },
+                )
+            }
             DropdownMenuItem(
                 text = { Text(stringResource(R.string.action_save_to)) },
                 onClick = {
@@ -491,10 +492,6 @@ fun BrowseItemOverflowButton(
                     onClick = { run(actions.onOpenWith) },
                 )
             }
-            DropdownMenuItem(
-                text = { Text(stringResource(R.string.browse_item_info)) },
-                onClick = { run(actions.onInfo) },
-            )
         }
     }
 }

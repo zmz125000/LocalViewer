@@ -781,6 +781,7 @@ object Settings : DataStorePreferences(null) {
     val uploadConflictPolicy = intPref("upload_conflict_policy", -1)
     val uploadPreserveDate = boolPref("upload_preserve_date", true)
     val uploadConflictDialog = boolPref("upload_conflict_dialog", true)
+    val uploadConflictRemember = boolPref("upload_conflict_remember", false)
 
     /**
      * Run more than one save/convert job at a time. Slot count follows the CPU

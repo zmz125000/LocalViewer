@@ -240,7 +240,6 @@ fun AnimatedVisibilityScope.EhScreen(navigator: DestinationsNavigator) = Screen(
                     state = Settings.openHtmlInIncognito.asMutableState(),
                 )
             }
-            ImageConversionPreferences()
             val useMedia3Player = Settings.useMedia3Player.asMutableState()
             SwitchPreference(
                 title = stringResource(id = R.string.settings_use_media3_player),
