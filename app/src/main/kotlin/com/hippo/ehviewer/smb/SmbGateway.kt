@@ -4239,7 +4239,10 @@ object SmbGateway {
                     }
                     checkpoint()
                     target.setFileInformation(com.hierynomus.msfscc.fileinformation.FileDispositionInformation(false))
-                    if (replaceExisting) target.rename(dest.pathInShare, true)
+                    if (replaceExisting) {
+                        if (!Settings.enableFileDeletion.value) throw com.hippo.ehviewer.library.TransferReplacementDisabled()
+                        target.rename(dest.pathInShare, true)
+                    }
                 } catch (e: Throwable) {
                     runCatching { target.deleteOnClose() }
                     throw e

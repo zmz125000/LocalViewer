@@ -28,6 +28,7 @@ class UploadTransfersTest {
             ),
             conflictPolicy = TransferConflictPolicy.Rename,
             preserveDate = true,
+            replaceWithoutConfirmation = false,
             background = false,
             autoFinish = false,
             autoStart = false,
@@ -53,6 +54,7 @@ class UploadTransfersTest {
                     destinationLabel = "destination",
                     conflictPolicy = policy,
                     preserveDate = enabled,
+                    replaceWithoutConfirmation = enabled,
                     background = enabled,
                     autoFinish = enabled,
                     autoStart = enabled,
@@ -76,6 +78,7 @@ class UploadTransfersTest {
                 assertFalse(reset.startWhenReady)
                 assertEquals(state.conflictPolicy, reset.conflictPolicy)
                 assertEquals(enabled, reset.preserveDate)
+                assertEquals(enabled, reset.replaceWithoutConfirmation)
                 assertEquals(enabled, reset.background)
                 assertEquals(enabled, reset.autoFinish)
                 assertEquals(enabled, reset.autoStart)
@@ -236,6 +239,7 @@ class UploadTransfersTest {
         val state = UploadState(
             conflictPolicy = TransferConflictPolicy.Skip,
             preserveDate = true,
+            replaceWithoutConfirmation = false,
             background = false,
             autoFinish = false,
             autoStart = false,

@@ -11,6 +11,65 @@ import org.junit.Test
 
 class TransferConflictPolicyTest {
     @Test
+    fun conflictsAskOncePerFileAndNeverOverwriteBeforeTheDecision() = runBlocking {
+        var prompts = 0
+        val creates = mutableListOf<String>()
+        val result = createTransferFile(
+            "photo.jpg",
+            TransferConflictPolicy.Replace,
+            {},
+            exists = { it == "photo.jpg" || it == "photo (2).jpg" },
+            onConflict = {
+                prompts++
+                assertTrue(creates.isEmpty())
+                TransferConflictPolicy.Rename
+            },
+        ) { name, replace ->
+            assertEquals(false, replace)
+            creates += name
+        }
+        assertEquals(1, prompts)
+        assertEquals(listOf("photo (3).jpg"), creates)
+        assertEquals("photo (3).jpg", result?.name)
+    }
+
+    @Test
+    fun exclusiveCreateRacesAlsoAskBeforeReplacement() = runBlocking {
+        var prompts = 0
+        val modes = mutableListOf<Boolean>()
+        val result = createTransferFile(
+            "photo.jpg",
+            TransferConflictPolicy.Skip,
+            {},
+            { false },
+            onConflict = {
+                prompts++
+                TransferConflictPolicy.Replace
+            },
+        ) { _, replace ->
+            modes += replace
+            if (!replace) throw TransferNameConflict("photo.jpg")
+            "replaced"
+        }
+        assertEquals(1, prompts)
+        assertEquals(listOf(false, true), modes)
+        assertEquals("replaced", result?.value)
+    }
+
+    @Test
+    fun unoccupiedNamesNeverAskAndReplacementDisabledAtCommitBecomesSkipped() = runBlocking {
+        val result = createTransferFile("photo.jpg", TransferConflictPolicy.Replace, {}, { false }, onConflict = { error("No conflict") }) { _, replace ->
+            assertEquals(false, replace)
+            "new file"
+        }
+        assertEquals("new file", result?.value)
+        val skipped = createTransferFile("photo.jpg", TransferConflictPolicy.Replace, {}, { true }, onConflict = { TransferConflictPolicy.Replace }) { _, _ ->
+            throw TransferReplacementDisabled()
+        }
+        assertEquals(null, skipped)
+    }
+
+    @Test
     fun legacyPreferencesKeepTheirSelectedBehaviour() {
         assertEquals(TransferConflictPolicy.Skip, TransferConflictPolicy.fromPreference(-1, true))
         assertEquals(TransferConflictPolicy.Rename, TransferConflictPolicy.fromPreference(-1, false))

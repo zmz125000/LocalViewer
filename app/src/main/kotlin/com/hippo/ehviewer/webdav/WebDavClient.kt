@@ -333,6 +333,7 @@ object WebDavClient {
                 }.onFailure { if (it is kotlinx.coroutines.CancellationException) throw it }
             }
             checkpoint()
+            if (replaceExisting && !Settings.enableFileDeletion.value) throw com.hippo.ehviewer.library.TransferReplacementDisabled()
             val moved = http().request(absoluteUrl(source, temp)) {
                 method = HttpMethod("MOVE")
                 attributes.put(connectionSource, WebDavGateway.sourceConfigKey(source))

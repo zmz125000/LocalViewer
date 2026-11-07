@@ -531,6 +531,11 @@
     <string name="transfer_rename_conflicts">衝突時重新命名</string>
     <string name="transfer_replace_existing">取代已存在的檔案</string>
     <string name="transfer_preserve_date">保留原始日期</string>
+    <string name="transfer_replace_without_confirmation">取代時不再確認</string>
+    <string name="transfer_conflict_title">檔案已存在</string>
+    <string name="transfer_conflict_sizes">來源：%1$s · 已存在：%2$s</string>
+    <string name="transfer_conflict_scope">將所選操作套用至本次上傳的其餘衝突。</string>
+    <string name="transfer_conflict_remember">記住選擇</string>
     <string name="transfer_dest">目的地</string>
     <string name="transfer_destination">目的地</string>
     <string name="transfer_start">開始</string>

@@ -133,10 +133,10 @@ fun LocalSourceAccessDialog(
 }
 
 @Composable
-private fun SourceAccessOption(
+internal fun SourceAccessOption(
     icon: ImageVector,
     title: String,
-    summary: String,
+    summary: String? = null,
     onClick: () -> Unit,
 ) {
     val shape = RoundedCornerShape(14.dp)
@@ -175,12 +175,14 @@ private fun SourceAccessOption(
                     style = MaterialTheme.typography.titleSmall,
                     color = MaterialTheme.colorScheme.onSurface,
                 )
-                Text(
-                    text = summary,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(top = 2.dp),
-                )
+                if (summary != null) {
+                    Text(
+                        text = summary,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 2.dp),
+                    )
+                }
             }
         }
     }

@@ -112,6 +112,8 @@ internal fun canCopySmbOnServer(from: SmbSourceEntity, fromPassword: String, to:
 /** The destination rejected an exclusive create; callers may skip or choose another name. */
 class TransferNameConflict(name: String) : java.io.IOException("Destination already exists: $name")
 
+class TransferReplacementDisabled : java.io.IOException("File replacement is disabled")
+
 internal data class TransferCreation<T>(val name: String, val value: T)
 
 internal enum class TransferConflictPolicy {
@@ -124,6 +126,8 @@ internal enum class TransferConflictPolicy {
         fun fromPreference(value: Int, legacySkip: Boolean): TransferConflictPolicy = entries.getOrNull(value)
             ?: if (legacySkip) Skip else Rename
     }
+
+    fun allowed(fileDeletionEnabled: Boolean): TransferConflictPolicy = if (this == Replace && !fileDeletionEnabled) Skip else this
 }
 
 /** Replacement is explicit; skip and rename retain exclusive creation, including race handling. */
@@ -132,13 +136,46 @@ internal suspend fun <T> createTransferFile(
     policy: TransferConflictPolicy,
     checkpoint: suspend () -> Unit,
     exists: suspend (String) -> Boolean,
+    onConflict: (suspend (String) -> TransferConflictPolicy)? = null,
     create: suspend (String, Boolean) -> T,
 ): TransferCreation<T>? {
-    if (policy == TransferConflictPolicy.Replace) {
+    if (onConflict == null && policy == TransferConflictPolicy.Replace) {
         checkpoint()
-        return TransferCreation(name, create(name, true))
+        return try {
+            TransferCreation(name, create(name, true))
+        } catch (_: TransferReplacementDisabled) {
+            null
+        }
     }
-    return createTransferWithoutOverwrite(name, policy == TransferConflictPolicy.Skip, checkpoint, exists) { create(it, false) }
+    var candidate = name
+    var number = 1L
+    var decision: TransferConflictPolicy? = null
+    while (true) {
+        checkpoint()
+        if (!exists(candidate)) {
+            try {
+                return TransferCreation(candidate, create(candidate, false))
+            } catch (_: TransferNameConflict) {
+                // An exclusive-create race needs the same decision as a preflight conflict.
+            }
+        }
+        val action = decision ?: (onConflict?.invoke(candidate) ?: policy).also { decision = it }
+        when (action) {
+            TransferConflictPolicy.Skip -> return null
+            TransferConflictPolicy.Replace -> {
+                checkpoint()
+                return try {
+                    TransferCreation(candidate, create(candidate, true))
+                } catch (_: TransferReplacementDisabled) {
+                    null
+                }
+            }
+            TransferConflictPolicy.Rename -> {
+                val dot = name.lastIndexOf('.').takeIf { it > 0 } ?: name.length
+                candidate = "${name.take(dot)} (${++number})${name.drop(dot)}"
+            }
+        }
+    }
 }
 
 internal fun transferMetadataMatches(source: TransferFile, destination: TransferFile): Boolean = !source.directory && !destination.directory && source.size >= 0 && destination.size == source.size &&

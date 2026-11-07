@@ -780,6 +780,7 @@ object Settings : DataStorePreferences(null) {
     val uploadSkipExisting = boolPref("upload_skip_existing", true) // Legacy preference for migration.
     val uploadConflictPolicy = intPref("upload_conflict_policy", -1)
     val uploadPreserveDate = boolPref("upload_preserve_date", true)
+    val uploadReplaceWithoutConfirmation = boolPref("upload_replace_without_confirmation", false)
 
     /**
      * Run more than one save/convert job at a time. Slot count follows the CPU

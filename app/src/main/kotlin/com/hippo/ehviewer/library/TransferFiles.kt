@@ -55,13 +55,14 @@ data class TransferFile(
 
 class TransferControl {
     val paused = AtomicBoolean(false)
+    val waitingForConflict = AtomicBoolean(false)
     suspend fun checkpoint() {
         kotlin.coroutines.coroutineContext.ensureActive()
-        while (paused.get()) delay(50)
+        while (paused.get() || waitingForConflict.get()) delay(50)
     }
     fun checkpointBlocking(context: CoroutineContext) {
         context.ensureActive()
-        while (paused.get()) {
+        while (paused.get() || waitingForConflict.get()) {
             Thread.sleep(50)
             context.ensureActive()
         }
@@ -226,6 +227,7 @@ object TransferFiles {
 
     /** Returns false only when the destination cannot preserve the source timestamp. */
     suspend fun write(file: TransferFile, parent: TransferLocation, name: String, control: TransferControl, connection: SmbGateway.UploadConnection?, onServerCopy: (Boolean) -> Unit = {}, destinationChecked: Boolean = false, replaceExisting: Boolean = false, preserveDate: Boolean = true, existingDestination: TransferFile? = null, progress: (Long) -> Unit): Boolean {
+        if (replaceExisting && !com.hippo.ehviewer.Settings.enableFileDeletion.value) throw TransferReplacementDisabled()
         check(!replaceExisting || existingDestination?.directory != true) { "Cannot replace a folder with a file: $name" }
         val timestamp = if (preserveDate) file.mtime else 0L
         onServerCopy(false)
@@ -281,6 +283,7 @@ object TransferFiles {
                     ).toOkioPath()
             }
             val timestampPreserved = try {
+                if (replaceExisting && !com.hippo.ehviewer.Settings.enableFileDeletion.value) throw TransferReplacementDisabled()
                 val counted = object : OutputStream() {
                     lateinit var output: OutputStream
                     override fun write(b: Int) {
@@ -313,6 +316,7 @@ object TransferFiles {
                 }
                 if (absolute && replaceExisting) {
                     control.checkpoint()
+                    if (!com.hippo.ehviewer.Settings.enableFileDeletion.value) throw TransferReplacementDisabled()
                     check(!File(target.path).isDirectory) { "Cannot replace a folder with a file: $name" }
                     java.nio.file.Files.move(File(created.toString()).toPath(), File(target.path).toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING)
                 }

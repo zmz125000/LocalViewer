@@ -16,7 +16,9 @@ import com.hippo.ehviewer.library.NetworkSourceGuard
 import com.hippo.ehviewer.library.PermanentFiles
 import com.hippo.ehviewer.library.RestoreFiles
 import com.hippo.ehviewer.library.SavedUploads
+import com.hippo.ehviewer.library.TransferConflictDecision
 import com.hippo.ehviewer.library.TransferConflictPolicy
+import com.hippo.ehviewer.library.TransferConflictResolver
 import com.hippo.ehviewer.library.TransferControl
 import com.hippo.ehviewer.library.TransferFile
 import com.hippo.ehviewer.library.TransferFiles
@@ -42,6 +44,7 @@ import java.time.LocalDate
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -71,8 +74,9 @@ internal data class UploadState(
     val rows: List<UploadRow> = emptyList(),
     val destination: TransferLocation? = null,
     val destinationLabel: String = "",
-    val conflictPolicy: TransferConflictPolicy = TransferConflictPolicy.fromPreference(Settings.uploadConflictPolicy.value, Settings.uploadSkipExisting.value),
+    val conflictPolicy: TransferConflictPolicy = TransferConflictPolicy.fromPreference(Settings.uploadConflictPolicy.value, Settings.uploadSkipExisting.value).allowed(Settings.enableFileDeletion.value),
     val preserveDate: Boolean = Settings.uploadPreserveDate.value,
+    val replaceWithoutConfirmation: Boolean = Settings.uploadReplaceWithoutConfirmation.value,
     val background: Boolean = Settings.browseTaskForegroundService.value,
     val autoFinish: Boolean = Settings.browseTaskAutoFinish.value,
     val autoStart: Boolean = Settings.uploadAutoStart.value,
@@ -91,6 +95,7 @@ internal data class UploadState(
     val failed get() = rows.count { it.status == UploadFileStatus.Failed }
     val active get() = phase == UploadPhase.Running || phase == UploadPhase.Paused
     val editable get() = phase == UploadPhase.Ready
+    val settingsEditable get() = editable || phase == UploadPhase.Stopped || phase == UploadPhase.Finished || phase == UploadPhase.Failed
 
     fun resetForTransfer() = copy(
         phase = UploadPhase.Ready,
@@ -108,6 +113,15 @@ internal class UploadJob(val id: Long, val title: String, val saving: Boolean = 
     val bytes = AtomicLong()
     var worker: Job? = null
     var previousWorker: Job? = null
+}
+
+internal class UploadConflict(
+    val job: UploadJob,
+    val file: TransferFile,
+    val name: String,
+    val existing: TransferFile?,
+) {
+    val decision = CompletableDeferred<TransferConflictDecision>()
 }
 
 /** Remove the folder itself and descendants, never similarly prefixed siblings. */
@@ -178,6 +192,44 @@ internal object UploadTransfers {
     private val ids = AtomicLong(1)
     private val _jobs = MutableStateFlow<List<UploadJob>>(emptyList())
     val jobs = _jobs.asStateFlow()
+    private val conflictDialogMutex = Mutex()
+    private val _conflict = MutableStateFlow<UploadConflict?>(null)
+    val conflict = _conflict.asStateFlow()
+
+    init {
+        scope.launch {
+            Settings.enableFileDeletion.valueFlow().collect { enabled ->
+                if (!enabled) {
+                    if (Settings.uploadConflictPolicy.value == TransferConflictPolicy.Replace.ordinal) {
+                        Settings.uploadConflictPolicy.value = TransferConflictPolicy.Skip.ordinal
+                    }
+                    _jobs.value.forEach { job -> job.state.update { it.copy(conflictPolicy = it.conflictPolicy.allowed(false)) } }
+                }
+            }
+        }
+    }
+
+    private suspend fun confirmConflict(job: UploadJob, file: TransferFile, name: String, existing: TransferFile?): TransferConflictDecision {
+        job.control.waitingForConflict.set(true)
+        try {
+            return conflictDialogMutex.withLock {
+                val request = UploadConflict(job, file, name, existing)
+                _conflict.value = request
+                try {
+                    request.decision.await()
+                } finally {
+                    _conflict.compareAndSet(request, null)
+                    request.decision.cancel()
+                }
+            }
+        } finally {
+            job.control.waitingForConflict.set(false)
+        }
+    }
+
+    fun resolveConflict(request: UploadConflict, policy: TransferConflictPolicy, always: Boolean) {
+        request.decision.complete(TransferConflictDecision(policy.allowed(Settings.enableFileDeletion.value), always))
+    }
     var panelId by mutableStateOf<Long?>(null)
     var destinationJobId by mutableStateOf<Long?>(null)
     private var skipDestinationPanelFor: Long? = null
@@ -506,13 +558,18 @@ internal object UploadTransfers {
         if (state.autoFinish && state.phase == UploadPhase.Finished && state.failed == 0) dismiss(job)
     }
     fun setConflictPolicy(job: UploadJob, policy: TransferConflictPolicy) {
-        if (!job.state.value.editable) return
-        val state = job.state.updateAndGet { if (it.editable) it.copy(conflictPolicy = policy) else it }
+        if (!job.state.value.settingsEditable) return
+        val state = job.state.updateAndGet { if (it.settingsEditable) it.copy(conflictPolicy = policy.allowed(Settings.enableFileDeletion.value)) else it }
         Settings.uploadConflictPolicy.value = state.conflictPolicy.ordinal
     }
+    fun toggleReplaceWithoutConfirmation(job: UploadJob) {
+        if (!job.state.value.settingsEditable || !Settings.enableFileDeletion.value) return
+        val state = job.state.updateAndGet { if (it.settingsEditable) it.copy(replaceWithoutConfirmation = !it.replaceWithoutConfirmation) else it }
+        Settings.uploadReplaceWithoutConfirmation.value = state.replaceWithoutConfirmation
+    }
     fun togglePreserveDate(job: UploadJob) {
-        if (!job.state.value.editable) return
-        val state = job.state.updateAndGet { if (it.editable) it.copy(preserveDate = !it.preserveDate) else it }
+        if (!job.state.value.settingsEditable) return
+        val state = job.state.updateAndGet { if (it.settingsEditable) it.copy(preserveDate = !it.preserveDate) else it }
         Settings.uploadPreserveDate.value = state.preserveDate
     }
     fun togglePause(job: UploadJob) {
@@ -644,6 +701,7 @@ internal object UploadTransfers {
             try {
                 TransferFiles.withUploadConnection(state.destination, multiplex = state.smbMultiplex) { connection ->
                     slots.withPermit {
+                        val conflicts = TransferConflictResolver()
                         val directories = HashMap<String, TransferLocation>()
                         val safNames = HashMap<TransferLocation, MutableSet<String>>()
                         val destinationEntries = HashMap<TransferLocation, MutableMap<String, TransferFile>>()
@@ -663,7 +721,7 @@ internal object UploadTransfers {
                                 if (file.directory) {
                                     val created = com.hippo.ehviewer.library.createTransferWithoutOverwrite(
                                         name = name,
-                                        skipExisting = state.conflictPolicy == TransferConflictPolicy.Skip,
+                                        skipExisting = state.conflictPolicy.allowed(Settings.enableFileDeletion.value) == TransferConflictPolicy.Skip,
                                         checkpoint = job.control::checkpoint,
                                         exists = { false }, // mkdir merges existing directories, rejects files.
                                         create = { TransferFiles.mkdir(parent, it, connection) },
@@ -689,7 +747,7 @@ internal object UploadTransfers {
                                 val currentFile = prepared?.getOrThrow() ?: if (file.size >= 0 && file.mtime > 0) file else TransferFiles.stat(file)
                                 val result = com.hippo.ehviewer.library.createTransferFile(
                                     name = name,
-                                    policy = state.conflictPolicy,
+                                    policy = state.conflictPolicy.allowed(Settings.enableFileDeletion.value),
                                     checkpoint = job.control::checkpoint,
                                     exists = { candidate ->
                                         // SAF document ids are opaque; match display names.
@@ -705,6 +763,23 @@ internal object UploadTransfers {
                                             false
                                         } else {
                                             TransferFiles.exists(parent.child(candidate), connection)
+                                        }
+                                    },
+                                    onConflict = { candidate ->
+                                        conflicts.resolve(
+                                            policy = job.state.value.conflictPolicy,
+                                            fileDeletionEnabled = { Settings.enableFileDeletion.value },
+                                            replaceWithoutConfirmation = state.replaceWithoutConfirmation,
+                                        ) {
+                                            val existing = try {
+                                                safListing.withLock { destinationFiles(parent, connection)[candidate] }
+                                                    ?: TransferFiles.find(parent, candidate, connection)
+                                            } catch (error: CancellationException) {
+                                                throw error
+                                            } catch (_: Exception) {
+                                                null
+                                            }
+                                            confirmConflict(job, currentFile, candidate, existing)
                                         }
                                     },
                                     create = { candidate, replace ->
