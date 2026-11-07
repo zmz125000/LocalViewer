@@ -76,7 +76,7 @@ internal data class UploadState(
     val destinationLabel: String = "",
     val conflictPolicy: TransferConflictPolicy = TransferConflictPolicy.fromPreference(Settings.uploadConflictPolicy.value, Settings.uploadSkipExisting.value).allowed(Settings.enableFileDeletion.value),
     val preserveDate: Boolean = Settings.uploadPreserveDate.value,
-    val replaceWithoutConfirmation: Boolean = Settings.uploadReplaceWithoutConfirmation.value,
+    val conflictDialog: Boolean = Settings.uploadConflictDialog.value,
     val background: Boolean = Settings.browseTaskForegroundService.value,
     val autoFinish: Boolean = Settings.browseTaskAutoFinish.value,
     val autoStart: Boolean = Settings.uploadAutoStart.value,
@@ -562,10 +562,10 @@ internal object UploadTransfers {
         val state = job.state.updateAndGet { if (it.settingsEditable) it.copy(conflictPolicy = policy.allowed(Settings.enableFileDeletion.value)) else it }
         Settings.uploadConflictPolicy.value = state.conflictPolicy.ordinal
     }
-    fun toggleReplaceWithoutConfirmation(job: UploadJob) {
-        if (!job.state.value.settingsEditable || !Settings.enableFileDeletion.value) return
-        val state = job.state.updateAndGet { if (it.settingsEditable) it.copy(replaceWithoutConfirmation = !it.replaceWithoutConfirmation) else it }
-        Settings.uploadReplaceWithoutConfirmation.value = state.replaceWithoutConfirmation
+    fun toggleConflictDialog(job: UploadJob) {
+        if (!job.state.value.settingsEditable) return
+        val state = job.state.updateAndGet { if (it.settingsEditable) it.copy(conflictDialog = !it.conflictDialog) else it }
+        Settings.uploadConflictDialog.value = state.conflictDialog
     }
     fun togglePreserveDate(job: UploadJob) {
         if (!job.state.value.settingsEditable) return
@@ -769,7 +769,7 @@ internal object UploadTransfers {
                                         conflicts.resolve(
                                             policy = job.state.value.conflictPolicy,
                                             fileDeletionEnabled = { Settings.enableFileDeletion.value },
-                                            replaceWithoutConfirmation = state.replaceWithoutConfirmation,
+                                            showDialog = state.conflictDialog,
                                         ) {
                                             val existing = try {
                                                 safListing.withLock { destinationFiles(parent, connection)[candidate] }

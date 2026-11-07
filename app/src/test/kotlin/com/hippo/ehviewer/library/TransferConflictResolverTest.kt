@@ -27,7 +27,7 @@ class TransferConflictResolverTest {
     fun onceAsksAgainAndAlwaysAppliesOnlyToThisResolver() = runBlocking {
         val resolver = TransferConflictResolver()
         var prompts = 0
-        suspend fun choose(always: Boolean) = resolver.resolve(TransferConflictPolicy.Skip, { true }, false) {
+        suspend fun choose(always: Boolean) = resolver.resolve(TransferConflictPolicy.Skip, { true }, true) {
             prompts++
             TransferConflictDecision(TransferConflictPolicy.Rename, always)
         }
@@ -35,7 +35,7 @@ class TransferConflictResolverTest {
         assertEquals(TransferConflictPolicy.Rename, choose(true))
         assertEquals(TransferConflictPolicy.Rename, choose(false))
         assertEquals(2, prompts)
-        TransferConflictResolver().resolve(TransferConflictPolicy.Skip, { true }, false) {
+        TransferConflictResolver().resolve(TransferConflictPolicy.Skip, { true }, true) {
             prompts++
             TransferConflictDecision(it)
         }
@@ -43,16 +43,29 @@ class TransferConflictResolverTest {
     }
 
     @Test
-    fun replaceWithoutConfirmationBypassesOnlyReplacePrompts() = runBlocking {
+    fun dialogOffAppliesEveryPolicyWithoutPrompting() = runBlocking {
         val resolver = TransferConflictResolver()
+        for (policy in TransferConflictPolicy.entries) {
+            assertEquals(
+                policy,
+                resolver.resolve(policy, { true }, false) {
+                    error("Dialog is disabled")
+                },
+            )
+        }
         assertEquals(
-            TransferConflictPolicy.Replace,
-            resolver.resolve(TransferConflictPolicy.Replace, { true }, true) {
-                error("Replacement was explicitly allowed without confirmation")
+            TransferConflictPolicy.Skip,
+            resolver.resolve(TransferConflictPolicy.Replace, { false }, false) {
+                error("Deletion is disabled; replacement must fall back to Skip")
             },
         )
+    }
+
+    @Test
+    fun dialogOnPromptsForEveryPolicy() = runBlocking {
+        val resolver = TransferConflictResolver()
         var prompts = 0
-        for (policy in listOf(TransferConflictPolicy.Skip, TransferConflictPolicy.Rename)) {
+        for (policy in TransferConflictPolicy.entries) {
             assertEquals(
                 policy,
                 resolver.resolve(policy, { true }, true) {
@@ -61,14 +74,14 @@ class TransferConflictResolverTest {
                 },
             )
         }
-        assertEquals(2, prompts)
+        assertEquals(3, prompts)
     }
 
     @Test
     fun disablingDeletionWhileDialogIsOpenOrAfterAlwaysPreventsReplacement() = runBlocking {
         var enabled = true
         val resolver = TransferConflictResolver()
-        val result = resolver.resolve(TransferConflictPolicy.Replace, { enabled }, false) {
+        val result = resolver.resolve(TransferConflictPolicy.Replace, { enabled }, true) {
             enabled = false
             TransferConflictDecision(it, true)
         }
@@ -80,7 +93,7 @@ class TransferConflictResolverTest {
             },
         )
         val second = TransferConflictResolver()
-        second.resolve(TransferConflictPolicy.Replace, { true }, false) { TransferConflictDecision(it, true) }
+        second.resolve(TransferConflictPolicy.Replace, { true }, true) { TransferConflictDecision(it, true) }
         assertEquals(
             TransferConflictPolicy.Skip,
             second.resolve(TransferConflictPolicy.Replace, { false }, true) {
@@ -95,13 +108,13 @@ class TransferConflictResolverTest {
         val decision = CompletableDeferred<TransferConflictDecision>()
         var prompts = 0
         val first = async(start = CoroutineStart.UNDISPATCHED) {
-            resolver.resolve(TransferConflictPolicy.Skip, { true }, false) {
+            resolver.resolve(TransferConflictPolicy.Skip, { true }, true) {
                 prompts++
                 decision.await()
             }
         }
         val second = async(start = CoroutineStart.UNDISPATCHED) {
-            resolver.resolve(TransferConflictPolicy.Skip, { true }, false) { error("Must reuse Always") }
+            resolver.resolve(TransferConflictPolicy.Skip, { true }, true) { error("Must reuse Always") }
         }
         assertFalse(first.isCompleted)
         assertFalse(second.isCompleted)
@@ -117,12 +130,12 @@ class TransferConflictResolverTest {
     fun stoppingACoroutineWaitingForADialogDoesNotLeaveTheResolverLocked() = runBlocking {
         val resolver = TransferConflictResolver()
         val waiting = async(start = CoroutineStart.UNDISPATCHED) {
-            resolver.resolve(TransferConflictPolicy.Replace, { true }, false) { CompletableDeferred<TransferConflictDecision>().await() }
+            resolver.resolve(TransferConflictPolicy.Replace, { true }, true) { CompletableDeferred<TransferConflictDecision>().await() }
         }
         withTimeout(2000) { waiting.cancelAndJoin() }
         assertTrue(waiting.isCancelled)
         withTimeout(2000) {
-            assertEquals(TransferConflictPolicy.Skip, resolver.resolve(TransferConflictPolicy.Skip, { true }, false) { TransferConflictDecision(it) })
+            assertEquals(TransferConflictPolicy.Skip, resolver.resolve(TransferConflictPolicy.Skip, { true }, true) { TransferConflictDecision(it) })
         }
     }
 

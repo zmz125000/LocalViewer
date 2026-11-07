@@ -13,11 +13,11 @@ internal class TransferConflictResolver {
     suspend fun resolve(
         policy: TransferConflictPolicy,
         fileDeletionEnabled: () -> Boolean,
-        replaceWithoutConfirmation: Boolean,
+        showDialog: Boolean,
         confirm: suspend (TransferConflictPolicy) -> TransferConflictDecision,
     ): TransferConflictPolicy = mutex.withLock {
         val current = (always ?: policy).allowed(fileDeletionEnabled())
-        if (always != null || (current == TransferConflictPolicy.Replace && replaceWithoutConfirmation)) return@withLock current
+        if (always != null || !showDialog) return@withLock current
         val decision = confirm(current)
         val result = decision.policy.allowed(fileDeletionEnabled())
         if (decision.always) always = result

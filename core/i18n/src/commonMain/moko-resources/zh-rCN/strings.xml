@@ -1235,10 +1235,9 @@
     <string name="transfer_rename_conflicts">冲突时重命名</string>
     <string name="transfer_replace_existing">替换已存在的文件</string>
     <string name="transfer_preserve_date">保留原始日期</string>
-    <string name="transfer_replace_without_confirmation">替换时不再确认</string>
+    <string name="transfer_conflict_dialog">文件冲突对话框</string>
     <string name="transfer_conflict_title">文件已存在</string>
     <string name="transfer_conflict_sizes">来源：%1$s · 已存在：%2$s</string>
-    <string name="transfer_conflict_scope">将所选操作应用于本次上传的其余冲突。</string>
     <string name="transfer_conflict_remember">记住选择</string>
     <string name="transfer_dest">目的地</string>
     <string name="transfer_destination">目的地</string>

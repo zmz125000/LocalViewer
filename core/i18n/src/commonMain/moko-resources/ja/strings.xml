@@ -1164,10 +1164,9 @@
     <string name="transfer_rename_conflicts">名前が競合する場合は変更</string>
     <string name="transfer_replace_existing">既存のファイルを置き換える</string>
     <string name="transfer_preserve_date">元の日時を保持</string>
-    <string name="transfer_replace_without_confirmation">確認せずに置き換える</string>
+    <string name="transfer_conflict_dialog">ファイル競合ダイアログ</string>
     <string name="transfer_conflict_title">ファイルは既に存在します</string>
     <string name="transfer_conflict_sizes">転送元: %1$s · 既存: %2$s</string>
-    <string name="transfer_conflict_scope">このアップロードの残りの競合にも選択した操作を適用します。</string>
     <string name="transfer_conflict_remember">選択を記憶</string>
     <string name="transfer_dest">転送先</string>
     <string name="transfer_destination">転送先</string>

@@ -227,24 +227,25 @@ private fun UploadConflictDialog(request: UploadConflict) {
                                     TransferConflictPolicy.Replace -> R.string.transfer_replace_existing
                                 },
                             ),
+                            iconBackground = false,
                             onClick = { UploadTransfers.resolveConflict(request, option, rememberChoice) },
                         )
                     }
                 }
                 Row(
-                    Modifier.fillMaxWidth().toggleable(rememberChoice, role = Role.Switch, onValueChange = { rememberChoice = it })
+                    Modifier.fillMaxWidth().toggleable(
+                        value = rememberChoice,
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                        role = Role.Switch,
+                        onValueChange = { rememberChoice = it },
+                    )
                         .padding(horizontal = 4.dp, vertical = 8.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(stringResource(R.string.transfer_conflict_remember), Modifier.weight(1f))
                     Switch(checked = rememberChoice, onCheckedChange = null)
                 }
-                Text(
-                    stringResource(R.string.transfer_conflict_scope),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(horizontal = 4.dp),
-                )
             }
         }
     }
@@ -317,38 +318,38 @@ private fun FileTransferPanel(job: UploadJob) {
                                     menu = false
                                 },
                             )
-                            for (policy in TransferConflictPolicy.entries) {
-                                if (policy == TransferConflictPolicy.Replace && !deletionEnabled) continue
-                                DropdownMenuItem(
-                                    text = {
-                                        Text(
-                                            stringResource(
-                                                when (policy) {
-                                                    TransferConflictPolicy.Skip -> R.string.transfer_skip_existing
-                                                    TransferConflictPolicy.Rename -> R.string.transfer_rename_conflicts
-                                                    TransferConflictPolicy.Replace -> R.string.transfer_replace_existing
-                                                },
-                                            ),
-                                        )
-                                    },
-                                    enabled = state.settingsEditable,
-                                    trailingIcon = { if (state.conflictPolicy.allowed(deletionEnabled) == policy) Icon(Icons.Default.Check, null) },
-                                    onClick = {
-                                        UploadTransfers.setConflictPolicy(job, policy)
-                                        menu = false
-                                    },
-                                )
-                            }
-                            if (deletionEnabled && state.conflictPolicy == TransferConflictPolicy.Replace) {
-                                DropdownMenuItem(
-                                    text = { Text(stringResource(R.string.transfer_replace_without_confirmation)) },
-                                    enabled = state.settingsEditable,
-                                    trailingIcon = { if (state.replaceWithoutConfirmation) Icon(Icons.Default.Check, null) },
-                                    onClick = {
-                                        UploadTransfers.toggleReplaceWithoutConfirmation(job)
-                                        menu = false
-                                    },
-                                )
+                            DropdownMenuItem(
+                                text = { Text(stringResource(R.string.transfer_conflict_dialog)) },
+                                enabled = state.settingsEditable,
+                                trailingIcon = { if (state.conflictDialog) Icon(Icons.Default.Check, null) },
+                                onClick = {
+                                    UploadTransfers.toggleConflictDialog(job)
+                                    menu = false
+                                },
+                            )
+                            if (!state.conflictDialog) {
+                                for (policy in TransferConflictPolicy.entries) {
+                                    if (policy == TransferConflictPolicy.Replace && !deletionEnabled) continue
+                                    DropdownMenuItem(
+                                        text = {
+                                            Text(
+                                                stringResource(
+                                                    when (policy) {
+                                                        TransferConflictPolicy.Skip -> R.string.transfer_skip_existing
+                                                        TransferConflictPolicy.Rename -> R.string.transfer_rename_conflicts
+                                                        TransferConflictPolicy.Replace -> R.string.transfer_replace_existing
+                                                    },
+                                                ),
+                                            )
+                                        },
+                                        enabled = state.settingsEditable,
+                                        trailingIcon = { if (state.conflictPolicy.allowed(deletionEnabled) == policy) Icon(Icons.Default.Check, null) },
+                                        onClick = {
+                                            UploadTransfers.setConflictPolicy(job, policy)
+                                            menu = false
+                                        },
+                                    )
+                                }
                             }
                             DropdownMenuItem(
                                 text = { Text(stringResource(R.string.transfer_preserve_date)) },

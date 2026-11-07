@@ -1278,10 +1278,9 @@
     <string name="transfer_rename_conflicts">Rename if conflict</string>
     <string name="transfer_replace_existing">Replace existing files</string>
     <string name="transfer_preserve_date">Preserve original date</string>
-    <string name="transfer_replace_without_confirmation">Replace without confirmation</string>
+    <string name="transfer_conflict_dialog">File conflict dialog</string>
     <string name="transfer_conflict_title">File already exists</string>
     <string name="transfer_conflict_sizes">Source: %1$s · Existing: %2$s</string>
-    <string name="transfer_conflict_scope">Remember this action for the remaining conflicts in this upload.</string>
     <string name="transfer_conflict_remember">Remember</string>
     <string name="transfer_dest">Dest</string>
     <string name="transfer_destination">Destination</string>
