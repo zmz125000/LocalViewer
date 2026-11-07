@@ -32,6 +32,7 @@ import com.hippo.ehviewer.library.humanizePathName
 import com.hippo.ehviewer.library.needsLocalTransferMetadata
 import com.hippo.ehviewer.library.networkSourceGuard
 import com.hippo.ehviewer.library.removalActionFor
+import com.hippo.ehviewer.library.removalParent
 import com.hippo.ehviewer.library.removalRequiresPanel
 import com.hippo.ehviewer.library.removalTargets
 import com.hippo.ehviewer.library.resolveBrowsePath
@@ -111,6 +112,7 @@ internal class UploadJob(val id: Long, val title: String, val saving: Boolean = 
     val state = MutableStateFlow(UploadState())
     val control = TransferControl()
     val bytes = AtomicLong()
+    val removalAttempts = java.util.concurrent.ConcurrentHashMap.newKeySet<TransferLocation>()
     var worker: Job? = null
     var previousWorker: Job? = null
 }
@@ -416,22 +418,26 @@ internal object UploadTransfers {
                     for (row in state.rows) {
                         job.control.checkpoint()
                         updateRow(job, row.file.relative, UploadFileStatus.Running)
-                        val parent = row.file.source.copy(path = row.file.source.path.substringBeforeLast('/', ""))
+                        val parent = removalParent(row.file.source)
                         // Stop or a lost reply can race an already committed server rename.
                         // Refresh attempted network parents even when the acknowledgement is lost.
                         val rowAction = removalActionFor(row.file, job.removalAction)
+                        fun attempted() {
+                            job.removalAttempts += row.file.source
+                            lease.attempted(row.file.source)
+                        }
                         try {
                             val detail = when (rowAction) {
                                 FileRemovalAction.Trash -> {
-                                    lease.attempted(row.file.source)
+                                    attempted()
                                     "$date/${TrashFiles.move(row.file, date, job.control)}"
                                 }
                                 FileRemovalAction.Restore -> {
-                                    lease.attempted(row.file.source)
+                                    attempted()
                                     RestoreFiles.move(row.file, job.control)
                                 }
                                 else -> {
-                                    if (!PermanentFiles.delete(row.file, rowAction, job.control, onDelete = { lease.attempted(row.file.source) })) {
+                                    if (!PermanentFiles.delete(row.file, rowAction, job.control, onDelete = ::attempted)) {
                                         updateRow(job, row.file.relative, UploadFileStatus.Skipped)
                                         continue
                                     }
@@ -447,14 +453,12 @@ internal object UploadTransfers {
                             }
                             when (parent.kind) {
                                 ExplorerWindows.Kind.Smb -> {
-                                    BrowseSession.invalidateSmbListing(parent.sourceId, parent.path)
                                     BrowseSession.invalidateSmbListingsUnder(row.file.source.sourceId, row.file.source.path)
                                 }
                                 ExplorerWindows.Kind.WebDav -> {
-                                    BrowseSession.invalidateWebDavListing(parent.sourceId, parent.path)
                                     BrowseSession.invalidateWebDavListingsUnder(row.file.source.sourceId, row.file.source.path)
                                 }
-                                ExplorerWindows.Kind.Local -> BrowseSession.invalidateLocalListing()
+                                ExplorerWindows.Kind.Local -> Unit
                             }
                         } catch (error: CancellationException) {
                             throw error
@@ -641,10 +645,11 @@ internal object UploadTransfers {
         job.worker?.invokeOnCompletion { cause ->
             lease?.close()
             if (job.deleting && notifyDeletion) {
-                val parents = job.state.value.rows.flatMap { row ->
-                    listOfNotNull(row.file.source, if (job.removalAction == FileRemovalAction.Restore) restoreLocation(row.file.source) else null)
-                }.map { it.copy(path = it.path.substringBeforeLast('/', "")) }.distinct()
-                if (parents.any { it.kind == ExplorerWindows.Kind.Local }) BrowseSession.notifyLocalMutation()
+                val parents = job.removalAttempts.flatMap { source ->
+                    listOfNotNull(source, if (job.removalAction == FileRemovalAction.Restore) restoreLocation(source) else null)
+                }.map(::removalParent).distinct()
+                val localParents = parents.filter { it.kind == ExplorerWindows.Kind.Local }.map { it.path }
+                if (localParents.isNotEmpty()) BrowseSession.notifyLocalMutation(localParents)
                 parents.forEach { parent ->
                     when (parent.kind) {
                         ExplorerWindows.Kind.Smb -> BrowseSession.notifySmbMutation(parent.sourceId, parent.path)

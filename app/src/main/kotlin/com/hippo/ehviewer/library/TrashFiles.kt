@@ -158,6 +158,16 @@ internal object TrashFiles {
 
 internal enum class FileRemovalAction { Trash, Delete, EmptyTrash, Restore }
 
+/** SAF document IDs may encode every slash, so a URI string parent is not its folder. */
+internal fun removalParent(source: TransferLocation): TransferLocation {
+    if (source.kind == ExplorerWindows.Kind.Local && source.path.startsWith("content:") && "/document/" in source.path) {
+        val id = decodedTrashPath(source.path).substringAfter("/document/")
+        val parent = id.substringBeforeLast('/', if (':' in id) id.substringBefore(':') + ":" else id)
+        return source.copy(path = source.path.substringBefore("/document/") + "/document/" + java.net.URLEncoder.encode(parent, "UTF-8").replace("+", "%20"))
+    }
+    return source.copy(path = source.path.substringBeforeLast('/', ""))
+}
+
 internal fun isTrashFolder(source: TransferLocation): Boolean = decodedTrashPath(source.path)
     .replace('\\', '/').trimEnd('/').substringAfterLast('/').substringAfterLast(':').equals(".trash", true)
 

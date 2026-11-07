@@ -34,6 +34,14 @@ import splitties.init.appCtx
  * [classifyRemoteListingWithPeeks], optional disk index + slim quick scan.
  */
 object LocalFolderListing {
+    private val jobLocations = ConcurrentHashMap<String, TransferLocation>()
+
+    internal fun cancelMutatedListingJobs() {
+        jobLocations.forEach { (key, location) ->
+            if (BrowseSession.mutationRefresh.snapshot(location).pending) LocalListingJobs.cancel(key)
+        }
+    }
+
     /** Same idea as SMB/WebDAV peek gates: cap fan-out on [Dispatchers.IO], no extra pool. */
     private const val PEEK_PARALLELISM = 8
 
@@ -281,9 +289,11 @@ object LocalFolderListing {
             }
         }
         val effective = resolveBrowsePath(listedPath, preferMediaStore = preferMediaStore)
+        val mutation = BrowseSession.mutationRefresh.snapshot(TransferLocation(ExplorerWindows.Kind.Local, 0, effective.toString()))
         val dirKey = BrowseSession.normalizeLocalRelativeDir(relativeDir)
         val configKey = rootConfigKey(rootPath, preferMediaStore)
         val jobKey = BrowseSession.localFolderListingKey(rootId, dirKey)
+        jobLocations[jobKey] = TransferLocation(ExplorerWindows.Kind.Local, 0, effective.toString())
         val previousForDeletion = if (!useCache) {
             BrowseSession.getLocalFolderCachedListing(rootId, dirKey)?.entries
                 ?: NetworkFolderIndexCache.loadLocal(rootId, configKey, dirKey)
@@ -337,7 +347,7 @@ object LocalFolderListing {
                 val materialized = materializeLocalEntries(effective, cached.entries)
                 publishListingOnMain(materialized, onCached)
                 val shouldQuickScan =
-                    Settings.networkFolderIndexQuickScan.value && !cached.sessionCurrent
+                    mutation.pending || (Settings.networkFolderIndexQuickScan.value && !cached.sessionCurrent)
                 if (!shouldQuickScan) return@withContext materialized
                 if (!isShallowIncompleteListing(cached.entries)) {
                     LocalListingJobs.start(jobKey) {
@@ -438,13 +448,14 @@ object LocalFolderListing {
         return classifyDirectoryChildren(dir, preferMediaStore, children)
     }
 
-    suspend fun listDirectorySlim(
+    internal suspend fun listDirectorySlim(
         dir: Path,
         preferMediaStore: Boolean,
         cached: List<BrowseEntryRemote>,
         rootId: Long,
         configKey: String,
         relativeDir: String,
+        mutation: BrowseMutationRefresh.Snapshot = BrowseSession.mutationRefresh.snapshot(TransferLocation(ExplorerWindows.Kind.Local, 0, dir.toString())),
     ): SlimRefresh {
         // A quick scan must enumerate live children, not replay the peek cache.
         BrowseSession.invalidateLocalRawChildren(BrowseSession.pathKey(dir))
@@ -452,9 +463,9 @@ object LocalFolderListing {
         val deleted = confirmedMissingLocalDirectories(dir, cached, children)
         val retained = if (deleted.isEmpty()) cached else cached.filter { browseEntryFolderRoot(it) !in deleted }
         val plan = planRemoteDirectorySlimRefresh(retained, children)
-        val preserveCachedFiles = isUntrustedSlimLiveFileListing(retained, children) &&
+        val preserveCachedFiles = !mutation.currentChanged && isUntrustedSlimLiveFileListing(retained, children) &&
             plan.addedDirectories.isNotEmpty()
-        if (isUntrustedLocalSlimLiveListing(retained, children) && !preserveCachedFiles) {
+        if (!mutation.currentChanged && isUntrustedLocalSlimLiveListing(retained, children) && !preserveCachedFiles) {
             return SlimRefresh(retained, deleted, persist = deleted.isNotEmpty())
         }
         if (preserveCachedFiles) {
@@ -474,7 +485,10 @@ object LocalFolderListing {
         } else {
             emptyList()
         }
-        val mtimeChanged = directoriesNeedingDeepScanOnMtimeChange(retained, children)
+        val mtimeChanged = (
+            directoriesNeedingDeepScanOnMtimeChange(retained, children) +
+                mutation.changedChildren(children)
+            ).distinctBy { it.name }
         val reclassifyNames = (deepHidden.asSequence() + mtimeChanged.asSequence())
             .mapTo(HashSet()) { it.name }
         val cachedZipAsDir = if (zipFileNames.isEmpty()) {
@@ -765,6 +779,7 @@ object LocalFolderListing {
         dirKey: String,
         materialized: List<BrowseEntry>,
     ): List<BrowseEntry> {
+        val mutation = BrowseSession.mutationRefresh.snapshot(TransferLocation(ExplorerWindows.Kind.Local, 0, effective.toString()))
         val refresh = listDirectorySlim(
             effective,
             preferMediaStore,
@@ -772,6 +787,7 @@ object LocalFolderListing {
             rootId,
             configKey,
             dirKey,
+            mutation,
         )
         if (!refresh.persist) {
             logcat("FolderIndex") {
@@ -781,6 +797,9 @@ object LocalFolderListing {
             return materialized
         }
         removeDeletedLocalSubtrees(rootId, dirKey, effective, refresh.removedDirectoryNames)
+        if (mutation.pending) {
+            NetworkFolderIndexCache.saveMutationRefresh(ExplorerWindows.Kind.Local, rootId, configKey, dirKey, refresh.entries)
+        }
         val toKeep = persistFinishedListing(
             rootId,
             configKey,
@@ -790,6 +809,7 @@ object LocalFolderListing {
             refresh.zipInteriors,
             persistEntries = refresh.entries != filledRemote || refresh.zipInteriors.isNotEmpty(),
         )
+        BrowseSession.mutationRefresh.complete(mutation)
         return materializeLocalEntries(effective, toKeep)
     }
 

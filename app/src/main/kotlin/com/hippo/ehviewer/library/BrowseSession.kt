@@ -19,12 +19,14 @@ const val BROWSE_IMAGE_SCAN_CAP = 128
  * Survives navigating to the reader (unlike [androidx.compose.runtime.remember]).
  */
 object BrowseSession {
+    internal val mutationRefresh = BrowseMutationRefresh()
     private val _localMutations = MutableSharedFlow<Unit>(extraBufferCapacity = 1, onBufferOverflow = BufferOverflow.DROP_OLDEST)
     val localMutations = _localMutations.asSharedFlow()
 
-    fun notifyLocalMutation() {
-        LocalFolderListing.cancelListingJobs()
-        invalidateLocalListing()
+    fun notifyLocalMutation(parents: List<String>) {
+        mutationRefresh.changed(parents.map { TransferLocation(ExplorerWindows.Kind.Local, 0, it) })
+        LocalFolderListing.cancelMutatedListingJobs()
+        parents.forEach { invalidateLocalRawChildren(it) }
         _localMutations.tryEmit(Unit)
     }
 
@@ -32,7 +34,9 @@ object BrowseSession {
     val smbMutations = _smbMutations.asSharedFlow()
 
     fun notifySmbMutation(sourceId: Long, parent: String) {
-        invalidateSmbListing(sourceId, parent)
+        com.hippo.ehviewer.smb.SmbGateway.cancelListingsForMutation(sourceId, parent)
+        mutationRefresh.changed(listOf(TransferLocation(ExplorerWindows.Kind.Smb, sourceId, parent)))
+        invalidateSmbRawChildren(sourceId, parent)
         _smbMutations.tryEmit(sourceId to parent.trim('/'))
     }
 
@@ -40,7 +44,9 @@ object BrowseSession {
     val webDavMutations = _webDavMutations.asSharedFlow()
 
     fun notifyWebDavMutation(sourceId: Long, parent: String) {
-        invalidateWebDavListing(sourceId, parent)
+        com.hippo.ehviewer.webdav.WebDavGateway.cancelListingsForMutation(sourceId, parent)
+        mutationRefresh.changed(listOf(TransferLocation(ExplorerWindows.Kind.WebDav, sourceId, parent)))
+        invalidateWebDavRawChildren(sourceId, parent)
         _webDavMutations.tryEmit(sourceId to parent.trim('/'))
     }
 

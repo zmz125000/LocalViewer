@@ -654,7 +654,11 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
 
     LaunchedEffect(sourceId, relativeDir) {
         BrowseSession.webDavMutations.collect { (changedSource, parent) ->
-            if (changedSource == sourceId && parent == relativeDir.trim('/')) requestForceReload()
+            val current = relativeDir.trim('/')
+            if (changedSource == sourceId && (current.isEmpty() || parent == current || parent.startsWith("$current/"))) {
+                activeListingRequest = null
+                refreshToken++
+            }
         }
     }
 
@@ -731,10 +735,11 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
         }
 
         val loadDir = if (configChanged) "" else targetDir
+        val mutationRefresh = BrowseSession.mutationRefresh.snapshot(TransferLocation(ExplorerWindows.Kind.WebDav, sourceId, loadDir)).pending
         // Photo-grid open: same complete index the reader uses — no directory scan.
         // Name-only rows drop size/date; stamp them here so this write cannot wipe
         // a fill that already ran (grid entry never had a file list to keep).
-        if (!force && !configChanged && photoGrid) {
+        if (!force && !mutationRefresh && !configChanged && photoGrid) {
             val names = FolderGalleryIndex.loadWebDav(src.id, configKey, loadDir)
             if (names != null) {
                 val preserved = if (listedDir == loadDir) FolderGalleryIndex.directChildMetadata(entries) else emptyMap()
@@ -841,7 +846,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                 applyCachedListing(loadDir)
                 refreshing = false
             }
-            if (force && photoGrid && ZipAsDirListing.splitZipBrowsePath(loadDir) == null) {
+            if ((force || mutationRefresh) && photoGrid && ZipAsDirListing.splitZipBrowsePath(loadDir) == null) {
                 val refreshed = withIOContext {
                     BrowseSession.peekWebDavRawChildren(sourceId, loadDir)?.let { children ->
                         FolderGalleryIndex.persistPhotoGridRefresh(ExplorerWindows.Kind.WebDav, sourceId, configKey, loadDir, children)

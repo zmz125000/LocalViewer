@@ -683,7 +683,11 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
 
     LaunchedEffect(sourceId, relativeDir) {
         BrowseSession.smbMutations.collect { (changedSource, parent) ->
-            if (changedSource == sourceId && parent == relativeDir.trim('/')) requestForceReload()
+            val current = relativeDir.trim('/')
+            if (changedSource == sourceId && (current.isEmpty() || parent == current || parent.startsWith("$current/"))) {
+                activeListingRequest = null
+                refreshToken++
+            }
         }
     }
 
@@ -827,10 +831,11 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
         }
 
         val loadDir = if (configChanged) "" else targetDir
+        val mutationRefresh = BrowseSession.mutationRefresh.snapshot(TransferLocation(ExplorerWindows.Kind.Smb, sourceId, loadDir)).pending
         // Photo-grid open: same complete index the reader uses — no directory scan.
         // Name-only rows drop size/date; stamp them here so this write cannot wipe
         // a fill that already ran (grid entry never had a file list to keep).
-        if (!force && !configChanged && photoGrid) {
+        if (!force && !mutationRefresh && !configChanged && photoGrid) {
             val names = FolderGalleryIndex.loadSmb(src.id, configKey, loadDir)
             if (names != null) {
                 val preserved = if (listedDir == loadDir) FolderGalleryIndex.directChildMetadata(entries) else emptyMap()
@@ -937,7 +942,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                 applyCachedListing(loadDir)
                 refreshing = false
             }
-            if (force && photoGrid && ZipAsDirListing.splitZipBrowsePath(loadDir) == null) {
+            if ((force || mutationRefresh) && photoGrid && ZipAsDirListing.splitZipBrowsePath(loadDir) == null) {
                 val refreshed = withIOContext {
                     BrowseSession.peekSmbRawChildren(sourceId, loadDir)?.let { children ->
                         FolderGalleryIndex.persistPhotoGridRefresh(ExplorerWindows.Kind.Smb, sourceId, configKey, loadDir, children)

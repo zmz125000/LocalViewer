@@ -21,6 +21,7 @@ import com.hierynomus.smbj.share.Directory
 import com.hierynomus.smbj.share.DiskShare
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.library.BrowseEntryRemote
+import com.hippo.ehviewer.library.BrowseMutationRefresh
 import com.hippo.ehviewer.library.BrowseSession
 import com.hippo.ehviewer.library.DirPresence
 import com.hippo.ehviewer.library.ExplorerWindows
@@ -31,6 +32,7 @@ import com.hippo.ehviewer.library.RemoteChild
 import com.hippo.ehviewer.library.RemoteDirectorySlimPlan
 import com.hippo.ehviewer.library.RemoteFileStat
 import com.hippo.ehviewer.library.SMB_PROMOTE_MAX_LEAVES
+import com.hippo.ehviewer.library.TransferLocation
 import com.hippo.ehviewer.library.ZipAsDirListing
 import com.hippo.ehviewer.library.ZipCdParse
 import com.hippo.ehviewer.library.ZipCentralDirectory
@@ -1945,6 +1947,15 @@ object SmbGateway {
         listJobs[BrowseSession.smbListingKey(sourceId, relativeDir)]?.join()
     }
 
+    internal fun cancelListingsForMutation(sourceId: Long, parent: String) {
+        var dir = parent.replace('\\', '/').trim('/')
+        while (true) {
+            listJobs.remove(BrowseSession.smbListingKey(sourceId, dir))?.cancel()
+            if (dir.isEmpty()) break
+            dir = dir.substringBeforeLast('/', "")
+        }
+    }
+
     suspend fun listDirectory(
         source: SmbSourceEntity,
         password: String,
@@ -1967,6 +1978,7 @@ object SmbGateway {
             }
         }
         val cacheKey = BrowseSession.smbListingKey(source.id, relativeDir)
+        val mutation = BrowseSession.mutationRefresh.snapshot(TransferLocation(ExplorerWindows.Kind.Smb, source.id, relativeDir))
         val configKey = sourceConfigKey(source)
         if (useCache && isListJobActive(cacheKey)) {
             BrowseSession.getSmbCachedListing(source.id, relativeDir)?.let { ram ->
@@ -2024,9 +2036,11 @@ object SmbGateway {
                 publishCachedOnMain(presented, onCached)
                 // Quick scan only for old (non-current) listings — every directory independently,
                 // including subfolders hydrated from disk later in the same process.
-                val shouldQuickScan = Settings.networkFolderIndexQuickScan.value &&
-                    !cached.sessionCurrent &&
-                    isSourceConnected(source)
+                val shouldQuickScan = mutation.pending || (
+                    Settings.networkFolderIndexQuickScan.value &&
+                        !cached.sessionCurrent &&
+                        isSourceConnected(source)
+                    )
                 if (!shouldQuickScan) return presented
                 // In-progress shallow stubs must not use slim (would skip peeks forever).
                 if (isShallowIncompleteListing(cached.entries)) {
@@ -2049,6 +2063,7 @@ object SmbGateway {
                             relativeDir,
                             cached.entries,
                             configKey,
+                            mutation,
                         )
                         if (!refresh.persist) {
                             logcat("FolderIndex") {
@@ -2059,7 +2074,7 @@ object SmbGateway {
                         }
                         removeDeletedDirectoryCaches(source.id, relativeDir, refresh.removedDirectoryNames)
                         // Successful slim marks this exact directory current (even if unchanged).
-                        val toKeep = if (refresh.persist &&
+                        val toKeep = if (!mutation.pending && refresh.persist &&
                             (refresh.entries != cached.entries || refresh.zipInteriors.isNotEmpty())
                         ) {
                             persistParentAndZipInteriors(
@@ -2073,14 +2088,21 @@ object SmbGateway {
                         } else {
                             refresh.entries
                         }
+                        val refreshedEntries = if (mutation.pending) {
+                            NetworkFolderIndexCache.saveMutationRefresh(ExplorerWindows.Kind.Smb, source.id, configKey, relativeDir, refresh.entries)
+                            persistParentAndZipInteriors(source, configKey, relativeDir, refresh.entries, refresh.zipInteriors, refresh.removedDirectoryNames)
+                        } else {
+                            toKeep
+                        }
                         val slimmed = presentListingForZipAsDirToggle(
                             source,
                             configKey,
                             relativeDir,
-                            toKeep,
+                            refreshedEntries,
                             sessionCurrent = true,
                             previousForZipNames = cached.entries,
                         )
+                        BrowseSession.mutationRefresh.complete(mutation)
                         publishCachedOnMain(slimmed, onCached)
                         slimmed
                     } catch (e: kotlinx.coroutines.CancellationException) {
@@ -2391,6 +2413,7 @@ object SmbGateway {
         relativeDir: String,
         cached: List<BrowseEntryRemote>,
         configKey: String,
+        mutation: BrowseMutationRefresh.Snapshot,
     ): SlimDirectoryRefresh {
         if (isServerRootSource(source) && relativeDir.isBlank()) {
             val children = listShareRootEntries(source, password).map {
@@ -2414,9 +2437,9 @@ object SmbGateway {
         }
         val retained = if (deleted.isEmpty()) cached else cached.filter { browseEntryFolderRoot(it) !in deleted }
         val plan = planRemoteDirectorySlimRefresh(retained, children)
-        val preserveCachedFiles = isUntrustedSlimLiveFileListing(retained, children) &&
+        val preserveCachedFiles = !mutation.currentChanged && isUntrustedSlimLiveFileListing(retained, children) &&
             plan.addedDirectories.isNotEmpty()
-        if (isUntrustedSlimLiveListing(retained, children) && !preserveCachedFiles) {
+        if (!mutation.currentChanged && isUntrustedSlimLiveListing(retained, children) && !preserveCachedFiles) {
             return SlimDirectoryRefresh(retained, deleted, persist = deleted.isNotEmpty())
         }
         if (preserveCachedFiles) {
@@ -2441,7 +2464,10 @@ object SmbGateway {
         } else {
             emptyList()
         }
-        val mtimeChanged = directoriesNeedingDeepScanOnMtimeChange(retained, children)
+        val mtimeChanged = (
+            directoriesNeedingDeepScanOnMtimeChange(retained, children) +
+                mutation.changedChildren(children)
+            ).distinctBy { it.name }
         val reclassifyNames = (deepHidden.asSequence() + mtimeChanged.asSequence())
             .mapTo(HashSet()) { it.name }
         val cachedZipAsDir = if (zipFileNames.isEmpty()) {

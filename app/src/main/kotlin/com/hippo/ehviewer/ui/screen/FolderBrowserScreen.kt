@@ -714,12 +714,13 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
             error = null
             return
         }
+        val mutationRefresh = BrowseSession.mutationRefresh.snapshot(TransferLocation(ExplorerWindows.Kind.Local, 0, frame.path)).pending
         // Leave→enter folder must not wait on previous path’s stuck MMR workers.
         notifyLocalThumbFolder(frame)
         val targetPath = frameListKey(frame)
         fun ownsListing(): Boolean = activeListingRequest === request && stack.lastOrNull() == frame
         // Photo-grid open: same complete index the reader uses — no directory scan.
-        if (!force && frame.photoGrid) {
+        if (!force && !mutationRefresh && frame.photoGrid) {
             val shownImages = entries.filter { it is BrowseEntry.RegularFile && isImageFileName(it.name) }
             val alreadyShown = listedPath == targetPath && shownImages.isNotEmpty()
             val missingMetadata = shownImages.any { it.size <= 0L || it.lastModifiedMs <= 0L }
@@ -760,7 +761,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
             }
         }
         // Video-folder overlay: library index / DB file list — no browse classify scan.
-        if (!force && frame.videoFolder && !frame.isZipBrowse) {
+        if (!force && !mutationRefresh && frame.videoFolder && !frame.isZipBrowse) {
             val shownVideos = entries.filterIsInstance<BrowseEntry.VideoFile>()
             val alreadyShown = listedPath == targetPath && shownVideos.isNotEmpty()
             if (alreadyShown) {
@@ -787,7 +788,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                 return
             }
         }
-        if (!force && applyCachedLocalListing(frame) && isLocalListingSessionCurrent(frame)) {
+        if (!force && !mutationRefresh && applyCachedLocalListing(frame) && isLocalListingSessionCurrent(frame)) {
             loading = false
             refreshing = false
             return
@@ -888,7 +889,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                 applyCachedLocalListing(frame)
                 refreshing = false
             }
-            if (force && frame.photoGrid) {
+            if ((force || mutationRefresh) && frame.photoGrid) {
                 val refreshed = withIOContext {
                     val effective = resolveBrowsePath(frame.path.toPath(), preferMediaStore = frame.preferMediaStore)
                     BrowseSession.peekLocalRawChildren(BrowseSession.pathKey(effective))?.let { children ->
@@ -920,7 +921,12 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
     }
 
     LaunchedEffect(explorerWindowId) {
-        BrowseSession.localMutations.collectLatest { reload(force = true) }
+        BrowseSession.localMutations.collectLatest {
+            val frame = stack.lastOrNull() ?: return@collectLatest
+            if (BrowseSession.mutationRefresh.snapshot(TransferLocation(ExplorerWindows.Kind.Local, 0, frame.path)).pending) {
+                reload(refreshPhotoGrid = true)
+            }
+        }
     }
 
     // Gallery grids opened from Library are part of its live-update surface too.
