@@ -12,6 +12,45 @@ class NetworkSourceGuardTest {
     private fun source(path: String, kind: ExplorerWindows.Kind = ExplorerWindows.Kind.Smb, id: Long = 1) = TransferLocation(kind, id, path)
 
     @Test
+    fun restoreMayTargetTrashedPathButStillExcludesOtherTransfers() {
+        for (kind in ExplorerWindows.Kind.entries) {
+            val guard = NetworkSourceGuard()
+            val destination = source("photos/album", kind)
+            val trash = source("photos/.trash/2026-11-07/album", kind)
+            val deletion = guard.acquire(listOf(destination), deleting = true)!!
+            deletion.attempted(destination)
+            deletion.close()
+            assertEquals(NetworkSourceGuard.BlockReason.Unavailable, guard.acquireResult(listOf(destination), false).reason)
+
+            // A destination does not have to exist; the trash source does.
+            val restore = guard.acquireResult(listOf(trash), true, listOf(destination)).lease!!
+            assertEquals(NetworkSourceGuard.BlockReason.Busy, guard.acquireResult(listOf(destination), false).reason)
+            assertNull(guard.acquire(listOf(trash), deleting = true))
+            assertNull(guard.acquire(listOf(destination.child("a.jpg")), deleting = true))
+            restore.attempted(trash)
+            restore.close()
+            // Moving out of trash invalidates only the input, not the destination.
+            guard.listed(source("photos", kind), listOf("album"), guard.listingStarted())
+            assertNotNull(guard.acquire(listOf(destination), deleting = false))
+            assertEquals(NetworkSourceGuard.BlockReason.Unavailable, guard.acquireResult(listOf(trash), false).reason)
+        }
+    }
+
+    @Test
+    fun restoreRejectsBusyDestinationAtomicallyAndUnavailableInput() {
+        val guard = NetworkSourceGuard()
+        val destination = source("photos/album")
+        val trash = source("photos/.trash/2026-11-07/album")
+        val reader = guard.acquire(listOf(destination.child("a.jpg")), deleting = false)!!
+        assertEquals(NetworkSourceGuard.BlockReason.Busy, guard.acquireResult(listOf(trash), true, listOf(destination)).reason)
+        val deletion = guard.acquire(listOf(trash), deleting = true)!!
+        deletion.attempted(trash)
+        deletion.close()
+        reader.close()
+        assertEquals(NetworkSourceGuard.BlockReason.Unavailable, guard.acquireResult(listOf(trash), true, listOf(destination)).reason)
+    }
+
+    @Test
     fun safVolumeRootListingCanRestoreTopLevelFolder() {
         val guard = NetworkSourceGuard()
         val root = TransferLocation(ExplorerWindows.Kind.Local, 0, "content:/provider/tree/primary%3A/document/primary%3A")

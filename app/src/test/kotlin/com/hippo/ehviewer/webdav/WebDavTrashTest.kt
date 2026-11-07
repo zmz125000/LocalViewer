@@ -70,6 +70,26 @@ class WebDavTrashTest {
     }
 
     @Test
+    fun unsupportedRestoreMoveRejectsWithoutPayloadFallbackOrRetry() = runBlocking {
+        for (directory in listOf(false, true)) {
+            for (status in listOf(405, 501)) {
+                val operations = mutableListOf<WebDavTrashRequest>()
+                try {
+                    restoreWebDavFromTrash(".trash/2026-11-07/album", directory, {}) {
+                        operations += it
+                        WebDavTrashResponse(status)
+                    }
+                    fail("Unsupported MOVE must be rejected")
+                } catch (_: UnsupportedOperationException) {
+                    assertEquals(listOf("MOVE"), operations.map { it.method })
+                    assertEquals("F", operations.single().overwrite)
+                    assertEquals("album", operations.single().destination)
+                }
+            }
+        }
+    }
+
+    @Test
     fun restoreRejectsInfrastructureBeforeContactingServer() = runBlocking {
         for (path in listOf(".trash", ".trash/2026-11-07", "photos/a.jpg")) {
             try {

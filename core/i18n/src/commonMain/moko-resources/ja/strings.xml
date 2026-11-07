@@ -1211,7 +1211,8 @@
     <string name="transfer_local_move">ストレージ内の移動</string>
     <string name="transfer_server_move">サーバー側の移動</string>
     <string name="transfer_item_count">%d 件</string>
-    <string name="transfer_source_unavailable">この項目は処理中、削除中、または利用できなくなっています。フォルダを更新してからもう一度お試しください。</string>
+    <string name="transfer_source_unavailable">この項目は移動または削除された可能性があります。親フォルダを更新してから再試行してください。</string>
+    <string name="transfer_source_busy">別の転送がこの項目または転送先を使用しています。転送の完了を待つか停止してから再試行してください。</string>
     <string name="transfer_delete_trash_protected">.trash 内の項目は削除できません。</string>
     <string name="ask_where_to_save">保存先を毎回確認</string>
     <string name="transfer_upload_action">アップロード先を選択…</string>

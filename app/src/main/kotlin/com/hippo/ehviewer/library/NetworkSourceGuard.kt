@@ -2,6 +2,8 @@ package com.hippo.ehviewer.library
 
 /** Shared source ownership survives job dismissal. Cached listings cannot revive a moved path. */
 internal class NetworkSourceGuard {
+    enum class BlockReason { Busy, Unavailable }
+    data class Acquisition(val lease: Lease? = null, val reason: BlockReason? = null)
     private data class Active(val deleting: Boolean, val roots: Set<TransferLocation>, val attempted: MutableSet<TransferLocation> = HashSet())
     private val active = HashMap<Long, Active>()
     private val unavailable = HashMap<TransferLocation, Long>()
@@ -34,19 +36,23 @@ internal class NetworkSourceGuard {
         (parent.path == child.path || parent.path.isEmpty() || child.path.startsWith(parent.path + "/"))
 
     /** Upload reads may coexist; a delete excludes overlapping reads and other deletes. */
+    fun acquire(sources: List<TransferLocation>, deleting: Boolean): Lease? = acquireResult(sources, deleting).lease
+
+    /** Destinations need exclusive ownership, but need not already exist. */
     @Synchronized
-    fun acquire(sources: List<TransferLocation>, deleting: Boolean): Lease? {
-        val roots = sources.mapTo(HashSet(), ::normalize)
-        if (roots.any { source -> unavailable.keys.any { contains(it, source) } }) return null
+    fun acquireResult(sources: List<TransferLocation>, deleting: Boolean, destinations: List<TransferLocation> = emptyList()): Acquisition {
+        val inputs = sources.mapTo(HashSet(), ::normalize)
+        val roots = inputs + destinations.map(::normalize)
         if (active.values.any { entry ->
                 (deleting || entry.deleting) && roots.any { source -> entry.roots.any { contains(it, source) || contains(source, it) } }
             }
         ) {
-            return null
+            return Acquisition(reason = BlockReason.Busy)
         }
+        if (inputs.any { source -> unavailable.keys.any { contains(it, source) } }) return Acquisition(reason = BlockReason.Unavailable)
         val id = ++ids
         active[id] = Active(deleting, roots)
-        return Lease(id)
+        return Acquisition(lease = Lease(id))
     }
 
     @Synchronized

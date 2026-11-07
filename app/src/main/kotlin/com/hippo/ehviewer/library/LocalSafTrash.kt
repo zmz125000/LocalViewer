@@ -64,6 +64,8 @@ internal object LocalSafTrash {
         val treeId = DocumentsContract.getTreeDocumentId(source)
         val sourceId = DocumentsContract.getDocumentId(source)
         val restored = requireNotNull(safRestorePath(treeId, sourceId))
+        val original = entry(source)
+        if (original.flags and Document.FLAG_SUPPORTS_MOVE == 0) throw UnsupportedOperationException("Provider does not support document moves")
         val destinationParentId = restored.substringBeforeLast('/', treeId)
         var target = document(source, treeId)
         val relativeParent = destinationParentId.removePrefix(treeId).trimStart('/')
@@ -71,8 +73,6 @@ internal object LocalSafTrash {
             control.checkpoint()
             target = directory(target, part)
         }
-        val original = entry(source)
-        if (original.flags and Document.FLAG_SUPPORTS_MOVE == 0) throw UnsupportedOperationException("Provider does not support document moves")
         val name = moveDocument(source, document(source, sourceId.substringBeforeLast('/')), target, original, control)
         "$destinationParentId/$name"
     }

@@ -1282,7 +1282,8 @@
     <string name="transfer_local_move">本地移动</string>
     <string name="transfer_server_move">服务器端移动</string>
     <string name="transfer_item_count">%d 项</string>
-    <string name="transfer_source_unavailable">此项目正忙、正在删除或已不可用。请刷新文件夹后重试。</string>
+    <string name="transfer_source_unavailable">此项目可能已被移动或删除。请刷新其上级文件夹后重试。</string>
+    <string name="transfer_source_busy">其他传输正在使用此项目或其目标位置。请等待传输完成或停止传输后重试。</string>
     <string name="transfer_delete_trash_protected">.trash 内的项目不能删除。</string>
     <string name="ask_where_to_save">询问保存位置</string>
     <string name="transfer_upload_action">上传到…</string>

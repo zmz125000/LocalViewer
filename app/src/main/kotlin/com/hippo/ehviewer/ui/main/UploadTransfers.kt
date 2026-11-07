@@ -309,10 +309,7 @@ internal object UploadTransfers {
     fun prepare(files: List<TransferFile>, saving: Boolean = false): UploadJob? {
         require(files.isNotEmpty())
         val roots = uploadSelectionRoots(files)
-        val lease = networkSourceGuard.acquire(roots.map { it.source }, deleting = false) ?: run {
-            sourceUnavailable()
-            return null
-        }
+        val lease = acquireSources(roots.map { it.source }, deleting = false) ?: return null
         val job = UploadJob(ids.getAndIncrement(), roots.first().relative, saving)
         _jobs.update { it + job }
         job.worker = scope.launch {
@@ -358,10 +355,11 @@ internal object UploadTransfers {
             }
             return false
         }
-        val lease = networkSourceGuard.acquire(roots.flatMap { listOfNotNull(it.source, if (action == FileRemovalAction.Restore) restoreLocation(it.source) else null) }, deleting = true) ?: run {
-            sourceUnavailable()
-            return false
-        }
+        val lease = acquireSources(
+            roots.map { it.source },
+            deleting = true,
+            destinations = if (action == FileRemovalAction.Restore) roots.mapNotNull { restoreLocation(it.source) } else emptyList(),
+        ) ?: return false
         val needsReview = review || removalRequiresPanel(roots, action)
         val job = UploadJob(ids.getAndIncrement(), roots.first().relative, deleting = true, removalAction = action)
         job.state.value = job.state.value.copy(
@@ -393,10 +391,15 @@ internal object UploadTransfers {
         return true
     }
 
-    private fun sourceUnavailable() {
+    private fun acquireSources(sources: List<TransferLocation>, deleting: Boolean, destinations: List<TransferLocation> = emptyList(), job: UploadJob? = null): NetworkSourceGuard.Lease? {
+        val result = networkSourceGuard.acquireResult(sources, deleting, destinations)
+        result.lease?.let { return it }
+        val message = if (result.reason == NetworkSourceGuard.BlockReason.Busy) R.string.transfer_source_busy else R.string.transfer_source_unavailable
+        job?.state?.update { it.copy(phase = UploadPhase.Failed, error = appCtx.getString(message)) }
         scope.launch(Dispatchers.Main.immediate) {
-            Toast.makeText(appCtx, R.string.transfer_source_unavailable, Toast.LENGTH_LONG).show()
+            Toast.makeText(appCtx, message, Toast.LENGTH_LONG).show()
         }
+        return null
     }
 
     private fun startDelete(job: UploadJob, lease: NetworkSourceGuard.Lease) {
@@ -662,20 +665,17 @@ internal object UploadTransfers {
             if (job.removalAction != FileRemovalAction.Restore && !Settings.enableFileDeletion.value) return
             val state = job.state.value
             if (!state.editable || state.rows.isEmpty()) return
-            val lease = networkSourceGuard.acquire(state.rows.map { it.file.source }, deleting = true) ?: run {
-                sourceUnavailable()
-                return
-            }
+            val lease = acquireSources(
+                state.rows.map { it.file.source },
+                deleting = true,
+                destinations = if (job.removalAction == FileRemovalAction.Restore) state.rows.mapNotNull { restoreLocation(it.file.source) } else emptyList(),
+            ) ?: return
             startDelete(job, lease)
             return
         }
         val state = job.state.value
         if (!state.editable || state.destination == null || state.rows.isEmpty()) return
-        val lease = networkSourceGuard.acquire(state.rows.map { it.file.source }, deleting = false) ?: run {
-            job.state.update { it.copy(phase = UploadPhase.Failed, error = appCtx.getString(R.string.transfer_source_unavailable)) }
-            sourceUnavailable()
-            return
-        }
+        val lease = acquireSources(state.rows.map { it.file.source }, deleting = false, job = job) ?: return
         if (!job.state.compareAndSet(state, state.copy(phase = UploadPhase.Running, error = null, startWhenReady = false))) {
             lease.close()
             return
