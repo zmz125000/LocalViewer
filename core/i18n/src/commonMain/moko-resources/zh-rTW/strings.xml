@@ -909,8 +909,10 @@
     <string name="convert_jxl">JPEG XL（SDR）</string>
     <string name="convert_jxl_hdr">JPEG XL（HDR）</string>
     <string name="convert_jxl_scrgb">JPEG XL（HDR scRGB）</string>
+    <string name="convert_jxl_hlg">JPEG XL (HDR HLG)</string>
     <string name="convert_jxl_pq">JPEG XL (HDR PQ)</string>
     <string name="convert_avif">AVIF (SDR)</string>
+    <string name="convert_avif_hlg">AVIF (HDR HLG)</string>
     <string name="convert_avif_pq">AVIF (HDR PQ)</string>
     <string name="convert_avif_gain_map">AVIF (HDR)</string>
     <string name="pref_category_general">一般</string>
@@ -1270,6 +1272,6 @@
     <string name="browse_auto_finish_deletion">自動結束（刪除）</string>
     <string name="gallery_trash_regular_files">%1$d 個一般檔案已隨畫廊資料夾移到垃圾桶。</string>
     <string name="transfer_current">目前</string>
-    <string name="transfer_current_not_folder">請開啟可寫入的資料夾以使用「目前」。</string>
+    <string name="transfer_current_not_folder">請開啟可寫入的資料夾。</string>
     <string name="transfer_same_destination">目的地是來源資料夾，或會將項目複製到自身。請選擇其他資料夾。</string>
 </resources>

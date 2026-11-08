@@ -300,6 +300,16 @@ object HdrConvertCache {
         if (OriginDiskCache.existingThumb(dest) != null) return@withContext true
         withThumbConvertSlot {
             val edge = maxEdge.coerceIn(64, 2048)
+            // Like the video thumbnail path, try the provider's cached/embedded
+            // preview before decoding the HEIC primary image. Keep the Binder
+            // request inside thumbnail admission, including for plain SDR HEIC.
+            if (isHeicImageExtension(FileUtils.getExtensionFromFilename(fileNameHint)) &&
+                writeProviderThumb(source, dest, edge, quality)
+            ) {
+                onDecoded?.let { reportThumbSize(dest, it) }
+                OriginDiskCache.scheduleTrim()
+                return@withThumbConvertSlot true
+            }
             val route = classifyPath(source, fileNameHint)
             ThumbnailMemory.withPath(source, (route as? StillRoute.Lib)?.codec, edge) {
                 if (route is StillRoute.Lib && route.codec == LibCodec.Raw) {
@@ -778,6 +788,27 @@ object HdrConvertCache {
     }.onFailure {
         Log.e(TAG, "writePlatformThumbBytes failed", it)
     }.getOrDefault(false)
+
+    private fun writeProviderThumb(source: Path, dest: File, edge: Int, quality: Int): Boolean {
+        val uri = runCatching { source.toUri() }.getOrNull() ?: return false
+        if (uri.scheme != "content") return false
+        val bitmap = runCatching {
+            appCtx.contentResolver.loadThumbnail(uri, android.util.Size(edge, edge), null)
+        }.getOrNull() ?: return false
+        val tmp = File("${dest.absolutePath}.tmp.${System.nanoTime()}")
+        return try {
+            dest.parentFile?.mkdirs()
+            FileOutputStream(tmp).use { check(bitmap.compress(Bitmap.CompressFormat.WEBP_LOSSY, quality, it)) }
+            commitTmp(tmp, dest)
+            true
+        } catch (error: Exception) {
+            Log.w(TAG, "Provider HEIC thumbnail failed; using decoder", error)
+            false
+        } finally {
+            bitmap.recycle()
+            tmp.delete()
+        }
+    }
 
     private suspend fun writeHeifThumb(source: ImageSource, dest: File, edge: Int, quality: Int): Boolean {
         val output = OriginDiskCache.jpegSibling(dest)

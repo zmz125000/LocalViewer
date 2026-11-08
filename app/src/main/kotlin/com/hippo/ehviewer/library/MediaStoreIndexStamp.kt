@@ -6,8 +6,8 @@ import com.hippo.ehviewer.Settings
  * Compact MediaStore fingerprint for a library root so startup can skip a full
  * image dump when the index has not changed.
  *
- * [generation] is [android.provider.MediaStore.getGeneration] for the external
- * volume (API 30+), or [GENERATION_UNKNOWN] when unavailable.
+ * [generation] is an equality token for the versions and generations of concrete
+ * external volumes (API 30+), or [GENERATION_UNKNOWN] when unavailable.
  * [count] / [maxDateModifiedSecs] / [idXor] cover the Images rows under the
  * root (DATE_MODIFIED delta when generation is missing or volume-wide noise).
  */
@@ -31,6 +31,22 @@ data class MediaStoreIndexStamp(
 
         /** Images+video fingerprint. Old 5-field stamps fail [parse] so startup rescans. */
         private const val VERSION = "4"
+
+        /** Stable across enumeration order; database resets and mount changes invalidate it too. */
+        fun volumeGenerationToken(volumes: List<Triple<String, String, Long>>): Long {
+            if (volumes.isEmpty() || volumes.any { it.third < 0L }) return GENERATION_UNKNOWN
+            var hash = -3750763034362895579L // FNV-1a, including names and database versions.
+            fun absorb(value: String) {
+                for (char in value) hash = (hash xor char.code.toLong()) * 1099511628211L
+                hash = (hash xor 0L) * 1099511628211L
+            }
+            for ((name, version, generation) in volumes.sortedBy { it.first }) {
+                absorb(name)
+                absorb(version)
+                absorb(generation.toString())
+            }
+            return (hash and Long.MAX_VALUE).coerceAtLeast(1L)
+        }
 
         fun parse(encoded: String): Pair<Long, MediaStoreIndexStamp>? {
             val parts = encoded.split(SEP)

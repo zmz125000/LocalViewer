@@ -244,7 +244,7 @@ external fun extractRawPreviewFd(fd: Int, outPath: String, demosaicFallback: Boo
  * [premultiplied] un-associates alpha before encode. 8-bit JPEG (HDR) is baseline.
  * [sdrOffset] is 0, or the offset of a same-gamut, sRGB-encoded SDR RGBA16 plane
  * appended to the F16 HDR pixels. JPEG narrows this base to 8-bit at encoding.
- * AVIF modes: 4 SDR, 5 HDR PQ, 6 ISO 21496-1 gain map; JXL mode 7 is HDR PQ.
+ * AVIF modes: 4 SDR, 5 HDR PQ, 6 ISO 21496-1 gain map; JXL mode 7 is HDR PQ; modes 8/9 are HLG JXL/AVIF.
  * [quality]: 0 lossless (JPEG Q95), 1 high (JPEG Q95), 2 mid (JPEG Q90), 3 low (JPEG Q85), 4 custom.
  * JPEG exports retain 4:4:4 chroma at every quality.
  * Custom AVIF depth and gain-map downsizing apply only when [quality] is 4.
@@ -353,6 +353,24 @@ internal external fun releaseStillBuffer(buffer: java.nio.ByteBuffer)
 internal external fun captureStillPixels(buffer: java.nio.ByteBuffer): ByteArray?
 internal external fun decodeHevcAnnexBBuffer(csd: ByteArray, picture: ByteArray, info: IntArray): java.nio.ByteBuffer?
 internal external fun linearizeHeifIccBuffer(pixels: java.nio.ByteBuffer, icc: ByteArray, wideGamut: Boolean): Boolean
+
+/** Geometry: tile W/H, chroma W/H, depth, primary W/H, output W/H, tile X/Y, crop W/H. */
+internal external fun renderHevcTileBuffer(
+    y: java.nio.ShortBuffer,
+    cb: java.nio.ShortBuffer,
+    cr: java.nio.ShortBuffer,
+    output: ByteBuffer,
+    geometry: IntArray,
+    transfer: FloatArray?,
+    fullRange: Boolean,
+    matrix: Int,
+    primaries: Int,
+    gamut: Int,
+    encoded: Boolean,
+    hlg: Boolean,
+    preserveEncodedColor: Boolean,
+    sourceBt2020: Boolean,
+): Float
 
 internal external fun captureStillBitmap(bitmap: android.graphics.Bitmap): ByteArray?
 

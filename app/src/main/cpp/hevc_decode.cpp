@@ -11,6 +11,48 @@
 #include <thread>
 #include "skcms.h"
 #include "linear_color_profile.h"
+#include "hdr_encode.h"
+#include "hevc_tile_render.h"
+
+extern "C" JNIEXPORT jfloat JNICALL
+Java_com_hippo_ehviewer_jni_HdrConvertKt_renderHevcTileBuffer(JNIEnv* env, jclass,
+        jobject jY, jobject jCb, jobject jCr, jobject jOutput, jintArray jGeometry,
+        jfloatArray jLut, jboolean fullRange, jint matrix, jint primaries, jint gamut,
+        jboolean encoded, jboolean hlg, jboolean preserveEncodedColor, jboolean sourceBt2020) {
+    if (!jY || !jCb || !jCr || !jOutput || !jGeometry || env->GetArrayLength(jGeometry) != 13) return -1.f;
+    jint g[13];
+    env->GetIntArrayRegion(jGeometry, 0, 13, g);
+    if (env->ExceptionCheck()) return -1.f;
+    HevcTileRender p{g[0],g[1],g[2],g[3],g[4],g[5],g[6],g[7],g[8],g[9],g[10],g[11],g[12],
+        fullRange == JNI_TRUE, matrix, primaries, gamut, encoded == JNI_TRUE, hlg == JNI_TRUE, preserveEncodedColor == JNI_TRUE, sourceBt2020 == JNI_TRUE};
+    for (int i : {0,1,2,3,5,6,7,8,11,12}) if (g[i] <= 0 || g[i] > 16384) return -1.f;
+    if (p.depth < 8 || p.depth > 16 || p.x < 0 || p.y < 0 || p.output_width > p.source_width || p.output_height > p.source_height ||
+        p.copy_width > p.width || p.copy_height > p.height || p.x > p.source_width - p.copy_width || p.y > p.source_height - p.copy_height ||
+        p.chroma_width > p.width || p.chroma_height > p.height) return -1.f;
+    const auto* y = static_cast<const uint16_t*>(env->GetDirectBufferAddress(jY));
+    const auto* cb = static_cast<const uint16_t*>(env->GetDirectBufferAddress(jCb));
+    const auto* cr = static_cast<const uint16_t*>(env->GetDirectBufferAddress(jCr));
+    auto* output = static_cast<uint16_t*>(env->GetDirectBufferAddress(jOutput));
+    if (!y || !cb || !cr || !output || env->GetDirectBufferCapacity(jY) < int64_t(p.width)*p.height ||
+        env->GetDirectBufferCapacity(jCb) < int64_t(p.chroma_width)*p.chroma_height ||
+        env->GetDirectBufferCapacity(jCr) < int64_t(p.chroma_width)*p.chroma_height ||
+        env->GetDirectBufferCapacity(jOutput) < int64_t(p.output_width)*p.output_height*8) return -1.f;
+    if (jLut && env->GetArrayLength(jLut) != 65537) return -1.f;
+    auto* lut = jLut ? env->GetFloatArrayElements(jLut, nullptr) : nullptr;
+    if (jLut && !lut) return -1.f;
+    const float peak = render_hevc_tile(y, cb, cr, lut, p, [&](size_t at, float r, float g, float b) {
+        if (p.encoded) {
+            output[at] = uint16_t(std::lround(std::clamp(r,0.f,1.f)*65535.f));
+            output[at+1] = uint16_t(std::lround(std::clamp(g,0.f,1.f)*65535.f));
+            output[at+2] = uint16_t(std::lround(std::clamp(b,0.f,1.f)*65535.f));
+            output[at+3] = 65535;
+        } else {
+            output[at] = float_to_half(r); output[at+1] = float_to_half(g); output[at+2] = float_to_half(b); output[at+3] = 0x3c00;
+        }
+    });
+    if (lut) env->ReleaseFloatArrayElements(jLut, lut, JNI_ABORT);
+    return peak;
+}
 
 namespace {
 constexpr size_t kMaxPixels = 64u * 1024u * 1024u;

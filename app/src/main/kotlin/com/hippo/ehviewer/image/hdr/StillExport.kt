@@ -15,9 +15,11 @@ enum class StillExportTarget {
     Avif,
     AvifPq,
     AvifGainMap,
+    JxlHlg,
+    AvifHlg,
     ;
 
-    private val jpegXl: Boolean get() = this == Jxl || this == JxlHdr || this == JxlScRgb || this == JxlPq
+    private val jpegXl: Boolean get() = this == Jxl || this == JxlHdr || this == JxlScRgb || this == JxlPq || this == JxlHlg
 
     val available: Boolean get() = BuildConfig.JXL_ENCODER_ENABLED || !jpegXl
 }
@@ -43,8 +45,8 @@ internal fun StillExportTarget.forSource(name: String, acceptSdr: Boolean): Stil
     if (!acceptSdr) return null
     return when (this) {
         StillExportTarget.JpegHdr -> StillExportTarget.Jpeg
-        StillExportTarget.JxlHdr, StillExportTarget.JxlScRgb, StillExportTarget.JxlPq -> StillExportTarget.Jxl
-        StillExportTarget.AvifPq, StillExportTarget.AvifGainMap -> StillExportTarget.Avif
+        StillExportTarget.JxlHdr, StillExportTarget.JxlScRgb, StillExportTarget.JxlHlg, StillExportTarget.JxlPq -> StillExportTarget.Jxl
+        StillExportTarget.AvifHlg, StillExportTarget.AvifPq, StillExportTarget.AvifGainMap -> StillExportTarget.Avif
         else -> this
     }
 }
@@ -53,18 +55,20 @@ internal fun StillExportTarget.visibleForSources(hasHdr: Boolean): Boolean = ava
 
 /** RAW output dynamic range is independent of the reader and the display. */
 internal fun StillExportTarget.rawHdr(): Boolean = when (exportMode()) {
-    1, 3, 5, 6, 7 -> true
+    1, 3, 5, 6, 7, 8, 9 -> true
     else -> false
 }
 
 /** Only gain-map outputs need RAW's separately rendered camera-look SDR base. */
 internal fun StillExportTarget.needsSdrBase(): Boolean = this == StillExportTarget.JpegHdr || this == StillExportTarget.AvifGainMap
 
-/** 0 JPEG, 1 Ultra HDR JPEG, 2/3 SDR/linear HDR JXL, 4/5/6 SDR/PQ/gain-map AVIF, 7 PQ JXL. */
+/** 0 JPEG, 1 Ultra HDR JPEG, 2/3 SDR/linear HDR JXL, 4/5/6 SDR/PQ/gain-map AVIF, 7 PQ JXL, 8 HLG JXL, 9 HLG AVIF. */
 fun StillExportTarget.exportMode(): Int = when (this) {
     StillExportTarget.JpegHdr -> 1
     StillExportTarget.Jxl -> 2
     StillExportTarget.JxlHdr, StillExportTarget.JxlScRgb -> 3
+    StillExportTarget.JxlHlg -> 8
+    StillExportTarget.AvifHlg -> 9
     StillExportTarget.JxlPq -> 7
     StillExportTarget.Avif -> 4
     StillExportTarget.AvifPq -> 5
@@ -73,14 +77,14 @@ fun StillExportTarget.exportMode(): Int = when (this) {
 }
 
 fun StillExportTarget.fileExtension(): String = when (this) {
-    StillExportTarget.Jxl, StillExportTarget.JxlHdr, StillExportTarget.JxlScRgb, StillExportTarget.JxlPq -> "jxl"
-    StillExportTarget.Avif, StillExportTarget.AvifPq, StillExportTarget.AvifGainMap -> "avif"
+    StillExportTarget.Jxl, StillExportTarget.JxlHdr, StillExportTarget.JxlScRgb, StillExportTarget.JxlHlg, StillExportTarget.JxlPq -> "jxl"
+    StillExportTarget.Avif, StillExportTarget.AvifHlg, StillExportTarget.AvifPq, StillExportTarget.AvifGainMap -> "avif"
     else -> "jpg"
 }
 
 fun StillExportTarget.mimeType(): String = when (this) {
-    StillExportTarget.Jxl, StillExportTarget.JxlHdr, StillExportTarget.JxlScRgb, StillExportTarget.JxlPq -> "image/jxl"
-    StillExportTarget.Avif, StillExportTarget.AvifPq, StillExportTarget.AvifGainMap -> "image/avif"
+    StillExportTarget.Jxl, StillExportTarget.JxlHdr, StillExportTarget.JxlScRgb, StillExportTarget.JxlHlg, StillExportTarget.JxlPq -> "image/jxl"
+    StillExportTarget.Avif, StillExportTarget.AvifHlg, StillExportTarget.AvifPq, StillExportTarget.AvifGainMap -> "image/avif"
     else -> "image/jpeg"
 }
 
@@ -96,6 +100,7 @@ fun stillExportFileName(
     val type = encoding ?: when (target) {
         StillExportTarget.Jpeg, StillExportTarget.Jxl, StillExportTarget.Avif -> "sdr"
         StillExportTarget.JpegHdr, StillExportTarget.AvifGainMap -> "gainmap"
+        StillExportTarget.JxlHlg, StillExportTarget.AvifHlg -> "hlg"
         StillExportTarget.JxlPq, StillExportTarget.AvifPq -> "pq"
         StillExportTarget.JxlHdr -> "linear"
         StillExportTarget.JxlScRgb -> "scrgb"

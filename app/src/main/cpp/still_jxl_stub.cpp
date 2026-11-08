@@ -2,7 +2,7 @@
 
 // Keep the export ABI without pulling the JPEG XL encoder into the APK.
 // The real implementation remains in still_jxl.cpp for opt-in builds.
-int encode_jxl_f16(unsigned, unsigned, uint16_t*, uhdr_color_gamut_t, bool, const char*, StillEncodeQuality, bool) {
+int encode_jxl_f16(unsigned, unsigned, uint16_t*, uhdr_color_gamut_t, bool, const char*, StillEncodeQuality, bool, bool) {
     return -100; // Unsupported in this build; never write a partial output.
 }
 
@@ -24,4 +24,4 @@ int encode_jxl_source(unsigned, unsigned, const void*, bool, const StillSourceCo
     return -100;
 }
 
-int encode_jxl_f32(unsigned, unsigned, float*, uhdr_color_gamut_t, bool, const char*, StillEncodeQuality, bool) { return -100; }
+int encode_jxl_f32(unsigned, unsigned, float*, uhdr_color_gamut_t, bool, const char*, StillEncodeQuality, bool, bool) { return -100; }

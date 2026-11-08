@@ -220,9 +220,25 @@ static int encode_jxl_scrgb(unsigned w, unsigned h, Sample* rgba, uhdr_color_gam
 // reference, while intensity_target reports the measured maximum RGB-channel
 // level as an upper bound on image intensity.
 int encode_jxl_f16(unsigned w, unsigned h, uint16_t* rgba, uhdr_color_gamut_t cg,
-                   bool hdr, const char* path, StillEncodeQuality quality, bool pq) {
+                   bool hdr, const char* path, StillEncodeQuality quality, bool pq, bool hlg) {
     const size_t pixels = static_cast<size_t>(w) * h;
     if (!rgba || !path || !pixels) return -60;
+    if (hlg) {
+        if (pq) return -60;
+        auto* encoded = rgba;
+        hdr_parallel_pixels(pixels, hdr_pixel_jobs(pixels), [&](size_t begin, size_t end, unsigned) {
+            for (size_t i = begin; i < end; ++i) {
+                float r = half_to_float(rgba[i*4]), g = half_to_float(rgba[i*4+1]), b = half_to_float(rgba[i*4+2]);
+                linear_to_hlg_rgb(r, g, b, cg);
+                encoded[i*4] = uint16_t(std::lround(r*65535.f));
+                encoded[i*4+1] = uint16_t(std::lround(g*65535.f));
+                encoded[i*4+2] = uint16_t(std::lround(b*65535.f));
+                const float alpha = half_to_float(rgba[i*4+3]);
+                encoded[i*4+3] = uint16_t(std::lround((std::isfinite(alpha) ? std::clamp(alpha, 0.f, 1.f) : 0.f)*65535.f));
+            }
+        });
+        return encode_jxl_pixels(w, h, encoded, cg, path, quality, JXL_TYPE_UINT16, JXL_TRANSFER_FUNCTION_HLG, 1000.f);
+    }
     if (!hdr && !pq) return encode_jxl_sdr(w, h, rgba, cg, path, quality);
     if (hdr && !pq && quality.jxl_scrgb) return encode_jxl_scrgb(w, h, rgba, cg, path, quality);
     float peak = pq ? kMaxLinear : 1.f;
@@ -347,9 +363,25 @@ int encode_jxl_source(unsigned w, unsigned h, const void* rgba, bool sixteen,
 }
 
 int encode_jxl_f32(unsigned w,unsigned h,float* rgba,uhdr_color_gamut_t cg,
-                   bool hdr,const char* path,StillEncodeQuality quality,bool pq) {
+                   bool hdr,const char* path,StillEncodeQuality quality,bool pq,bool hlg) {
     const size_t pixels=static_cast<size_t>(w)*h;
     if(!rgba||!path||!pixels)return -60;
+    if (hlg) {
+        if (pq) return -60;
+        std::vector<uint16_t> encoded(pixels*4);
+        hdr_parallel_pixels(pixels, hdr_pixel_jobs(pixels), [&](size_t begin, size_t end, unsigned) {
+            for (size_t i = begin; i < end; ++i) {
+                float r = rgba[i*4], g = rgba[i*4+1], b = rgba[i*4+2];
+                linear_to_hlg_rgb(r, g, b, cg);
+                encoded[i*4] = uint16_t(std::lround(r*65535.f));
+                encoded[i*4+1] = uint16_t(std::lround(g*65535.f));
+                encoded[i*4+2] = uint16_t(std::lround(b*65535.f));
+                const float alpha = rgba[i*4+3];
+                encoded[i*4+3] = uint16_t(std::lround((std::isfinite(alpha) ? std::clamp(alpha, 0.f, 1.f) : 0.f)*65535.f));
+            }
+        });
+        return encode_jxl_pixels(w, h, encoded.data(), cg, path, quality, JXL_TYPE_UINT16, JXL_TRANSFER_FUNCTION_HLG, 1000.f);
+    }
     if (!hdr && !pq) return encode_jxl_sdr(w, h, rgba, cg, path, quality);
     if (hdr && !pq && quality.jxl_scrgb) return encode_jxl_scrgb(w, h, rgba, cg, path, quality);
     float peak=pq?kMaxLinear:1.f;

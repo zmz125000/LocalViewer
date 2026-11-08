@@ -24,6 +24,9 @@ internal class HdrTransferLut(transfer: Int) {
         return table[index] + (table[index + 1] - table[index]) * fraction
     }
 
+    /** Borrowed read-only by the synchronous native HEVC tile renderer. */
+    fun nativeTable(): FloatArray = table
+
     private companion object {
         // Interpolation keeps continuous RGB precision after the YUV matrix;
         // rounding directly to a 10/16-bit code would lose precision near black.

@@ -1,9 +1,19 @@
 package com.hippo.ehviewer.image.hdr
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class StillRouteTest {
+    @Test
+    fun allHeicCoversUseTheBoundedThumbnailPipeline() {
+        for (ext in listOf("heic", "HEIF", ".heics", "heifs", "hif")) {
+            assertTrue(needsGeneratedPageThumb(ext))
+        }
+        assertFalse(needsGeneratedPageThumb("jpg"))
+    }
+
     @Test(timeout = 5_000)
     fun largeJpegDoesNotRunHeifCicpFallback() {
         // A compressed JPEG can contain these byte pairs without any CICP metadata.

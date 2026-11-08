@@ -225,6 +225,11 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeHevcAnnexBBuffer(JNIEnv*, jclass,
 extern "C" JNIEXPORT jboolean JNICALL
 Java_com_hippo_ehviewer_jni_HdrConvertKt_linearizeHeifIccBuffer(JNIEnv*, jclass, jobject, jbyteArray, jboolean) { return JNI_FALSE; }
 
+extern "C" JNIEXPORT jfloat JNICALL
+Java_com_hippo_ehviewer_jni_HdrConvertKt_renderHevcTileBuffer(JNIEnv*, jclass,
+        jobject, jobject, jobject, jobject, jintArray, jfloatArray, jboolean, jint, jint, jint,
+        jboolean, jboolean, jboolean, jboolean) { return -1.f; }
+
 extern "C" JNIEXPORT jbyteArray JNICALL
 Java_com_hippo_ehviewer_jni_HdrConvertKt_extractJxlExif(JNIEnv*, jclass, jobject) { return nullptr; }
 

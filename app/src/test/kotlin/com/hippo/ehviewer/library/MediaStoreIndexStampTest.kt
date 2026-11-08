@@ -8,6 +8,22 @@ import org.junit.Test
 
 class MediaStoreIndexStampTest {
     @Test
+    fun `volume token detects changes resets and mounted volumes regardless of enumeration order`() {
+        val primary = Triple("external_primary", "v1", 100L)
+        val removable = Triple("1234-5678", "v2", 5L)
+        fun token(vararg volumes: Triple<String, String, Long>) = MediaStoreIndexStamp.volumeGenerationToken(volumes.toList())
+        val both = token(primary, removable)
+        assertTrue(both > 0)
+        assertEquals(both, token(removable, primary))
+        assertFalse(both == token(primary, removable.copy(third = 6L)))
+        assertFalse(both == token(primary, removable.copy(second = "reset")))
+        assertFalse(both == token(primary))
+        assertEquals(MediaStoreIndexStamp.GENERATION_UNKNOWN, token())
+        assertEquals(MediaStoreIndexStamp.GENERATION_UNKNOWN, token(primary.copy(third = -1L)))
+        assertTrue(token(primary.copy(third = 0L)) > 0)
+    }
+
+    @Test
     fun `encode round-trips`() {
         val stamp = MediaStoreIndexStamp(
             generation = 42L,
