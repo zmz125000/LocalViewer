@@ -244,7 +244,7 @@ external fun extractRawPreviewFd(fd: Int, outPath: String, demosaicFallback: Boo
  * [premultiplied] un-associates alpha before encode. 8-bit JPEG (HDR) is baseline.
  * [sdrOffset] is 0, or the offset of a same-gamut, sRGB-encoded SDR RGBA16 plane
  * appended to the F16 HDR pixels. JPEG narrows this base to 8-bit at encoding.
- * AVIF modes: 4 SDR, 5 HDR PQ, 6 ISO 21496-1 gain map; JXL mode 7 is HDR PQ.
+ * AVIF modes: 4 SDR, 5 HDR PQ, 6 ISO 21496-1 gain map; JXL mode 7 is HDR PQ; modes 8/9 are HLG JXL/AVIF.
  * [quality]: 0 lossless (JPEG Q95), 1 high (JPEG Q95), 2 mid (JPEG Q90), 3 low (JPEG Q85), 4 custom.
  * JPEG exports retain 4:4:4 chroma at every quality.
  * Custom AVIF depth and gain-map downsizing apply only when [quality] is 4.

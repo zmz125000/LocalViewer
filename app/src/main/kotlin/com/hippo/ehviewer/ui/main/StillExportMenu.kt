@@ -10,8 +10,10 @@ internal val StillExportTarget.conversionLabelRes: Int
         StillExportTarget.Jxl -> R.string.convert_jxl
         StillExportTarget.JxlHdr -> R.string.convert_jxl_hdr
         StillExportTarget.JxlScRgb -> R.string.convert_jxl_scrgb
+        StillExportTarget.JxlHlg -> R.string.convert_jxl_hlg
         StillExportTarget.JxlPq -> R.string.convert_jxl_pq
         StillExportTarget.Avif -> R.string.convert_avif
         StillExportTarget.AvifGainMap -> R.string.convert_avif_gain_map
+        StillExportTarget.AvifHlg -> R.string.convert_avif_hlg
         StillExportTarget.AvifPq -> R.string.convert_avif_pq
     }

@@ -909,8 +909,10 @@
     <string name="convert_jxl">JPEG XL（SDR）</string>
     <string name="convert_jxl_hdr">JPEG XL（HDR）</string>
     <string name="convert_jxl_scrgb">JPEG XL（HDR scRGB）</string>
+    <string name="convert_jxl_hlg">JPEG XL (HDR HLG)</string>
     <string name="convert_jxl_pq">JPEG XL (HDR PQ)</string>
     <string name="convert_avif">AVIF (SDR)</string>
+    <string name="convert_avif_hlg">AVIF (HDR HLG)</string>
     <string name="convert_avif_pq">AVIF (HDR PQ)</string>
     <string name="convert_avif_gain_map">AVIF (HDR)</string>
     <string name="pref_category_general">一般</string>

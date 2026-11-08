@@ -1911,10 +1911,12 @@ private fun ConvertTargetItems(
         StillExportTarget.Jxl to R.string.convert_jxl,
         StillExportTarget.JxlHdr to R.string.convert_jxl_hdr,
         StillExportTarget.JxlScRgb to R.string.convert_jxl_scrgb,
+        StillExportTarget.JxlHlg to R.string.convert_jxl_hlg,
         StillExportTarget.JxlPq to R.string.convert_jxl_pq,
 
         StillExportTarget.Avif to R.string.convert_avif,
         StillExportTarget.AvifGainMap to R.string.convert_avif_gain_map,
+        StillExportTarget.AvifHlg to R.string.convert_avif_hlg,
         StillExportTarget.AvifPq to R.string.convert_avif_pq,
 
     ).filter { (target, _) -> target.visibleForSources(hasHdr) }.forEach { (target, label) ->

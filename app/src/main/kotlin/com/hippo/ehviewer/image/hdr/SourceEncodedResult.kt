@@ -57,6 +57,8 @@ internal suspend fun sourceEncodedExport(source: Path, name: String, target: Sti
         val actual = when {
             info[2] != 0 && format == 0 -> StillExportTarget.JpegHdr
             info[2] != 0 && format == 2 -> StillExportTarget.AvifGainMap
+            info[3] == 18 && format == 1 -> StillExportTarget.JxlHlg
+            info[3] == 18 && format == 2 -> StillExportTarget.AvifHlg
             info[3] == 16 && format == 1 -> StillExportTarget.JxlPq
             info[3] == 16 && format == 2 -> StillExportTarget.AvifPq
             info[3] == 8 && (info[4] > 255 || info[4] == 80) && format in listOf(1, 3) -> if (target == StillExportTarget.JxlScRgb) target else StillExportTarget.JxlHdr

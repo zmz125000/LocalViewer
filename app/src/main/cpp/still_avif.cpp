@@ -12,6 +12,7 @@
 #include <memory>
 #include <numeric>
 #include <vector>
+#include <type_traits>
 
 namespace {
 using Image = std::unique_ptr<avifImage, decltype(&avifImageDestroy)>;
@@ -75,6 +76,39 @@ avifRGBImage rgb_view(const avifImage* image, uint8_t* pixels, unsigned depth, u
     rgb.alphaPremultiplied = AVIF_FALSE;
     return rgb;
 }
+// Match JXRConverter's HLG reference: 1000-nit display and system gamma 1.2.
+// Read F16 or F32 directly so HLG does not need another full-size float buffer.
+template<class Sample>
+int encode_avif_hlg(unsigned w, unsigned h, const Sample* rgba, uhdr_color_gamut_t gamut,
+                    const char* path, StillEncodeQuality quality) {
+    const size_t pixels = size_t(w)*h;
+    const unsigned depth = quality.avif_depth(), maximum = (1u << depth)-1;
+    auto image = make_image(w, h, depth, gamut, false, quality);
+    if (!image) return -71;
+    image->transferCharacteristics = AVIF_TRANSFER_CHARACTERISTICS_HLG;
+    std::vector<uint16_t> encoded(depth > 8 ? pixels*4 : 0);
+    std::vector<uint8_t> encoded8(depth == 8 ? pixels*4 : 0);
+    auto value = [&](size_t index) {
+        if constexpr (std::is_same_v<Sample, uint16_t>) return half_to_float(rgba[index]);
+        else return rgba[index];
+    };
+    hdr_parallel_pixels(pixels, hdr_pixel_jobs(pixels), [&](size_t begin, size_t end, unsigned) {
+        for (size_t i = begin; i < end; ++i) {
+            float rgb[3] = {value(i*4), value(i*4+1), value(i*4+2)};
+            linear_to_hlg_rgb(rgb[0], rgb[1], rgb[2], gamut);
+            float alpha = value(i*4+3);
+            const float channels[4] = {rgb[0], rgb[1], rgb[2], std::isfinite(alpha) ? std::clamp(alpha, 0.f, 1.f) : 0.f};
+            for (unsigned c = 0; c < 4; ++c) {
+                const auto code = unsigned(std::lround(channels[c]*maximum));
+                if (depth == 8) encoded8[i*4+c] = uint8_t(code);
+                else encoded[i*4+c] = uint16_t(code);
+            }
+        }
+    });
+    auto rgb = rgb_view(image.get(), depth == 8 ? encoded8.data() : reinterpret_cast<uint8_t*>(encoded.data()), depth, depth == 8 ? 1 : 2);
+    if (avifImageRGBToYUV(image.get(), &rgb) != AVIF_RESULT_OK) return -75;
+    return write_avif(image.get(), path, quality);
+}
 } // namespace
 
 int encode_avif_u8(unsigned w, unsigned h, const uint8_t* rgba, uhdr_color_gamut_t gamut,
@@ -90,7 +124,8 @@ int encode_avif_u8(unsigned w, unsigned h, const uint8_t* rgba, uhdr_color_gamut
 
 int encode_avif_f16(unsigned w, unsigned h, uint16_t* rgba, uhdr_color_gamut_t gamut,
                     int mode, const char* path, StillEncodeQuality quality, const uint16_t* sdr_base) {
-    if (!rgba || !path || !w || !h || mode < 0 || mode > 2) return -70;
+    if (!rgba || !path || !w || !h || mode < 0 || mode > 3) return -70;
+    if (mode == 3) return encode_avif_hlg(w, h, rgba, gamut, path, quality);
     const size_t pixels = static_cast<size_t>(w) * h;
     const bool pq = mode == 1;
     const bool gain_map = mode == 2;
@@ -203,7 +238,8 @@ int encode_avif_f16(unsigned w, unsigned h, uint16_t* rgba, uhdr_color_gamut_t g
 
 int encode_avif_f32(unsigned w,unsigned h,const float* rgba,uhdr_color_gamut_t gamut,
                     int mode,const char* path,StillEncodeQuality quality,const float* sdr_base) {
-    if(!rgba||!path||!w||!h||uint64_t(w)*h>80000000||mode<0||mode>2)return -70;
+    if(!rgba||!path||!w||!h||uint64_t(w)*h>80000000||mode<0||mode>3)return -70;
+    if (mode == 3) return encode_avif_hlg(w, h, rgba, gamut, path, quality);
     const size_t pixels=size_t(w)*h;
     const bool pq=mode==1,gain_map=mode==2;
     const unsigned depth=quality.avif_depth(),maximum=(1u<<depth)-1;
