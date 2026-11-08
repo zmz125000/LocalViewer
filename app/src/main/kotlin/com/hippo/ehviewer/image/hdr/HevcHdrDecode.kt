@@ -4,6 +4,7 @@ import android.util.Log
 import com.ehviewer.core.util.isAtLeastU
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.jni.linearizeHeifIccBuffer
+import com.hippo.ehviewer.jni.renderHevcTileBuffer
 import java.nio.ByteBuffer
 import kotlin.math.max
 import kotlin.math.pow
@@ -97,12 +98,36 @@ internal object HevcHdrDecode {
                     val copyW = minOf(picture.width, hdr.width - x0)
                     val copyH = minOf(picture.height, hdr.height - y0)
                     if (copyW <= 0 || copyH <= 0) return null
+                    // Native software decode exposes direct planes. Convert directly
+                    // into the final buffer, keeping ICC/alpha/rotation stages below.
+                    // MediaCodec's heap-backed fallback retains the Kotlin renderer.
+                    val tilePeak = if (picture.y.isDirect && picture.cb.isDirect && picture.cr.isDirect) {
+                        renderHevcTileBuffer(
+                            picture.y, picture.cb, picture.cr, pixels.buffer,
+                            intArrayOf(
+                                picture.width, picture.height, picture.chromaWidth, picture.chromaHeight, picture.bitDepth,
+                                hdr.width, hdr.height, outW, outH, x0, y0, copyW, copyH,
+                            ),
+                            transfer?.nativeTable(),
+                            if (hdr.hasNclx) hdr.fullRange else picture.fullRange ?: hdr.fullRange,
+                            if (hdr.hasNclx) hdr.matrix else picture.matrix ?: hdr.matrix,
+                            hdr.primaries, gamut, encodedRgb, hdr.transfer == 18, icc != null, bt2020,
+                        )
+                    } else {
+                        -1f
+                    }
+                    if (tilePeak >= 1f) {
+                        peak = max(peak, tilePeak)
+                        return@use
+                    }
                     val chromaXShift = if (picture.chromaWidth == picture.width) 0 else 1
                     val chromaYShift = if (picture.chromaHeight == picture.height) 0 else 1
                     for (y in 0 until copyH) {
                         val oy = ((y0 + y).toLong() * outH / hdr.height).toInt().coerceIn(0, outH - 1)
+                        if (y0 + y + 1 < hdr.height && (y0 + y + 1).toLong() * outH / hdr.height == oy.toLong()) continue
                         for (x in 0 until copyW) {
                             val ox = ((x0 + x).toLong() * outW / hdr.width).toInt().coerceIn(0, outW - 1)
+                            if (x0 + x + 1 < hdr.width && (x0 + x + 1).toLong() * outW / hdr.width == ox.toLong()) continue
                             val yCode = picture.y[y * picture.width + x].toInt() and 0xffff
                             val cx = minOf(x shr chromaXShift, picture.chromaWidth - 1)
                             val cy = minOf(y shr chromaYShift, picture.chromaHeight - 1)

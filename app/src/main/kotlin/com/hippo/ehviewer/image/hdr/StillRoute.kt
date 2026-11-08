@@ -132,12 +132,13 @@ fun isLibStillExtension(ext: String?): Boolean {
 }
 
 /**
- * Photo-grid / browse thumbs that ImageDecoder cannot paint from the file.
+ * Photo-grid / browse formats that need the shared, bounded thumbnail pipeline.
+ * HEIC uses provider previews or a cached decode, including platform SDR input.
  * AVIF includes ISO gain-map stills (iphone18) and absolute PQ AVIF.
  */
 fun needsGeneratedPageThumb(ext: String?): Boolean {
     val e = ext?.lowercase()?.removePrefix(".") ?: return false
-    return isLibStillExtension(e) || e == "avif" || (Settings.preferNativeHeifAvif.value && isHeicImageExtension(e))
+    return isLibStillExtension(e) || e == "avif" || isHeicImageExtension(e)
 }
 
 fun isRawStillExtension(ext: String?): Boolean {
