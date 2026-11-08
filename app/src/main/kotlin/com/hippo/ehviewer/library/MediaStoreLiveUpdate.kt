@@ -53,7 +53,8 @@ object MediaStoreLiveUpdate {
 
     /**
      * A collection-wide MediaStore callback whose volume generation has not moved.
-     * Item URIs, deletes, and an explicit resume catch-up are real work.
+     * Item URIs and deletes are real work. Resume catch-up can skip a generation
+     * already processed in this session; the first catch-up still queries recent rows.
      */
     fun isUnchangedCollectionSignal(
         itemCount: Int,
@@ -65,6 +66,9 @@ object MediaStoreLiveUpdate {
         if (itemCount > 0 || delete || forceRecent) return false
         return generation > 0L && generation == armedGeneration
     }
+
+    /** Keep the overlap for files published during reconciliation, without replaying old bulk rows. */
+    fun recentWatermarkAfterReconcile(previous: Long, startedSec: Long, lookbackSec: Long): Long = maxOf(previous, startedSec - lookbackSec)
 
     /**
      * Skip dot files (unless [includeHidden]), sample clips, and non-media names.

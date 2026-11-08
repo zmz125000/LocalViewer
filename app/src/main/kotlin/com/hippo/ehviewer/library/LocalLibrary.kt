@@ -350,9 +350,9 @@ object LocalLibrary {
                     if (db.libraryRootDao().load(root.id) == null) continue
                     val skip = !forceMediaDump
                     if (root.includesArchives) {
-                        scanRootLocked(root, reuseKnownArchives = true, skipIfUnchanged = skip)
+                        scanRootLocked(root, reuseKnownArchives = true, skipIfUnchanged = skip, maintenance = true, mediaOnlyRefresh = forceMediaDump)
                     } else {
-                        scanRootLocked(root, skipIfUnchanged = skip)
+                        scanRootLocked(root, skipIfUnchanged = skip, maintenance = true, mediaOnlyRefresh = forceMediaDump)
                     }
                 }
             } finally {
@@ -387,6 +387,8 @@ object LocalLibrary {
         root: LibraryRootEntity,
         reuseKnownArchives: Boolean = false,
         skipIfUnchanged: Boolean = false,
+        maintenance: Boolean = false,
+        mediaOnlyRefresh: Boolean = false,
     ) {
         if (root.role != LIBRARY_ROOT_ROLE_LIBRARY) {
             clearRootGalleries(root.id)
@@ -426,6 +428,8 @@ object LocalLibrary {
             else -> tryConvertSafPathToMediaStore(path)
         }
         val canMs = msRoot != null && MediaPermissions.hasMediaAccess()
+        // A media notification says nothing about archives or non-MediaStore providers.
+        if (mediaOnlyRefresh && !canMs) return
         val mediaRelative = msRoot?.mediaStoreRelativeDir().orEmpty()
         var pendingStamp: MediaStoreIndexStamp? = null
         var skipMediaDump = false
@@ -443,7 +447,7 @@ object LocalLibrary {
                 }
             }
         }
-        if (skipIfUnchanged && previous.isNotEmpty() && (root.includesArchives || !canMs)) {
+        if (maintenance && previous.isNotEmpty() && (root.includesArchives || !canMs)) {
             // SAF / archive-mode startup: prune missing zips, keep last folder galleries.
             // No tree walk — new archives appear on a manual full rescan.
             if (skipMediaDump || !canMs) {
@@ -455,7 +459,7 @@ object LocalLibrary {
             logcat("LocalLibrary") { "Skip unchanged MediaStore root ${root.id}" }
             return
         }
-        val knownArchives = if (reuseKnownArchives || (skipIfUnchanged && root.includesArchives)) {
+        val knownArchives = if (!mediaOnlyRefresh && (reuseKnownArchives || (skipIfUnchanged && root.includesArchives))) {
             LibraryScanner.groupKnownArchives(previous)
         } else {
             emptyMap()
@@ -464,9 +468,10 @@ object LocalLibrary {
             root.id,
             path,
             rootDisplayName = root.displayName,
-            includeArchives = root.includesArchives,
+            includeArchives = root.includesArchives && !mediaOnlyRefresh,
             knownArchives = knownArchives,
-            walkDirectories = !skipIfUnchanged || previous.isEmpty(),
+            // A forced live MediaStore dump must not turn into a recursive SAF/archive scan.
+            walkDirectories = !mediaOnlyRefresh && (!maintenance || previous.isEmpty()),
         )
         // A detach during the walk must not overwrite the source's saved index with partial results.
         if (!UsbVolumes.isPathAvailable(root.treeUri)) return
@@ -475,7 +480,12 @@ object LocalLibrary {
             logcat("LocalLibrary") { "Skip scan write for deleted root ${root.id}" }
             return
         }
-        val toWrite = preserveArchivePageCountsIfDisabled(previous, scanned.galleries)
+        val refreshed = if (mediaOnlyRefresh) {
+            LibraryScanner.mergeMediaRefresh(previous, scanned.galleries)
+        } else {
+            scanned.galleries
+        }
+        val toWrite = preserveArchivePageCountsIfDisabled(previous, refreshed)
         // MediaStore scans throw on failed queries. A successful empty index is
         // authoritative, even if the fingerprint counts unsupported media names.
         if (toWrite.isEmpty() && previous.isNotEmpty() && !canMs) {
@@ -602,6 +612,7 @@ object LocalLibrary {
             var applied = 0
             for (root in roots) {
                 if (db.libraryRootDao().load(root.id) == null) continue
+                if (!UsbVolumes.isPathAvailable(root.treeUri)) continue
                 val path = rootPath(root) ?: continue
                 val msRoot = when {
                     path.isMediaStorePath() -> path

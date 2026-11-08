@@ -449,13 +449,18 @@ object MediaStoreFs {
         return MediaStoreIndexStamp(generation, count, maxDate, idXor)
     }
 
-    /** External-volume MediaStore generation, or [MediaStoreIndexStamp.GENERATION_UNKNOWN]. */
+    /** Equality token for all concrete external volumes; the merged `external` volume has no generation. */
     fun volumeGeneration(): Long {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
             return MediaStoreIndexStamp.GENERATION_UNKNOWN
         }
         return runCatching {
-            MediaStore.getGeneration(appCtx, MediaStore.VOLUME_EXTERNAL)
+            val volumes = MediaStore.getExternalVolumeNames(appCtx)
+            MediaStoreIndexStamp.volumeGenerationToken(
+                volumes.map { volume ->
+                    Triple(volume, MediaStore.getVersion(appCtx, volume), MediaStore.getGeneration(appCtx, volume))
+                },
+            )
         }.getOrDefault(MediaStoreIndexStamp.GENERATION_UNKNOWN)
     }
 

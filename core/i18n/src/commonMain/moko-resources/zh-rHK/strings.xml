@@ -604,6 +604,6 @@
 
     <string name="convert_jxl_scrgb">JPEG XL（HDR scRGB）</string>
     <string name="transfer_current">目前</string>
-    <string name="transfer_current_not_folder">請開啟可寫入的資料夾以使用「目前」。</string>
+    <string name="transfer_current_not_folder">請開啟可寫入的資料夾。</string>
     <string name="transfer_same_destination">目的地是來源資料夾，或會將項目複製到自身。請選擇其他資料夾。</string>
 </resources>

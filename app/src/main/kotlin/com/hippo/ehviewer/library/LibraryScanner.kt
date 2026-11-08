@@ -263,6 +263,9 @@ object LibraryScanner {
         return out
     }
 
+    /** Media notifications only replace media rows; retain archives without per-file provider probes. */
+    fun mergeMediaRefresh(previous: List<LocalGalleryEntity>, media: List<LocalGalleryEntity>): List<LocalGalleryEntity> = media + previous.filter { archiveFilePath(it) != null }
+
     /**
      * Startup prune: keep previously indexed archive / zip-as-dir rows whose
      * archive file still exists. Does not open the zip.

@@ -125,6 +125,10 @@ object MediaStoreWatch {
     @Volatile
     private var generationAtArm: Long = MediaStoreIndexStamp.GENERATION_UNKNOWN
 
+    // Accessed only by the batch loop. Initial catch-up must query recent rows
+    // even if observer registration just captured the same generation.
+    private var hasCompletedBatch = false
+
     private val observer = object : android.database.ContentObserver(Handler(Looper.getMainLooper())) {
         override fun onChange(selfChange: Boolean, uri: Uri?, flags: Int) {
             if (!libraryResumed || !updatesEnabled) return
@@ -360,16 +364,14 @@ object MediaStoreWatch {
         if (!MediaPermissions.hasMediaAccess()) return
         val deleteFlag = batch.flags and ContentResolver.NOTIFY_DELETE != 0
         val items = batch.uris.filter { MediaStoreLiveUpdate.isMediaStoreItemId(it.lastPathSegment) }
-        val generationForSkip = if (items.isEmpty() && !deleteFlag && !batch.forceRecent) {
-            MediaStoreFs.volumeGeneration()
-        } else {
-            MediaStoreIndexStamp.GENERATION_UNKNOWN
-        }
+        // Capture before queries. Notifications arriving during this pass belong to
+        // a later generation and must not be acknowledged by this pass.
+        val generation = MediaStoreFs.volumeGeneration()
         if (MediaStoreLiveUpdate.isUnchangedCollectionSignal(
                 itemCount = items.size,
                 delete = deleteFlag,
-                forceRecent = batch.forceRecent,
-                generation = generationForSkip,
+                forceRecent = batch.forceRecent && !hasCompletedBatch,
+                generation = generation,
                 armedGeneration = generationAtArm,
             )
         ) {
@@ -397,20 +399,18 @@ object MediaStoreWatch {
         } else {
             val recent = queryAddedSince(addedSinceSec)
             if (recent.size >= RECENT_LIMIT) {
-                reconcile("bulk")
+                reconcile("bulk", generation)
                 return
             }
             resolved += recent
         }
         if (!updatesEnabled || !libraryResumed) return
-        var applied = 0
         if (resolved.isNotEmpty()) {
-            applied = LocalLibrary.applyObservedMedia(resolved)
+            LocalLibrary.applyObservedMedia(resolved)
             val newest = resolved.maxOf { it.addedSec }
             if (newest > addedSinceSec) addedSinceSec = newest
         }
         if (stillPending.isNotEmpty()) retryPending(stillPending)
-        val generation = MediaStoreFs.volumeGeneration()
         // A collection notification can include removals as well as recent adds.
         // Applying those adds alone cannot remove stale folders or refresh counts.
         val hasCollectionNotification = items.isEmpty() || items.size < batch.uris.size
@@ -418,15 +418,24 @@ object MediaStoreWatch {
         val needReconcile = deleteFlag || gone.isNotEmpty() ||
             collectionChanged ||
             (resolved.isEmpty() && stillPending.isEmpty() && generation > 0L && generation != generationAtArm)
-        if (applied > 0) generationAtArm = generation
-        if (needReconcile) reconcile(if (deleteFlag || gone.isNotEmpty()) "delete" else "generation")
+        if (needReconcile) {
+            reconcile(if (deleteFlag || gone.isNotEmpty()) "delete" else "generation", generation)
+        } else {
+            generationAtArm = generation
+        }
+        hasCompletedBatch = true
     }
 
-    private suspend fun reconcile(reason: String) {
+    private suspend fun reconcile(reason: String, generation: Long) {
         if (!updatesEnabled || !libraryResumed) return
+        val startedSec = Clock.System.now().epochSeconds
+        val startedMs = SystemClock.elapsedRealtime()
         logcat("MediaStoreWatch") { "Reconcile library ($reason)" }
         LocalLibrary.startupMaintenance(forceMediaDump = true)
-        generationAtArm = MediaStoreFs.volumeGeneration()
+        addedSinceSec = MediaStoreLiveUpdate.recentWatermarkAfterReconcile(addedSinceSec, startedSec, RECENT_LOOKBACK_SEC)
+        generationAtArm = generation
+        hasCompletedBatch = true
+        logcat("MediaStoreWatch") { "Reconciled library ($reason) in ${SystemClock.elapsedRealtime() - startedMs}ms" }
     }
 
     private fun retryPending(uris: List<Uri>) {
@@ -512,7 +521,10 @@ object MediaStoreWatch {
         }
         runCatching {
             appCtx.contentResolver.query(collection, rowProjection(includeData = false), extras, null)?.use { c ->
-                while (c.moveToNext()) {
+                // Some providers ignore QUERY_ARG_LIMIT. Bound client-side work too.
+                var read = 0
+                while (read < RECENT_LIMIT && c.moveToNext()) {
+                    read++
                     readRow(c, includeData = false)?.let { row ->
                         if (!MediaStoreLiveUpdate.isReadyMediaRow(row.pending, row.sizeBytes) || row.name.isEmpty()) {
                             return@let

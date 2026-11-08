@@ -128,6 +128,19 @@ class LibraryScannerWalkTest {
         assertEquals(listOf(1L, 2L), grouped.getValue(zip).map { it.id })
     }
 
+    @Test
+    fun `media reconciliation preserves archive rows without probing their provider`() {
+        val archive = gallery(LOCAL_GALLERY_KIND_ARCHIVE, "content://unavailable/tree/test/document/book.zip", 1)
+        val zipAlbum = gallery(LOCAL_GALLERY_KIND_FOLDER, ZipPaths.encode("content://unavailable/tree/test/document/book.zip", "Album"), 2)
+        val oldFolder = gallery(LOCAL_GALLERY_KIND_FOLDER, "/sdcard/OldAlbum", 3)
+        val newFolder = gallery(LOCAL_GALLERY_KIND_FOLDER, "/sdcard/NewAlbum", 4)
+        assertEquals(
+            listOf(newFolder, archive, zipAlbum),
+            LibraryScanner.mergeMediaRefresh(listOf(archive, zipAlbum, oldFolder), listOf(newFolder)),
+        )
+        assertEquals(listOf(archive, zipAlbum), LibraryScanner.mergeMediaRefresh(listOf(archive, zipAlbum, oldFolder), emptyList()))
+    }
+
     private fun gallery(
         kind: Int,
         contentPath: String,

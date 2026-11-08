@@ -1233,6 +1233,6 @@
     <string name="browse_auto_finish_deletion">自動終了（削除）</string>
     <string name="gallery_trash_regular_files">%1$d 個の通常ファイルをギャラリーフォルダと一緒にゴミ箱へ移動しました。</string>
     <string name="transfer_current">現在</string>
-    <string name="transfer_current_not_folder">「現在」を使うには、書き込み可能なフォルダを開いてください。</string>
+    <string name="transfer_current_not_folder">書き込み可能なフォルダを開いてください。</string>
     <string name="transfer_same_destination">転送先が元のフォルダ、または項目自身と重なっています。別のフォルダを選択してください。</string>
 </resources>

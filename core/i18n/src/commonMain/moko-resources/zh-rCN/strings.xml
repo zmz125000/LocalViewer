@@ -1304,6 +1304,6 @@
     <string name="browse_auto_finish_deletion">自动结束（删除）</string>
     <string name="gallery_trash_regular_files">%1$d 个普通文件已随画廊文件夹移到回收站。</string>
     <string name="transfer_current">当前</string>
-    <string name="transfer_current_not_folder">请打开可写入的文件夹以使用“当前”。</string>
+    <string name="transfer_current_not_folder">请打开可写入的文件夹。</string>
     <string name="transfer_same_destination">目标是源文件夹，或会将项目复制到自身。请选择其他文件夹。</string>
 </resources>

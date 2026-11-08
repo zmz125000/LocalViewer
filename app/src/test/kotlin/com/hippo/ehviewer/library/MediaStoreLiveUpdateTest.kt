@@ -79,6 +79,13 @@ class MediaStoreLiveUpdateTest {
     }
 
     @Test
+    fun `bulk reconciliation advances recent window while preserving publication overlap`() {
+        assertEquals(995L, MediaStoreLiveUpdate.recentWatermarkAfterReconcile(100, 1000, 5))
+        // A clock adjustment or a new item watermark must never move the window backwards.
+        assertEquals(1001L, MediaStoreLiveUpdate.recentWatermarkAfterReconcile(1001, 1000, 5))
+    }
+
+    @Test
     fun `empty or pending media is not a library row`() {
         assertFalse(MediaStoreLiveUpdate.isReadyMediaRow(pending = true, sizeBytes = 100))
         assertFalse(MediaStoreLiveUpdate.isReadyMediaRow(pending = false, sizeBytes = 0))

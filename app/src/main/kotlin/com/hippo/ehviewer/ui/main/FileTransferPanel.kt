@@ -8,12 +8,14 @@ import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -82,6 +84,7 @@ import com.hippo.ehviewer.library.resolveRelative
 import com.hippo.ehviewer.ui.screen.LocalExplorerPanel
 import com.hippo.ehviewer.ui.screen.SourceAccessOption
 import com.hippo.ehviewer.ui.theme.snackbarActionButtonColors
+import com.hippo.ehviewer.ui.theme.snackbarActionContentColor
 import com.hippo.ehviewer.ui.theme.snackbarContainerColor
 import com.hippo.ehviewer.ui.theme.snackbarDismissButtonColors
 import com.hippo.ehviewer.ui.theme.snackbarDismissContentColor
@@ -131,46 +134,55 @@ internal fun UploadTransferBars() {
                 val finished = !state.active && !state.editable && state.phase != UploadPhase.Preparing
                 Snackbar(
                     modifier = Modifier.padding(bottom = 8.dp),
-                    actionOnNewLine = state.editable && !job.deleting,
                     containerColor = snackbarContainerColor(),
                     contentColor = snackbarDismissContentColor(),
                     action = {
                         Row {
                             if (state.editable && !job.deleting) {
-                                TextButton(
-                                    enabled = !resolvingCurrent,
-                                    onClick = {
-                                        val current = FolderSelectHost.current
-                                        val place = current?.place
-                                        val title = current?.folderName.orEmpty()
-                                        resolvingCurrent = true
-                                        scope.launch {
-                                            try {
-                                                val location = withIOContext { currentUploadDestination(place) }
-                                                if (location == null) {
+                                Surface(
+                                    modifier = Modifier.combinedClickable(
+                                        enabled = !resolvingCurrent,
+                                        role = Role.Button,
+                                        onClick = {
+                                            UploadTransfers.chooseDestination(job)
+                                            explorer.open()
+                                        },
+                                        onLongClick = {
+                                            val current = FolderSelectHost.current
+                                            val place = current?.place
+                                            val title = current?.folderName.orEmpty()
+                                            resolvingCurrent = true
+                                            scope.launch {
+                                                try {
+                                                    val location = withIOContext { currentUploadDestination(place) }
+                                                    if (location == null) {
+                                                        Toast.makeText(context, R.string.transfer_current_not_folder, Toast.LENGTH_LONG).show()
+                                                    } else if (UploadTransfers.job(job.id) === job && job.state.value.editable) {
+                                                        UploadTransfers.saveDestination(job, location, title.ifBlank { location.path })
+                                                    }
+                                                } catch (error: CancellationException) {
+                                                    throw error
+                                                } catch (error: Exception) {
+                                                    logcat("FileTransfer", error)
                                                     Toast.makeText(context, R.string.transfer_current_not_folder, Toast.LENGTH_LONG).show()
-                                                } else if (UploadTransfers.job(job.id) === job && job.state.value.editable) {
-                                                    UploadTransfers.saveDestination(job, location, title.ifBlank { location.path })
+                                                } finally {
+                                                    resolvingCurrent = false
                                                 }
-                                            } catch (error: CancellationException) {
-                                                throw error
-                                            } catch (error: Exception) {
-                                                logcat("FileTransfer", error)
-                                                Toast.makeText(context, R.string.transfer_current_not_folder, Toast.LENGTH_LONG).show()
-                                            } finally {
-                                                resolvingCurrent = false
                                             }
-                                        }
-                                    },
-                                    colors = snackbarActionButtonColors(),
-                                ) { Text(stringResource(R.string.transfer_current)) }
-                                TextButton(
-                                    onClick = {
-                                        UploadTransfers.chooseDestination(job)
-                                        explorer.open()
-                                    },
-                                    colors = snackbarActionButtonColors(),
-                                ) { Text(stringResource(R.string.transfer_dest)) }
+                                        },
+                                    ),
+                                    shape = androidx.compose.material3.ButtonDefaults.textShape,
+                                    color = androidx.compose.ui.graphics.Color.Transparent,
+                                    contentColor = snackbarActionContentColor(),
+                                ) {
+                                    Box(
+                                        Modifier.defaultMinSize(minWidth = 58.dp, minHeight = 48.dp)
+                                            .padding(androidx.compose.material3.ButtonDefaults.TextButtonContentPadding),
+                                        contentAlignment = Alignment.Center,
+                                    ) {
+                                        Text(stringResource(R.string.transfer_dest), style = MaterialTheme.typography.labelLarge)
+                                    }
+                                }
                             }
                             if (state.active) {
                                 TextButton(
