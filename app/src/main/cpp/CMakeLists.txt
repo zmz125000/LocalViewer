@@ -397,7 +397,7 @@ if (EHVIEWER_HDR_CODECS)
     else ()
         set(EHVIEWER_JXL_EXPORT_SOURCE still_jxl_stub.cpp)
     endif ()
-    set(EHVIEWER_HDR_SOURCES hdr_convert.cpp avif_hdr.cpp still_avif.cpp source_export.cpp jxl_hdr.cpp hevc_decode.cpp ${EHVIEWER_JXL_EXPORT_SOURCE} still_probe.cpp)
+    set(EHVIEWER_HDR_SOURCES hdr_convert.cpp avif_hdr.cpp still_avif.cpp source_export.cpp jpeg_source.cpp jxl_hdr.cpp hevc_decode.cpp ${EHVIEWER_JXL_EXPORT_SOURCE} still_probe.cpp)
     list(APPEND EHVIEWER_HDR_LIBS de265)
 
     if (TARGET uhdr)
@@ -497,7 +497,7 @@ endif ()
 set_source_files_properties(jp2_decode.cpp PROPERTIES COMPILE_DEFINITIONS OPJ_STATIC)
 
 # Build and link our app's native lib
-set_source_files_properties(raw_still.cpp reader_pixels.cpp PROPERTIES COMPILE_FLAGS "-fexceptions")
+set_source_files_properties(raw_still.cpp reader_pixels.cpp jpeg_source.cpp PROPERTIES COMPILE_FLAGS "-fexceptions")
 add_library(${PROJECT_NAME} SHARED archive.c gifutils.c hash.c natsort/strnatcmp.c jp2_decode.cpp
         raw_still.cpp reader_pixels.cpp ${EHVIEWER_HDR_SOURCES})
 target_include_directories(${PROJECT_NAME} PRIVATE

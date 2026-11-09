@@ -33,7 +33,6 @@ internal suspend fun sourceEncodedExport(source: Path, name: String, target: Sti
         else -> return null
     }
     if (format == 3 && (kind != 4 || quality.extendedSrgbBt2020 && target != StillExportTarget.JxlScRgb)) return null
-    if (format == 0 && kind == 4) return null // JXL has no standard gain-map container to retain.
     val out = File.createTempFile("source-out", null, splitties.init.appCtx.cacheDir)
     var success = false
     try {
