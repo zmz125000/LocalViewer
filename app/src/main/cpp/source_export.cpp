@@ -201,10 +201,16 @@ Image jxl_image(const uint8_t* data,size_t size,int target,StillEncodeQuality qu
             size_t count=0;
             if(JxlDecoderGetICCProfileSize(decoder.get(),JXL_COLOR_PROFILE_TARGET_ORIGINAL,&count)!=JXL_DEC_SUCCESS || count>16*1024*1024)return Image(nullptr,avifImageDestroy);
             icc.resize(count);
+            // The source-preserving RGB encoder cannot store CMYK's separate K
+            // plane. Use the shared color-managed decoder rather than drop black.
+            if (count && JxlDecoderGetColorAsICCProfile(decoder.get(), JXL_COLOR_PROFILE_TARGET_ORIGINAL,
+                    icc.data(), icc.size()) != JXL_DEC_SUCCESS) return Image(nullptr, avifImageDestroy);
+            if (icc.size() >= 20 && !memcmp(icc.data() + 16, "CMYK", 4)) {
+                unsupported = true; return Image(nullptr, avifImageDestroy);
+            }
             // Non-XYB samples already are in the original space (libjxl rejects re-targeting them);
             // XYB would otherwise decode an ICC-only original as linear sRGB.
-            if(count && (JxlDecoderGetColorAsICCProfile(decoder.get(),JXL_COLOR_PROFILE_TARGET_ORIGINAL,icc.data(),icc.size())!=JXL_DEC_SUCCESS ||
-                (!info.uses_original_profile && JxlDecoderSetOutputColorProfile(decoder.get(),nullptr,icc.data(),icc.size())!=JXL_DEC_SUCCESS)))return Image(nullptr,avifImageDestroy);
+            if(count && !info.uses_original_profile && JxlDecoderSetOutputColorProfile(decoder.get(),nullptr,icc.data(),icc.size())!=JXL_DEC_SUCCESS)return Image(nullptr,avifImageDestroy);
         } else if(status==JXL_DEC_NEED_IMAGE_OUT_BUFFER) {
             size_t count=0;if(JxlDecoderImageOutBufferSize(decoder.get(),&format,&count)!=JXL_DEC_SUCCESS)return Image(nullptr,avifImageDestroy);
             pixels.resize(count);if(JxlDecoderSetImageOutBuffer(decoder.get(),&format,pixels.data(),pixels.size())!=JXL_DEC_SUCCESS)return Image(nullptr,avifImageDestroy);
