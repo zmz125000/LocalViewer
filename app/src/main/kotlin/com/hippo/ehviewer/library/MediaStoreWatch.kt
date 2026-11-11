@@ -29,8 +29,8 @@ import splitties.init.appCtx
  * Live library updates for MediaStore images and videos.
  *
  * The in-process [android.database.ContentObserver] is armed only while the
- * library screen is resumed. Leaving the library (another tab, reader, or app
- * background) drops it. There is no timer and no background content job.
+ * library screen is resumed, for at most one minute at a time. Leaving the
+ * library (another tab, reader, or app background) drops it immediately.
  * Returning re-registers and one catch-up applies rows missed while idle.
  * Deletes and bulk dumps fall back to [LocalLibrary.startupMaintenance]
  * (generation / fingerprint).
@@ -75,6 +75,7 @@ object MediaStoreWatch {
     fun resumeAfterManualRefresh() {
         pauseState.resume()
         publishPauseState()
+        if (libraryResumed) renewLiveWindow()
         onPrefEnabled()
     }
 
@@ -87,6 +88,7 @@ object MediaStoreWatch {
 
     /** One wait per notification burst. Idle does not wake on this interval. */
     private const val COALESCE_MS = 800L
+    private const val LIBRARY_ACTIVE_MS = 60_000L
 
     /**
      * After a collection callback whose generation did not move, ignore further
@@ -120,6 +122,26 @@ object MediaStoreWatch {
     private var libraryResumed = false
 
     @Volatile
+    private var liveWindowOpen = false
+
+    private val idleHandler = Handler(Looper.getMainLooper())
+    private val pauseAfterMinute = Runnable {
+        if (libraryResumed) {
+            liveWindowOpen = false
+            stop()
+        }
+    }
+
+    private val active: Boolean
+        get() = libraryResumed && liveWindowOpen && updatesEnabled
+
+    private fun renewLiveWindow() {
+        liveWindowOpen = true
+        idleHandler.removeCallbacks(pauseAfterMinute)
+        idleHandler.postDelayed(pauseAfterMinute, LIBRARY_ACTIVE_MS)
+    }
+
+    @Volatile
     private var addedSinceSec: Long = Clock.System.now().epochSeconds - RECENT_LOOKBACK_SEC
 
     @Volatile
@@ -131,7 +153,7 @@ object MediaStoreWatch {
 
     private val observer = object : android.database.ContentObserver(Handler(Looper.getMainLooper())) {
         override fun onChange(selfChange: Boolean, uri: Uri?, flags: Int) {
-            if (!libraryResumed || !updatesEnabled) return
+            if (!active) return
             // A null URI is a collection-level signal. Keep a real URI in the
             // batch so the coalesce does not drop it.
             enqueue(listOf(uri ?: imagesUri()), flags)
@@ -139,10 +161,8 @@ object MediaStoreWatch {
     }
 
     fun start(context: Context = appCtx) {
-        if (!updatesEnabled) return
-        // Permission grant / pref toggle may call start off the library screen;
-        // only register while the list is resumed.
-        if (!libraryResumed) return
+        // Permission grant / pref toggle may call start off the library screen.
+        if (!active) return
         val app = context.applicationContext
         scope.launch {
             if (!LocalLibrary.hasLibraryRoots()) return@launch
@@ -156,6 +176,7 @@ object MediaStoreWatch {
      */
     fun onLibraryVisible() {
         libraryResumed = true
+        renewLiveWindow()
         collectionQuietUntilMs = 0L
         if (!updatesEnabled) return
         scope.launch {
@@ -167,7 +188,7 @@ object MediaStoreWatch {
 
     /** Pref toggled on. No-op unless the library screen is already resumed. */
     fun onPrefEnabled() {
-        if (!libraryResumed || !updatesEnabled) return
+        if (!active) return
         scope.launch {
             if (!LocalLibrary.hasLibraryRoots()) return@launch
             armObservers()
@@ -182,14 +203,15 @@ object MediaStoreWatch {
                 stop()
                 return@launch
             }
-            if (!libraryResumed || !updatesEnabled) return@launch
+            if (!active) return@launch
             armObservers()
             catchUp()
         }
     }
 
+    @Synchronized
     private fun armObservers(context: Context = appCtx) {
-        if (!updatesEnabled || !libraryResumed) return
+        if (!active) return
         val app = context.applicationContext
         if (MediaPermissions.hasImagePermission(app) && imagesRegistered.compareAndSet(false, true)) {
             app.contentResolver.registerContentObserver(imagesUri(), true, observer)
@@ -210,6 +232,8 @@ object MediaStoreWatch {
      */
     fun onLibraryHidden() {
         libraryResumed = false
+        liveWindowOpen = false
+        idleHandler.removeCallbacks(pauseAfterMinute)
         unregisterObservers()
         synchronized(gate) {
             pendingUris.clear()
@@ -234,7 +258,7 @@ object MediaStoreWatch {
      * library screen calls [onLibraryVisible] on its own resume.
      */
     fun onAppForegrounded() {
-        if (!updatesEnabled || !libraryResumed) return
+        if (!active) return
         start()
         catchUp()
     }
@@ -246,7 +270,7 @@ object MediaStoreWatch {
 
     /** Screen on. Catch up only while the library list is the active screen. */
     fun onScreenOn() {
-        if (!updatesEnabled || !libraryResumed) return
+        if (!active) return
         start()
         catchUp()
     }
@@ -261,10 +285,11 @@ object MediaStoreWatch {
 
     /** One recent-row pass for files added while the library was hidden. */
     private fun catchUp() {
-        if (!libraryResumed || !updatesEnabled) return
+        if (!active) return
         enqueue(listOf(imagesUri()), 0, forceRecent = true)
     }
 
+    @Synchronized
     private fun unregisterObservers(context: Context = appCtx) {
         val app = context.applicationContext
         val images = imagesRegistered.getAndSet(false)
@@ -299,7 +324,7 @@ object MediaStoreWatch {
     }
 
     fun enqueue(uris: Collection<Uri>, flags: Int, forceRecent: Boolean = false) {
-        if (!updatesEnabled || !libraryResumed) return
+        if (!active) return
         val delete = flags and ContentResolver.NOTIFY_DELETE != 0
         val hasItem = uris.any { MediaStoreLiveUpdate.isMediaStoreItemId(it.lastPathSegment) }
         if (!forceRecent && !hasItem && !delete && SystemClock.elapsedRealtime() < collectionQuietUntilMs) {
@@ -322,7 +347,7 @@ object MediaStoreWatch {
             val wait = (collectionQuietUntilMs - SystemClock.elapsedRealtime()).coerceAtLeast(0L)
             delay(wait)
             collectionRecheckArmed.set(false)
-            if (!libraryResumed || !updatesEnabled) return@launch
+            if (!active) return@launch
             enqueue(listOf(imagesUri()), 0)
         }
     }
@@ -337,7 +362,7 @@ object MediaStoreWatch {
                 while (kicks.tryReceive().isSuccess) {
                     // Extra callbacks in this burst share the pass above.
                 }
-                if (!libraryResumed || !updatesEnabled) {
+                if (!active) {
                     drain()
                     continue
                 }
@@ -359,7 +384,7 @@ object MediaStoreWatch {
     }
 
     private suspend fun applyBatch(batch: Batch) {
-        if (!libraryResumed || !updatesEnabled) return
+        if (!active) return
         if (!LocalLibrary.hasLibraryRoots()) return
         if (!MediaPermissions.hasMediaAccess()) return
         val deleteFlag = batch.flags and ContentResolver.NOTIFY_DELETE != 0
@@ -404,7 +429,7 @@ object MediaStoreWatch {
             }
             resolved += recent
         }
-        if (!updatesEnabled || !libraryResumed) return
+        if (!active) return
         if (resolved.isNotEmpty()) {
             LocalLibrary.applyObservedMedia(resolved)
             val newest = resolved.maxOf { it.addedSec }
@@ -427,7 +452,7 @@ object MediaStoreWatch {
     }
 
     private suspend fun reconcile(reason: String, generation: Long) {
-        if (!updatesEnabled || !libraryResumed) return
+        if (!active) return
         val startedSec = Clock.System.now().epochSeconds
         val startedMs = SystemClock.elapsedRealtime()
         logcat("MediaStoreWatch") { "Reconcile library ($reason)" }

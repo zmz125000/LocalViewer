@@ -127,9 +127,11 @@ fun EhTheme(
     applySystemBarAppearance: Boolean = true,
     content: @Composable () -> Unit,
 ) {
-    val amoled by Settings.blackDarkTheme.collectAsState()
+    val blackDark by Settings.blackDarkTheme.collectAsState()
     val defaultBackground by Settings.defaultBackgroundColor.collectAsState()
-    val lighterDark by Settings.lighterDarkTheme.collectAsState()
+    val colorfulDark by Settings.colorfulDarkTheme.collectAsState()
+    val amoled = blackDark && !colorfulDark
+    val useDefaultBackground = defaultBackground && !colorfulDark
     val palette by Settings.colorPalette.collectAsState()
     val darkPalette by Settings.darkColorPalette.collectAsState()
     val context = LocalContext.current
@@ -139,7 +141,7 @@ fun EhTheme(
     val selected = paletteColorScheme(
         selectedPalette,
         useDarkTheme,
-        lighterDark && !amoled,
+        colorfulDark,
     )
     val baseColors = selected?.let { scheme ->
         if (useDarkTheme && amoled) {
@@ -158,7 +160,7 @@ fun EhTheme(
     } else {
         dynamicLightColorScheme(context)
     }
-    val colors = if (defaultBackground && !(useDarkTheme && amoled)) {
+    val colors = if (useDefaultBackground && !(useDarkTheme && amoled)) {
         val background = if (useDarkTheme) DarkGrey else Color.White
         baseColors.copy(
             background = background,
