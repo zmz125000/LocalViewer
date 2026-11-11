@@ -53,13 +53,13 @@ internal fun selectedPaletteForTheme(lightSelection: Int, darkOverride: Int, dar
 }
 
 /** Returns null for Dynamic (system), including an unknown saved preference. */
-internal fun paletteColorScheme(selection: Int, dark: Boolean, lighterDark: Boolean = false): ColorScheme? = palettes.getOrNull(selection - 1)?.let { palette ->
-    val colors = if (dark && lighterDark) {
+internal fun paletteColorScheme(selection: Int, dark: Boolean, colorfulDark: Boolean = false): ColorScheme? = palettes.getOrNull(selection - 1)?.let { palette ->
+    val colors = if (dark && colorfulDark) {
         palette.copy(dark = palette.deep, deep = palette.middle, middle = palette.pale, pale = palette.light)
     } else {
         palette
     }
-    val scheme = colors.scheme(dark, lighterDark)
+    val scheme = colors.scheme(dark, colorfulDark)
     when {
         selection == SOLARIZED_LIGHT_PALETTE && !dark -> scheme.copy(
             onBackground = Color(SOLARIZED_LIGHT_FOREGROUND),
@@ -75,14 +75,14 @@ internal fun paletteColorScheme(selection: Int, dark: Boolean, lighterDark: Bool
     }
 }
 
-private fun Palette.scheme(isDark: Boolean, lighterDark: Boolean): ColorScheme {
+private fun Palette.scheme(isDark: Boolean, colorfulDark: Boolean): ColorScheme {
     val surface = if (isDark) dark else light
     val toward = if (isDark) deep else middle
 
     // All container levels move in the same direction as Material's tonal elevation:
     // lighter in dark mode and darker in light mode.
     fun level(amount: Float) = lerp(surface, toward, amount)
-    val foreground = if (isDark && lighterDark) {
+    val foreground = if (isDark && colorfulDark) {
         readableOn(surface)
     } else if (isDark) {
         light
@@ -116,11 +116,11 @@ private fun Palette.scheme(isDark: Boolean, lighterDark: Boolean): ColorScheme {
         surfaceDim = if (isDark) dark else level(0.25f),
         surfaceBright = if (isDark) level(0.9f) else light,
         surfaceContainerLowest = if (isDark) dark else light,
-        surfaceContainerLow = level(0.12f),
-        surfaceContainer = level(0.25f),
-        surfaceContainerHigh = level(0.42f),
-        surfaceContainerHighest = level(0.62f),
-        surfaceVariant = level(0.55f),
+        surfaceContainerLow = level(if (isDark) 0.12f else 0.06f),
+        surfaceContainer = level(if (isDark) 0.25f else 0.12f),
+        surfaceContainerHigh = level(if (isDark) 0.42f else 0.25f),
+        surfaceContainerHighest = level(if (isDark) 0.62f else 0.42f),
+        surfaceVariant = level(if (isDark) 0.55f else 0.42f),
         onSurfaceVariant = foreground,
         outline = if (isDark) middle else deep,
         outlineVariant = level(0.9f),
