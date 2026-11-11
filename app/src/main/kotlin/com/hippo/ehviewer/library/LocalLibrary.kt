@@ -298,24 +298,6 @@ object LocalLibrary {
         }
     }
 
-    /** Rebuild only MediaStore-backed sources after a privacy policy or path-model change. */
-    suspend fun refreshMediaStoreSources() = withNonCancellableContext {
-        withIOContext {
-            scanMutex.withLock {
-                _scanning.value = true
-                try {
-                    for (root in db.libraryRootDao().listByRole(LIBRARY_ROOT_ROLE_LIBRARY)) {
-                        val path = rootPath(root) ?: continue
-                        if (!path.isMediaStorePath()) continue
-                        scanRootLocked(root, reuseKnownArchives = true)
-                    }
-                } finally {
-                    _scanning.value = false
-                }
-            }
-        }
-    }
-
     suspend fun rescanAll() = withNonCancellableContext {
         withIOContext {
             scanMutex.withLock {
@@ -394,10 +376,6 @@ object LocalLibrary {
             clearRootGalleries(root.id)
             return
         }
-        if (!UsbVolumes.isPathAvailable(root.treeUri)) {
-            logcat("LocalLibrary") { "Skip disconnected library source ${root.id}" }
-            return
-        }
         val path = rootPath(root) ?: run {
             logcat("LocalLibrary") { "Library root not accessible: ${root.treeUri}" }
             if (db.libraryRootDao().load(root.id) != null) {
@@ -408,7 +386,6 @@ object LocalLibrary {
         // MediaStore virtual root is always a directory tree; skip FileSystem metadata check
         // which can mis-classify synthetic paths.
         if (!isMediaStoreRootUri(root.treeUri) && !path.isDirectory) {
-            if (!UsbVolumes.isPathAvailable(root.treeUri)) return
             logcat("LocalLibrary") { "Library root is not a directory: $path" }
             if (db.libraryRootDao().load(root.id) != null) {
                 clearRootGalleries(root.id)
@@ -435,7 +412,7 @@ object LocalLibrary {
         var skipMediaDump = false
         if (skipIfUnchanged && previous.isNotEmpty() && canMs) {
             val stored = MediaStoreIndexStamp.load(root.id)
-            val generation = MediaStoreFs.volumeGeneration()
+            val generation = MediaStoreFs.libraryVolumeGeneration(mediaRelative)
             if (stored != null && stored.generationUnchanged(generation)) {
                 skipMediaDump = true
             } else if (stored != null) {
@@ -473,8 +450,6 @@ object LocalLibrary {
             // A forced live MediaStore dump must not turn into a recursive SAF/archive scan.
             walkDirectories = !mediaOnlyRefresh && (!maintenance || previous.isEmpty()),
         )
-        // A detach during the walk must not overwrite the source's saved index with partial results.
-        if (!UsbVolumes.isPathAvailable(root.treeUri)) return
         // Drop results if the root was removed while scanning (belt-and-suspenders with mutex).
         if (db.libraryRootDao().load(root.id) == null) {
             logcat("LocalLibrary") { "Skip scan write for deleted root ${root.id}" }
@@ -612,7 +587,6 @@ object LocalLibrary {
             var applied = 0
             for (root in roots) {
                 if (db.libraryRootDao().load(root.id) == null) continue
-                if (!UsbVolumes.isPathAvailable(root.treeUri)) continue
                 val path = rootPath(root) ?: continue
                 val msRoot = when {
                     path.isMediaStorePath() -> path
@@ -622,7 +596,11 @@ object LocalLibrary {
                 val mediaRelative = msRoot.mediaStoreRelativeDir()
                 val configKey = LocalFolderListing.rootConfigKey(path, root.prefersMediaStore)
                 for (file in files) {
-                    if (!MediaStoreFs.acceptsLibraryPath(file.parentRelative)) continue
+                    if (MediaStoreVolumePath.volume(mediaRelative) == null &&
+                        MediaStoreVolumePath.volume(file.parentRelative) != null
+                    ) {
+                        continue
+                    }
                     val folderRel = SafMediaStoreListing.relativeUnderRoot(
                         mediaRelative,
                         file.parentRelative,

@@ -171,11 +171,6 @@ class EhApplication : Application(), SingletonImageLoader.Factory {
             // MediaStoreWatch arms from LibraryScreen resume (library-scoped).
             launch {
                 runCatching {
-                    // Remove old merged removable rows once, even when startup scanning is off.
-                    if (!Settings.libraryVolumePathsMigrated.value) {
-                        LocalLibrary.refreshMediaStoreSources()
-                        Settings.libraryVolumePathsMigrated.value = true
-                    }
                     if (Settings.libraryStartupScan.value) LocalLibrary.startupMaintenance()
                 }.onFailure { logcat(it) }
             }

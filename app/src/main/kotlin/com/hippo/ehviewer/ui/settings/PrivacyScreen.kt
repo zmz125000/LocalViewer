@@ -144,14 +144,6 @@ fun AnimatedVisibilityScope.PrivacyScreen(navigator: DestinationsNavigator) = Sc
                 }
                 previousSaveHistory = saveHistory.value
             }
-            SwitchPreference(
-                title = stringResource(R.string.settings_privacy_library_accept_otg),
-                state = Settings.libraryAcceptOtg.asMutableState(),
-            )
-            SwitchPreference(
-                title = stringResource(R.string.settings_privacy_library_accept_sd_card),
-                state = Settings.libraryAcceptSdCard.asMutableState(),
-            )
             val scanHiddenFiles = Settings.scanHiddenFiles.asMutableState()
             SwitchPreference(
                 title = stringResource(id = R.string.settings_privacy_clear_history_on_startup),

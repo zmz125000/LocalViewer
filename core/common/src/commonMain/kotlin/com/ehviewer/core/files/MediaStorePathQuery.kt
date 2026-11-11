@@ -46,6 +46,14 @@ object MediaStorePathQuery {
         return "($selection) AND volume_name = ?" to arrayOf("$root/", root, "$root/%", volume)
     }
 
+    /** Library scans use a concrete volume URI, so only the relative path needs filtering. */
+    fun libraryDescendantSelection(relativeDir: String): Pair<String, Array<String>>? {
+        val root = MediaStoreVolumePath.local(relativeDir.replace('\\', '/').trim('/'))
+        if (root.isEmpty()) return null
+        val selection = "$RELATIVE_PATH = ? OR $RELATIVE_PATH = ? OR $RELATIVE_PATH LIKE ?"
+        return selection to arrayOf("$root/", root, "$root/%")
+    }
+
     /** OEM rows that leave [RELATIVE_PATH] empty; pair with [DATA] in the projection. */
     fun emptyRelativePathSelection(): String = "$RELATIVE_PATH IS NULL OR $RELATIVE_PATH = '' OR $RELATIVE_PATH = '/'"
 

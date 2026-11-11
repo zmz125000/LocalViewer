@@ -111,12 +111,6 @@ fun libraryFavoritesWithUsb(
     return head + rest
 }
 
-/** Availability checks share history's volume identity without touching the device. */
-internal fun isStoragePathAvailable(path: String, volumes: List<UsbVolume>): Boolean {
-    val id = removableStorageVolumeId(path) ?: return true
-    return volumes.any { it.uuid.equals(id, ignoreCase = true) }
-}
-
 internal fun removableStorageVolumeId(raw: String): String? {
     val path = raw.removePrefix("vid-local:").let { ZipPaths.parse(it)?.first ?: it }
     if (path.startsWith("mediastore:")) {

@@ -45,9 +45,10 @@ class MediaStoreIndexStampTest {
     }
 
     @Test
-    fun `old indexes must be rebuilt with volume identities and privacy policy`() {
+    fun `old indexes must be rebuilt for primary volume only`() {
         assertNull(MediaStoreIndexStamp.parse("7:42:1200:1700000000:43981:2"))
         assertNull(MediaStoreIndexStamp.parse("7:42:1200:1700000000:43981:3"))
+        assertNull(MediaStoreIndexStamp.parse("7:42:1200:1700000000:43981:4"))
     }
 
     @Test
