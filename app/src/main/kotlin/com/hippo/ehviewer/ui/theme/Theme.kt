@@ -131,6 +131,7 @@ fun EhTheme(
     val defaultBackground by Settings.defaultBackgroundColor.collectAsState()
     val colorfulDark by Settings.colorfulDarkTheme.collectAsState()
     val amoled = blackDark && !colorfulDark
+    val useDefaultBackground = defaultBackground && !colorfulDark
     val palette by Settings.colorPalette.collectAsState()
     val darkPalette by Settings.darkColorPalette.collectAsState()
     val context = LocalContext.current
@@ -159,7 +160,7 @@ fun EhTheme(
     } else {
         dynamicLightColorScheme(context)
     }
-    val colors = if (defaultBackground && !(useDarkTheme && amoled)) {
+    val colors = if (useDefaultBackground && !(useDarkTheme && amoled)) {
         val background = if (useDarkTheme) DarkGrey else Color.White
         baseColors.copy(
             background = background,

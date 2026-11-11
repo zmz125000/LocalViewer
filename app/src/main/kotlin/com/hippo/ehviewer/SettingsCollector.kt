@@ -57,7 +57,7 @@ suspend fun updateWhenThemeChanges(theme: Int) {
 
 @Suppress("UNUSED_PARAMETER")
 suspend fun updateWhenColorfulDarkThemeChanges(enabled: Boolean) {
-    delay(100) // Let the setting row update before night mode recreates the screen.
+    delay(400) // Let the settings visibility animation finish before night mode recreates the screen.
     applyNightMode(Settings.theme.value)
 }
 

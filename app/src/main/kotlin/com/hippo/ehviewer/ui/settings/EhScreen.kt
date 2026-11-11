@@ -76,13 +76,15 @@ fun AnimatedVisibilityScope.EhScreen(navigator: DestinationsNavigator) = Screen(
                 title = stringResource(id = R.string.colorful_dark_theme),
                 state = colorfulDark,
             )
-            if (!colorfulDark.value) {
-                SimpleMenuPreferenceInt(
-                    title = stringResource(id = R.string.color_theme),
-                    entry = com.hippo.ehviewer.R.array.color_theme_entries,
-                    entryValueRes = com.hippo.ehviewer.R.array.color_theme_values,
-                    state = Settings.colorPalette.asMutableState(),
-                )
+            AnimatedVisibility(visible = !colorfulDark.value) {
+                Column {
+                    SimpleMenuPreferenceInt(
+                        title = stringResource(id = R.string.color_theme),
+                        entry = com.hippo.ehviewer.R.array.color_theme_entries,
+                        entryValueRes = com.hippo.ehviewer.R.array.color_theme_values,
+                        state = Settings.colorPalette.asMutableState(),
+                    )
+                }
             }
             SimpleMenuPreferenceInt(
                 title = stringResource(id = R.string.color_theme_dark),
@@ -90,23 +92,23 @@ fun AnimatedVisibilityScope.EhScreen(navigator: DestinationsNavigator) = Screen(
                 entryValueRes = com.hippo.ehviewer.R.array.dark_color_theme_values,
                 state = Settings.darkColorPalette.asMutableState(),
             )
-            if (!colorfulDark.value) {
-                SimpleMenuPreferenceInt(
-                    title = stringResource(id = R.string.dark_theme),
-                    entry = com.hippo.ehviewer.R.array.night_mode_entries,
-                    entryValueRes = com.hippo.ehviewer.R.array.night_mode_values,
-                    state = Settings.theme.asMutableState(),
-                )
-            }
-            SwitchPreference(
-                title = stringResource(id = R.string.default_background_color),
-                state = Settings.defaultBackgroundColor.asMutableState(),
-            )
-            if (!colorfulDark.value) {
-                SwitchPreference(
-                    title = stringResource(id = R.string.black_dark_theme),
-                    state = Settings.blackDarkTheme.asMutableState(),
-                )
+            AnimatedVisibility(visible = !colorfulDark.value) {
+                Column {
+                    SimpleMenuPreferenceInt(
+                        title = stringResource(id = R.string.dark_theme),
+                        entry = com.hippo.ehviewer.R.array.night_mode_entries,
+                        entryValueRes = com.hippo.ehviewer.R.array.night_mode_values,
+                        state = Settings.theme.asMutableState(),
+                    )
+                    SwitchPreference(
+                        title = stringResource(id = R.string.default_background_color),
+                        state = Settings.defaultBackgroundColor.asMutableState(),
+                    )
+                    SwitchPreference(
+                        title = stringResource(id = R.string.black_dark_theme),
+                        state = Settings.blackDarkTheme.asMutableState(),
+                    )
+                }
             }
             val listMode = Settings.listMode.asMutableState()
             SimpleMenuPreferenceInt(
