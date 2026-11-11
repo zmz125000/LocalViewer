@@ -74,8 +74,11 @@ object Settings : DataStorePreferences(null) {
     val defaultFavSlot = intPref("default_favorite_slot", -2)
     val theme = intPref("theme_2", -1).observed(::updateWhenThemeChanges)
 
-    /** 0 = Android dynamic colors; 1..10 = the built-in color palettes. */
+    /** 0 = Android dynamic colors; positive values select built-in palettes. */
     val colorPalette = intPref("color_palette", 0)
+
+    /** -1 follows [colorPalette]; 0 uses dynamic dark colors; positive values select a dark palette. */
+    val darkColorPalette = intPref("dark_color_palette", -1)
     val defaultBackgroundColor = boolPref("default_background_color", false)
     val blackDarkTheme = boolPref("black_dark_theme", false)
     val harmonizeCategoryColor = boolPref("harmonize_category_color", true)

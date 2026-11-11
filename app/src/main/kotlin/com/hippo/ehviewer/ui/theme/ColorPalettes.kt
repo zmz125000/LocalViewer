@@ -29,6 +29,11 @@ private val palettes = listOf(
     palette(0xFF16324F, 0xFF1E6091, 0xFF3A86FF, 0xFFA9DEF9, 0xFFEAF4FF), // Cerulean Tide
     palette(0xFF1F2833, 0xFF2C5F2D, 0xFF97BC62, 0xFFC5DCA0, 0xFFF1F7ED), // Copper Patina
     palette(0xFF1B2D2A, 0xFF2E4F4F, 0xFF84A98C, 0xFFCAD2C5, 0xFFF0EFEB), // Fog Cedar
+    palette(0xFF0B132B, 0xFF1B3A4B, 0xFF2E8A99, 0xFF98C1D9, 0xFFF1FAFF), // Lagoon Pearl
+    palette(0xFF0B1D26, 0xFF1B3A4B, 0xFF74C69D, 0xFFB7E4C7, 0xFFE9F5DB), // Polar Mint
+    palette(0xFF1E2D2F, 0xFF2D3E40, 0xFF5B8A8F, 0xFF9ACBD0, 0xFFEAF0F1), // Rainy Window
+    palette(0xFF2B193D, 0xFF5E315B, 0xFF964F8E, 0xFFE7C5EB, 0xFFFFF0FF), // Mulled Wine
+    palette(0xFF2D1E2F, 0xFFEDAE49, 0xFFF9DF74, 0xFFF6E7CB, 0xFFFEF9E7), // Golden Hour
 )
 
 /** Returns null for Dynamic (system), including an unknown saved preference. */

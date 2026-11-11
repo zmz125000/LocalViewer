@@ -294,11 +294,43 @@
         <item>Cerulean Tide</item>
         <item>Copper Patina</item>
         <item>Fog Cedar</item>
+        <item>Lagoon Pearl</item>
+        <item>Polar Mint</item>
+        <item>Rainy Window</item>
+        <item>Mulled Wine</item>
+        <item>Golden Hour</item>
     </string-array>
 
     <integer-array name="color_theme_values">
         <item>0</item><item>1</item><item>2</item><item>3</item><item>4</item>
         <item>5</item><item>6</item><item>7</item><item>8</item><item>9</item><item>10</item>
+        <item>11</item><item>12</item><item>13</item><item>14</item><item>15</item>
+    </integer-array>
+
+    <string-array name="dark_color_theme_entries" translatable="false">
+        <item>@string/color_theme_follow_theme</item>
+        <item>@string/color_theme_dynamic</item>
+        <item>Moonstone</item>
+        <item>Twilight Ink</item>
+        <item>Ocean Spray</item>
+        <item>Nordic Frost</item>
+        <item>Forest Hike</item>
+        <item>Glacier Mist</item>
+        <item>Ink Paper</item>
+        <item>Cerulean Tide</item>
+        <item>Copper Patina</item>
+        <item>Fog Cedar</item>
+        <item>Lagoon Pearl</item>
+        <item>Polar Mint</item>
+        <item>Rainy Window</item>
+        <item>Mulled Wine</item>
+        <item>Golden Hour</item>
+    </string-array>
+
+    <integer-array name="dark_color_theme_values">
+        <item>-1</item><item>0</item><item>1</item><item>2</item><item>3</item><item>4</item>
+        <item>5</item><item>6</item><item>7</item><item>8</item><item>9</item><item>10</item>
+        <item>11</item><item>12</item><item>13</item><item>14</item><item>15</item>
     </integer-array>
 
     <string-array name="night_mode_entries" translatable="false">

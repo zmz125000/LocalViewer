@@ -130,9 +130,13 @@ fun EhTheme(
     val amoled by Settings.blackDarkTheme.collectAsState()
     val defaultBackground by Settings.defaultBackgroundColor.collectAsState()
     val palette by Settings.colorPalette.collectAsState()
+    val darkPalette by Settings.darkColorPalette.collectAsState()
     val context = LocalContext.current
     // minSdk 32: Material You dynamic color is always available.
-    val selected = paletteColorScheme(palette, useDarkTheme)
+    val selected = paletteColorScheme(
+        if (useDarkTheme && darkPalette >= 0) darkPalette else palette,
+        useDarkTheme,
+    )
     val baseColors = selected?.let { scheme ->
         if (useDarkTheme && amoled) {
             scheme.copy(background = Color.Black, surface = Color.Black, surfaceContainerLowest = Color.Black)
