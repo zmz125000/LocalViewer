@@ -9,13 +9,18 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.Inventory2
+import androidx.compose.material.icons.filled.Lan
 import androidx.compose.material.icons.filled.PermMedia
 import androidx.compose.material3.BasicAlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -33,6 +38,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
@@ -121,6 +127,96 @@ fun LocalSourceAccessDialog(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(top = 4.dp),
+                    horizontalArrangement = Arrangement.End,
+                ) {
+                    TextButton(onClick = onDismiss) {
+                        Text(stringResource(android.R.string.cancel))
+                    }
+                }
+            }
+        }
+    }
+}
+
+/** Library empty-state entry point for every media source type. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun AddMediaSourceDialog(
+    onDismiss: () -> Unit,
+    onChooseDeviceMedia: () -> Unit,
+    onChooseSmb: () -> Unit,
+    onChooseWebDav: () -> Unit,
+    onChooseFolderMedia: () -> Unit,
+    onChooseFolderFiles: () -> Unit,
+) {
+    val maxHeight = (LocalConfiguration.current.screenHeightDp - 48).coerceAtLeast(240).dp
+    BasicAlertDialog(onDismissRequest = onDismiss) {
+        Surface(
+            modifier = Modifier.fillMaxWidth().heightIn(max = maxHeight),
+            shape = RoundedCornerShape(24.dp),
+            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+            tonalElevation = 3.dp,
+        ) {
+            Column(
+                modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState())
+                    .padding(horizontal = 16.dp, vertical = 16.dp),
+            ) {
+                Text(
+                    text = stringResource(R.string.add_media_source),
+                    style = MaterialTheme.typography.titleLarge,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 4.dp),
+                )
+                Column(
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.fillMaxWidth().padding(top = 10.dp),
+                ) {
+                    SourceAccessOption(
+                        icon = Icons.Default.Lan,
+                        title = stringResource(R.string.network_add_smb),
+                        onClick = {
+                            onDismiss()
+                            onChooseSmb()
+                        },
+                    )
+                    SourceAccessOption(
+                        icon = Icons.Default.Cloud,
+                        title = stringResource(R.string.webdav_add),
+                        onClick = {
+                            onDismiss()
+                            onChooseWebDav()
+                        },
+                    )
+                    SourceAccessOption(
+                        icon = Icons.Default.PermMedia,
+                        title = stringResource(R.string.add_device_media),
+                        summary = stringResource(R.string.source_access_device_media_summary),
+                        onClick = {
+                            onDismiss()
+                            onChooseDeviceMedia()
+                        },
+                    )
+                    SourceAccessOption(
+                        icon = Icons.Default.FolderOpen,
+                        title = stringResource(R.string.source_access_folder_media),
+                        summary = stringResource(R.string.source_access_folder_media_summary),
+                        onClick = {
+                            onDismiss()
+                            onChooseFolderMedia()
+                        },
+                    )
+                    SourceAccessOption(
+                        icon = Icons.Default.Inventory2,
+                        title = stringResource(R.string.source_access_folder_files),
+                        summary = stringResource(R.string.source_access_folder_files_summary),
+                        onClick = {
+                            onDismiss()
+                            onChooseFolderFiles()
+                        },
+                    )
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
                     horizontalArrangement = Arrangement.End,
                 ) {
                     TextButton(onClick = onDismiss) {

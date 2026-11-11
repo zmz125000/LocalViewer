@@ -244,10 +244,12 @@ private suspend fun encodeStagedCaptured(leaf: String, target: StillExportTarget
                 try {
                     val rc = withStillInput(decodeSource) { transcodeJpegBufferToJxl(it, out.absolutePath, quality.keepExif) } ?: -60
                     success = rc == 0 && out.length() > 0L
-                    if (!success) {
+                    if (!success && rc != -70) {
                         android.util.Log.e("StillConvert", "Lossless JPEG transcoding failed: $leaf rc=$rc")
                     }
-                    return@withSource if (success) EncodedStill(out, target) else null
+                    // libjxl cannot coefficient-transcode CMYK JPEG. Preserve its
+                    // native ink samples/profile using the regular source encoder.
+                    if (rc != -70) return@withSource if (success) EncodedStill(out, target) else null
                 } finally {
                     if (!success) out.delete()
                 }
