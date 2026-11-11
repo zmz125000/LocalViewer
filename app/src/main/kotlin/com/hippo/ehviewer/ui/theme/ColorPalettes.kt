@@ -28,6 +28,7 @@ private val palettes = listOf(
     palette(0xFF0E0E10, 0xFF1E1E24, 0xFF4E4E50, 0xFFD3D3D3, 0xFFFFFFFF), // Ink Paper
     palette(0xFF16324F, 0xFF1E6091, 0xFF3A86FF, 0xFFA9DEF9, 0xFFEAF4FF), // Cerulean Tide
     palette(0xFF1F2833, 0xFF2C5F2D, 0xFF97BC62, 0xFFC5DCA0, 0xFFF1F7ED), // Copper Patina
+    palette(0xFF1B2D2A, 0xFF2E4F4F, 0xFF84A98C, 0xFFCAD2C5, 0xFFF0EFEB), // Fog Cedar
 )
 
 /** Returns null for Dynamic (system), including an unknown saved preference. */

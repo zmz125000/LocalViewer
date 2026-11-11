@@ -74,7 +74,7 @@ object Settings : DataStorePreferences(null) {
     val defaultFavSlot = intPref("default_favorite_slot", -2)
     val theme = intPref("theme_2", -1).observed(::updateWhenThemeChanges)
 
-    /** 0 = Android dynamic colors; 1..9 = the built-in color palettes. */
+    /** 0 = Android dynamic colors; 1..10 = the built-in color palettes. */
     val colorPalette = intPref("color_palette", 0)
     val defaultBackgroundColor = boolPref("default_background_color", false)
     val blackDarkTheme = boolPref("black_dark_theme", false)
@@ -656,7 +656,7 @@ object Settings : DataStorePreferences(null) {
      * mtime from scan). Combined with [libraryRecentOpen] pin. Default name.
      * (Legacy pref value 2 = old exclusive Last-open sort → treated as name.)
      */
-    val librarySortMode = intPref("library_sort_mode", 0)
+    val librarySortMode = intPref("library_sort_mode", 1)
 
     /**
      * Library gallery reader and photo-grid open order. Off (default) is name.
