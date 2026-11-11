@@ -830,6 +830,7 @@
     <string name="download_service">ダウンロードサービス</string>
     <string name="favorite_name">お気に入り</string>
     <string name="dark_theme">ダークテーマ</string>
+    <string name="default_background_color">デフォルトの背景色</string>
     <string name="black_dark_theme">ブラックダークテーマ</string>
     <string name="harmonize_category_color">カテゴリーの色をダイナミックカラーで調和する</string>
     <string name="sort_by">並べ替え</string>

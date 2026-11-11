@@ -43,6 +43,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.InputChip
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.NavigationBarDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SearchBarDefaults
 import androidx.compose.material3.SearchBarValue
@@ -303,9 +304,9 @@ fun SearchBarScreen(
             // pill ↔ docked corner jump.
             Surface(
                 shape = SearchBarDefaults.dockedShape,
-                color = searchBarColors.containerColor,
+                color = NavigationBarDefaults.containerColor,
                 contentColor = MaterialTheme.colorScheme.onSurface,
-                tonalElevation = SearchBarDefaults.TonalElevation,
+                tonalElevation = NavigationBarDefaults.Elevation,
                 shadowElevation = SearchBarDefaults.ShadowElevation,
                 modifier = Modifier.fillMaxWidth(),
             ) {

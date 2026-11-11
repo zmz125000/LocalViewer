@@ -11,7 +11,11 @@ import androidx.compose.ui.graphics.luminance
 private data class Palette(val dark: Color, val deep: Color, val middle: Color, val pale: Color, val light: Color)
 
 private fun palette(vararg colors: Long) = Palette(
-    Color(colors[0]), Color(colors[1]), Color(colors[2]), Color(colors[3]), Color(colors[4]),
+    Color(colors[0]),
+    Color(colors[1]),
+    Color(colors[2]),
+    Color(colors[3]),
+    Color(colors[4]),
 )
 
 private val palettes = listOf(
@@ -27,12 +31,12 @@ private val palettes = listOf(
 )
 
 /** Returns null for Dynamic (system), including an unknown saved preference. */
-internal fun paletteColorScheme(selection: Int, dark: Boolean): ColorScheme? =
-    palettes.getOrNull(selection - 1)?.scheme(dark)
+internal fun paletteColorScheme(selection: Int, dark: Boolean): ColorScheme? = palettes.getOrNull(selection - 1)?.scheme(dark)
 
 private fun Palette.scheme(isDark: Boolean): ColorScheme {
     val surface = if (isDark) dark else light
     val toward = if (isDark) deep else middle
+
     // All container levels move in the same direction as Material's tonal elevation:
     // lighter in dark mode and darker in light mode.
     fun level(amount: Float) = lerp(surface, toward, amount)
