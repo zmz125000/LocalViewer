@@ -135,7 +135,7 @@ fun EhTheme(
     val context = LocalContext.current
     // minSdk 32: Material You dynamic color is always available.
     val selected = paletteColorScheme(
-        if (useDarkTheme && darkPalette >= 0) darkPalette else palette,
+        selectedPaletteForTheme(palette, darkPalette, useDarkTheme),
         useDarkTheme,
         lighterDark && !amoled,
     )

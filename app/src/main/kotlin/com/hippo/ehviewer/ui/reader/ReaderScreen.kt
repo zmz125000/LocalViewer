@@ -138,6 +138,8 @@ import com.hippo.ehviewer.ui.main.UploadTransfers
 import com.hippo.ehviewer.ui.main.browseCoverThumbIdentity
 import com.hippo.ehviewer.ui.screen.LocalExplorerPanel
 import com.hippo.ehviewer.ui.theme.EhTheme
+import com.hippo.ehviewer.ui.theme.SOLARIZED_DARK_BACKGROUND
+import com.hippo.ehviewer.ui.theme.SOLARIZED_LIGHT_BACKGROUND
 import com.hippo.ehviewer.ui.tools.DialogState
 import com.hippo.ehviewer.ui.tools.awaitInputText
 import com.hippo.ehviewer.ui.tools.dialog
@@ -1914,6 +1916,8 @@ internal fun collectBackgroundColorAsState(): State<Color> {
             0 -> Color.White
             2 -> grey
             3 -> if (dark) grey else Color.White
+            4 -> Color(SOLARIZED_LIGHT_BACKGROUND)
+            5 -> Color(SOLARIZED_DARK_BACKGROUND)
             else -> Color.Black
         }
     }

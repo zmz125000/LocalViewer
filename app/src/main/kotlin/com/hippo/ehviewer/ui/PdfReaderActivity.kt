@@ -217,6 +217,10 @@ import com.hippo.ehviewer.ui.reader.scrollLeft
 import com.hippo.ehviewer.ui.reader.scrollRight
 import com.hippo.ehviewer.ui.reader.scrollUp
 import com.hippo.ehviewer.ui.reader.webtoonReadingIndex
+import com.hippo.ehviewer.ui.theme.SOLARIZED_DARK_BACKGROUND
+import com.hippo.ehviewer.ui.theme.SOLARIZED_DARK_FOREGROUND
+import com.hippo.ehviewer.ui.theme.SOLARIZED_LIGHT_BACKGROUND
+import com.hippo.ehviewer.ui.theme.SOLARIZED_LIGHT_FOREGROUND
 import com.hippo.ehviewer.ui.tools.DialogState
 import com.hippo.ehviewer.ui.tools.dialog
 import eu.kanade.tachiyomi.ui.reader.PageIndicatorText
@@ -1525,6 +1529,8 @@ private fun ebookPageColors(theme: Int, dark: Boolean): Pair<Int, Int> {
         0 -> white to black
         2 -> grey to light
         3 -> if (dark) grey to light else white to black
+        4 -> SOLARIZED_LIGHT_BACKGROUND.toInt() to SOLARIZED_LIGHT_FOREGROUND.toInt()
+        5 -> SOLARIZED_DARK_BACKGROUND.toInt() to SOLARIZED_DARK_FOREGROUND.toInt()
         else -> black to light
     }
 }

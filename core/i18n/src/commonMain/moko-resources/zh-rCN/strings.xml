@@ -1042,6 +1042,8 @@
     <string name="pref_custom_color_filter">自定义滤镜</string>
     <string name="pref_keep_screen_on">保持屏幕常亮</string>
     <string name="pref_reader_theme">背景颜色</string>
+    <string name="solarized_light_background">Solarized 浅色</string>
+    <string name="solarized_dark_background">Solarized 深色</string>
     <string name="white_background">白色</string>
     <string name="black_background">黑色</string>
     <string name="left_to_right_viewer">从左到右</string>

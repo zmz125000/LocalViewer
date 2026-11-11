@@ -1087,6 +1087,8 @@
     <string name="gray_background">Gray</string>
     <string name="black_background">Black</string>
     <string name="automatic_background">Auto</string>
+    <string name="solarized_light_background">Solarized Light</string>
+    <string name="solarized_dark_background">Solarized Dark</string>
     <string name="l_nav">L shaped</string>
     <string name="kindlish_nav">Kindle-ish</string>
     <string name="edge_nav">Edge</string>

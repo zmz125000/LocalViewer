@@ -1000,7 +1000,8 @@ object Settings : DataStorePreferences(null) {
 
     /**
      * Ebook page + reader backdrop. Same values as [readerTheme]
-     * (0 white, 1 black, 2 gray, 3 auto). Image/PDF reader keep [readerTheme].
+     * (0 white, 1 black, 2 gray, 3 auto, 4 Solarized Light, 5 Solarized Dark).
+     * Image/PDF reader keep [readerTheme].
      */
     val ebookTheme = intPref("pref_ebook_theme_key", 3)
 

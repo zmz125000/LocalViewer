@@ -65,8 +65,10 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.NavigationRail
 import androidx.compose.material3.NavigationRailItem
+import androidx.compose.material3.NavigationRailItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Snackbar
 import androidx.compose.material3.SnackbarHost
@@ -827,6 +829,9 @@ class MainActivity : AppCompatActivity() {
                                     val selected = selectedTab == item.direction
                                     NavigationBarItem(
                                         selected = selected,
+                                        colors = NavigationBarItemDefaults.colors(
+                                            selectedIconColor = MaterialTheme.colorScheme.primary,
+                                        ),
                                         onClick = { onMainNavClick(item) },
                                         icon = {
                                             MainNavDestinationIcon(
@@ -871,6 +876,9 @@ class MainActivity : AppCompatActivity() {
                                         val selected = selectedTab == item.direction
                                         NavigationRailItem(
                                             selected = selected,
+                                            colors = NavigationRailItemDefaults.colors(
+                                                selectedIconColor = MaterialTheme.colorScheme.primary,
+                                            ),
                                             onClick = { onMainNavClick(item) },
                                             icon = {
                                                 MainNavDestinationIcon(

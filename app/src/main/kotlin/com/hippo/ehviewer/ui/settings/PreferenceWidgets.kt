@@ -23,6 +23,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
 import com.ehviewer.core.ui.component.RollingNumber
 import com.hippo.ehviewer.ui.openBrowser
+import com.hippo.ehviewer.ui.theme.DarkSwitchTheme
 import com.hippo.ehviewer.util.ProgressDialog
 import com.ramcosta.composedestinations.navigation.DestinationsNavigator
 import com.ramcosta.composedestinations.spec.DirectionDestinationSpec
@@ -62,12 +63,14 @@ fun Preference(title: String, summary: String? = null, onClick: () -> Unit = {})
 
 @Composable
 fun SwitchPreference(title: String, summary: String? = null, state: MutableState<Boolean>, enabled: Boolean = true) {
-    SwitchPreference(
-        state = state,
-        title = { Text(title) },
-        summary = summary?.let { { Text(it) } },
-        enabled = enabled,
-    )
+    DarkSwitchTheme {
+        SwitchPreference(
+            state = state,
+            title = { Text(title) },
+            summary = summary?.let { { Text(it) } },
+            enabled = enabled,
+        )
+    }
 }
 
 @Composable

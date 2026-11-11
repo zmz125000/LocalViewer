@@ -34,7 +34,23 @@ private val palettes = listOf(
     palette(0xFF1E2D2F, 0xFF2D3E40, 0xFF5B8A8F, 0xFF9ACBD0, 0xFFEAF0F1), // Rainy Window
     palette(0xFF2B193D, 0xFF5E315B, 0xFF964F8E, 0xFFE7C5EB, 0xFFFFF0FF), // Mulled Wine
     palette(0xFF2D1E2F, 0xFFEDAE49, 0xFFF9DF74, 0xFFF6E7CB, 0xFFFEF9E7), // Golden Hour
+    palette(0xFF344E41, 0xFF3A5A40, 0xFF588157, 0xFFA3B18A, 0xFFDAD7CD), // Sage Grove
+    palette(0xFF012A4A, 0xFF01497C, 0xFF2A6F97, 0xFF61A5C2, 0xFFA9D6E5), // Blue Depths
+    palette(0xFF212529, 0xFF495057, 0xFFADB5BD, 0xFFDEE2E6, 0xFFF8F9FA), // Slate Scale
+    palette(0xFF03045E, 0xFF0077B6, 0xFF00B4D8, 0xFF90E0EF, 0xFFCAF0F8), // Azure Coast
+    palette(SOLARIZED_DARK_BACKGROUND, SOLARIZED_BASE01, SOLARIZED_DARK_FOREGROUND, SOLARIZED_BASE2, SOLARIZED_LIGHT_BACKGROUND), // Solarized Light
+    palette(SOLARIZED_DARK_BACKGROUND, SOLARIZED_BASE02, SOLARIZED_BASE01, SOLARIZED_DARK_FOREGROUND, SOLARIZED_DARK_FOREGROUND), // Solarized Dark
 )
+
+internal const val SOLARIZED_LIGHT_PALETTE = 20
+internal const val SOLARIZED_DARK_PALETTE = 21
+
+/** Follow theme keeps the paired Solarized appearance when dark mode starts. */
+internal fun selectedPaletteForTheme(lightSelection: Int, darkOverride: Int, dark: Boolean): Int {
+    if (!dark) return lightSelection
+    val selected = if (darkOverride >= 0) darkOverride else lightSelection
+    return if (selected == SOLARIZED_LIGHT_PALETTE) SOLARIZED_DARK_PALETTE else selected
+}
 
 /** Returns null for Dynamic (system), including an unknown saved preference. */
 internal fun paletteColorScheme(selection: Int, dark: Boolean, lighterDark: Boolean = false): ColorScheme? = palettes.getOrNull(selection - 1)?.let { palette ->
@@ -43,7 +59,13 @@ internal fun paletteColorScheme(selection: Int, dark: Boolean, lighterDark: Bool
     } else {
         palette
     }
-    colors.scheme(dark, lighterDark)
+    val scheme = colors.scheme(dark, lighterDark)
+    if (selection == SOLARIZED_LIGHT_PALETTE && !dark) {
+        val foreground = Color(SOLARIZED_LIGHT_FOREGROUND)
+        scheme.copy(onBackground = foreground, onSurface = foreground, onSurfaceVariant = foreground)
+    } else {
+        scheme
+    }
 }
 
 private fun Palette.scheme(isDark: Boolean, lighterDark: Boolean): ColorScheme {
