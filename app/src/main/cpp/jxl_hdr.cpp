@@ -105,7 +105,9 @@ bool transform_original_profile_to_linear(std::vector<float>& rgba, size_t npx,
     }
     if (!skcms_Transform(rgba.data(), skcms_PixelFormat_RGBA_ffff,
                          skcms_AlphaFormat_Unpremul, &src, rgba.data(),
-                         skcms_PixelFormat_RGBA_ffff, skcms_AlphaFormat_Unpremul, &dst, npx)) {
+                         skcms_PixelFormat_RGBA_ffff,
+                         src.data_color_space == skcms_Signature_CMYK ? skcms_AlphaFormat_Opaque : skcms_AlphaFormat_Unpremul,
+                         &dst, npx)) {
         ALOGE("JXL original-profile CMS transform failed cg=%d", (int)cg);
         return false;
     }
@@ -242,6 +244,8 @@ int decode_jxl_to_linear(const uint8_t* data, size_t len, std::vector<Sample>& o
     uhdr_color_gamut_t cg = UHDR_CG_BT_709;
     std::vector<uint8_t> source_icc;
     std::vector<float> pixels;
+    std::vector<float> black;
+    int black_index = -1;
     JxlPixelFormat format = {4, JXL_TYPE_FLOAT, JXL_NATIVE_ENDIAN, 0};
     std::vector<uint8_t> exif_box;
     bool collecting_exif = false;
@@ -283,6 +287,11 @@ int decode_jxl_to_linear(const uint8_t* data, size_t len, std::vector<Sample>& o
             if (frame_complete) break;
         } else if (status == JXL_DEC_BASIC_INFO) {
             if (JxlDecoderGetBasicInfo(dec.get(), &info) != JXL_DEC_SUCCESS) return -7;
+            for (unsigned i = 0; i < info.num_extra_channels; ++i) {
+                JxlExtraChannelInfo extra{};
+                if (JxlDecoderGetExtraChannelInfo(dec.get(), i, &extra) != JXL_DEC_SUCCESS) return -7;
+                if (extra.type == JXL_CHANNEL_BLACK) black_index = static_cast<int>(i);
+            }
             if (out_source_depth) *out_source_depth = static_cast<int>(info.bits_per_sample);
             w = info.xsize;
             h = info.ysize;
@@ -352,6 +361,15 @@ int decode_jxl_to_linear(const uint8_t* data, size_t len, std::vector<Sample>& o
                 JXL_DEC_SUCCESS) {
                 return -11;
             }
+            if (black_index >= 0) {
+                const JxlPixelFormat black_format = {1, JXL_TYPE_FLOAT, JXL_NATIVE_ENDIAN, 0};
+                size_t black_size = 0;
+                if (JxlDecoderExtraChannelBufferSize(dec.get(), &black_format, &black_size,
+                                                     black_index) != JXL_DEC_SUCCESS) return -11;
+                black.resize(black_size / sizeof(float));
+                if (JxlDecoderSetExtraChannelBuffer(dec.get(), &black_format, black.data(),
+                                                     black_size, black_index) != JXL_DEC_SUCCESS) return -11;
+            }
         } else if (status == JXL_DEC_FRAME_PROGRESSION && thumbnail_edge > 0 && progressive_preview) {
             const size_t ratio = JxlDecoderGetIntendedDownsamplingRatio(dec.get());
             // Finish the first progressive rendition with enough source detail.
@@ -371,6 +389,20 @@ int decode_jxl_to_linear(const uint8_t* data, size_t len, std::vector<Sample>& o
     if (pixels.empty() || w == 0 || h == 0) return -12;
 
     const size_t pixels_n = static_cast<size_t>(w) * static_cast<size_t>(h);
+    // CMYK JXL stores inverse C/M/Y in the color planes and inverse K in a
+    // BLACK extra channel, not alpha. Supply all four inks to the ICC transform.
+    const bool cmyk = source_icc.size() >= 20 && !memcmp(source_icc.data() + 16, "CMYK", 4);
+    std::vector<float> alpha;
+    if (cmyk) {
+        if (black.size() != pixels_n || !info.uses_original_profile) return -13;
+        if (info.alpha_bits) alpha.resize(pixels_n);
+        for (size_t i = 0; i < pixels_n; ++i) {
+            if (!alpha.empty()) alpha[i] = pixels[i * 4 + 3];
+            pixels[i * 4 + 3] = black[i];
+        }
+    }
+    // Release the extra ink plane before allocating the display buffer.
+    std::vector<float>().swap(black);
     const bool original_profile = info.uses_original_profile == JXL_TRUE;
     const bool hdr_cms = original_profile && (is_pq || is_hlg);
     const float cms_intensity = std::clamp(std::isfinite(info.intensity_target) && info.intensity_target > 0.f ? info.intensity_target : 1000.f, is_pq ? 1.f : kSdrWhiteNits, kMaxNits);
@@ -381,6 +413,10 @@ int decode_jxl_to_linear(const uint8_t* data, size_t len, std::vector<Sample>& o
                !transform_original_profile_to_linear(pixels, pixels_n, source_icc, cg)) {
         return -13;
     }
+    if (!alpha.empty()) {
+        for (size_t i = 0; i < pixels_n; ++i) pixels[i * 4 + 3] = alpha[i];
+    }
+    std::vector<float>().swap(alpha);
 
     // BasicInfo.intensity_target: libjxl default for SDR is **255** nits — NOT HDR.
     const float intensity = info.intensity_target;

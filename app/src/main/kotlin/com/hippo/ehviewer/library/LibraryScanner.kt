@@ -87,7 +87,7 @@ object LibraryScanner {
                 folderVideos = folderVideos,
             )
         }
-        if (shouldWalkDirectories(mediaStoreIndexed, includeArchives, walkDirectories)) {
+        if (shouldWalkDirectories(mediaStoreIndexed, includeArchives, walkDirectories, rootPath.isMediaStorePath())) {
             scanDir(
                 rootId = rootId,
                 dir = rootPath,
@@ -127,12 +127,14 @@ object LibraryScanner {
      */
     fun needsDirectoryWalk(mediaStoreIndexed: Boolean, includeArchives: Boolean): Boolean = !mediaStoreIndexed || includeArchives
 
-    /** Startup archive scan can skip the tree walk ([walkDirectories] false). */
+    /** A virtual MediaStore tree cannot expose archives, so it needs no second walk. */
     fun shouldWalkDirectories(
         mediaStoreIndexed: Boolean,
         includeArchives: Boolean,
         walkDirectories: Boolean,
-    ): Boolean = walkDirectories && needsDirectoryWalk(mediaStoreIndexed, includeArchives)
+        virtualMediaStoreRoot: Boolean = false,
+    ): Boolean = walkDirectories && needsDirectoryWalk(mediaStoreIndexed, includeArchives) &&
+        !(mediaStoreIndexed && virtualMediaStoreRoot)
 
     private fun scanMediaStoreFolderGalleries(
         rootId: Long,
@@ -274,7 +276,6 @@ object LibraryScanner {
         if (knownArchives.isEmpty()) return emptyList()
         val out = ArrayList<LocalGalleryEntity>()
         for ((path, rows) in knownArchives) {
-            if (!UsbVolumes.isPathAvailable(path)) continue
             if (EmptyArchiveRegistry.isMarked(path)) continue
             if (!archiveFileExists(path)) continue
             out += rows
@@ -308,8 +309,6 @@ object LibraryScanner {
         folderPages: MutableMap<String, List<String>>,
         folderVideos: MutableMap<String, List<String>>,
     ) {
-        if (!UsbVolumes.isPathAvailable(dir.toString())) return
-        if (dir.isMediaStorePath() && !MediaStoreFs.acceptsLibraryPath(dir.mediaStoreRelativeDir())) return
         val children = runCatching {
             // Overlay re-queries MediaStore in every folder; the library scan already
             // indexed image folders. Light SAF meta when those dates come from MediaStore

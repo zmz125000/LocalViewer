@@ -9,6 +9,14 @@ import org.junit.Test
 
 class MediaStorePathQueryTest {
     @Test
+    fun `library scan filters paths without a redundant volume predicate`() {
+        val (selection, args) = MediaStorePathQuery.libraryDescendantSelection("Pictures/Comics")!!
+        assertFalse(selection.contains("volume_name"))
+        assertArrayEquals(arrayOf("Pictures/Comics/", "Pictures/Comics", "Pictures/Comics/%"), args)
+        assertNull(MediaStorePathQuery.libraryDescendantSelection("@volume-abcd-1234"))
+    }
+
+    @Test
     fun `device root has no SQL filter`() {
         assertNull(MediaStorePathQuery.descendantRelativePathSelection(""))
         assertNull(MediaStorePathQuery.descendantRelativePathSelection("/"))

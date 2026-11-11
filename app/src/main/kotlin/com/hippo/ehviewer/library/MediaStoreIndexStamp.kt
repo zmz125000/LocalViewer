@@ -30,7 +30,7 @@ data class MediaStoreIndexStamp(
         private const val SEP = ':'
 
         /** Images+video fingerprint. Old 5-field stamps fail [parse] so startup rescans. */
-        private const val VERSION = "4"
+        private const val VERSION = "5"
 
         /** Stable across enumeration order; database resets and mount changes invalidate it too. */
         fun volumeGenerationToken(volumes: List<Triple<String, String, Long>>): Long {
@@ -50,7 +50,7 @@ data class MediaStoreIndexStamp(
 
         fun parse(encoded: String): Pair<Long, MediaStoreIndexStamp>? {
             val parts = encoded.split(SEP)
-            // Older stamps merged removable volumes and did not apply their privacy policy.
+            // Older stamps could include removable media in the device library.
             if (parts.size != 6 || parts[5] != VERSION) return null
             val rootId = parts[0].toLongOrNull() ?: return null
             val generation = parts[1].toLongOrNull() ?: return null

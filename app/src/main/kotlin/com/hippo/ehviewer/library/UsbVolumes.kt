@@ -56,9 +56,6 @@ object UsbVolumes {
         }
     }
 
-    /** In-memory mount snapshot only; never probes a document provider or filesystem. */
-    fun isPathAvailable(path: String): Boolean = isStoragePathAvailable(path, _mounted.value)
-
     fun listMounted(context: Context): List<UsbVolume> {
         val manager = context.getSystemService(StorageManager::class.java) ?: return emptyList()
         return manager.storageVolumes.mapNotNull { volume -> volume.toUsbVolume(context) }

@@ -282,6 +282,25 @@
         <item>https://raw.githubusercontent.com/EhTagTranslation/DatabaseReleases/refs/heads/master/db.text.json</item>
     </string-array>
 
+    <string-array name="color_theme_entries" translatable="false">
+        <item>@string/color_theme_dynamic</item>
+        <item>Moonstone</item>
+        <item>Twilight Ink</item>
+        <item>Ocean Spray</item>
+        <item>Nordic Frost</item>
+        <item>Forest Hike</item>
+        <item>Glacier Mist</item>
+        <item>Ink Paper</item>
+        <item>Cerulean Tide</item>
+        <item>Copper Patina</item>
+        <item>Fog Cedar</item>
+    </string-array>
+
+    <integer-array name="color_theme_values">
+        <item>0</item><item>1</item><item>2</item><item>3</item><item>4</item>
+        <item>5</item><item>6</item><item>7</item><item>8</item><item>9</item><item>10</item>
+    </integer-array>
+
     <string-array name="night_mode_entries" translatable="false">
         <item>@string/dark_theme_follow_system</item>
         <item>@string/dark_theme_off</item>

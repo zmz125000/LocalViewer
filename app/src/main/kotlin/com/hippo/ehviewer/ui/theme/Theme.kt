@@ -70,7 +70,7 @@ private val SnackbarDark = Color(0xFF4A4A4A)
 
 @Composable
 fun snackbarContainerColor(): Color = if (isSystemInDarkTheme()) {
-    SnackbarDark
+    if (Settings.colorPalette.collectAsState().value == 0) SnackbarDark else MaterialTheme.colorScheme.surfaceContainerHighest
 } else {
     MaterialTheme.colorScheme.inverseSurface
 }
@@ -90,7 +90,7 @@ fun snackbarActionContentColor(): Color {
 @Composable
 fun snackbarDismissContentColor(): Color {
     val preferred = if (isSystemInDarkTheme()) {
-        OnDarkGrey
+        if (Settings.colorPalette.collectAsState().value == 0) OnDarkGrey else MaterialTheme.colorScheme.onSurface
     } else {
         MaterialTheme.colorScheme.inverseOnSurface
     }
@@ -128,12 +128,27 @@ fun EhTheme(
     content: @Composable () -> Unit,
 ) {
     val amoled by Settings.blackDarkTheme.collectAsState()
+    val defaultBackground by Settings.defaultBackgroundColor.collectAsState()
+    val palette by Settings.colorPalette.collectAsState()
     val context = LocalContext.current
     // minSdk 32: Material You dynamic color is always available.
-    val colors = if (useDarkTheme) {
+    val selected = paletteColorScheme(palette, useDarkTheme)
+    val baseColors = selected?.let { scheme ->
+        if (useDarkTheme && amoled) {
+            scheme.copy(background = Color.Black, surface = Color.Black, surfaceContainerLowest = Color.Black)
+        } else {
+            scheme
+        }
+    } ?: if (useDarkTheme) {
         dynamicDarkColorScheme(context).amoled(amoled)
     } else {
         dynamicLightColorScheme(context)
+    }
+    val colors = if (defaultBackground && !(useDarkTheme && amoled)) {
+        val background = if (useDarkTheme) DarkGrey else Color.White
+        baseColors.copy(background = background, surface = background, surfaceContainerLowest = background)
+    } else {
+        baseColors
     }
 
     // Root app theme only. Nested reader EhTheme must not touch bars — that leaked white

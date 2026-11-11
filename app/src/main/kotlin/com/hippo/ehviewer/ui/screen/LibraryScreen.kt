@@ -22,11 +22,13 @@ import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.LibraryBooks
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Inventory2
 import androidx.compose.material.icons.filled.Lan
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material3.Button
 import androidx.compose.material3.CircularWavyProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -188,6 +190,11 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
     var refreshing by remember { mutableStateOf(false) }
     var showEasyTierDialog by remember { mutableStateOf(false) }
     val startEasyTierVpn = rememberEasyTierStartButtonAction()
+    var showAddMediaSource by rememberSaveable { mutableStateOf(false) }
+    LibraryAddMediaSourceFlow(
+        showDialog = showAddMediaSource,
+        onDismiss = { showAddMediaSource = false },
+    )
 
     // Survive NavHost dispose/restore (e.g. open favourite folder → back).
     // collectAsState(initial=empty) remounted an empty list for one frame and
@@ -1132,17 +1139,25 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
                     verticalArrangement = Arrangement.Center,
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
-                    Text(
-                        text = stringResource(
-                            if (librarySection == LibrarySection.Videos) {
-                                R.string.library_empty_videos
-                            } else {
-                                R.string.library_empty
-                            },
-                        ),
-                        style = MaterialTheme.typography.headlineSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
+                    if (hasLibrarySources || keyword.isNotBlank()) {
+                        Text(
+                            text = stringResource(
+                                if (librarySection == LibrarySection.Videos) {
+                                    R.string.library_empty_videos
+                                } else {
+                                    R.string.library_empty
+                                },
+                            ),
+                            style = MaterialTheme.typography.headlineSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    if (keyword.isBlank()) {
+                        Button(onClick = { showAddMediaSource = true }) {
+                            Icon(Icons.Default.Add, contentDescription = null)
+                            Text(stringResource(R.string.add_media_source), modifier = Modifier.padding(start = 8.dp))
+                        }
+                    }
                 }
             }
 

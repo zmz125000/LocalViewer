@@ -8,10 +8,10 @@ import androidx.compose.foundation.layout.plus
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.material3.CardColors
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.dimensionResource
@@ -121,10 +121,10 @@ object GalleryGridDefaults {
     @Composable
     fun listColumns(): GridCells = GridCells.Fixed(listColumnCount())
 
-    /** Dark page is #2A2A2A (or black). Cells sit a step lighter so the card reads. */
+    /** Keep grid cards at the theme's raised surface level in dark mode. */
     @Composable
     fun cardColors(): CardColors = if (isSystemInDarkTheme()) {
-        CardDefaults.elevatedCardColors(containerColor = Color(0xFF3A3A3A))
+        CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh)
     } else {
         CardDefaults.elevatedCardColors()
     }

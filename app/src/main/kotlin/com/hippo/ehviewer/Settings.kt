@@ -73,6 +73,10 @@ object Settings : DataStorePreferences(null) {
     val gallerySite = intPref("gallery_site_2", 0).observed(::updateWhenGallerySiteChanges)
     val defaultFavSlot = intPref("default_favorite_slot", -2)
     val theme = intPref("theme_2", -1).observed(::updateWhenThemeChanges)
+
+    /** 0 = Android dynamic colors; 1..10 = the built-in color palettes. */
+    val colorPalette = intPref("color_palette", 0)
+    val defaultBackgroundColor = boolPref("default_background_color", false)
     val blackDarkTheme = boolPref("black_dark_theme", false)
     val harmonizeCategoryColor = boolPref("harmonize_category_color", true)
     val launchPage = intPref("launch_page_2", 0)
@@ -393,13 +397,6 @@ object Settings : DataStorePreferences(null) {
      */
     val libraryStartupScan = boolPref("library_startup_scan", false)
 
-    val libraryVolumePathsMigrated = boolPref("library_volume_paths_migrated", false)
-
-    val libraryAcceptOtg = boolPref("library_accept_otg", false)
-        .observed { updateWhenLibraryRemovablePolicyChanges() }
-    val libraryAcceptSdCard = boolPref("library_accept_sd_card", false)
-        .observed { updateWhenLibraryRemovablePolicyChanges() }
-
     /**
      * When true (default), [com.hippo.ehviewer.library.MediaStoreWatch] applies new
      * MediaStore images and videos while the library screen is resumed, without
@@ -659,7 +656,7 @@ object Settings : DataStorePreferences(null) {
      * mtime from scan). Combined with [libraryRecentOpen] pin. Default name.
      * (Legacy pref value 2 = old exclusive Last-open sort → treated as name.)
      */
-    val librarySortMode = intPref("library_sort_mode", 0)
+    val librarySortMode = intPref("library_sort_mode", 1)
 
     /**
      * Library gallery reader and photo-grid open order. Off (default) is name.

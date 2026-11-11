@@ -14,7 +14,6 @@ import androidx.core.content.ContextCompat
 import com.ehviewer.core.files.mediaStoreParentRelativeDir
 import com.ehviewer.core.files.resolveMediaStorePathToContentUri
 import com.ehviewer.core.files.toUri
-import com.hippo.ehviewer.Settings
 import java.io.IOException
 import okio.Path
 import okio.Path.Companion.toPath
@@ -230,12 +229,8 @@ object MediaStoreFs {
         val mimeType: String? = null,
     )
 
-    fun acceptsLibraryPath(relative: String): Boolean = MediaStoreVolumePath.accepts(
-        relative,
-        UsbVolumes.mounted.value,
-        Settings.libraryAcceptOtg.value,
-        Settings.libraryAcceptSdCard.value,
-    )
+    /** Device media scans stay on internal storage; an explicitly selected volume keeps its own URI. */
+    private fun libraryVolume(relativeDir: String): String = MediaStoreVolumePath.volume(relativeDir) ?: MediaStore.VOLUME_EXTERNAL_PRIMARY
 
     fun volumeLabel(relative: String): String? {
         val id = MediaStoreVolumePath.volume(relative) ?: return null
@@ -324,8 +319,10 @@ object MediaStoreFs {
         val root = relativeDir.replace('\\', '/').trim('/')
         val out = ArrayList<SafMediaStoreListing.ImageFile>()
         val seen = HashSet<String>()
-        val pathFilter = MediaStorePathQuery.descendantRelativePathSelection(root)
+        val collection = MediaStore.Images.Media.getContentUri(libraryVolume(root))
+        val pathFilter = MediaStorePathQuery.libraryDescendantSelection(root)
         absorbImageFiles(
+            collection = collection,
             projection = arrayOf(
                 MediaStore.MediaColumns.DISPLAY_NAME,
                 MediaStore.MediaColumns.RELATIVE_PATH,
@@ -340,6 +337,7 @@ object MediaStoreFs {
             seen = seen,
         )
         absorbImageFiles(
+            collection = collection,
             projection = arrayOf(
                 MediaStore.MediaColumns.DISPLAY_NAME,
                 MediaStore.MediaColumns.RELATIVE_PATH,
@@ -366,8 +364,8 @@ object MediaStoreFs {
         val root = relativeDir.replace('\\', '/').trim('/')
         val out = ArrayList<SafMediaStoreListing.ImageFile>()
         val seen = HashSet<String>()
-        val pathFilter = MediaStorePathQuery.descendantRelativePathSelection(root)
-        val collection = MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL)
+        val pathFilter = MediaStorePathQuery.libraryDescendantSelection(root)
+        val collection = MediaStore.Video.Media.getContentUri(libraryVolume(root))
         absorbImageFiles(
             collection = collection,
             projection = arrayOf(
@@ -407,14 +405,15 @@ object MediaStoreFs {
      * same RELATIVE_PATH prefix as [listDescendantImageFiles] (no DATA).
      */
     fun imageIndexStamp(relativeDir: String): MediaStoreIndexStamp {
-        val generation = volumeGeneration()
+        val generation = libraryVolumeGeneration(relativeDir)
         val hasImages = MediaPermissions.hasImagePermission()
         val hasVideos = MediaPermissions.hasVideoPermission()
         if (!hasImages && !hasVideos) {
             return MediaStoreIndexStamp(generation, 0, 0L, 0L)
         }
         val root = relativeDir.replace('\\', '/').trim('/')
-        val pathFilter = MediaStorePathQuery.descendantRelativePathSelection(root)
+        val pathFilter = MediaStorePathQuery.libraryDescendantSelection(root)
+        val volume = libraryVolume(root)
         var count = 0
         var maxDate = 0L
         var idXor = 0L
@@ -427,8 +426,6 @@ object MediaStoreFs {
                 selectionArgs = pathFilter?.second,
                 sortOrder = "${MediaStore.MediaColumns._ID} ASC",
             ) { c ->
-                val volume = c.getString(c.getColumnIndexOrThrow(MediaStore.MediaColumns.VOLUME_NAME))
-                if (!acceptsLibraryPath(MediaStoreVolumePath.parent(volume, ""))) return@queryMediaPaged false
                 val id = c.getLong(0)
                 if (!seenIds.add(id)) return@queryMediaPaged false
                 count++
@@ -441,12 +438,23 @@ object MediaStoreFs {
             }
         }
         if (hasImages) {
-            absorbStamp(MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL))
+            absorbStamp(MediaStore.Images.Media.getContentUri(volume))
         }
         if (hasVideos) {
-            absorbStamp(MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL))
+            absorbStamp(MediaStore.Video.Media.getContentUri(volume))
         }
         return MediaStoreIndexStamp(generation, count, maxDate, idXor)
+    }
+
+    /** Only changes on the source's physical volume invalidate a library stamp. */
+    fun libraryVolumeGeneration(relativeDir: String): Long {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return MediaStoreIndexStamp.GENERATION_UNKNOWN
+        val volume = libraryVolume(relativeDir)
+        return runCatching {
+            MediaStoreIndexStamp.volumeGenerationToken(
+                listOf(Triple(volume, MediaStore.getVersion(appCtx, volume), MediaStore.getGeneration(appCtx, volume))),
+            )
+        }.getOrDefault(MediaStoreIndexStamp.GENERATION_UNKNOWN)
     }
 
     /** Equality token for all concrete external volumes; the merged `external` volume has no generation. */
@@ -498,7 +506,6 @@ object MediaStoreFs {
                 ),
             )
             if (SafMediaStoreListing.relativeUnderRoot(root, relPath) == null) return@queryMediaPaged false
-            if (!acceptsLibraryPath(relPath)) return@queryMediaPaged false
             val key = "$relPath/$name"
             if (!seen.add(key)) return@queryMediaPaged false
             val lastMod = if (modIdx < 0 || c.isNull(modIdx)) {
@@ -694,8 +701,8 @@ object MediaStoreFs {
 
     /**
      * Page through MediaStore so a folder with thousands of files is not truncated
-     * by the ~2 MB cursor window. Track physical row ids before filtering so a page
-     * of excluded removable media cannot hide later internal media.
+     * by the ~2 MB cursor window. Concrete-volume scans deduplicate numeric ids;
+     * merged-volume browsing also includes the volume in each row key.
      * Stops when a page is short, empty of new rows (OEM ignored OFFSET), or
      * the provider returned more than [MEDIA_QUERY_PAGE] (LIMIT ignored).
      * Library scans require successful, complete queries; filtered rows still
@@ -711,7 +718,9 @@ object MediaStoreFs {
         onRow: (Cursor) -> Boolean,
     ) {
         var offset = 0
-        val seenIds = HashSet<String>()
+        val mergedVolume = collection.pathSegments.firstOrNull() == MediaStore.VOLUME_EXTERNAL
+        val seenConcreteIds = if (mergedVolume) null else HashSet<Long>()
+        val seenMergedIds = if (mergedVolume) HashSet<String>() else null
         val rowProjection = (projection + MediaStore.MediaColumns.VOLUME_NAME + MediaStore.MediaColumns._ID)
             .distinct().toTypedArray()
         while (offset < MEDIA_QUERY_MAX_ROWS) {
@@ -739,8 +748,14 @@ object MediaStoreFs {
                     val idIndex = c.getColumnIndexOrThrow(MediaStore.MediaColumns._ID)
                     while (c.moveToNext()) {
                         pageRows++
-                        val volume = c.getString(c.getColumnIndexOrThrow(MediaStore.MediaColumns.VOLUME_NAME))
-                        if (!seenIds.add("$volume:${c.getLong(idIndex)}")) continue
+                        val id = c.getLong(idIndex)
+                        val newId = if (mergedVolume) {
+                            val volume = c.getString(c.getColumnIndexOrThrow(MediaStore.MediaColumns.VOLUME_NAME))
+                            seenMergedIds!!.add("$volume:$id")
+                        } else {
+                            seenConcreteIds!!.add(id)
+                        }
+                        if (!newId) continue
                         newRows++
                         onRow(c)
                     }

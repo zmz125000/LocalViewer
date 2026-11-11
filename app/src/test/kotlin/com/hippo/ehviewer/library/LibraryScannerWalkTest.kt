@@ -50,6 +50,11 @@ class LibraryScannerWalkTest {
     }
 
     @Test
+    fun `virtual MediaStore root does not repeat folder queries for archives`() {
+        assertFalse(LibraryScanner.shouldWalkDirectories(true, true, true, virtualMediaStoreRoot = true))
+    }
+
+    @Test
     fun `startup archive scan can skip the tree walk`() {
         assertFalse(
             LibraryScanner.shouldWalkDirectories(

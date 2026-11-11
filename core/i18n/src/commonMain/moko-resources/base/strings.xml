@@ -26,8 +26,10 @@
     <string name="browse_manage_sources">Manage Sources</string>
     <string name="browse_manage_sources_short">Sources</string>
     <string name="network_duplicate_smb">Duplicate</string>
-    <string name="library_empty">Add library sources from browse tab</string>
-    <string name="library_empty_videos">Add library sources from browse tab</string>
+    <string name="library_empty">No media found</string>
+    <string name="library_empty_videos">No videos found</string>
+    <string name="add_media_source">Add media source</string>
+    <string name="add_device_media">Add device media</string>
     <string name="library_video_folders">Video folders</string>
     <string name="library_video_all">All videos</string>
     <string name="library_photo_all">All photos</string>
@@ -858,6 +860,9 @@
     <string name="download_service">Download Service</string>
     <string name="favorite_name">Favorites</string>
     <string name="dark_theme">Dark theme</string>
+    <string name="color_theme">Theme</string>
+    <string name="color_theme_dynamic">Dynamic (system)</string>
+    <string name="default_background_color">Default background color</string>
     <string name="black_dark_theme">Black dark theme</string>
     <string name="harmonize_category_color">Harmonize category color for Dynamic Color</string>
     <string name="sort_by">Sort by</string>
@@ -1420,8 +1425,6 @@
     <string name="mixed_delete_confirm">Permanently delete %1$d files and move %2$d items to .trash? File deletion cannot be undone.</string>
     <string name="browse_auto_finish_deletion">Auto finish (deletion)</string>
     <string name="gallery_trash_regular_files">%1$d regular files moved to trash with the gallery folder.</string>
-    <string name="settings_privacy_library_accept_otg">Allow USB / OTG media in Library</string>
-    <string name="settings_privacy_library_accept_sd_card">Allow SD card media in Library</string>
     <string name="settings_privacy_library_removable_summary">Applies only to MediaStore sources. Device media folders remain available for browsing.</string>
     <string name="library_live_update_stopped">USB / OTG connected. Library live updates paused.</string>
     <string name="library_live_update_resume">Resume</string>

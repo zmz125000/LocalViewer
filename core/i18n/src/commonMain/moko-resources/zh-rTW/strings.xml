@@ -26,8 +26,10 @@
     <string name="browse_manage_sources">管理來源</string>
     <string name="browse_manage_sources_short">來源</string>
     <string name="network_duplicate_smb">複製</string>
-    <string name="library_empty">請從瀏覽頁新增圖庫來源</string>
-    <string name="library_empty_videos">請從瀏覽頁新增圖庫來源</string>
+    <string name="library_empty">找不到媒體</string>
+    <string name="library_empty_videos">找不到影片</string>
+    <string name="add_media_source">新增媒體來源</string>
+    <string name="add_device_media">新增裝置媒體</string>
     <string name="library_video_folders">影片資料夾</string>
     <string name="library_video_all">全部影片</string>
     <string name="library_photo_all">全部照片</string>
@@ -795,6 +797,7 @@
     <string name="app_cache_cleared">已清除快取</string>
     <string name="download_service">下載服務</string>
     <string name="favorite_name">收藏圖庫</string>
+    <string name="default_background_color">預設背景顏色</string>
     <string name="black_dark_theme">純黑深色主題</string>
     <string name="harmonize_category_color">以動態顏色為分類顏色配色</string>
     <string name="backup_before_update">更新前備份資料</string>
