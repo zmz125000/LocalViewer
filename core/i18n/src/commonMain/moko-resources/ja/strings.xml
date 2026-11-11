@@ -833,6 +833,7 @@
     <string name="default_background_color">デフォルトの背景色</string>
     <string name="colorful_dark_theme">カラフルなダークテーマ</string>
     <string name="color_theme_dark">テーマ（ダーク）</string>
+    <string name="theme_selector">テーマ選択</string>
     <string name="color_theme_follow_theme">テーマに従う</string>
     <string name="black_dark_theme">ブラックダークテーマ</string>
     <string name="harmonize_category_color">カテゴリーの色をダイナミックカラーで調和する</string>

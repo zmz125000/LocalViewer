@@ -45,6 +45,7 @@ import com.hippo.ehviewer.library.ZipPaths
 import com.hippo.ehviewer.library.libraryBrowseRelative
 import com.hippo.ehviewer.library.naturalCompare
 import com.hippo.ehviewer.library.stableGalleryId
+import com.hippo.ehviewer.ui.theme.ThemeSelectorRequest
 
 /** Library gallery secondary sort ([Settings.librarySortMode]). */
 enum class LibrarySortMode(val prefValue: Int) {
@@ -374,7 +375,7 @@ fun mergeOpenMtimes(primary: Map<String, Long>, fallback: Map<String, Long>): Ma
  *     All photos stays date-sorted either way.
  * - Mid: List / Grid layout
  * - Bottom: Photo grid, All photos, All videos, zip as folder, back to dir, page count,
- *   reading progress, startup scan, live update
+ *   reading progress, startup scan, live update, theme selector
  *
  * Tap icon → menu. Long-press → toggle list ↔ grid.
  */
@@ -553,6 +554,13 @@ fun LibraryViewModeMenu(modifier: Modifier = Modifier) {
                 label = stringResource(R.string.settings_library_startup_scan),
                 checked = libraryStartupScan,
                 onClick = { libraryStartupScan = !libraryStartupScan },
+            )
+            DropdownMenuItem(
+                text = { Text(stringResource(R.string.theme_selector)) },
+                onClick = {
+                    expanded = false
+                    ThemeSelectorRequest.open = true
+                },
             )
         }
     }

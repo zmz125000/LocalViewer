@@ -285,25 +285,18 @@
     <string-array name="color_theme_entries" translatable="false">
         <item>@string/color_theme_dynamic</item>
         <item>@string/solarized_light_background</item>
-        <item>Sunset Serenade</item>
         <item>Coastal Breeze</item>
         <item>Forest Hike</item>
-        <item>Modern Pastel</item>
         <item>Desert Dawn</item>
-        <item>Aurora Glow</item>
-        <item>Retro Pop</item>
         <item>Nordic Frost</item>
         <item>Lavender Fields</item>
         <item>Island Vibes</item>
         <item>Minimal Stone</item>
         <item>Soft Cream</item>
         <item>Skyline</item>
-        <item>Tea Garden</item>
         <item>Blush &amp; Ash</item>
         <item>Soft Earth</item>
-        <item>Citrus Fresh</item>
         <item>Deep Sea</item>
-        <item>Midnight Neon</item>
         <item>Mocha &amp; Cream</item>
         <item>Peachy Dream</item>
         <item>Emerald Lake</item>
@@ -315,7 +308,6 @@
         <item>Butterfly Garden</item>
         <item>Sunbleached</item>
         <item>Azure Sands</item>
-        <item>Jungle Feast</item>
         <item>Berry Smoothie</item>
         <item>Ink &amp; Paper</item>
         <item>Sage &amp; Olive</item>
@@ -432,39 +424,24 @@
         <item>67</item>
         <item>68</item>
         <item>69</item>
-        <item>70</item>
-        <item>71</item>
-        <item>72</item>
-        <item>73</item>
-        <item>74</item>
-        <item>75</item>
-        <item>76</item>
-        <item>77</item>
     </integer-array>
 
     <string-array name="dark_color_theme_entries" translatable="false">
         <item>@string/color_theme_follow_theme</item>
         <item>@string/color_theme_dynamic</item>
         <item>@string/solarized_dark_background</item>
-        <item>Sunset Serenade</item>
         <item>Coastal Breeze</item>
         <item>Forest Hike</item>
-        <item>Modern Pastel</item>
         <item>Desert Dawn</item>
-        <item>Aurora Glow</item>
-        <item>Retro Pop</item>
         <item>Nordic Frost</item>
         <item>Lavender Fields</item>
         <item>Island Vibes</item>
         <item>Minimal Stone</item>
         <item>Soft Cream</item>
         <item>Skyline</item>
-        <item>Tea Garden</item>
         <item>Blush &amp; Ash</item>
         <item>Soft Earth</item>
-        <item>Citrus Fresh</item>
         <item>Deep Sea</item>
-        <item>Midnight Neon</item>
         <item>Mocha &amp; Cream</item>
         <item>Peachy Dream</item>
         <item>Emerald Lake</item>
@@ -476,7 +453,6 @@
         <item>Butterfly Garden</item>
         <item>Sunbleached</item>
         <item>Azure Sands</item>
-        <item>Jungle Feast</item>
         <item>Berry Smoothie</item>
         <item>Ink &amp; Paper</item>
         <item>Sage &amp; Olive</item>
@@ -594,14 +570,6 @@
         <item>67</item>
         <item>68</item>
         <item>69</item>
-        <item>70</item>
-        <item>71</item>
-        <item>72</item>
-        <item>73</item>
-        <item>74</item>
-        <item>75</item>
-        <item>76</item>
-        <item>77</item>
     </integer-array>
 
     <string-array name="night_mode_entries" translatable="false">
