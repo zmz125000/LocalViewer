@@ -73,6 +73,8 @@ object Settings : DataStorePreferences(null) {
     val gallerySite = intPref("gallery_site_2", 0).observed(::updateWhenGallerySiteChanges)
     val defaultFavSlot = intPref("default_favorite_slot", -2)
     val theme = intPref("theme_2", -1).observed(::updateWhenThemeChanges)
+    /** 0 = Android dynamic colors; 1..9 = the built-in color palettes. */
+    val colorPalette = intPref("color_palette", 0)
     val blackDarkTheme = boolPref("black_dark_theme", false)
     val harmonizeCategoryColor = boolPref("harmonize_category_color", true)
     val launchPage = intPref("launch_page_2", 0)

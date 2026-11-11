@@ -72,6 +72,12 @@ fun AnimatedVisibilityScope.EhScreen(navigator: DestinationsNavigator) = Screen(
                 .verticalScroll(rememberScrollState()),
         ) {
             SimpleMenuPreferenceInt(
+                title = stringResource(id = R.string.color_theme),
+                entry = com.hippo.ehviewer.R.array.color_theme_entries,
+                entryValueRes = com.hippo.ehviewer.R.array.color_theme_values,
+                state = Settings.colorPalette.asMutableState(),
+            )
+            SimpleMenuPreferenceInt(
                 title = stringResource(id = R.string.dark_theme),
                 entry = com.hippo.ehviewer.R.array.night_mode_entries,
                 entryValueRes = com.hippo.ehviewer.R.array.night_mode_values,
