@@ -12,7 +12,7 @@ fun DarkSwitchTheme(content: @Composable () -> Unit) {
         MaterialTheme(
             colorScheme = scheme.copy(
                 primary = scheme.secondary,
-                onPrimary = scheme.onSecondary,
+                onPrimary = scheme.surfaceContainerLow,
             ),
             content = content,
         )

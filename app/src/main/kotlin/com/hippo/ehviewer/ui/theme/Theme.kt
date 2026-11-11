@@ -134,8 +134,10 @@ fun EhTheme(
     val darkPalette by Settings.darkColorPalette.collectAsState()
     val context = LocalContext.current
     // minSdk 32: Material You dynamic color is always available.
+    val selectedPalette = selectedPaletteForTheme(palette, darkPalette, useDarkTheme)
+    val solarized = selectedPalette == SOLARIZED_LIGHT_PALETTE || selectedPalette == SOLARIZED_DARK_PALETTE
     val selected = paletteColorScheme(
-        selectedPaletteForTheme(palette, darkPalette, useDarkTheme),
+        selectedPalette,
         useDarkTheme,
         lighterDark && !amoled,
     )
@@ -145,8 +147,8 @@ fun EhTheme(
                 background = Color.Black,
                 surface = Color.Black,
                 surfaceContainerLowest = Color.Black,
-                onBackground = Color.White,
-                onSurface = Color.White,
+                onBackground = if (solarized) scheme.onBackground else Color.White,
+                onSurface = if (solarized) scheme.onSurface else Color.White,
             )
         } else {
             scheme
@@ -162,8 +164,8 @@ fun EhTheme(
             background = background,
             surface = background,
             surfaceContainerLowest = background,
-            onBackground = if (useDarkTheme) OnDarkGrey else baseColors.onBackground,
-            onSurface = if (useDarkTheme) OnDarkGrey else baseColors.onSurface,
+            onBackground = if (useDarkTheme && !solarized) OnDarkGrey else baseColors.onBackground,
+            onSurface = if (useDarkTheme && !solarized) OnDarkGrey else baseColors.onSurface,
         )
     } else {
         baseColors

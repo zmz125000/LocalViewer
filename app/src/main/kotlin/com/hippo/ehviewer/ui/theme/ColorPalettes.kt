@@ -38,8 +38,8 @@ private val palettes = listOf(
     palette(0xFF012A4A, 0xFF01497C, 0xFF2A6F97, 0xFF61A5C2, 0xFFA9D6E5), // Blue Depths
     palette(0xFF212529, 0xFF495057, 0xFFADB5BD, 0xFFDEE2E6, 0xFFF8F9FA), // Slate Scale
     palette(0xFF03045E, 0xFF0077B6, 0xFF00B4D8, 0xFF90E0EF, 0xFFCAF0F8), // Azure Coast
-    palette(SOLARIZED_DARK_BACKGROUND, SOLARIZED_BASE01, SOLARIZED_DARK_FOREGROUND, SOLARIZED_BASE2, SOLARIZED_LIGHT_BACKGROUND), // Solarized Light
-    palette(SOLARIZED_DARK_BACKGROUND, SOLARIZED_BASE02, SOLARIZED_BASE01, SOLARIZED_DARK_FOREGROUND, SOLARIZED_DARK_FOREGROUND), // Solarized Dark
+    palette(SOLARIZED_DARK_BACKGROUND, SOLARIZED_BASE01, SOLARIZED_BASE00, SOLARIZED_BASE2, SOLARIZED_LIGHT_BACKGROUND), // Solarized Light
+    palette(SOLARIZED_DARK_BACKGROUND, SOLARIZED_BASE02, SOLARIZED_BASE01, SOLARIZED_BASE0, SOLARIZED_BASE1), // Solarized Dark
 )
 
 internal const val SOLARIZED_LIGHT_PALETTE = 20
@@ -60,11 +60,18 @@ internal fun paletteColorScheme(selection: Int, dark: Boolean, lighterDark: Bool
         palette
     }
     val scheme = colors.scheme(dark, lighterDark)
-    if (selection == SOLARIZED_LIGHT_PALETTE && !dark) {
-        val foreground = Color(SOLARIZED_LIGHT_FOREGROUND)
-        scheme.copy(onBackground = foreground, onSurface = foreground, onSurfaceVariant = foreground)
-    } else {
-        scheme
+    when {
+        selection == SOLARIZED_LIGHT_PALETTE && !dark -> scheme.copy(
+            onBackground = Color(SOLARIZED_LIGHT_FOREGROUND),
+            onSurface = Color(SOLARIZED_LIGHT_FOREGROUND),
+            onSurfaceVariant = Color(SOLARIZED_LIGHT_FOREGROUND),
+        )
+        selection == SOLARIZED_DARK_PALETTE && dark -> scheme.copy(
+            onBackground = Color(SOLARIZED_DARK_FOREGROUND),
+            onSurface = Color(SOLARIZED_DARK_FOREGROUND),
+            onSurfaceVariant = Color(SOLARIZED_DARK_FOREGROUND),
+        )
+        else -> scheme
     }
 }
 
