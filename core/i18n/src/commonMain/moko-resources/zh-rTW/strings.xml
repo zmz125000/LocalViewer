@@ -798,6 +798,7 @@
     <string name="download_service">下載服務</string>
     <string name="favorite_name">收藏圖庫</string>
     <string name="default_background_color">預設背景顏色</string>
+    <string name="lighter_dark_theme">較亮的深色主題</string>
     <string name="color_theme_dark">主題（深色）</string>
     <string name="color_theme_follow_theme">跟隨主題</string>
     <string name="black_dark_theme">純黑深色主題</string>

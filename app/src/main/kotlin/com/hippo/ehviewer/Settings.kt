@@ -80,6 +80,7 @@ object Settings : DataStorePreferences(null) {
     /** -1 follows [colorPalette]; 0 uses dynamic dark colors; positive values select a dark palette. */
     val darkColorPalette = intPref("dark_color_palette", -1)
     val defaultBackgroundColor = boolPref("default_background_color", false)
+    val lighterDarkTheme = boolPref("lighter_dark_theme", false)
     val blackDarkTheme = boolPref("black_dark_theme", false)
     val harmonizeCategoryColor = boolPref("harmonize_category_color", true)
     val launchPage = intPref("launch_page_2", 0)

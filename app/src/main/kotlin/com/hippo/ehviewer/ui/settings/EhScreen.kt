@@ -94,6 +94,10 @@ fun AnimatedVisibilityScope.EhScreen(navigator: DestinationsNavigator) = Screen(
                 state = Settings.defaultBackgroundColor.asMutableState(),
             )
             SwitchPreference(
+                title = stringResource(id = R.string.lighter_dark_theme),
+                state = Settings.lighterDarkTheme.asMutableState(),
+            )
+            SwitchPreference(
                 title = stringResource(id = R.string.black_dark_theme),
                 state = Settings.blackDarkTheme.asMutableState(),
             )

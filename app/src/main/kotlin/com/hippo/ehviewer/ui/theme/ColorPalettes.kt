@@ -37,16 +37,29 @@ private val palettes = listOf(
 )
 
 /** Returns null for Dynamic (system), including an unknown saved preference. */
-internal fun paletteColorScheme(selection: Int, dark: Boolean): ColorScheme? = palettes.getOrNull(selection - 1)?.scheme(dark)
+internal fun paletteColorScheme(selection: Int, dark: Boolean, lighterDark: Boolean = false): ColorScheme? = palettes.getOrNull(selection - 1)?.let { palette ->
+    val colors = if (dark && lighterDark) {
+        palette.copy(dark = palette.deep, deep = palette.middle, middle = palette.pale, pale = palette.light)
+    } else {
+        palette
+    }
+    colors.scheme(dark, lighterDark)
+}
 
-private fun Palette.scheme(isDark: Boolean): ColorScheme {
+private fun Palette.scheme(isDark: Boolean, lighterDark: Boolean): ColorScheme {
     val surface = if (isDark) dark else light
     val toward = if (isDark) deep else middle
 
     // All container levels move in the same direction as Material's tonal elevation:
     // lighter in dark mode and darker in light mode.
     fun level(amount: Float) = lerp(surface, toward, amount)
-    val foreground = if (isDark) light else dark
+    val foreground = if (isDark && lighterDark) {
+        readableOn(surface)
+    } else if (isDark) {
+        light
+    } else {
+        dark
+    }
     val primary = if (isDark) pale else deep
     val secondary = if (isDark) middle else deep
     val tertiary = if (isDark) light else dark

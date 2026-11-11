@@ -129,6 +129,7 @@ fun EhTheme(
 ) {
     val amoled by Settings.blackDarkTheme.collectAsState()
     val defaultBackground by Settings.defaultBackgroundColor.collectAsState()
+    val lighterDark by Settings.lighterDarkTheme.collectAsState()
     val palette by Settings.colorPalette.collectAsState()
     val darkPalette by Settings.darkColorPalette.collectAsState()
     val context = LocalContext.current
@@ -136,10 +137,17 @@ fun EhTheme(
     val selected = paletteColorScheme(
         if (useDarkTheme && darkPalette >= 0) darkPalette else palette,
         useDarkTheme,
+        lighterDark && !amoled,
     )
     val baseColors = selected?.let { scheme ->
         if (useDarkTheme && amoled) {
-            scheme.copy(background = Color.Black, surface = Color.Black, surfaceContainerLowest = Color.Black)
+            scheme.copy(
+                background = Color.Black,
+                surface = Color.Black,
+                surfaceContainerLowest = Color.Black,
+                onBackground = Color.White,
+                onSurface = Color.White,
+            )
         } else {
             scheme
         }
@@ -150,7 +158,13 @@ fun EhTheme(
     }
     val colors = if (defaultBackground && !(useDarkTheme && amoled)) {
         val background = if (useDarkTheme) DarkGrey else Color.White
-        baseColors.copy(background = background, surface = background, surfaceContainerLowest = background)
+        baseColors.copy(
+            background = background,
+            surface = background,
+            surfaceContainerLowest = background,
+            onBackground = if (useDarkTheme) OnDarkGrey else baseColors.onBackground,
+            onSurface = if (useDarkTheme) OnDarkGrey else baseColors.onSurface,
+        )
     } else {
         baseColors
     }

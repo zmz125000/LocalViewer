@@ -831,6 +831,7 @@
     <string name="favorite_name">お気に入り</string>
     <string name="dark_theme">ダークテーマ</string>
     <string name="default_background_color">デフォルトの背景色</string>
+    <string name="lighter_dark_theme">明るめのダークテーマ</string>
     <string name="color_theme_dark">テーマ（ダーク）</string>
     <string name="color_theme_follow_theme">テーマに従う</string>
     <string name="black_dark_theme">ブラックダークテーマ</string>
