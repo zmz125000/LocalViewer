@@ -285,21 +285,77 @@
     <string-array name="color_theme_entries" translatable="false">
         <item>@string/color_theme_dynamic</item>
         <item>@string/solarized_light_background</item>
-        <item>Moonstone</item>
-        <item>Twilight Ink</item>
-        <item>Ocean Spray</item>
-        <item>Nordic Frost</item>
+        <item>Sunset Serenade</item>
+        <item>Coastal Breeze</item>
         <item>Forest Hike</item>
+        <item>Modern Pastel</item>
+        <item>Desert Dawn</item>
+        <item>Aurora Glow</item>
+        <item>Retro Pop</item>
+        <item>Nordic Frost</item>
+        <item>Lavender Fields</item>
+        <item>Island Vibes</item>
+        <item>Minimal Stone</item>
+        <item>Soft Cream</item>
+        <item>Skyline</item>
+        <item>Tea Garden</item>
+        <item>Blush &amp; Ash</item>
+        <item>Soft Earth</item>
+        <item>Citrus Fresh</item>
+        <item>Deep Sea</item>
+        <item>Midnight Neon</item>
+        <item>Mocha &amp; Cream</item>
+        <item>Peachy Dream</item>
+        <item>Emerald Lake</item>
+        <item>Dusty Rose</item>
+        <item>Plum Sorbet</item>
+        <item>Tropical Mango</item>
         <item>Glacier Mist</item>
-        <item>Ink Paper</item>
+        <item>Charcoal Mint</item>
+        <item>Butterfly Garden</item>
+        <item>Sunbleached</item>
+        <item>Azure Sands</item>
+        <item>Jungle Feast</item>
+        <item>Berry Smoothie</item>
+        <item>Ink &amp; Paper</item>
+        <item>Sage &amp; Olive</item>
         <item>Cerulean Tide</item>
-        <item>Copper Patina</item>
-        <item>Fog Cedar</item>
-        <item>Lagoon Pearl</item>
-        <item>Polar Mint</item>
-        <item>Rainy Window</item>
-        <item>Mulled Wine</item>
         <item>Golden Hour</item>
+        <item>Velvet Night</item>
+        <item>Copper Patina</item>
+        <item>Pastel Sky</item>
+        <item>Neon Soda</item>
+        <item>Vintage Film</item>
+        <item>Ocean Spray</item>
+        <item>Blossom Fade</item>
+        <item>Terra &amp; Clay</item>
+        <item>Glass Morph</item>
+        <item>Arctic Dawn</item>
+        <item>Mulled Wine</item>
+        <item>Candy Shop</item>
+        <item>Sandstone</item>
+        <item>Rainy Window</item>
+        <item>Coffee Break</item>
+        <item>Canyon Sunset</item>
+        <item>Mint Breeze</item>
+        <item>Royal Plum</item>
+        <item>Seaglass</item>
+        <item>Graphite &amp; Lime</item>
+        <item>Blush Cloud</item>
+        <item>Tundra Moss</item>
+        <item>Cobalt Ember</item>
+        <item>Stone &amp; Pear</item>
+        <item>Twilight Ink</item>
+        <item>Apricot Cream</item>
+        <item>Polar Mint</item>
+        <item>Aubergine &amp; Gold</item>
+        <item>Denim &amp; Rust</item>
+        <item>Lagoon Pearl</item>
+        <item>Pistachio &amp; Rose</item>
+        <item>Moonstone</item>
+        <item>Orchard Honey</item>
+        <item>Fog &amp; Cedar</item>
+        <item>Glacier Sun</item>
         <item>Sage Grove</item>
         <item>Blue Depths</item>
         <item>Slate Scale</item>
@@ -307,31 +363,160 @@
     </string-array>
 
     <integer-array name="color_theme_values">
-        <item>0</item><item>20</item><item>1</item><item>2</item><item>3</item><item>4</item>
-        <item>5</item><item>6</item><item>7</item><item>8</item><item>9</item><item>10</item>
-        <item>11</item><item>12</item><item>13</item><item>14</item><item>15</item>
-        <item>16</item><item>17</item><item>18</item><item>19</item>
+        <item>0</item>
+        <item>1</item>
+        <item>3</item>
+        <item>4</item>
+        <item>5</item>
+        <item>6</item>
+        <item>7</item>
+        <item>8</item>
+        <item>9</item>
+        <item>10</item>
+        <item>11</item>
+        <item>12</item>
+        <item>13</item>
+        <item>14</item>
+        <item>15</item>
+        <item>16</item>
+        <item>17</item>
+        <item>18</item>
+        <item>19</item>
+        <item>20</item>
+        <item>21</item>
+        <item>22</item>
+        <item>23</item>
+        <item>24</item>
+        <item>25</item>
+        <item>26</item>
+        <item>27</item>
+        <item>28</item>
+        <item>29</item>
+        <item>30</item>
+        <item>31</item>
+        <item>32</item>
+        <item>33</item>
+        <item>34</item>
+        <item>35</item>
+        <item>36</item>
+        <item>37</item>
+        <item>38</item>
+        <item>39</item>
+        <item>40</item>
+        <item>41</item>
+        <item>42</item>
+        <item>43</item>
+        <item>44</item>
+        <item>45</item>
+        <item>46</item>
+        <item>47</item>
+        <item>48</item>
+        <item>49</item>
+        <item>50</item>
+        <item>51</item>
+        <item>52</item>
+        <item>53</item>
+        <item>54</item>
+        <item>55</item>
+        <item>56</item>
+        <item>57</item>
+        <item>58</item>
+        <item>59</item>
+        <item>60</item>
+        <item>61</item>
+        <item>62</item>
+        <item>63</item>
+        <item>64</item>
+        <item>65</item>
+        <item>66</item>
+        <item>67</item>
+        <item>68</item>
+        <item>69</item>
+        <item>70</item>
+        <item>71</item>
+        <item>72</item>
+        <item>73</item>
+        <item>74</item>
+        <item>75</item>
+        <item>76</item>
+        <item>77</item>
     </integer-array>
 
     <string-array name="dark_color_theme_entries" translatable="false">
         <item>@string/color_theme_follow_theme</item>
         <item>@string/color_theme_dynamic</item>
         <item>@string/solarized_dark_background</item>
-        <item>Moonstone</item>
-        <item>Twilight Ink</item>
-        <item>Ocean Spray</item>
-        <item>Nordic Frost</item>
+        <item>Sunset Serenade</item>
+        <item>Coastal Breeze</item>
         <item>Forest Hike</item>
+        <item>Modern Pastel</item>
+        <item>Desert Dawn</item>
+        <item>Aurora Glow</item>
+        <item>Retro Pop</item>
+        <item>Nordic Frost</item>
+        <item>Lavender Fields</item>
+        <item>Island Vibes</item>
+        <item>Minimal Stone</item>
+        <item>Soft Cream</item>
+        <item>Skyline</item>
+        <item>Tea Garden</item>
+        <item>Blush &amp; Ash</item>
+        <item>Soft Earth</item>
+        <item>Citrus Fresh</item>
+        <item>Deep Sea</item>
+        <item>Midnight Neon</item>
+        <item>Mocha &amp; Cream</item>
+        <item>Peachy Dream</item>
+        <item>Emerald Lake</item>
+        <item>Dusty Rose</item>
+        <item>Plum Sorbet</item>
+        <item>Tropical Mango</item>
         <item>Glacier Mist</item>
-        <item>Ink Paper</item>
+        <item>Charcoal Mint</item>
+        <item>Butterfly Garden</item>
+        <item>Sunbleached</item>
+        <item>Azure Sands</item>
+        <item>Jungle Feast</item>
+        <item>Berry Smoothie</item>
+        <item>Ink &amp; Paper</item>
+        <item>Sage &amp; Olive</item>
         <item>Cerulean Tide</item>
-        <item>Copper Patina</item>
-        <item>Fog Cedar</item>
-        <item>Lagoon Pearl</item>
-        <item>Polar Mint</item>
-        <item>Rainy Window</item>
-        <item>Mulled Wine</item>
         <item>Golden Hour</item>
+        <item>Velvet Night</item>
+        <item>Copper Patina</item>
+        <item>Pastel Sky</item>
+        <item>Neon Soda</item>
+        <item>Vintage Film</item>
+        <item>Ocean Spray</item>
+        <item>Blossom Fade</item>
+        <item>Terra &amp; Clay</item>
+        <item>Glass Morph</item>
+        <item>Arctic Dawn</item>
+        <item>Mulled Wine</item>
+        <item>Candy Shop</item>
+        <item>Sandstone</item>
+        <item>Rainy Window</item>
+        <item>Coffee Break</item>
+        <item>Canyon Sunset</item>
+        <item>Mint Breeze</item>
+        <item>Royal Plum</item>
+        <item>Seaglass</item>
+        <item>Graphite &amp; Lime</item>
+        <item>Blush Cloud</item>
+        <item>Tundra Moss</item>
+        <item>Cobalt Ember</item>
+        <item>Stone &amp; Pear</item>
+        <item>Twilight Ink</item>
+        <item>Apricot Cream</item>
+        <item>Polar Mint</item>
+        <item>Aubergine &amp; Gold</item>
+        <item>Denim &amp; Rust</item>
+        <item>Lagoon Pearl</item>
+        <item>Pistachio &amp; Rose</item>
+        <item>Moonstone</item>
+        <item>Orchard Honey</item>
+        <item>Fog &amp; Cedar</item>
+        <item>Glacier Sun</item>
         <item>Sage Grove</item>
         <item>Blue Depths</item>
         <item>Slate Scale</item>
@@ -339,10 +524,84 @@
     </string-array>
 
     <integer-array name="dark_color_theme_values">
-        <item>-1</item><item>0</item><item>21</item><item>1</item><item>2</item><item>3</item><item>4</item>
-        <item>5</item><item>6</item><item>7</item><item>8</item><item>9</item><item>10</item>
-        <item>11</item><item>12</item><item>13</item><item>14</item><item>15</item>
-        <item>16</item><item>17</item><item>18</item><item>19</item>
+        <item>-1</item>
+        <item>0</item>
+        <item>2</item>
+        <item>3</item>
+        <item>4</item>
+        <item>5</item>
+        <item>6</item>
+        <item>7</item>
+        <item>8</item>
+        <item>9</item>
+        <item>10</item>
+        <item>11</item>
+        <item>12</item>
+        <item>13</item>
+        <item>14</item>
+        <item>15</item>
+        <item>16</item>
+        <item>17</item>
+        <item>18</item>
+        <item>19</item>
+        <item>20</item>
+        <item>21</item>
+        <item>22</item>
+        <item>23</item>
+        <item>24</item>
+        <item>25</item>
+        <item>26</item>
+        <item>27</item>
+        <item>28</item>
+        <item>29</item>
+        <item>30</item>
+        <item>31</item>
+        <item>32</item>
+        <item>33</item>
+        <item>34</item>
+        <item>35</item>
+        <item>36</item>
+        <item>37</item>
+        <item>38</item>
+        <item>39</item>
+        <item>40</item>
+        <item>41</item>
+        <item>42</item>
+        <item>43</item>
+        <item>44</item>
+        <item>45</item>
+        <item>46</item>
+        <item>47</item>
+        <item>48</item>
+        <item>49</item>
+        <item>50</item>
+        <item>51</item>
+        <item>52</item>
+        <item>53</item>
+        <item>54</item>
+        <item>55</item>
+        <item>56</item>
+        <item>57</item>
+        <item>58</item>
+        <item>59</item>
+        <item>60</item>
+        <item>61</item>
+        <item>62</item>
+        <item>63</item>
+        <item>64</item>
+        <item>65</item>
+        <item>66</item>
+        <item>67</item>
+        <item>68</item>
+        <item>69</item>
+        <item>70</item>
+        <item>71</item>
+        <item>72</item>
+        <item>73</item>
+        <item>74</item>
+        <item>75</item>
+        <item>76</item>
+        <item>77</item>
     </integer-array>
 
     <string-array name="night_mode_entries" translatable="false">
