@@ -56,8 +56,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
@@ -1312,14 +1310,6 @@ internal fun TaskStyledDialog(onDismiss: () -> Unit, content: @Composable (Boole
                     .padding(16.dp),
                 contentAlignment = Alignment.Center,
             ) {
-                val page = MaterialTheme.colorScheme.background
-                val darkPage = page.luminance() < 0.5f
-                val lifted = MaterialTheme.colorScheme.surfaceContainerHighest
-                val panelColor = when {
-                    !darkPage -> MaterialTheme.colorScheme.surfaceContainer
-                    lifted.luminance() - page.luminance() < 0.06f -> Color(0xFF424242)
-                    else -> lifted
-                }
                 val windowWidth = when {
                     phonePortrait -> minOf(maxWidth, 340.dp) * 0.9f
                     phoneLandscape -> screenW * 0.5f
@@ -1342,7 +1332,7 @@ internal fun TaskStyledDialog(onDismiss: () -> Unit, content: @Composable (Boole
                             onClick = {},
                         ),
                     shape = ShapeDefaults.ExtraLarge,
-                    color = panelColor,
+                    color = MaterialTheme.colorScheme.surfaceContainerHigh,
                     shadowElevation = 3.dp,
                     tonalElevation = 0.dp,
                 ) {
