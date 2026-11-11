@@ -35,8 +35,10 @@ import com.hippo.ehviewer.asMutableState
 import com.hippo.ehviewer.ui.DefaultPdfReader
 import com.hippo.ehviewer.ui.DefaultVideoPlayer
 import com.hippo.ehviewer.ui.Screen
+import com.hippo.ehviewer.ui.destinations.LibraryScreenDestination
 import com.hippo.ehviewer.ui.main.NavigationIcon
 import com.hippo.ehviewer.ui.screen.adaptiveTopAppBarColors
+import com.hippo.ehviewer.ui.theme.ThemeSelectorRequest
 import com.hippo.ehviewer.ui.tools.awaitSelectItem
 import com.ramcosta.composedestinations.annotation.Destination
 import com.ramcosta.composedestinations.annotation.RootGraph
@@ -76,16 +78,18 @@ fun AnimatedVisibilityScope.EhScreen(navigator: DestinationsNavigator) = Screen(
                 title = stringResource(id = R.string.colorful_dark_theme),
                 state = colorfulDark,
             )
-            AnimatedVisibility(visible = !colorfulDark.value) {
-                Column {
-                    SimpleMenuPreferenceInt(
-                        title = stringResource(id = R.string.color_theme),
-                        entry = com.hippo.ehviewer.R.array.color_theme_entries,
-                        entryValueRes = com.hippo.ehviewer.R.array.color_theme_values,
-                        state = Settings.colorPalette.asMutableState(),
-                    )
+            Preference(title = stringResource(R.string.theme_selector)) {
+                ThemeSelectorRequest.open = true
+                if (!navigator.popBackStack(LibraryScreenDestination, inclusive = false)) {
+                    navigator.navigate(LibraryScreenDestination) { launchSingleTop = true }
                 }
             }
+            SimpleMenuPreferenceInt(
+                title = stringResource(id = R.string.color_theme),
+                entry = com.hippo.ehviewer.R.array.color_theme_entries,
+                entryValueRes = com.hippo.ehviewer.R.array.color_theme_values,
+                state = Settings.colorPalette.asMutableState(),
+            )
             SimpleMenuPreferenceInt(
                 title = stringResource(id = R.string.color_theme_dark),
                 entry = com.hippo.ehviewer.R.array.dark_color_theme_entries,
