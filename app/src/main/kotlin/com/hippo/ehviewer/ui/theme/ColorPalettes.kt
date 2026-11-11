@@ -29,19 +29,66 @@ private val palettes = listOf(
     palette(0xFF16324F, 0xFF1E6091, 0xFF3A86FF, 0xFFA9DEF9, 0xFFEAF4FF), // Cerulean Tide
     palette(0xFF1F2833, 0xFF2C5F2D, 0xFF97BC62, 0xFFC5DCA0, 0xFFF1F7ED), // Copper Patina
     palette(0xFF1B2D2A, 0xFF2E4F4F, 0xFF84A98C, 0xFFCAD2C5, 0xFFF0EFEB), // Fog Cedar
+    palette(0xFF0B132B, 0xFF1B3A4B, 0xFF2E8A99, 0xFF98C1D9, 0xFFF1FAFF), // Lagoon Pearl
+    palette(0xFF0B1D26, 0xFF1B3A4B, 0xFF74C69D, 0xFFB7E4C7, 0xFFE9F5DB), // Polar Mint
+    palette(0xFF1E2D2F, 0xFF2D3E40, 0xFF5B8A8F, 0xFF9ACBD0, 0xFFEAF0F1), // Rainy Window
+    palette(0xFF2B193D, 0xFF5E315B, 0xFF964F8E, 0xFFE7C5EB, 0xFFFFF0FF), // Mulled Wine
+    palette(0xFF2D1E2F, 0xFFEDAE49, 0xFFF9DF74, 0xFFF6E7CB, 0xFFFEF9E7), // Golden Hour
+    palette(0xFF344E41, 0xFF3A5A40, 0xFF588157, 0xFFA3B18A, 0xFFDAD7CD), // Sage Grove
+    palette(0xFF012A4A, 0xFF01497C, 0xFF2A6F97, 0xFF61A5C2, 0xFFA9D6E5), // Blue Depths
+    palette(0xFF212529, 0xFF495057, 0xFFADB5BD, 0xFFDEE2E6, 0xFFF8F9FA), // Slate Scale
+    palette(0xFF03045E, 0xFF0077B6, 0xFF00B4D8, 0xFF90E0EF, 0xFFCAF0F8), // Azure Coast
+    palette(SOLARIZED_DARK_BACKGROUND, SOLARIZED_BASE01, SOLARIZED_BASE00, SOLARIZED_BASE2, SOLARIZED_LIGHT_BACKGROUND), // Solarized Light
+    palette(SOLARIZED_DARK_BACKGROUND, SOLARIZED_BASE02, SOLARIZED_BASE01, SOLARIZED_BASE0, SOLARIZED_BASE1), // Solarized Dark
 )
 
-/** Returns null for Dynamic (system), including an unknown saved preference. */
-internal fun paletteColorScheme(selection: Int, dark: Boolean): ColorScheme? = palettes.getOrNull(selection - 1)?.scheme(dark)
+internal const val SOLARIZED_LIGHT_PALETTE = 20
+internal const val SOLARIZED_DARK_PALETTE = 21
 
-private fun Palette.scheme(isDark: Boolean): ColorScheme {
+/** Follow theme keeps the paired Solarized appearance when dark mode starts. */
+internal fun selectedPaletteForTheme(lightSelection: Int, darkOverride: Int, dark: Boolean): Int {
+    if (!dark) return lightSelection
+    val selected = if (darkOverride >= 0) darkOverride else lightSelection
+    return if (selected == SOLARIZED_LIGHT_PALETTE) SOLARIZED_DARK_PALETTE else selected
+}
+
+/** Returns null for Dynamic (system), including an unknown saved preference. */
+internal fun paletteColorScheme(selection: Int, dark: Boolean, lighterDark: Boolean = false): ColorScheme? = palettes.getOrNull(selection - 1)?.let { palette ->
+    val colors = if (dark && lighterDark) {
+        palette.copy(dark = palette.deep, deep = palette.middle, middle = palette.pale, pale = palette.light)
+    } else {
+        palette
+    }
+    val scheme = colors.scheme(dark, lighterDark)
+    when {
+        selection == SOLARIZED_LIGHT_PALETTE && !dark -> scheme.copy(
+            onBackground = Color(SOLARIZED_LIGHT_FOREGROUND),
+            onSurface = Color(SOLARIZED_LIGHT_FOREGROUND),
+            onSurfaceVariant = Color(SOLARIZED_LIGHT_FOREGROUND),
+        )
+        selection == SOLARIZED_DARK_PALETTE && dark -> scheme.copy(
+            onBackground = Color(SOLARIZED_DARK_FOREGROUND),
+            onSurface = Color(SOLARIZED_DARK_FOREGROUND),
+            onSurfaceVariant = Color(SOLARIZED_DARK_FOREGROUND),
+        )
+        else -> scheme
+    }
+}
+
+private fun Palette.scheme(isDark: Boolean, lighterDark: Boolean): ColorScheme {
     val surface = if (isDark) dark else light
     val toward = if (isDark) deep else middle
 
     // All container levels move in the same direction as Material's tonal elevation:
     // lighter in dark mode and darker in light mode.
     fun level(amount: Float) = lerp(surface, toward, amount)
-    val foreground = if (isDark) light else dark
+    val foreground = if (isDark && lighterDark) {
+        readableOn(surface)
+    } else if (isDark) {
+        light
+    } else {
+        dark
+    }
     val primary = if (isDark) pale else deep
     val secondary = if (isDark) middle else deep
     val tertiary = if (isDark) light else dark

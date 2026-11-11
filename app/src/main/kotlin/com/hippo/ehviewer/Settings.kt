@@ -74,9 +74,13 @@ object Settings : DataStorePreferences(null) {
     val defaultFavSlot = intPref("default_favorite_slot", -2)
     val theme = intPref("theme_2", -1).observed(::updateWhenThemeChanges)
 
-    /** 0 = Android dynamic colors; 1..10 = the built-in color palettes. */
+    /** 0 = Android dynamic colors; positive values select built-in palettes. */
     val colorPalette = intPref("color_palette", 0)
+
+    /** -1 follows [colorPalette]; 0 uses dynamic dark colors; positive values select a dark palette. */
+    val darkColorPalette = intPref("dark_color_palette", -1)
     val defaultBackgroundColor = boolPref("default_background_color", false)
+    val lighterDarkTheme = boolPref("lighter_dark_theme", false)
     val blackDarkTheme = boolPref("black_dark_theme", false)
     val harmonizeCategoryColor = boolPref("harmonize_category_color", true)
     val launchPage = intPref("launch_page_2", 0)
@@ -996,7 +1000,8 @@ object Settings : DataStorePreferences(null) {
 
     /**
      * Ebook page + reader backdrop. Same values as [readerTheme]
-     * (0 white, 1 black, 2 gray, 3 auto). Image/PDF reader keep [readerTheme].
+     * (0 white, 1 black, 2 gray, 3 auto, 4 Solarized Light, 5 Solarized Dark).
+     * Image/PDF reader keep [readerTheme].
      */
     val ebookTheme = intPref("pref_ebook_theme_key", 3)
 

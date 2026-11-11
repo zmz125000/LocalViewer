@@ -44,6 +44,7 @@ import com.hippo.ehviewer.ui.keepNoMediaFileStatus
 import com.hippo.ehviewer.ui.main.BrowseSaveAs
 import com.hippo.ehviewer.ui.main.NavigationIcon
 import com.hippo.ehviewer.ui.screen.adaptiveTopAppBarColors
+import com.hippo.ehviewer.ui.theme.DarkSwitchTheme
 import com.hippo.ehviewer.ui.tools.observed
 import com.hippo.ehviewer.util.displayPath
 import com.ramcosta.composedestinations.annotation.Destination
@@ -135,15 +136,17 @@ fun AnimatedVisibilityScope.DownloadScreen(navigator: DestinationsNavigator) = S
                     launchSnackbar(cannotGetDownloadLocation)
                 }
             }
-            me.zhanghai.compose.preference.SwitchPreference(
-                value = askForSaveDestination.value,
-                onValueChange = { ask ->
-                    launchIO {
-                        with(contextOf<Context>()) { BrowseSaveAs.updateAskForSaveDestination(ask) }
-                    }
-                },
-                title = { Text(stringResource(R.string.ask_where_to_save)) },
-            )
+            DarkSwitchTheme {
+                me.zhanghai.compose.preference.SwitchPreference(
+                    value = askForSaveDestination.value,
+                    onValueChange = { ask ->
+                        launchIO {
+                            with(contextOf<Context>()) { BrowseSaveAs.updateAskForSaveDestination(ask) }
+                        }
+                    },
+                    title = { Text(stringResource(R.string.ask_where_to_save)) },
+                )
+            }
             val conversionLocationSummary = conversionLocation.value?.let { saved ->
                 runCatching {
                     val treeUri = Uri.parse(saved)
@@ -163,15 +166,17 @@ fun AnimatedVisibilityScope.DownloadScreen(navigator: DestinationsNavigator) = S
                     launchSnackbar(cannotGetDownloadLocation)
                 }
             }
-            me.zhanghai.compose.preference.SwitchPreference(
-                value = askWhereToSave.value,
-                onValueChange = { ask ->
-                    launchIO {
-                        with(contextOf<Context>()) { BrowseSaveAs.updateAskWhereToSave(ask) }
-                    }
-                },
-                title = { Text(stringResource(R.string.browse_ask_where_to_save)) },
-            )
+            DarkSwitchTheme {
+                me.zhanghai.compose.preference.SwitchPreference(
+                    value = askWhereToSave.value,
+                    onValueChange = { ask ->
+                        launchIO {
+                            with(contextOf<Context>()) { BrowseSaveAs.updateAskWhereToSave(ask) }
+                        }
+                    },
+                    title = { Text(stringResource(R.string.browse_ask_where_to_save)) },
+                )
+            }
             val mediaScan = Settings.mediaScan.asMutableState()
             SwitchPreference(
                 title = stringResource(id = R.string.settings_download_media_scan),

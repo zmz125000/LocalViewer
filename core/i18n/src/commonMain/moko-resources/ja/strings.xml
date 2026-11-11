@@ -831,6 +831,9 @@
     <string name="favorite_name">お気に入り</string>
     <string name="dark_theme">ダークテーマ</string>
     <string name="default_background_color">デフォルトの背景色</string>
+    <string name="lighter_dark_theme">明るめのダークテーマ</string>
+    <string name="color_theme_dark">テーマ（ダーク）</string>
+    <string name="color_theme_follow_theme">テーマに従う</string>
     <string name="black_dark_theme">ブラックダークテーマ</string>
     <string name="harmonize_category_color">カテゴリーの色をダイナミックカラーで調和する</string>
     <string name="sort_by">並べ替え</string>
@@ -995,6 +998,8 @@
     <string name="tapping_inverted_both">両方</string>
     <string name="pref_read_with_long_tap">長押しで表示</string>
     <string name="pref_reader_theme">背景の色</string>
+    <string name="solarized_light_background">Solarized ライト</string>
+    <string name="solarized_dark_background">Solarized ダーク</string>
     <string name="white_background">ホワイト</string>
     <string name="gray_background">グレー</string>
     <string name="black_background">ブラック</string>

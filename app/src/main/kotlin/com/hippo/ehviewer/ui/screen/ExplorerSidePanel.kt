@@ -414,14 +414,6 @@ fun ExplorerSidePanelHost(
             }
             val rawOffset = panelState.currentOffset
             val offset = if (rawOffset.isNaN()) slidePx else rawOffset
-            val page = MaterialTheme.colorScheme.background
-            val darkPage = page.luminance() < 0.5f
-            val lifted = MaterialTheme.colorScheme.surfaceContainerHighest
-            val panelColor = when {
-                !darkPage -> MaterialTheme.colorScheme.surfaceContainer
-                lifted.luminance() - page.luminance() < 0.06f -> Color(0xFF424242)
-                else -> lifted
-            }
             Surface(
                 modifier = Modifier
                     .align(if (phonePortrait) Alignment.TopCenter else Alignment.TopEnd)
@@ -448,7 +440,7 @@ fun ExplorerSidePanelHost(
                     )
                     .offset { IntOffset(offset.roundToInt(), 0) },
                 shape = ShapeDefaults.ExtraLarge,
-                color = panelColor,
+                color = MaterialTheme.colorScheme.surfaceContainerHigh,
                 shadowElevation = 3.dp,
                 tonalElevation = 0.dp,
             ) {

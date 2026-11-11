@@ -861,8 +861,11 @@
     <string name="favorite_name">Favorites</string>
     <string name="dark_theme">Dark theme</string>
     <string name="color_theme">Theme</string>
+    <string name="color_theme_dark">Theme (dark)</string>
+    <string name="color_theme_follow_theme">Follow theme</string>
     <string name="color_theme_dynamic">Dynamic (system)</string>
     <string name="default_background_color">Default background color</string>
+    <string name="lighter_dark_theme">Lighter dark theme</string>
     <string name="black_dark_theme">Black dark theme</string>
     <string name="harmonize_category_color">Harmonize category color for Dynamic Color</string>
     <string name="sort_by">Sort by</string>
@@ -1086,6 +1089,8 @@
     <string name="gray_background">Gray</string>
     <string name="black_background">Black</string>
     <string name="automatic_background">Auto</string>
+    <string name="solarized_light_background">Solarized Light</string>
+    <string name="solarized_dark_background">Solarized Dark</string>
     <string name="l_nav">L shaped</string>
     <string name="kindlish_nav">Kindle-ish</string>
     <string name="edge_nav">Edge</string>

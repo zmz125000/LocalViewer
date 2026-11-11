@@ -78,6 +78,12 @@ fun AnimatedVisibilityScope.EhScreen(navigator: DestinationsNavigator) = Screen(
                 state = Settings.colorPalette.asMutableState(),
             )
             SimpleMenuPreferenceInt(
+                title = stringResource(id = R.string.color_theme_dark),
+                entry = com.hippo.ehviewer.R.array.dark_color_theme_entries,
+                entryValueRes = com.hippo.ehviewer.R.array.dark_color_theme_values,
+                state = Settings.darkColorPalette.asMutableState(),
+            )
+            SimpleMenuPreferenceInt(
                 title = stringResource(id = R.string.dark_theme),
                 entry = com.hippo.ehviewer.R.array.night_mode_entries,
                 entryValueRes = com.hippo.ehviewer.R.array.night_mode_values,
@@ -86,6 +92,10 @@ fun AnimatedVisibilityScope.EhScreen(navigator: DestinationsNavigator) = Screen(
             SwitchPreference(
                 title = stringResource(id = R.string.default_background_color),
                 state = Settings.defaultBackgroundColor.asMutableState(),
+            )
+            SwitchPreference(
+                title = stringResource(id = R.string.lighter_dark_theme),
+                state = Settings.lighterDarkTheme.asMutableState(),
             )
             SwitchPreference(
                 title = stringResource(id = R.string.black_dark_theme),
