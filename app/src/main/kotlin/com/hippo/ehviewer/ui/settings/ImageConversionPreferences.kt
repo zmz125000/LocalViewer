@@ -2,6 +2,7 @@ package com.hippo.ehviewer.ui.settings
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -15,7 +16,7 @@ import com.hippo.ehviewer.asMutableState
 
 /** Image conversion controls in Download settings. */
 @Composable
-internal fun ImageConversionPreferences() {
+internal fun ColumnScope.ImageConversionPreferences() {
     val conversionQuality = Settings.imageConversionQuality.asMutableState()
     val srgbClamp = Settings.imageConversionSrgbClamp.asMutableState()
     SimpleMenuPreferenceInt(
