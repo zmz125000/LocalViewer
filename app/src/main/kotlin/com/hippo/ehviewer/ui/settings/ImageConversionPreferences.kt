@@ -83,16 +83,16 @@ internal fun ImageConversionPreferences() {
         title = stringResource(R.string.image_conversion_keep_exif),
         state = Settings.imageConversionKeepExif.asMutableState(),
     )
+    SwitchPreference(
+        title = stringResource(R.string.image_conversion_srgb_clamp),
+        state = srgbClamp,
+    )
     AnimatedVisibility(visible = !srgbClamp.value) {
         SwitchPreference(
             title = stringResource(R.string.image_conversion_extended_srgb_bt2020),
             state = Settings.imageConversionExtendedSrgbBt2020.asMutableState(),
         )
     }
-    SwitchPreference(
-        title = stringResource(R.string.image_conversion_srgb_clamp),
-        state = srgbClamp,
-    )
     SwitchPreference(
         title = stringResource(R.string.image_conversion_jxl_jpeg_transcoding),
         state = Settings.imageConversionJxlJpegTranscoding.asMutableState(),

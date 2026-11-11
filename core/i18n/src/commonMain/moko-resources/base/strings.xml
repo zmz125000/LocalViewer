@@ -26,8 +26,10 @@
     <string name="browse_manage_sources">Manage Sources</string>
     <string name="browse_manage_sources_short">Sources</string>
     <string name="network_duplicate_smb">Duplicate</string>
-    <string name="library_empty">Add library sources from browse tab</string>
-    <string name="library_empty_videos">Add library sources from browse tab</string>
+    <string name="library_empty">No media found</string>
+    <string name="library_empty_videos">No videos found</string>
+    <string name="add_media_source">Add media source</string>
+    <string name="add_device_media">Add device media</string>
     <string name="library_video_folders">Video folders</string>
     <string name="library_video_all">All videos</string>
     <string name="library_photo_all">All photos</string>
