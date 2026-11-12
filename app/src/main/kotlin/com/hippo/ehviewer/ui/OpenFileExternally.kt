@@ -685,6 +685,7 @@ object OpenFileExternally {
                 internalPlayer = true,
                 playlistSessionId = created.session.id,
                 playlistIndex = created.initialIndex,
+                subtitleTokens = prepared.subtitleTokens,
             )
         } catch (e: Throwable) {
             InternalVideoPlaylistRegistry.remove(created.session.id)
@@ -705,14 +706,87 @@ object OpenFileExternally {
             is InternalVideoSource.WebDav ->
                 registerWebDavStreamdoc(source.sourceId, source.remotePath, displayName, mimeType)
         }
-        val zipLocal = source is InternalVideoSource.Local && ZipPaths.isZipPath(source.path)
-        return PreparedInternalVideo(
-            token = token,
-            uri = StreamDocumentProvider.uriFor(token, displayName),
-            displayName = displayName,
-            mimeType = mimeType,
-            network = zipLocal || source !is InternalVideoSource.Local,
-        )
+        val subtitleTokens = ArrayList<String>()
+        try {
+            val names = when (source) {
+                is InternalVideoSource.Local -> withIOContext {
+                    SidecarSubtitles.matchSiblings(displayName, findLocalSiblingNames(source.path))
+                }
+                is InternalVideoSource.Smb -> {
+                    val smb = withIOContext { SmbRepository.load(source.sourceId) }
+                    if (smb == null) {
+                        emptyList()
+                    } else {
+                        findSmbSidecarNames(
+                            source.sourceId,
+                            smb,
+                            SmbPasswordStore.get(source.sourceId),
+                            source.remotePath,
+                            displayName,
+                        ).filter(SidecarSubtitles::isSubtitleFileName)
+                    }
+                }
+                is InternalVideoSource.WebDav -> {
+                    val dav = withIOContext { WebDavRepository.load(source.sourceId) }
+                    if (dav == null) {
+                        emptyList()
+                    } else {
+                        findWebDavSidecarNames(
+                            source.sourceId,
+                            dav,
+                            WebDavPasswordStore.get(source.sourceId),
+                            source.remotePath,
+                            displayName,
+                        ).filter(SidecarSubtitles::isSubtitleFileName)
+                    }
+                }
+            }.filter { SidecarSubtitles.mimeTypeForSubtitle(it) in INTERNAL_SUBTITLE_MIMES }
+                .take(MAX_INTERNAL_SUBTITLES)
+            for (name in names) {
+                val subToken = try {
+                    val subMime = SidecarSubtitles.mimeTypeForSubtitle(name)
+                    when (source) {
+                        is InternalVideoSource.Local -> {
+                            val subPath = siblingPath(source.path, name) ?: continue
+                            registerLocalStreamdoc(subPath, name, subMime)
+                        }
+                        is InternalVideoSource.Smb -> registerSmbStreamdoc(
+                            source.sourceId,
+                            SmbGateway.joinRelativePath(parentRelative(source.remotePath), name),
+                            name,
+                            subMime,
+                            probeSize = false,
+                        )
+                        is InternalVideoSource.WebDav -> registerWebDavStreamdoc(
+                            source.sourceId,
+                            WebDavGateway.joinRelative(parentRelative(source.remotePath), name),
+                            name,
+                            subMime,
+                            probeSize = false,
+                        )
+                    }
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    throw e
+                } catch (e: Throwable) {
+                    logcat("OpenFileExternally", e)
+                    continue
+                }
+                subtitleTokens += subToken
+            }
+            val zipLocal = source is InternalVideoSource.Local && ZipPaths.isZipPath(source.path)
+            return PreparedInternalVideo(
+                token = token,
+                uri = StreamDocumentProvider.uriFor(token, displayName),
+                displayName = displayName,
+                mimeType = mimeType,
+                network = zipLocal || source !is InternalVideoSource.Local,
+                subtitleTokens = subtitleTokens,
+            )
+        } catch (e: Throwable) {
+            subtitleTokens.forEach(StreamDocumentRegistry::remove)
+            StreamDocumentRegistry.remove(token)
+            throw e
+        }
     }
 
     // region HTTP external video
@@ -2221,6 +2295,7 @@ object OpenFileExternally {
         remoteRelativeFile: String,
         displayName: String,
         mimeType: String,
+        probeSize: Boolean = true,
     ): String {
         val source = withIOContext {
             SmbRepository.load(sourceId) ?: throw IOException("SMB source missing")
@@ -2230,7 +2305,7 @@ object OpenFileExternally {
         // Video size is taken from the sticky open. A browse-pool STAT waits behind thumbs
         // and the data NIO group; PDF/archives still probe so viewers get Content-Length.
         val ebookCacheKey = "smb:$sourceId:${remoteRelativeFile.trim('/')}"
-        val sizeBytes = if (isVideo) {
+        val sizeBytes = if (isVideo || !probeSize) {
             -1L
         } else {
             cachedNetworkEbookSize(displayName, ebookCacheKey) ?: withIOContext {
@@ -2264,6 +2339,7 @@ object OpenFileExternally {
         remoteRelativeFile: String,
         displayName: String,
         mimeType: String,
+        probeSize: Boolean = true,
     ): String {
         val source = withIOContext {
             WebDavRepository.load(sourceId) ?: throw IOException("WebDAV source missing")
@@ -2271,7 +2347,7 @@ object OpenFileExternally {
         val password = WebDavPasswordStore.get(sourceId)
         val isVideo = DefaultVideoPlayer.isVideoMime(mimeType) || isBrowseVideoFileName(displayName)
         val ebookCacheKey = "webdav:$sourceId:${remoteRelativeFile.trim('/')}"
-        val sizeBytes = if (isVideo) {
+        val sizeBytes = if (isVideo || !probeSize) {
             -1L
         } else {
             cachedNetworkEbookSize(displayName, ebookCacheKey) ?: withIOContext {
@@ -2496,6 +2572,7 @@ object OpenFileExternally {
         internalPlayer: Boolean,
         playlistSessionId: String? = null,
         playlistIndex: Int = 0,
+        subtitleTokens: List<String> = emptyList(),
         internalPdf: Boolean = false,
         usePreferredPlayer: Boolean = true,
         progressGid: Long = 0L,
@@ -2536,6 +2613,7 @@ object OpenFileExternally {
                     streamToken = token,
                     playlistSessionId = playlistSessionId,
                     playlistIndex = playlistIndex,
+                    subtitleTokens = subtitleTokens,
                 ).apply {
                     addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                     addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
@@ -2567,6 +2645,7 @@ object OpenFileExternally {
                 }
             }
         } catch (e: Throwable) {
+            subtitleTokens.forEach(StreamDocumentRegistry::remove)
             StreamDocumentRegistry.remove(token)
             throw e
         }
@@ -2607,6 +2686,10 @@ object OpenFileExternally {
      * High enough for large video folders (300+) without unbounded multi-GB intent clips.
      */
     private const val MAX_DIR_MEDIA_FILES = 2000
+
+    // Two adjacent playlist items may coexist briefly; stay below the streamdoc token cap.
+    private const val MAX_INTERNAL_SUBTITLES = 8
+    private val INTERNAL_SUBTITLE_MIMES = setOf("application/x-subrip", "text/x-ssa", "text/vtt", "application/ttml+xml")
 
     private val CHROME_PACKAGES = arrayOf(
         "com.android.chrome",

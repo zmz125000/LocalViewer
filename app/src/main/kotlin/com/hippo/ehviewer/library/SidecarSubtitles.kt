@@ -15,6 +15,7 @@ object SidecarSubtitles {
         "ass",
         "ssa",
         "vtt",
+        "ttml",
         "sub",
         "smi",
         "sami",
@@ -44,6 +45,7 @@ object SidecarSubtitles {
             "srt" -> "application/x-subrip"
             "ass", "ssa" -> "text/x-ssa"
             "vtt" -> "text/vtt"
+            "ttml" -> "application/ttml+xml"
             "smi", "sami" -> "application/smil+xml"
             "sub" -> "text/x-microdvd"
             "txt" -> "text/plain"

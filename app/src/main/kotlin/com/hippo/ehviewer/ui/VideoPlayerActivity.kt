@@ -31,10 +31,12 @@ import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
+import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.VideoSize
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
@@ -65,6 +67,7 @@ class VideoPlayerActivity : AppCompatActivity() {
     private var player: ExoPlayer? = null
     private var playerUsesNetworkSource: Boolean? = null
     private var streamToken: String? = null
+    private var subtitleTokens: List<String> = emptyList()
     private var playerView: SeekPlayerView? = null
     private var playlistSessionId: String? = null
     private var playlistIndex: Int = 0
@@ -151,6 +154,8 @@ class VideoPlayerActivity : AppCompatActivity() {
         val nextSession = intent.getStringExtra(EXTRA_PLAYLIST_SESSION)
         val nextIndex = intent.getIntExtra(EXTRA_PLAYLIST_INDEX, 0)
         val nextSource = InternalVideoPlaylistRegistry.get(nextSession)?.items?.getOrNull(nextIndex)
+        val nextSubtitleTokens = intent.getStringArrayExtra(EXTRA_SUBTITLE_TOKENS)?.toList().orEmpty()
+        val oldSubtitleTokens = subtitleTokens
         savePlaybackProgress()
         try {
             playPrepared(
@@ -158,19 +163,23 @@ class VideoPlayerActivity : AppCompatActivity() {
                 title = title,
                 mimeType = mimeType,
                 network = networkToken != null,
+                subtitleTokens = nextSubtitleTokens,
                 holdForResume = nextSource != null &&
                     Settings.media3PlaybackResume.value != Settings.MEDIA3_RESUME_OFF,
             )
         } catch (e: Throwable) {
             logcat("VideoPlayer", e)
+            nextSubtitleTokens.filterNot(oldSubtitleTokens::contains).forEach(StreamDocumentRegistry::remove)
             token?.let(StreamDocumentRegistry::remove)
             return oldToken != null
         }
         streamToken = token
+        subtitleTokens = nextSubtitleTokens
         playlistSessionId = nextSession
         playlistIndex = nextIndex
         armResume(nextSource)
         if (oldToken != null && oldToken != token) StreamDocumentRegistry.remove(oldToken)
+        oldSubtitleTokens.filterNot(nextSubtitleTokens::contains).forEach(StreamDocumentRegistry::remove)
         if (replacePlaylist && oldPlaylist != null && oldPlaylist != playlistSessionId) {
             InternalVideoPlaylistRegistry.remove(oldPlaylist)
         }
@@ -217,6 +226,8 @@ class VideoPlayerActivity : AppCompatActivity() {
         releasePlayer()
         streamToken?.let(StreamDocumentRegistry::remove)
         streamToken = null
+        subtitleTokens.forEach(StreamDocumentRegistry::remove)
+        subtitleTokens = emptyList()
         InternalVideoPlaylistRegistry.remove(playlistSessionId)
         playlistSessionId = null
         playerView = null
@@ -301,6 +312,7 @@ class VideoPlayerActivity : AppCompatActivity() {
 
     private fun switchToPrepared(index: Int, source: InternalVideoSource, prepared: PreparedInternalVideo) {
         val oldToken = streamToken
+        val oldSubtitleTokens = subtitleTokens
         val playUri = if (prepared.network) {
             StreamDocDataSource.uriFor(prepared.token)
         } else {
@@ -312,15 +324,19 @@ class VideoPlayerActivity : AppCompatActivity() {
                 title = prepared.displayName,
                 mimeType = prepared.mimeType,
                 network = prepared.network,
+                subtitleTokens = prepared.subtitleTokens,
                 holdForResume = Settings.media3PlaybackResume.value != Settings.MEDIA3_RESUME_OFF,
             )
         } catch (e: Throwable) {
+            prepared.subtitleTokens.forEach(StreamDocumentRegistry::remove)
             StreamDocumentRegistry.remove(prepared.token)
             throw e
         }
         streamToken = prepared.token
+        subtitleTokens = prepared.subtitleTokens
         playlistIndex = index
         if (oldToken != prepared.token) oldToken?.let(StreamDocumentRegistry::remove)
+        oldSubtitleTokens.filterNot(prepared.subtitleTokens::contains).forEach(StreamDocumentRegistry::remove)
         armResume(source)
     }
 
@@ -329,6 +345,7 @@ class VideoPlayerActivity : AppCompatActivity() {
         title: String?,
         mimeType: String?,
         network: Boolean,
+        subtitleTokens: List<String>,
         holdForResume: Boolean,
     ) {
         // Drop the previous file's id before prepare callbacks, so a reset position
@@ -339,6 +356,22 @@ class VideoPlayerActivity : AppCompatActivity() {
             .setUri(uri)
             .apply {
                 if (!mimeType.isNullOrBlank()) setMimeType(mimeType)
+                var selectFirstSubtitle = true
+                val subtitles = subtitleTokens.mapNotNull { token ->
+                    val entry = StreamDocumentRegistry.get(token) ?: return@mapNotNull null
+                    if (entry.mimeType !in MEDIA3_SUBTITLE_MIMES) return@mapNotNull null
+                    val subtitle = MediaItem.SubtitleConfiguration.Builder(
+                        StreamDocumentProvider.uriFor(token, entry.displayName),
+                    )
+                        .setMimeType(entry.mimeType)
+                        .setLabel(entry.displayName)
+                    if (selectFirstSubtitle) {
+                        subtitle.setSelectionFlags(C.SELECTION_FLAG_DEFAULT)
+                        selectFirstSubtitle = false
+                    }
+                    subtitle.build()
+                }
+                if (subtitles.isNotEmpty()) setSubtitleConfigurations(subtitles)
                 if (!title.isNullOrBlank()) {
                     setMediaMetadata(MediaMetadata.Builder().setTitle(title).build())
                 }
@@ -374,7 +407,7 @@ class VideoPlayerActivity : AppCompatActivity() {
         if (network) {
             builder.setMediaSourceFactory(
                 DefaultMediaSourceFactory(this)
-                    .setDataSourceFactory(StreamDocDataSource.Factory()),
+                    .setDataSourceFactory(DefaultDataSource.Factory(this, StreamDocDataSource.Factory())),
             )
         }
 
@@ -628,6 +661,7 @@ class VideoPlayerActivity : AppCompatActivity() {
 
     companion object {
         const val EXTRA_STREAM_TOKEN = "stream_token"
+        const val EXTRA_SUBTITLE_TOKENS = "subtitle_tokens"
         const val EXTRA_TITLE = "title"
         const val EXTRA_PLAYLIST_SESSION = "playlist_session"
         const val EXTRA_PLAYLIST_INDEX = "playlist_index"
@@ -637,6 +671,12 @@ class VideoPlayerActivity : AppCompatActivity() {
         private const val RESUME_AUTO_MIN_MS = 3 * 60 * 1000L
         private const val RESUME_END_MARGIN_MS = 3_000L
         private const val ACTION_PIP_PLAY_PAUSE = "com.hippo.ehviewer.action.PIP_PLAY_PAUSE"
+        private val MEDIA3_SUBTITLE_MIMES = setOf(
+            MimeTypes.APPLICATION_SUBRIP,
+            MimeTypes.TEXT_SSA,
+            MimeTypes.TEXT_VTT,
+            MimeTypes.APPLICATION_TTML,
+        )
 
         fun intent(
             context: Context,
@@ -646,10 +686,14 @@ class VideoPlayerActivity : AppCompatActivity() {
             streamToken: String,
             playlistSessionId: String? = null,
             playlistIndex: Int = 0,
+            subtitleTokens: List<String> = emptyList(),
         ): Intent = Intent(context, VideoPlayerActivity::class.java).apply {
             setDataAndType(uri, mimeType)
             putExtra(EXTRA_STREAM_TOKEN, streamToken)
             putExtra(EXTRA_TITLE, title)
+            if (subtitleTokens.isNotEmpty()) {
+                putExtra(EXTRA_SUBTITLE_TOKENS, subtitleTokens.toTypedArray())
+            }
             if (playlistSessionId != null) {
                 putExtra(EXTRA_PLAYLIST_SESSION, playlistSessionId)
                 putExtra(EXTRA_PLAYLIST_INDEX, playlistIndex)

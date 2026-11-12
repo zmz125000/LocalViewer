@@ -434,6 +434,7 @@ private fun extraMimeForExtension(ext: String): String? = when (ext) {
     "srt" -> "application/x-subrip"
     "ass", "ssa" -> "text/x-ssa"
     "vtt" -> "text/vtt"
+    "ttml" -> "application/ttml+xml"
     "smi", "sami" -> "application/smil+xml"
     "sub" -> "text/x-microdvd"
     "mp3" -> "audio/mpeg"
