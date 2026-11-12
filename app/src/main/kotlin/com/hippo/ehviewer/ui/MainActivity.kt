@@ -831,6 +831,7 @@ class MainActivity : AppCompatActivity() {
                                         selected = selected,
                                         colors = NavigationBarItemDefaults.colors(
                                             selectedIconColor = MaterialTheme.colorScheme.primary,
+                                            selectedTextColor = MaterialTheme.colorScheme.primary,
                                         ),
                                         onClick = { onMainNavClick(item) },
                                         icon = {
@@ -878,6 +879,7 @@ class MainActivity : AppCompatActivity() {
                                             selected = selected,
                                             colors = NavigationRailItemDefaults.colors(
                                                 selectedIconColor = MaterialTheme.colorScheme.primary,
+                                                selectedTextColor = MaterialTheme.colorScheme.primary,
                                             ),
                                             onClick = { onMainNavClick(item) },
                                             icon = {

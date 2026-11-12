@@ -1,6 +1,5 @@
 package com.hippo.ehviewer.ui.theme
 
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -20,7 +19,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.integerArrayResource
-import androidx.compose.ui.res.stringArrayResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.ehviewer.core.i18n.R
@@ -41,26 +39,20 @@ fun ThemeSelectorDialog() {
     val colorfulDark = Settings.colorfulDarkTheme.asMutableState()
     val lightPalette = Settings.colorPalette.asMutableState()
     val darkPalette = Settings.darkColorPalette.asMutableState()
-    val dark = isSystemInDarkTheme() || colorfulDark.value
+    val dark = isSystemInDarkTheme()
+    val changeLightPalette = !dark || darkPalette.value == -1
     val choices = integerArrayResource(
-        if (dark) {
-            com.hippo.ehviewer.R.array.dark_color_theme_values
-        } else {
+        if (changeLightPalette) {
             com.hippo.ehviewer.R.array.color_theme_values
-        },
-    )
-    val current = if (dark) darkPalette.value else lightPalette.value
-    val currentIndex = choices.indexOf(current).takeIf { it >= 0 } ?: 0
-    val labels = stringArrayResource(
-        if (dark) {
-            com.hippo.ehviewer.R.array.dark_color_theme_entries
         } else {
-            com.hippo.ehviewer.R.array.color_theme_entries
+            com.hippo.ehviewer.R.array.dark_color_theme_values
         },
-    )
+    ).filter { it != -1 } // Follow theme is a menu choice, not a Prev/Next stop.
+    val current = if (changeLightPalette) lightPalette.value else darkPalette.value
+    val currentIndex = choices.indexOf(current).takeIf { it >= 0 } ?: 0
     fun move(delta: Int) {
         val next = choices[(currentIndex + delta + choices.size) % choices.size]
-        if (dark) darkPalette.value = next else lightPalette.value = next
+        if (changeLightPalette) lightPalette.value = next else darkPalette.value = next
     }
 
     TaskStyledDialog(onDismiss = { ThemeSelectorRequest.open = false }) { _ ->
@@ -87,16 +79,12 @@ fun ThemeSelectorDialog() {
                     entryValueRes = com.hippo.ehviewer.R.array.dark_color_theme_values,
                     state = darkPalette,
                 )
-                AnimatedVisibility(visible = !colorfulDark.value) {
-                    Column {
-                        SimpleMenuPreferenceInt(
-                            title = stringResource(R.string.dark_theme),
-                            entry = com.hippo.ehviewer.R.array.night_mode_entries,
-                            entryValueRes = com.hippo.ehviewer.R.array.night_mode_values,
-                            state = Settings.theme.asMutableState(),
-                        )
-                    }
-                }
+                SimpleMenuPreferenceInt(
+                    title = stringResource(R.string.dark_theme),
+                    entry = com.hippo.ehviewer.R.array.night_mode_entries,
+                    entryValueRes = com.hippo.ehviewer.R.array.night_mode_values,
+                    state = Settings.theme.asMutableState(),
+                )
             }
             HorizontalDivider()
             Row(
