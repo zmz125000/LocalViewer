@@ -28,7 +28,7 @@ import com.hippo.ehviewer.ui.main.TaskStyledDialog
 import com.hippo.ehviewer.ui.settings.SimpleMenuPreferenceInt
 import com.hippo.ehviewer.ui.settings.SwitchPreference
 
-/** Shared request so General settings can return to Library and open its selector. */
+/** Shared request for the theme selector from navigation and settings. */
 object ThemeSelectorRequest {
     var open by mutableStateOf(false)
 }

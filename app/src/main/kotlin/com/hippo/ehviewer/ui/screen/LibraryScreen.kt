@@ -151,7 +151,6 @@ import com.hippo.ehviewer.ui.openLocalFolderPhotoGrid
 import com.hippo.ehviewer.ui.openLocalVideoFolder
 import com.hippo.ehviewer.ui.openSmbBrowseDir
 import com.hippo.ehviewer.ui.openWebDavBrowseDir
-import com.hippo.ehviewer.ui.theme.ThemeSelectorDialog
 import com.hippo.ehviewer.webdav.WebDavRepository
 import com.ramcosta.composedestinations.annotation.Destination
 import com.ramcosta.composedestinations.annotation.RootGraph
@@ -191,7 +190,6 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
         showDialog = showAddMediaSource,
         onDismiss = { showAddMediaSource = false },
     )
-    ThemeSelectorDialog()
 
     // Survive NavHost dispose/restore (e.g. open favourite folder → back).
     // collectAsState(initial=empty) remounted an empty list for one frame and

@@ -55,6 +55,7 @@ import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.FileUpload
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Lan
+import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -144,6 +145,7 @@ import com.hippo.ehviewer.ui.openLocalBrowseDir
 import com.hippo.ehviewer.ui.openLocalFolderPhotoGrid
 import com.hippo.ehviewer.ui.openSmbBrowseDir
 import com.hippo.ehviewer.ui.openWebDavBrowseDir
+import com.hippo.ehviewer.ui.theme.ThemeSelectorRequest
 import com.hippo.ehviewer.util.findActivity
 import com.hippo.ehviewer.webdav.WebDavRepository
 import com.ramcosta.composedestinations.navigation.DestinationsNavigator
@@ -581,6 +583,15 @@ private fun ExplorerPanel(
                 )
             }
             if (!choosingUpload) {
+                Icon(
+                    Icons.Default.Palette,
+                    contentDescription = stringResource(R.string.theme_selector),
+                    modifier = Modifier
+                        .padding(8.dp)
+                        .size(headerIconSize)
+                        .clickable { ThemeSelectorRequest.open = true },
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
                 val duplicateEnabled = activeId != null
                 Icon(
                     Icons.Default.ContentCopy,
