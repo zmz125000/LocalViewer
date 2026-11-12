@@ -34,6 +34,7 @@ import com.hippo.ehviewer.library.OPEN_CACHE_WARN_BYTES
 import com.hippo.ehviewer.library.OriginDiskCache
 import com.hippo.ehviewer.library.RemoteChild
 import com.hippo.ehviewer.library.SMB_FILE_TOKEN
+import com.hippo.ehviewer.library.SidecarAudioTracks
 import com.hippo.ehviewer.library.SidecarSubtitles
 import com.hippo.ehviewer.library.VideoDirectLinkByteSource
 import com.hippo.ehviewer.library.WEBDAV_FILE_TOKEN
@@ -825,8 +826,8 @@ object OpenFileExternally {
     }
 
     /**
-     * Off (default): opened video + matching sidecars only.
-     * On: every video + subtitle file in the same directory (folder playlist).
+     * Off: opened video + matching subtitle/audio sidecars only.
+     * On: every video, subtitle and audio file in the same directory.
      */
     private fun accessDirEnabled(): Boolean = Settings.externalVideoAccessDir.value
 
@@ -836,7 +837,7 @@ object OpenFileExternally {
      */
     private fun passFolderPlaylistEnabled(): Boolean = accessDirEnabled() && Settings.externalVideoPassFolderPlaylist.value
 
-    private fun isHttpExposedMediaName(name: String): Boolean = isBrowseVideoFileName(name) || SidecarSubtitles.isSubtitleFileName(name)
+    private fun isHttpExposedMediaName(name: String): Boolean = isBrowseVideoFileName(name) || SidecarSubtitles.isSubtitleFileName(name) || SidecarAudioTracks.isAudioFileName(name)
 
     private fun mediaMimeForName(name: String): String = when {
         SidecarSubtitles.isSubtitleFileName(name) -> SidecarSubtitles.mimeTypeForSubtitle(name)
@@ -1301,11 +1302,10 @@ object OpenFileExternally {
 
     private fun findLocalSidecarNames(videoPathStr: String, videoName: String): List<String> {
         val siblings = findLocalSiblingNames(videoPathStr)
-        val matched = SidecarSubtitles.matchSiblings(
-            videoName,
-            siblings.filter(ExternalHttpStreamServer::isSafeFileName),
-        )
-        if (matched.isNotEmpty()) return matched
+        val safeSiblings = siblings.filter(ExternalHttpStreamServer::isSafeFileName)
+        val audio = SidecarAudioTracks.matchSiblings(videoName, safeSiblings)
+        val subtitles = SidecarSubtitles.matchSiblings(videoName, safeSiblings)
+        if (subtitles.isNotEmpty()) return subtitles + audio
         // Video-folder overlay listings are video-only; probe sidecars without File.list().
         val probed = SidecarSubtitles.probeCandidateNames(videoName).filter { name ->
             val path = siblingPath(videoPathStr, name) ?: return@filter false
@@ -1314,10 +1314,10 @@ object OpenFileExternally {
         return SidecarSubtitles.matchSiblings(
             videoName,
             probed.filter(ExternalHttpStreamServer::isSafeFileName),
-        )
+        ) + audio
     }
 
-    /** All browse videos + subtitle files in the local parent directory. */
+    /** All browse videos, subtitles and audio files in the local parent directory. */
     private fun listLocalDirMediaNames(videoPathStr: String): List<String> = findLocalSiblingNames(videoPathStr)
         .filter { ExternalHttpStreamServer.isSafeFileName(it) && isHttpExposedMediaName(it) }
         .distinct()
@@ -1450,7 +1450,8 @@ object OpenFileExternally {
         val parentDir = parentRelative(remoteRelativeFile)
         // One directory list — never probeCandidateNames × fileSize (hundreds of NOT_FOUND opens).
         val names = listSmbDirChildNames(sourceId, source, password, parentDir)
-        return SidecarSubtitles.matchSiblings(videoName, names)
+        return SidecarSubtitles.matchSiblings(videoName, names) +
+            SidecarAudioTracks.matchSiblings(videoName, names)
     }
 
     /**
@@ -1519,7 +1520,8 @@ object OpenFileExternally {
     ): List<String> {
         val parentDir = parentRelative(remoteRelativeFile)
         val names = listWebDavDirChildNames(sourceId, source, password, parentDir)
-        return SidecarSubtitles.matchSiblings(videoName, names)
+        return SidecarSubtitles.matchSiblings(videoName, names) +
+            SidecarAudioTracks.matchSiblings(videoName, names)
     }
 
     private suspend fun listWebDavDirChildNames(
@@ -2372,7 +2374,7 @@ object OpenFileExternally {
     private fun sessionHasFolderPlaylist(session: ExternalHttpStreamServer.Session): Boolean {
         var media = 0
         for (entry in session.files.values) {
-            if (!isHttpExposedMediaName(entry.displayName)) continue
+            if (!DefaultVideoPlayer.isVideoMime(entry.mimeType)) continue
             media++
             if (media >= 2) return true
         }
@@ -2574,9 +2576,13 @@ object OpenFileExternally {
 
     private fun Intent.attachSubtitleExtras(subUris: List<Uri>, subNames: Array<String>) {
         putExtra("subs", subUris.toTypedArray())
+        // MX Player / Just Player use this separately from "subs" to select a track.
+        // Just Player also stops probing same-stem HTTP subtitles once "subs" is set.
+        putExtra("subs.enable", arrayOf(subUris.first()))
         if (subNames.size == subUris.size) {
             putExtra("subs.name", subNames)
         }
+        // VLC's external-player API reads a URL string from this extra.
         putExtra("subtitles_location", subUris.first().toString())
         putExtra("subtitle", subUris.first().toString())
         putExtra("subtitle_uri", subUris.first())

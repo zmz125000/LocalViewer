@@ -228,8 +228,8 @@ object Settings : DataStorePreferences(null) {
 
     /**
      * When true, external HTTP video open exposes **all** videos and subtitle files in the
-     * current directory (playlist / next-prev friendly). When false (default), only the
-     * opened video plus matching sidecar subs are published. Settings → General.
+     * current directory (playlist / next-prev friendly). When false, only the
+     * opened video plus matching subtitle/audio sidecars are published. Settings → General.
      */
     val externalVideoAccessDir = boolPref("external_video_access_dir", true)
         .observed(::updateWhenExternalVideoAccessDirChanges)
