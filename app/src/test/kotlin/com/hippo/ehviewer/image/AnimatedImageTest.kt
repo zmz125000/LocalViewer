@@ -90,6 +90,8 @@ class AnimatedImageTest {
     fun webpFilenameIsTreatedAsPossiblyAnimated() {
         assertTrue(isAnimatedReaderExtension("webp"))
         assertTrue(isAnimatedReaderExtension(".gif"))
+        assertTrue(isAnimatedReaderExtension("apng"))
+        assertTrue(isAnimatedReaderExtension("ajxl"))
         assertFalse(isAnimatedReaderExtension("jpg"))
     }
 }

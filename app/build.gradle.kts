@@ -258,6 +258,7 @@ dependencies {
     // https://coil-kt.github.io/coil/changelog/
     implementation(platform(libs.coil.bom))
     implementation(libs.bundles.coil)
+    implementation(libs.apng.animation)
 
     implementation(libs.telephoto.zoomable)
 

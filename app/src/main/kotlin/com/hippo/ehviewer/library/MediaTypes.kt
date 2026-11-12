@@ -20,7 +20,7 @@ val IMAGE_EXTENSIONS = setOf(
     // JPEG (+ common aliases)
     "jpg", "jpeg", "jpe", "jfif",
     // Lossless / general raster
-    "png", "webp", "gif", "bmp",
+    "png", "apng", "webp", "awebp", "gif", "bmp",
     // Android / Coil platform ImageDecoder (minSdk 31 — HEIC works like Aves)
     "heic", "heif", "heics", "heifs", "hif",
     "avif",
@@ -30,7 +30,7 @@ val IMAGE_EXTENSIONS = setOf(
     // JPEG XR (Windows HDR screen capture) — converted to Ultra HDR before decode
     "jxr", "wdp", "hdp",
     // JPEG XL — converted to Ultra HDR before decode
-    "jxl",
+    "jxl", "ajxl",
     // JPEG 2000 — OpenJPEG, then a Coil-ready JPEG
     "jp2", "j2k", "j2c", "jpc", "jpx",
     // Camera RAW — LibRaw. Not generic TIFF.
@@ -367,6 +367,9 @@ fun mimeTypeForFileName(name: String): String {
     return when {
         ext in IMAGE_EXTENSIONS -> when (ext) {
             "jpg", "jpe", "jfif" -> "image/jpeg"
+            "apng" -> "image/apng"
+            "awebp" -> "image/webp"
+            "ajxl" -> "image/jxl"
             "svg", "svgz" -> "image/svg+xml"
             "jxr", "wdp", "hdp" -> "image/vnd.ms-photo"
             "jp2", "j2k", "j2c", "jpc" -> "image/jp2"

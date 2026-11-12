@@ -51,11 +51,15 @@ import com.ehviewer.core.files.read
 import com.ehviewer.core.files.toUri
 import com.ehviewer.core.util.isAtLeastU
 import com.hippo.ehviewer.Settings
+import com.hippo.ehviewer.coil.AnimatedJxlDrawable
 import com.hippo.ehviewer.coil.AnimatedWebPDrawable
 import com.hippo.ehviewer.coil.BitmapImageWithExtraInfo
+import com.hippo.ehviewer.coil.ReaderApngDrawable
 import com.hippo.ehviewer.coil.detectGainmap
 import com.hippo.ehviewer.coil.detectQrCode
+import com.hippo.ehviewer.coil.ensureDirectForNative
 import com.hippo.ehviewer.coil.hardwareThreshold
+import com.hippo.ehviewer.coil.hasJxlAnimation
 import com.hippo.ehviewer.coil.maybeCropBorder
 import com.hippo.ehviewer.image.hdr.AppleHdr
 import com.hippo.ehviewer.image.hdr.BitDepthClass
@@ -66,6 +70,7 @@ import com.hippo.ehviewer.image.hdr.OppoProxdr
 import com.hippo.ehviewer.image.hdr.PlatformBitDepth
 import com.hippo.ehviewer.image.hdr.isHeicImageExtension
 import com.hippo.ehviewer.image.hdr.shouldPlatformHighDepthDecode
+import com.hippo.ehviewer.image.hdr.withStillInput
 import com.hippo.ehviewer.jni.isGif
 import com.hippo.ehviewer.jni.mmap
 import com.hippo.ehviewer.jni.munmap
@@ -78,6 +83,7 @@ import eu.kanade.tachiyomi.ui.reader.setting.ReadingModeType
 import java.io.File
 import java.io.InputStream
 import java.nio.ByteBuffer
+import java.nio.ByteOrder
 import kotlin.concurrent.atomics.AtomicInt
 import kotlin.concurrent.atomics.decrementAndFetch
 import kotlin.concurrent.atomics.updateAndFetch
@@ -164,8 +170,14 @@ class Image private constructor(
             val frame = pixels * 4L
             return when (val img = innerImage) {
                 is DrawableImage -> {
-                    val frames = if (img.drawable is AnimatedWebPDrawable) 2L else 4L
-                    maxOf(img.size, frame * frames)
+                    val drawable = img.drawable
+                    val frames = if (drawable is AnimatedWebPDrawable || drawable is AnimatedJxlDrawable) 2L else 4L
+                    val encoded = when (drawable) {
+                        is ReaderApngDrawable -> drawable.encodedBytes.toLong()
+                        is AnimatedJxlDrawable -> drawable.encodedBytes.toLong()
+                        else -> 0L
+                    }
+                    maxOf(img.size, frame * frames + encoded)
                 }
                 else -> maxOf(allocationSize, frame)
             }
@@ -228,7 +240,7 @@ class Image private constructor(
         isWideGamutContent = isWideGamutDirect || bitmapIsWideGamut(image)
         // AWEBP already copied the buffer into a direct native decoder source.
         val drawable = (innerImage as? DrawableImage)?.drawable
-        if (innerImage is BitmapImage || drawable is AnimatedWebPDrawable) {
+        if (innerImage is BitmapImage || drawable is AnimatedWebPDrawable || drawable is AnimatedJxlDrawable || drawable is ReaderApngDrawable) {
             this.src?.close()
             this.src = null
         }
@@ -264,6 +276,7 @@ class Image private constructor(
                 val drawable = image.drawable
                 (drawable as? Animatable)?.stop()
                 (drawable as? AnimatedWebPDrawable)?.dispose()
+                (drawable as? AnimatedJxlDrawable)?.dispose()
                 drawable.callback = null
                 src?.close()
             }
@@ -831,6 +844,12 @@ class Image private constructor(
             checkExtraneousAds: Boolean = false,
             forceOriginal: Boolean = false,
         ): Image {
+            readerJxlDrawable(src)?.let { drawable ->
+                return Image(drawable.asImage(), src, displayScaler = false)
+            }
+            readerApngDrawable(src)?.let { drawable ->
+                return Image(drawable.asImage(), src, displayScaler = false)
+            }
             try {
                 LibDirectDecode.decodeColorPng(src)?.let { return fromLibDirect(it, src) }
             } catch (error: kotlinx.coroutines.CancellationException) {
@@ -1062,6 +1081,82 @@ interface PathSource : ImageSource {
 
 interface ByteBufferSource : ImageSource {
     val source: ByteBuffer
+}
+
+/** APNG4Android decodes frames lazily, so give it its own encoded buffer before closing the page source. */
+private fun readerApngDrawable(src: ImageSource): ReaderApngDrawable? {
+    if (src is PathSource) {
+        val ext = FileUtils.getExtensionFromFilename(src.source.name)?.lowercase()
+            ?.takeIf { it == "png" || it == "apng" } ?: src.type.trimStart('.').lowercase()
+        if (ext != "png" && ext != "apng") return null
+    }
+    return try {
+        withStillInput(src) { source ->
+            if (source.remaining() < 33 || source.remaining() > 128 * 1024 * 1024) return@withStillInput null
+            if (!source.hasApngAnimation()) return@withStillInput null
+            val encoded = ByteBuffer.allocateDirect(source.remaining())
+            encoded.put(source.duplicate())
+            encoded.flip()
+            ReaderApngDrawable(encoded)
+        }
+    } catch (_: Exception) {
+        null
+    }
+}
+
+/** Walk PNG chunk headers without copying static PNG pages into a sniff buffer. */
+private fun ByteBuffer.hasApngAnimation(): Boolean {
+    val png = duplicate().order(ByteOrder.BIG_ENDIAN)
+    val start = png.position()
+    if (png.remaining() < 33 || png.get(start) != 0x89.toByte() ||
+        png.get(start + 1) != 'P'.code.toByte() || png.get(start + 2) != 'N'.code.toByte() ||
+        png.get(start + 3) != 'G'.code.toByte()
+    ) {
+        return false
+    }
+    var offset = start + 8
+    while (offset.toLong() + 12 <= png.limit()) {
+        val length = png.getInt(offset).toLong() and 0xffffffffL
+        val end = offset.toLong() + 12 + length
+        if (end > png.limit()) return false
+        val type = png.getInt(offset + 4)
+        if (type == 0x6163544c) return true // acTL
+        if (type == 0x49444154 || type == 0x49454e44) return false // IDAT / IEND
+        offset = end.toInt()
+    }
+    return false
+}
+
+private fun readerJxlDrawable(src: ImageSource): AnimatedJxlDrawable? {
+    if (src is PathSource) {
+        val ext = FileUtils.getExtensionFromFilename(src.source.name)?.lowercase()
+            ?.takeIf { it == "jxl" || it == "ajxl" } ?: src.type.trimStart('.').lowercase()
+        if (ext != "jxl" && ext != "ajxl") return null
+    } else if (src is ByteBufferSource && !src.source.looksLikeJxl()) {
+        return null
+    }
+    return try {
+        withStillInput(src) { source ->
+            if (source.remaining() < 12 || source.remaining() > 128 * 1024 * 1024) return@withStillInput null
+            val direct = source.ensureDirectForNative()
+            if (!direct.hasJxlAnimation()) return@withStillInput null
+            AnimatedJxlDrawable(direct)
+        }
+    } catch (_: Exception) {
+        null
+    }
+}
+
+private fun ByteBuffer.looksLikeJxl(): Boolean {
+    val head = duplicate()
+    if (head.remaining() < 2) return false
+    val first = head.get().toInt() and 0xff
+    val second = head.get().toInt() and 0xff
+    if (first == 0xff && second == 0x0a) return true
+    if (head.remaining() < 10 || first != 0 || second != 0) return false
+    val rest = ByteArray(10)
+    head.get(rest)
+    return rest.contentEquals(byteArrayOf(0, 12, 0x4a, 0x58, 0x4c, 0x20, 0x0d, 0x0a, 0x87.toByte(), 0x0a))
 }
 
 inline fun byteBufferSource(buffer: ByteBuffer, crossinline release: () -> Unit) = object : ByteBufferSource {
