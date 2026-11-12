@@ -81,6 +81,7 @@ object Settings : DataStorePreferences(null) {
     val darkColorPalette = intPref("dark_color_palette", -1)
     val defaultBackgroundColor = boolPref("default_background_color", false)
     val colorfulDarkTheme = boolPref("colorful_dark_theme", false).observed(::updateWhenColorfulDarkThemeChanges)
+    val gridCards = boolPref("grid_cards", false)
     val blackDarkTheme = boolPref("black_dark_theme", false)
     val harmonizeCategoryColor = boolPref("harmonize_category_color", true)
     val launchPage = intPref("launch_page_2", 0)

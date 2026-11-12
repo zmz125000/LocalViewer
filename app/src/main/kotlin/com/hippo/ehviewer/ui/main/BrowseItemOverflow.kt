@@ -112,6 +112,7 @@ fun BrowseItemOverflowButton(
     actions: BrowseOverflowActions,
     placement: BrowseOverflowPlacement,
     modifier: Modifier = Modifier,
+    triggerContent: (@Composable (Modifier) -> Unit)? = null,
 ) {
     var expanded by remember { mutableStateOf(false) }
     var convertMenu by remember { mutableStateOf(false) }
@@ -181,19 +182,22 @@ fun BrowseItemOverflowButton(
     }
     Box(modifier) {
         val interactionSource = remember { MutableInteractionSource() }
-        Icon(
-            imageVector = Icons.Default.MoreVert,
-            contentDescription = more,
-            modifier = Modifier
-                .size(iconSize)
-                .clickable(
-                    interactionSource = interactionSource,
-                    indication = ripple(bounded = false),
-                    role = Role.Button,
-                    onClick = { expanded = true },
-                ),
-            tint = MaterialTheme.colorScheme.onSurface,
+        val triggerModifier = Modifier.clickable(
+            interactionSource = interactionSource,
+            indication = ripple(bounded = triggerContent != null),
+            role = Role.Button,
+            onClick = { expanded = true },
         )
+        if (triggerContent != null) {
+            triggerContent(triggerModifier)
+        } else {
+            Icon(
+                imageVector = Icons.Default.MoreVert,
+                contentDescription = more,
+                modifier = Modifier.size(iconSize).then(triggerModifier),
+                tint = MaterialTheme.colorScheme.onSurface,
+            )
+        }
         DropdownMenu(
             expanded = expanded,
             onDismissRequest = {

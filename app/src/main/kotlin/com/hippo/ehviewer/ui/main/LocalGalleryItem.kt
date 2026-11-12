@@ -14,6 +14,8 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.text.InlineTextContent
+import androidx.compose.foundation.text.appendInlineContent
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.InsertDriveFile
 import androidx.compose.material.icons.filled.Cloud
@@ -45,6 +47,9 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.text.Placeholder
+import androidx.compose.ui.text.PlaceholderVerticalAlign
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -440,6 +445,10 @@ fun HistoryGridItem(
     modifier: Modifier = Modifier,
     overflow: BrowseOverflowActions? = null,
 ) {
+    if (Settings.gridCards.collectAsState().value) {
+        HistoryGridItemCard(info, onClick, onLongClick, showPages, showProgress, modifier, overflow)
+        return
+    }
     val kind = LocalHistory.kindLabelKey(info)
     val placeholderIcon: ImageVector = when (kind) {
         LocalHistory.KindLabel.Archive -> Icons.Default.Inventory2
@@ -452,95 +461,103 @@ fun HistoryGridItem(
     }
     val nameHeight = GalleryGridDefaults.nameHeight()
     val namePadH = GalleryGridDefaults.namePaddingH()
-    val namePadBottom = GalleryGridDefaults.namePaddingBottom()
+    val captionGap = 6.dp
     val gridDecodePx = GalleryGridDefaults.gridDecodePx()
     val coverKey = remember(info.gid, info.thumbKey, info.token, info.uploader) {
         historyCoverKey(info)
     }
-    ElevatedCard(
-        modifier = modifier.fillMaxWidth(),
+    CaptionBelowGridFrame(
         onClick = onClick,
         onLongClick = onLongClick,
-        colors = GalleryGridDefaults.cardColors(),
+        modifier = modifier,
     ) {
-        Column(Modifier.fillMaxWidth()) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .aspectRatio(1f)
-                    .clip(ShapeDefaults.Medium),
-            ) {
-                CoverImage(
-                    coverPath = coverKey,
-                    progressGid = info.gid,
-                    sizePx = gridDecodePx,
-                    placeholder = placeholderIcon,
-                    placeholderSize = BrowseGridPlaceholderIconSize,
-                    modifier = Modifier.fillMaxSize(),
-                )
-                if (showPages && LocalHistory.showsPageProgress(info)) {
-                    Badge(
-                        modifier = Modifier
-                            .align(Alignment.TopEnd)
-                            .widthIn(min = 32.dp)
-                            .height(24.dp),
-                    ) {
-                        val readProgress = if (showProgress) {
-                            remember(info.gid) { EhDB.getReadProgressFlow(info.gid) }.collectAsState(0).value
-                        } else {
-                            0
-                        }
-                        Text(
-                            text = if (readProgress > 0) {
-                                "${readProgress + 1}/${info.pages}"
-                            } else {
-                                "${info.pages}"
-                            },
-                        )
-                    }
-                }
-            }
-            // Fixed name band (same as before): caption sits on the bottom.
-            // Icon is CenterVertically with the text only — not the whole name box.
-            val labelIconSize = with(LocalDensity.current) {
-                MaterialTheme.typography.labelMedium.fontSize.toDp()
-            }
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(nameHeight)
-                    .padding(horizontal = namePadH),
-                contentAlignment = Alignment.BottomStart,
-            ) {
-                Row(
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .aspectRatio(1f)
+                .clip(captionBelowGridShape())
+                .background(MaterialTheme.colorScheme.surfaceContainerHigh),
+        ) {
+            CoverImage(
+                coverPath = coverKey,
+                progressGid = info.gid,
+                sizePx = gridDecodePx,
+                placeholder = placeholderIcon,
+                placeholderSize = BrowseGridPlaceholderIconSize,
+                modifier = Modifier.fillMaxSize(),
+            )
+            if (showPages && LocalHistory.showsPageProgress(info)) {
+                Badge(
                     modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(bottom = namePadBottom),
-                    verticalAlignment = Alignment.CenterVertically,
+                        .align(Alignment.TopEnd)
+                        .widthIn(min = 32.dp)
+                        .height(24.dp),
                 ) {
-                    Icon(
-                        imageVector = placeholderIcon,
-                        contentDescription = null,
-                        modifier = Modifier
-                            .padding(end = 4.dp)
-                            .size(labelIconSize),
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    Text(
-                        text = info.title.orEmpty(),
-                        style = MaterialTheme.typography.labelMedium,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis,
-                        textAlign = TextAlign.Start,
-                        modifier = Modifier.weight(1f),
-                    )
-                    overflow?.let { actions ->
-                        BrowseItemOverflowButton(
-                            actions = actions,
-                            placement = BrowseOverflowPlacement.GridBottomEnd,
-                        )
+                    val readProgress = if (showProgress) {
+                        remember(info.gid) { EhDB.getReadProgressFlow(info.gid) }.collectAsState(0).value
+                    } else {
+                        0
                     }
+                    Text(
+                        text = if (readProgress > 0) {
+                            "${readProgress + 1}/${info.pages}"
+                        } else {
+                            "${info.pages}"
+                        },
+                    )
                 }
+            }
+        }
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(nameHeight + captionGap)
+                .padding(top = captionGap)
+                .padding(horizontal = namePadH),
+        ) {
+            val title = buildAnnotatedString {
+                appendInlineContent("kind", "")
+                append(" ")
+                append(info.title.orEmpty())
+            }
+            val inlineContent = mapOf(
+                "kind" to InlineTextContent(
+                    Placeholder(
+                        MaterialTheme.typography.labelMedium.fontSize,
+                        MaterialTheme.typography.labelMedium.fontSize,
+                        PlaceholderVerticalAlign.TextCenter,
+                    ),
+                ) {
+                    Icon(placeholderIcon, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                },
+            )
+            if (overflow != null) {
+                BrowseItemOverflowButton(
+                    actions = overflow,
+                    placement = BrowseOverflowPlacement.GridBottomEnd,
+                    modifier = Modifier.fillMaxWidth(),
+                    triggerContent = { trigger ->
+                        Text(
+                            text = title,
+                            inlineContent = inlineContent,
+                            style = MaterialTheme.typography.labelMedium,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                            textAlign = TextAlign.Start,
+                            modifier = trigger.fillMaxWidth(),
+                        )
+                    },
+                )
+            } else {
+                Text(
+                    text = title,
+                    inlineContent = inlineContent,
+                    style = MaterialTheme.typography.labelMedium,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    textAlign = TextAlign.Start,
+                    modifier = Modifier.fillMaxWidth(),
+                )
             }
         }
     }
@@ -761,6 +778,220 @@ fun HistoryDirectoryGridItem(
 
 @Composable
 fun LocalGalleryGridItem(
+    gallery: LocalGalleryEntity,
+    onClick: () -> Unit,
+    onLongClick: () -> Unit = onClick,
+    showPages: Boolean,
+    showProgress: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    if (Settings.gridCards.collectAsState().value) {
+        LocalGalleryGridItemCard(gallery, onClick, onLongClick, showPages, showProgress, modifier)
+        return
+    }
+    val nameHeight = GalleryGridDefaults.nameHeight()
+    val namePadH = GalleryGridDefaults.namePaddingH()
+    val captionGap = 6.dp
+    val gridDecodePx = GalleryGridDefaults.gridDecodePx()
+    CaptionBelowGridFrame(
+        onClick = onClick,
+        onLongClick = onLongClick,
+        modifier = modifier,
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .aspectRatio(1f)
+                .clip(captionBelowGridShape())
+                .background(MaterialTheme.colorScheme.surfaceContainerHigh),
+        ) {
+            val isArchive = gallery.kind == LOCAL_GALLERY_KIND_ARCHIVE
+            val isImageFile = gallery.kind == LOCAL_GALLERY_KIND_IMAGE_FILE
+            val isVideo = gallery.kind == LOCAL_GALLERY_KIND_VIDEO_FILE ||
+                gallery.kind == LOCAL_GALLERY_KIND_VIDEO_FOLDER
+            if (isVideo) {
+                BrowseVideoThumbnail(
+                    source = (gallery.coverPath ?: gallery.contentPath)
+                        .takeIf { it.isNotBlank() }
+                        ?.let { VideoThumbnailSource.Local(it) },
+                    modifier = Modifier.fillMaxSize(),
+                    iconSize = BrowseGridPlaceholderIconSize,
+                    decodeSizePx = gridDecodePx,
+                )
+            } else {
+                CoverImage(
+                    coverPath = gallery.coverPath,
+                    progressGid = gallery.id,
+                    sizePx = gridDecodePx,
+                    archiveContentPath = gallery.contentPath.takeIf { isArchive },
+                    placeholder = when {
+                        isArchive -> Icons.Default.Inventory2
+                        isImageFile -> Icons.AutoMirrored.Filled.InsertDriveFile
+                        else -> Icons.Default.Folder
+                    },
+                    placeholderSize = BrowseGridPlaceholderIconSize,
+                    modifier = Modifier.fillMaxSize(),
+                )
+            }
+            if (showPages && gallery.pageCount > 0) {
+                Badge(
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .widthIn(min = 32.dp)
+                        .height(24.dp),
+                ) {
+                    val readProgress = if (showProgress) {
+                        remember(gallery.id) { EhDB.getReadProgressFlow(gallery.id) }.collectAsState(0).value
+                    } else {
+                        0
+                    }
+                    Text(
+                        text = if (readProgress > 0) {
+                            "${readProgress + 1}/${gallery.pageCount}"
+                        } else {
+                            "${gallery.pageCount}"
+                        },
+                    )
+                }
+            }
+        }
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(nameHeight + captionGap)
+                .padding(top = captionGap)
+                .padding(horizontal = namePadH),
+        ) {
+            Text(
+                text = gallery.title.safFolderLabel(),
+                style = MaterialTheme.typography.labelMedium,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.align(Alignment.TopCenter).fillMaxWidth(),
+            )
+        }
+    }
+}
+
+@Composable
+private fun HistoryGridItemCard(
+    info: GalleryInfo,
+    onClick: () -> Unit,
+    onLongClick: () -> Unit = onClick,
+    showPages: Boolean,
+    showProgress: Boolean,
+    modifier: Modifier = Modifier,
+    overflow: BrowseOverflowActions? = null,
+) {
+    val kind = LocalHistory.kindLabelKey(info)
+    val placeholderIcon: ImageVector = when (kind) {
+        LocalHistory.KindLabel.Archive -> Icons.Default.Inventory2
+        LocalHistory.KindLabel.Smb -> Icons.Default.Lan
+        LocalHistory.KindLabel.WebDav -> Icons.Default.Cloud
+        LocalHistory.KindLabel.Library, LocalHistory.KindLabel.File ->
+            Icons.AutoMirrored.Filled.InsertDriveFile
+        LocalHistory.KindLabel.Video -> Icons.Default.Movie
+        else -> Icons.Default.Folder
+    }
+    val nameHeight = GalleryGridDefaults.nameHeight()
+    val namePadH = GalleryGridDefaults.namePaddingH()
+    val namePadBottom = GalleryGridDefaults.namePaddingBottom()
+    val gridDecodePx = GalleryGridDefaults.gridDecodePx()
+    val coverKey = remember(info.gid, info.thumbKey, info.token, info.uploader) {
+        historyCoverKey(info)
+    }
+    ElevatedCard(
+        modifier = modifier.fillMaxWidth(),
+        onClick = onClick,
+        onLongClick = onLongClick,
+        colors = GalleryGridDefaults.cardColors(),
+    ) {
+        Column(Modifier.fillMaxWidth()) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .aspectRatio(1f)
+                    .clip(ShapeDefaults.Medium),
+            ) {
+                CoverImage(
+                    coverPath = coverKey,
+                    progressGid = info.gid,
+                    sizePx = gridDecodePx,
+                    placeholder = placeholderIcon,
+                    placeholderSize = BrowseGridPlaceholderIconSize,
+                    modifier = Modifier.fillMaxSize(),
+                )
+                if (showPages && LocalHistory.showsPageProgress(info)) {
+                    Badge(
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .widthIn(min = 32.dp)
+                            .height(24.dp),
+                    ) {
+                        val readProgress = if (showProgress) {
+                            remember(info.gid) { EhDB.getReadProgressFlow(info.gid) }.collectAsState(0).value
+                        } else {
+                            0
+                        }
+                        Text(
+                            text = if (readProgress > 0) {
+                                "${readProgress + 1}/${info.pages}"
+                            } else {
+                                "${info.pages}"
+                            },
+                        )
+                    }
+                }
+            }
+            // Fixed name band (same as before): caption sits on the bottom.
+            // Icon is CenterVertically with the text only — not the whole name box.
+            val labelIconSize = with(LocalDensity.current) {
+                MaterialTheme.typography.labelMedium.fontSize.toDp()
+            }
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(nameHeight)
+                    .padding(horizontal = namePadH),
+                contentAlignment = Alignment.BottomStart,
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = namePadBottom),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(
+                        imageVector = placeholderIcon,
+                        contentDescription = null,
+                        modifier = Modifier
+                            .padding(end = 4.dp)
+                            .size(labelIconSize),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Text(
+                        text = info.title.orEmpty(),
+                        style = MaterialTheme.typography.labelMedium,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                        textAlign = TextAlign.Start,
+                        modifier = Modifier.weight(1f),
+                    )
+                    overflow?.let { actions ->
+                        BrowseItemOverflowButton(
+                            actions = actions,
+                            placement = BrowseOverflowPlacement.GridBottomEnd,
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun LocalGalleryGridItemCard(
     gallery: LocalGalleryEntity,
     onClick: () -> Unit,
     onLongClick: () -> Unit = onClick,

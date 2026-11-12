@@ -540,17 +540,17 @@ fun LibraryViewModeMenu(modifier: Modifier = Modifier) {
                 checked = showGalleryPages,
                 onClick = { showGalleryPages = !showGalleryPages },
             )
+            LibraryMenuToggleItem(
+                label = stringResource(R.string.browse_menu_reading_progress),
+                checked = showReadingProgress,
+                onClick = { showReadingProgress = !showReadingProgress },
+            )
             DropdownMenuItem(
                 text = { Text(stringResource(R.string.theme_selector)) },
                 onClick = {
                     expanded = false
                     ThemeSelectorRequest.open = true
                 },
-            )
-            LibraryMenuToggleItem(
-                label = stringResource(R.string.browse_menu_reading_progress),
-                checked = showReadingProgress,
-                onClick = { showReadingProgress = !showReadingProgress },
             )
             LibraryMenuToggleItem(
                 label = stringResource(R.string.settings_library_live_update),
