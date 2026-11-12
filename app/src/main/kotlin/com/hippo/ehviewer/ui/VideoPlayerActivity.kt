@@ -37,7 +37,6 @@ import androidx.media3.common.Player
 import androidx.media3.common.VideoSize
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DefaultDataSource
-import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import com.ehviewer.core.util.logcat
@@ -48,6 +47,7 @@ import com.hippo.ehviewer.provider.StreamDocumentProvider
 import com.hippo.ehviewer.provider.StreamDocumentRegistry
 import com.hippo.ehviewer.ui.player.InternalVideoPlaylistRegistry
 import com.hippo.ehviewer.ui.player.InternalVideoSource
+import com.hippo.ehviewer.ui.player.Media3AudioRenderersFactory
 import com.hippo.ehviewer.ui.player.PreparedInternalVideo
 import com.hippo.ehviewer.ui.player.SeekPlayerView
 import com.hippo.ehviewer.ui.player.StreamDocDataSource
@@ -391,8 +391,7 @@ class VideoPlayerActivity : AppCompatActivity() {
         playerView?.player = null
         runCatching { previous?.release() }
 
-        val renderersFactory = DefaultRenderersFactory(this)
-            .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON)
+        val renderersFactory = Media3AudioRenderersFactory(this, Settings.media3AudioDownmixing.value)
         val builder = ExoPlayer.Builder(this, renderersFactory)
             .setAudioAttributes(
                 AudioAttributes.Builder()

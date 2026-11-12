@@ -1036,6 +1036,14 @@ object Settings : DataStorePreferences(null) {
      */
     val media3PlaybackResume = intPref("media3_playback_resume", MEDIA3_RESUME_AUTO)
 
+    const val MEDIA3_AUDIO_OFF = 0
+    const val MEDIA3_AUDIO_DEVICE = 1
+    const val MEDIA3_AUDIO_STEREO = 2
+    const val MEDIA3_AUDIO_PASSTHROUGH = 3
+
+    /** In-app video audio output: original, device layout, stereo, or encoded passthrough. */
+    val media3AudioDownmixing = intPref("media3_audio_downmixing", MEDIA3_AUDIO_DEVICE)
+
     /**
      * Coil decode size vs shorter screen edge:
      * 0=1.5x, 1=2x, 2=2.5x, 3=3x, 4=original

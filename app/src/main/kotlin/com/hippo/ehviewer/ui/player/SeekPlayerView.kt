@@ -8,12 +8,18 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.ViewConfiguration
 import android.view.ViewGroup
+import android.widget.PopupMenu
 import android.widget.PopupWindow
 import androidx.media3.common.C
+import androidx.media3.common.Format
+import androidx.media3.common.MimeTypes
 import androidx.media3.common.Player
+import androidx.media3.common.TrackSelectionOverride
 import androidx.media3.common.Tracks
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.ui.DefaultTrackNameProvider
 import androidx.media3.ui.PlayerView
+import com.ehviewer.core.i18n.R as I18nR
 import com.hippo.ehviewer.R
 import kotlin.math.abs
 
@@ -129,6 +135,7 @@ class SeekPlayerView @JvmOverloads constructor(
     /** No audio track, or only one, has nothing to pick. Leave the button visible and grey. */
     private fun updateAudioTrackButton() {
         val button = findViewById<View>(androidx.media3.ui.R.id.exo_audio_track) ?: return
+        button.setOnClickListener { showAudioTrackMenu(button) }
         val tracks = player?.currentTracks
         var count = 0
         if (tracks != null) {
@@ -143,6 +150,58 @@ class SeekPlayerView @JvmOverloads constructor(
         button.visibility = VISIBLE
         button.isEnabled = enabled
         button.alpha = if (enabled) 1f else 0.35f
+    }
+
+    private fun showAudioTrackMenu(anchor: View) {
+        val current = player ?: return
+        val popup = PopupMenu(context, anchor)
+        val nameProvider = DefaultTrackNameProvider(resources)
+        val overrides = current.trackSelectionParameters.overrides
+        val auto = popup.menu.add(context.getString(I18nR.string.video_audio_auto))
+        auto.isCheckable = true
+        auto.isChecked = current.currentTracks.groups.none {
+            it.type == C.TRACK_TYPE_AUDIO && overrides.containsKey(it.mediaTrackGroup)
+        }
+        auto.setOnMenuItemClickListener {
+            current.trackSelectionParameters = current.trackSelectionParameters.buildUpon()
+                .clearOverridesOfType(C.TRACK_TYPE_AUDIO).build()
+            true
+        }
+        for (group in current.currentTracks.groups) {
+            if (group.type != C.TRACK_TYPE_AUDIO) continue
+            for (index in 0 until group.length) {
+                if (!group.isTrackSupported(index)) continue
+                val format = group.getTrackFormat(index)
+                val codec = audioCodecLabel(format)
+                val title = nameProvider.getTrackName(format) + (codec?.let { " ($it)" } ?: "")
+                val item = popup.menu.add(title)
+                item.isCheckable = true
+                item.isChecked = group.isTrackSelected(index)
+                item.setOnMenuItemClickListener {
+                    current.trackSelectionParameters = current.trackSelectionParameters.buildUpon()
+                        .setOverrideForType(TrackSelectionOverride(group.mediaTrackGroup, index))
+                        .build()
+                    true
+                }
+            }
+        }
+        popup.show()
+    }
+
+    private fun audioCodecLabel(format: Format): String? = when (format.sampleMimeType) {
+        MimeTypes.AUDIO_DTS_HD -> "DTS-HD"
+        MimeTypes.AUDIO_DTS_X -> "DTS:X"
+        MimeTypes.AUDIO_DTS_UHD_P2 -> "DTS-UHD"
+        MimeTypes.AUDIO_DTS, MimeTypes.AUDIO_DTS_EXPRESS -> "DTS"
+        MimeTypes.AUDIO_E_AC3_JOC -> "Dolby Atmos"
+        MimeTypes.AUDIO_E_AC3 -> "E-AC-3"
+        MimeTypes.AUDIO_AC3 -> "AC-3"
+        MimeTypes.AUDIO_TRUEHD -> "TrueHD"
+        MimeTypes.AUDIO_FLAC -> "FLAC"
+        MimeTypes.AUDIO_OPUS -> "Opus"
+        MimeTypes.AUDIO_AAC -> "AAC"
+        else -> format.codecs?.takeIf { it.isNotBlank() }
+            ?: format.sampleMimeType?.substringAfter('/')?.takeIf { it.isNotBlank() }
     }
 
     override fun showController() {

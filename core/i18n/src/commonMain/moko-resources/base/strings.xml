@@ -125,6 +125,12 @@
     <string name="settings_media3_playback_resume_auto">Auto (longer than 3 minutes)</string>
     <string name="settings_media3_playback_resume_on">On</string>
     <string name="settings_media3_playback_resume_off">Off</string>
+    <string name="settings_media3_audio_downmixing">Media3 audio downmixing</string>
+    <string name="settings_media3_audio_off">Off (original layout)</string>
+    <string name="settings_media3_audio_device">Device output layout</string>
+    <string name="settings_media3_audio_stereo">Stereo</string>
+    <string name="settings_media3_audio_passthrough">Passthrough</string>
+    <string name="video_audio_auto">Auto</string>
     <string name="settings_pdf_reader">PDF reader</string>
     <string name="settings_pdf_reader_summary">%s is the current default reader.</string>
     <string name="settings_pdf_reader_mode_auto">Auto</string>

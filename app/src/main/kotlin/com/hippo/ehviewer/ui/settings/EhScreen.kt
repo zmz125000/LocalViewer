@@ -304,6 +304,16 @@ fun AnimatedVisibilityScope.EhScreen(navigator: DestinationsNavigator) = Screen(
                     )
                 }
             }
+            val audioDownmixing = Settings.media3AudioDownmixing.asMutableState()
+            val audioEntries = stringArrayResource(id = com.hippo.ehviewer.R.array.media3_audio_downmixing_entries)
+            val audioIndex = audioDownmixing.value.coerceIn(0, audioEntries.lastIndex)
+            SimpleMenuPreferenceInt(
+                title = stringResource(id = R.string.settings_media3_audio_downmixing),
+                summary = audioEntries[audioIndex],
+                entry = com.hippo.ehviewer.R.array.media3_audio_downmixing_entries,
+                entryValueRes = com.hippo.ehviewer.R.array.media3_audio_downmixing_values,
+                state = audioDownmixing,
+            )
             SwitchPreference(
                 title = stringResource(id = R.string.settings_video_scroll_to_next),
                 state = Settings.videoScrollToNext.asMutableState(),
