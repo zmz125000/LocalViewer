@@ -67,6 +67,10 @@ fun ThemeSelectorDialog() {
                     title = stringResource(R.string.colorful_dark_theme),
                     state = colorfulDark,
                 )
+                SwitchPreference(
+                    title = stringResource(R.string.grid_cards),
+                    state = Settings.gridCards.asMutableState(),
+                )
                 SimpleMenuPreferenceInt(
                     title = stringResource(R.string.color_theme),
                     entry = com.hippo.ehviewer.R.array.color_theme_entries,

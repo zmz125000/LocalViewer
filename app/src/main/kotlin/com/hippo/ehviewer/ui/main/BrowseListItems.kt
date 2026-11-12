@@ -1,5 +1,9 @@
 package com.hippo.ehviewer.ui.main
 
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
@@ -14,11 +18,13 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.InlineTextContent
 import androidx.compose.foundation.text.appendInlineContent
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.InsertDriveFile
 import androidx.compose.material.icons.filled.Android
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.PhotoLibrary
@@ -385,12 +391,14 @@ private fun GalleryPagesBadge(
 ) {
     if (pageCount <= 0 && !pageCountCapped) return
     val readProgress = rememberGalleryReadProgress(if (pageCountCapped) 0L else progressGid)
-    Badge(
-        modifier = modifier
-            .widthIn(min = 32.dp)
-            .height(24.dp),
-    ) {
-        Text(text = galleryPageBadgeText(pageCount, readProgress, pageCountCapped))
+    val text = galleryPageBadgeText(pageCount, readProgress, pageCountCapped)
+    val cards by Settings.gridCards.collectAsState()
+    if (cards) {
+        Badge(modifier = modifier.widthIn(min = 32.dp).height(24.dp)) {
+            Text(text = text)
+        }
+    } else {
+        CaptionBelowPageBadge(text, modifier)
     }
 }
 
@@ -1454,57 +1462,91 @@ private fun BrowseGridCell(
     overflow: BrowseOverflowActions? = null,
     highlighted: Boolean = false,
 ) {
+    if (Settings.gridCards.collectAsState().value) {
+        BrowseGridCellCard(name, onClick, thumb, modifier, onLongClick, overflow, highlighted)
+        return
+    }
     val longClick = onLongClick ?: onClick
     val tap = folderSelectTap(overflow)
     // Same caption metrics as Library grid (GalleryGridDefaults).
-    val nameHeight = GalleryGridDefaults.nameHeight()
     val namePadH = GalleryGridDefaults.namePaddingH()
-    val namePadBottom = GalleryGridDefaults.namePaddingBottom()
-    ElevatedCard(
-        modifier = modifier.fillMaxWidth(),
+    val captionGap = 6.dp
+    val nameHeight = captionBelowNameHeight()
+    CaptionBelowGridFrame(
         onClick = tap?.toggle ?: onClick,
         onLongClick = tap?.toggle ?: longClick,
-        colors = if (tap?.selected ?: highlighted) folderSelectedCardColors() else GalleryGridDefaults.cardColors(),
+        modifier = modifier,
     ) {
-        Column(Modifier.fillMaxWidth()) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .aspectRatio(1f)
-                    .clip(ShapeDefaults.Medium),
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .aspectRatio(1f)
+                .clip(captionBelowGridShape())
+                .background(
+                    if (highlighted) {
+                        MaterialTheme.colorScheme.secondaryContainer
+                    } else {
+                        MaterialTheme.colorScheme.surfaceContainerHigh
+                    },
+                ),
+        ) {
+            thumb()
+            androidx.compose.animation.AnimatedVisibility(
+                visible = tap?.selected == true,
+                modifier = Modifier.align(Alignment.TopStart).padding(4.dp),
+                enter = fadeIn() + scaleIn(),
+                exit = fadeOut() + scaleOut(),
             ) {
-                thumb()
-            }
-            // Fixed height so 1-line and 2-line names share the same cell size;
-            // text sits on the bottom of the band; overflow sits in the label on the right.
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(nameHeight)
-                    .padding(horizontal = namePadH),
-                contentAlignment = Alignment.BottomStart,
-            ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(bottom = namePadBottom),
-                    verticalAlignment = Alignment.CenterVertically,
+                Box(
+                    modifier = Modifier.size(24.dp).background(MaterialTheme.colorScheme.primary, CircleShape),
+                    contentAlignment = Alignment.Center,
                 ) {
-                    Text(
-                        text = name,
-                        style = MaterialTheme.typography.labelMedium,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis,
-                        textAlign = TextAlign.Start,
-                        modifier = Modifier.weight(1f),
+                    Icon(
+                        Icons.Default.Check,
+                        contentDescription = null,
+                        modifier = Modifier.size(16.dp),
+                        tint = MaterialTheme.colorScheme.onPrimary,
                     )
-                    overflow?.let { actions ->
-                        BrowseItemOverflowButton(
-                            actions = actions,
-                            placement = BrowseOverflowPlacement.GridBottomEnd,
-                        )
-                    }
                 }
+            }
+        }
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(nameHeight + captionGap)
+                .padding(top = captionGap)
+                .padding(horizontal = namePadH),
+        ) {
+            if (overflow != null && tap == null) {
+                BrowseItemOverflowButton(
+                    actions = overflow,
+                    placement = BrowseOverflowPlacement.GridBottomEnd,
+                    modifier = Modifier.fillMaxWidth(),
+                    triggerLongClick = if (overflow.selectKey != null) {
+                        { FolderSelectHost.current?.enter(overflow.toPick()) }
+                    } else {
+                        null
+                    },
+                    triggerContent = { trigger ->
+                        Text(
+                            text = name,
+                            style = MaterialTheme.typography.labelMedium,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                            textAlign = TextAlign.Center,
+                            modifier = trigger.fillMaxWidth(),
+                        )
+                    },
+                )
+            } else {
+                Text(
+                    text = name,
+                    style = MaterialTheme.typography.labelMedium,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.fillMaxWidth(),
+                )
             }
         }
     }
@@ -2124,6 +2166,7 @@ fun BrowseSectionHeader(
     onClick: (() -> Unit)? = null,
     onLongClick: (() -> Unit)? = null,
     section: BrowseFolderSection? = null,
+    compactTop: Boolean = false,
     color: Color = MaterialTheme.colorScheme.primary,
 ) {
     val haptic = LocalHapticFeedback.current
@@ -2167,7 +2210,8 @@ fun BrowseSectionHeader(
                     Modifier
                 },
             )
-            .padding(horizontal = 16.dp, vertical = 8.dp),
+            .padding(horizontal = 16.dp)
+            .padding(top = if (compactTop) 0.dp else 8.dp, bottom = 8.dp),
     )
 }
 
@@ -2345,5 +2389,71 @@ fun rememberBrowseSectionCollapse(
 fun BrowseEmptyHint(text: String, modifier: Modifier = Modifier) {
     Column(modifier = modifier.padding(24.dp)) {
         Text(text = text, style = MaterialTheme.typography.bodyLarge)
+    }
+}
+
+@Composable
+private fun BrowseGridCellCard(
+    name: String,
+    onClick: () -> Unit,
+    thumb: @Composable () -> Unit,
+    modifier: Modifier = Modifier,
+    onLongClick: (() -> Unit)? = null,
+    overflow: BrowseOverflowActions? = null,
+    highlighted: Boolean = false,
+) {
+    val longClick = onLongClick ?: onClick
+    val tap = folderSelectTap(overflow)
+    // Same caption metrics as Library grid (GalleryGridDefaults).
+    val nameHeight = GalleryGridDefaults.nameHeight()
+    val namePadH = GalleryGridDefaults.namePaddingH()
+    val namePadBottom = GalleryGridDefaults.namePaddingBottom()
+    ElevatedCard(
+        modifier = modifier.fillMaxWidth(),
+        onClick = tap?.toggle ?: onClick,
+        onLongClick = tap?.toggle ?: longClick,
+        colors = if (tap?.selected ?: highlighted) folderSelectedCardColors() else GalleryGridDefaults.cardColors(),
+    ) {
+        Column(Modifier.fillMaxWidth()) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .aspectRatio(1f)
+                    .clip(ShapeDefaults.Medium),
+            ) {
+                thumb()
+            }
+            // Fixed height so 1-line and 2-line names share the same cell size;
+            // text sits on the bottom of the band; overflow sits in the label on the right.
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(nameHeight)
+                    .padding(horizontal = namePadH),
+                contentAlignment = Alignment.BottomStart,
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = namePadBottom),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = name,
+                        style = MaterialTheme.typography.labelMedium,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                        textAlign = TextAlign.Start,
+                        modifier = Modifier.weight(1f),
+                    )
+                    overflow?.let { actions ->
+                        BrowseItemOverflowButton(
+                            actions = actions,
+                            placement = BrowseOverflowPlacement.GridBottomEnd,
+                        )
+                    }
+                }
+            }
+        }
     }
 }

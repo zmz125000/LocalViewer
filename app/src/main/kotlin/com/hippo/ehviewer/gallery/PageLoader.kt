@@ -367,7 +367,7 @@ abstract class PageLoader(
         thumbSoftwareBitmapBeforeHardware(index, raw, direct.bitmap)
         // Native decoding can be selected for precision/codec support even when
         // the preference is off. Its SDR base still needs the OEM/Apple map.
-        return Image.fromLibDirect(direct, raw, attachHeifGainMap = hevcHdr || (deepHeif && precision?.avif == false)).also {
+        return Image.fromLibDirect(direct, raw, attachHeifGainMap = hevcHdr || (deepHeif && precision.avif == false)).also {
             it.noteHiResPreview(Image.hiResPreviewCapEdge(forceOriginal) > 0)
         }
     }

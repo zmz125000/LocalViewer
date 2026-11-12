@@ -801,6 +801,7 @@
     <string name="colorful_dark_theme">多彩主題</string>
     <string name="color_theme_dark">主題（深色）</string>
     <string name="theme_selector">主題選擇器</string>
+    <string name="grid_cards">網格卡片</string>
     <string name="color_theme_follow_theme">跟隨主題</string>
     <string name="black_dark_theme">純黑深色主題</string>
     <string name="harmonize_category_color">以動態顏色為分類顏色配色</string>
