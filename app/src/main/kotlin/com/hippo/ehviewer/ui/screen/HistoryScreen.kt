@@ -149,7 +149,12 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
     var allDirectoryItems by remember { mutableStateOf(immediateHistory?.directories ?: emptyList()) }
     var allFileItems by remember { mutableStateOf(immediateHistory?.files ?: emptyList()) }
     var historyItems by remember { mutableStateOf(immediateHistory?.shownFiles ?: emptyList()) }
-    var preparingHistory by remember { mutableStateOf(immediateHistory == null && historySource.isNotEmpty()) }
+    var preparingHistory by remember {
+        mutableStateOf(
+            immediateHistory == null &&
+                (historySource.isNotEmpty() || (!historyLoaded && !HistoryListMemory.loaded)),
+        )
+    }
     LaunchedEffect(historySource, historyKey) {
         if (historySource.isEmpty() && !historyLoaded && !HistoryListMemory.loaded) return@LaunchedEffect
         val ready = HistoryListMemory.peek(historySource, historyKey)
@@ -499,7 +504,7 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
             }
         }
 
-        if (!preparingHistory && directoryItems.isEmpty() && historyItems.isEmpty() && allFileItems.isEmpty()) {
+        if (!preparingHistory && directoryItems.isEmpty() && historyItems.isEmpty()) {
             Column(
                 modifier = Modifier.padding(paddingValues).padding(horizontal = marginH).fillMaxSize(),
                 verticalArrangement = Arrangement.Center,

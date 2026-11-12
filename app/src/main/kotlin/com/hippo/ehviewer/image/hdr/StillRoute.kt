@@ -90,7 +90,7 @@ val StillRoute.isGainMap: Boolean
 /**
  * Extensions that are **not** platform ImageDecoder stills (need lib convert).
  */
-val LIB_STILL_EXTENSIONS = setOf("jxr", "wdp", "hdp", "jxl", "jp2", "j2k", "j2c", "jpc", "jpx")
+val LIB_STILL_EXTENSIONS = setOf("jxr", "wdp", "hdp", "jxl", "ajxl", "jp2", "j2k", "j2c", "jpc", "jpx")
 
 /** DSLR / camera RAW. Not generic TIFF. */
 val RAW_STILL_EXTENSIONS = setOf(
@@ -175,7 +175,7 @@ fun exportImageExtension(originalExt: String?, decodedFileName: String? = null):
 fun classifyByExtension(fileName: String): StillRoute {
     val ext = FileUtils.getExtensionFromFilename(fileName)?.lowercase()
     return when {
-        ext == "jxl" -> StillRoute.Lib(LibCodec.Jxl)
+        ext == "jxl" || ext == "ajxl" -> StillRoute.Lib(LibCodec.Jxl)
         isJpeg2000Extension(ext) -> StillRoute.Lib(LibCodec.Jpeg2000)
         isRawStillExtension(ext) -> StillRoute.Lib(LibCodec.Raw)
         isLibStillExtension(ext) -> StillRoute.Lib(LibCodec.Jxr)
@@ -274,7 +274,7 @@ fun classify(bytes: ByteArray, length: Int = bytes.size, fileNameHint: String? =
     }
 
     // JPEG XL — platform cannot open; always Ultra HDR convert path.
-    if (isJpegXlMagic(bytes, n) || ext == "jxl") {
+    if (isJpegXlMagic(bytes, n) || ext == "jxl" || ext == "ajxl") {
         return StillRoute.Lib(LibCodec.Jxl)
     }
 

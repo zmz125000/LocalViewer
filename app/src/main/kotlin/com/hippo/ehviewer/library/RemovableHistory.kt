@@ -12,7 +12,9 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.emitAll
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.shareIn
@@ -55,15 +57,27 @@ object RemovableHistory {
         val roots = LocalLibrary.rootsFlow()
             .map { rows -> rows.associate { it.id to it.treeUri } }
             .distinctUntilChanged()
-        val paths = LocalLibrary.galleryStoragePathsFlow()
-            .map { rows -> rows.associate { it.id to it.contentPath } }
-            .distinctUntilChanged()
         val indexes = flow {
             // Bounded to current history rows and released when the shared upstream stops.
             val indexer = HistoryStorageIndexer()
             emitAll(
-                combine(EhDB.historyListFlow, roots, paths) { rows, rootUris, libraryPaths ->
-                    indexer.build(rows, rootUris, libraryPaths)
+                EhDB.historyListFlow.flatMapLatest { rows ->
+                    val ids = rows.asSequence()
+                        .filter { it.token == LOCAL_GALLERY_TOKEN }
+                        .map { it.gid }
+                        .distinct()
+                        .toList()
+                    val paths = if (ids.isEmpty()) {
+                        flowOf(emptyMap())
+                    } else {
+                        val chunks = ids.chunked(500).map(LocalLibrary::galleryStoragePathsForIdsFlow)
+                        combine(chunks) { results ->
+                            results.flatMap { it }.associate { it.id to it.contentPath }
+                        }
+                    }
+                    combine(roots, paths) { rootUris, libraryPaths ->
+                        indexer.build(rows, rootUris, libraryPaths)
+                    }
                 },
             )
         }
@@ -113,7 +127,7 @@ internal class HistoryStorageIndexer(
     private var previous = emptyMap<Long, Entry>()
 
     fun <T : GalleryInfo> build(rows: List<T>, roots: Map<Long, String>, paths: Map<Long, String>): HistoryStorageIndex<T> {
-        if (roots !== rootsRef || paths !== pathsRef) previous = emptyMap()
+        if (roots != rootsRef || paths != pathsRef) previous = emptyMap()
         rootsRef = roots
         pathsRef = paths
         val next = HashMap<Long, Entry>(rows.size)

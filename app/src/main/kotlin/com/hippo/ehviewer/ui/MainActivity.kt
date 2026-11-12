@@ -172,6 +172,7 @@ import com.hippo.ehviewer.ui.screen.toggleHistorySection
 import com.hippo.ehviewer.ui.screen.toggleLibraryFlattenMode
 import com.hippo.ehviewer.ui.screen.toggleLibrarySection
 import com.hippo.ehviewer.ui.settings.showNewVersion
+import com.hippo.ehviewer.ui.theme.ThemeSelectorDialog
 import com.hippo.ehviewer.ui.theme.snackbarActionContentColor
 import com.hippo.ehviewer.ui.theme.snackbarContainerColor
 import com.hippo.ehviewer.ui.theme.snackbarDismissContentColor
@@ -945,6 +946,7 @@ class MainActivity : AppCompatActivity() {
                         }
                     }
                 }
+                ThemeSelectorDialog()
             }
         }
 

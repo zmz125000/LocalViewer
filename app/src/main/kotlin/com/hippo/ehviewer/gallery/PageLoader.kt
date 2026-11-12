@@ -14,6 +14,7 @@ import com.ehviewer.core.model.GalleryInfo
 import com.ehviewer.core.util.logcat
 import com.hippo.ehviewer.EhDB
 import com.hippo.ehviewer.Settings
+import com.hippo.ehviewer.coil.hasJxlAnimation
 import com.hippo.ehviewer.image.ByteBufferSource
 import com.hippo.ehviewer.image.HI_RES_PREVIEW_EDGE
 import com.hippo.ehviewer.image.HiResTier
@@ -37,6 +38,7 @@ import com.hippo.ehviewer.image.hdr.exportImageExtension
 import com.hippo.ehviewer.image.hdr.isRawStillExtension
 import com.hippo.ehviewer.image.hdr.needsGeneratedPageThumb
 import com.hippo.ehviewer.image.hdr.needsLibDecode
+import com.hippo.ehviewer.image.hdr.withStillInput
 import com.hippo.ehviewer.image.readMetadata
 import com.hippo.ehviewer.library.ReaderPageThumb
 import com.hippo.ehviewer.util.FileUtils
@@ -335,6 +337,11 @@ abstract class PageLoader(
         val route = when (raw) {
             is PathSource -> classifyPath(raw.source, nameHint)
             is ByteBufferSource -> classify(raw.source, nameHint)
+        }
+        if (route == StillRoute.Lib(LibCodec.Jxl) &&
+            withStillInput(raw) { it.hasJxlAnimation() } == true
+        ) {
+            return null
         }
         // RAW is always a direct bitmap. Bypass-UHDR does not apply, and there is no gain map.
         val rawStill = (route is StillRoute.Lib && route.codec == LibCodec.Raw) ||

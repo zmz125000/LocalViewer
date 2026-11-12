@@ -410,9 +410,10 @@ private fun GalleryPagesBadge(
 fun BrowseListSupportingContent(
     text: String,
     typeIcon: ImageVector? = null,
+    maxLines: Int = Int.MAX_VALUE,
 ) {
     if (typeIcon == null) {
-        Text(text)
+        Text(text, maxLines = maxLines, overflow = TextOverflow.Ellipsis)
         return
     }
     val iconSize = with(LocalDensity.current) {
@@ -427,7 +428,7 @@ fun BrowseListSupportingContent(
                 .size(iconSize),
             tint = MaterialTheme.colorScheme.onSurfaceVariant,
         )
-        Text(text)
+        Text(text, maxLines = maxLines, overflow = TextOverflow.Ellipsis)
     }
 }
 
@@ -1513,7 +1514,7 @@ private fun BrowseGridCell(
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(nameHeight + captionGap)
+                .heightIn(min = nameHeight + captionGap)
                 .padding(top = captionGap)
                 .padding(horizontal = namePadH),
         ) {

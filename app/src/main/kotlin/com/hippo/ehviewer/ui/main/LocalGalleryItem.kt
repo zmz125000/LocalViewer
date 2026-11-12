@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
@@ -118,6 +119,24 @@ private fun directoryFolderDisplayCoverKey(
         return null
     }
     return coverKey
+}
+
+private fun historyRelativePath(path: String): String = "/${path.trim('/')}"
+
+private fun historyListPath(target: LocalHistoryTarget): String? = when (target) {
+    is LocalHistoryTarget.LocalArchive -> target.path
+    is LocalHistoryTarget.LocalFile -> target.path
+    is LocalHistoryTarget.LocalBrowseFolder -> historyRelativePath(target.relativePath)
+    is LocalHistoryTarget.LocalFolderGallery -> historyRelativePath(target.relativePath)
+    is LocalHistoryTarget.SmbBrowseFolder -> historyRelativePath(target.relativePath)
+    is LocalHistoryTarget.SmbFolderGallery -> historyRelativePath(target.remoteDir)
+    is LocalHistoryTarget.SmbStreamArchive -> historyRelativePath(target.remotePath)
+    is LocalHistoryTarget.SmbFile -> historyRelativePath(target.remotePath)
+    is LocalHistoryTarget.WebDavBrowseFolder -> historyRelativePath(target.relativePath)
+    is LocalHistoryTarget.WebDavFolderGallery -> historyRelativePath(target.remoteDir)
+    is LocalHistoryTarget.WebDavStreamArchive -> historyRelativePath(target.remotePath)
+    is LocalHistoryTarget.WebDavFile -> historyRelativePath(target.remotePath)
+    is LocalHistoryTarget.LibraryGallery, is LocalHistoryTarget.Orphan -> null
 }
 
 @Composable
@@ -344,12 +363,7 @@ fun HistoryListItem(
         LocalHistory.KindLabel.Video -> Icons.Default.Movie
         else -> Icons.Default.Folder
     }
-    val historyFileName = remember(info.uploader, info.title) {
-        val path = info.uploader.orEmpty()
-        path.substringAfterLast('/').substringAfterLast('\\').ifEmpty {
-            info.title.orEmpty()
-        }
-    }
+    val historyFileName = remember(info.uploader, info.title) { LocalHistory.fileNameOfHistory(info) }
     val typeLabel = when {
         LocalHistory.isBrowseDirectory(info) -> "Dir"
         kind == LocalHistory.KindLabel.Archive ||
@@ -362,13 +376,19 @@ fun HistoryListItem(
         else -> "File"
     }
     val pageCount = if (showPages && LocalHistory.showsPageProgress(info)) info.pages else 0
-    val savedPage = remember(info.gid) { EhDB.getReadProgressFlow(info.gid) }.collectAsState(0).value
+    // Always subscribe. Putting remember/collectAsState behind showProgress changes
+    // the slot table when the setting toggles.
+    val savedPage by remember(info.gid) { EhDB.getReadProgressFlow(info.gid) }.collectAsState(0)
     val readProgress = if (showProgress && pageCount > 0) savedPage else 0
-    val metaLine = browseListSupportingLine(
+    val path = remember(info.gid, info.token, info.uploader, info.thumbKey) {
+        historyListPath(LocalHistory.parse(info))
+    }
+    val metadata = browseListSupportingLine(
         typeLabel = typeLabel,
         pageCount = pageCount,
         readProgress = readProgress,
     )
+    val metaLine = path?.takeIf { it.isNotBlank() }?.let { "$metadata · $it" } ?: metadata
     val listDecodePx = CoverThumb.listDecodePx()
     val browseFolderThumbs by Settings.browseFolderThumbs.collectAsState()
     val videoFolderCover by Settings.videoFolderCover.collectAsState()
@@ -390,7 +410,7 @@ fun HistoryListItem(
         },
         supportingContent = {
             // Same type icon as [HistoryGridItem] caption row.
-            BrowseListSupportingContent(text = metaLine, typeIcon = placeholderIcon)
+            BrowseListSupportingContent(text = metaLine, typeIcon = placeholderIcon, maxLines = 1)
         },
         leadingContent = {
             if (directoryWithoutThumb) {
@@ -506,11 +526,8 @@ fun HistoryGridItem(
                 modifier = Modifier.fillMaxSize(),
             )
             if (showPages && LocalHistory.showsPageProgress(info)) {
-                val readProgress = if (showProgress) {
-                    remember(info.gid) { EhDB.getReadProgressFlow(info.gid) }.collectAsState(0).value
-                } else {
-                    0
-                }
+                val savedPage by remember(info.gid) { EhDB.getReadProgressFlow(info.gid) }.collectAsState(0)
+                val readProgress = if (showProgress) savedPage else 0
                 CaptionBelowPageBadge(
                     text = if (readProgress > 0) {
                         "${readProgress + 1}/${info.pages}"
@@ -524,7 +541,7 @@ fun HistoryGridItem(
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(nameHeight + captionGap)
+                .heightIn(min = nameHeight + captionGap)
                 .padding(top = captionGap)
                 .padding(horizontal = namePadH),
         ) {
@@ -627,11 +644,8 @@ fun HistorySquareGridItem(
                         .widthIn(min = 32.dp)
                         .height(24.dp),
                 ) {
-                    val readProgress = if (showProgress) {
-                        remember(info.gid) { EhDB.getReadProgressFlow(info.gid) }.collectAsState(0).value
-                    } else {
-                        0
-                    }
+                    val savedPage by remember(info.gid) { EhDB.getReadProgressFlow(info.gid) }.collectAsState(0)
+                    val readProgress = if (showProgress) savedPage else 0
                     Text(
                         text = if (readProgress > 0) {
                             "${readProgress + 1}/${info.pages}"
@@ -865,7 +879,7 @@ fun LocalGalleryGridItem(
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(nameHeight + captionGap)
+                .heightIn(min = nameHeight + captionGap)
                 .padding(top = captionGap)
                 .padding(horizontal = namePadH),
         ) {
@@ -936,11 +950,8 @@ private fun HistoryGridItemCard(
                             .widthIn(min = 32.dp)
                             .height(24.dp),
                     ) {
-                        val readProgress = if (showProgress) {
-                            remember(info.gid) { EhDB.getReadProgressFlow(info.gid) }.collectAsState(0).value
-                        } else {
-                            0
-                        }
+                        val savedPage by remember(info.gid) { EhDB.getReadProgressFlow(info.gid) }.collectAsState(0)
+                        val readProgress = if (showProgress) savedPage else 0
                         Text(
                             text = if (readProgress > 0) {
                                 "${readProgress + 1}/${info.pages}"

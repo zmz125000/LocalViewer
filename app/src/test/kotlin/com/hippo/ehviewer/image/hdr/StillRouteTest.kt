@@ -7,6 +7,12 @@ import org.junit.Test
 
 class StillRouteTest {
     @Test
+    fun animatedJxlAliasUsesJxlRoute() {
+        assertEquals(StillRoute.Lib(LibCodec.Jxl), classifyByExtension("page.ajxl"))
+        assertEquals(StillRoute.Lib(LibCodec.Jxl), classify(byteArrayOf(0xff.toByte(), 0x0a), fileNameHint = "page.ajxl"))
+    }
+
+    @Test
     fun allHeicCoversUseTheBoundedThumbnailPipeline() {
         for (ext in listOf("heic", "HEIF", ".heics", "heifs", "hif")) {
             assertTrue(needsGeneratedPageThumb(ext))

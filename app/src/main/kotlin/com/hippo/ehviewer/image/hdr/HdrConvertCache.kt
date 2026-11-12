@@ -8,6 +8,7 @@ import com.ehviewer.core.files.metadataOrNull
 import com.ehviewer.core.files.openFileDescriptor
 import com.ehviewer.core.files.toUri
 import com.hippo.ehviewer.Settings
+import com.hippo.ehviewer.coil.hasJxlAnimation
 import com.hippo.ehviewer.image.ImageSource
 import com.hippo.ehviewer.image.PathSource
 import com.hippo.ehviewer.image.byteBufferSource
@@ -392,7 +393,9 @@ object HdrConvertCache {
             return@withContext primaryPath
         }
         val route = classify(bytes, bytes.size, originalFileName)
-        if (!route.needsUhdr || (route is StillRoute.Lib && route.forceDirect)) {
+        if (!route.needsUhdr || (route is StillRoute.Lib && route.forceDirect) ||
+            (route == StillRoute.Lib(LibCodec.Jxl) && ByteBuffer.wrap(bytes).hasJxlAnimation())
+        ) {
             writeBytesAtomic(bytes, File(primaryPath.toString()))
             return@withContext primaryPath
         }
@@ -428,7 +431,9 @@ object HdrConvertCache {
             return@withContext primaryPath
         }
         val route = classify(tmp, fileNameHint = originalFileName)
-        if (!route.needsUhdr || (route is StillRoute.Lib && route.forceDirect)) {
+        if (!route.needsUhdr || (route is StillRoute.Lib && route.forceDirect) ||
+            (route == StillRoute.Lib(LibCodec.Jxl) && withStillInput(tmp.toOkioPath()) { it.hasJxlAnimation() } == true)
+        ) {
             commitTmp(tmp, File(primaryPath.toString()))
             return@withContext primaryPath
         }
