@@ -1,5 +1,9 @@
 package com.hippo.ehviewer.ui.main
 
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
@@ -14,11 +18,13 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.InlineTextContent
 import androidx.compose.foundation.text.appendInlineContent
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.InsertDriveFile
 import androidx.compose.material.icons.filled.Android
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.PhotoLibrary
@@ -385,12 +391,14 @@ private fun GalleryPagesBadge(
 ) {
     if (pageCount <= 0 && !pageCountCapped) return
     val readProgress = rememberGalleryReadProgress(if (pageCountCapped) 0L else progressGid)
-    Badge(
-        modifier = modifier
-            .widthIn(min = 32.dp)
-            .height(24.dp),
-    ) {
-        Text(text = galleryPageBadgeText(pageCount, readProgress, pageCountCapped))
+    val text = galleryPageBadgeText(pageCount, readProgress, pageCountCapped)
+    val cards by Settings.gridCards.collectAsState()
+    if (cards) {
+        Badge(modifier = modifier.widthIn(min = 32.dp).height(24.dp)) {
+            Text(text = text)
+        }
+    } else {
+        CaptionBelowPageBadge(text, modifier)
     }
 }
 
@@ -1461,9 +1469,9 @@ private fun BrowseGridCell(
     val longClick = onLongClick ?: onClick
     val tap = folderSelectTap(overflow)
     // Same caption metrics as Library grid (GalleryGridDefaults).
-    val nameHeight = GalleryGridDefaults.nameHeight()
     val namePadH = GalleryGridDefaults.namePaddingH()
     val captionGap = 6.dp
+    val nameHeight = captionBelowNameHeight()
     CaptionBelowGridFrame(
         onClick = tap?.toggle ?: onClick,
         onLongClick = tap?.toggle ?: longClick,
@@ -1475,7 +1483,7 @@ private fun BrowseGridCell(
                 .aspectRatio(1f)
                 .clip(captionBelowGridShape())
                 .background(
-                    if (tap?.selected ?: highlighted) {
+                    if (highlighted) {
                         MaterialTheme.colorScheme.secondaryContainer
                     } else {
                         MaterialTheme.colorScheme.surfaceContainerHigh
@@ -1483,6 +1491,24 @@ private fun BrowseGridCell(
                 ),
         ) {
             thumb()
+            androidx.compose.animation.AnimatedVisibility(
+                visible = tap?.selected == true,
+                modifier = Modifier.align(Alignment.TopStart).padding(4.dp),
+                enter = fadeIn() + scaleIn(),
+                exit = fadeOut() + scaleOut(),
+            ) {
+                Box(
+                    modifier = Modifier.size(24.dp).background(MaterialTheme.colorScheme.primary, CircleShape),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        Icons.Default.Check,
+                        contentDescription = null,
+                        modifier = Modifier.size(16.dp),
+                        tint = MaterialTheme.colorScheme.onPrimary,
+                    )
+                }
+            }
         }
         Box(
             modifier = Modifier

@@ -459,7 +459,7 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
                 modifier = Modifier.nestedScroll(searchBarConnection).fillMaxSize(),
                 state = gridState,
                 contentPadding = GalleryGridDefaults.contentPadding(paddingValues),
-                verticalArrangement = GalleryGridDefaults.verticalSpacing(),
+                verticalArrangement = gridSpacing,
                 horizontalArrangement = gridSpacing,
             ) {
                 if (directoryItems.isNotEmpty()) {

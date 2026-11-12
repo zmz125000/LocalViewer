@@ -459,9 +459,9 @@ fun HistoryGridItem(
         LocalHistory.KindLabel.Video -> Icons.Default.Movie
         else -> Icons.Default.Folder
     }
-    val nameHeight = GalleryGridDefaults.nameHeight()
     val namePadH = GalleryGridDefaults.namePaddingH()
     val captionGap = 6.dp
+    val nameHeight = captionBelowNameHeight()
     val gridDecodePx = GalleryGridDefaults.gridDecodePx()
     val coverKey = remember(info.gid, info.thumbKey, info.token, info.uploader) {
         historyCoverKey(info)
@@ -487,25 +487,19 @@ fun HistoryGridItem(
                 modifier = Modifier.fillMaxSize(),
             )
             if (showPages && LocalHistory.showsPageProgress(info)) {
-                Badge(
-                    modifier = Modifier
-                        .align(Alignment.TopEnd)
-                        .widthIn(min = 32.dp)
-                        .height(24.dp),
-                ) {
-                    val readProgress = if (showProgress) {
-                        remember(info.gid) { EhDB.getReadProgressFlow(info.gid) }.collectAsState(0).value
-                    } else {
-                        0
-                    }
-                    Text(
-                        text = if (readProgress > 0) {
-                            "${readProgress + 1}/${info.pages}"
-                        } else {
-                            "${info.pages}"
-                        },
-                    )
+                val readProgress = if (showProgress) {
+                    remember(info.gid) { EhDB.getReadProgressFlow(info.gid) }.collectAsState(0).value
+                } else {
+                    0
                 }
+                CaptionBelowPageBadge(
+                    text = if (readProgress > 0) {
+                        "${readProgress + 1}/${info.pages}"
+                    } else {
+                        "${info.pages}"
+                    },
+                    modifier = Modifier.align(Alignment.TopEnd),
+                )
             }
         }
         Box(
@@ -789,9 +783,9 @@ fun LocalGalleryGridItem(
         LocalGalleryGridItemCard(gallery, onClick, onLongClick, showPages, showProgress, modifier)
         return
     }
-    val nameHeight = GalleryGridDefaults.nameHeight()
     val namePadH = GalleryGridDefaults.namePaddingH()
     val captionGap = 6.dp
+    val nameHeight = captionBelowNameHeight()
     val gridDecodePx = GalleryGridDefaults.gridDecodePx()
     CaptionBelowGridFrame(
         onClick = onClick,
@@ -834,25 +828,19 @@ fun LocalGalleryGridItem(
                 )
             }
             if (showPages && gallery.pageCount > 0) {
-                Badge(
-                    modifier = Modifier
-                        .align(Alignment.TopEnd)
-                        .widthIn(min = 32.dp)
-                        .height(24.dp),
-                ) {
-                    val readProgress = if (showProgress) {
-                        remember(gallery.id) { EhDB.getReadProgressFlow(gallery.id) }.collectAsState(0).value
-                    } else {
-                        0
-                    }
-                    Text(
-                        text = if (readProgress > 0) {
-                            "${readProgress + 1}/${gallery.pageCount}"
-                        } else {
-                            "${gallery.pageCount}"
-                        },
-                    )
+                val readProgress = if (showProgress) {
+                    remember(gallery.id) { EhDB.getReadProgressFlow(gallery.id) }.collectAsState(0).value
+                } else {
+                    0
                 }
+                CaptionBelowPageBadge(
+                    text = if (readProgress > 0) {
+                        "${readProgress + 1}/${gallery.pageCount}"
+                    } else {
+                        "${gallery.pageCount}"
+                    },
+                    modifier = Modifier.align(Alignment.TopEnd),
+                )
             }
         }
         Box(
