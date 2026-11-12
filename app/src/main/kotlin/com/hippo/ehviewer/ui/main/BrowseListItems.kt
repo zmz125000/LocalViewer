@@ -2161,6 +2161,7 @@ fun BrowseSectionHeader(
     onClick: (() -> Unit)? = null,
     onLongClick: (() -> Unit)? = null,
     section: BrowseFolderSection? = null,
+    compactTop: Boolean = false,
     color: Color = MaterialTheme.colorScheme.primary,
 ) {
     val haptic = LocalHapticFeedback.current
@@ -2204,7 +2205,8 @@ fun BrowseSectionHeader(
                     Modifier
                 },
             )
-            .padding(horizontal = 16.dp, vertical = 8.dp),
+            .padding(horizontal = 16.dp)
+            .padding(top = if (compactTop) 0.dp else 8.dp, bottom = 8.dp),
     )
 }
 

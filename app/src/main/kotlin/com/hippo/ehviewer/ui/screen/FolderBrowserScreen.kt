@@ -3511,6 +3511,8 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                             BrowseSectionHeader(
                                 stringResource(R.string.browse_documents),
                                 section = BrowseFolderSection.Documents,
+                                compactTop = grid && !Settings.gridCards.collectAsState().value &&
+                                    galleries.isNotEmpty() && BrowseFolderSection.Galleries !in collapsedSections,
                                 onClick = { toggleSection(BrowseFolderSection.Documents) },
                             )
                         }
@@ -3798,6 +3800,10 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                     BrowseSectionHeader(
                                         stringResource(R.string.browse_videos),
                                         section = BrowseFolderSection.Videos,
+                                        compactTop = !Settings.gridCards.collectAsState().value && (
+                                            (documents.isNotEmpty() && BrowseFolderSection.Documents !in collapsedSections) ||
+                                                (galleries.isNotEmpty() && BrowseFolderSection.Galleries !in collapsedSections)
+                                            ),
                                         onClick = { toggleSection(BrowseFolderSection.Videos) },
                                     )
                                 }
@@ -3830,6 +3836,11 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                     BrowseSectionHeader(
                                         stringResource(R.string.browse_files),
                                         section = BrowseFolderSection.Files,
+                                        compactTop = !Settings.gridCards.collectAsState().value && (
+                                            (videos.isNotEmpty() && BrowseFolderSection.Videos !in collapsedSections) ||
+                                                (documents.isNotEmpty() && BrowseFolderSection.Documents !in collapsedSections) ||
+                                                (galleries.isNotEmpty() && BrowseFolderSection.Galleries !in collapsedSections)
+                                            ),
                                         onClick = { toggleSection(BrowseFolderSection.Files) },
                                     )
                                 }
