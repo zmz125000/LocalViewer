@@ -52,6 +52,7 @@ data class PreparedInternalVideo(
     val displayName: String,
     val mimeType: String,
     val network: Boolean,
+    val subtitleTokens: List<String> = emptyList(),
 )
 
 object InternalVideoPlaylistRegistry {

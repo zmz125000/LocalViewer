@@ -15,6 +15,7 @@ object SidecarSubtitles {
         "ass",
         "ssa",
         "vtt",
+        "ttml",
         "sub",
         "smi",
         "sami",
@@ -44,6 +45,7 @@ object SidecarSubtitles {
             "srt" -> "application/x-subrip"
             "ass", "ssa" -> "text/x-ssa"
             "vtt" -> "text/vtt"
+            "ttml" -> "application/ttml+xml"
             "smi", "sami" -> "application/smil+xml"
             "sub" -> "text/x-microdvd"
             "txt" -> "text/plain"
@@ -57,11 +59,7 @@ object SidecarSubtitles {
      */
     fun isSidecarFor(videoName: String, fileName: String): Boolean {
         if (!isSubtitleFileName(fileName)) return false
-        val videoStem = stem(videoName) ?: return false
-        val subStem = stem(fileName) ?: return false
-        return subStem.equals(videoStem, ignoreCase = true) ||
-            subStem.startsWith("$videoStem.", ignoreCase = true) ||
-            subStem.startsWith("$videoStem ", ignoreCase = true)
+        return matchesVideoStem(videoName, fileName)
     }
 
     /** Filter sibling basenames that pair with [videoName]. Sorted by name. */
@@ -87,6 +85,14 @@ object SidecarSubtitles {
                 }
             }
         }
+    }
+
+    internal fun matchesVideoStem(videoName: String, sidecarName: String): Boolean {
+        val videoStem = stem(videoName) ?: return false
+        val sidecarStem = stem(sidecarName) ?: return false
+        return sidecarStem.equals(videoStem, ignoreCase = true) ||
+            sidecarStem.startsWith("$videoStem.", ignoreCase = true) ||
+            sidecarStem.startsWith("$videoStem ", ignoreCase = true)
     }
 
     private fun stem(name: String): String? {

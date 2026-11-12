@@ -79,9 +79,9 @@ android {
         applicationId = "moe.tarsin.localviewer"
         versionCode = 38
         versionName = if (snapshot) {
-            "1.13.32-SNAPSHOT"
+            "1.13.33-SNAPSHOT"
         } else {
-            "1.13.32"
+            "1.13.33"
         }
         buildConfigField("boolean", "SNAPSHOT", "$snapshot")
         buildConfigField("boolean", "JXL_ENCODER_ENABLED", "$jxlEncoderEnabled")
@@ -266,6 +266,7 @@ dependencies {
     // Built-in video player (PlayerView controls); local/network via StreamDocumentProvider.
     implementation(libs.androidx.media3.exoplayer)
     implementation(libs.androidx.media3.ui)
+    implementation(projects.media3Ffmpeg)
 
     // Cronet (app HTTP) + Android HUC fallback.
     implementation(libs.ktor.client.android)

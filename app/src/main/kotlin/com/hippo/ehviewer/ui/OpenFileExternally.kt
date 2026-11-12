@@ -34,6 +34,7 @@ import com.hippo.ehviewer.library.OPEN_CACHE_WARN_BYTES
 import com.hippo.ehviewer.library.OriginDiskCache
 import com.hippo.ehviewer.library.RemoteChild
 import com.hippo.ehviewer.library.SMB_FILE_TOKEN
+import com.hippo.ehviewer.library.SidecarAudioTracks
 import com.hippo.ehviewer.library.SidecarSubtitles
 import com.hippo.ehviewer.library.VideoDirectLinkByteSource
 import com.hippo.ehviewer.library.WEBDAV_FILE_TOKEN
@@ -684,6 +685,7 @@ object OpenFileExternally {
                 internalPlayer = true,
                 playlistSessionId = created.session.id,
                 playlistIndex = created.initialIndex,
+                subtitleTokens = prepared.subtitleTokens,
             )
         } catch (e: Throwable) {
             InternalVideoPlaylistRegistry.remove(created.session.id)
@@ -704,14 +706,87 @@ object OpenFileExternally {
             is InternalVideoSource.WebDav ->
                 registerWebDavStreamdoc(source.sourceId, source.remotePath, displayName, mimeType)
         }
-        val zipLocal = source is InternalVideoSource.Local && ZipPaths.isZipPath(source.path)
-        return PreparedInternalVideo(
-            token = token,
-            uri = StreamDocumentProvider.uriFor(token, displayName),
-            displayName = displayName,
-            mimeType = mimeType,
-            network = zipLocal || source !is InternalVideoSource.Local,
-        )
+        val subtitleTokens = ArrayList<String>()
+        try {
+            val names = when (source) {
+                is InternalVideoSource.Local -> withIOContext {
+                    SidecarSubtitles.matchSiblings(displayName, findLocalSiblingNames(source.path))
+                }
+                is InternalVideoSource.Smb -> {
+                    val smb = withIOContext { SmbRepository.load(source.sourceId) }
+                    if (smb == null) {
+                        emptyList()
+                    } else {
+                        findSmbSidecarNames(
+                            source.sourceId,
+                            smb,
+                            SmbPasswordStore.get(source.sourceId),
+                            source.remotePath,
+                            displayName,
+                        ).filter(SidecarSubtitles::isSubtitleFileName)
+                    }
+                }
+                is InternalVideoSource.WebDav -> {
+                    val dav = withIOContext { WebDavRepository.load(source.sourceId) }
+                    if (dav == null) {
+                        emptyList()
+                    } else {
+                        findWebDavSidecarNames(
+                            source.sourceId,
+                            dav,
+                            WebDavPasswordStore.get(source.sourceId),
+                            source.remotePath,
+                            displayName,
+                        ).filter(SidecarSubtitles::isSubtitleFileName)
+                    }
+                }
+            }.filter { SidecarSubtitles.mimeTypeForSubtitle(it) in INTERNAL_SUBTITLE_MIMES }
+                .take(MAX_INTERNAL_SUBTITLES)
+            for (name in names) {
+                val subToken = try {
+                    val subMime = SidecarSubtitles.mimeTypeForSubtitle(name)
+                    when (source) {
+                        is InternalVideoSource.Local -> {
+                            val subPath = siblingPath(source.path, name) ?: continue
+                            registerLocalStreamdoc(subPath, name, subMime)
+                        }
+                        is InternalVideoSource.Smb -> registerSmbStreamdoc(
+                            source.sourceId,
+                            SmbGateway.joinRelativePath(parentRelative(source.remotePath), name),
+                            name,
+                            subMime,
+                            probeSize = false,
+                        )
+                        is InternalVideoSource.WebDav -> registerWebDavStreamdoc(
+                            source.sourceId,
+                            WebDavGateway.joinRelative(parentRelative(source.remotePath), name),
+                            name,
+                            subMime,
+                            probeSize = false,
+                        )
+                    }
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    throw e
+                } catch (e: Throwable) {
+                    logcat("OpenFileExternally", e)
+                    continue
+                }
+                subtitleTokens += subToken
+            }
+            val zipLocal = source is InternalVideoSource.Local && ZipPaths.isZipPath(source.path)
+            return PreparedInternalVideo(
+                token = token,
+                uri = StreamDocumentProvider.uriFor(token, displayName),
+                displayName = displayName,
+                mimeType = mimeType,
+                network = zipLocal || source !is InternalVideoSource.Local,
+                subtitleTokens = subtitleTokens,
+            )
+        } catch (e: Throwable) {
+            subtitleTokens.forEach(StreamDocumentRegistry::remove)
+            StreamDocumentRegistry.remove(token)
+            throw e
+        }
     }
 
     // region HTTP external video
@@ -825,8 +900,8 @@ object OpenFileExternally {
     }
 
     /**
-     * Off (default): opened video + matching sidecars only.
-     * On: every video + subtitle file in the same directory (folder playlist).
+     * Off: opened video + matching subtitle/audio sidecars only.
+     * On: every video, subtitle and audio file in the same directory.
      */
     private fun accessDirEnabled(): Boolean = Settings.externalVideoAccessDir.value
 
@@ -836,7 +911,7 @@ object OpenFileExternally {
      */
     private fun passFolderPlaylistEnabled(): Boolean = accessDirEnabled() && Settings.externalVideoPassFolderPlaylist.value
 
-    private fun isHttpExposedMediaName(name: String): Boolean = isBrowseVideoFileName(name) || SidecarSubtitles.isSubtitleFileName(name)
+    private fun isHttpExposedMediaName(name: String): Boolean = isBrowseVideoFileName(name) || SidecarSubtitles.isSubtitleFileName(name) || SidecarAudioTracks.isAudioFileName(name)
 
     private fun mediaMimeForName(name: String): String = when {
         SidecarSubtitles.isSubtitleFileName(name) -> SidecarSubtitles.mimeTypeForSubtitle(name)
@@ -1301,11 +1376,10 @@ object OpenFileExternally {
 
     private fun findLocalSidecarNames(videoPathStr: String, videoName: String): List<String> {
         val siblings = findLocalSiblingNames(videoPathStr)
-        val matched = SidecarSubtitles.matchSiblings(
-            videoName,
-            siblings.filter(ExternalHttpStreamServer::isSafeFileName),
-        )
-        if (matched.isNotEmpty()) return matched
+        val safeSiblings = siblings.filter(ExternalHttpStreamServer::isSafeFileName)
+        val audio = SidecarAudioTracks.matchSiblings(videoName, safeSiblings)
+        val subtitles = SidecarSubtitles.matchSiblings(videoName, safeSiblings)
+        if (subtitles.isNotEmpty()) return subtitles + audio
         // Video-folder overlay listings are video-only; probe sidecars without File.list().
         val probed = SidecarSubtitles.probeCandidateNames(videoName).filter { name ->
             val path = siblingPath(videoPathStr, name) ?: return@filter false
@@ -1314,10 +1388,10 @@ object OpenFileExternally {
         return SidecarSubtitles.matchSiblings(
             videoName,
             probed.filter(ExternalHttpStreamServer::isSafeFileName),
-        )
+        ) + audio
     }
 
-    /** All browse videos + subtitle files in the local parent directory. */
+    /** All browse videos, subtitles and audio files in the local parent directory. */
     private fun listLocalDirMediaNames(videoPathStr: String): List<String> = findLocalSiblingNames(videoPathStr)
         .filter { ExternalHttpStreamServer.isSafeFileName(it) && isHttpExposedMediaName(it) }
         .distinct()
@@ -1450,7 +1524,8 @@ object OpenFileExternally {
         val parentDir = parentRelative(remoteRelativeFile)
         // One directory list — never probeCandidateNames × fileSize (hundreds of NOT_FOUND opens).
         val names = listSmbDirChildNames(sourceId, source, password, parentDir)
-        return SidecarSubtitles.matchSiblings(videoName, names)
+        return SidecarSubtitles.matchSiblings(videoName, names) +
+            SidecarAudioTracks.matchSiblings(videoName, names)
     }
 
     /**
@@ -1519,7 +1594,8 @@ object OpenFileExternally {
     ): List<String> {
         val parentDir = parentRelative(remoteRelativeFile)
         val names = listWebDavDirChildNames(sourceId, source, password, parentDir)
-        return SidecarSubtitles.matchSiblings(videoName, names)
+        return SidecarSubtitles.matchSiblings(videoName, names) +
+            SidecarAudioTracks.matchSiblings(videoName, names)
     }
 
     private suspend fun listWebDavDirChildNames(
@@ -2219,6 +2295,7 @@ object OpenFileExternally {
         remoteRelativeFile: String,
         displayName: String,
         mimeType: String,
+        probeSize: Boolean = true,
     ): String {
         val source = withIOContext {
             SmbRepository.load(sourceId) ?: throw IOException("SMB source missing")
@@ -2228,7 +2305,7 @@ object OpenFileExternally {
         // Video size is taken from the sticky open. A browse-pool STAT waits behind thumbs
         // and the data NIO group; PDF/archives still probe so viewers get Content-Length.
         val ebookCacheKey = "smb:$sourceId:${remoteRelativeFile.trim('/')}"
-        val sizeBytes = if (isVideo) {
+        val sizeBytes = if (isVideo || !probeSize) {
             -1L
         } else {
             cachedNetworkEbookSize(displayName, ebookCacheKey) ?: withIOContext {
@@ -2262,6 +2339,7 @@ object OpenFileExternally {
         remoteRelativeFile: String,
         displayName: String,
         mimeType: String,
+        probeSize: Boolean = true,
     ): String {
         val source = withIOContext {
             WebDavRepository.load(sourceId) ?: throw IOException("WebDAV source missing")
@@ -2269,7 +2347,7 @@ object OpenFileExternally {
         val password = WebDavPasswordStore.get(sourceId)
         val isVideo = DefaultVideoPlayer.isVideoMime(mimeType) || isBrowseVideoFileName(displayName)
         val ebookCacheKey = "webdav:$sourceId:${remoteRelativeFile.trim('/')}"
-        val sizeBytes = if (isVideo) {
+        val sizeBytes = if (isVideo || !probeSize) {
             -1L
         } else {
             cachedNetworkEbookSize(displayName, ebookCacheKey) ?: withIOContext {
@@ -2372,7 +2450,7 @@ object OpenFileExternally {
     private fun sessionHasFolderPlaylist(session: ExternalHttpStreamServer.Session): Boolean {
         var media = 0
         for (entry in session.files.values) {
-            if (!isHttpExposedMediaName(entry.displayName)) continue
+            if (!DefaultVideoPlayer.isVideoMime(entry.mimeType)) continue
             media++
             if (media >= 2) return true
         }
@@ -2494,6 +2572,7 @@ object OpenFileExternally {
         internalPlayer: Boolean,
         playlistSessionId: String? = null,
         playlistIndex: Int = 0,
+        subtitleTokens: List<String> = emptyList(),
         internalPdf: Boolean = false,
         usePreferredPlayer: Boolean = true,
         progressGid: Long = 0L,
@@ -2534,6 +2613,7 @@ object OpenFileExternally {
                     streamToken = token,
                     playlistSessionId = playlistSessionId,
                     playlistIndex = playlistIndex,
+                    subtitleTokens = subtitleTokens,
                 ).apply {
                     addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                     addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
@@ -2565,6 +2645,7 @@ object OpenFileExternally {
                 }
             }
         } catch (e: Throwable) {
+            subtitleTokens.forEach(StreamDocumentRegistry::remove)
             StreamDocumentRegistry.remove(token)
             throw e
         }
@@ -2574,9 +2655,13 @@ object OpenFileExternally {
 
     private fun Intent.attachSubtitleExtras(subUris: List<Uri>, subNames: Array<String>) {
         putExtra("subs", subUris.toTypedArray())
+        // MX Player / Just Player use this separately from "subs" to select a track.
+        // Just Player also stops probing same-stem HTTP subtitles once "subs" is set.
+        putExtra("subs.enable", arrayOf(subUris.first()))
         if (subNames.size == subUris.size) {
             putExtra("subs.name", subNames)
         }
+        // VLC's external-player API reads a URL string from this extra.
         putExtra("subtitles_location", subUris.first().toString())
         putExtra("subtitle", subUris.first().toString())
         putExtra("subtitle_uri", subUris.first())
@@ -2601,6 +2686,10 @@ object OpenFileExternally {
      * High enough for large video folders (300+) without unbounded multi-GB intent clips.
      */
     private const val MAX_DIR_MEDIA_FILES = 2000
+
+    // Two adjacent playlist items may coexist briefly; stay below the streamdoc token cap.
+    private const val MAX_INTERNAL_SUBTITLES = 8
+    private val INTERNAL_SUBTITLE_MIMES = setOf("application/x-subrip", "text/x-ssa", "text/vtt", "application/ttml+xml")
 
     private val CHROME_PACKAGES = arrayOf(
         "com.android.chrome",
