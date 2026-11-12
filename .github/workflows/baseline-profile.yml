@@ -73,6 +73,15 @@ jobs:
         run: ./gradlew generateBaselineProfile
           -Pandroid.testoptions.manageddevices.emulator.gpu="swiftshader_indirect"
 
+      - name: Upload Baseline Profile for releases
+        if: github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@v7
+        with:
+          name: baseline-profile
+          path: app/src/main/generated/baselineProfiles/
+          if-no-files-found: error
+          retention-days: 14
+
       - name: Upload reports
         if: failure()
         uses: actions/upload-artifact@v7
