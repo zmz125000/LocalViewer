@@ -145,12 +145,14 @@ object HistoryHidePersist {
     }
 
     private suspend fun hideLookup(rows: List<GalleryInfo>): HideLookup {
-        val ids = rows.mapNotNull { info ->
-            info.gid.takeIf { info.token == LOCAL_GALLERY_TOKEN }
-        }.distinct()
-        val places = ids.mapNotNull { id ->
-            LocalLibrary.loadGallery(id)?.let { id to BrowseFolderId.local(it.rootId, it.relativePath) }
-        }.toMap()
+        val ids = rows.filter { it.token == LOCAL_GALLERY_TOKEN }.map { it.gid }.distinct()
+        val places = if (ids.isNotEmpty()) {
+            ids.chunked(500).flatMap { LocalLibrary.loadGalleriesByIds(it) }.associate { gallery ->
+                gallery.id to BrowseFolderId.local(gallery.rootId, gallery.relativePath)
+            }
+        } else {
+            emptyMap()
+        }
         val needsRoots = rows.any { info ->
             when (LocalHistory.parse(info)) {
                 is LocalHistoryTarget.LocalArchive, is LocalHistoryTarget.LocalFile -> true

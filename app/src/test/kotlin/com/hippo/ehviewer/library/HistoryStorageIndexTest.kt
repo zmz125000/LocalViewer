@@ -48,7 +48,7 @@ class HistoryStorageIndexTest {
         indexer.build(rows, roots, paths)
         assertEquals(2, lookups)
         val reordered = listOf(row(2, "internal"), row(1, "usb"))
-        assertEquals(listOf(reordered.first()), indexer.build(reordered, roots, paths).connectedRows(emptySet()))
+        assertEquals(listOf(reordered.first()), indexer.build(reordered, HashMap(roots), HashMap(paths)).connectedRows(emptySet()))
         assertEquals(2, lookups)
         val changed = listOf(row(2, "usb"), row(1, "usb"))
         assertEquals(emptyList<BaseGalleryInfo>(), indexer.build(changed, roots, paths).connectedRows(emptySet()))

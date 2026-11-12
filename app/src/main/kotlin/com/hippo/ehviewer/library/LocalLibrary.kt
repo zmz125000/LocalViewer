@@ -61,7 +61,9 @@ object LocalLibrary {
 
     fun galleriesFlow(): Flow<List<LocalGalleryEntity>> = db.localGalleryDao().listFlow()
 
-    fun galleryStoragePathsFlow(): Flow<List<LocalGalleryStoragePath>> = db.localGalleryDao().storagePathsFlow()
+    fun galleryStoragePathsForIdsFlow(ids: List<Long>): Flow<List<LocalGalleryStoragePath>> = db.localGalleryDao().storagePathsForIdsFlow(ids)
+
+    suspend fun loadGalleriesByIds(ids: List<Long>): List<LocalGalleryEntity> = db.localGalleryDao().loadByIds(ids)
 
     fun searchGalleriesFlow(keyword: String): Flow<List<LocalGalleryEntity>> = db.localGalleryDao().searchFlow(keyword)
 

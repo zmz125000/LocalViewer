@@ -14,9 +14,12 @@ interface LocalGalleryDao {
     @Query("SELECT * FROM LOCAL_GALLERIES ORDER BY TITLE COLLATE NOCASE ASC")
     fun listFlow(): Flow<List<LocalGalleryEntity>>
 
-    /** Availability filtering needs no covers, counts, titles, or title sorting. */
-    @Query("SELECT ID AS id, CONTENT_PATH AS contentPath FROM LOCAL_GALLERIES")
-    fun storagePathsFlow(): Flow<List<LocalGalleryStoragePath>>
+    /** Availability filtering only reads gallery paths referenced by History. */
+    @Query("SELECT ID AS id, CONTENT_PATH AS contentPath FROM LOCAL_GALLERIES WHERE ID IN (:ids)")
+    fun storagePathsForIdsFlow(ids: List<Long>): Flow<List<LocalGalleryStoragePath>>
+
+    @Query("SELECT * FROM LOCAL_GALLERIES WHERE ID IN (:ids)")
+    suspend fun loadByIds(ids: List<Long>): List<LocalGalleryEntity>
 
     @Query("SELECT * FROM LOCAL_GALLERIES WHERE TITLE LIKE '%' || :keyword || '%' ORDER BY TITLE COLLATE NOCASE ASC")
     fun searchFlow(keyword: String): Flow<List<LocalGalleryEntity>>

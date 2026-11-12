@@ -121,6 +121,35 @@ private fun directoryFolderDisplayCoverKey(
     return coverKey
 }
 
+private fun historyRelativePath(path: String): String = "/${path.trim('/')}"
+
+private fun historyListPath(target: LocalHistoryTarget): String? = when (target) {
+    is LocalHistoryTarget.LocalArchive -> target.path
+    is LocalHistoryTarget.LocalFile -> target.path
+    is LocalHistoryTarget.LocalBrowseFolder -> historyRelativePath(target.relativePath)
+    is LocalHistoryTarget.LocalFolderGallery -> historyRelativePath(target.relativePath)
+    is LocalHistoryTarget.SmbBrowseFolder -> historyRelativePath(target.relativePath)
+    is LocalHistoryTarget.SmbFolderGallery -> historyRelativePath(target.remoteDir)
+    is LocalHistoryTarget.SmbStreamArchive -> historyRelativePath(target.remotePath)
+    is LocalHistoryTarget.SmbFile -> historyRelativePath(target.remotePath)
+    is LocalHistoryTarget.WebDavBrowseFolder -> historyRelativePath(target.relativePath)
+    is LocalHistoryTarget.WebDavFolderGallery -> historyRelativePath(target.remoteDir)
+    is LocalHistoryTarget.WebDavStreamArchive -> historyRelativePath(target.remotePath)
+    is LocalHistoryTarget.WebDavFile -> historyRelativePath(target.remotePath)
+    is LocalHistoryTarget.LibraryGallery, is LocalHistoryTarget.Orphan -> null
+}
+
+private suspend fun resolvedHistoryListPath(target: LocalHistoryTarget): String? = when (target) {
+    is LocalHistoryTarget.LibraryGallery -> LocalLibrary.loadGallery(target.galleryId)?.contentPath
+    is LocalHistoryTarget.LocalBrowseFolder -> LocalLibrary.loadRoot(target.rootId)?.let { root ->
+        LocalLibrary.rootPath(root)?.resolve(target.relativePath)?.toString()
+    }
+    is LocalHistoryTarget.LocalFolderGallery -> LocalLibrary.loadRoot(target.rootId)?.let { root ->
+        LocalLibrary.rootPath(root)?.resolve(target.relativePath)?.toString()
+    }
+    else -> null
+}
+
 @Composable
 private fun coverRequest(coverPath: String?, sizePx: Int): ImageRequest? {
     val context = LocalContext.current
@@ -345,12 +374,7 @@ fun HistoryListItem(
         LocalHistory.KindLabel.Video -> Icons.Default.Movie
         else -> Icons.Default.Folder
     }
-    val historyFileName = remember(info.uploader, info.title) {
-        val path = info.uploader.orEmpty()
-        path.substringAfterLast('/').substringAfterLast('\\').ifEmpty {
-            info.title.orEmpty()
-        }
-    }
+    val historyFileName = remember(info.uploader, info.title) { LocalHistory.fileNameOfHistory(info) }
     val typeLabel = when {
         LocalHistory.isBrowseDirectory(info) -> "Dir"
         kind == LocalHistory.KindLabel.Archive ||
@@ -363,13 +387,28 @@ fun HistoryListItem(
         else -> "File"
     }
     val pageCount = if (showPages && LocalHistory.showsPageProgress(info)) info.pages else 0
-    val savedPage = remember(info.gid) { EhDB.getReadProgressFlow(info.gid) }.collectAsState(0).value
-    val readProgress = if (showProgress && pageCount > 0) savedPage else 0
-    val metaLine = browseListSupportingLine(
+    val readProgress = if (showProgress && pageCount > 0) {
+        remember(info.gid) { EhDB.getReadProgressFlow(info.gid) }.collectAsState(0).value
+    } else {
+        0
+    }
+    val target = remember(info.gid, info.token, info.uploader, info.thumbKey) { LocalHistory.parse(info) }
+    var resolvedPath by remember(target) { mutableStateOf<String?>(null) }
+    LaunchedEffect(target) {
+        if (target is LocalHistoryTarget.LibraryGallery ||
+            target is LocalHistoryTarget.LocalBrowseFolder ||
+            target is LocalHistoryTarget.LocalFolderGallery
+        ) {
+            resolvedPath = withIOContext { resolvedHistoryListPath(target) }
+        }
+    }
+    val path = resolvedPath ?: historyListPath(target)
+    val metadata = browseListSupportingLine(
         typeLabel = typeLabel,
         pageCount = pageCount,
         readProgress = readProgress,
     )
+    val metaLine = path?.takeIf { it.isNotBlank() }?.let { "$metadata · $it" } ?: metadata
     val listDecodePx = CoverThumb.listDecodePx()
     val browseFolderThumbs by Settings.browseFolderThumbs.collectAsState()
     val videoFolderCover by Settings.videoFolderCover.collectAsState()
@@ -391,7 +430,7 @@ fun HistoryListItem(
         },
         supportingContent = {
             // Same type icon as [HistoryGridItem] caption row.
-            BrowseListSupportingContent(text = metaLine, typeIcon = placeholderIcon)
+            BrowseListSupportingContent(text = metaLine, typeIcon = placeholderIcon, maxLines = 1)
         },
         leadingContent = {
             if (directoryWithoutThumb) {
