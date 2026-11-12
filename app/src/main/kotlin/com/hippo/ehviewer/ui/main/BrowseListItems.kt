@@ -2124,6 +2124,7 @@ fun BrowseSectionHeader(
     onClick: (() -> Unit)? = null,
     onLongClick: (() -> Unit)? = null,
     section: BrowseFolderSection? = null,
+    color: Color = MaterialTheme.colorScheme.primary,
 ) {
     val haptic = LocalHapticFeedback.current
     val listInset = LocalBrowseListHeaderInset.current
@@ -2143,7 +2144,7 @@ fun BrowseSectionHeader(
     Text(
         text = label,
         style = MaterialTheme.typography.titleSmall,
-        color = MaterialTheme.colorScheme.primary,
+        color = color,
         modifier = modifier
             .padding(horizontal = listInset)
             .then(

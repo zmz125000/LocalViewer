@@ -39,15 +39,14 @@ suspend fun updateWhenKeepMediaStatusChanges(mediaScan: Boolean) {
 
 /** Apply app night mode immediately (main thread). Used at process start and after pref changes. */
 fun applyNightMode(theme: Int) {
-    val effectiveTheme = if (Settings.colorfulDarkTheme.value) AppCompatDelegate.MODE_NIGHT_YES else theme
     // minSdk 32: UiModeManager per-app night mode is always available.
-    val mode = when (effectiveTheme) {
+    val mode = when (theme) {
         AppCompatDelegate.MODE_NIGHT_NO -> UiModeManager.MODE_NIGHT_NO
         AppCompatDelegate.MODE_NIGHT_YES -> UiModeManager.MODE_NIGHT_YES
         else -> UiModeManager.MODE_NIGHT_AUTO
     }
     uiModeManager.setApplicationNightMode(mode)
-    AppCompatDelegate.setDefaultNightMode(effectiveTheme)
+    AppCompatDelegate.setDefaultNightMode(theme)
 }
 
 suspend fun updateWhenThemeChanges(theme: Int) {
@@ -55,8 +54,8 @@ suspend fun updateWhenThemeChanges(theme: Int) {
     applyNightMode(theme)
 }
 
-@Suppress("UNUSED_PARAMETER")
 suspend fun updateWhenColorfulDarkThemeChanges(enabled: Boolean) {
+    if (enabled) Settings.theme.value = AppCompatDelegate.MODE_NIGHT_YES
     delay(400) // Let the settings visibility animation finish before night mode recreates the screen.
     applyNightMode(Settings.theme.value)
 }

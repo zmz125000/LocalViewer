@@ -799,6 +799,7 @@ private fun ExplorerWindowList(
                     BrowseSectionHeader(
                         text = stringResource(R.string.explorer_windows),
                         onClick = onToggleMode,
+                        color = MaterialTheme.colorScheme.onSurface,
                         onLongClick = if (choosingUpload) {
                             null
                         } else {
@@ -863,7 +864,11 @@ private fun ExplorerWindowList(
                 }
             }
             item(key = "saved-hdr") {
-                BrowseSectionHeader(stringResource(R.string.explorer_saved_paths), onClick = onToggleMode)
+                BrowseSectionHeader(
+                    stringResource(R.string.explorer_saved_paths),
+                    onClick = onToggleMode,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
             }
             items(saved, key = { "s-${it.key}" }) { item ->
                 ExplorerPathRow(
@@ -892,7 +897,11 @@ private fun ExplorerWindowList(
             }
             if (!choosingUpload) {
                 item(key = "uploads-hdr") {
-                    BrowseSectionHeader(stringResource(R.string.explorer_uploads), onClick = onToggleMode)
+                    BrowseSectionHeader(
+                        stringResource(R.string.explorer_uploads),
+                        onClick = onToggleMode,
+                        color = MaterialTheme.colorScheme.onSurface,
+                    )
                 }
                 items(uploads, key = { "upload-${it.id}" }) { upload ->
                     ExplorerPathRow(
@@ -955,7 +964,11 @@ private fun ExplorerFavoritesGrid(
         horizontalArrangement = GalleryGridDefaults.spacedBy(),
     ) {
         item(key = "fav-hdr", span = { GridItemSpan(maxLineSpan) }) {
-            BrowseSectionHeader(stringResource(R.string.browse_favorites), onClick = onToggleMode)
+            BrowseSectionHeader(
+                stringResource(R.string.browse_favorites),
+                onClick = onToggleMode,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
         }
         items(favorites, key = { "fav-${it.key}" }) { fav ->
             FavoriteSourceGridCell(
@@ -971,7 +984,11 @@ private fun ExplorerFavoritesGrid(
         }
         if (smb.isNotEmpty() || webDav.isNotEmpty()) {
             item(key = "src-net", span = { GridItemSpan(maxLineSpan) }) {
-                BrowseSectionHeader(stringResource(R.string.network), onClick = onToggleMode)
+                BrowseSectionHeader(
+                    stringResource(R.string.network),
+                    onClick = onToggleMode,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
             }
             items(smb, key = { "smb-${it.id}" }) { source ->
                 FavoriteSourceGridCell(
@@ -1002,7 +1019,11 @@ private fun ExplorerFavoritesGrid(
         }
         if (roots.isNotEmpty()) {
             item(key = "src-dir", span = { GridItemSpan(maxLineSpan) }) {
-                BrowseSectionHeader(stringResource(R.string.folder), onClick = onToggleMode)
+                BrowseSectionHeader(
+                    stringResource(R.string.folder),
+                    onClick = onToggleMode,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
             }
             items(roots, key = { "root-${it.id}" }) { root ->
                 FavoriteSourceGridCell(
