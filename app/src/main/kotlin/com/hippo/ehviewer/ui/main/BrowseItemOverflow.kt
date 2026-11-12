@@ -184,7 +184,7 @@ fun BrowseItemOverflowButton(
         val interactionSource = remember { MutableInteractionSource() }
         val triggerModifier = Modifier.clickable(
             interactionSource = interactionSource,
-            indication = ripple(bounded = triggerContent != null),
+            indication = if (triggerContent == null) ripple(bounded = false) else null,
             role = Role.Button,
             onClick = { expanded = true },
         )

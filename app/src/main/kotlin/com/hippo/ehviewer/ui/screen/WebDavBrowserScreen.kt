@@ -3283,7 +3283,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                                 .fillMaxSize(),
                             contentPadding = GalleryGridDefaults.contentPadding(),
                             horizontalArrangement = gridSpacing,
-                            verticalArrangement = gridSpacing,
+                            verticalArrangement = GalleryGridDefaults.verticalSpacing(),
                         ) {
                             searchSection(grid = true)
                             recentSection(grid = true)

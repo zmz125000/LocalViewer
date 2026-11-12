@@ -516,7 +516,7 @@ fun HistoryGridItem(
                 .padding(horizontal = namePadH),
         ) {
             val title = buildAnnotatedString {
-                appendInlineContent("kind", "")
+                appendInlineContent("kind", " ")
                 append(" ")
                 append(info.title.orEmpty())
             }

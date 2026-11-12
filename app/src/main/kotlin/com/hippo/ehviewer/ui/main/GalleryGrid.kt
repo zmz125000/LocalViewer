@@ -45,6 +45,8 @@ internal fun CaptionBelowGridFrame(
     val haptic = LocalHapticFeedback.current
     Column(
         modifier = modifier.fillMaxWidth().combinedClickable(
+            interactionSource = null,
+            indication = null,
             onClick = onClick,
             onLongClick = {
                 haptic.performHapticFeedback(HapticFeedbackType.LongPress)
@@ -180,6 +182,14 @@ object GalleryGridDefaults {
 
     @Composable
     fun spacedBy(): Arrangement.HorizontalOrVertical = Arrangement.spacedBy(gutter())
+
+    /** Cardless captions have their own band, so keep rows closer together. */
+    @Composable
+    fun verticalSpacing(): Arrangement.Vertical {
+        val cards by Settings.gridCards.collectAsState()
+        val gap = if (cards) gutter() else (gutter() - 8.dp).coerceAtLeast(4.dp)
+        return Arrangement.spacedBy(gap)
+    }
 
     @Composable
     fun nameHeight(): Dp = dimensionResource(R.dimen.gallery_grid_name_height)
