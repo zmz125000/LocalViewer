@@ -1522,6 +1522,11 @@ private fun BrowseGridCell(
                     actions = overflow,
                     placement = BrowseOverflowPlacement.GridBottomEnd,
                     modifier = Modifier.fillMaxWidth(),
+                    triggerLongClick = if (overflow.selectKey != null) {
+                        { FolderSelectHost.current?.enter(overflow.toPick()) }
+                    } else {
+                        null
+                    },
                     triggerContent = { trigger ->
                         Text(
                             text = name,

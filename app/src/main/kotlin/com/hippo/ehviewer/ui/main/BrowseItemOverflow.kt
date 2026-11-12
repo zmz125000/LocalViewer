@@ -2,6 +2,7 @@ package com.hippo.ehviewer.ui.main
 
 import android.widget.Toast
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
@@ -21,8 +22,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import com.ehviewer.core.i18n.R
@@ -113,6 +116,7 @@ fun BrowseItemOverflowButton(
     placement: BrowseOverflowPlacement,
     modifier: Modifier = Modifier,
     triggerContent: (@Composable (Modifier) -> Unit)? = null,
+    triggerLongClick: (() -> Unit)? = null,
 ) {
     var expanded by remember { mutableStateOf(false) }
     var convertMenu by remember { mutableStateOf(false) }
@@ -134,6 +138,7 @@ fun BrowseItemOverflowButton(
     val shortcutUnsupported = stringResource(R.string.browse_shortcut_unsupported)
     val grid = placement == BrowseOverflowPlacement.GridBottomEnd
     val more = stringResource(R.string.browse_item_more)
+    val haptic = LocalHapticFeedback.current
     val iconSize = with(LocalDensity.current) {
         val style = if (grid) {
             MaterialTheme.typography.labelMedium
@@ -182,12 +187,26 @@ fun BrowseItemOverflowButton(
     }
     Box(modifier) {
         val interactionSource = remember { MutableInteractionSource() }
-        val triggerModifier = Modifier.clickable(
-            interactionSource = interactionSource,
-            indication = if (triggerContent == null) ripple(bounded = false) else null,
-            role = Role.Button,
-            onClick = { expanded = true },
-        )
+        val indication = if (triggerContent == null) ripple(bounded = false) else null
+        val triggerModifier = if (triggerLongClick != null) {
+            Modifier.combinedClickable(
+                interactionSource = interactionSource,
+                indication = indication,
+                role = Role.Button,
+                onClick = { expanded = true },
+                onLongClick = {
+                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    triggerLongClick()
+                },
+            )
+        } else {
+            Modifier.clickable(
+                interactionSource = interactionSource,
+                indication = indication,
+                role = Role.Button,
+                onClick = { expanded = true },
+            )
+        }
         if (triggerContent != null) {
             triggerContent(triggerModifier)
         } else {
