@@ -954,6 +954,21 @@ static void copy_avif_gainmap_alpha8(const avifImage* image, uint8_t* output, si
             image->yuvPlanes[AVIF_CHAN_Y] + size_t(y) * image->yuvRowBytes[AVIF_CHAN_Y], image->width);
 }
 
+// A full-size RGB gain map can retain another 160 MiB beside a 5K F16 base,
+// even when the reader downscales that base. Use the single-frame path for
+// maps that would dominate the reader bitmap or exceed a modest upload size.
+static bool avif_gainmap_handoff_size(const avifImage* base, const avifImage* map, int max_edge) {
+    if (!base || !map || !base->width || !base->height || !map->width || !map->height) return false;
+    const uint64_t map_pixels = uint64_t(map->width) * map->height;
+    if (map_pixels > 2u * 1024u * 1024u) return false;
+    const unsigned long_edge = std::max(base->width, base->height);
+    const double scale = max_edge > 0 && static_cast<unsigned>(max_edge) < long_edge ?
+        double(max_edge) / long_edge : 1.;
+    const uint64_t output_pixels = uint64_t(std::max(2u, static_cast<unsigned>(std::lround(base->width * scale)))) *
+        std::max(2u, static_cast<unsigned>(std::lround(base->height * scale)));
+    return map_pixels <= output_pixels / 4;
+}
+
 // Reader-only handoff: Android applies the ISO gain map on the GPU instead of
 // allocating and reconstructing a full-resolution linear HDR frame on the CPU.
 // Export and thumbnail paths continue to use the complete reconstruction above.
@@ -1000,7 +1015,8 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeAvifGainmap(
     // color metadata. ICC, HDR bases and transformed items retain the general
     // path. F16 is presentation storage for 8/10/12-bit codes; it can round
     // 12-bit samples slightly but must not apply a transfer curve to the map.
-    if (!gm || !gm->image || image->icc.size || gm->altICC.size || dec->alphaPresent || dec->imageCount != 1 ||
+    if (!gm || !gm->image || !avif_gainmap_handoff_size(image, gm->image, maxEdge) ||
+        image->icc.size || gm->altICC.size || dec->alphaPresent || dec->imageCount != 1 ||
         image->transformFlags || gm->image->transformFlags ||
         image->depth > 12 || gm->image->depth > 12 ||
         !known_primaries(image->colorPrimaries) ||

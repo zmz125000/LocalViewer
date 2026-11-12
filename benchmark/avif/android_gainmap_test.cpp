@@ -35,6 +35,16 @@ static void check_alpha8() {
     image->yuvRange = AVIF_RANGE_LIMITED;
     check(!avif_gainmap_alpha8_stride(image.get()), "limited-range map must use RGB conversion");
 }
+static void check_handoff_size() {
+    std::unique_ptr<avifImage, decltype(&avifImageDestroy)> base(avifImageCreateEmpty(), avifImageDestroy);
+    std::unique_ptr<avifImage, decltype(&avifImageDestroy)> map(avifImageCreateEmpty(), avifImageDestroy);
+    base->width = 5120; base->height = 3840;
+    map->width = 5120; map->height = 3840;
+    check(!avif_gainmap_handoff_size(base.get(), map.get(), 2048), "full-size map accepted for preview");
+    check(!avif_gainmap_handoff_size(base.get(), map.get(), 0), "full-size map accepted for original");
+    map->width = 640; map->height = 480;
+    check(avif_gainmap_handoff_size(base.get(), map.get(), 2048), "small map rejected for preview");
+}
 static void compare_android(avifImage* image) {
     float meta[17]{};
     check(android_gainmap_metadata(image->gainMap, meta), "gain metadata handoff");
@@ -74,6 +84,7 @@ static void compare_android(avifImage* image) {
 int main(int argc, char** argv) try {
     check_alpha8();
     check_f16_codes();
+    check_handoff_size();
     check(argc == 2, "pass a gain-map AVIF sample");
     std::unique_ptr<avifDecoder, decltype(&avifDecoderDestroy)> decoder(avifDecoderCreate(), avifDecoderDestroy);
     decoder->imageContentToDecode = AVIF_IMAGE_CONTENT_ALL;
