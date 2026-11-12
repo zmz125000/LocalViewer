@@ -434,6 +434,24 @@ fun HistoryListItem(
     )
 }
 
+/** Allow long history titles to wrap within words in narrow grid cells. */
+private fun breakableHistoryTitle(title: String): String = buildString {
+    var offset = 0
+    while (offset < title.length) {
+        val codePoint = title.codePointAt(offset)
+        val next = offset + Character.charCount(codePoint)
+        appendCodePoint(codePoint)
+        if (
+            next < title.length &&
+            Character.isLetterOrDigit(codePoint) &&
+            Character.isLetterOrDigit(title.codePointAt(next))
+        ) {
+            append('\u200B')
+        }
+        offset = next
+    }
+}
+
 /** History grid cell — same layout as [LocalGalleryGridItem], covers library + browse path rows. */
 @Composable
 fun HistoryGridItem(
@@ -462,6 +480,7 @@ fun HistoryGridItem(
     val namePadH = GalleryGridDefaults.namePaddingH()
     val captionGap = 6.dp
     val nameHeight = captionBelowNameHeight()
+    val breakableTitle = remember(info.title) { breakableHistoryTitle(info.title.orEmpty()) }
     val gridDecodePx = GalleryGridDefaults.gridDecodePx()
     val coverKey = remember(info.gid, info.thumbKey, info.token, info.uploader) {
         historyCoverKey(info)
@@ -512,7 +531,7 @@ fun HistoryGridItem(
             val title = buildAnnotatedString {
                 appendInlineContent("kind", " ")
                 append(" ")
-                append(info.title.orEmpty())
+                append(breakableTitle)
             }
             val inlineContent = mapOf(
                 "kind" to InlineTextContent(
