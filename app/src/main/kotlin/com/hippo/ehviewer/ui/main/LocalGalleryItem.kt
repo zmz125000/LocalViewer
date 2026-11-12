@@ -139,17 +139,6 @@ private fun historyListPath(target: LocalHistoryTarget): String? = when (target)
     is LocalHistoryTarget.LibraryGallery, is LocalHistoryTarget.Orphan -> null
 }
 
-private suspend fun resolvedHistoryListPath(target: LocalHistoryTarget): String? = when (target) {
-    is LocalHistoryTarget.LibraryGallery -> LocalLibrary.loadGallery(target.galleryId)?.contentPath
-    is LocalHistoryTarget.LocalBrowseFolder -> LocalLibrary.loadRoot(target.rootId)?.let { root ->
-        LocalLibrary.rootPath(root)?.resolve(target.relativePath)?.toString()
-    }
-    is LocalHistoryTarget.LocalFolderGallery -> LocalLibrary.loadRoot(target.rootId)?.let { root ->
-        LocalLibrary.rootPath(root)?.resolve(target.relativePath)?.toString()
-    }
-    else -> null
-}
-
 @Composable
 private fun coverRequest(coverPath: String?, sizePx: Int): ImageRequest? {
     val context = LocalContext.current
@@ -387,22 +376,13 @@ fun HistoryListItem(
         else -> "File"
     }
     val pageCount = if (showPages && LocalHistory.showsPageProgress(info)) info.pages else 0
-    val readProgress = if (showProgress && pageCount > 0) {
-        remember(info.gid) { EhDB.getReadProgressFlow(info.gid) }.collectAsState(0).value
-    } else {
-        0
+    // Always subscribe. Putting remember/collectAsState behind showProgress changes
+    // the slot table when the setting toggles.
+    val savedPage by remember(info.gid) { EhDB.getReadProgressFlow(info.gid) }.collectAsState(0)
+    val readProgress = if (showProgress && pageCount > 0) savedPage else 0
+    val path = remember(info.gid, info.token, info.uploader, info.thumbKey) {
+        historyListPath(LocalHistory.parse(info))
     }
-    val target = remember(info.gid, info.token, info.uploader, info.thumbKey) { LocalHistory.parse(info) }
-    var resolvedPath by remember(target) { mutableStateOf<String?>(null) }
-    LaunchedEffect(target) {
-        if (target is LocalHistoryTarget.LibraryGallery ||
-            target is LocalHistoryTarget.LocalBrowseFolder ||
-            target is LocalHistoryTarget.LocalFolderGallery
-        ) {
-            resolvedPath = withIOContext { resolvedHistoryListPath(target) }
-        }
-    }
-    val path = resolvedPath ?: historyListPath(target)
     val metadata = browseListSupportingLine(
         typeLabel = typeLabel,
         pageCount = pageCount,
@@ -546,11 +526,8 @@ fun HistoryGridItem(
                 modifier = Modifier.fillMaxSize(),
             )
             if (showPages && LocalHistory.showsPageProgress(info)) {
-                val readProgress = if (showProgress) {
-                    remember(info.gid) { EhDB.getReadProgressFlow(info.gid) }.collectAsState(0).value
-                } else {
-                    0
-                }
+                val savedPage by remember(info.gid) { EhDB.getReadProgressFlow(info.gid) }.collectAsState(0)
+                val readProgress = if (showProgress) savedPage else 0
                 CaptionBelowPageBadge(
                     text = if (readProgress > 0) {
                         "${readProgress + 1}/${info.pages}"
@@ -667,11 +644,8 @@ fun HistorySquareGridItem(
                         .widthIn(min = 32.dp)
                         .height(24.dp),
                 ) {
-                    val readProgress = if (showProgress) {
-                        remember(info.gid) { EhDB.getReadProgressFlow(info.gid) }.collectAsState(0).value
-                    } else {
-                        0
-                    }
+                    val savedPage by remember(info.gid) { EhDB.getReadProgressFlow(info.gid) }.collectAsState(0)
+                    val readProgress = if (showProgress) savedPage else 0
                     Text(
                         text = if (readProgress > 0) {
                             "${readProgress + 1}/${info.pages}"
@@ -976,11 +950,8 @@ private fun HistoryGridItemCard(
                             .widthIn(min = 32.dp)
                             .height(24.dp),
                     ) {
-                        val readProgress = if (showProgress) {
-                            remember(info.gid) { EhDB.getReadProgressFlow(info.gid) }.collectAsState(0).value
-                        } else {
-                            0
-                        }
+                        val savedPage by remember(info.gid) { EhDB.getReadProgressFlow(info.gid) }.collectAsState(0)
+                        val readProgress = if (showProgress) savedPage else 0
                         Text(
                             text = if (readProgress > 0) {
                                 "${readProgress + 1}/${info.pages}"
