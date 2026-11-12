@@ -265,6 +265,7 @@ dependencies {
     // Built-in video player (PlayerView controls); local/network via StreamDocumentProvider.
     implementation(libs.androidx.media3.exoplayer)
     implementation(libs.androidx.media3.ui)
+    implementation(projects.media3Ffmpeg)
 
     // Cronet (app HTTP) + Android HUC fallback.
     implementation(libs.ktor.client.android)
