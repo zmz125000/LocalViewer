@@ -1513,7 +1513,7 @@ private fun BrowseGridCell(
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(nameHeight + captionGap)
+                .heightIn(min = nameHeight + captionGap)
                 .padding(top = captionGap)
                 .padding(horizontal = namePadH),
         ) {

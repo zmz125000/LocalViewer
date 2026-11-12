@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
@@ -524,7 +525,7 @@ fun HistoryGridItem(
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(nameHeight + captionGap)
+                .heightIn(min = nameHeight + captionGap)
                 .padding(top = captionGap)
                 .padding(horizontal = namePadH),
         ) {
@@ -865,7 +866,7 @@ fun LocalGalleryGridItem(
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(nameHeight + captionGap)
+                .heightIn(min = nameHeight + captionGap)
                 .padding(top = captionGap)
                 .padding(horizontal = namePadH),
         ) {
