@@ -189,6 +189,7 @@ while ($true) {
 
 - [cchenhen](https://github.com/cchenhen) for txtautotoc.
 - [miaoxin2003](https://github.com/miaoxin2003) for improvements to PDF.
+- [WWSBB1](https://github.com/WWSBB1/LocalViewer) bugfixes.
 
 Here is the libraries
 
