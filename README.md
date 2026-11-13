@@ -150,6 +150,7 @@ RAW images from [rawsamples.ch](https://www.rawsamples.ch/index.php/en/canon).
 # Screenshot
 
 ![LocalViewer screenshot main page](https://github.com/zmz125000/LocalViewer-art/blob/master/screenshots-01.webp)
+![LocalViewer screenshot main page](https://github.com/zmz125000/LocalViewer-art/blob/master/screenshots-05.webp)
 ![LocalViewer screenshot gallery reader](https://github.com/zmz125000/LocalViewer-art/blob/master/screenshots-02.webp)
 ![LocalViewer screenshot window manager](https://github.com/zmz125000/LocalViewer-art/blob/master/screenshots-03.webp)
 
