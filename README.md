@@ -104,10 +104,11 @@ RAW images from [rawsamples.ch](https://www.rawsamples.ch/index.php/en/canon).
 * HDR, Wide Color Gamut and 16-bit color mode support.
 * Image info widget (dimensions, bit depth, color space, exif).
 * Instant local archive reading with mmap.
-* ZIP/RAR/CBZ/CBR/CBT/PDF/EPUB support over network share.
+* ZIP/RAR/CBZ/CBR/CBT/PDF/EPUB stream over network.
 * PDF/EPUB/MOBI/FB2/TXT/AZW3/Markdown Ebook support with text formatting.
 * JXL/JXR/JPG/PNG/AVIF/HEIC HDR support.
 * 16-bit RAW formats decoding with true HDR output.
+* RAW controls sliders for tone curve, HDR headroom, HDR brightness target.
 * RAW formats support dng/cr2/cr3/nef/nrw/arw/raf/orf/rw2/pef/srw/raw.
 * Batch convert JXL/JXR/RAW to JPEG, JPEG XL, AVIF in both SDR and HDR.
 * Compatible with Oppo/OnePlus ProXDR HEIC format.
