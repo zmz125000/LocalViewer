@@ -589,7 +589,10 @@ private fun ExplorerPanel(
                     modifier = Modifier
                         .padding(8.dp)
                         .size(headerIconSize)
-                        .clickable { ThemeSelectorRequest.open = true },
+                        .clickable(
+                            interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
+                            indication = null,
+                        ) { ThemeSelectorRequest.open = true },
                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 val duplicateEnabled = activeId != null
