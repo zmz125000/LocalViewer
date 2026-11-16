@@ -414,6 +414,7 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
                             HistoryListItem(
                                 onClick = { openEntry(info) },
                                 onLongClick = { deleteEntry(info) },
+                                onCaptionLongClick = { openFolderFromHistory(context, info, filterQuery) },
                                 info = info,
                                 showPages = showPages,
                                 showProgress = showProgress,
@@ -447,6 +448,7 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
                         HistoryListItem(
                             onClick = { openEntry(info) },
                             onLongClick = { deleteEntry(info) },
+                            onCaptionLongClick = { openFolderFromHistory(context, info, filterQuery) },
                             info = info,
                             showPages = showPages,
                             showProgress = showProgress,
@@ -473,6 +475,7 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
                             info = info,
                             onClick = { openEntry(info) },
                             onLongClick = { deleteEntry(info) },
+                            onCaptionLongClick = { openFolderFromHistory(context, info, filterQuery) },
                             modifier = Modifier.thenIf(animateItems) { animateItem() },
                             overflow = overflowFor(info),
                         )
@@ -495,6 +498,7 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
                         info = info,
                         onClick = { openEntry(info) },
                         onLongClick = { deleteEntry(info) },
+                        onCaptionLongClick = { openFolderFromHistory(context, info, filterQuery) },
                         showPages = showPages,
                         showProgress = showProgress,
                         modifier = Modifier.thenIf(animateItems) { animateItem() },

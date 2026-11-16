@@ -8,6 +8,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.aspectRatio
@@ -673,6 +674,28 @@ private fun folderSelectedCardColors() = CardDefaults.elevatedCardColors(
     contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
 )
 
+@Composable
+private fun BoxScope.FolderGridSelectionTick(selected: Boolean) {
+    androidx.compose.animation.AnimatedVisibility(
+        visible = selected,
+        modifier = Modifier.align(Alignment.TopStart).padding(4.dp),
+        enter = fadeIn() + scaleIn(),
+        exit = fadeOut() + scaleOut(),
+    ) {
+        Box(
+            modifier = Modifier.size(24.dp).background(MaterialTheme.colorScheme.primary, CircleShape),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                Icons.Default.Check,
+                contentDescription = null,
+                modifier = Modifier.size(16.dp),
+                tint = MaterialTheme.colorScheme.onPrimary,
+            )
+        }
+    }
+}
+
 /** In select mode the row toggles selection and does not open. */
 @Composable
 private fun Modifier.folderSelectClicks(
@@ -1034,11 +1057,12 @@ fun BrowseDirectoryGridItem(
     // Style is per-item: only folders with a real cover use the gallery-thumb layout.
     val useThumbStyle = showFolderThumb && displayCover != null
     val tap = folderSelectTap(overflow)
+    val useCardStyle by Settings.gridCards.collectAsState()
     ElevatedCard(
         onClick = tap?.toggle ?: onClick,
         onLongClick = tap?.toggle ?: (onLongClick ?: onClick),
         modifier = modifier.fillMaxWidth().aspectRatio(1f),
-        colors = if (tap?.selected == true && !useThumbStyle) {
+        colors = if (tap?.selected == true && useCardStyle && !useThumbStyle) {
             folderSelectedCardColors()
         } else {
             GalleryGridDefaults.cardColors()
@@ -1084,7 +1108,7 @@ fun BrowseDirectoryGridItem(
                             .align(Alignment.BottomCenter)
                             .fillMaxWidth()
                             .background(
-                                if (tap?.selected == true) {
+                                if (tap?.selected == true && useCardStyle) {
                                     MaterialTheme.colorScheme.secondaryContainer
                                 } else {
                                     MaterialTheme.colorScheme.surface.copy(alpha = 0.55f)
@@ -1163,6 +1187,7 @@ fun BrowseDirectoryGridItem(
                     }
                 }
             }
+            if (!useCardStyle) FolderGridSelectionTick(tap?.selected == true)
         }
     }
 }
@@ -1492,24 +1517,7 @@ private fun BrowseGridCell(
                 ),
         ) {
             thumb()
-            androidx.compose.animation.AnimatedVisibility(
-                visible = tap?.selected == true,
-                modifier = Modifier.align(Alignment.TopStart).padding(4.dp),
-                enter = fadeIn() + scaleIn(),
-                exit = fadeOut() + scaleOut(),
-            ) {
-                Box(
-                    modifier = Modifier.size(24.dp).background(MaterialTheme.colorScheme.primary, CircleShape),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(
-                        Icons.Default.Check,
-                        contentDescription = null,
-                        modifier = Modifier.size(16.dp),
-                        tint = MaterialTheme.colorScheme.onPrimary,
-                    )
-                }
-            }
+            FolderGridSelectionTick(tap?.selected == true)
         }
         Box(
             modifier = Modifier

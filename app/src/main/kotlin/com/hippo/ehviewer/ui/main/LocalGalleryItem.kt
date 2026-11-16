@@ -347,6 +347,7 @@ fun HistoryListItem(
     info: GalleryInfo,
     onClick: () -> Unit,
     onLongClick: () -> Unit = onClick,
+    onCaptionLongClick: (() -> Unit)? = null,
     showPages: Boolean,
     showProgress: Boolean,
     modifier: Modifier = Modifier,
@@ -406,6 +407,17 @@ fun HistoryListItem(
                 info.title.orEmpty(),
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
+                modifier = if (onCaptionLongClick != null) {
+                    Modifier.fillMaxWidth().combinedClickable(
+                        onClick = onClick,
+                        onLongClick = {
+                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                            onCaptionLongClick()
+                        },
+                    )
+                } else {
+                    Modifier
+                },
             )
         },
         supportingContent = {
@@ -478,13 +490,14 @@ fun HistoryGridItem(
     info: GalleryInfo,
     onClick: () -> Unit,
     onLongClick: () -> Unit = onClick,
+    onCaptionLongClick: (() -> Unit)? = null,
     showPages: Boolean,
     showProgress: Boolean,
     modifier: Modifier = Modifier,
     overflow: BrowseOverflowActions? = null,
 ) {
     if (Settings.gridCards.collectAsState().value) {
-        HistoryGridItemCard(info, onClick, onLongClick, showPages, showProgress, modifier, overflow)
+        HistoryGridItemCard(info, onClick, onLongClick, onCaptionLongClick, showPages, showProgress, modifier, overflow)
         return
     }
     val kind = LocalHistory.kindLabelKey(info)
@@ -566,6 +579,7 @@ fun HistoryGridItem(
                     actions = overflow,
                     placement = BrowseOverflowPlacement.GridBottomEnd,
                     modifier = Modifier.fillMaxWidth(),
+                    triggerLongClick = onCaptionLongClick,
                     triggerContent = { trigger ->
                         Text(
                             text = title,
@@ -586,7 +600,14 @@ fun HistoryGridItem(
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                     textAlign = TextAlign.Start,
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = if (onCaptionLongClick != null) {
+                        Modifier.fillMaxWidth().combinedClickable(
+                            onClick = onClick,
+                            onLongClick = onCaptionLongClick,
+                        )
+                    } else {
+                        Modifier.fillMaxWidth()
+                    },
                 )
             }
         }
@@ -683,6 +704,7 @@ fun HistoryDirectoryGridItem(
     info: GalleryInfo,
     onClick: () -> Unit,
     onLongClick: () -> Unit = onClick,
+    onCaptionLongClick: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
     overflow: BrowseOverflowActions? = null,
 ) {
@@ -730,7 +752,8 @@ fun HistoryDirectoryGridItem(
                         .fillMaxWidth()
                         .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.55f))
                         .padding(horizontal = namePadH)
-                        .padding(top = 4.dp, bottom = namePadBottom),
+                        .padding(top = 4.dp, bottom = namePadBottom)
+                        .then(if (onCaptionLongClick != null) Modifier.combinedClickable(onClick = onClick, onLongClick = onCaptionLongClick) else Modifier),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(
@@ -771,7 +794,8 @@ fun HistoryDirectoryGridItem(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = namePadH)
-                    .padding(bottom = namePadBottom),
+                    .padding(bottom = namePadBottom)
+                    .then(if (onCaptionLongClick != null) Modifier.combinedClickable(onClick = onClick, onLongClick = onCaptionLongClick) else Modifier),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 if (networkBadge != null) {
@@ -900,6 +924,7 @@ private fun HistoryGridItemCard(
     info: GalleryInfo,
     onClick: () -> Unit,
     onLongClick: () -> Unit = onClick,
+    onCaptionLongClick: (() -> Unit)? = null,
     showPages: Boolean,
     showProgress: Boolean,
     modifier: Modifier = Modifier,
@@ -971,7 +996,8 @@ private fun HistoryGridItemCard(
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(nameHeight)
-                    .padding(horizontal = namePadH),
+                    .padding(horizontal = namePadH)
+                    .then(if (onCaptionLongClick != null) Modifier.combinedClickable(onClick = onClick, onLongClick = onCaptionLongClick) else Modifier),
                 contentAlignment = Alignment.BottomStart,
             ) {
                 Row(
