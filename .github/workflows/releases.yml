@@ -8,6 +8,9 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: write
     strategy:
       fail-fast: false
       matrix:
@@ -74,7 +77,24 @@ jobs:
           cache-encryption-key: ${{ secrets.GradleEncryptionKey }}
           cache-read-only: true
 
-      - name: Generate Baseline Profile
+      - name: Restore Baseline Profile
+        id: profile
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if artifact_id=$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=baseline-profile&per_page=1" --jq '.artifacts[0].id // empty') && [ -n "$artifact_id" ]; then
+            mkdir -p app/src/main/generated/baselineProfiles
+            if gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact_id/zip" > /tmp/baseline-profile.zip &&
+              unzip -q /tmp/baseline-profile.zip -d app/src/main/generated/baselineProfiles &&
+              test -s app/src/main/generated/baselineProfiles/baseline-prof.txt; then
+              echo "found=true" >> "$GITHUB_OUTPUT"
+            else
+              rm -rf app/src/main/generated/baselineProfiles
+            fi
+          fi
+
+      - name: Generate Baseline Profile if unavailable
+        if: steps.profile.outputs.found != 'true'
         run: ./gradlew generateBaselineProfile
           -Pandroid.testoptions.manageddevices.emulator.gpu="swiftshader_indirect"
           -Prelease
