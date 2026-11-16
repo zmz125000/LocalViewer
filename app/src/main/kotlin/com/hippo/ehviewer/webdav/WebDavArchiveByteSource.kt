@@ -156,6 +156,7 @@ private class RawWebDavArchiveByteSource(
     /**
      * Brief multi-try for server restart windows (most restarts recover within ~1–2 s).
      * Returns null only after all attempts fail (or [close] cancelled the work).
+     * Caller cancellation propagates so it cannot start the failed-stat cooldown.
      */
     private fun resolveSizeWithRetry(): Long? = try {
         withTrackedJob {
@@ -171,12 +172,12 @@ private class RawWebDavArchiveByteSource(
             }
             last?.takeIf { it > 0L }
         }
-    } catch (_: CancellationException) {
-        null
     } catch (e: Throwable) {
         if (closed.get()) {
+            Thread.interrupted()
             null
         } else {
+            rethrowWebDavArchiveCancellation(e)
             logcat("WebDavArchive", e)
             null
         }
@@ -205,16 +206,13 @@ private class RawWebDavArchiveByteSource(
         } catch (e: RemoteRangeNotSupportedException) {
             // Permanent capability failure must not be masked as EOF/-1.
             throw e
-        } catch (_: CancellationException) {
-            // Media3 seek cancels this coroutine. -1 would make the video window
-            // retry the old offset; close() still soft-fails.
-            if (!closed.get()) throw SmbReadCancelledException()
-            -1
         } catch (e: Throwable) {
-            if (!closed.get() && (e is InterruptedException || e is SmbReadCancelledException)) {
-                throw SmbReadCancelledException()
+            if (closed.get()) {
+                Thread.interrupted()
+                return -1
             }
-            if (closed.get()) return -1
+            // Stop the obsolete offset on seek instead of making the video window retry it.
+            rethrowWebDavArchiveCancellation(e)
             logcat("WebDavArchive", e)
             -1
         }
@@ -255,4 +253,18 @@ private class RawWebDavArchiveByteSource(
         /** After a full failed stat, skip re-HEAD for this long (readahead / JNI thrash). */
         const val FAIL_FAST_MS = 1_500L
     }
+}
+
+/** Preserve the video reader's abort signal, including cancellation wrapped by transport code. */
+internal fun rethrowWebDavArchiveCancellation(error: Throwable) {
+    var cause: Throwable? = error
+    var depth = 0
+    while (cause != null && depth++ < 8) {
+        if (cause is InterruptedException || cause is CancellationException || cause is SmbReadCancelledException) {
+            Thread.interrupted()
+            throw SmbReadCancelledException()
+        }
+        cause = cause.cause
+    }
+    if (Thread.interrupted()) throw SmbReadCancelledException()
 }
