@@ -195,7 +195,6 @@ android {
 
 baselineProfile {
     mergeIntoMain = true
-    saveInSrc = true
 }
 
 dependencies {
