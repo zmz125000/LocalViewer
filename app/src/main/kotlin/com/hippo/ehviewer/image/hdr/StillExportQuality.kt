@@ -16,6 +16,7 @@ internal class StillExportQuality(
     val keepExif: Boolean = false,
     float32: Boolean = false,
     val srgbClamp: Boolean = false,
+    val toneMapping: SdrToneMapping = SdrToneMapping(mapper = 0),
 ) : AbstractCoroutineContextElement(Key) {
     /** Custom-only; captured with the job so later setting changes cannot change its buffers. */
     val float32Processing = value == 4 && float32
@@ -32,6 +33,26 @@ internal class StillExportQuality(
             Settings.imageConversionKeepExif.value,
             Settings.imageConversionFloat32.value,
             Settings.imageConversionSrgbClamp.value,
+            SdrToneMapping.current(),
+        )
+    }
+}
+
+/** Captured with the export batch, independent of later settings changes. */
+internal data class SdrToneMapping(
+    val mapper: Int = 2,
+    val shoulder: Float = .67f,
+    val rangeNits: Float = 10000f,
+) {
+    val enabled: Boolean get() = mapper != 0
+
+    fun nativeControls() = floatArrayOf(mapper.toFloat(), shoulder, rangeNits)
+
+    companion object {
+        fun current() = SdrToneMapping(
+            Settings.imageConversionToneMapper.value.coerceIn(0, 2),
+            Settings.imageConversionToneShoulder.value.coerceIn(0, 95) / 100f,
+            Settings.imageConversionToneRange.value.coerceIn(204, 10000).toFloat(),
         )
     }
 }

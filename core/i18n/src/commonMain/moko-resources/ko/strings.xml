@@ -362,4 +362,14 @@
     <string name="dark_theme_follow_system">시스템 설정</string>
     <string name="dark_theme_off">항상 꺼짐</string>
     <string name="dark_theme_on">항상 켜짐</string>
+    <string name="image_conversion_tone_shoulder">SDR 숄더</string>
+    <string name="image_conversion_tone_shoulder_summary">SKIV(사용자 지정)는 %1$d 니트 미만의 픽셀을 변경하지 않습니다.</string>
+    <string name="image_conversion_tone_range">HDR 범위 상한</string>
+    <string name="image_conversion_tone_range_summary">최대 %1$d 니트까지의 이미지 하이라이트를 SDR에 맞춥니다. 상한을 초과하는 하이라이트는 클리핑됩니다.</string>
+    <string name="reader_tone_skiv_gpu">SKIV (GPU)</string>
+    <string name="reader_tone_custom_gpu">SKIV(사용자 지정, GPU)</string>
+    <string name="pref_reader_hdr_tone_mapping">HDR 톤 매핑</string>
+    <string name="image_conversion_tone_mapper">SDR 톤 매핑</string>
+    <string name="image_conversion_tone_off">끄기</string>
+    <string name="image_conversion_tone_custom">SKIV(사용자 지정)</string>
 </resources>

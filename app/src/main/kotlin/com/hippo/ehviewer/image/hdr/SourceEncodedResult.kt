@@ -43,7 +43,7 @@ internal suspend fun sourceEncodedExport(source: Path, name: String, target: Sti
             } else if (kind != 2) {
                 convertSourceEncodedStill(
                     input, if (kind == 4) 3 else kind, format, out.absolutePath, quality.value, quality.jxlDistance,
-                    quality.codecQuality, quality.avifBitDepth, quality.downsizeGainMap, quality.keepExif, info,
+                    quality.codecQuality, quality.avifBitDepth, quality.downsizeGainMap, quality.keepExif, info, quality.toneMapping.enabled,
                 )
             } else {
                 encodeHeifSource(source, name, input, format, out, quality, info)
@@ -75,7 +75,7 @@ private fun simpleGainMetadata(maximum: Float, display: Float = maximum) = float
 )
 
 private fun encodeHeifSource(source: Path, name: String, input: ByteBuffer, format: Int, out: File, quality: StillExportQuality, info: IntArray): Int {
-    if (format == 0 && HeifPrecisionProbe.probe(input)?.transfer in listOf(16, 18)) return 0
+    if ((format == 0 || quality.toneMapping.enabled) && HeifPrecisionProbe.probe(input)?.transfer in listOf(16, 18)) return 0
     val frame = HevcHdrDecode.decode(input, 0, advancedColor = true, allowHdr = true, encodedRgb = true) ?: return -96
     frame.use {
         val color = checkNotNull(frame.sourceEncoding)
@@ -211,6 +211,14 @@ private fun encodePlatformSource(source: Path, name: String, input: ByteBuffer, 
         source.openFileDescriptor("r").use { ExifInterface(it.fileDescriptor).getAttributeInt(ExifInterface.TAG_ORIENTATION, 1) }
     }.getOrDefault(1).coerceIn(1, 8)
     val pngTags = if (ext == "png") pngColorTags(input) else null
+    if (quality.toneMapping.enabled && (
+            pngTags?.second in listOf(16, 18) ||
+                space == ColorSpace.get(ColorSpace.Named.BT2020_PQ) || space == ColorSpace.get(ColorSpace.Named.BT2020_HLG) ||
+                space == ColorSpace.get(ColorSpace.Named.LINEAR_EXTENDED_SRGB) || space == ColorSpace.get(ColorSpace.Named.EXTENDED_SRGB)
+            )
+    ) {
+        return 0
+    }
     val params = (space as? ColorSpace.Rgb)?.transferParameters
 
     /** CICP primaries/transfer for samples in [space], optionally described by [profile]. */

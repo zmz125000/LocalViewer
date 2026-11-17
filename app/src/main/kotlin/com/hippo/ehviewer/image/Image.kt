@@ -112,6 +112,7 @@ class Image private constructor(
      * the platform blit.
      */
     val displayScaler: Boolean = false,
+    val gpuToneMapping: com.hippo.ehviewer.image.hdr.SkivGpuToneMapping? = null,
     private val decodedColorSpaceIsSource: Boolean = true,
 ) {
     var metadata: ImageMetadata = ImageMetadata()
@@ -925,6 +926,7 @@ class Image private constructor(
                 image = coil,
                 src = src,
                 isHdrContentDirect = result.isHdrContent,
+                gpuToneMapping = result.gpuToneMapping,
                 contentHdrBoostOverride = if (coil is BitmapImageWithExtraInfo && coil.hasGainmap) null else result.contentHdrBoost,
                 isWideGamutDirect = result.isWideGamutSource,
             ).also {

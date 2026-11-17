@@ -20,8 +20,10 @@
 #include <memory>
 #include <string>
 #include <vector>
+#include <utility>
 
 #include "hdr_encode.h"
+#include "sdr_tone_map.h"
 #include "reader_pixels.h"
 #include "hdr_parallel.h"
 #include "ultrahdr_api.h"
@@ -1349,6 +1351,62 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_convertExportGamut(
     return JNI_FALSE;
 }
 
+// Expose premultiplied F16 as straight float samples without a full-frame F32
+// allocation. The mapper scans first, then modifies each independent pixel once.
+struct ReaderTonePixels {
+    uint16_t* data;
+    size_t length;
+    size_t size() const { return length; }
+    float operator[](size_t i) const {
+        const float a=half_to_float(data[(i/4)*4+3]);
+        return i%4==3?a:(a>0.f?half_to_float(data[i])/a:0.f);
+    }
+    struct Sample {
+        ReaderTonePixels& pixels; size_t i;
+        operator float() const { return static_cast<const ReaderTonePixels&>(pixels)[i]; }
+        Sample& operator=(float value) {
+            const float a=half_to_float(pixels.data[(i/4)*4+3]);
+            pixels.data[i]=float_to_half(i%4==3?value:value*a);return *this;
+        }
+        Sample& operator=(const Sample& value) { return *this=float(value); }
+    };
+    Sample operator[](size_t i) { return {*this,i}; }
+};
+
+// Reader-only presentation: source metadata and export pixels remain untouched.
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_hippo_ehviewer_jni_HdrConvertKt_toneMapReaderPixels(
+        JNIEnv* env, jclass, jbyteArray array, jobject direct, jint width, jint height,
+        jint gamut, jint mapper, jfloat shoulder, jfloat cap, jfloatArray out_peak) try {
+    if(width<=0||height<=0||mapper<1||mapper>4||gamut<0||gamut>2)return JNI_FALSE;
+    const uint64_t count=uint64_t(width)*uint64_t(height);
+    if(count>SIZE_MAX/8)return JNI_FALSE;
+    const size_t bytes=size_t(count)*8;
+    auto* data=direct?static_cast<uint16_t*>(env->GetDirectBufferAddress(direct)):nullptr;
+    if(direct&&(!data||env->GetDirectBufferCapacity(direct)<jlong(bytes)))return JNI_FALSE;
+    if(!direct&&(!array||size_t(env->GetArrayLength(array))<bytes))return JNI_FALSE;
+    // Rare Java-backed fallback: copy once, avoiding a pinned Java heap while
+    // the percentile scan and parallel mapper run. Captured native frames need
+    // only the 512 KiB histogram, with no additional full-frame allocation.
+    std::vector<uint16_t> storage;
+    if(!data) {
+        storage.resize(size_t(count)*4);data=storage.data();
+        env->GetByteArrayRegion(array,0,jsize(bytes),reinterpret_cast<jbyte*>(data));
+        if(env->ExceptionCheck())return JNI_FALSE;
+    }
+    ReaderTonePixels pixels{data,size_t(count)*4};
+    if(mapper>=3) {
+        if(!out_peak||env->GetArrayLength(out_peak)<1)return JNI_FALSE;
+        const auto& space=gamut==2?skiv::rgb2020_xyz:gamut==1?skiv::rgbp3_xyz:skiv::rgb709_xyz;
+        const jfloat peak=float(skiv::content_peak(pixels,space)*80.);
+        env->SetFloatArrayRegion(out_peak,0,1,&peak);
+        return env->ExceptionCheck()?JNI_FALSE:JNI_TRUE;
+    }
+    tone_map_skiv_in_place(pixels,gamut,mapper==2,shoulder,cap);
+    if(!direct)env->SetByteArrayRegion(array,0,jsize(bytes),reinterpret_cast<const jbyte*>(data));
+    return env->ExceptionCheck()?JNI_FALSE:JNI_TRUE;
+} catch (...) { return JNI_FALSE; }
+
 int pack_linear_f16_for_direct(std::vector<uint16_t>& rgba, unsigned w, unsigned h, bool force_hdr,
                                uhdr_color_gamut_t cg, bool advanced_color, int transfer_cicp,
                                std::vector<uint8_t>& out_pixels, int* out_format, int* out_is_hdr,
@@ -1754,6 +1812,23 @@ int encode_srgb_jpeg_u8(unsigned w, unsigned h, const uint8_t* rgba, const char*
  * (BT.709, Display P3, or BT.2020). JXL keeps linear half precision and those primaries.
  * 8-bit JPEG (HDR) stays a baseline JPEG. There is no headroom to put in a gain map.
  */
+int encode_still_export_f32(float*,unsigned,unsigned,int,int,const char*,StillEncodeQuality,const float*);
+
+static bool tone_map_export_mode(int mode) {
+    return mode==kExportJpeg||mode==kExportJxl||mode==kExportAvif||mode==kExportJpegHdr||mode==kExportAvifGainMap;
+}
+
+// JNI settings are immutable per queued export, never reader/display controls.
+static bool read_tone_controls(JNIEnv* env,jfloatArray controls,StillEncodeQuality& quality) {
+    if(!controls)return true;
+    if(env->GetArrayLength(controls)!=3)return false;
+    float v[3];env->GetFloatArrayRegion(controls,0,3,v);
+    if(env->ExceptionCheck())return false;
+    for(float value:v)if(!std::isfinite(value))return false;
+    if(v[0]<0.f||v[0]>2.f||v[0]!=std::floor(v[0])||v[1]<0.f||v[1]>.95f||v[2]<204.f||v[2]>10000.f)return false;
+    quality.sdr_mapper=int(v[0]);quality.sdr_shoulder=v[1];quality.sdr_range_nits=v[2];return true;
+}
+
 int encode_still_export(const uint8_t* src, size_t src_len, unsigned w, unsigned h, bool f16,
                         int gamut, int mode, bool premultiplied, const char* out_path, size_t sdr_offset = 0,
                         StillEncodeQuality quality = 1, bool mutable_input = false) {
@@ -1762,6 +1837,22 @@ int encode_still_export(const uint8_t* src, size_t src_len, unsigned w, unsigned
     const size_t bpp = f16 ? 8u : 4u;
     if (pixels == 0 || pixels > 80000000u || src_len < pixels * bpp) return -51;
     if (sdr_offset && (!f16 || sdr_offset != pixels * 8u || sdr_offset > src_len || pixels * 8u > src_len - sdr_offset)) return -51;
+    // Promote only linear exports that use the SDR mapper. Encoded 8-bit
+    // sources and every HDR-only target retain their existing paths.
+    if(f16&&quality.sdr_mapper!=0&&!quality.jxl_scrgb&&tone_map_export_mode(mode)) {
+        std::vector<float> linear(pixels*4),base(sdr_offset?pixels*4:0);
+        const auto* half=reinterpret_cast<const uint16_t*>(src);
+        for(size_t i=0;i<pixels*4;++i)linear[i]=half_to_float(half[i]);
+        if(premultiplied)for(size_t i=0;i<pixels;++i) {
+            const float alpha=linear[i*4+3];
+            for(unsigned c=0;c<3;++c)linear[i*4+c]=alpha>0.f?linear[i*4+c]/alpha:0.f;
+        }
+        if(sdr_offset) {
+            const auto* encoded=reinterpret_cast<const uint16_t*>(src+sdr_offset);
+            for(size_t i=0;i<pixels*4;++i)base[i]=i%4==3?encoded[i]/65535.f:srgb_eotf(encoded[i]/65535.f);
+        }
+        return encode_still_export_f32(linear.data(),w,h,gamut,mode,out_path,quality,base.empty()?nullptr:base.data());
+    }
     uhdr_color_gamut_t cg = export_gamut(gamut);
     const bool srgb_clamp = quality.srgb_clamp && !quality.jxl_scrgb;
     if (f16) {
@@ -1863,6 +1954,19 @@ int encode_still_export_f32(float* src,unsigned w,unsigned h,int gamut,int mode,
         clamp_export_f32(src,pixels,gamut);cg=UHDR_CG_BT_709;
         if(sdr_base) {sdr_storage.assign(sdr_base,sdr_base+pixels*4);clamp_export_f32(sdr_storage.data(),pixels,gamut);sdr_base=sdr_storage.data();}
     }
+    std::vector<float> mapped;
+    if(quality.sdr_mapper!=0&&!quality.jxl_scrgb&&tone_map_export_mode(mode)) {
+        float peak=0.f;
+        for(size_t i=0;i<pixels;++i)if(std::isfinite(src[i*4+3])&&src[i*4+3]>0.f)
+            for(unsigned c=0;c<3;++c)if(std::isfinite(src[i*4+c]))peak=std::max(peak,src[i*4+c]);
+        if(peak>1.f) {
+            const int working_gamut=cg==UHDR_CG_BT_2100?2:cg==UHDR_CG_DISPLAY_P3?1:0;
+            mapped=tone_map_skiv_base(std::vector<float>(src,src+pixels*4),working_gamut,
+                quality.sdr_mapper==2,quality.sdr_shoulder,quality.sdr_range_nits);
+            if(mode==kExportJpegHdr||mode==kExportAvifGainMap)sdr_base=mapped.data();
+            else src=mapped.data();
+        }
+    }
     if(mode==kExportJxl||mode==kExportJxlHdr||mode==kExportJxlPq||mode==kExportJxlHlg)
         return encode_jxl_f32(w,h,src,cg,mode!=kExportJxl,path,quality,mode==kExportJxlPq,mode==kExportJxlHlg);
     if(mode==kExportAvifHlg) return encode_avif_f32(w,h,src,cg,3,path,quality);
@@ -1897,7 +2001,7 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_encodeNativeStillExport(JNIEnv* env, jc
                                                                jint width, jint height, jint format,
                                                                jint gamut, jint mode, jboolean premultiplied,
                                                                jstring jOut, jint sdr_offset, jint quality, jfloat custom_distance, jint custom_quality,
-                                                               jint avif_depth, jboolean downsize_gain_map, jbyteArray jExif, jint source_bits, jboolean jxl_scrgb, jboolean srgb_clamp) try {
+                                                               jint avif_depth, jboolean downsize_gain_map, jbyteArray jExif, jint source_bits, jboolean jxl_scrgb, jboolean srgb_clamp, jfloatArray tone_controls) try {
     std::vector<uint8_t> exif;
     if (jExif) {
         const jsize size = env->GetArrayLength(jExif);
@@ -1912,6 +2016,7 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_encodeNativeStillExport(JNIEnv* env, jc
     encode_quality.exif_size = exif.size();
     encode_quality.jxl_scrgb = jxl_scrgb == JNI_TRUE;
     encode_quality.srgb_clamp = srgb_clamp == JNI_TRUE;
+    if(!read_tone_controls(env,tone_controls,encode_quality))return -52;
     encode_quality.source_bits = source_bits > 0 && source_bits <= 32 ? unsigned(source_bits) : 32;
     if (avif_depth != 10 && avif_depth != 12) return -52;
     if (!jPixels || !jOut || width <= 0 || height <= 0 || sdr_offset < 0 || quality < 0 || quality > 4 ||
@@ -1955,7 +2060,7 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_encodeStillExport(JNIEnv* env, jclass, 
                                                            jint width, jint height, jboolean f16,
                                                            jint gamut, jint mode,
                                                            jboolean premultiplied, jstring jOut, jint sdr_offset,
-                                                           jint quality, jfloat custom_distance, jint custom_quality, jint avif_depth, jboolean downsize_gain_map, jbyteArray jExif, jint source_bits, jboolean jxl_scrgb, jboolean srgb_clamp) {
+                                                           jint quality, jfloat custom_distance, jint custom_quality, jint avif_depth, jboolean downsize_gain_map, jbyteArray jExif, jint source_bits, jboolean jxl_scrgb, jboolean srgb_clamp, jfloatArray tone_controls) {
     std::vector<uint8_t> exif;
     if (jExif) {
         const jsize size = env->GetArrayLength(jExif);
@@ -1970,6 +2075,7 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_encodeStillExport(JNIEnv* env, jclass, 
     encode_quality.exif_size = exif.size();
     encode_quality.jxl_scrgb = jxl_scrgb == JNI_TRUE;
     encode_quality.srgb_clamp = srgb_clamp == JNI_TRUE;
+    if(!read_tone_controls(env,tone_controls,encode_quality))return -52;
     encode_quality.source_bits = source_bits > 0 && source_bits <= 32 ? unsigned(source_bits) : 32;
     if (avif_depth != 10 && avif_depth != 12) return -52;
     if (!jPixels || !jOut || width <= 0 || height <= 0 || sdr_offset < 0 || quality < 0 || quality > 4 ||

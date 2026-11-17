@@ -355,7 +355,7 @@ abstract class PageLoader(
         val precision = if (advanced && route == StillRoute.Platform) PlatformHeifDecode.precision(raw, nameHint) else null
         val deepHeif = precision?.highDepth == true
         if (rawStill) noteRawLoaded()
-        if (!rawStill && !hevcHdr && !avifDirect && !deepHeif && !Settings.readerLibDirectBitmap.value) return null
+        if (!rawStill && !hevcHdr && !avifDirect && !deepHeif && !Settings.readerLibDirectBitmap.value && !Settings.readerSdrToneMappingEnabled) return null
         if (!route.needsLibDecode && !rawStill && !deepHeif) return null
         val maxEdge = Image.maxEdgeForReader(forceOriginal)
         val direct = (if (deepHeif) PlatformHeifDecode.decode(raw, precision, maxEdge) else null)

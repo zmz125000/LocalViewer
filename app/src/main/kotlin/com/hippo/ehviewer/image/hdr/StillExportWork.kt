@@ -53,7 +53,7 @@ internal class ExportMemoryBudget(private val capacity: Long) {
     }
 }
 
-internal fun exportWorkingBytes(width: Long, height: Long, sourceBytes: Long, raw: Boolean, floatPixels: Boolean = false): Long {
+internal fun exportWorkingBytes(width: Long, height: Long, sourceBytes: Long, raw: Boolean, floatPixels: Boolean = false, toneMapping: Boolean = false): Long {
     if (width <= 0 || height <= 0 || width > 65536 || height > 65536) return Long.MAX_VALUE
     // Account for selected working precision, RAW's paired SDR base and codec scratch.
     return width * height * (
@@ -64,7 +64,7 @@ internal fun exportWorkingBytes(width: Long, height: Long, sourceBytes: Long, ra
         } else {
             80
         }
-        ) + sourceBytes.coerceAtLeast(0).coerceAtMost(1024L * 1024 * 1024) * 2 + 16L * 1024 * 1024
+        ) + (if (toneMapping) width * height * 48 else 0) + sourceBytes.coerceAtLeast(0).coerceAtMost(1024L * 1024 * 1024) * 2 + 16L * 1024 * 1024
 }
 
 /** Native exports keep pixel planes outside the Java heap; fallbacks retain their previous budget. */
@@ -126,13 +126,24 @@ internal object StillExportWork {
         val sourceBytes = file.length()
         val quality = currentCoroutineContext()[StillExportQuality] ?: StillExportQuality.current()
         // JXL already decodes to F32; retaining that buffer avoids the extra F16 copy.
-        val preservingJxr = kind == 1 && (!quality.extendedSrgbBt2020 || target == StillExportTarget.JxlScRgb) &&
+        val preservingJxr = kind == 1 && (!quality.toneMapping.enabled || target != StillExportTarget.Jxl) && (!quality.extendedSrgbBt2020 || target == StillExportTarget.JxlScRgb) &&
             (target == StillExportTarget.Jxl || target == StillExportTarget.JxlHdr || target == StillExportTarget.JxlScRgb)
         val floatPixels = ext == "jxl" || preservingJxr || quality.float32Processing && (raw || kind == 1 || ext == "avif")
         // Codec working buffers live on the native heap, not inside the JVM's
         // maxMemory allowance. Keep both leases through encode, with separate limits.
         return heapBudget.withBytes(exportHeapBytes(width, height, sourceBytes, raw, nativePixels = true, mappedInput = true)) {
-            nativeBudget.withBytes(exportWorkingBytes(width, height, sourceBytes, raw, floatPixels = floatPixels), work)
+            nativeBudget.withBytes(
+                exportWorkingBytes(
+                    width,
+                    height,
+                    sourceBytes,
+                    raw,
+                    floatPixels = floatPixels,
+                    toneMapping = quality.toneMapping.enabled &&
+                        target in setOf(StillExportTarget.Jpeg, StillExportTarget.Jxl, StillExportTarget.Avif, StillExportTarget.JpegHdr, StillExportTarget.AvifGainMap),
+                ),
+                work,
+            )
         }
     }
 }

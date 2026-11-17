@@ -516,6 +516,7 @@ private fun Image.toPainter(
         limitUpscale,
         displayScaler && allowScaler,
         settledZoom,
+        gpuToneMapping,
     )
     is DrawableImage -> DrawablePainter(image.drawable)
     else -> unreachable()

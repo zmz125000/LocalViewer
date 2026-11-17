@@ -239,6 +239,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.isActive
@@ -2247,6 +2248,10 @@ private fun PdfReaderScreen(
                 readerDecodeScaler.changesFlow(),
                 readerHiResSoftwareDownscale.changesFlow(),
                 readerAdvancedColor.changesFlow(),
+                readerHdrToneMapper.changesFlow().filter { !readerHdrDisplay.value },
+                readerHdrToneShoulder.changesFlow().filter { readerSdrToneMappingEnabled && readerHdrToneMapper.value in listOf(2, 4) },
+                readerHdrToneRange.changesFlow().filter { readerSdrToneMappingEnabled && readerHdrToneMapper.value in listOf(2, 4) },
+                readerHdrDisplay.changesFlow().filter { readerHdrToneMapper.value != 0 },
                 readerOppoProxdr.changesFlow(),
             ).collect {
                 loader.restart()

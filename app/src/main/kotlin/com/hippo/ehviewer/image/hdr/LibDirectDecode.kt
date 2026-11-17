@@ -87,6 +87,7 @@ data class LibDirectResult(
     val sourcePrimaries: Int? = null,
     /** Explicit floating-point linear sRGB with an 80-nit reference white. */
     val sourceIsScRgb: Boolean = false,
+    val gpuToneMapping: SkivGpuToneMapping? = null,
 )
 
 /**
@@ -237,7 +238,7 @@ object LibDirectDecode {
                 handle = beginNativeExportPixels(
                     target.needsSdrBase(),
                     quality.float32Processing,
-                    preserveScRgb = maxEdge == 0 && (!quality.extendedSrgbBt2020 || target == StillExportTarget.JxlScRgb) &&
+                    preserveScRgb = maxEdge == 0 && (!quality.toneMapping.enabled || target != StillExportTarget.Jxl) && (!quality.extendedSrgbBt2020 || target == StillExportTarget.JxlScRgb) &&
                         (!quality.srgbClamp || target == StillExportTarget.JxlScRgb) &&
                         (target == StillExportTarget.JxlHdr || target == StillExportTarget.JxlScRgb || target == StillExportTarget.Jxl),
                 )
@@ -593,7 +594,7 @@ object LibDirectDecode {
      * precision. Absolute HDR keeps the existing HDR-display preference.
      */
     private fun decodeHevcHdrPacked(bytes: ByteBuffer, maxEdge: Int, advanced: Boolean, export: Boolean = false): PackedPixels? {
-        val allowHdr = export || Settings.preferNativeHeifAvif.value || Settings.readerHdrDisplay.value
+        val allowHdr = export || Settings.readerSdrToneMappingEnabled || Settings.preferNativeHeifAvif.value || Settings.readerHdrDisplay.value
         // ProXDR attaches its gain map after decoding this SDR base. Preserve the
         // base gamut too; the trailer probe reads only a small tail of the buffer.
         val preserveColor = advanced || (Settings.readerHdrDisplay.value && OppoProxdr.looksLike(bytes))
@@ -887,7 +888,7 @@ object LibDirectDecode {
     internal suspend fun decodeColorPng(src: ImageSource): LibDirectResult? = withContext(Dispatchers.IO) {
         // Advanced color off restores normal system decoding. Source metadata is
         // read separately, so its gamut label never comes from the working bitmap.
-        if (!Settings.readerAdvancedColor.value) return@withContext null
+        if (!Settings.readerAdvancedColor.value && !Settings.readerSdrToneMappingEnabled) return@withContext null
         // 32-bit ABIs link the HDR JNI stub; avoid allocating PNG scratch before that fallback.
         if (!android.os.Process.is64Bit()) return@withContext null
         val signature = when (src) {
@@ -904,7 +905,7 @@ object LibDirectDecode {
                 val info = PngHdrMetadata.probe(input) ?: return@withStillInput null
                 if (!info.needsNativeReader) return@withStillInput null
                 val advancedColor = Settings.readerAdvancedColor.value
-                if (!advancedColor) return@withStillInput null
+                if (!advancedColor && (!Settings.readerSdrToneMappingEnabled || info.transfer !in listOf(16, 18))) return@withStillInput null
                 pngSourcePixels(input, info.width, info.height)?.use { pixels ->
                     val handle = beginNativeReaderPixels()
                     try {
@@ -943,6 +944,30 @@ object LibDirectDecode {
         val transfer = outInfo[5]
         if (w <= 0 || h <= 0) return null
         val f16 = format == 1
+        var gpuToneMapping: SkivGpuToneMapping? = null
+        if (f16 && isHdr && outInfo.getOrNull(7) != 1 && !Settings.readerHdrDisplay.value) {
+            val selected = Settings.readerHdrToneMapper.value.coerceIn(0, 4)
+            val mapper = if (selected >= 3 && !SkivGpuToneMapping.supported) selected - 2 else selected
+            if (mapper != 0) {
+                val peak = if (mapper >= 3) FloatArray(1) else null
+                val success = com.hippo.ehviewer.jni.toneMapReaderPixels(
+                    pixels, nativePixels, w, h, gamut, mapper,
+                    Settings.readerHdrToneShoulder.value.coerceIn(0, 95) / 100f,
+                    Settings.readerHdrToneRange.value.coerceIn(210, 10000).toFloat(),
+                    peak,
+                )
+                if (success && peak != null) {
+                    gpuToneMapping = SkivGpuToneMapping(
+                        gamut,
+                        mapper == 4,
+                        peak[0],
+                        Settings.readerHdrToneShoulder.value.coerceIn(0, 95) / 100f,
+                        Settings.readerHdrToneRange.value.coerceIn(210, 10000).toFloat(),
+                    )
+                }
+                if (!success) Log.w("ReaderColor", "SKIV presentation failed; retaining original pixels")
+            }
+        }
         val colorSpace = resolveColorSpace(f16, gamut, transfer)
         // All F16 reader frames go straight into a HardwareBuffer. HDR can produce
         // F16 with advanced color off too; a software Bitmap here would only be
@@ -965,6 +990,7 @@ object LibDirectDecode {
             (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && bitmap.colorSpace?.isWideGamut == true)
         return LibDirectResult(
             bitmap = bitmap,
+            gpuToneMapping = gpuToneMapping,
             isHdrContent = isHdr,
             contentHdrBoost = if (isHdr) boost else 1f,
             isWideGamutSource = wide,

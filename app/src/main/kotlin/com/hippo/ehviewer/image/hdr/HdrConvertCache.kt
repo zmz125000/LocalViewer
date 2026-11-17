@@ -119,7 +119,7 @@ object HdrConvertCache {
     fun usesNetworkLibConvert(fileName: String): Boolean = isRamPipelineCandidate(fileName) && !keepOriginalOnNetwork(fileName)
 
     /** Keep original bytes on network finalize (no UHDR encode). */
-    private fun keepOriginalOnNetwork(fileName: String): Boolean = Settings.readerLibDirectBitmap.value ||
+    private fun keepOriginalOnNetwork(fileName: String): Boolean = Settings.readerLibDirectBitmap.value || Settings.readerSdrToneMappingEnabled ||
         keepHeifPrecisionOriginal(fileName, Settings.readerAdvancedColor.value, Settings.preferNativeHeifAvif.value)
 
     /** Derived Ultra HDR for local files (user originals untouched). */
@@ -158,7 +158,7 @@ object HdrConvertCache {
      * pure [uhdrSiblingOf] + an in-memory set (see Smb/WebDav `isPageCached`).
      */
     fun resolvePagePath(primary: Path): Path {
-        if ((Settings.readerLibDirectBitmap.value || keepHeifPrecisionOriginal(primary.name, Settings.readerAdvancedColor.value, Settings.preferNativeHeifAvif.value)) && isPresent(primary)) return primary
+        if ((Settings.readerLibDirectBitmap.value || Settings.readerSdrToneMappingEnabled || keepHeifPrecisionOriginal(primary.name, Settings.readerAdvancedColor.value, Settings.preferNativeHeifAvif.value)) && isPresent(primary)) return primary
         val uhdr = uhdrSiblingOf(primary)
         if (uhdr.toString() != primary.toString() && isPresent(uhdr)) {
             if (primary.name.endsWith(".avif", ignoreCase = true) && isPresent(primary)) {

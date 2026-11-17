@@ -36,6 +36,25 @@ fun ColorFilterSetting(
     showImageScaler: Boolean = true,
     showCameraRaw: Boolean = false,
 ) = Column(modifier = Modifier.verticalScroll(rememberScrollState()).navigationBarsPadding()) {
+    val toneMapper = Settings.readerHdrToneMapper.asMutableState()
+    val hdrDisplay = Settings.readerHdrDisplay.asMutableState()
+    AnimatedVisibility(visible = toneMapper.value in listOf(2, 4) && !hdrDisplay.value) {
+        Column {
+            CommitSliderChoice(
+                title = stringResource(R.string.image_conversion_tone_shoulder),
+                range = 0..95,
+                field = Settings.readerHdrToneShoulder.asMutableState(),
+                valueText = { "${(it * 2.03f).roundToInt()} nits" },
+            )
+            CommitSliderChoice(
+                title = stringResource(R.string.image_conversion_tone_range),
+                range = 210..10000,
+                steps = 978,
+                field = Settings.readerHdrToneRange.asMutableState(),
+                valueText = { "$it nits" },
+            )
+        }
+    }
     if (showCameraRaw) {
         val cameraRaw = Settings.readerCameraRaw.asMutableState()
         AnimatedVisibility(visible = cameraRaw.value) {

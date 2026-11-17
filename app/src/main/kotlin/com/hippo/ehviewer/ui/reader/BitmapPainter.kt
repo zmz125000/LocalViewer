@@ -29,6 +29,7 @@ class BitmapPainter(
      * Reading it here redraws once, then the kernel bakes at that scale.
      */
     private val settledZoom: FloatState,
+    private val toneMapping: com.hippo.ehviewer.image.hdr.SkivGpuToneMapping? = null,
 ) : Painter() {
     private val srcRect = intrinsicSize.toRect().toAndroidRectF()
     private val dstRect = RectF()
@@ -48,6 +49,12 @@ class BitmapPainter(
         dstRect.right = size.width.fastRoundToInt().toFloat()
         dstRect.bottom = size.height.fastRoundToInt().toFloat()
         val native = canvas.nativeCanvas
+        if (toneMapping != null && android.os.Build.VERSION.SDK_INT >= 33) {
+            val zoom = settledZoom.floatValue.coerceAtLeast(1f)
+            val cacheW = (dstRect.width() * zoom).coerceAtMost(bitmap.width.toFloat()).fastRoundToInt().coerceAtLeast(1)
+            val cacheH = (dstRect.height() * zoom).coerceAtMost(bitmap.height.toFloat()).fastRoundToInt().coerceAtLeast(1)
+            if (drawDisplayScaler(native, dstRect, 3, cacheW, cacheH)) return@drawIntoCanvas
+        }
         val plan = if (!allowScaler || dstRect.width() < 1f || dstRect.height() < 1f) {
             ScalerDraw(0, 1, 1)
         } else {
@@ -85,7 +92,7 @@ class BitmapPainter(
             return false
         }
         val scaler = pageScaler ?: try {
-            DisplayScaler.create(bitmap).also { pageScaler = it }
+            DisplayScaler.create(bitmap, toneMapping).also { pageScaler = it }
         } catch (e: RuntimeException) {
             scalerFailed = true
             android.util.Log.e("DisplayScaler", "shader unavailable", e)
