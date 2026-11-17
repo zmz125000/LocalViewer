@@ -320,4 +320,11 @@
     <string name="settings_eh_show_gallery_pages_summary">Die Galerieseitenzahle in der Galerieliste anzeigen</string>
     <string name="dark_theme_follow_system">System folgen</string>
 
+    <string name="image_conversion_tone_shoulder">SDR-Schulter</string>
+    <string name="image_conversion_tone_shoulder_summary">SKIV (benutzerdefiniert) lässt Pixel unter %1$d Nits unverändert.</string>
+    <string name="image_conversion_tone_range">HDR-Obergrenze</string>
+    <string name="image_conversion_tone_range_summary">Passt die Bildlichter bis %1$d Nits an SDR an; hellere Lichter werden abgeschnitten.</string>
+    <string name="image_conversion_tone_mapper">SDR-Tonemapping</string>
+    <string name="image_conversion_tone_off">Aus</string>
+    <string name="image_conversion_tone_custom">SKIV (benutzerdefiniert)</string>
 </resources>

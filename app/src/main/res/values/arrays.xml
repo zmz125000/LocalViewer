@@ -808,4 +808,10 @@
     <integer-array name="media3_audio_downmixing_values" translatable="false">
         <item>0</item><item>1</item><item>2</item><item>3</item>
     </integer-array>
+    <string-array name="sdr_tone_mapper_entries">
+        <item>@string/image_conversion_tone_off</item>
+        <item>@string/image_conversion_tone_skiv</item>
+        <item>@string/image_conversion_tone_custom</item>
+    </string-array>
+    <integer-array name="sdr_tone_mapper_values" translatable="false"><item>0</item><item>1</item><item>2</item></integer-array>
 </resources>

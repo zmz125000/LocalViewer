@@ -139,7 +139,7 @@ int jpeg_to_jxl(const void* data,size_t size,const char* path,StillEncodeQuality
 }
 
 Image jxl_image(const uint8_t* data,size_t size,int target,StillEncodeQuality quality,bool keep_exif,std::vector<uint8_t>& icc,
-                 std::vector<uint8_t>& exif,bool& unsupported,const char* output,int& encoded_result,jint* output_info) {
+                 std::vector<uint8_t>& exif,bool& unsupported,const char* output,int& encoded_result,jint* output_info,bool tone_mapping=false) {
     unsupported=false;
     const bool linear_only = target == 3;
     if (linear_only) target = 1;
@@ -178,6 +178,10 @@ Image jxl_image(const uint8_t* data,size_t size,int target,StillEncodeQuality qu
             scrgb = structured && info.exponent_bits_per_sample > 0 && info.intensity_target == 80.f &&
                 color.color_space == JXL_COLOR_SPACE_RGB && color.white_point == JXL_WHITE_POINT_D65 &&
                 color.primaries == JXL_PRIMARIES_SRGB && color.transfer_function == JXL_TRANSFER_FUNCTION_LINEAR;
+            if(tone_mapping&&!linear_only&&(info.exponent_bits_per_sample>0||
+                (structured&&(color.transfer_function==JXL_TRANSFER_FUNCTION_PQ||color.transfer_function==JXL_TRANSFER_FUNCTION_HLG)))) {
+                unsupported=true;return Image(nullptr,avifImageDestroy);
+            }
             if ((linear_only && !scrgb) || (target != 1 && scrgb)) {
                 // Decide during the normal color event, before allocating/decoding pixels.
                 unsupported = true; return Image(nullptr, avifImageDestroy);
@@ -574,7 +578,7 @@ std::vector<uint8_t> source_jpeg_icc(const uint8_t* data,size_t size) { return j
 extern "C" JNIEXPORT jint JNICALL
 Java_com_hippo_ehviewer_jni_HdrConvertKt_convertSourceEncodedStill(JNIEnv* env,jclass,jobject input,jint kind,
         jint target,jstring output,jint preset,jfloat distance,jint codec_quality,jint avif_depth,jboolean downsize,
-        jboolean keep_exif,jintArray out_info) try {
+        jboolean keep_exif,jintArray out_info,jboolean tone_mapping) try {
     if(!input||!output||!out_info||env->GetArrayLength(out_info)<5)return -80;
     const auto* data=static_cast<const uint8_t*>(env->GetDirectBufferAddress(input));
     const auto size=env->GetDirectBufferCapacity(input);if(!data||size<=0)return -80;
@@ -593,7 +597,7 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_convertSourceEncodedStill(JNIEnv* env,j
         auto parsed=avifDecoderParse(decoder.get());
         if(parsed!=AVIF_RESULT_OK) {decoder->ignoreExif=AVIF_TRUE;parsed=avifDecoderParse(decoder.get());}
         if(parsed!=AVIF_RESULT_OK)return -92;
-        if(target==0 && !decoder->image->gainMap &&
+        if((target==0||tone_mapping==JNI_TRUE) && !decoder->image->gainMap &&
            (decoder->image->transferCharacteristics==16 || decoder->image->transferCharacteristics==18))return 0;
         if(avifDecoderNextImage(decoder.get())!=AVIF_RESULT_OK)return -93;
         decoded_image=decoder->image;
@@ -641,7 +645,7 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_convertSourceEncodedStill(JNIEnv* env,j
     } else if(kind==3) {
         bool unsupported=false;
         int encoded=0;jint info[5]{};
-        image=jxl_image(data,size,target,quality,keep_exif==JNI_TRUE,icc,exif,unsupported,path.get(),encoded,info);
+        image=jxl_image(data,size,target,quality,keep_exif==JNI_TRUE,icc,exif,unsupported,path.get(),encoded,info,tone_mapping==JNI_TRUE);
         if(encoded){env->SetIntArrayRegion(out_info,0,5,info);return encoded;}
         if(unsupported)return 0;
         if(!image)return -94;

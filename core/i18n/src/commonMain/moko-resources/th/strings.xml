@@ -373,4 +373,11 @@
 
     <string name="download_service">บริการดาวน์โหลด</string>
     <string name="favorite_name">รายการโปรด</string>
+    <string name="image_conversion_tone_shoulder">จุดเริ่มบีบไฮไลต์ SDR</string>
+    <string name="image_conversion_tone_shoulder_summary">SKIV (กำหนดเอง) จะไม่เปลี่ยนพิกเซลที่ต่ำกว่า %1$d นิต</string>
+    <string name="image_conversion_tone_range">ขีดจำกัดช่วง HDR</string>
+    <string name="image_conversion_tone_range_summary">ปรับช่วงไฮไลต์ของภาพที่ไม่เกิน %1$d นิตให้อยู่ในช่วง SDR โดยตัดส่วนที่สว่างเกินขีดจำกัด</string>
+    <string name="image_conversion_tone_mapper">การแมปโทน SDR</string>
+    <string name="image_conversion_tone_off">ปิด</string>
+    <string name="image_conversion_tone_custom">SKIV (กำหนดเอง)</string>
 </resources>

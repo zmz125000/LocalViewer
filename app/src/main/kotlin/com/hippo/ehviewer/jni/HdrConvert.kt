@@ -270,6 +270,7 @@ external fun encodeStillExport(
     sourceBitDepth: Int = 32,
     jxlScRgb: Boolean = false,
     srgbClamp: Boolean = false,
+    toneMapping: FloatArray? = null,
 ): Int
 
 /** Owned pixels: 0 RGBA8, 1/2 linear F16/F32 (203 nits), 3/4 source scRGB F16/F32 (80 nits). */
@@ -292,6 +293,7 @@ internal external fun encodeNativeStillExport(
     sourceBitDepth: Int = 32,
     jxlScRgb: Boolean = false,
     srgbClamp: Boolean = false,
+    toneMapping: FloatArray? = null,
 ): Int
 
 /** Header-only size probe. Kind: 0 JXL, 1 JXR, 2 RAW; packed width/height, or 0. */
@@ -397,6 +399,7 @@ internal external fun convertSourceEncodedStill(
     downsize: Boolean,
     keepExif: Boolean,
     outInfo: IntArray,
+    toneMapping: Boolean = false,
 ): Int
 internal external fun encodeSourceRgb(
     pixels: ByteBuffer,

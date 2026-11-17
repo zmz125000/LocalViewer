@@ -392,4 +392,11 @@
     <string name="dark_theme_follow_system">Identique au système</string>
     <string name="dark_theme_off">Toujours actif</string>
     <string name="dark_theme_on">Toujours inactif</string>
+    <string name="image_conversion_tone_shoulder">Seuil SDR</string>
+    <string name="image_conversion_tone_shoulder_summary">SKIV (personnalisé) conserve les pixels sous %1$d nits.</string>
+    <string name="image_conversion_tone_range">Plafond HDR</string>
+    <string name="image_conversion_tone_range_summary">Adapte les hautes lumières de l’image au SDR jusqu’à %1$d nits ; les valeurs supérieures sont écrêtées.</string>
+    <string name="image_conversion_tone_mapper">Mappage tonal SDR</string>
+    <string name="image_conversion_tone_off">Désactivé</string>
+    <string name="image_conversion_tone_custom">SKIV (personnalisé)</string>
 </resources>

@@ -368,4 +368,11 @@
     <string name="u_config">Ajustes EHentai</string>
     <string name="apply_tip">Toca la marca de verificación para guardar los cambios</string>
     <string name="dark_theme_follow_system">Sigue el sistema</string>
+    <string name="image_conversion_tone_shoulder">Umbral SDR</string>
+    <string name="image_conversion_tone_shoulder_summary">SKIV (personalizado) mantiene intactos los píxeles por debajo de %1$d nits.</string>
+    <string name="image_conversion_tone_range">Límite HDR</string>
+    <string name="image_conversion_tone_range_summary">Adapta las luces de la imagen hasta %1$d nits a SDR; las luces que superan el límite se recortan.</string>
+    <string name="image_conversion_tone_mapper">Mapeo de tonos SDR</string>
+    <string name="image_conversion_tone_off">Desactivado</string>
+    <string name="image_conversion_tone_custom">SKIV (personalizado)</string>
 </resources>

@@ -61,6 +61,7 @@ internal fun ColumnScope.ImageConversionPreferences() {
             )
         }
     }
+    HdrToneMappingPreferences()
     val rawHdrMode = Settings.rawHdrConversionMode.asMutableState()
     val rawHdrEntries = stringArrayResource(id = com.hippo.ehviewer.R.array.raw_hdr_conversion_entries)
     SimpleMenuPreferenceInt(
@@ -98,4 +99,43 @@ internal fun ColumnScope.ImageConversionPreferences() {
         title = stringResource(R.string.image_conversion_jxl_jpeg_transcoding),
         state = Settings.imageConversionJxlJpegTranscoding.asMutableState(),
     )
+}
+
+@Composable
+private fun HdrToneMappingPreferences() {
+    val mapper = Settings.imageConversionToneMapper.asMutableState()
+    val shoulder = Settings.imageConversionToneShoulder.asMutableState()
+    val sliderShoulder = remember { mutableIntStateOf(shoulder.value.coerceIn(0, 95)) }
+    val range = Settings.imageConversionToneRange.asMutableState()
+    LaunchedEffect(range.value) {
+        val snapped = ((range.value.coerceIn(210, 10000) + 5) / 10) * 10
+        if (range.value != snapped) range.value = snapped
+    }
+    SimpleMenuPreferenceInt(
+        title = stringResource(R.string.image_conversion_tone_mapper),
+        entry = com.hippo.ehviewer.R.array.sdr_tone_mapper_entries,
+        entryValueRes = com.hippo.ehviewer.R.array.sdr_tone_mapper_values,
+        state = mapper,
+    )
+    AnimatedVisibility(mapper.value == 2) {
+        Column {
+            me.zhanghai.compose.preference.IntSliderPreference(
+                state = shoulder,
+                sliderState = sliderShoulder,
+                title = { Text(stringResource(R.string.image_conversion_tone_shoulder)) },
+                summary = { Text(stringResource(R.string.image_conversion_tone_shoulder_summary, kotlin.math.round(sliderShoulder.intValue * 2.03f).toInt())) },
+                valueRange = 0..95,
+                valueSteps = 94,
+                valueText = { Text("${sliderShoulder.intValue}%") },
+            )
+            IntSliderPreference(
+                title = stringResource(R.string.image_conversion_tone_range),
+                summary = stringResource(R.string.image_conversion_tone_range_summary, range.value),
+                minValue = 210,
+                maxValue = 10000,
+                step = (10000 - 210) / 10 - 1,
+                state = range,
+            )
+        }
+    }
 }

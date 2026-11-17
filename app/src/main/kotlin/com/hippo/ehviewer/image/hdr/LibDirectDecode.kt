@@ -237,7 +237,7 @@ object LibDirectDecode {
                 handle = beginNativeExportPixels(
                     target.needsSdrBase(),
                     quality.float32Processing,
-                    preserveScRgb = maxEdge == 0 && (!quality.extendedSrgbBt2020 || target == StillExportTarget.JxlScRgb) &&
+                    preserveScRgb = maxEdge == 0 && (!quality.toneMapping.enabled || target != StillExportTarget.Jxl) && (!quality.extendedSrgbBt2020 || target == StillExportTarget.JxlScRgb) &&
                         (!quality.srgbClamp || target == StillExportTarget.JxlScRgb) &&
                         (target == StillExportTarget.JxlHdr || target == StillExportTarget.JxlScRgb || target == StillExportTarget.Jxl),
                 )
