@@ -9,9 +9,9 @@ import android.graphics.RenderNode
 import android.graphics.RuntimeShader
 import android.graphics.Shader
 import android.os.Build
+import androidx.annotation.RequiresApi
 import com.hippo.ehviewer.image.hdr.configureSkivShader
 import com.hippo.ehviewer.image.hdr.skivShaderSource
-import androidx.annotation.RequiresApi
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt

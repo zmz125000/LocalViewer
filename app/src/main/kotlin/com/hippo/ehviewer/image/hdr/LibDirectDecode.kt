@@ -958,7 +958,9 @@ object LibDirectDecode {
                 )
                 if (success && peak != null) {
                     gpuToneMapping = SkivGpuToneMapping(
-                        gamut, mapper == 4, peak[0],
+                        gamut,
+                        mapper == 4,
+                        peak[0],
                         Settings.readerHdrToneShoulder.value.coerceIn(0, 95) / 100f,
                         Settings.readerHdrToneRange.value.coerceIn(210, 10000).toFloat(),
                     )

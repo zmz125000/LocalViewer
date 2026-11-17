@@ -26,7 +26,8 @@ internal fun configureSkivShader(shader: RuntimeShader, controls: SkivGpuToneMap
     shader.setIntUniform("sourceGamut", controls.gamut)
     shader.setFloatUniform("curve", white.toFloat(), peakPq.toFloat(), knee.toFloat(), outputWhite.toFloat())
     shader.setFloatUniform(
-        "customCurve", customPeak.toFloat(),
+        "customCurve",
+        customPeak.toFloat(),
         intensity(knee, customPeak, white).toFloat(),
         intensity(customPeak, customPeak, white).toFloat(),
     )
