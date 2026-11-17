@@ -44,7 +44,7 @@ fun ColorFilterSetting(
                 title = stringResource(R.string.image_conversion_tone_shoulder),
                 range = 0..95,
                 field = Settings.readerHdrToneShoulder.asMutableState(),
-                valueText = { "$it%" },
+                valueText = { "${(it * 2.03f).roundToInt()} nits" },
             )
             CommitSliderChoice(
                 title = stringResource(R.string.image_conversion_tone_range),

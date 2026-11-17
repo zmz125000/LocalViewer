@@ -102,7 +102,7 @@ internal fun ColumnScope.ImageConversionPreferences() {
 }
 
 @Composable
-private fun HdrToneMappingPreferences() {
+private fun ColumnScope.HdrToneMappingPreferences() {
     val mapper = Settings.imageConversionToneMapper.asMutableState()
     val shoulder = Settings.imageConversionToneShoulder.asMutableState()
     val sliderShoulder = remember { mutableIntStateOf(shoulder.value.coerceIn(0, 95)) }
@@ -117,7 +117,7 @@ private fun HdrToneMappingPreferences() {
         entryValueRes = com.hippo.ehviewer.R.array.sdr_tone_mapper_values,
         state = mapper,
     )
-    AnimatedVisibility(mapper.value == 2) {
+    AnimatedVisibility(visible = mapper.value == 2) {
         Column {
             me.zhanghai.compose.preference.IntSliderPreference(
                 state = shoulder,

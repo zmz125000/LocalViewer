@@ -42,7 +42,7 @@ internal class StillExportQuality(
 internal data class SdrToneMapping(
     val mapper: Int = 2,
     val shoulder: Float = .67f,
-    val rangeNits: Float = 2000f,
+    val rangeNits: Float = 10000f,
 ) {
     val enabled: Boolean get() = mapper != 0
 
