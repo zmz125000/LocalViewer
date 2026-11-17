@@ -87,6 +87,7 @@ data class LibDirectResult(
     val sourcePrimaries: Int? = null,
     /** Explicit floating-point linear sRGB with an 80-nit reference white. */
     val sourceIsScRgb: Boolean = false,
+    val gpuToneMapping: SkivGpuToneMapping? = null,
 )
 
 /**
@@ -943,14 +944,25 @@ object LibDirectDecode {
         val transfer = outInfo[5]
         if (w <= 0 || h <= 0) return null
         val f16 = format == 1
+        var gpuToneMapping: SkivGpuToneMapping? = null
         if (f16 && isHdr && outInfo.getOrNull(7) != 1 && !Settings.readerHdrDisplay.value) {
-            val mapper = Settings.readerHdrToneMapper.value.coerceIn(0, 2)
+            val selected = Settings.readerHdrToneMapper.value.coerceIn(0, 4)
+            val mapper = if (selected >= 3 && !SkivGpuToneMapping.supported) selected - 2 else selected
             if (mapper != 0) {
+                val peak = if (mapper >= 3) FloatArray(1) else null
                 val success = com.hippo.ehviewer.jni.toneMapReaderPixels(
                     pixels, nativePixels, w, h, gamut, mapper,
                     Settings.readerHdrToneShoulder.value.coerceIn(0, 95) / 100f,
                     Settings.readerHdrToneRange.value.coerceIn(210, 10000).toFloat(),
+                    peak,
                 )
+                if (success && peak != null) {
+                    gpuToneMapping = SkivGpuToneMapping(
+                        gamut, mapper == 4, peak[0],
+                        Settings.readerHdrToneShoulder.value.coerceIn(0, 95) / 100f,
+                        Settings.readerHdrToneRange.value.coerceIn(210, 10000).toFloat(),
+                    )
+                }
                 if (!success) Log.w("ReaderColor", "SKIV presentation failed; retaining original pixels")
             }
         }
@@ -976,6 +988,7 @@ object LibDirectDecode {
             (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && bitmap.colorSpace?.isWideGamut == true)
         return LibDirectResult(
             bitmap = bitmap,
+            gpuToneMapping = gpuToneMapping,
             isHdrContent = isHdr,
             contentHdrBoost = if (isHdr) boost else 1f,
             isWideGamutSource = wide,

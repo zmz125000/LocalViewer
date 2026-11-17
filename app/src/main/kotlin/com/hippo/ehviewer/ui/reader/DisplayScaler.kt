@@ -9,6 +9,8 @@ import android.graphics.RenderNode
 import android.graphics.RuntimeShader
 import android.graphics.Shader
 import android.os.Build
+import com.hippo.ehviewer.image.hdr.configureSkivShader
+import com.hippo.ehviewer.image.hdr.skivShaderSource
 import androidx.annotation.RequiresApi
 import kotlin.math.max
 import kotlin.math.min
@@ -28,9 +30,9 @@ import kotlin.math.roundToInt
 internal object DisplayScaler {
     fun wantsShader(mode: Int): Boolean = mode in 3..6 && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
 
-    fun create(bitmap: Bitmap): Any {
+    fun create(bitmap: Bitmap, toneMapping: com.hippo.ehviewer.image.hdr.SkivGpuToneMapping? = null): Any {
         check(Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU)
-        return PageScaler(bitmap)
+        return PageScaler(bitmap, toneMapping)
     }
 
     fun draw(scaler: Any, canvas: Canvas, dst: RectF, mode: Int, cacheW: Int, cacheH: Int): Boolean {
@@ -46,13 +48,14 @@ internal object DisplayScaler {
 }
 
 /**
- * One shader family per page. The bitmap is sampled at texel centers (nearest child
- * shader) and weighted here, so the hardware bilinear sampler is not applied twice.
+ * One cached shader family per page. Resampling kernels use nearest input and
+ * explicit weights. HDR tone mapping samples the raw linear F16 buffer with bilinear
+ * filtering; its shader handles source gamut and final destination conversion.
  */
 @RequiresApi(33)
-internal class PageScaler(bitmap: Bitmap) {
+internal class PageScaler(bitmap: Bitmap, private val toneMapping: com.hippo.ehviewer.image.hdr.SkivGpuToneMapping? = null) {
     private val sampling = BitmapShader(bitmap, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP).apply {
-        setFilterMode(BitmapShader.FILTER_MODE_NEAREST)
+        setFilterMode(if (toneMapping == null) BitmapShader.FILTER_MODE_NEAREST else BitmapShader.FILTER_MODE_LINEAR)
     }
     private val srcW = bitmap.width.toFloat()
     private val srcH = bitmap.height.toFloat()
@@ -173,8 +176,13 @@ internal class PageScaler(bitmap: Bitmap) {
     }
 
     private fun newShader(mode: Int): RuntimeShader {
-        val shader = RuntimeShader(shaderSource(mode))
-        shader.setInputShader("contents", sampling)
+        val shader = RuntimeShader(if (toneMapping != null) skivShaderSource else shaderSource(mode))
+        if (toneMapping != null) {
+            shader.setInputBuffer("contents", sampling)
+            configureSkivShader(shader, toneMapping)
+        } else {
+            shader.setInputShader("contents", sampling)
+        }
         shader.setFloatUniform("srcSize", srcW, srcH)
         return shader
     }

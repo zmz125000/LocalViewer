@@ -538,8 +538,8 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
                 // Advanced color changes F16 pack / CS for lib-direct — re-decode.
                 readerAdvancedColor.changesFlow(),
                 readerHdrToneMapper.changesFlow().filter { !readerHdrDisplay.value },
-                readerHdrToneShoulder.changesFlow().filter { !readerHdrDisplay.value && readerHdrToneMapper.value == 2 },
-                readerHdrToneRange.changesFlow().filter { !readerHdrDisplay.value && readerHdrToneMapper.value == 2 },
+                readerHdrToneShoulder.changesFlow().filter { !readerHdrDisplay.value && readerHdrToneMapper.value in listOf(2, 4) },
+                readerHdrToneRange.changesFlow().filter { !readerHdrDisplay.value && readerHdrToneMapper.value in listOf(2, 4) },
                 // ProXDR HEIC → UHDR convert path changes display file.
                 readerOppoProxdr.changesFlow(),
                 // HDR display changes whether a non-original decode is redone at

@@ -191,6 +191,8 @@
     <string name="image_conversion_tone_shoulder_summary">SKIV (egendefinert) lar piksler under %1$d nit være uendret.</string>
     <string name="image_conversion_tone_range">Øvre HDR-grense</string>
     <string name="image_conversion_tone_range_summary">Tilpasser bildets høylys opptil %1$d nit til SDR; lysere høylys klippes.</string>
+    <string name="reader_tone_skiv_gpu">SKIV (GPU)</string>
+    <string name="reader_tone_custom_gpu">SKIV (egendefinert, GPU)</string>
     <string name="pref_reader_hdr_tone_mapping">HDR-tonetilordning</string>
     <string name="image_conversion_tone_mapper">SDR-tonetilordning</string>
     <string name="image_conversion_tone_off">Av</string>

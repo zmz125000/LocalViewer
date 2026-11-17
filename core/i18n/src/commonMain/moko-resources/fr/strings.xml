@@ -396,6 +396,8 @@
     <string name="image_conversion_tone_shoulder_summary">SKIV (personnalisé) conserve les pixels sous %1$d nits.</string>
     <string name="image_conversion_tone_range">Plafond HDR</string>
     <string name="image_conversion_tone_range_summary">Adapte les hautes lumières de l’image au SDR jusqu’à %1$d nits ; les valeurs supérieures sont écrêtées.</string>
+    <string name="reader_tone_skiv_gpu">SKIV (GPU)</string>
+    <string name="reader_tone_custom_gpu">SKIV (personnalisé, GPU)</string>
     <string name="pref_reader_hdr_tone_mapping">Mappage des tons HDR</string>
     <string name="image_conversion_tone_mapper">Mappage tonal SDR</string>
     <string name="image_conversion_tone_off">Désactivé</string>

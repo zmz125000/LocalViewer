@@ -1377,8 +1377,8 @@ struct ReaderTonePixels {
 extern "C" JNIEXPORT jboolean JNICALL
 Java_com_hippo_ehviewer_jni_HdrConvertKt_toneMapReaderPixels(
         JNIEnv* env, jclass, jbyteArray array, jobject direct, jint width, jint height,
-        jint gamut, jint mapper, jfloat shoulder, jfloat cap) try {
-    if(width<=0||height<=0||mapper<1||mapper>2||gamut<0||gamut>2)return JNI_FALSE;
+        jint gamut, jint mapper, jfloat shoulder, jfloat cap, jfloatArray out_peak) try {
+    if(width<=0||height<=0||mapper<1||mapper>4||gamut<0||gamut>2)return JNI_FALSE;
     const uint64_t count=uint64_t(width)*uint64_t(height);
     if(count>SIZE_MAX/8)return JNI_FALSE;
     const size_t bytes=size_t(count)*8;
@@ -1395,6 +1395,13 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_toneMapReaderPixels(
         if(env->ExceptionCheck())return JNI_FALSE;
     }
     ReaderTonePixels pixels{data,size_t(count)*4};
+    if(mapper>=3) {
+        if(!out_peak||env->GetArrayLength(out_peak)<1)return JNI_FALSE;
+        const auto& space=gamut==2?skiv::rgb2020_xyz:gamut==1?skiv::rgbp3_xyz:skiv::rgb709_xyz;
+        const jfloat peak=float(skiv::content_peak(pixels,space)*80.);
+        env->SetFloatArrayRegion(out_peak,0,1,&peak);
+        return env->ExceptionCheck()?JNI_FALSE:JNI_TRUE;
+    }
     tone_map_skiv_in_place(pixels,gamut,mapper==2,shoulder,cap);
     if(!direct)env->SetByteArrayRegion(array,0,jsize(bytes),reinterpret_cast<const jbyte*>(data));
     return env->ExceptionCheck()?JNI_FALSE:JNI_TRUE;

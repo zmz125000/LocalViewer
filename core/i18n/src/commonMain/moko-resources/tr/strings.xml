@@ -78,6 +78,8 @@
     <string name="image_conversion_tone_shoulder_summary">SKIV (özel), %1$d nit altındaki pikselleri değiştirmez.</string>
     <string name="image_conversion_tone_range">HDR aralık sınırı</string>
     <string name="image_conversion_tone_range_summary">Görüntünün %1$d nite kadar olan parlak alanlarını SDR aralığına sığdırır; daha parlak alanlar kırpılır.</string>
+    <string name="reader_tone_skiv_gpu">SKIV (GPU)</string>
+    <string name="reader_tone_custom_gpu">SKIV (özel, GPU)</string>
     <string name="pref_reader_hdr_tone_mapping">HDR ton eşleme</string>
     <string name="image_conversion_tone_mapper">SDR ton eşleme</string>
     <string name="image_conversion_tone_off">Kapalı</string>
