@@ -75,14 +75,14 @@ inline double inverse_pq(double code) {
 inline double intensity(double input,double peak,double white) {
     return std::pow(std::max(input,0.),1.18)*(1.+white/(peak*peak)*input)/(1.+input/white);
 }
-inline RGB input_xyz(const std::vector<float>& pixels,size_t at,const Matrix& space) {
+template<class Pixels> inline RGB input_xyz(const Pixels& pixels,size_t at,const Matrix& space) {
     RGB rgb{};
     for(unsigned c=0;c<3;++c)rgb[c]=(std::isfinite(pixels[at+c])?double(pixels[at+c]):0.)*(203./80.);
     return transform(space,rgb);
 }
 // Match SKIV's 65536-bin, 99.94th-percentile luminance estimate. Ignore fully
 // invisible pixels and handle a constant image without a zero-range division.
-inline double content_peak(const std::vector<float>& pixels,const Matrix& space) {
+template<class Pixels> inline double content_peak(const Pixels& pixels,const Matrix& space) {
     double low=std::numeric_limits<double>::infinity(),high=-low;uint64_t count=0;
     for(size_t i=0;i<pixels.size();i+=4)if(std::isfinite(pixels[i+3])&&pixels[i+3]>0.f) {
         const double y=input_xyz(pixels,i,space)[1];low=std::min(low,y);high=std::max(high,y);++count;
@@ -106,7 +106,7 @@ inline double content_peak(const std::vector<float>& pixels,const Matrix& space)
 // gamut: 0 BT.709, 1 Display P3, 2 BT.2020. Working pixels use 203-nit units.
 // Stock follows SKIV export's 120-nit PQ target, 10000-nit cap and 1.18 power.
 // Custom anchors that curve at the manual shoulder and 203-nit SDR white.
-inline std::vector<float> tone_map_skiv_base(const std::vector<float>& hdr,int gamut,bool custom,float shoulder,float cap_nits) {
+template<class Pixels> inline void tone_map_skiv_in_place(Pixels& hdr,int gamut,bool custom,float shoulder,float cap_nits) {
     using namespace skiv;
     const Matrix& space=gamut==2?rgb2020_xyz:gamut==1?rgbp3_xyz:rgb709_xyz;
     const Matrix from_xyz=inverse(space);
@@ -117,13 +117,14 @@ inline std::vector<float> tone_map_skiv_base(const std::vector<float>& hdr,int g
     const double input_knee=pq(knee*203./80.),output_white=pq(203./80.);
     const double custom_peak=std::max(peak_pq,output_white);
     const double curve_knee=intensity(input_knee,custom_peak,white),curve_peak=intensity(custom_peak,custom_peak,white);
-    std::vector<float> output=hdr;
+    auto& output=hdr;
+    const auto& source=hdr;
     const size_t pixels=hdr.size()/4;
     hdr_parallel_pixels(pixels,hdr_pixel_jobs(pixels),[&](size_t begin,size_t end,unsigned) {
     for(size_t pixel=begin;pixel<end;++pixel) {
         const size_t i=pixel*4;
-        if(!std::isfinite(hdr[i+3])||hdr[i+3]<=0.f){output[i]=output[i+1]=output[i+2]=0.f;continue;}
-        auto lms=transform(xyz_lms,input_xyz(hdr,i,space));for(auto& value:lms)value=pq(value);
+        if(!std::isfinite(source[i+3])||source[i+3]<=0.f){output[i]=output[i+1]=output[i+2]=0.f;continue;}
+        auto lms=transform(xyz_lms,input_xyz(source,i,space));for(auto& value:lms)value=pq(value);
         auto ictcp=transform(lms_ictcp,lms);const double input=std::max(ictcp[0],0.);
         if(custom&&input<=input_knee)continue;
         double reference,mapped;
@@ -144,5 +145,9 @@ inline std::vector<float> tone_map_skiv_base(const std::vector<float>& hdr,int g
         for(unsigned c=0;c<3;++c)output[i+c]=float(std::clamp(rgb[c],0.,1.));
     }
     });
-    return output;
+}
+
+inline std::vector<float> tone_map_skiv_base(std::vector<float> hdr,int gamut,bool custom,float shoulder,float cap_nits) {
+    tone_map_skiv_in_place(hdr,gamut,custom,shoulder,cap_nits);
+    return hdr;
 }

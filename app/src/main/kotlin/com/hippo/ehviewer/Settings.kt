@@ -1136,6 +1136,13 @@ object Settings : DataStorePreferences(null) {
      * deep color, and a HDR panel also gets Android 16 HDR (COLOR_MODE_HDR).
      * A panel that is not HDR keeps the deep-color bitmap and does not request HDR.
      */
+    val readerSdrToneMappingEnabled: Boolean
+        get() = !readerHdrDisplay.value && readerHdrToneMapper.value != 0
+
+    val readerHdrToneMapper = intPref("reader_hdr_tone_mapper", 0)
+    val readerHdrToneShoulder = intPref("reader_hdr_tone_shoulder", 67)
+    val readerHdrToneRange = intPref("reader_hdr_tone_range", 2000)
+
     val readerHdrDisplay = boolPref("pref_reader_hdr_display", true)
 
     /**

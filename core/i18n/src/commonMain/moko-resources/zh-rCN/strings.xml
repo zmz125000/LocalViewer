@@ -1322,6 +1322,7 @@
     <string name="image_conversion_tone_shoulder_summary">SKIV（自定义）保持低于 %1$d 尼特的像素不变。</string>
     <string name="image_conversion_tone_range">HDR 范围上限</string>
     <string name="image_conversion_tone_range_summary">将图像中最高 %1$d 尼特的高光范围映射至 SDR；超出上限的高光会被裁切。</string>
+    <string name="pref_reader_hdr_tone_mapping">HDR 色调映射</string>
     <string name="image_conversion_tone_mapper">SDR 色调映射</string>
     <string name="image_conversion_tone_off">关闭</string>
     <string name="image_conversion_tone_custom">SKIV（自定义）</string>

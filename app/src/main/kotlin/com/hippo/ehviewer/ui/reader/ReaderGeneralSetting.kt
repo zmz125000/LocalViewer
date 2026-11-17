@@ -27,13 +27,37 @@ fun ReaderGeneralSetting(
         values = integerArrayResource(id = com.hippo.ehviewer.R.array.reader_themes_values).toList(),
         field = if (isDocument) Settings.ebookTheme.asMutableState() else Settings.readerTheme.asMutableState(),
     )
+    val hdrDisplay = Settings.readerHdrDisplay.asMutableState()
+    val toneMapper = Settings.readerHdrToneMapper.asMutableState()
+    SpinnerChoice(
+        title = stringResource(R.string.pref_reader_hdr_tone_mapping),
+        entries = stringArrayResource(com.hippo.ehviewer.R.array.sdr_tone_mapper_entries),
+        values = listOf(0, 1, 2),
+        field = toneMapper,
+    )
+    AnimatedVisibility(visible = toneMapper.value == 2 && !hdrDisplay.value) {
+        Column {
+            CommitSliderChoice(
+                title = stringResource(R.string.image_conversion_tone_shoulder),
+                range = 0..95,
+                field = Settings.readerHdrToneShoulder.asMutableState(),
+                valueText = { "$it%" },
+            )
+            CommitSliderChoice(
+                title = stringResource(R.string.image_conversion_tone_range),
+                range = 210..10000,
+                steps = 978,
+                field = Settings.readerHdrToneRange.asMutableState(),
+                valueText = { "$it nits" },
+            )
+        }
+    }
     if (isDocument) {
         SwitchChoice(
             title = stringResource(id = R.string.pref_ebook_show_pictures),
             field = Settings.ebookShowPictures.asMutableState(),
         )
     }
-    val hdrDisplay = Settings.readerHdrDisplay.asMutableState()
     SwitchChoice(
         title = stringResource(id = R.string.pref_reader_hdr_display),
         field = hdrDisplay,

@@ -20,6 +20,7 @@
 #include <memory>
 #include <string>
 #include <vector>
+#include <utility>
 
 #include "hdr_encode.h"
 #include "sdr_tone_map.h"
@@ -1349,6 +1350,55 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_convertExportGamut(
 } catch (...) {
     return JNI_FALSE;
 }
+
+// Expose premultiplied F16 as straight float samples without a full-frame F32
+// allocation. The mapper scans first, then modifies each independent pixel once.
+struct ReaderTonePixels {
+    uint16_t* data;
+    size_t length;
+    size_t size() const { return length; }
+    float operator[](size_t i) const {
+        const float a=half_to_float(data[(i/4)*4+3]);
+        return i%4==3?a:(a>0.f?half_to_float(data[i])/a:0.f);
+    }
+    struct Sample {
+        ReaderTonePixels& pixels; size_t i;
+        operator float() const { return static_cast<const ReaderTonePixels&>(pixels)[i]; }
+        Sample& operator=(float value) {
+            const float a=half_to_float(pixels.data[(i/4)*4+3]);
+            pixels.data[i]=float_to_half(i%4==3?value:value*a);return *this;
+        }
+        Sample& operator=(const Sample& value) { return *this=float(value); }
+    };
+    Sample operator[](size_t i) { return {*this,i}; }
+};
+
+// Reader-only presentation: source metadata and export pixels remain untouched.
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_hippo_ehviewer_jni_HdrConvertKt_toneMapReaderPixels(
+        JNIEnv* env, jclass, jbyteArray array, jobject direct, jint width, jint height,
+        jint gamut, jint mapper, jfloat shoulder, jfloat cap) try {
+    if(width<=0||height<=0||mapper<1||mapper>2||gamut<0||gamut>2)return JNI_FALSE;
+    const uint64_t count=uint64_t(width)*uint64_t(height);
+    if(count>SIZE_MAX/8)return JNI_FALSE;
+    const size_t bytes=size_t(count)*8;
+    auto* data=direct?static_cast<uint16_t*>(env->GetDirectBufferAddress(direct)):nullptr;
+    if(direct&&(!data||env->GetDirectBufferCapacity(direct)<jlong(bytes)))return JNI_FALSE;
+    if(!direct&&(!array||size_t(env->GetArrayLength(array))<bytes))return JNI_FALSE;
+    // Rare Java-backed fallback: copy once, avoiding a pinned Java heap while
+    // the percentile scan and parallel mapper run. Captured native frames need
+    // only the 512 KiB histogram, with no additional full-frame allocation.
+    std::vector<uint16_t> storage;
+    if(!data) {
+        storage.resize(size_t(count)*4);data=storage.data();
+        env->GetByteArrayRegion(array,0,jsize(bytes),reinterpret_cast<jbyte*>(data));
+        if(env->ExceptionCheck())return JNI_FALSE;
+    }
+    ReaderTonePixels pixels{data,size_t(count)*4};
+    tone_map_skiv_in_place(pixels,gamut,mapper==2,shoulder,cap);
+    if(!direct)env->SetByteArrayRegion(array,0,jsize(bytes),reinterpret_cast<const jbyte*>(data));
+    return env->ExceptionCheck()?JNI_FALSE:JNI_TRUE;
+} catch (...) { return JNI_FALSE; }
 
 int pack_linear_f16_for_direct(std::vector<uint16_t>& rgba, unsigned w, unsigned h, bool force_hdr,
                                uhdr_color_gamut_t cg, bool advanced_color, int transfer_cicp,

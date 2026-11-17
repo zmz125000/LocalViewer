@@ -1249,6 +1249,7 @@
     <string name="image_conversion_tone_shoulder_summary">SKIV（カスタム）は %1$d ニト未満のピクセルを変更しません。</string>
     <string name="image_conversion_tone_range">HDR 範囲の上限</string>
     <string name="image_conversion_tone_range_summary">画像のハイライトを最大 %1$d ニトまで SDR に収めます。上限を超えるハイライトはクリップされます。</string>
+    <string name="pref_reader_hdr_tone_mapping">HDRトーンマッピング</string>
     <string name="image_conversion_tone_mapper">SDR トーンマッピング</string>
     <string name="image_conversion_tone_off">オフ</string>
     <string name="image_conversion_tone_custom">SKIV（カスタム）</string>

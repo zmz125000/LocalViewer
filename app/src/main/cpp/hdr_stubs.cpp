@@ -252,3 +252,9 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_encodeSourceRgb(
 extern "C" JNIEXPORT jbyteArray JNICALL
 Java_com_hippo_ehviewer_jni_HdrConvertKt_decodePngRgbToDirect(
     JNIEnv*, jclass, jobject, jint, jint, jint, jint, jboolean, jintArray, jfloatArray) { return nullptr; }
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_hippo_ehviewer_jni_HdrConvertKt_toneMapReaderPixels(
+        JNIEnv*, jclass, jbyteArray, jobject, jint, jint, jint, jint, jfloat, jfloat) {
+    return JNI_FALSE;
+}

@@ -372,6 +372,7 @@
     <string name="image_conversion_tone_shoulder_summary">SKIV (personalizado) mantiene intactos los píxeles por debajo de %1$d nits.</string>
     <string name="image_conversion_tone_range">Límite HDR</string>
     <string name="image_conversion_tone_range_summary">Adapta las luces de la imagen hasta %1$d nits a SDR; las luces que superan el límite se recortan.</string>
+    <string name="pref_reader_hdr_tone_mapping">Mapeo de tonos HDR</string>
     <string name="image_conversion_tone_mapper">Mapeo de tonos SDR</string>
     <string name="image_conversion_tone_off">Desactivado</string>
     <string name="image_conversion_tone_custom">SKIV (personalizado)</string>

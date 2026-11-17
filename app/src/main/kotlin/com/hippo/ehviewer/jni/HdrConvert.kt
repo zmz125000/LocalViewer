@@ -9,6 +9,9 @@ internal external fun beginNativeReaderPixels(): Long
 internal external fun beginNativeExportPixels(keepSdrBase: Boolean, float32Processing: Boolean = false, preserveScRgb: Boolean = false): Long
 internal external fun captureExportBitmap(bitmap: Bitmap): ByteArray?
 
+/** In-place reader SDR presentation of linear premultiplied F16 pixels. */
+internal external fun toneMapReaderPixels(pixels: ByteArray, direct: ByteBuffer?, width: Int, height: Int, gamut: Int, mapper: Int, shoulder: Float, cap: Float): Boolean
+
 /** In-place linear sRGB F16 to export gamut; alpha association stays unchanged. */
 internal external fun convertExportGamut(pixels: ByteBuffer, destinationGamut: Int): Boolean
 internal external fun endNativeReaderPixels(handle: Long): ByteBuffer?

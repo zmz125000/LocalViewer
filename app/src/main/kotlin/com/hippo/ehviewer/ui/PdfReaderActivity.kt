@@ -237,6 +237,7 @@ import kotlin.math.roundToInt
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
@@ -2247,6 +2248,10 @@ private fun PdfReaderScreen(
                 readerDecodeScaler.changesFlow(),
                 readerHiResSoftwareDownscale.changesFlow(),
                 readerAdvancedColor.changesFlow(),
+                readerHdrToneMapper.changesFlow().filter { !readerHdrDisplay.value },
+                readerHdrToneShoulder.changesFlow().filter { readerSdrToneMappingEnabled && readerHdrToneMapper.value == 2 },
+                readerHdrToneRange.changesFlow().filter { readerSdrToneMappingEnabled && readerHdrToneMapper.value == 2 },
+                readerHdrDisplay.changesFlow().filter { readerHdrToneMapper.value != 0 },
                 readerOppoProxdr.changesFlow(),
             ).collect {
                 loader.restart()

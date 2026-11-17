@@ -537,6 +537,9 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
                 readerHiResSoftwareDownscale.changesFlow(),
                 // Advanced color changes F16 pack / CS for lib-direct — re-decode.
                 readerAdvancedColor.changesFlow(),
+                readerHdrToneMapper.changesFlow().filter { !readerHdrDisplay.value },
+                readerHdrToneShoulder.changesFlow().filter { !readerHdrDisplay.value && readerHdrToneMapper.value == 2 },
+                readerHdrToneRange.changesFlow().filter { !readerHdrDisplay.value && readerHdrToneMapper.value == 2 },
                 // ProXDR HEIC → UHDR convert path changes display file.
                 readerOppoProxdr.changesFlow(),
                 // HDR display changes whether a non-original decode is redone at
@@ -544,7 +547,7 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
                 // A RAW page's bitmap itself follows this switch (deep color + HDR),
                 // so those galleries reload at any decode size.
                 readerHdrDisplay.changesFlow().filter {
-                    pageLoader.containsRawStill() || (
+                    readerHdrToneMapper.value != 0 || pageLoader.containsRawStill() || (
                         !effectiveReaderHiResOptimize() && !effectiveReaderDecodeSize().isOriginal
                         )
                 },
