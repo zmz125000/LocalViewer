@@ -38,6 +38,11 @@
         </item>
     </style>
 
+    <style name="VideoControlMenuAnimation">
+        <item name="android:windowEnterAnimation">@anim/video_menu_enter</item>
+        <item name="android:windowExitAnimation">@anim/video_menu_exit</item>
+    </style>
+
     <!-- Full-screen Media3 player; black letterbox + SurfaceView for HDR video. -->
     <style name="AppTheme.VideoPlayer" parent="Base.AppTheme">
         <item name="android:windowBackground">@android:color/black</item>

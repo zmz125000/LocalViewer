@@ -22,7 +22,7 @@ internal class Media3AudioRenderersFactory(
     context: Context,
     private val mode: Int,
     private val hdrMode: Int,
-    private val audioBoost: Media3AudioBoostProcessor,
+    private val audioBoost: Media3AudioBoostProcessor?,
 ) : DefaultRenderersFactory(context) {
     init {
         setExtensionRendererMode(EXTENSION_RENDERER_MODE_ON)
@@ -99,7 +99,7 @@ internal class Media3AudioRenderersFactory(
             }
             processors += mixer
         }
-        processors += audioBoost
+        if (audioBoost != null) processors += audioBoost
         return builder.setAudioProcessors(processors.toTypedArray()).build()
     }
 

@@ -14,11 +14,11 @@ import android.graphics.Rect
 import android.graphics.drawable.Icon
 import android.net.Uri
 import android.os.Bundle
+import android.util.Log
 import android.util.Rational
 import android.view.View
 import android.view.WindowManager
 import android.widget.ImageButton
-import android.widget.PopupMenu
 import androidx.activity.SystemBarStyle
 import androidx.activity.enableEdgeToEdge
 import androidx.appcompat.app.AppCompatActivity
@@ -114,6 +114,7 @@ class VideoPlayerActivity : AppCompatActivity() {
             statusBarStyle = SystemBarStyle.dark(android.graphics.Color.BLACK),
             navigationBarStyle = SystemBarStyle.dark(android.graphics.Color.BLACK),
         )
+        setReaderColorMode(hdr = Settings.media3HdrToneMapping.value == Settings.MEDIA3_HDR)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         setContentView(R.layout.activity_video_player)
 
@@ -172,7 +173,7 @@ class VideoPlayerActivity : AppCompatActivity() {
                     Settings.media3PlaybackResume.value != Settings.MEDIA3_RESUME_OFF,
             )
         } catch (e: Throwable) {
-            logcat("VideoPlayer", e)
+            Log.e("VideoPlayer", "Unable to open the media item", e)
             nextSubtitleTokens.filterNot(oldSubtitleTokens::contains).forEach(StreamDocumentRegistry::remove)
             token?.let(StreamDocumentRegistry::remove)
             return oldToken != null
@@ -271,14 +272,13 @@ class VideoPlayerActivity : AppCompatActivity() {
     }
 
     private fun showAudioBoostMenu(anchor: View) {
-        val levels = listOf(0, 3, 6, 9)
-        showPlaybackOptions(anchor, levels.map(::audioBoostLabel), levels.indexOf(audioBoostDb)) { index ->
+        val levels = (0..16 step 2).toList()
+        playerView?.showControlMenu(anchor, levels.map(::audioBoostLabel), levels.indexOf(audioBoostDb)) { index ->
             val level = levels[index]
-            if (level == audioBoostDb) return@showPlaybackOptions
+            if (level == audioBoostDb) return@showControlMenu
             val previous = audioBoostDb
             audioBoostDb = level
-            val passthrough = Settings.media3AudioDownmixing.value == Settings.MEDIA3_AUDIO_PASSTHROUGH
-            if (passthrough && (level == 0 || previous == 0)) {
+            if (level == 0 || previous == 0) {
                 if (!restartCurrentMediaItem(playerHdrMode)) audioBoostDb = previous
             } else {
                 audioBoostProcessor?.setGainDb(level)
@@ -290,26 +290,12 @@ class VideoPlayerActivity : AppCompatActivity() {
     private fun showHdrMenu(anchor: View) {
         val labels = resources.getStringArray(R.array.media3_hdr_tone_mapping_entries)
         val modes = resources.getIntArray(R.array.media3_hdr_tone_mapping_values)
-        showPlaybackOptions(anchor, labels.asList(), modes.indexOf(playerHdrMode)) { index ->
+        playerView?.showControlMenu(anchor, labels.asList(), modes.indexOf(playerHdrMode)) { index ->
             val mode = modes[index]
             if (mode == playerHdrMode || restartCurrentMediaItem(mode)) {
                 Settings.media3HdrToneMapping.value = mode
             }
         }
-    }
-
-    private fun showPlaybackOptions(anchor: View, labels: List<String>, selected: Int, onSelection: (Int) -> Unit) {
-        val popup = PopupMenu(this, anchor)
-        labels.forEachIndexed { index, label ->
-            popup.menu.add(0, index, index, label).isCheckable = true
-        }
-        popup.menu.setGroupCheckable(0, true, true)
-        popup.menu.findItem(selected)?.isChecked = true
-        popup.setOnMenuItemClickListener {
-            onSelection(it.itemId)
-            true
-        }
-        playerView?.showControlMenu(popup)
     }
 
     private fun updatePlaybackOptionButtons() {
@@ -377,7 +363,7 @@ class VideoPlayerActivity : AppCompatActivity() {
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Throwable) {
-                logcat("VideoPlayer", e)
+                Log.e("VideoPlayer", "Unable to open the media item", e)
             } finally {
                 changingItem = false
                 updatePlaylistButtons()
@@ -480,7 +466,7 @@ class VideoPlayerActivity : AppCompatActivity() {
                 current.currentPosition,
                 preservePlaybackSettings = true,
             )
-        }.onFailure { logcat("VideoPlayer", it) }.isSuccess
+        }.onFailure { Log.e("VideoPlayer", "Unable to restart playback", it) }.isSuccess
     }
 
     private fun startMediaItem(
@@ -499,7 +485,7 @@ class VideoPlayerActivity : AppCompatActivity() {
         } else {
             configuredAudioMode
         }
-        val boost = Media3AudioBoostProcessor(audioBoostDb)
+        val boost = if (audioBoostDb > 0) Media3AudioBoostProcessor(audioBoostDb) else null
         val renderersFactory = Media3AudioRenderersFactory(this, audioMode, hdrMode, boost)
         val builder = ExoPlayer.Builder(this, renderersFactory)
             .setAudioAttributes(
@@ -548,7 +534,7 @@ class VideoPlayerActivity : AppCompatActivity() {
                 }
 
                 override fun onPlayerError(error: PlaybackException) {
-                    logcat("VideoPlayer", error)
+                    Log.e("VideoPlayer", "Media3 playback failed", error)
                     if (hdrMode != Settings.MEDIA3_HDR &&
                         (
                             error.errorCode == PlaybackException.ERROR_CODE_VIDEO_FRAME_PROCESSING_FAILED ||
