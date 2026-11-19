@@ -33,6 +33,7 @@ import androidx.media3.common.Tracks
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.ui.DefaultTrackNameProvider
 import androidx.media3.ui.PlayerView
+import androidx.window.core.layout.WindowSizeClass.Companion.WIDTH_DP_MEDIUM_LOWER_BOUND
 import com.ehviewer.core.i18n.R as I18nR
 import com.hippo.ehviewer.R
 import kotlin.math.abs
@@ -362,12 +363,15 @@ class SeekPlayerView @JvmOverloads constructor(
         var transportWidth = 0
         for (index in 0 until transport.childCount) transportWidth += transport.getChildAt(index).layoutParams.width
         val portrait = width < height
-        val compact = portrait || available < transportWidth + 2 * buttonWidth * maxOf(left.childCount, right.childCount)
+        val tabletPortrait = portrait && resources.configuration.smallestScreenWidthDp >= WIDTH_DP_MEDIUM_LOWER_BOUND
+        val compact = !tabletPortrait &&
+            (portrait || available < transportWidth + 2 * buttonWidth * maxOf(left.childCount, right.childCount))
         val rewind = findViewById<View>(R.id.video_rewind)
         val forward = findViewById<View>(R.id.video_forward)
         val minTransportWidth = transportWidth - rewind.layoutParams.width - forward.layoutParams.width
         val fit = findViewById<View>(R.id.video_fit)
-        fit.visibility = if (portrait || available < minTransportWidth + buttonWidth * (1 + right.childCount)) GONE else VISIBLE
+        val showFit = tabletPortrait || (!portrait && available >= minTransportWidth + buttonWidth * (1 + right.childCount))
+        fit.visibility = if (showFit) VISIBLE else GONE
         val rightWidth = (0 until right.childCount).sumOf { index ->
             val button = right.getChildAt(index)
             if (button.visibility == GONE) 0 else button.layoutParams.width
@@ -379,13 +383,11 @@ class SeekPlayerView @JvmOverloads constructor(
         forward.visibility = rewind.visibility
         if (!showSteps) transportWidth = minTransportWidth
 
-        // Keep transport centered where possible and clear the right-hand buttons on narrow screens.
-        transport.translationX = if (compact) {
-            val gap = (available - transportWidth) / 2f
-            (gap - rightWidth).coerceIn(minOf(0f, buttonWidth - gap), 0f)
-        } else {
-            0f
-        }
+        // Keep transport centered where possible while clearing the controls on either side.
+        val gap = (available - transportWidth) / 2f
+        val leftWidth = if (compact) buttonWidth else (0 until left.childCount).sumOf { left.getChildAt(it).layoutParams.width }
+        val minShift = leftWidth - gap
+        transport.translationX = 0f.coerceIn(minShift, maxOf(minShift, gap - rightWidth))
     }
 
     internal fun showControlMenu(

@@ -62,105 +62,95 @@
             android:paddingHorizontal="4dp">
 
             <LinearLayout
-                android:layout_width="match_parent"
+                android:id="@+id/video_track_buttons"
+                android:layout_width="wrap_content"
                 android:layout_height="@dimen/video_action_height"
-                android:layout_gravity="center_vertical"
+                android:layout_gravity="start|center_vertical"
+                android:gravity="center_vertical"
                 android:orientation="horizontal">
 
-                <LinearLayout
-                    android:id="@+id/video_track_buttons"
-                    android:layout_width="wrap_content"
-                    android:layout_height="match_parent"
-                    android:gravity="center_vertical"
-                    android:orientation="horizontal">
+                <ImageButton
+                    android:id="@id/exo_audio_track"
+                    style="@style/ExoStyledControls.Button.Bottom.AudioTrack"
+                    android:layout_marginHorizontal="0dp"
+                    android:src="@drawable/ic_video_music" />
 
-                    <ImageButton
-                        android:id="@id/exo_audio_track"
-                        style="@style/ExoStyledControls.Button.Bottom.AudioTrack"
-                        android:layout_marginHorizontal="0dp"
-                        android:src="@drawable/ic_video_music" />
+                <ImageButton
+                    android:id="@+id/video_subtitle"
+                    style="@style/ExoStyledControls.Button.Bottom.CC"
+                    android:layout_marginHorizontal="0dp"
+                    android:contentDescription="@string/video_subtitle_tracks" />
 
-                    <ImageButton
-                        android:id="@+id/video_subtitle"
-                        style="@style/ExoStyledControls.Button.Bottom.CC"
-                        android:layout_marginHorizontal="0dp"
-                        android:contentDescription="@string/video_subtitle_tracks" />
+                <ImageButton
+                    android:id="@+id/video_audio_boost"
+                    android:layout_width="48dp"
+                    android:layout_height="48dp"
+                    android:background="?attr/selectableItemBackgroundBorderless"
+                    android:contentDescription="@string/video_audio_boost"
+                    android:padding="12dp"
+                    android:src="@drawable/ic_video_audio_boost"
+                    android:tint="@android:color/white" />
 
-                    <ImageButton
-                        android:id="@+id/video_audio_boost"
-                        android:layout_width="48dp"
-                        android:layout_height="48dp"
-                        android:background="?attr/selectableItemBackgroundBorderless"
-                        android:contentDescription="@string/video_audio_boost"
-                        android:padding="12dp"
-                        android:src="@drawable/ic_video_audio_boost"
-                        android:tint="@android:color/white" />
+                <ImageButton
+                    android:id="@+id/video_audio_output"
+                    android:layout_width="48dp"
+                    android:layout_height="48dp"
+                    android:background="?attr/selectableItemBackgroundBorderless"
+                    android:contentDescription="@string/settings_media3_audio_downmixing"
+                    android:padding="12dp"
+                    android:src="@drawable/ic_video_audio_output"
+                    android:tint="@android:color/white" />
 
-                    <ImageButton
-                        android:id="@+id/video_audio_output"
-                        android:layout_width="48dp"
-                        android:layout_height="48dp"
-                        android:background="?attr/selectableItemBackgroundBorderless"
-                        android:contentDescription="@string/settings_media3_audio_downmixing"
-                        android:padding="12dp"
-                        android:src="@drawable/ic_video_audio_output"
-                        android:tint="@android:color/white" />
+                <ImageButton
+                    android:id="@+id/video_hdr"
+                    android:layout_width="48dp"
+                    android:layout_height="48dp"
+                    android:background="?attr/selectableItemBackgroundBorderless"
+                    android:contentDescription="@string/settings_media3_hdr_tone_mapping"
+                    android:padding="12dp"
+                    android:src="@drawable/ic_video_hdr"
+                    android:tint="@android:color/white" />
 
-                    <ImageButton
-                        android:id="@+id/video_hdr"
-                        android:layout_width="48dp"
-                        android:layout_height="48dp"
-                        android:background="?attr/selectableItemBackgroundBorderless"
-                        android:contentDescription="@string/settings_media3_hdr_tone_mapping"
-                        android:padding="12dp"
-                        android:src="@drawable/ic_video_hdr"
-                        android:tint="@android:color/white" />
+            </LinearLayout>
 
-                </LinearLayout>
+            <LinearLayout
+                android:id="@+id/video_extra_buttons"
+                android:layout_width="wrap_content"
+                android:layout_height="@dimen/video_action_height"
+                android:layout_gravity="end|center_vertical"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
 
-                <Space
-                    android:layout_width="0dp"
-                    android:layout_height="1dp"
-                    android:layout_weight="1" />
+                <ImageButton
+                    android:id="@+id/video_rotate"
+                    android:layout_width="48dp"
+                    android:layout_height="48dp"
+                    android:background="?attr/selectableItemBackgroundBorderless"
+                    android:contentDescription="@string/video_rotate_with_video"
+                    android:padding="12dp"
+                    android:src="@drawable/ic_video_rotate"
+                    android:tint="@android:color/white" />
 
-                <LinearLayout
-                    android:id="@+id/video_extra_buttons"
-                    android:layout_width="wrap_content"
-                    android:layout_height="match_parent"
-                    android:gravity="center_vertical"
-                    android:orientation="horizontal">
+                <ImageButton
+                    android:id="@+id/video_fit"
+                    android:layout_width="48dp"
+                    android:layout_height="48dp"
+                    android:background="?attr/selectableItemBackgroundBorderless"
+                    android:contentDescription="@string/video_crop_to_fill"
+                    android:padding="12dp"
+                    android:src="@drawable/exo_styled_controls_fullscreen_enter"
+                    android:tint="@android:color/white"
+                    android:visibility="gone" />
 
-                    <ImageButton
-                        android:id="@+id/video_rotate"
-                        android:layout_width="48dp"
-                        android:layout_height="48dp"
-                        android:background="?attr/selectableItemBackgroundBorderless"
-                        android:contentDescription="@string/video_rotate_with_video"
-                        android:padding="12dp"
-                        android:src="@drawable/ic_video_rotate"
-                        android:tint="@android:color/white" />
-
-                    <ImageButton
-                        android:id="@+id/video_fit"
-                        android:layout_width="48dp"
-                        android:layout_height="48dp"
-                        android:background="?attr/selectableItemBackgroundBorderless"
-                        android:contentDescription="@string/video_crop_to_fill"
-                        android:padding="12dp"
-                        android:src="@drawable/exo_styled_controls_fullscreen_enter"
-                        android:tint="@android:color/white" />
-
-                    <ImageButton
-                        android:id="@+id/video_pip"
-                        android:layout_width="48dp"
-                        android:layout_height="48dp"
-                        android:background="?attr/selectableItemBackgroundBorderless"
-                        android:contentDescription="@string/video_picture_in_picture"
-                        android:padding="12dp"
-                        android:src="@drawable/ic_video_pip"
-                        android:tint="@android:color/white" />
-
-                </LinearLayout>
+                <ImageButton
+                    android:id="@+id/video_pip"
+                    android:layout_width="48dp"
+                    android:layout_height="48dp"
+                    android:background="?attr/selectableItemBackgroundBorderless"
+                    android:contentDescription="@string/video_picture_in_picture"
+                    android:padding="12dp"
+                    android:src="@drawable/ic_video_pip"
+                    android:tint="@android:color/white" />
 
             </LinearLayout>
 
