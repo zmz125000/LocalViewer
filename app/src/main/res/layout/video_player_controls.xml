@@ -62,7 +62,6 @@
             android:paddingHorizontal="4dp">
 
             <LinearLayout
-                android:id="@+id/video_action_row"
                 android:layout_width="match_parent"
                 android:layout_height="@dimen/video_action_height"
                 android:layout_gravity="center_vertical"
@@ -158,7 +157,7 @@
                 android:id="@+id/video_more"
                 android:layout_width="48dp"
                 android:layout_height="48dp"
-                android:layout_gravity="end|center_vertical"
+                android:layout_gravity="start|center_vertical"
                 android:background="?attr/selectableItemBackgroundBorderless"
                 android:contentDescription="@string/abc_action_menu_overflow_description"
                 android:padding="12dp"

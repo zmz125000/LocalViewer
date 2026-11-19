@@ -18,9 +18,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.nestedscroll.nestedScroll
@@ -305,22 +303,11 @@ fun AnimatedVisibilityScope.EhScreen(navigator: DestinationsNavigator) = Screen(
                     )
                 }
             }
-            val scrollToNext = Settings.videoScrollToNext.asMutableState()
-            val legacyScrollToNext = Settings.legacyVideoScrollToNext.asMutableState()
-            val scrollMode = remember(scrollToNext, legacyScrollToNext) {
-                object : MutableState<Int> by scrollToNext {
-                    override var value: Int
-                        get() = Settings.resolvedVideoScrollToNext(scrollToNext.value, legacyScrollToNext.value)
-                        set(value) {
-                            scrollToNext.value = value
-                        }
-                }
-            }
             SimpleMenuPreferenceInt(
                 title = stringResource(id = R.string.settings_video_scroll_to_next),
                 entry = com.hippo.ehviewer.R.array.video_scroll_to_next_entries,
                 entryValueRes = com.hippo.ehviewer.R.array.video_scroll_to_next_values,
-                state = scrollMode,
+                state = Settings.videoScrollToNext.asMutableState(),
             )
             var defaultVideoPlayer by Settings.defaultVideoPlayerComponent.asMutableState()
             val alwaysAsk = stringResource(id = R.string.settings_default_video_player_always_ask)

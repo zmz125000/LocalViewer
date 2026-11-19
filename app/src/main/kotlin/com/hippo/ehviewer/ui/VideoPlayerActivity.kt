@@ -273,10 +273,7 @@ class VideoPlayerActivity : AppCompatActivity() {
         playerAudioMode = Settings.media3AudioDownmixing.value
         updatePlaybackOptionButtons()
         rotateWithVideo = Settings.videoRotateWithVideo.value
-        playerView?.playlistSwipeMinutes = Settings.resolvedVideoScrollToNext(
-            Settings.videoScrollToNext.value,
-            Settings.legacyVideoScrollToNext.value,
-        )
+        playerView?.playlistSwipeMinutes = Settings.videoScrollToNext.value
         playerView?.onPlaylistScroll = { delta -> moveInPlaylist(delta) }
         playerView?.onTrackSelectionChanged = { type ->
             if (pendingResumeGid != 0L) trackChoicesDuringResume += type
@@ -331,8 +328,6 @@ class VideoPlayerActivity : AppCompatActivity() {
             R.id.video_audio_boost,
             R.id.video_audio_output,
             R.id.video_hdr,
-            R.id.video_rotate,
-            R.id.video_pip,
         ).map { findViewById<ImageButton>(it) }.filter { it.isEnabled && it.visibility == View.VISIBLE }
         val labels = buttons.map { button ->
             when (button.id) {
@@ -348,7 +343,6 @@ class VideoPlayerActivity : AppCompatActivity() {
                 R.id.video_audio_boost -> showAudioBoostMenu(anchor)
                 R.id.video_audio_output -> showAudioOutputMenu(anchor)
                 R.id.video_hdr -> showHdrMenu(anchor)
-                else -> button.performClick()
             }
         }
     }

@@ -302,12 +302,28 @@ class SeekPlayerView @JvmOverloads constructor(
         val buttonWidth = more.layoutParams.width
         var transportWidth = 0
         for (index in 0 until transport.childCount) transportWidth += transport.getChildAt(index).layoutParams.width
-        val compact = width < height || available < transportWidth + 2 * buttonWidth * maxOf(left.childCount, right.childCount)
-        val showSteps = !compact || available >= transportWidth + 2 * buttonWidth
-        findViewById<View>(R.id.video_action_row)?.visibility = if (compact) GONE else VISIBLE
+        val portrait = width < height
+        val compact = portrait || available < transportWidth + 2 * buttonWidth * maxOf(left.childCount, right.childCount)
+        val rightWidth = (0 until right.childCount).sumOf { index ->
+            val button = right.getChildAt(index)
+            if (button.visibility == GONE) 0 else button.layoutParams.width
+        }
+        val showSteps = !portrait && (!compact || available >= transportWidth + buttonWidth + rightWidth)
+        val rewind = findViewById<View>(R.id.video_rewind)
+        val forward = findViewById<View>(R.id.video_forward)
+        left.visibility = if (compact) GONE else VISIBLE
         more.visibility = if (compact) VISIBLE else GONE
-        findViewById<View>(R.id.video_rewind)?.visibility = if (showSteps) VISIBLE else GONE
-        findViewById<View>(R.id.video_forward)?.visibility = if (showSteps) VISIBLE else GONE
+        rewind.visibility = if (showSteps) VISIBLE else GONE
+        forward.visibility = rewind.visibility
+        if (!showSteps) transportWidth -= rewind.layoutParams.width + forward.layoutParams.width
+
+        // Keep transport centered where possible and clear the right-hand buttons on narrow screens.
+        transport.translationX = if (compact) {
+            val gap = (available - transportWidth) / 2f
+            (gap - rightWidth).coerceIn(minOf(0f, buttonWidth - gap), 0f)
+        } else {
+            0f
+        }
     }
 
     internal fun showControlMenu(anchor: View, labels: List<String>, selected: Int, onSelection: (Int) -> Unit) {

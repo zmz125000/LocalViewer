@@ -129,7 +129,7 @@ internal class Media3SkivVideoRenderer(builder: Builder, private val piecewise: 
 
 /**
  * Media3 applies its HDR-to-SDR curve in the input sampler before the video effects run.
- * Replace just that function in the pinned Media3 shaders for this playback graph.
+ * Use SKIV and retain dark HDR values in the pinned Media3 shaders for this graph.
  */
 @Suppress("DEPRECATION")
 private class SkivShaderContext(context: Context, piecewise: Boolean) : ContextWrapper(context) {
@@ -145,7 +145,12 @@ private class SkivShaderContext(context: Context, piecewise: Boolean) : ContextW
                 return base.openRawResource(id)
             }
 
+            // PQ values below about 0.61 nits can be flushed to zero on GPUs that
+            // use native half precision for the sampler's mediump linear RGB.
             val source = base.openRawResource(id).bufferedReader().use { it.readText() }
+                .replace("precision mediump float;", "precision highp float;")
+                .replace("uniform __samplerExternal2DY2YEXT ", "uniform highp __samplerExternal2DY2YEXT ")
+                .replace("uniform sampler2D ", "uniform highp sampler2D ")
             val function = "highp vec3 applyBt2020ToBt709Ootf(highp vec3 linearRgbBt2020) {"
             val start = source.indexOf(function)
             val end = if (start >= 0) source.indexOf("\n}", start) else -1
