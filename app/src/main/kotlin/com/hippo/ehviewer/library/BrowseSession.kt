@@ -77,6 +77,8 @@ object BrowseSession {
          * Null = normal filesystem folder.
          */
         val zipInnerRel: String? = null,
+        /** Initial photo-grid sort requested when opening this frame. */
+        val photoGridStartsWithDateSort: Boolean = false,
     ) {
         val isZipBrowse: Boolean get() = zipInnerRel != null
     }

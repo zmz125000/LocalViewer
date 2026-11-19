@@ -119,7 +119,7 @@ fun photoGridProgressOrderKey(
     return hash
 }
 
-/** In-memory sort for the current photo grid. Reset when [folderKey] changes. */
+/** In-memory sort for the current photo grid. */
 class PhotoGridSortControls(
     val mode: BrowseSortMode,
     val ascending: Boolean,
@@ -130,12 +130,12 @@ class PhotoGridSortControls(
 )
 
 @Composable
-fun rememberPhotoGridSort(folderKey: Any?, libraryDateSort: Boolean): PhotoGridSortControls {
-    var mode by remember(folderKey) {
-        mutableStateOf(if (libraryDateSort) BrowseSortMode.Date else BrowseSortMode.Name)
+fun rememberPhotoGridSort(folderKey: Any?, startWithDateSort: Boolean = false): PhotoGridSortControls {
+    var mode by remember(folderKey, startWithDateSort) {
+        mutableStateOf(if (startWithDateSort) BrowseSortMode.Date else BrowseSortMode.Name)
     }
-    var ascending by remember(folderKey) {
-        mutableStateOf(!libraryDateSort)
+    var ascending by remember(folderKey, startWithDateSort) {
+        mutableStateOf(!startWithDateSort)
     }
     var useList by remember(folderKey) { mutableStateOf(false) }
     return PhotoGridSortControls(
