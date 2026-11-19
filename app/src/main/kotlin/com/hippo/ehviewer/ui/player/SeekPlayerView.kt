@@ -65,7 +65,7 @@ class SeekPlayerView @JvmOverloads constructor(
     /** Shorts-style swipe between playlist items. Horizontal scrub stays available. */
     var playlistSwipeMinutes = 0
 
-    internal var onTrackSelectionChanged: ((Int) -> Unit)? = null
+    internal var onTrackSelectionChanged: ((type: Int, subtitleLanguage: String?) -> Unit)? = null
 
     private val touchSlop = ViewConfiguration.get(context).scaledTouchSlop
     private val edgeGuardPx = 32f * resources.displayMetrics.density
@@ -214,7 +214,9 @@ class SeekPlayerView @JvmOverloads constructor(
 
     private fun updateSubtitleButton() {
         val button = findViewById<ImageButton>(R.id.video_subtitle) ?: return
-        val enabled = player?.currentTracks?.isTypeSelected(C.TRACK_TYPE_TEXT) == true
+        val current = player
+        val enabled = current != null && C.TRACK_TYPE_TEXT !in current.trackSelectionParameters.disabledTrackTypes &&
+            current.currentTracks.isTypeSelected(C.TRACK_TYPE_TEXT)
         button.setImageResource(
             if (enabled) {
                 androidx.media3.ui.R.drawable.exo_styled_controls_subtitle_on
@@ -248,12 +250,14 @@ class SeekPlayerView @JvmOverloads constructor(
             return
         }
         val nameProvider = DefaultTrackNameProvider(resources)
+        val mediaItem = current.currentMediaItem
         val labels = mutableListOf(
             context.getString(
                 if (isSubtitle) androidx.media3.ui.R.string.exo_track_selection_none else I18nR.string.video_audio_auto,
             ),
         )
         val overrides = mutableListOf<TrackSelectionOverride>()
+        val trackTypeDisabled = trackType in current.trackSelectionParameters.disabledTrackTypes
         var selected = 0
         for (group in current.currentTracks.groups) {
             if (group.type != trackType) continue
@@ -268,7 +272,7 @@ class SeekPlayerView @JvmOverloads constructor(
                 }
                 labels += name + (codec?.let { " ($it)" } ?: "")
                 overrides += TrackSelectionOverride(group.mediaTrackGroup, index)
-                if (group.isTrackSelected(index) &&
+                if (!trackTypeDisabled && group.isTrackSelected(index) &&
                     (isSubtitle || current.trackSelectionParameters.overrides.containsKey(group.mediaTrackGroup))
                 ) {
                     selected = labels.lastIndex
@@ -278,17 +282,23 @@ class SeekPlayerView @JvmOverloads constructor(
         showControlMenu(anchor, labels, selected, captionPreferences) { choice ->
             if (choice == labels.size) {
                 openCaptionPreferences()
-            } else if (player === current) {
+            } else if (player === current && current.currentMediaItem == mediaItem) {
                 val parameters = current.trackSelectionParameters.buildUpon()
                     .clearOverridesOfType(trackType)
-                if (choice > 0) {
-                    parameters.setOverrideForType(overrides[choice - 1])
+                val override = overrides.getOrNull(choice - 1)
+                if (override != null) {
+                    parameters.selectVideoTrack(override)
                 } else if (isSubtitle) {
-                    // Match Media3's None option, which still permits forced subtitles.
                     parameters.hideVideoSubtitles()
                 }
                 current.trackSelectionParameters = parameters.build()
-                onTrackSelectionChanged?.invoke(trackType)
+                if (isSubtitle) updateSubtitleButton()
+                val subtitleLanguage = when {
+                    !isSubtitle -> null
+                    override == null -> NO_VIDEO_SUBTITLES
+                    else -> current.subtitleLanguage(override.mediaTrackGroup.getFormat(override.trackIndices.single()))
+                }
+                onTrackSelectionChanged?.invoke(trackType, subtitleLanguage)
             }
         }
     }

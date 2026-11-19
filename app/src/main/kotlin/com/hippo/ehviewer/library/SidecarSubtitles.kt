@@ -95,6 +95,26 @@ object SidecarSubtitles {
             sidecarStem.startsWith("$videoStem ", ignoreCase = true)
     }
 
+    internal fun trackSuffix(videoName: String, sidecarName: String): String? {
+        val videoStem = stem(videoName) ?: return null
+        if (!isSidecarFor(videoName, sidecarName)) return null
+        return sidecarName.substringAfterLast('/').substringAfterLast('\\')
+            .substring(videoStem.length).trimStart('.', ' ')
+    }
+
+    internal fun languageTag(suffix: String): String? {
+        val firstTag = suffix.substringBeforeLast('.', "").substringBefore('.').substringBefore(' ').lowercase()
+        return when (firstTag) {
+            "chs", "sc" -> "zh-Hans"
+            "cht", "tc" -> "zh-Hant"
+            "jp" -> "ja"
+            "cc", "sdh" -> null
+            else -> firstTag.takeIf { LANGUAGE_TAG.matches(it) }
+        }
+    }
+
+    private val LANGUAGE_TAG = Regex("[a-z]{2,3}(?:-[a-z0-9]{2,8})*")
+
     private fun stem(name: String): String? {
         val base = name.substringAfterLast('/').substringAfterLast('\\')
         if (base.isEmpty() || !base.contains('.')) return null

@@ -60,10 +60,15 @@ import com.hippo.ehviewer.ui.player.Media3AudioRenderersFactory
 import com.hippo.ehviewer.ui.player.Media3SubtitleParserFactory
 import com.hippo.ehviewer.ui.player.PreparedInternalVideo
 import com.hippo.ehviewer.ui.player.SeekPlayerView
+import com.hippo.ehviewer.ui.player.SiblingTrackChoice
 import com.hippo.ehviewer.ui.player.StreamDocDataSource
+import com.hippo.ehviewer.ui.player.applyVideoSubtitleHistory
 import com.hippo.ehviewer.ui.player.progressGid
+import com.hippo.ehviewer.ui.player.restoreSiblingTrack
 import com.hippo.ehviewer.ui.player.restoreVideoTrack
+import com.hippo.ehviewer.ui.player.siblingTrackChoice
 import com.hippo.ehviewer.ui.player.supportsSkivToneMapping
+import com.hippo.ehviewer.ui.player.updateVideoSubtitleHistory
 import com.hippo.ehviewer.ui.player.videoTrackKey
 import com.hippo.ehviewer.util.setReaderColorMode
 import com.hippo.ehviewer.util.supportsWideColorGamut
@@ -110,7 +115,14 @@ class VideoPlayerActivity : AppCompatActivity() {
     private var pendingResumeGid = 0L
     private var resumeProgress: ProgressInfo? = null
     private var readProgressJob: Job? = null
-    private val trackChoicesDuringResume = mutableSetOf<Int>()
+    private var pendingTrackDefaults = false
+    private var siblingAudioChoice: SiblingTrackChoice? = null
+    private var siblingSubtitleChoice: SiblingTrackChoice? = null
+    private var siblingSubtitleFromHistory = false
+    private var subtitleChoiceFromHistory = false
+    private var savedSubtitleTrack: String? = null
+    private val manualTrackChoicesBeforeRestore = mutableSetOf<Int>()
+    private var subtitleHistory = ""
 
     private val progressSaveRunnable = Runnable {
         savePlaybackProgress()
@@ -134,6 +146,7 @@ class VideoPlayerActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        subtitleHistory = Settings.media3SubtitleHistory.value
         volumeControlStream = AudioManager.STREAM_MUSIC
         enableEdgeToEdge(
             statusBarStyle = SystemBarStyle.dark(android.graphics.Color.BLACK),
@@ -183,7 +196,9 @@ class VideoPlayerActivity : AppCompatActivity() {
         val oldPlaylist = playlistSessionId
         val nextSession = intent.getStringExtra(EXTRA_PLAYLIST_SESSION)
         val nextIndex = intent.getIntExtra(EXTRA_PLAYLIST_INDEX, 0)
-        val nextSource = InternalVideoPlaylistRegistry.get(nextSession)?.items?.getOrNull(nextIndex)
+        val nextItems = InternalVideoPlaylistRegistry.get(nextSession)?.items.orEmpty()
+        val nextSource = nextItems.getOrNull(nextIndex)
+        val previousSource = currentSource()
         val nextSubtitleTokens = intent.getStringArrayExtra(EXTRA_SUBTITLE_TOKENS)?.toList().orEmpty()
         val oldSubtitleTokens = subtitleTokens
         savePlaybackProgress()
@@ -195,6 +210,7 @@ class VideoPlayerActivity : AppCompatActivity() {
                 network = networkToken != null,
                 subtitleTokens = nextSubtitleTokens,
                 holdForResume = nextSource != null,
+                inheritTracks = nextSource != null && nextSource != previousSource && previousSource in nextItems,
             )
         } catch (e: Throwable) {
             Log.e("VideoPlayer", "Unable to open the media item", e)
@@ -296,8 +312,20 @@ class VideoPlayerActivity : AppCompatActivity() {
         rotateWithVideo = Settings.videoRotateWithVideo.value
         playerView?.playlistSwipeMinutes = Settings.videoScrollToNext.value
         playerView?.onPlaylistScroll = { delta -> moveInPlaylist(delta) }
-        playerView?.onTrackSelectionChanged = { type ->
-            if (pendingResumeGid != 0L) trackChoicesDuringResume += type
+        playerView?.onTrackSelectionChanged = { type, subtitleLanguage ->
+            if (pendingTrackDefaults) manualTrackChoicesBeforeRestore += type
+            if (type == C.TRACK_TYPE_TEXT) subtitleChoiceFromHistory = false
+            if (subtitleLanguage != null) {
+                subtitleHistory = updateVideoSubtitleHistory(subtitleHistory, subtitleLanguage)
+                lifecycleScope.launch(start = CoroutineStart.UNDISPATCHED) {
+                    withNonCancellableContext {
+                        Settings.withMutableSnapshot { preferences ->
+                            val key = Settings.media3SubtitleHistory
+                            preferences[key] = updateVideoSubtitleHistory(preferences[key], subtitleLanguage)
+                        }
+                    }
+                }
+            }
             savePlaybackProgress()
         }
         findViewById<ImageButton>(R.id.video_rotate).setOnClickListener { toggleRotateWithVideo() }
@@ -563,6 +591,7 @@ class VideoPlayerActivity : AppCompatActivity() {
                 network = prepared.network,
                 subtitleTokens = prepared.subtitleTokens,
                 holdForResume = true,
+                inheritTracks = true,
             )
         } catch (e: Throwable) {
             prepared.subtitleTokens.forEach(StreamDocumentRegistry::remove)
@@ -584,6 +613,7 @@ class VideoPlayerActivity : AppCompatActivity() {
         network: Boolean,
         subtitleTokens: List<String>,
         holdForResume: Boolean,
+        inheritTracks: Boolean,
     ) {
         // Drop the previous file's id before prepare callbacks, so a reset position
         // is not written over the progress just saved for that file.
@@ -591,7 +621,14 @@ class VideoPlayerActivity : AppCompatActivity() {
         pendingResumeGid = 0L
         readProgressJob?.cancel()
         resumeProgress = null
-        trackChoicesDuringResume.clear()
+        pendingTrackDefaults = true
+        manualTrackChoicesBeforeRestore.clear()
+        val previous = player.takeIf { inheritTracks }
+        siblingAudioChoice = previous?.siblingTrackChoice(C.TRACK_TYPE_AUDIO)
+        siblingSubtitleChoice = previous?.siblingTrackChoice(C.TRACK_TYPE_TEXT)
+        siblingSubtitleFromHistory = inheritTracks && subtitleChoiceFromHistory
+        subtitleChoiceFromHistory = false
+        savedSubtitleTrack = null
         trackSupportsSkiv = null
         val mediaItem = MediaItem.Builder()
             .setUri(uri)
@@ -843,15 +880,34 @@ class VideoPlayerActivity : AppCompatActivity() {
     }
 
     private fun tryResume() {
-        val saved = resumeProgress ?: return
         val exo = player ?: return
-        if (exo.playbackState != Player.STATE_READY || pendingResumeGid != saved.gid) return
-
+        val saved = resumeProgress
+        if (exo.playbackState != Player.STATE_READY || (pendingResumeGid != 0L && pendingResumeGid != saved?.gid)) return
+        if (pendingTrackDefaults) {
+            pendingTrackDefaults = false
+            savedSubtitleTrack = saved?.subtitleTrack
+            val parameters = exo.trackSelectionParameters.buildUpon()
+            if (C.TRACK_TYPE_AUDIO !in manualTrackChoicesBeforeRestore &&
+                !parameters.restoreSiblingTrack(exo, C.TRACK_TYPE_AUDIO, siblingAudioChoice)
+            ) {
+                parameters.restoreVideoTrack(exo, C.TRACK_TYPE_AUDIO, saved?.audioTrack)
+            }
+            if (C.TRACK_TYPE_TEXT !in manualTrackChoicesBeforeRestore) {
+                subtitleChoiceFromHistory = when {
+                    parameters.restoreSiblingTrack(exo, C.TRACK_TYPE_TEXT, siblingSubtitleChoice) -> siblingSubtitleFromHistory
+                    parameters.restoreVideoTrack(exo, C.TRACK_TYPE_TEXT, saved?.subtitleTrack) -> false
+                    else -> parameters.applyVideoSubtitleHistory(exo, subtitleHistory)
+                }
+            }
+            siblingAudioChoice = null
+            siblingSubtitleChoice = null
+            exo.trackSelectionParameters = parameters.build()
+        }
+        if (saved == null) {
+            manualTrackChoicesBeforeRestore.clear()
+            return
+        }
         resumeProgress = null
-        val parameters = exo.trackSelectionParameters.buildUpon()
-        if (C.TRACK_TYPE_AUDIO !in trackChoicesDuringResume) parameters.restoreVideoTrack(exo, C.TRACK_TYPE_AUDIO, saved.audioTrack)
-        if (C.TRACK_TYPE_TEXT !in trackChoicesDuringResume) parameters.restoreVideoTrack(exo, C.TRACK_TYPE_TEXT, saved.subtitleTrack)
-        exo.trackSelectionParameters = parameters.build()
 
         val duration = exo.duration
         val mode = Settings.media3PlaybackResume.value
@@ -862,8 +918,8 @@ class VideoPlayerActivity : AppCompatActivity() {
             exo.seekTo(saved.page.toLong())
         }
         pendingResumeGid = 0L
-        if (trackChoicesDuringResume.isNotEmpty()) savePlaybackProgress()
-        trackChoicesDuringResume.clear()
+        if (manualTrackChoicesBeforeRestore.isNotEmpty()) savePlaybackProgress()
+        manualTrackChoicesBeforeRestore.clear()
         if (lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED) || isInPictureInPictureMode) {
             exo.playWhenReady = true
         }
@@ -884,7 +940,7 @@ class VideoPlayerActivity : AppCompatActivity() {
             gid,
             storedPositionMs(exo),
             videoTrackKey(exo, C.TRACK_TYPE_AUDIO),
-            videoTrackKey(exo, C.TRACK_TYPE_TEXT),
+            if (subtitleChoiceFromHistory) savedSubtitleTrack else videoTrackKey(exo, C.TRACK_TYPE_TEXT),
         )
         val source = currentSource()
         lifecycleScope.launch(start = CoroutineStart.UNDISPATCHED) {

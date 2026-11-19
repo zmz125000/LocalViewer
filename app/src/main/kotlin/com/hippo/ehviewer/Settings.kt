@@ -1048,6 +1048,7 @@ object Settings : DataStorePreferences(null) {
     }
 
     val media3PlaybackResume = intPref("media3_playback_resume", MEDIA3_RESUME_AUTO)
+    internal val media3SubtitleHistory = stringPref("media3_subtitle_history", "")
 
     const val MEDIA3_AUDIO_OFF = 0
     const val MEDIA3_AUDIO_DEVICE = 1
