@@ -1644,10 +1644,14 @@ private fun SelectionOverflowControl(
     val removalAction = if (useTrashBin) com.hippo.ehviewer.library.FileRemovalAction.Trash else com.hippo.ehviewer.library.FileRemovalAction.Delete
     val confirmDelete = rememberNetworkDeleteConfirmation(removalAction, review = true) { FolderSelectHost.cancelShownSelection() }
     val enableFileDeletion = Settings.enableFileDeletion.asMutableState().value
-    val deletable = enableFileDeletion && picks.isNotEmpty() && picks.all {
-        (it.removalSource ?: it.uploadSource)?.let { source ->
-            com.hippo.ehviewer.library.canRemoveItem(source, removalAction)
-        } == true
+    val removablePicks = if (enableFileDeletion) {
+        picks.filter {
+            (it.removalSource ?: it.uploadSource)?.let { source ->
+                com.hippo.ehviewer.library.canRemoveItem(source, removalAction)
+            } == true
+        }
+    } else {
+        emptyList()
     }
     val canSelectAll = selectionActions &&
         folderKey != null &&
@@ -1744,15 +1748,16 @@ private fun SelectionOverflowControl(
                         },
                     )
                 }
-                if (selectionActions && deletable) {
+                if (selectionActions && removablePicks.isNotEmpty()) {
                     DropdownMenuItem(
                         text = { Text(stringResource(if (removalAction == com.hippo.ehviewer.library.FileRemovalAction.Trash) R.string.action_trash else R.string.delete)) },
                         onClick = {
                             menu = false
                             scope.launch {
-                                val requests = picks.map { pick ->
+                                val requests = removablePicks.mapNotNull { pick ->
+                                    val source = pick.removalSource ?: pick.uploadSource ?: return@mapNotNull null
                                     com.hippo.ehviewer.library.TransferFile(
-                                        requireNotNull(pick.removalSource ?: pick.uploadSource),
+                                        source,
                                         pick.title,
                                         pick.isFolder,
                                         pick.listLine?.sizeBytes ?: -1L,
