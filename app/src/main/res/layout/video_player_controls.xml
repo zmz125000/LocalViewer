@@ -21,6 +21,16 @@
             android:orientation="horizontal"
             android:paddingHorizontal="8dp">
 
+            <ImageButton
+                android:id="@+id/video_volume"
+                android:layout_width="48dp"
+                android:layout_height="48dp"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:contentDescription="@string/video_volume"
+                android:padding="12dp"
+                android:src="@drawable/ic_video_volume"
+                android:tint="@android:color/white" />
+
             <TextView
                 android:id="@id/exo_position"
                 android:layout_width="wrap_content"
@@ -52,6 +62,16 @@
                 android:minWidth="64dp"
                 android:textColor="@android:color/white"
                 android:textSize="13sp" />
+
+            <ImageButton
+                android:id="@+id/video_brightness"
+                android:layout_width="48dp"
+                android:layout_height="48dp"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:contentDescription="@string/video_brightness"
+                android:padding="12dp"
+                android:src="@drawable/ic_video_brightness"
+                android:tint="@android:color/white" />
 
         </LinearLayout>
 

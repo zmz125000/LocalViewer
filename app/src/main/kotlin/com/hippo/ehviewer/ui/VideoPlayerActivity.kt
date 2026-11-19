@@ -12,8 +12,10 @@ import android.content.pm.PackageManager
 import android.content.res.Configuration
 import android.graphics.Rect
 import android.graphics.drawable.Icon
+import android.media.AudioManager
 import android.net.Uri
 import android.os.Bundle
+import android.provider.Settings as AndroidSettings
 import android.util.Log
 import android.util.Rational
 import android.view.View
@@ -63,6 +65,7 @@ import com.hippo.ehviewer.ui.player.restoreVideoTrack
 import com.hippo.ehviewer.ui.player.videoTrackKey
 import com.hippo.ehviewer.util.setReaderColorMode
 import com.hippo.ehviewer.util.supportsWideColorGamut
+import kotlin.math.roundToInt
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
@@ -85,6 +88,7 @@ class VideoPlayerActivity : AppCompatActivity() {
     private var playerAudioMode = Settings.MEDIA3_AUDIO_DEVICE
     private var defaultTrackSelection = TrackSelectionParameters.DEFAULT
     private var audioBoostDb = 0
+    private val audioManager by lazy { getSystemService(AudioManager::class.java) }
     private var audioBoostProcessor: Media3AudioBoostProcessor? = null
     private var streamToken: String? = null
     private var subtitleTokens: List<String> = emptyList()
@@ -127,6 +131,7 @@ class VideoPlayerActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        volumeControlStream = AudioManager.STREAM_MUSIC
         enableEdgeToEdge(
             statusBarStyle = SystemBarStyle.dark(android.graphics.Color.BLACK),
             navigationBarStyle = SystemBarStyle.dark(android.graphics.Color.BLACK),
@@ -272,6 +277,16 @@ class VideoPlayerActivity : AppCompatActivity() {
             tooltipText = contentDescription
             setOnClickListener(::showAudioOutputMenu)
         }
+        findViewById<ImageButton>(R.id.video_volume).apply {
+            tooltipText = contentDescription
+            setOnClickListener(::showVolumeMenu)
+        }
+        findViewById<ImageButton>(R.id.video_brightness).apply {
+            tooltipText = contentDescription
+            setOnClickListener(::showBrightnessMenu)
+        }
+        updateVolumeButton()
+        updateBrightnessButton()
         findViewById<ImageButton>(R.id.video_more).setOnClickListener(::showMoreControls)
         playerAudioMode = Settings.media3AudioDownmixing.value
         updatePlaybackOptionButtons()
@@ -323,6 +338,65 @@ class VideoPlayerActivity : AppCompatActivity() {
                 Settings.media3AudioDownmixing.value = mode
             }
         }
+    }
+
+    private fun showVolumeMenu(anchor: View) {
+        val stream = AudioManager.STREAM_MUSIC
+        val volume = audioManager.getStreamVolume(stream)
+        updateVolumeButton(volume)
+        playerView?.showLevelMenu(
+            anchor,
+            getString(R.string.video_volume),
+            audioManager.getStreamMinVolume(stream)..audioManager.getStreamMaxVolume(stream),
+            volume,
+            adjustable = !audioManager.isVolumeFixed,
+        ) { level ->
+            if (level != null && level != audioManager.getStreamVolume(stream)) {
+                audioManager.setStreamVolume(stream, level, 0)
+            }
+            val current = audioManager.getStreamVolume(stream)
+            updateVolumeButton(current)
+            current
+        }
+    }
+
+    private fun brightnessLevel(): Int? = window.attributes.screenBrightness.takeIf { it >= 0f }
+        ?.let { (it * 100).roundToInt() }
+
+    private fun showBrightnessMenu(anchor: View) {
+        val brightness = AndroidSettings.System.getInt(contentResolver, AndroidSettings.System.SCREEN_BRIGHTNESS, 128)
+        playerView?.showLevelMenu(
+            anchor,
+            getString(R.string.video_brightness),
+            1..100,
+            brightnessLevel(),
+            systemLevel = (brightness * 100f / 255f).roundToInt(),
+        ) { level ->
+            if (level != brightnessLevel()) {
+                window.attributes = window.attributes.apply {
+                    screenBrightness = level?.div(100f) ?: WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
+                }
+                updateBrightnessButton()
+            }
+            level
+        }
+    }
+
+    private fun updateVolumeButton(volume: Int = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)) {
+        val maxVolume = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+        findViewById<ImageButton>(R.id.video_volume).apply {
+            setImageResource(if (volume == 0) R.drawable.ic_video_volume_muted else R.drawable.ic_video_volume)
+            stateDescription = if (volume == 0) {
+                getString(R.string.video_volume_mute)
+            } else {
+                getString(R.string.video_level_percent, (volume * 100.0 / maxOf(maxVolume, 1)).roundToInt())
+            }
+        }
+    }
+
+    private fun updateBrightnessButton() {
+        findViewById<ImageButton>(R.id.video_brightness).stateDescription =
+            brightnessLevel()?.let { getString(R.string.video_level_percent, it) } ?: getString(R.string.video_level_system)
     }
 
     private fun showMoreControls(anchor: View) {
@@ -589,7 +663,7 @@ class VideoPlayerActivity : AppCompatActivity() {
         audioOutputMode: Int = playerAudioMode,
     ) {
         val previous = player
-        // Boost needs decoded PCM. Restore passthrough when the boost is turned off.
+        // Audio boost needs decoded PCM to control the audio samples.
         val audioMode = if (audioOutputMode == Settings.MEDIA3_AUDIO_PASSTHROUGH && audioBoostDb > 0) {
             Settings.MEDIA3_AUDIO_DEVICE
         } else {
@@ -607,6 +681,7 @@ class VideoPlayerActivity : AppCompatActivity() {
                 true,
             )
             .setHandleAudioBecomingNoisy(true)
+            .setDeviceVolumeControlEnabled(true)
 
         val mediaSourceFactory = DefaultMediaSourceFactory(this)
             .setSubtitleParserFactory(Media3SubtitleParserFactory())
@@ -617,6 +692,13 @@ class VideoPlayerActivity : AppCompatActivity() {
         val defaultTracks = exo.trackSelectionParameters
         exo.addListener(
             object : Player.Listener {
+                override fun onDeviceVolumeChanged(volume: Int, muted: Boolean) {
+                    if (player !== exo) return
+                    val current = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
+                    updateVolumeButton(current)
+                    playerView?.refreshLevelMenu(R.id.video_volume, current)
+                }
+
                 override fun onVideoSizeChanged(videoSize: VideoSize) {
                     if (player !== exo) return
                     lastVideoSize = videoSize
@@ -669,7 +751,6 @@ class VideoPlayerActivity : AppCompatActivity() {
             if (preservePlaybackSettings && previous != null) {
                 exo.trackSelectionParameters = previous.trackSelectionParameters
                 exo.playbackParameters = previous.playbackParameters
-                exo.volume = previous.volume
             }
             exo.setMediaItem(mediaItem, positionMs)
             if (hdrMode != Settings.MEDIA3_HDR) {

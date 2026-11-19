@@ -22,6 +22,7 @@ import android.widget.ArrayAdapter
 import android.widget.ImageButton
 import android.widget.ListView
 import android.widget.PopupWindow
+import android.widget.SeekBar
 import android.widget.TextView
 import android.widget.Toast
 import androidx.media3.common.C
@@ -37,6 +38,7 @@ import androidx.window.core.layout.WindowSizeClass.Companion.WIDTH_DP_MEDIUM_LOW
 import com.ehviewer.core.i18n.R as I18nR
 import com.hippo.ehviewer.R
 import kotlin.math.abs
+import kotlin.math.roundToInt
 
 /**
  * Stock [PlayerView] plus surface gestures: tap toggles chrome, double-tap closes the player,
@@ -80,6 +82,7 @@ class SeekPlayerView @JvmOverloads constructor(
     private var canStartDrag = false
 
     private var controlMenu: PopupWindow? = null
+    private var levelMenuRefresh: ((Int, Int) -> Unit)? = null
     private val captions = context.getSystemService(CaptioningManager::class.java)
     private val captionListener = object : CaptioningManager.CaptioningChangeListener() {
         override fun onEnabledChanged(enabled: Boolean) = updateCaptionStyle()
@@ -398,13 +401,8 @@ class SeekPlayerView @JvmOverloads constructor(
         onSelection: (Int) -> Unit,
     ) {
         if (!anchor.isAttachedToWindow) return
-        controlMenu?.dismiss()
-
         val density = resources.displayMetrics.density
         val gap = (8 * density).toInt()
-        val frame = Rect()
-        anchor.getWindowVisibleDisplayFrame(frame)
-        if (frame.width() <= 2 * gap) return
 
         val itemLayout = if (selected in labels.indices) {
             android.R.layout.simple_list_item_single_choice
@@ -412,18 +410,9 @@ class SeekPlayerView @JvmOverloads constructor(
             android.R.layout.simple_list_item_1
         }
         val adapter = ArrayAdapter(context, itemLayout, labels)
-        val colors = context.obtainStyledAttributes(intArrayOf(android.R.attr.colorBackgroundFloating))
-        val menuColor = colors.getColor(0, context.getColor(android.R.color.background_dark))
-        colors.recycle()
-        val shape = GradientDrawable().apply {
-            cornerRadius = 12 * density
-            setColor(menuColor)
-        }
         val list = ListView(context).apply {
             divider = null
             setPadding(0, gap, 0, gap)
-            background = shape
-            clipToOutline = true
         }
         if (actionLabel != null) {
             val action = LayoutInflater.from(context).inflate(android.R.layout.simple_list_item_1, list, false) as TextView
@@ -446,22 +435,113 @@ class SeekPlayerView @JvmOverloads constructor(
             item.measure(unspecified, unspecified)
             contentWidth = maxOf(contentWidth, item.measuredWidth)
         }
+
+        val popup = showControlsPopup(anchor, list, contentWidth) ?: return
+        list.setOnItemClickListener { _, _, position, _ ->
+            popup.dismiss()
+            onSelection(position)
+        }
+        list.post {
+            if (popup.isShowing && selected > list.lastVisiblePosition) list.setSelection(selected)
+        }
+    }
+
+    internal fun showLevelMenu(
+        anchor: View,
+        title: String,
+        range: IntRange,
+        level: Int?,
+        systemLevel: Int? = null,
+        adjustable: Boolean = true,
+        onLevelChanged: (Int?) -> Int?,
+    ) {
+        val panel = LayoutInflater.from(context).inflate(R.layout.video_level_popup, null)
+        val header = panel.findViewById<View>(R.id.video_level_header)
+        panel.findViewById<TextView>(R.id.video_level_title).text = title
+        val value = panel.findViewById<TextView>(R.id.video_level_value)
+        val slider = panel.findViewById<SeekBar>(R.id.video_level_slider)
+        val systemLabel = context.getString(R.string.video_level_system)
+        slider.contentDescription = title
+        slider.min = range.first
+        slider.max = range.last
+        slider.isEnabled = adjustable
+
+        fun showLevel(current: Int?) {
+            slider.progress = (current ?: systemLevel ?: range.first).coerceIn(range)
+            value.text = if (current == null) {
+                systemLabel
+            } else {
+                val percent = (current * 100.0 / maxOf(range.last, 1)).roundToInt()
+                context.getString(R.string.video_level_percent, percent)
+            }
+        }
+
+        val maxLabel = context.getString(R.string.video_level_percent, 100)
+        value.text = if (systemLevel != null && value.paint.measureText(systemLabel) > value.paint.measureText(maxLabel)) {
+            systemLabel
+        } else {
+            maxLabel
+        }
+        val unspecified = MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED)
+        header.measure(unspecified, unspecified)
+        val popupWidth = header.measuredWidth + panel.paddingLeft + panel.paddingRight
+        showLevel(level)
+        if (showControlsPopup(anchor, panel, popupWidth) == null) return
+        levelMenuRefresh = { anchorId, current ->
+            if (anchorId == anchor.id) showLevel(current)
+        }
+        slider.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onStartTrackingTouch(seekBar: SeekBar) = Unit
+            override fun onStopTrackingTouch(seekBar: SeekBar) = Unit
+
+            override fun onProgressChanged(seekBar: SeekBar, progress: Int, fromUser: Boolean) {
+                if (fromUser) showLevel(onLevelChanged(progress))
+            }
+        })
+        if (systemLevel != null) {
+            header.isFocusable = true
+            header.setOnClickListener { showLevel(onLevelChanged(null)) }
+        }
+    }
+
+    internal fun refreshLevelMenu(anchorId: Int, level: Int) {
+        levelMenuRefresh?.invoke(anchorId, level)
+    }
+
+    private fun showControlsPopup(anchor: View, content: View, contentWidth: Int): PopupWindow? {
+        if (!anchor.isAttachedToWindow) return null
+        controlMenu?.dismiss()
+        val density = resources.displayMetrics.density
+        val gap = (8 * density).toInt()
+        val frame = Rect()
+        anchor.getWindowVisibleDisplayFrame(frame)
+        if (frame.width() <= 2 * gap) return null
+
         val popupWidth = contentWidth.coerceAtMost(minOf(frame.width() - 2 * gap, (360 * density).toInt()))
         val location = IntArray(2)
         anchor.getLocationOnScreen(location)
         val above = location[1] - frame.top - gap
         val below = frame.bottom - location[1] - anchor.height - gap
         val availableHeight = maxOf(above, below)
-        if (availableHeight <= 0) return
-        list.measure(
+        if (availableHeight <= 0) return null
+        content.measure(
             MeasureSpec.makeMeasureSpec(popupWidth, MeasureSpec.EXACTLY),
             MeasureSpec.makeMeasureSpec(availableHeight, MeasureSpec.AT_MOST),
         )
-        val popupHeight = list.measuredHeight
+        val popupHeight = content.measuredHeight
         val showAbove = popupHeight <= above
         val left = location[0].coerceIn(frame.left + gap, frame.right - gap - popupWidth)
         val top = if (showAbove) location[1] - popupHeight - gap else location[1] + anchor.height + gap
-        val popup = PopupWindow(list, popupWidth, popupHeight, true).apply {
+        val colors = context.obtainStyledAttributes(intArrayOf(android.R.attr.colorBackgroundFloating))
+        val menuColor = colors.getColor(0, context.getColor(android.R.color.background_dark))
+        colors.recycle()
+        val shape = GradientDrawable().apply {
+            cornerRadius = 12 * density
+            setColor(menuColor)
+        }
+        content.background = shape
+        content.clipToOutline = true
+        val popup = PopupWindow(content, popupWidth, popupHeight, true).apply {
             setBackgroundDrawable(
                 GradientDrawable().apply {
                     cornerRadius = shape.cornerRadius
@@ -477,20 +557,17 @@ class SeekPlayerView @JvmOverloads constructor(
             exitTransition = null
             animationStyle = R.style.VideoControlMenuAnimation
         }
-        list.setOnItemClickListener { _, _, position, _ ->
-            popup.dismiss()
-            onSelection(position)
-        }
         popup.setOnDismissListener {
-            if (controlMenu === popup) controlMenu = null
+            if (controlMenu === popup) {
+                controlMenu = null
+                levelMenuRefresh = null
+            }
             scheduleAutoHide()
         }
         controlMenu = popup
         showController()
         popup.showAtLocation(anchor, Gravity.TOP or Gravity.LEFT, left, top)
-        list.post {
-            if (popup.isShowing && selected > list.lastVisiblePosition) list.setSelection(selected)
-        }
+        return popup
     }
 
     override fun onAttachedToWindow() {
