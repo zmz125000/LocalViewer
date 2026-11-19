@@ -189,7 +189,10 @@ object Settings : DataStorePreferences(null) {
      * In-app player: swipe up/down moves to the next/previous video.
      * Independent of [videoRotateWithVideo]. Default on.
      */
-    val videoScrollToNext = boolPref("video_scroll_to_next", true)
+    val legacyVideoScrollToNext = boolPref("video_scroll_to_next", true)
+    val videoScrollToNext = intPref("video_scroll_to_next_mode", -2)
+
+    fun resolvedVideoScrollToNext(mode: Int, legacy: Boolean): Int = if (mode == -2) if (legacy) -1 else 0 else mode
 
     /**
      * When true (default): tap HTML → loopback HTTP + default browser, serving the

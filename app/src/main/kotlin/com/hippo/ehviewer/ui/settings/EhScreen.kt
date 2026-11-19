@@ -18,6 +18,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -304,28 +305,22 @@ fun AnimatedVisibilityScope.EhScreen(navigator: DestinationsNavigator) = Screen(
                     )
                 }
             }
-            val hdrToneMapping = Settings.media3HdrToneMapping.asMutableState()
-            val hdrEntries = stringArrayResource(id = com.hippo.ehviewer.R.array.media3_hdr_tone_mapping_entries)
+            val scrollToNext = Settings.videoScrollToNext.asMutableState()
+            val legacyScrollToNext = Settings.legacyVideoScrollToNext.asMutableState()
+            val scrollMode = remember(scrollToNext, legacyScrollToNext) {
+                object : MutableState<Int> by scrollToNext {
+                    override var value: Int
+                        get() = Settings.resolvedVideoScrollToNext(scrollToNext.value, legacyScrollToNext.value)
+                        set(value) {
+                            scrollToNext.value = value
+                        }
+                }
+            }
             SimpleMenuPreferenceInt(
-                title = stringResource(id = com.hippo.ehviewer.R.string.settings_media3_hdr_tone_mapping),
-                summary = hdrEntries.getOrElse(hdrToneMapping.value) { hdrEntries.first() },
-                entry = com.hippo.ehviewer.R.array.media3_hdr_tone_mapping_entries,
-                entryValueRes = com.hippo.ehviewer.R.array.media3_hdr_tone_mapping_values,
-                state = hdrToneMapping,
-            )
-            val audioDownmixing = Settings.media3AudioDownmixing.asMutableState()
-            val audioEntries = stringArrayResource(id = com.hippo.ehviewer.R.array.media3_audio_downmixing_entries)
-            val audioIndex = audioDownmixing.value.coerceIn(0, audioEntries.lastIndex)
-            SimpleMenuPreferenceInt(
-                title = stringResource(id = R.string.settings_media3_audio_downmixing),
-                summary = audioEntries[audioIndex],
-                entry = com.hippo.ehviewer.R.array.media3_audio_downmixing_entries,
-                entryValueRes = com.hippo.ehviewer.R.array.media3_audio_downmixing_values,
-                state = audioDownmixing,
-            )
-            SwitchPreference(
                 title = stringResource(id = R.string.settings_video_scroll_to_next),
-                state = Settings.videoScrollToNext.asMutableState(),
+                entry = com.hippo.ehviewer.R.array.video_scroll_to_next_entries,
+                entryValueRes = com.hippo.ehviewer.R.array.video_scroll_to_next_values,
+                state = scrollMode,
             )
             var defaultVideoPlayer by Settings.defaultVideoPlayerComponent.asMutableState()
             val alwaysAsk = stringResource(id = R.string.settings_default_video_player_always_ask)

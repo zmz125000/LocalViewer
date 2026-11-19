@@ -97,6 +97,16 @@
                         android:tint="@android:color/white" />
 
                     <ImageButton
+                        android:id="@+id/video_audio_output"
+                        android:layout_width="48dp"
+                        android:layout_height="48dp"
+                        android:background="?attr/selectableItemBackgroundBorderless"
+                        android:contentDescription="@string/settings_media3_audio_downmixing"
+                        android:padding="12dp"
+                        android:src="@drawable/ic_video_audio_output"
+                        android:tint="@android:color/white" />
+
+                    <ImageButton
                         android:id="@+id/video_hdr"
                         android:layout_width="48dp"
                         android:layout_height="48dp"
@@ -143,6 +153,18 @@
                 </LinearLayout>
 
             </LinearLayout>
+
+            <ImageButton
+                android:id="@+id/video_more"
+                android:layout_width="48dp"
+                android:layout_height="48dp"
+                android:layout_gravity="end|center_vertical"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:contentDescription="@string/abc_action_menu_overflow_description"
+                android:padding="12dp"
+                android:src="@drawable/ic_video_more"
+                android:tint="@android:color/white"
+                android:visibility="gone" />
 
             <LinearLayout
                 android:id="@+id/video_transport"

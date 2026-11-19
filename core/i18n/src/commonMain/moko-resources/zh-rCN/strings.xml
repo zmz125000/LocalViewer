@@ -102,6 +102,10 @@
     <string name="settings_use_media3_player_for_local_files_summary">在“使用 Media3 播放器”关闭时：浏览本地文件夹时打开的视频仍用应用内播放器。</string>
     <string name="settings_video_scroll_to_next">滑动到下一个视频</string>
     <string name="settings_video_scroll_to_next_summary">上滑或下滑切换下一个或上一个视频。</string>
+    <string name="settings_video_scroll_to_next_5_minutes">5 分钟</string>
+    <string name="settings_video_scroll_to_next_10_minutes">10 分钟</string>
+    <string name="settings_video_scroll_to_next_always">始终</string>
+    <string name="video_subtitle_tracks">字幕轨道</string>
     <string name="settings_media3_playback_resume">播放进度续播</string>
     <string name="settings_media3_playback_resume_summary">%s 是当前续播方式。</string>
     <string name="settings_media3_playback_resume_auto">自动（超过 3 分钟）</string>

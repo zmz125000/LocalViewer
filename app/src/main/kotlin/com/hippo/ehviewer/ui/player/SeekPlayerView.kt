@@ -12,9 +12,9 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.ViewConfiguration
 import android.view.ViewGroup
+import android.view.WindowInsets
 import android.view.accessibility.CaptioningManager
 import android.widget.ArrayAdapter
-import android.widget.FrameLayout
 import android.widget.ListView
 import android.widget.PopupWindow
 import androidx.media3.common.C
@@ -49,14 +49,17 @@ class SeekPlayerView @JvmOverloads constructor(
     /** Double-tap on the video. The activity finishes so playback and the window both go away. */
     var onClosePlayer: (() -> Unit)? = null
 
-    /** Vertical swipe while [scrollToNextEnabled]: +1 next (up), -1 previous (down). */
+    /** Vertical swipe: +1 next (up), -1 previous (down). */
     var onPlaylistScroll: ((Int) -> Unit)? = null
 
     /** Shorts-style swipe between playlist items. Horizontal scrub stays available. */
-    var scrollToNextEnabled: Boolean = false
+    var playlistSwipeMinutes = 0
+
+    internal var onTrackSelectionChanged: ((Int) -> Unit)? = null
 
     private val touchSlop = ViewConfiguration.get(context).scaledTouchSlop
-    private val scrubStartPx = maxOf(touchSlop * 3f, 32f * resources.displayMetrics.density)
+    private val edgeGuardPx = 32f * resources.displayMetrics.density
+    private val scrubStartPx = maxOf(touchSlop * 3f, edgeGuardPx)
     private var downX = 0f
     private var downY = 0f
     private var seekStartMs = 0L
@@ -66,6 +69,7 @@ class SeekPlayerView @JvmOverloads constructor(
     private var lastSeekAt = 0L
     private var controllerGesture = false
     private var shownOnThisTap = false
+    private var canStartDrag = false
 
     private var controlMenu: PopupWindow? = null
 
@@ -107,10 +111,9 @@ class SeekPlayerView @JvmOverloads constructor(
                 v.layoutParams = lp
             }
         }
-        for (id in intArrayOf(R.id.video_controls_buttons, R.id.video_track_buttons, R.id.video_extra_buttons)) {
-            findViewById<View>(id)?.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
-                layoutControlRows()
-            }
+        addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> layoutControls() }
+        findViewById<View>(R.id.video_controls_buttons)?.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
+            layoutControls()
         }
         findViewById<View>(androidx.media3.ui.R.id.exo_audio_track)?.setOnClickListener {
             showTrackMenu(it, C.TRACK_TYPE_AUDIO)
@@ -179,7 +182,7 @@ class SeekPlayerView @JvmOverloads constructor(
         button.alpha = if (enabled) 1f else 0.35f
     }
 
-    private fun showTrackMenu(anchor: View, trackType: Int) {
+    internal fun showTrackMenu(anchor: View, trackType: Int) {
         val current = player ?: return
         if (!current.isCommandAvailable(Player.COMMAND_SET_TRACK_SELECTION_PARAMETERS)) return
         val isSubtitle = trackType == C.TRACK_TYPE_TEXT
@@ -219,11 +222,10 @@ class SeekPlayerView @JvmOverloads constructor(
                     parameters.setOverrideForType(overrides[choice - 1])
                 } else if (isSubtitle) {
                     // Match Media3's None option, which still permits forced subtitles.
-                    parameters.setIgnoredTextSelectionFlags(C.SELECTION_FLAG_FORCED.inv())
-                        .setPreferredTextLanguage(null)
-                        .setPreferredTextRoleFlags(0)
+                    parameters.hideVideoSubtitles()
                 }
                 current.trackSelectionParameters = parameters.build()
+                onTrackSelectionChanged?.invoke(trackType)
             }
         }
     }
@@ -289,26 +291,23 @@ class SeekPlayerView @JvmOverloads constructor(
         postDelayed(autoHideRunnable, autoHideTimeoutMs.toLong())
     }
 
-    /** Keep transport centered and place the side buttons on a second row when space is tight. */
-    private fun layoutControlRows() {
+    private fun layoutControls() {
         val row = findViewById<View>(R.id.video_controls_buttons) ?: return
-        val tracks = findViewById<View>(R.id.video_track_buttons) ?: return
-        val transport = findViewById<View>(R.id.video_transport) ?: return
-        val actions = findViewById<View>(R.id.video_extra_buttons) ?: return
-        val actionRow = findViewById<View>(R.id.video_action_row) ?: return
-        if (transport.width == 0 || row.width == 0) return
+        val more = findViewById<View>(R.id.video_more) ?: return
+        val left = findViewById<ViewGroup>(R.id.video_track_buttons) ?: return
+        val right = findViewById<ViewGroup>(R.id.video_extra_buttons) ?: return
+        val transport = findViewById<ViewGroup>(R.id.video_transport) ?: return
+        if (row.width == 0) return
         val available = row.width - row.paddingLeft - row.paddingRight
-        val compact = available < transport.width + 2 * maxOf(tracks.width, actions.width)
-        val height = transport.layoutParams.height + if (compact) actionRow.layoutParams.height else 0
-        val gravity = if (compact) Gravity.BOTTOM else Gravity.CENTER_VERTICAL
-        val actionParams = actionRow.layoutParams as FrameLayout.LayoutParams
-        if (actionParams.gravity != gravity) {
-            actionParams.gravity = gravity
-            actionRow.layoutParams = actionParams
-        }
-        if (row.layoutParams.height != height) {
-            row.layoutParams = row.layoutParams.apply { this.height = height }
-        }
+        val buttonWidth = more.layoutParams.width
+        var transportWidth = 0
+        for (index in 0 until transport.childCount) transportWidth += transport.getChildAt(index).layoutParams.width
+        val compact = width < height || available < transportWidth + 2 * buttonWidth * maxOf(left.childCount, right.childCount)
+        val showSteps = !compact || available >= transportWidth + 2 * buttonWidth
+        findViewById<View>(R.id.video_action_row)?.visibility = if (compact) GONE else VISIBLE
+        more.visibility = if (compact) VISIBLE else GONE
+        findViewById<View>(R.id.video_rewind)?.visibility = if (showSteps) VISIBLE else GONE
+        findViewById<View>(R.id.video_forward)?.visibility = if (showSteps) VISIBLE else GONE
     }
 
     internal fun showControlMenu(anchor: View, labels: List<String>, selected: Int, onSelection: (Int) -> Unit) {
@@ -321,7 +320,12 @@ class SeekPlayerView @JvmOverloads constructor(
         anchor.getWindowVisibleDisplayFrame(frame)
         if (frame.width() <= 2 * gap) return
 
-        val adapter = ArrayAdapter(context, android.R.layout.simple_list_item_single_choice, labels)
+        val itemLayout = if (selected in labels.indices) {
+            android.R.layout.simple_list_item_single_choice
+        } else {
+            android.R.layout.simple_list_item_1
+        }
+        val adapter = ArrayAdapter(context, itemLayout, labels)
         val colors = context.obtainStyledAttributes(intArrayOf(android.R.attr.colorBackgroundFloating))
         val menuColor = colors.getColor(0, context.getColor(android.R.color.background_dark))
         colors.recycle()
@@ -331,12 +335,14 @@ class SeekPlayerView @JvmOverloads constructor(
         }
         val list = ListView(context).apply {
             setAdapter(adapter)
-            choiceMode = ListView.CHOICE_MODE_SINGLE
+            if (selected in labels.indices) {
+                choiceMode = ListView.CHOICE_MODE_SINGLE
+                setItemChecked(selected, true)
+            }
             divider = null
             setPadding(0, gap, 0, gap)
             background = shape
             clipToOutline = true
-            if (selected in labels.indices) setItemChecked(selected, true)
         }
 
         val unspecified = MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED)
@@ -463,11 +469,12 @@ class SeekPlayerView @JvmOverloads constructor(
                 distanceX: Float,
                 distanceY: Float,
             ): Boolean {
+                if (!canStartDrag) return false
                 val current = player ?: return false
                 val totalX = e2.x - downX
                 val totalY = e2.y - downY
                 if (scrollingNext) return true
-                if (!seeking && scrollToNextEnabled &&
+                if (!seeking && playlistSwipeAllowed(playlistSwipeMinutes, current.duration) &&
                     abs(totalY) >= scrubStartPx && abs(totalY) > abs(totalX) * 1.5f
                 ) {
                     scrollingNext = true
@@ -504,6 +511,10 @@ class SeekPlayerView @JvmOverloads constructor(
         if (event.actionMasked == MotionEvent.ACTION_DOWN) {
             downX = event.x
             downY = event.y
+            val insets = rootWindowInsets?.getInsets(WindowInsets.Type.systemGestures())
+            val left = maxOf(edgeGuardPx, (insets?.left ?: 0).toFloat())
+            val right = maxOf(edgeGuardPx, (insets?.right ?: 0).toFloat())
+            canStartDrag = downX in left..(width - right)
             seeking = false
             scrollingNext = false
             lastSeekMs = C.TIME_UNSET
@@ -537,7 +548,7 @@ class SeekPlayerView @JvmOverloads constructor(
                     return true
                 }
                 val wasSeeking = seeking
-                if (seeking && lastSeekMs != C.TIME_UNSET) {
+                if (event.actionMasked == MotionEvent.ACTION_UP && seeking && lastSeekMs != C.TIME_UNSET) {
                     player?.seekTo(lastSeekMs)
                 }
                 seeking = false
@@ -589,3 +600,6 @@ internal const val SCRUB_WINDOW_PORTRAIT_MS = 60L * 1000L
 internal const val SCRUB_WINDOW_LANDSCAPE_MS = 2L * 60L * 1000L
 
 internal fun scrubWindowMs(viewWidthPx: Int, viewHeightPx: Int): Long = if (viewWidthPx >= viewHeightPx) SCRUB_WINDOW_LANDSCAPE_MS else SCRUB_WINDOW_PORTRAIT_MS
+
+// Negative means Always. Unknown duration is eligible only in that mode.
+internal fun playlistSwipeAllowed(minutes: Int, durationMs: Long): Boolean = minutes < 0 || minutes > 0 && durationMs in 1..(minutes * 60_000L)

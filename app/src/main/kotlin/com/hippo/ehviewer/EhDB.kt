@@ -31,6 +31,7 @@ import com.ehviewer.core.database.model.Filter
 import com.ehviewer.core.database.model.GalleryEntity
 import com.ehviewer.core.database.model.HistoryInfo
 import com.ehviewer.core.database.model.LocalFavoriteInfo
+import com.ehviewer.core.database.model.PageProgress
 import com.ehviewer.core.database.model.ProgressInfo
 import com.ehviewer.core.database.model.QuickSearch
 import com.ehviewer.core.database.roomDb
@@ -66,13 +67,17 @@ object EhDB {
     fun getReadProgressFlow(gid: Long) = db.progressDao().getPageFlow(gid)
     suspend fun getReadProgress(gid: Long) = db.progressDao().getPage(gid)
 
+    suspend fun getVideoProgress(gid: Long) = db.progressDao().get(gid)
+
+    suspend fun putVideoProgress(progress: ProgressInfo) = db.progressDao().upsert(progress)
+
     /**
      * Progress rows have a FK to GALLERIES. Upsert is a no-op (logged) if the gallery
      * entity is missing — can happen when local/SMB galleries were never written to history.
      */
     suspend fun putReadProgress(gid: Long, page: Int) {
         runCatching {
-            db.progressDao().upsert(ProgressInfo(gid, page))
+            db.progressDao().upsertPage(PageProgress(gid, page))
         }.onFailure {
             // FK missing gallery — try once after ensuring a stub is not always possible here
             // without full GalleryInfo; swallow to avoid crashing reader teardown.
@@ -89,7 +94,7 @@ object EhDB {
         if (db.galleryDao().load(galleryInfo.gid) == null) {
             putGalleryInfo(galleryInfo.asEntity())
         }
-        db.progressDao().upsert(ProgressInfo(galleryInfo.gid, page))
+        db.progressDao().upsertPage(PageProgress(galleryInfo.gid, page))
     }
     suspend fun clearProgressInfo() = db.progressDao().deleteAll()
 

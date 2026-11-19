@@ -18,4 +18,16 @@ class ProgressInfo(
 
     @ColumnInfo(name = "PAGE")
     val page: Int,
+
+    @ColumnInfo(name = "AUDIO_TRACK")
+    val audioTrack: String? = null,
+
+    @ColumnInfo(name = "SUBTITLE_TRACK")
+    val subtitleTrack: String? = null,
+)
+
+/** A reader position update only touches the page column. */
+data class PageProgress(
+    @ColumnInfo(name = "GID") val gid: Long,
+    @ColumnInfo(name = "PAGE") val page: Int,
 )
