@@ -9,4 +9,9 @@
     <string name="video_caption_preferences">Caption preferences</string>
     <string name="video_fit_to_screen">Fit to screen</string>
     <string name="video_crop_to_fill">Crop to fill</string>
+    <string name="video_volume">Volume</string>
+    <string name="video_brightness">Brightness</string>
+    <string name="video_level_system">System</string>
+    <string name="video_volume_mute">Mute</string>
+    <string name="video_level_percent">%1$d%%</string>
 </resources>

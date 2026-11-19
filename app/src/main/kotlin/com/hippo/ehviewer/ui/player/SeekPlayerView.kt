@@ -22,6 +22,7 @@ import android.widget.ArrayAdapter
 import android.widget.ImageButton
 import android.widget.ListView
 import android.widget.PopupWindow
+import android.widget.SeekBar
 import android.widget.TextView
 import android.widget.Toast
 import androidx.media3.common.C
@@ -37,6 +38,7 @@ import androidx.window.core.layout.WindowSizeClass.Companion.WIDTH_DP_MEDIUM_LOW
 import com.ehviewer.core.i18n.R as I18nR
 import com.hippo.ehviewer.R
 import kotlin.math.abs
+import kotlin.math.roundToInt
 
 /**
  * Stock [PlayerView] plus surface gestures: tap toggles chrome, double-tap closes the player,
@@ -63,7 +65,7 @@ class SeekPlayerView @JvmOverloads constructor(
     /** Shorts-style swipe between playlist items. Horizontal scrub stays available. */
     var playlistSwipeMinutes = 0
 
-    internal var onTrackSelectionChanged: ((Int) -> Unit)? = null
+    internal var onTrackSelectionChanged: ((type: Int, subtitleLanguage: String?) -> Unit)? = null
 
     private val touchSlop = ViewConfiguration.get(context).scaledTouchSlop
     private val edgeGuardPx = 32f * resources.displayMetrics.density
@@ -80,6 +82,7 @@ class SeekPlayerView @JvmOverloads constructor(
     private var canStartDrag = false
 
     private var controlMenu: PopupWindow? = null
+    private var levelMenuRefresh: ((Int, Int) -> Unit)? = null
     private val captions = context.getSystemService(CaptioningManager::class.java)
     private val captionListener = object : CaptioningManager.CaptioningChangeListener() {
         override fun onEnabledChanged(enabled: Boolean) = updateCaptionStyle()
@@ -211,7 +214,9 @@ class SeekPlayerView @JvmOverloads constructor(
 
     private fun updateSubtitleButton() {
         val button = findViewById<ImageButton>(R.id.video_subtitle) ?: return
-        val enabled = player?.currentTracks?.isTypeSelected(C.TRACK_TYPE_TEXT) == true
+        val current = player
+        val enabled = current != null && C.TRACK_TYPE_TEXT !in current.trackSelectionParameters.disabledTrackTypes &&
+            current.currentTracks.isTypeSelected(C.TRACK_TYPE_TEXT)
         button.setImageResource(
             if (enabled) {
                 androidx.media3.ui.R.drawable.exo_styled_controls_subtitle_on
@@ -245,12 +250,14 @@ class SeekPlayerView @JvmOverloads constructor(
             return
         }
         val nameProvider = DefaultTrackNameProvider(resources)
+        val mediaItem = current.currentMediaItem
         val labels = mutableListOf(
             context.getString(
                 if (isSubtitle) androidx.media3.ui.R.string.exo_track_selection_none else I18nR.string.video_audio_auto,
             ),
         )
         val overrides = mutableListOf<TrackSelectionOverride>()
+        val trackTypeDisabled = trackType in current.trackSelectionParameters.disabledTrackTypes
         var selected = 0
         for (group in current.currentTracks.groups) {
             if (group.type != trackType) continue
@@ -265,7 +272,7 @@ class SeekPlayerView @JvmOverloads constructor(
                 }
                 labels += name + (codec?.let { " ($it)" } ?: "")
                 overrides += TrackSelectionOverride(group.mediaTrackGroup, index)
-                if (group.isTrackSelected(index) &&
+                if (!trackTypeDisabled && group.isTrackSelected(index) &&
                     (isSubtitle || current.trackSelectionParameters.overrides.containsKey(group.mediaTrackGroup))
                 ) {
                     selected = labels.lastIndex
@@ -275,17 +282,23 @@ class SeekPlayerView @JvmOverloads constructor(
         showControlMenu(anchor, labels, selected, captionPreferences) { choice ->
             if (choice == labels.size) {
                 openCaptionPreferences()
-            } else if (player === current) {
+            } else if (player === current && current.currentMediaItem == mediaItem) {
                 val parameters = current.trackSelectionParameters.buildUpon()
                     .clearOverridesOfType(trackType)
-                if (choice > 0) {
-                    parameters.setOverrideForType(overrides[choice - 1])
+                val override = overrides.getOrNull(choice - 1)
+                if (override != null) {
+                    parameters.selectVideoTrack(override)
                 } else if (isSubtitle) {
-                    // Match Media3's None option, which still permits forced subtitles.
                     parameters.hideVideoSubtitles()
                 }
                 current.trackSelectionParameters = parameters.build()
-                onTrackSelectionChanged?.invoke(trackType)
+                if (isSubtitle) updateSubtitleButton()
+                val subtitleLanguage = when {
+                    !isSubtitle -> null
+                    override == null -> NO_VIDEO_SUBTITLES
+                    else -> current.subtitleLanguage(override.mediaTrackGroup.getFormat(override.trackIndices.single()))
+                }
+                onTrackSelectionChanged?.invoke(trackType, subtitleLanguage)
             }
         }
     }
@@ -354,6 +367,7 @@ class SeekPlayerView @JvmOverloads constructor(
     private fun layoutControls() {
         val row = findViewById<View>(R.id.video_controls_buttons) ?: return
         val more = findViewById<View>(R.id.video_more) ?: return
+        val compactButtons = findViewById<ViewGroup>(R.id.video_compact_buttons) ?: return
         val left = findViewById<ViewGroup>(R.id.video_track_buttons) ?: return
         val right = findViewById<ViewGroup>(R.id.video_extra_buttons) ?: return
         val transport = findViewById<ViewGroup>(R.id.video_transport) ?: return
@@ -364,6 +378,7 @@ class SeekPlayerView @JvmOverloads constructor(
         for (index in 0 until transport.childCount) transportWidth += transport.getChildAt(index).layoutParams.width
         val portrait = width < height
         val tabletPortrait = portrait && resources.configuration.smallestScreenWidthDp >= WIDTH_DP_MEDIUM_LOWER_BOUND
+        val phonePortrait = portrait && !tabletPortrait
         val compact = !tabletPortrait &&
             (portrait || available < transportWidth + 2 * buttonWidth * maxOf(left.childCount, right.childCount))
         val rewind = findViewById<View>(R.id.video_rewind)
@@ -372,20 +387,38 @@ class SeekPlayerView @JvmOverloads constructor(
         val fit = findViewById<View>(R.id.video_fit)
         val showFit = tabletPortrait || (!portrait && available >= minTransportWidth + buttonWidth * (1 + right.childCount))
         fit.visibility = if (showFit) VISIBLE else GONE
+        val portraitFit = findViewById<View>(R.id.video_portrait_fit)
+        portraitFit.visibility = if (phonePortrait) VISIBLE else GONE
         val rightWidth = (0 until right.childCount).sumOf { index ->
             val button = right.getChildAt(index)
             if (button.visibility == GONE) 0 else button.layoutParams.width
         }
         val showSteps = !portrait && (!compact || available >= transportWidth + buttonWidth + rightWidth)
         left.visibility = if (compact) GONE else VISIBLE
-        more.visibility = if (compact) VISIBLE else GONE
+        compactButtons.visibility = if (compact) VISIBLE else GONE
         rewind.visibility = if (showSteps) VISIBLE else GONE
         forward.visibility = rewind.visibility
         if (!showSteps) transportWidth = minTransportWidth
 
+        val leftWidth = when {
+            phonePortrait -> buttonWidth + portraitFit.layoutParams.width
+            compact -> buttonWidth
+            else -> (0 until left.childCount).sumOf { left.getChildAt(it).layoutParams.width }
+        }
+        // On narrow phones, let the transport buttons share the space between the side controls.
+        val centerWidth = (available - leftWidth - rightWidth).coerceAtLeast(1)
+        val transportLayoutWidth = if (phonePortrait && centerWidth < transportWidth) {
+            transportWidth = centerWidth
+            centerWidth
+        } else {
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        }
+        if (transport.layoutParams.width != transportLayoutWidth) {
+            transport.layoutParams = transport.layoutParams.apply { width = transportLayoutWidth }
+        }
+
         // Keep transport centered where possible while clearing the controls on either side.
         val gap = (available - transportWidth) / 2f
-        val leftWidth = if (compact) buttonWidth else (0 until left.childCount).sumOf { left.getChildAt(it).layoutParams.width }
         val minShift = leftWidth - gap
         transport.translationX = 0f.coerceIn(minShift, maxOf(minShift, gap - rightWidth))
     }
@@ -398,13 +431,8 @@ class SeekPlayerView @JvmOverloads constructor(
         onSelection: (Int) -> Unit,
     ) {
         if (!anchor.isAttachedToWindow) return
-        controlMenu?.dismiss()
-
         val density = resources.displayMetrics.density
         val gap = (8 * density).toInt()
-        val frame = Rect()
-        anchor.getWindowVisibleDisplayFrame(frame)
-        if (frame.width() <= 2 * gap) return
 
         val itemLayout = if (selected in labels.indices) {
             android.R.layout.simple_list_item_single_choice
@@ -412,18 +440,9 @@ class SeekPlayerView @JvmOverloads constructor(
             android.R.layout.simple_list_item_1
         }
         val adapter = ArrayAdapter(context, itemLayout, labels)
-        val colors = context.obtainStyledAttributes(intArrayOf(android.R.attr.colorBackgroundFloating))
-        val menuColor = colors.getColor(0, context.getColor(android.R.color.background_dark))
-        colors.recycle()
-        val shape = GradientDrawable().apply {
-            cornerRadius = 12 * density
-            setColor(menuColor)
-        }
         val list = ListView(context).apply {
             divider = null
             setPadding(0, gap, 0, gap)
-            background = shape
-            clipToOutline = true
         }
         if (actionLabel != null) {
             val action = LayoutInflater.from(context).inflate(android.R.layout.simple_list_item_1, list, false) as TextView
@@ -446,22 +465,115 @@ class SeekPlayerView @JvmOverloads constructor(
             item.measure(unspecified, unspecified)
             contentWidth = maxOf(contentWidth, item.measuredWidth)
         }
+
+        val popup = showControlsPopup(anchor, list, contentWidth) ?: return
+        list.setOnItemClickListener { _, _, position, _ ->
+            popup.dismiss()
+            onSelection(position)
+        }
+        list.post {
+            if (popup.isShowing && selected > list.lastVisiblePosition) list.setSelection(selected)
+        }
+    }
+
+    internal fun showLevelMenu(
+        anchor: View,
+        title: String,
+        range: IntRange,
+        level: Int?,
+        systemLevel: Int? = null,
+        adjustable: Boolean = true,
+        onLevelChanged: (Int?) -> Int?,
+    ) {
+        val panel = LayoutInflater.from(context).inflate(R.layout.video_level_popup, null)
+        val header = panel.findViewById<View>(R.id.video_level_header)
+        val titleView = panel.findViewById<TextView>(R.id.video_level_title)
+        val value = panel.findViewById<TextView>(R.id.video_level_value)
+        val slider = panel.findViewById<SeekBar>(R.id.video_level_slider)
+        val systemLabel = context.getString(R.string.video_level_system)
+        slider.contentDescription = title
+        slider.min = range.first
+        slider.max = range.last
+        slider.isEnabled = adjustable
+
+        fun showLevel(current: Int?) {
+            slider.progress = (current ?: systemLevel ?: range.first).coerceIn(range)
+            value.text = if (current == null) {
+                systemLabel
+            } else {
+                val percent = (current * 100.0 / maxOf(range.last, 1)).roundToInt()
+                context.getString(R.string.video_level_percent, percent)
+            }
+        }
+
+        val maxLabel = context.getString(R.string.video_level_percent, 100)
+        value.text = listOf(systemLabel, maxLabel).maxBy { value.paint.measureText(it) }
+        // Reserve the same width for both overlays, including translated titles.
+        val unspecified = MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED)
+        val headerWidth = listOf(R.string.video_volume, R.string.video_brightness).maxOf { titleRes ->
+            titleView.setText(titleRes)
+            header.measure(unspecified, unspecified)
+            header.measuredWidth
+        }
+        val popupWidth = headerWidth + panel.paddingLeft + panel.paddingRight
+        titleView.text = title
+        showLevel(level)
+        if (showControlsPopup(anchor, panel, popupWidth) == null) return
+        levelMenuRefresh = { anchorId, current ->
+            if (anchorId == anchor.id) showLevel(current)
+        }
+        slider.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onStartTrackingTouch(seekBar: SeekBar) = Unit
+            override fun onStopTrackingTouch(seekBar: SeekBar) = Unit
+
+            override fun onProgressChanged(seekBar: SeekBar, progress: Int, fromUser: Boolean) {
+                if (fromUser) showLevel(onLevelChanged(progress))
+            }
+        })
+        if (systemLevel != null) {
+            header.isFocusable = true
+            header.setOnClickListener { showLevel(onLevelChanged(null)) }
+        }
+    }
+
+    internal fun refreshLevelMenu(anchorId: Int, level: Int) {
+        levelMenuRefresh?.invoke(anchorId, level)
+    }
+
+    private fun showControlsPopup(anchor: View, content: View, contentWidth: Int): PopupWindow? {
+        if (!anchor.isAttachedToWindow) return null
+        controlMenu?.dismiss()
+        val density = resources.displayMetrics.density
+        val gap = (8 * density).toInt()
+        val frame = Rect()
+        anchor.getWindowVisibleDisplayFrame(frame)
+        if (frame.width() <= 2 * gap) return null
+
         val popupWidth = contentWidth.coerceAtMost(minOf(frame.width() - 2 * gap, (360 * density).toInt()))
         val location = IntArray(2)
         anchor.getLocationOnScreen(location)
         val above = location[1] - frame.top - gap
         val below = frame.bottom - location[1] - anchor.height - gap
         val availableHeight = maxOf(above, below)
-        if (availableHeight <= 0) return
-        list.measure(
+        if (availableHeight <= 0) return null
+        content.measure(
             MeasureSpec.makeMeasureSpec(popupWidth, MeasureSpec.EXACTLY),
             MeasureSpec.makeMeasureSpec(availableHeight, MeasureSpec.AT_MOST),
         )
-        val popupHeight = list.measuredHeight
+        val popupHeight = content.measuredHeight
         val showAbove = popupHeight <= above
         val left = location[0].coerceIn(frame.left + gap, frame.right - gap - popupWidth)
         val top = if (showAbove) location[1] - popupHeight - gap else location[1] + anchor.height + gap
-        val popup = PopupWindow(list, popupWidth, popupHeight, true).apply {
+        val colors = context.obtainStyledAttributes(intArrayOf(android.R.attr.colorBackgroundFloating))
+        val menuColor = colors.getColor(0, context.getColor(android.R.color.background_dark))
+        colors.recycle()
+        val shape = GradientDrawable().apply {
+            cornerRadius = 12 * density
+            setColor(menuColor)
+        }
+        content.background = shape
+        content.clipToOutline = true
+        val popup = PopupWindow(content, popupWidth, popupHeight, true).apply {
             setBackgroundDrawable(
                 GradientDrawable().apply {
                     cornerRadius = shape.cornerRadius
@@ -477,20 +589,17 @@ class SeekPlayerView @JvmOverloads constructor(
             exitTransition = null
             animationStyle = R.style.VideoControlMenuAnimation
         }
-        list.setOnItemClickListener { _, _, position, _ ->
-            popup.dismiss()
-            onSelection(position)
-        }
         popup.setOnDismissListener {
-            if (controlMenu === popup) controlMenu = null
+            if (controlMenu === popup) {
+                controlMenu = null
+                levelMenuRefresh = null
+            }
             scheduleAutoHide()
         }
         controlMenu = popup
         showController()
         popup.showAtLocation(anchor, Gravity.TOP or Gravity.LEFT, left, top)
-        list.post {
-            if (popup.isShowing && selected > list.lastVisiblePosition) list.setSelection(selected)
-        }
+        return popup
     }
 
     override fun onAttachedToWindow() {

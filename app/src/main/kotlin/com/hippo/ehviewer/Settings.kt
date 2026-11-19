@@ -1037,9 +1037,18 @@ object Settings : DataStorePreferences(null) {
     const val MEDIA3_HDR = 0
     const val MEDIA3_SKIV = 1
     const val MEDIA3_SKIV_PIECEWISE = 2
+    const val MEDIA3_SKIV_WCG = 3
+    const val MEDIA3_SKIV_PIECEWISE_WCG = 4
     val media3HdrToneMapping = intPref("media3_hdr_tone_mapping", MEDIA3_HDR)
 
+    fun media3SdrFallback(mode: Int): Int = when (mode) {
+        MEDIA3_SKIV_WCG -> MEDIA3_SKIV
+        MEDIA3_SKIV_PIECEWISE_WCG -> MEDIA3_SKIV_PIECEWISE
+        else -> mode
+    }
+
     val media3PlaybackResume = intPref("media3_playback_resume", MEDIA3_RESUME_AUTO)
+    internal val media3SubtitleHistory = stringPref("media3_subtitle_history", "")
 
     const val MEDIA3_AUDIO_OFF = 0
     const val MEDIA3_AUDIO_DEVICE = 1

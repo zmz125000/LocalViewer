@@ -12,8 +12,10 @@ import android.content.pm.PackageManager
 import android.content.res.Configuration
 import android.graphics.Rect
 import android.graphics.drawable.Icon
+import android.media.AudioManager
 import android.net.Uri
 import android.os.Bundle
+import android.provider.Settings as AndroidSettings
 import android.util.Log
 import android.util.Rational
 import android.view.View
@@ -36,6 +38,7 @@ import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.TrackSelectionParameters
+import androidx.media3.common.Tracks
 import androidx.media3.common.VideoSize
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DefaultDataSource
@@ -57,11 +60,19 @@ import com.hippo.ehviewer.ui.player.Media3AudioRenderersFactory
 import com.hippo.ehviewer.ui.player.Media3SubtitleParserFactory
 import com.hippo.ehviewer.ui.player.PreparedInternalVideo
 import com.hippo.ehviewer.ui.player.SeekPlayerView
+import com.hippo.ehviewer.ui.player.SiblingTrackChoice
 import com.hippo.ehviewer.ui.player.StreamDocDataSource
+import com.hippo.ehviewer.ui.player.applyVideoSubtitleHistory
 import com.hippo.ehviewer.ui.player.progressGid
+import com.hippo.ehviewer.ui.player.restoreSiblingTrack
 import com.hippo.ehviewer.ui.player.restoreVideoTrack
+import com.hippo.ehviewer.ui.player.siblingTrackChoice
+import com.hippo.ehviewer.ui.player.supportsSkivToneMapping
+import com.hippo.ehviewer.ui.player.updateVideoSubtitleHistory
 import com.hippo.ehviewer.ui.player.videoTrackKey
 import com.hippo.ehviewer.util.setReaderColorMode
+import com.hippo.ehviewer.util.supportsWideColorGamut
+import kotlin.math.roundToInt
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
@@ -80,9 +91,12 @@ class VideoPlayerActivity : AppCompatActivity() {
     private var player: ExoPlayer? = null
     private var playerUsesNetworkSource: Boolean? = null
     private var playerHdrMode = Settings.MEDIA3_HDR
+    private var trackSupportsSkiv: Boolean? = null
+    private var wideColorOutputFailed = false
     private var playerAudioMode = Settings.MEDIA3_AUDIO_DEVICE
     private var defaultTrackSelection = TrackSelectionParameters.DEFAULT
     private var audioBoostDb = 0
+    private val audioManager by lazy { getSystemService(AudioManager::class.java) }
     private var audioBoostProcessor: Media3AudioBoostProcessor? = null
     private var streamToken: String? = null
     private var subtitleTokens: List<String> = emptyList()
@@ -101,7 +115,14 @@ class VideoPlayerActivity : AppCompatActivity() {
     private var pendingResumeGid = 0L
     private var resumeProgress: ProgressInfo? = null
     private var readProgressJob: Job? = null
-    private val trackChoicesDuringResume = mutableSetOf<Int>()
+    private var pendingTrackDefaults = false
+    private var siblingAudioChoice: SiblingTrackChoice? = null
+    private var siblingSubtitleChoice: SiblingTrackChoice? = null
+    private var siblingSubtitleFromHistory = false
+    private var subtitleChoiceFromHistory = false
+    private var savedSubtitleTrack: String? = null
+    private val manualTrackChoicesBeforeRestore = mutableSetOf<Int>()
+    private var subtitleHistory = ""
 
     private val progressSaveRunnable = Runnable {
         savePlaybackProgress()
@@ -125,11 +146,13 @@ class VideoPlayerActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        subtitleHistory = Settings.media3SubtitleHistory.value
+        volumeControlStream = AudioManager.STREAM_MUSIC
         enableEdgeToEdge(
             statusBarStyle = SystemBarStyle.dark(android.graphics.Color.BLACK),
             navigationBarStyle = SystemBarStyle.dark(android.graphics.Color.BLACK),
         )
-        setReaderColorMode(hdr = Settings.media3HdrToneMapping.value == Settings.MEDIA3_HDR)
+        applyVideoColorMode(Settings.MEDIA3_HDR)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         setContentView(R.layout.activity_video_player)
 
@@ -173,7 +196,9 @@ class VideoPlayerActivity : AppCompatActivity() {
         val oldPlaylist = playlistSessionId
         val nextSession = intent.getStringExtra(EXTRA_PLAYLIST_SESSION)
         val nextIndex = intent.getIntExtra(EXTRA_PLAYLIST_INDEX, 0)
-        val nextSource = InternalVideoPlaylistRegistry.get(nextSession)?.items?.getOrNull(nextIndex)
+        val nextItems = InternalVideoPlaylistRegistry.get(nextSession)?.items.orEmpty()
+        val nextSource = nextItems.getOrNull(nextIndex)
+        val previousSource = currentSource()
         val nextSubtitleTokens = intent.getStringArrayExtra(EXTRA_SUBTITLE_TOKENS)?.toList().orEmpty()
         val oldSubtitleTokens = subtitleTokens
         savePlaybackProgress()
@@ -185,6 +210,7 @@ class VideoPlayerActivity : AppCompatActivity() {
                 network = networkToken != null,
                 subtitleTokens = nextSubtitleTokens,
                 holdForResume = nextSource != null,
+                inheritTracks = nextSource != null && nextSource != previousSource && previousSource in nextItems,
             )
         } catch (e: Throwable) {
             Log.e("VideoPlayer", "Unable to open the media item", e)
@@ -270,19 +296,42 @@ class VideoPlayerActivity : AppCompatActivity() {
             tooltipText = contentDescription
             setOnClickListener(::showAudioOutputMenu)
         }
+        findViewById<ImageButton>(R.id.video_volume).apply {
+            tooltipText = contentDescription
+            setOnClickListener(::showVolumeMenu)
+        }
+        findViewById<ImageButton>(R.id.video_brightness).apply {
+            tooltipText = contentDescription
+            setOnClickListener(::showBrightnessMenu)
+        }
+        updateVolumeButton()
+        updateBrightnessButton()
         findViewById<ImageButton>(R.id.video_more).setOnClickListener(::showMoreControls)
         playerAudioMode = Settings.media3AudioDownmixing.value
         updatePlaybackOptionButtons()
         rotateWithVideo = Settings.videoRotateWithVideo.value
         playerView?.playlistSwipeMinutes = Settings.videoScrollToNext.value
         playerView?.onPlaylistScroll = { delta -> moveInPlaylist(delta) }
-        playerView?.onTrackSelectionChanged = { type ->
-            if (pendingResumeGid != 0L) trackChoicesDuringResume += type
+        playerView?.onTrackSelectionChanged = { type, subtitleLanguage ->
+            if (pendingTrackDefaults) manualTrackChoicesBeforeRestore += type
+            if (type == C.TRACK_TYPE_TEXT) subtitleChoiceFromHistory = false
+            if (subtitleLanguage != null) {
+                subtitleHistory = updateVideoSubtitleHistory(subtitleHistory, subtitleLanguage)
+                lifecycleScope.launch(start = CoroutineStart.UNDISPATCHED) {
+                    withNonCancellableContext {
+                        Settings.withMutableSnapshot { preferences ->
+                            val key = Settings.media3SubtitleHistory
+                            preferences[key] = updateVideoSubtitleHistory(preferences[key], subtitleLanguage)
+                        }
+                    }
+                }
+            }
             savePlaybackProgress()
         }
         findViewById<ImageButton>(R.id.video_rotate).setOnClickListener { toggleRotateWithVideo() }
         refreshRotateButton()
         findViewById<ImageButton>(R.id.video_fit).setOnClickListener { toggleVideoFit() }
+        findViewById<ImageButton>(R.id.video_portrait_fit).setOnClickListener { toggleVideoFit() }
         refreshVideoFitButton()
         val pip = findViewById<ImageButton>(R.id.video_pip)
         val pipAvailable = packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)
@@ -323,6 +372,65 @@ class VideoPlayerActivity : AppCompatActivity() {
         }
     }
 
+    private fun showVolumeMenu(anchor: View) {
+        val stream = AudioManager.STREAM_MUSIC
+        val volume = audioManager.getStreamVolume(stream)
+        updateVolumeButton(volume)
+        playerView?.showLevelMenu(
+            anchor,
+            getString(R.string.video_volume),
+            audioManager.getStreamMinVolume(stream)..audioManager.getStreamMaxVolume(stream),
+            volume,
+            adjustable = !audioManager.isVolumeFixed,
+        ) { level ->
+            if (level != null && level != audioManager.getStreamVolume(stream)) {
+                audioManager.setStreamVolume(stream, level, 0)
+            }
+            val current = audioManager.getStreamVolume(stream)
+            updateVolumeButton(current)
+            current
+        }
+    }
+
+    private fun brightnessLevel(): Int? = window.attributes.screenBrightness.takeIf { it >= 0f }
+        ?.let { (it * 100).roundToInt() }
+
+    private fun showBrightnessMenu(anchor: View) {
+        val brightness = AndroidSettings.System.getInt(contentResolver, AndroidSettings.System.SCREEN_BRIGHTNESS, 128)
+        playerView?.showLevelMenu(
+            anchor,
+            getString(R.string.video_brightness),
+            1..100,
+            brightnessLevel(),
+            systemLevel = (brightness * 100f / 255f).roundToInt(),
+        ) { level ->
+            if (level != brightnessLevel()) {
+                window.attributes = window.attributes.apply {
+                    screenBrightness = level?.div(100f) ?: WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
+                }
+                updateBrightnessButton()
+            }
+            level
+        }
+    }
+
+    private fun updateVolumeButton(volume: Int = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)) {
+        val maxVolume = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+        findViewById<ImageButton>(R.id.video_volume).apply {
+            setImageResource(if (volume == 0) R.drawable.ic_video_volume_muted else R.drawable.ic_video_volume)
+            stateDescription = if (volume == 0) {
+                getString(R.string.video_volume_mute)
+            } else {
+                getString(R.string.video_level_percent, (volume * 100.0 / maxOf(maxVolume, 1)).roundToInt())
+            }
+        }
+    }
+
+    private fun updateBrightnessButton() {
+        findViewById<ImageButton>(R.id.video_brightness).stateDescription =
+            brightnessLevel()?.let { getString(R.string.video_level_percent, it) } ?: getString(R.string.video_level_system)
+    }
+
     private fun showMoreControls(anchor: View) {
         val view = playerView ?: return
         val buttons = listOf(
@@ -333,7 +441,9 @@ class VideoPlayerActivity : AppCompatActivity() {
             R.id.video_hdr,
         ).map { findViewById<ImageButton>(it) }.filter { it.isEnabled && it.visibility == View.VISIBLE }.toMutableList()
         val fit = findViewById<ImageButton>(R.id.video_fit)
-        if (fit.visibility == View.GONE) buttons += fit
+        if (fit.visibility == View.GONE && findViewById<View>(R.id.video_portrait_fit).visibility == View.GONE) {
+            buttons += fit
+        }
         val labels = buttons.map { it.contentDescription.toString() }
         view.showControlMenu(anchor, labels, -1) { index ->
             val button = buttons[index]
@@ -351,10 +461,12 @@ class VideoPlayerActivity : AppCompatActivity() {
     private fun showHdrMenu(anchor: View) {
         val labels = resources.getStringArray(R.array.media3_hdr_tone_mapping_entries)
         val modes = resources.getIntArray(R.array.media3_hdr_tone_mapping_values)
-        playerView?.showControlMenu(anchor, labels.asList(), modes.indexOf(playerHdrMode)) { index ->
-            val mode = modes[index]
+        val checkedMode = if (trackSupportsSkiv == true) playerHdrMode else Settings.media3HdrToneMapping.value
+        playerView?.showControlMenu(anchor, labels.asList(), modes.indexOf(checkedMode)) { index ->
+            val requestedMode = modes[index]
+            val mode = effectiveVideoColorMode(requestedMode)
             if (mode == playerHdrMode || restartCurrentMediaItem(mode)) {
-                Settings.media3HdrToneMapping.value = mode
+                Settings.media3HdrToneMapping.value = requestedMode
             }
         }
     }
@@ -407,16 +519,18 @@ class VideoPlayerActivity : AppCompatActivity() {
 
     private fun refreshVideoFitButton() {
         val cropped = playerView?.resizeMode == AspectRatioFrameLayout.RESIZE_MODE_ZOOM
-        findViewById<ImageButton>(R.id.video_fit).apply {
-            setImageResource(
-                if (cropped) {
-                    androidx.media3.ui.R.drawable.exo_styled_controls_fullscreen_exit
-                } else {
-                    androidx.media3.ui.R.drawable.exo_styled_controls_fullscreen_enter
-                },
-            )
-            contentDescription = getString(if (cropped) R.string.video_fit_to_screen else R.string.video_crop_to_fill)
-            tooltipText = contentDescription
+        val icon = if (cropped) {
+            androidx.media3.ui.R.drawable.exo_styled_controls_fullscreen_exit
+        } else {
+            androidx.media3.ui.R.drawable.exo_styled_controls_fullscreen_enter
+        }
+        val description = getString(if (cropped) R.string.video_fit_to_screen else R.string.video_crop_to_fill)
+        for (id in listOf(R.id.video_fit, R.id.video_portrait_fit)) {
+            findViewById<ImageButton>(id).apply {
+                setImageResource(icon)
+                contentDescription = description
+                tooltipText = description
+            }
         }
     }
 
@@ -477,6 +591,7 @@ class VideoPlayerActivity : AppCompatActivity() {
                 network = prepared.network,
                 subtitleTokens = prepared.subtitleTokens,
                 holdForResume = true,
+                inheritTracks = true,
             )
         } catch (e: Throwable) {
             prepared.subtitleTokens.forEach(StreamDocumentRegistry::remove)
@@ -498,6 +613,7 @@ class VideoPlayerActivity : AppCompatActivity() {
         network: Boolean,
         subtitleTokens: List<String>,
         holdForResume: Boolean,
+        inheritTracks: Boolean,
     ) {
         // Drop the previous file's id before prepare callbacks, so a reset position
         // is not written over the progress just saved for that file.
@@ -505,7 +621,15 @@ class VideoPlayerActivity : AppCompatActivity() {
         pendingResumeGid = 0L
         readProgressJob?.cancel()
         resumeProgress = null
-        trackChoicesDuringResume.clear()
+        pendingTrackDefaults = true
+        manualTrackChoicesBeforeRestore.clear()
+        val previous = player.takeIf { inheritTracks }
+        siblingAudioChoice = previous?.siblingTrackChoice(C.TRACK_TYPE_AUDIO)
+        siblingSubtitleChoice = previous?.siblingTrackChoice(C.TRACK_TYPE_TEXT)
+        siblingSubtitleFromHistory = inheritTracks && subtitleChoiceFromHistory
+        subtitleChoiceFromHistory = false
+        savedSubtitleTrack = null
+        trackSupportsSkiv = null
         val mediaItem = MediaItem.Builder()
             .setUri(uri)
             .apply {
@@ -533,12 +657,8 @@ class VideoPlayerActivity : AppCompatActivity() {
             }
             .build()
 
-        val hdrMode = when (Settings.media3HdrToneMapping.value) {
-            Settings.MEDIA3_SKIV -> Settings.MEDIA3_SKIV
-            Settings.MEDIA3_SKIV_PIECEWISE -> Settings.MEDIA3_SKIV_PIECEWISE
-            else -> Settings.MEDIA3_HDR
-        }
-        player?.takeIf { playerUsesNetworkSource == network && playerHdrMode == hdrMode }?.let { existing ->
+        // Start on the direct path. The selected video track enables SKIV only if it is HDR.
+        player?.takeIf { playerUsesNetworkSource == network && playerHdrMode == Settings.MEDIA3_HDR }?.let { existing ->
             existing.playWhenReady = false
             existing.trackSelectionParameters = defaultTrackSelection
             existing.setMediaItem(mediaItem)
@@ -547,7 +667,7 @@ class VideoPlayerActivity : AppCompatActivity() {
             return
         }
 
-        startMediaItem(mediaItem, network, !holdForResume, hdrMode)
+        startMediaItem(mediaItem, network, !holdForResume, Settings.MEDIA3_HDR)
     }
 
     private fun restartCurrentMediaItem(hdrMode: Int, audioOutputMode: Int = playerAudioMode): Boolean {
@@ -566,6 +686,21 @@ class VideoPlayerActivity : AppCompatActivity() {
         }.onFailure { Log.e("VideoPlayer", "Unable to restart playback", it) }.isSuccess
     }
 
+    private fun effectiveVideoColorMode(mode: Int): Int {
+        if (trackSupportsSkiv != true) return Settings.MEDIA3_HDR
+        if (mode !in Settings.MEDIA3_HDR..Settings.MEDIA3_SKIV_PIECEWISE_WCG) return Settings.MEDIA3_HDR
+        val sdrMode = Settings.media3SdrFallback(mode)
+        return if (mode != sdrMode && (wideColorOutputFailed || !supportsWideColorGamut())) sdrMode else mode
+    }
+
+    private fun applyVideoColorMode(mode: Int, force: Boolean = false) {
+        setReaderColorMode(
+            hdr = mode == Settings.MEDIA3_HDR,
+            wideColor = mode != Settings.media3SdrFallback(mode),
+            force = force,
+        )
+    }
+
     private fun startMediaItem(
         mediaItem: MediaItem,
         network: Boolean,
@@ -576,7 +711,7 @@ class VideoPlayerActivity : AppCompatActivity() {
         audioOutputMode: Int = playerAudioMode,
     ) {
         val previous = player
-        // Boost needs decoded PCM. Restore passthrough when the boost is turned off.
+        // Audio boost needs decoded PCM to control the audio samples.
         val audioMode = if (audioOutputMode == Settings.MEDIA3_AUDIO_PASSTHROUGH && audioBoostDb > 0) {
             Settings.MEDIA3_AUDIO_DEVICE
         } else {
@@ -594,6 +729,7 @@ class VideoPlayerActivity : AppCompatActivity() {
                 true,
             )
             .setHandleAudioBecomingNoisy(true)
+            .setDeviceVolumeControlEnabled(true)
 
         val mediaSourceFactory = DefaultMediaSourceFactory(this)
             .setSubtitleParserFactory(Media3SubtitleParserFactory())
@@ -604,6 +740,27 @@ class VideoPlayerActivity : AppCompatActivity() {
         val defaultTracks = exo.trackSelectionParameters
         exo.addListener(
             object : Player.Listener {
+                override fun onTracksChanged(tracks: Tracks) {
+                    if (player !== exo) return
+                    val supportsSkiv = tracks.supportsSkivToneMapping() ?: return
+                    if (trackSupportsSkiv == supportsSkiv) return
+                    trackSupportsSkiv = supportsSkiv
+                    if (effectiveVideoColorMode(Settings.media3HdrToneMapping.value) != playerHdrMode) {
+                        playerView?.post {
+                            if (player !== exo || trackSupportsSkiv != supportsSkiv) return@post
+                            val target = effectiveVideoColorMode(Settings.media3HdrToneMapping.value)
+                            if (target != playerHdrMode) restartCurrentMediaItem(target)
+                        }
+                    }
+                }
+
+                override fun onDeviceVolumeChanged(volume: Int, muted: Boolean) {
+                    if (player !== exo) return
+                    val current = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
+                    updateVolumeButton(current)
+                    playerView?.refreshLevelMenu(R.id.video_volume, current)
+                }
+
                 override fun onVideoSizeChanged(videoSize: VideoSize) {
                     if (player !== exo) return
                     lastVideoSize = videoSize
@@ -638,9 +795,15 @@ class VideoPlayerActivity : AppCompatActivity() {
                                 error.errorCode == PlaybackException.ERROR_CODE_DECODER_INIT_FAILED
                             )
                     ) {
-                        // Some devices cannot expose their HDR decoder output to OpenGL.
                         playerView?.post {
-                            if (player === exo) restartCurrentMediaItem(Settings.MEDIA3_HDR)
+                            if (player !== exo) return@post
+                            val sdrMode = Settings.media3SdrFallback(hdrMode)
+                            if (sdrMode != hdrMode && error.errorCode != PlaybackException.ERROR_CODE_DECODER_INIT_FAILED) {
+                                wideColorOutputFailed = true
+                                if (restartCurrentMediaItem(sdrMode)) return@post
+                            }
+                            // Some devices cannot expose their HDR decoder output to OpenGL.
+                            restartCurrentMediaItem(Settings.MEDIA3_HDR)
                         }
                     }
                 }
@@ -650,7 +813,6 @@ class VideoPlayerActivity : AppCompatActivity() {
             if (preservePlaybackSettings && previous != null) {
                 exo.trackSelectionParameters = previous.trackSelectionParameters
                 exo.playbackParameters = previous.playbackParameters
-                exo.volume = previous.volume
             }
             exo.setMediaItem(mediaItem, positionMs)
             if (hdrMode != Settings.MEDIA3_HDR) {
@@ -666,7 +828,7 @@ class VideoPlayerActivity : AppCompatActivity() {
             playerAudioMode = audioOutputMode
             defaultTrackSelection = defaultTracks
             audioBoostProcessor = boost
-            setReaderColorMode(hdr = hdrMode == Settings.MEDIA3_HDR)
+            applyVideoColorMode(hdrMode)
             updatePlaybackOptionButtons()
             playerView?.player = exo
             exo.prepare()
@@ -718,15 +880,34 @@ class VideoPlayerActivity : AppCompatActivity() {
     }
 
     private fun tryResume() {
-        val saved = resumeProgress ?: return
         val exo = player ?: return
-        if (exo.playbackState != Player.STATE_READY || pendingResumeGid != saved.gid) return
-
+        val saved = resumeProgress
+        if (exo.playbackState != Player.STATE_READY || (pendingResumeGid != 0L && pendingResumeGid != saved?.gid)) return
+        if (pendingTrackDefaults) {
+            pendingTrackDefaults = false
+            savedSubtitleTrack = saved?.subtitleTrack
+            val parameters = exo.trackSelectionParameters.buildUpon()
+            if (C.TRACK_TYPE_AUDIO !in manualTrackChoicesBeforeRestore &&
+                !parameters.restoreSiblingTrack(exo, C.TRACK_TYPE_AUDIO, siblingAudioChoice)
+            ) {
+                parameters.restoreVideoTrack(exo, C.TRACK_TYPE_AUDIO, saved?.audioTrack)
+            }
+            if (C.TRACK_TYPE_TEXT !in manualTrackChoicesBeforeRestore) {
+                subtitleChoiceFromHistory = when {
+                    parameters.restoreSiblingTrack(exo, C.TRACK_TYPE_TEXT, siblingSubtitleChoice) -> siblingSubtitleFromHistory
+                    parameters.restoreVideoTrack(exo, C.TRACK_TYPE_TEXT, saved?.subtitleTrack) -> false
+                    else -> parameters.applyVideoSubtitleHistory(exo, subtitleHistory)
+                }
+            }
+            siblingAudioChoice = null
+            siblingSubtitleChoice = null
+            exo.trackSelectionParameters = parameters.build()
+        }
+        if (saved == null) {
+            manualTrackChoicesBeforeRestore.clear()
+            return
+        }
         resumeProgress = null
-        val parameters = exo.trackSelectionParameters.buildUpon()
-        if (C.TRACK_TYPE_AUDIO !in trackChoicesDuringResume) parameters.restoreVideoTrack(exo, C.TRACK_TYPE_AUDIO, saved.audioTrack)
-        if (C.TRACK_TYPE_TEXT !in trackChoicesDuringResume) parameters.restoreVideoTrack(exo, C.TRACK_TYPE_TEXT, saved.subtitleTrack)
-        exo.trackSelectionParameters = parameters.build()
 
         val duration = exo.duration
         val mode = Settings.media3PlaybackResume.value
@@ -737,8 +918,8 @@ class VideoPlayerActivity : AppCompatActivity() {
             exo.seekTo(saved.page.toLong())
         }
         pendingResumeGid = 0L
-        if (trackChoicesDuringResume.isNotEmpty()) savePlaybackProgress()
-        trackChoicesDuringResume.clear()
+        if (manualTrackChoicesBeforeRestore.isNotEmpty()) savePlaybackProgress()
+        manualTrackChoicesBeforeRestore.clear()
         if (lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED) || isInPictureInPictureMode) {
             exo.playWhenReady = true
         }
@@ -759,7 +940,7 @@ class VideoPlayerActivity : AppCompatActivity() {
             gid,
             storedPositionMs(exo),
             videoTrackKey(exo, C.TRACK_TYPE_AUDIO),
-            videoTrackKey(exo, C.TRACK_TYPE_TEXT),
+            if (subtitleChoiceFromHistory) savedSubtitleTrack else videoTrackKey(exo, C.TRACK_TYPE_TEXT),
         )
         val source = currentSource()
         lifecycleScope.launch(start = CoroutineStart.UNDISPATCHED) {
@@ -867,7 +1048,7 @@ class VideoPlayerActivity : AppCompatActivity() {
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
         hideSystemBars()
-        setReaderColorMode(hdr = playerHdrMode == Settings.MEDIA3_HDR, force = true)
+        applyVideoColorMode(playerHdrMode, force = true)
         playerView?.requestLayout()
     }
 

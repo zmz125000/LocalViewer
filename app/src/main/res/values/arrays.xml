@@ -816,11 +816,15 @@
         <item>HDR</item>
         <item>SKIV (SDR)</item>
         <item>SKIV Piecewise (SDR)</item>
+        <item>SKIV (WCG)</item>
+        <item>SKIV Piecewise (WCG)</item>
     </string-array>
     <integer-array name="media3_hdr_tone_mapping_values" translatable="false">
         <item>0</item>
         <item>1</item>
         <item>2</item>
+        <item>3</item>
+        <item>4</item>
     </integer-array>
 
     <string-array name="media3_audio_downmixing_entries">
