@@ -81,9 +81,10 @@
                         android:src="@drawable/ic_video_music" />
 
                     <ImageButton
-                        android:id="@id/exo_subtitle"
+                        android:id="@+id/video_subtitle"
                         style="@style/ExoStyledControls.Button.Bottom.CC"
-                        android:layout_marginHorizontal="0dp" />
+                        android:layout_marginHorizontal="0dp"
+                        android:contentDescription="@string/video_subtitle_tracks" />
 
                     <ImageButton
                         android:id="@+id/video_audio_boost"
@@ -137,6 +138,16 @@
                         android:contentDescription="@string/video_rotate_with_video"
                         android:padding="12dp"
                         android:src="@drawable/ic_video_rotate"
+                        android:tint="@android:color/white" />
+
+                    <ImageButton
+                        android:id="@+id/video_fit"
+                        android:layout_width="48dp"
+                        android:layout_height="48dp"
+                        android:background="?attr/selectableItemBackgroundBorderless"
+                        android:contentDescription="@string/video_crop_to_fill"
+                        android:padding="12dp"
+                        android:src="@drawable/exo_styled_controls_fullscreen_enter"
                         android:tint="@android:color/white" />
 
                     <ImageButton

@@ -1,13 +1,17 @@
 package com.hippo.ehviewer.ui.player
 
+import android.content.ActivityNotFoundException
 import android.content.Context
+import android.content.Intent
 import android.graphics.Rect
 import android.graphics.drawable.GradientDrawable
 import android.os.SystemClock
+import android.provider.Settings
 import android.util.AttributeSet
 import android.util.TypedValue
 import android.view.GestureDetector
 import android.view.Gravity
+import android.view.LayoutInflater
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewConfiguration
@@ -15,8 +19,11 @@ import android.view.ViewGroup
 import android.view.WindowInsets
 import android.view.accessibility.CaptioningManager
 import android.widget.ArrayAdapter
+import android.widget.ImageButton
 import android.widget.ListView
 import android.widget.PopupWindow
+import android.widget.TextView
+import android.widget.Toast
 import androidx.media3.common.C
 import androidx.media3.common.Format
 import androidx.media3.common.MimeTypes
@@ -72,6 +79,12 @@ class SeekPlayerView @JvmOverloads constructor(
     private var canStartDrag = false
 
     private var controlMenu: PopupWindow? = null
+    private val captions = context.getSystemService(CaptioningManager::class.java)
+    private val captionListener = object : CaptioningManager.CaptioningChangeListener() {
+        override fun onEnabledChanged(enabled: Boolean) = updateCaptionStyle()
+        override fun onFontScaleChanged(fontScale: Float) = updateCaptionStyle()
+        override fun onUserStyleChanged(userStyle: CaptioningManager.CaptionStyle) = updateCaptionStyle()
+    }
 
     /** Caller-facing auto-hide timeout; Media3's own timer is kept at 0 (see [setControllerShowTimeoutMs]). */
     private var autoHideTimeoutMs = 0
@@ -93,6 +106,7 @@ class SeekPlayerView @JvmOverloads constructor(
         }
 
         override fun onTracksChanged(tracks: Tracks) {
+            updateSubtitleButton()
             updateAudioTrackButton()
             post { updateAudioTrackButton() }
         }
@@ -111,30 +125,41 @@ class SeekPlayerView @JvmOverloads constructor(
                 v.layoutParams = lp
             }
         }
-        addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> layoutControls() }
+        addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
+            layoutControls()
+            layoutSubtitles()
+        }
         findViewById<View>(R.id.video_controls_buttons)?.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
             layoutControls()
         }
         findViewById<View>(androidx.media3.ui.R.id.exo_audio_track)?.setOnClickListener {
             showTrackMenu(it, C.TRACK_TYPE_AUDIO)
         }
-        findViewById<View>(androidx.media3.ui.R.id.exo_subtitle)?.setOnClickListener {
+        findViewById<View>(R.id.video_subtitle)?.setOnClickListener {
             showTrackMenu(it, C.TRACK_TYPE_TEXT)
         }
-        subtitleView?.let { subtitles ->
-            val captions = context.getSystemService(CaptioningManager::class.java)
-            subtitles.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
-                if (subtitles.width <= 0 || subtitles.height <= 0) return@addOnLayoutChangeListener
-                val scale = if (captions?.isEnabled == true) captions.fontScale else 1f
-                // Size plain text to the video bounds and cap the default size on large displays.
-                val textSizePx = minOf(
-                    subtitles.width * 0.042f,
-                    subtitles.height * 0.075f,
-                    24f * resources.displayMetrics.density,
-                )
-                subtitles.setFixedTextSize(TypedValue.COMPLEX_UNIT_PX, textSizePx * scale)
-            }
-        }
+        subtitleView?.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> layoutSubtitles() }
+    }
+
+    private fun layoutSubtitles() {
+        val subtitles = subtitleView ?: return
+        if (subtitles.width <= 0 || subtitles.height <= 0 || width <= 0 || height <= 0) return
+        // The content frame can extend past the screen in crop mode. Keep captions in the visible part.
+        val hiddenWidth = (subtitles.width - width).coerceAtLeast(0)
+        val hiddenHeight = (subtitles.height - height).coerceAtLeast(0)
+        subtitles.setPadding(hiddenWidth / 2, hiddenHeight / 2, (hiddenWidth + 1) / 2, (hiddenHeight + 1) / 2)
+        val scale = if (captions?.isEnabled == true) captions.fontScale else 1f
+        val textSizePx = minOf(
+            (subtitles.width - hiddenWidth) * 0.042f,
+            (subtitles.height - hiddenHeight) * 0.075f,
+            24f * resources.displayMetrics.density,
+        )
+        subtitles.setFixedTextSize(TypedValue.COMPLEX_UNIT_PX, textSizePx * scale)
+    }
+
+    private fun updateCaptionStyle() {
+        subtitleView?.setUserDefaultStyle()
+        layoutSubtitles()
     }
 
     private val controllerView: View?
@@ -159,6 +184,7 @@ class SeekPlayerView @JvmOverloads constructor(
         super.setPlayer(player)
         player?.addListener(playbackListener)
         onPlaybackUiChanged()
+        updateSubtitleButton()
         updateAudioTrackButton()
         post { updateAudioTrackButton() }
     }
@@ -182,10 +208,41 @@ class SeekPlayerView @JvmOverloads constructor(
         button.alpha = if (enabled) 1f else 0.35f
     }
 
+    private fun updateSubtitleButton() {
+        val button = findViewById<ImageButton>(R.id.video_subtitle) ?: return
+        val enabled = player?.currentTracks?.isTypeSelected(C.TRACK_TYPE_TEXT) == true
+        button.setImageResource(
+            if (enabled) {
+                androidx.media3.ui.R.drawable.exo_styled_controls_subtitle_on
+            } else {
+                androidx.media3.ui.R.drawable.exo_styled_controls_subtitle_off
+            },
+        )
+        button.stateDescription = context.getString(
+            if (enabled) {
+                androidx.media3.ui.R.string.exo_controls_cc_enabled_description
+            } else {
+                androidx.media3.ui.R.string.exo_controls_cc_disabled_description
+            },
+        )
+    }
+
+    private fun openCaptionPreferences() {
+        try {
+            context.startActivity(Intent(Settings.ACTION_CAPTIONING_SETTINGS))
+        } catch (_: ActivityNotFoundException) {
+            Toast.makeText(context, I18nR.string.browse_action_not_supported, Toast.LENGTH_SHORT).show()
+        }
+    }
+
     internal fun showTrackMenu(anchor: View, trackType: Int) {
-        val current = player ?: return
-        if (!current.isCommandAvailable(Player.COMMAND_SET_TRACK_SELECTION_PARAMETERS)) return
         val isSubtitle = trackType == C.TRACK_TYPE_TEXT
+        val captionPreferences = if (isSubtitle) context.getString(R.string.video_caption_preferences) else null
+        val current = player
+        if (current == null || !current.isCommandAvailable(Player.COMMAND_SET_TRACK_SELECTION_PARAMETERS)) {
+            if (captionPreferences != null) showControlMenu(anchor, listOf(captionPreferences), -1) { openCaptionPreferences() }
+            return
+        }
         val nameProvider = DefaultTrackNameProvider(resources)
         val labels = mutableListOf(
             context.getString(
@@ -214,8 +271,10 @@ class SeekPlayerView @JvmOverloads constructor(
                 }
             }
         }
-        showControlMenu(anchor, labels, selected) { choice ->
-            if (player === current) {
+        showControlMenu(anchor, labels, selected, captionPreferences) { choice ->
+            if (choice == labels.size) {
+                openCaptionPreferences()
+            } else if (player === current) {
                 val parameters = current.trackSelectionParameters.buildUpon()
                     .clearOverridesOfType(trackType)
                 if (choice > 0) {
@@ -304,18 +363,21 @@ class SeekPlayerView @JvmOverloads constructor(
         for (index in 0 until transport.childCount) transportWidth += transport.getChildAt(index).layoutParams.width
         val portrait = width < height
         val compact = portrait || available < transportWidth + 2 * buttonWidth * maxOf(left.childCount, right.childCount)
+        val rewind = findViewById<View>(R.id.video_rewind)
+        val forward = findViewById<View>(R.id.video_forward)
+        val minTransportWidth = transportWidth - rewind.layoutParams.width - forward.layoutParams.width
+        val fit = findViewById<View>(R.id.video_fit)
+        fit.visibility = if (portrait || available < minTransportWidth + buttonWidth * (1 + right.childCount)) GONE else VISIBLE
         val rightWidth = (0 until right.childCount).sumOf { index ->
             val button = right.getChildAt(index)
             if (button.visibility == GONE) 0 else button.layoutParams.width
         }
         val showSteps = !portrait && (!compact || available >= transportWidth + buttonWidth + rightWidth)
-        val rewind = findViewById<View>(R.id.video_rewind)
-        val forward = findViewById<View>(R.id.video_forward)
         left.visibility = if (compact) GONE else VISIBLE
         more.visibility = if (compact) VISIBLE else GONE
         rewind.visibility = if (showSteps) VISIBLE else GONE
         forward.visibility = rewind.visibility
-        if (!showSteps) transportWidth -= rewind.layoutParams.width + forward.layoutParams.width
+        if (!showSteps) transportWidth = minTransportWidth
 
         // Keep transport centered where possible and clear the right-hand buttons on narrow screens.
         transport.translationX = if (compact) {
@@ -326,7 +388,13 @@ class SeekPlayerView @JvmOverloads constructor(
         }
     }
 
-    internal fun showControlMenu(anchor: View, labels: List<String>, selected: Int, onSelection: (Int) -> Unit) {
+    internal fun showControlMenu(
+        anchor: View,
+        labels: List<String>,
+        selected: Int,
+        actionLabel: String? = null,
+        onSelection: (Int) -> Unit,
+    ) {
         if (!anchor.isAttachedToWindow) return
         controlMenu?.dismiss()
 
@@ -350,21 +418,29 @@ class SeekPlayerView @JvmOverloads constructor(
             setColor(menuColor)
         }
         val list = ListView(context).apply {
-            setAdapter(adapter)
-            if (selected in labels.indices) {
-                choiceMode = ListView.CHOICE_MODE_SINGLE
-                setItemChecked(selected, true)
-            }
             divider = null
             setPadding(0, gap, 0, gap)
             background = shape
             clipToOutline = true
         }
+        if (actionLabel != null) {
+            val action = LayoutInflater.from(context).inflate(android.R.layout.simple_list_item_1, list, false) as TextView
+            action.text = actionLabel
+            list.addFooterView(action, null, true)
+        }
+        list.apply {
+            setAdapter(adapter)
+            if (selected in labels.indices) {
+                choiceMode = ListView.CHOICE_MODE_SINGLE
+                setItemChecked(selected, true)
+            }
+        }
 
         val unspecified = MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED)
         var contentWidth = (160 * density).toInt()
-        for (index in labels.indices) {
-            val item = adapter.getView(index, null, list)
+        val menuAdapter = list.adapter
+        for (index in 0 until menuAdapter.count) {
+            val item = menuAdapter.getView(index, null, list)
             item.measure(unspecified, unspecified)
             contentWidth = maxOf(contentWidth, item.measuredWidth)
         }
@@ -415,7 +491,14 @@ class SeekPlayerView @JvmOverloads constructor(
         }
     }
 
+    override fun onAttachedToWindow() {
+        super.onAttachedToWindow()
+        captions?.addCaptioningChangeListener(captionListener)
+        updateCaptionStyle()
+    }
+
     override fun onDetachedFromWindow() {
+        captions?.removeCaptioningChangeListener(captionListener)
         controlMenu?.dismiss()
         removeCallbacks(autoHideRunnable)
         super.onDetachedFromWindow()

@@ -41,6 +41,7 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import androidx.media3.ui.AspectRatioFrameLayout
 import com.ehviewer.core.database.model.ProgressInfo
 import com.ehviewer.core.util.logcat
 import com.ehviewer.core.util.withNonCancellableContext
@@ -281,6 +282,8 @@ class VideoPlayerActivity : AppCompatActivity() {
         }
         findViewById<ImageButton>(R.id.video_rotate).setOnClickListener { toggleRotateWithVideo() }
         refreshRotateButton()
+        findViewById<ImageButton>(R.id.video_fit).setOnClickListener { toggleVideoFit() }
+        refreshVideoFitButton()
         val pip = findViewById<ImageButton>(R.id.video_pip)
         val pipAvailable = packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)
         pip.visibility = if (pipAvailable) View.VISIBLE else View.GONE
@@ -324,25 +327,23 @@ class VideoPlayerActivity : AppCompatActivity() {
         val view = playerView ?: return
         val buttons = listOf(
             androidx.media3.ui.R.id.exo_audio_track,
-            androidx.media3.ui.R.id.exo_subtitle,
+            R.id.video_subtitle,
             R.id.video_audio_boost,
             R.id.video_audio_output,
             R.id.video_hdr,
-        ).map { findViewById<ImageButton>(it) }.filter { it.isEnabled && it.visibility == View.VISIBLE }
-        val labels = buttons.map { button ->
-            when (button.id) {
-                androidx.media3.ui.R.id.exo_subtitle -> getString(com.ehviewer.core.i18n.R.string.video_subtitle_tracks)
-                else -> button.contentDescription.toString()
-            }
-        }
+        ).map { findViewById<ImageButton>(it) }.filter { it.isEnabled && it.visibility == View.VISIBLE }.toMutableList()
+        val fit = findViewById<ImageButton>(R.id.video_fit)
+        if (fit.visibility == View.GONE) buttons += fit
+        val labels = buttons.map { it.contentDescription.toString() }
         view.showControlMenu(anchor, labels, -1) { index ->
             val button = buttons[index]
             when (button.id) {
                 androidx.media3.ui.R.id.exo_audio_track -> view.showTrackMenu(anchor, C.TRACK_TYPE_AUDIO)
-                androidx.media3.ui.R.id.exo_subtitle -> view.showTrackMenu(anchor, C.TRACK_TYPE_TEXT)
+                R.id.video_subtitle -> view.showTrackMenu(anchor, C.TRACK_TYPE_TEXT)
                 R.id.video_audio_boost -> showAudioBoostMenu(anchor)
                 R.id.video_audio_output -> showAudioOutputMenu(anchor)
                 R.id.video_hdr -> showHdrMenu(anchor)
+                R.id.video_fit -> toggleVideoFit()
             }
         }
     }
@@ -391,6 +392,31 @@ class VideoPlayerActivity : AppCompatActivity() {
         findViewById<ImageButton>(R.id.video_rotate).apply {
             isSelected = rotateWithVideo
             alpha = if (rotateWithVideo) 1f else 0.4f
+        }
+    }
+
+    private fun toggleVideoFit() {
+        val view = playerView ?: return
+        view.resizeMode = if (view.resizeMode == AspectRatioFrameLayout.RESIZE_MODE_ZOOM) {
+            AspectRatioFrameLayout.RESIZE_MODE_FIT
+        } else {
+            AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+        }
+        refreshVideoFitButton()
+    }
+
+    private fun refreshVideoFitButton() {
+        val cropped = playerView?.resizeMode == AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+        findViewById<ImageButton>(R.id.video_fit).apply {
+            setImageResource(
+                if (cropped) {
+                    androidx.media3.ui.R.drawable.exo_styled_controls_fullscreen_exit
+                } else {
+                    androidx.media3.ui.R.drawable.exo_styled_controls_fullscreen_enter
+                },
+            )
+            contentDescription = getString(if (cropped) R.string.video_fit_to_screen else R.string.video_crop_to_fill)
+            tooltipText = contentDescription
         }
     }
 
