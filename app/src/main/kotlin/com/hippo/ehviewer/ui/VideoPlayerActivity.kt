@@ -62,6 +62,7 @@ import com.hippo.ehviewer.ui.player.progressGid
 import com.hippo.ehviewer.ui.player.restoreVideoTrack
 import com.hippo.ehviewer.ui.player.videoTrackKey
 import com.hippo.ehviewer.util.setReaderColorMode
+import com.hippo.ehviewer.util.supportsWideColorGamut
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
@@ -80,6 +81,7 @@ class VideoPlayerActivity : AppCompatActivity() {
     private var player: ExoPlayer? = null
     private var playerUsesNetworkSource: Boolean? = null
     private var playerHdrMode = Settings.MEDIA3_HDR
+    private var wideColorOutputFailed = false
     private var playerAudioMode = Settings.MEDIA3_AUDIO_DEVICE
     private var defaultTrackSelection = TrackSelectionParameters.DEFAULT
     private var audioBoostDb = 0
@@ -129,7 +131,7 @@ class VideoPlayerActivity : AppCompatActivity() {
             statusBarStyle = SystemBarStyle.dark(android.graphics.Color.BLACK),
             navigationBarStyle = SystemBarStyle.dark(android.graphics.Color.BLACK),
         )
-        setReaderColorMode(hdr = Settings.media3HdrToneMapping.value == Settings.MEDIA3_HDR)
+        applyVideoColorMode(effectiveVideoColorMode(Settings.media3HdrToneMapping.value))
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         setContentView(R.layout.activity_video_player)
 
@@ -352,9 +354,10 @@ class VideoPlayerActivity : AppCompatActivity() {
         val labels = resources.getStringArray(R.array.media3_hdr_tone_mapping_entries)
         val modes = resources.getIntArray(R.array.media3_hdr_tone_mapping_values)
         playerView?.showControlMenu(anchor, labels.asList(), modes.indexOf(playerHdrMode)) { index ->
-            val mode = modes[index]
+            val requestedMode = modes[index]
+            val mode = effectiveVideoColorMode(requestedMode)
             if (mode == playerHdrMode || restartCurrentMediaItem(mode)) {
-                Settings.media3HdrToneMapping.value = mode
+                Settings.media3HdrToneMapping.value = requestedMode
             }
         }
     }
@@ -533,11 +536,7 @@ class VideoPlayerActivity : AppCompatActivity() {
             }
             .build()
 
-        val hdrMode = when (Settings.media3HdrToneMapping.value) {
-            Settings.MEDIA3_SKIV -> Settings.MEDIA3_SKIV
-            Settings.MEDIA3_SKIV_PIECEWISE -> Settings.MEDIA3_SKIV_PIECEWISE
-            else -> Settings.MEDIA3_HDR
-        }
+        val hdrMode = effectiveVideoColorMode(Settings.media3HdrToneMapping.value)
         player?.takeIf { playerUsesNetworkSource == network && playerHdrMode == hdrMode }?.let { existing ->
             existing.playWhenReady = false
             existing.trackSelectionParameters = defaultTrackSelection
@@ -564,6 +563,20 @@ class VideoPlayerActivity : AppCompatActivity() {
                 audioOutputMode = audioOutputMode,
             )
         }.onFailure { Log.e("VideoPlayer", "Unable to restart playback", it) }.isSuccess
+    }
+
+    private fun effectiveVideoColorMode(mode: Int): Int {
+        if (mode !in Settings.MEDIA3_HDR..Settings.MEDIA3_SKIV_PIECEWISE_WCG) return Settings.MEDIA3_HDR
+        val sdrMode = Settings.media3SdrFallback(mode)
+        return if (mode != sdrMode && (wideColorOutputFailed || !supportsWideColorGamut())) sdrMode else mode
+    }
+
+    private fun applyVideoColorMode(mode: Int, force: Boolean = false) {
+        setReaderColorMode(
+            hdr = mode == Settings.MEDIA3_HDR,
+            wideColor = mode != Settings.media3SdrFallback(mode),
+            force = force,
+        )
     }
 
     private fun startMediaItem(
@@ -638,9 +651,15 @@ class VideoPlayerActivity : AppCompatActivity() {
                                 error.errorCode == PlaybackException.ERROR_CODE_DECODER_INIT_FAILED
                             )
                     ) {
-                        // Some devices cannot expose their HDR decoder output to OpenGL.
                         playerView?.post {
-                            if (player === exo) restartCurrentMediaItem(Settings.MEDIA3_HDR)
+                            if (player !== exo) return@post
+                            val sdrMode = Settings.media3SdrFallback(hdrMode)
+                            if (sdrMode != hdrMode && error.errorCode != PlaybackException.ERROR_CODE_DECODER_INIT_FAILED) {
+                                wideColorOutputFailed = true
+                                if (restartCurrentMediaItem(sdrMode)) return@post
+                            }
+                            // Some devices cannot expose their HDR decoder output to OpenGL.
+                            restartCurrentMediaItem(Settings.MEDIA3_HDR)
                         }
                     }
                 }
@@ -666,7 +685,7 @@ class VideoPlayerActivity : AppCompatActivity() {
             playerAudioMode = audioOutputMode
             defaultTrackSelection = defaultTracks
             audioBoostProcessor = boost
-            setReaderColorMode(hdr = hdrMode == Settings.MEDIA3_HDR)
+            applyVideoColorMode(hdrMode)
             updatePlaybackOptionButtons()
             playerView?.player = exo
             exo.prepare()
@@ -867,7 +886,7 @@ class VideoPlayerActivity : AppCompatActivity() {
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
         hideSystemBars()
-        setReaderColorMode(hdr = playerHdrMode == Settings.MEDIA3_HDR, force = true)
+        applyVideoColorMode(playerHdrMode, force = true)
         playerView?.requestLayout()
     }
 

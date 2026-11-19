@@ -24,7 +24,15 @@ highp vec3 pqOetf(highp vec3 linearColor);
 
 // The Media3 sampler provides PQ display light in 10000-nit units or
 // HLG scene light. Convert HLG using a 1000-nit reference display and gamma 1.2.
-highp vec3 skivToBt709(highp vec3 bt2020) {
+highp vec3 skivToSdr(highp vec3 bt2020) {
+#if SKIV_WCG
+    const highp mat3 xyzToOutputRgb = mat3(
+         2.493497, -0.829489,  0.035846,
+        -0.931384,  1.762664, -0.076172,
+        -0.402711,  0.023625,  0.956885);
+#else
+    const highp mat3 xyzToOutputRgb = XYZ_TO_RGB_BT709;
+#endif
     const highp mat3 xyzToLms = mat3(
         0.3592, -0.1922, 0.0070,
         0.6976, 1.1004, 0.0749,
@@ -63,7 +71,7 @@ highp vec3 skivToBt709(highp vec3 bt2020) {
     outputNits = 203.0;
     highp float knee = pqOetf(vec3(0.67 * outputNits / 10000.0)).x;
     if (inputIntensity <= knee)
-        return clamp(XYZ_TO_RGB_BT709 * xyz * (10000.0 / outputNits), 0.0, 1.0);
+        return clamp(xyzToOutputRgb * xyz * (10000.0 / outputNits), 0.0, 1.0);
 
     highp float target = pqOetf(vec3(outputNits / 10000.0)).x;
     highp float lo = pow(knee, 1.18) * (1.0 + white * knee / (peak * peak)) / (1.0 + knee / white);
@@ -74,5 +82,5 @@ highp vec3 skivToBt709(highp vec3 bt2020) {
     ictcp.x = mapped;
     ictcp.yz *= min(reference, mapped) / max(max(reference, mapped), 1e-6);
     highp vec3 linearLms = pqEotf(ictcpToLms * ictcp);
-    return clamp(XYZ_TO_RGB_BT709 * (lmsToXyz * linearLms) * (10000.0 / outputNits), 0.0, 1.0);
+    return clamp(xyzToOutputRgb * (lmsToXyz * linearLms) * (10000.0 / outputNits), 0.0, 1.0);
 }

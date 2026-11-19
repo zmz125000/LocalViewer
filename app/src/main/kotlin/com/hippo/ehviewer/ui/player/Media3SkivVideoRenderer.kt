@@ -12,6 +12,7 @@ import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.VideoGraph
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.effect.DefaultVideoFrameProcessor
 import androidx.media3.effect.R as EffectResources
 import androidx.media3.effect.SingleInputVideoGraph
 import androidx.media3.exoplayer.RendererCapabilities
@@ -26,7 +27,11 @@ import java.io.InputStream
 import java.util.concurrent.Executor
 
 @UnstableApi
-internal class Media3SkivVideoRenderer(builder: Builder, private val piecewise: Boolean) : MediaCodecVideoRenderer(builder) {
+internal class Media3SkivVideoRenderer(
+    builder: Builder,
+    private val piecewise: Boolean,
+    private val wideColor: Boolean = false,
+) : MediaCodecVideoRenderer(builder) {
     override fun supportsFormat(mediaCodecSelector: MediaCodecSelector, format: Format): Int {
         val selector = skivDecoderSelector(mediaCodecSelector, format)
         val support = super.supportsFormat(selector, format)
@@ -97,34 +102,36 @@ internal class Media3SkivVideoRenderer(builder: Builder, private val piecewise: 
     override fun createPlaybackVideoGraphWrapper(
         context: Context,
         videoFrameReleaseControl: VideoFrameReleaseControl,
-    ): PlaybackVideoGraphWrapper {
-        val shaderContext = SkivShaderContext(context.applicationContext, piecewise)
-        val factory = SingleInputVideoGraph.Factory()
-        return PlaybackVideoGraphWrapper.Builder(context, videoFrameReleaseControl)
-            .setEnablePlaylistMode(true)
-            .setClock(clock)
-            .setVideoGraphFactory(object : VideoGraph.Factory by factory {
-                override fun create(
-                    context: Context,
-                    outputColorInfo: ColorInfo,
-                    debugViewProvider: DebugViewProvider,
-                    listener: VideoGraph.Listener,
-                    listenerExecutor: Executor,
-                    initialTimestampOffsetUs: Long,
-                    renderFramesAutomatically: Boolean,
-                ): VideoGraph = factory.create(
-                    shaderContext,
-                    outputColorInfo,
-                    debugViewProvider,
-                    listener,
-                    listenerExecutor,
-                    initialTimestampOffsetUs,
-                    renderFramesAutomatically,
-                )
-            })
-            .build()
-            .apply { setRequestOpenGlToneMapping(true) }
-    }
+    ): PlaybackVideoGraphWrapper = PlaybackVideoGraphWrapper.Builder(context, videoFrameReleaseControl)
+        .setEnablePlaylistMode(true)
+        .setClock(clock)
+        .setVideoGraphFactory(object : VideoGraph.Factory {
+            override fun supportsMultipleInputs() = false
+
+            override fun create(
+                context: Context,
+                outputColorInfo: ColorInfo,
+                debugViewProvider: DebugViewProvider,
+                listener: VideoGraph.Listener,
+                listenerExecutor: Executor,
+                initialTimestampOffsetUs: Long,
+                renderFramesAutomatically: Boolean,
+            ): VideoGraph = SingleInputVideoGraph.Factory(
+                DefaultVideoFrameProcessor.Factory.Builder()
+                    .apply { if (wideColor) setGlObjectsProvider(Media3WideColorGlObjects()) }
+                    .build(),
+            ).create(
+                SkivShaderContext(context.applicationContext, piecewise, wideColor),
+                outputColorInfo,
+                debugViewProvider,
+                listener,
+                listenerExecutor,
+                initialTimestampOffsetUs,
+                renderFramesAutomatically,
+            )
+        })
+        .build()
+        .apply { setRequestOpenGlToneMapping(true) }
 }
 
 /**
@@ -132,35 +139,56 @@ internal class Media3SkivVideoRenderer(builder: Builder, private val piecewise: 
  * Use SKIV and retain dark HDR values in the pinned Media3 shaders for this graph.
  */
 @Suppress("DEPRECATION")
-private class SkivShaderContext(context: Context, piecewise: Boolean) : ContextWrapper(context) {
+private class SkivShaderContext(context: Context, piecewise: Boolean, wideColor: Boolean) : ContextWrapper(context) {
     private val base = context.resources
-    private val shader by lazy {
+    private val skivShader by lazy {
         base.openRawResource(R.raw.media3_skiv_tone_mapping).bufferedReader().use { it.readText() }
+    }
+    private val displayP3Shader by lazy {
+        base.openRawResource(R.raw.media3_display_p3).bufferedReader().use { it.readText() }
     }
     private val patchedResources = object : Resources(base.assets, base.displayMetrics, base.configuration) {
         override fun openRawResource(id: Int): InputStream {
-            if (id != EffectResources.raw.fragment_shader_transformation_external_yuv_es3 &&
-                id != EffectResources.raw.fragment_shader_transformation_hdr_internal_es3
-            ) {
-                return base.openRawResource(id)
-            }
+            val hdrSampler = id == EffectResources.raw.fragment_shader_transformation_external_yuv_es3 ||
+                id == EffectResources.raw.fragment_shader_transformation_hdr_internal_es3
+            val sdrSampler = wideColor && (
+                id == EffectResources.raw.fragment_shader_transformation_sdr_external_es2 ||
+                    id == EffectResources.raw.fragment_shader_transformation_sdr_internal_es2
+                )
+            val copy = wideColor && id == EffectResources.raw.fragment_shader_copy_es2
+            if (!hdrSampler && !sdrSampler && !copy) return base.openRawResource(id)
 
             // PQ values below about 0.61 nits can be flushed to zero on GPUs that
             // use native half precision for the sampler's mediump linear RGB.
             val source = base.openRawResource(id).bufferedReader().use { it.readText() }
                 .replace("precision mediump float;", "precision highp float;")
                 .replace("uniform __samplerExternal2DY2YEXT ", "uniform highp __samplerExternal2DY2YEXT ")
+                .replace("uniform samplerExternalOES ", "uniform highp samplerExternalOES ")
                 .replace("uniform sampler2D ", "uniform highp sampler2D ")
+            if (copy) return source.byteInputStream()
+            if (sdrSampler) {
+                // Preserve SDR colors by converting the encoded RGB into the same P3 surface space.
+                return source.replace("void main() {", "$displayP3Shader\nvoid main() {")
+                    .replace("convertToOutputColors(transformedColors.rgb)", "srgbToDisplayP3(convertToOutputColors(transformedColors.rgb))")
+                    .byteInputStream()
+            }
+
             val function = "highp vec3 applyBt2020ToBt709Ootf(highp vec3 linearRgbBt2020) {"
             val start = source.indexOf(function)
             val end = if (start >= 0) source.indexOf("\n}", start) else -1
             check(end >= 0) { "Media3 HDR sampler shader has changed" }
-            val mode = if (piecewise) "#define SKIV_PIECEWISE 1" else "#define SKIV_PIECEWISE 0"
-            return source.replaceRange(
+            val mode = "#define SKIV_PIECEWISE ${if (piecewise) 1 else 0}\n#define SKIV_WCG ${if (wideColor) 1 else 0}"
+            val colorEncoding = if (wideColor) displayP3Shader else ""
+            val shader = source.replaceRange(
                 start,
                 end + 2,
-                "$mode\n$shader\n$function\n  return skivToBt709(linearRgbBt2020);\n}",
-            ).byteInputStream()
+                "$mode\n$colorEncoding\n$skivShader\n$function\n  return skivToSdr(linearRgbBt2020);\n}",
+            )
+            return if (wideColor) {
+                shader.replace("return gamma22Oetf(linearColor);", "return displayP3Encode(linearColor);").byteInputStream()
+            } else {
+                shader.byteInputStream()
+            }
         }
     }
 

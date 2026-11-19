@@ -59,7 +59,12 @@ internal class Media3AudioRenderersFactory(
             .setEventHandler(eventHandler)
             .setEventListener(eventListener)
             .setMaxDroppedFramesToNotify(MAX_DROPPED_VIDEO_FRAME_COUNT_TO_NOTIFY)
-        out[videoIndex] = Media3SkivVideoRenderer(builder, hdrMode == Settings.MEDIA3_SKIV_PIECEWISE)
+        val sdrMode = Settings.media3SdrFallback(hdrMode)
+        out[videoIndex] = Media3SkivVideoRenderer(
+            builder,
+            piecewise = sdrMode == Settings.MEDIA3_SKIV_PIECEWISE,
+            wideColor = hdrMode != sdrMode,
+        )
     }
 
     override fun buildAudioSink(
