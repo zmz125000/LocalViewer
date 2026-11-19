@@ -487,7 +487,7 @@ class SeekPlayerView @JvmOverloads constructor(
     ) {
         val panel = LayoutInflater.from(context).inflate(R.layout.video_level_popup, null)
         val header = panel.findViewById<View>(R.id.video_level_header)
-        panel.findViewById<TextView>(R.id.video_level_title).text = title
+        val titleView = panel.findViewById<TextView>(R.id.video_level_title)
         val value = panel.findViewById<TextView>(R.id.video_level_value)
         val slider = panel.findViewById<SeekBar>(R.id.video_level_slider)
         val systemLabel = context.getString(R.string.video_level_system)
@@ -507,14 +507,16 @@ class SeekPlayerView @JvmOverloads constructor(
         }
 
         val maxLabel = context.getString(R.string.video_level_percent, 100)
-        value.text = if (systemLevel != null && value.paint.measureText(systemLabel) > value.paint.measureText(maxLabel)) {
-            systemLabel
-        } else {
-            maxLabel
-        }
+        value.text = listOf(systemLabel, maxLabel).maxBy { value.paint.measureText(it) }
+        // Reserve the same width for both overlays, including translated titles.
         val unspecified = MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED)
-        header.measure(unspecified, unspecified)
-        val popupWidth = header.measuredWidth + panel.paddingLeft + panel.paddingRight
+        val headerWidth = listOf(R.string.video_volume, R.string.video_brightness).maxOf { titleRes ->
+            titleView.setText(titleRes)
+            header.measure(unspecified, unspecified)
+            header.measuredWidth
+        }
+        val popupWidth = headerWidth + panel.paddingLeft + panel.paddingRight
+        titleView.text = title
         showLevel(level)
         if (showControlsPopup(anchor, panel, popupWidth) == null) return
         levelMenuRefresh = { anchorId, current ->
