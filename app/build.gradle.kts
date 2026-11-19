@@ -79,9 +79,9 @@ android {
         applicationId = "moe.tarsin.localviewer"
         versionCode = 38
         versionName = if (snapshot) {
-            "1.13.35-SNAPSHOT"
+            "1.13.36-SNAPSHOT"
         } else {
-            "1.13.35"
+            "1.13.36"
         }
         buildConfigField("boolean", "SNAPSHOT", "$snapshot")
         buildConfigField("boolean", "JXL_ENCODER_ENABLED", "$jxlEncoderEnabled")
@@ -265,6 +265,7 @@ dependencies {
 
     // Built-in video player (PlayerView controls); local/network via StreamDocumentProvider.
     implementation(libs.androidx.media3.exoplayer)
+    implementation(libs.androidx.media3.effect)
     implementation(libs.androidx.media3.ui)
     implementation(projects.media3Ffmpeg)
 

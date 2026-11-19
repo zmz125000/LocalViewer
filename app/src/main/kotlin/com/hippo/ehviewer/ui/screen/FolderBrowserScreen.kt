@@ -350,12 +350,6 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         base.filterByBrowseSearch(search.keyword) { it.name }
     }
 
-    val libraryPhotoDate by Settings.libraryPhotoSortByDate.collectAsState()
-    val libraryDateSort = fromLibrary && libraryOpenUsesDateSort(libraryPhotoDate)
-
-    fun libraryDateSortNow(): Boolean = fromLibrary &&
-        libraryOpenUsesDateSort(Settings.libraryPhotoSortByDate.value)
-
     /**
      * Image RegularFiles in name order. Folder Name/Date does not change this.
      * The photo grid applies its own visit-only Date override on top.
@@ -371,7 +365,10 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
     } else {
         null
     }
-    val gridSort = rememberPhotoGridSort(photoGridKey, libraryDateSort && photoGridKey != null)
+    val gridSort = rememberPhotoGridSort(
+        photoGridKey,
+        startWithDateSort = photoGrid && stack.lastOrNull()?.photoGridStartsWithDateSort == true,
+    )
     val photoGridImages = remember(folderImages, photoGrid, gridSort.mode, gridSort.ascending) {
         if (!photoGrid) {
             folderImages
@@ -3103,7 +3100,6 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                     val browseSortAscending by Settings.browseSortAscending.collectAsState()
                     val sections = filteredEntries.toBrowseSections(contentMode)
                     // Folder listing follows the folder-view Name/Date/Size setting.
-                    // Library photo sort by date changes the reader and photo-grid open only.
                     val dirsRaw = sections.directories
                         .filterIsInstance<BrowseEntry.Directory>()
                         .sortedForBrowseFolderUi(

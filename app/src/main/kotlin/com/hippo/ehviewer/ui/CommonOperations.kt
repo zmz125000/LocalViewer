@@ -313,6 +313,7 @@ fun openLocalFolderPhotoGrid(
     )
     val galleryFrame = galleryStack.last().copy(
         photoGrid = true,
+        photoGridStartsWithDateSort = fromLibrary && Settings.libraryPhotoSortByDate.value,
         title = title?.takeIf { it.isNotBlank() } ?: galleryStack.last().title,
     )
     val walkParents = walkUpperDirsForBrowseOpen(fromHistory, fromLibrary, sidePanelOpen)

@@ -167,6 +167,10 @@
     <string name="settings_use_media3_player_for_local_files_summary">「Media3 プレーヤーを使う」がオフのとき: ローカルフォルダ閲覧で開いた動画はアプリ内プレーヤーを使います。</string>
     <string name="settings_video_scroll_to_next">次の動画へスクロール</string>
     <string name="settings_video_scroll_to_next_summary">上下スワイプで次または前の動画へ移ります。</string>
+    <string name="settings_video_scroll_to_next_5_minutes">5分</string>
+    <string name="settings_video_scroll_to_next_10_minutes">10分</string>
+    <string name="settings_video_scroll_to_next_always">常に</string>
+    <string name="video_subtitle_tracks">字幕トラック</string>
     <string name="browse_menu_favorites_on_top">お気に入りを先頭に</string>
     <string name="browse_menu_page_count">ページ数</string>
     <string name="browse_menu_reading_progress">読書進捗</string>

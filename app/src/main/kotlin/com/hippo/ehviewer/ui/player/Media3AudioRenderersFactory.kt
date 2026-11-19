@@ -1,20 +1,65 @@
 package com.hippo.ehviewer.ui.player
 
 import android.content.Context
+import android.os.Handler
+import androidx.media3.common.AudioAttributes
+import androidx.media3.common.audio.AudioProcessor
 import androidx.media3.common.audio.ChannelMixingAudioProcessor
 import androidx.media3.common.audio.ChannelMixingMatrix
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.DefaultRenderersFactory
+import androidx.media3.exoplayer.Renderer
 import androidx.media3.exoplayer.audio.AudioCapabilities
 import androidx.media3.exoplayer.audio.AudioSink
 import androidx.media3.exoplayer.audio.DefaultAudioSink
+import androidx.media3.exoplayer.mediacodec.MediaCodecSelector
+import androidx.media3.exoplayer.video.MediaCodecVideoRenderer
+import androidx.media3.exoplayer.video.VideoRendererEventListener
 import com.hippo.ehviewer.Settings
 
 /** PCM modes disable encoded passthrough so the mixer actually receives decoded samples. */
 @UnstableApi
-internal class Media3AudioRenderersFactory(context: Context, private val mode: Int) : DefaultRenderersFactory(context) {
+internal class Media3AudioRenderersFactory(
+    context: Context,
+    private val mode: Int,
+    private val hdrMode: Int,
+    private val audioBoost: Media3AudioBoostProcessor?,
+) : DefaultRenderersFactory(context) {
     init {
         setExtensionRendererMode(EXTENSION_RENDERER_MODE_ON)
+    }
+
+    override fun buildVideoRenderers(
+        context: Context,
+        extensionRendererMode: Int,
+        mediaCodecSelector: MediaCodecSelector,
+        enableDecoderFallback: Boolean,
+        eventHandler: Handler,
+        eventListener: VideoRendererEventListener,
+        allowedVideoJoiningTimeMs: Long,
+        out: ArrayList<Renderer>,
+    ) {
+        val videoIndex = out.size
+        super.buildVideoRenderers(
+            context,
+            extensionRendererMode,
+            mediaCodecSelector,
+            enableDecoderFallback,
+            eventHandler,
+            eventListener,
+            allowedVideoJoiningTimeMs,
+            out,
+        )
+        if (hdrMode == Settings.MEDIA3_HDR) return
+        val builder = MediaCodecVideoRenderer.Builder(context)
+            .setCodecAdapterFactory(codecAdapterFactory)
+            .setMediaCodecSelector(mediaCodecSelector)
+            .setEnableDecoderFallback(enableDecoderFallback)
+            .setAllowedJoiningTimeMs(allowedVideoJoiningTimeMs)
+            .setEventHandler(eventHandler)
+            .setEventListener(eventListener)
+            .setMaxDroppedFramesToNotify(MAX_DROPPED_VIDEO_FRAME_COUNT_TO_NOTIFY)
+        out[videoIndex] = Media3SkivVideoRenderer(builder, hdrMode == Settings.MEDIA3_SKIV_PIECEWISE)
     }
 
     override fun buildAudioSink(
@@ -35,10 +80,11 @@ internal class Media3AudioRenderersFactory(context: Context, private val mode: I
 
         val outputChannels = when (mode) {
             Settings.MEDIA3_AUDIO_STEREO -> 2
-            Settings.MEDIA3_AUDIO_DEVICE -> AudioCapabilities.getCapabilities(context)
+            Settings.MEDIA3_AUDIO_DEVICE -> AudioCapabilities.getCapabilities(context, AudioAttributes.DEFAULT, null, emptyList())
                 .maxChannelCount.coerceIn(2, 8)
             else -> 0
         }
+        val processors = mutableListOf<AudioProcessor>()
         if (outputChannels > 0) {
             val mixer = ChannelMixingAudioProcessor()
             for (inputChannels in 1..16) {
@@ -52,9 +98,10 @@ internal class Media3AudioRenderersFactory(context: Context, private val mode: I
                 }
                 mixer.putChannelMixingMatrix(matrix)
             }
-            builder.setAudioProcessors(arrayOf(mixer))
+            processors += mixer
         }
-        return builder.build()
+        if (audioBoost != null) processors += audioBoost
+        return builder.setAudioProcessors(processors.toTypedArray()).build()
     }
 
     private fun surroundToStereo(channels: Int): ChannelMixingMatrix {

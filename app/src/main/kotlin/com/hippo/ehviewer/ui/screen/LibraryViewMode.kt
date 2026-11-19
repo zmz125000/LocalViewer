@@ -371,7 +371,7 @@ fun mergeOpenMtimes(primary: Map<String, Long>, fallback: Map<String, Long>): Ma
  *     lock = full list, tick = one grid row or two list rows.
  *   - Name + Last open: HISTORY pin, then title
  *   - Date + Last open: blend max(last-open, scan mtime), then title
- *   - Photo sort by date: gallery reader and photo-grid open order only.
+ *   - Photo sort by date: gallery reader and photo-grid order when opened directly from Library.
  *     All photos stays date-sorted either way.
  * - Mid: List / Grid layout
  * - Bottom: Photo grid, All photos, All videos, zip as folder, back to dir, page count,

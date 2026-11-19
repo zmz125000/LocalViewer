@@ -5,6 +5,7 @@ import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import androidx.room.Upsert
+import com.ehviewer.core.database.model.PageProgress
 import com.ehviewer.core.database.model.ProgressInfo
 import kotlinx.coroutines.flow.Flow
 
@@ -15,6 +16,12 @@ interface ProgressDao {
 
     @Query("SELECT IFNULL(PAGE, 0) FROM PROGRESS WHERE GID = :gid")
     fun getPageFlow(gid: Long): Flow<Int>
+
+    @Query("SELECT * FROM PROGRESS WHERE GID = :gid")
+    suspend fun get(gid: Long): ProgressInfo?
+
+    @Upsert(entity = ProgressInfo::class)
+    suspend fun upsertPage(progress: PageProgress)
 
     @Query("SELECT * FROM PROGRESS")
     suspend fun list(): List<ProgressInfo>

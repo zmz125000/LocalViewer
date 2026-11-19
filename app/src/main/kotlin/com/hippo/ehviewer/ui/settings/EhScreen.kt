@@ -19,7 +19,6 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.nestedscroll.nestedScroll
@@ -304,18 +303,10 @@ fun AnimatedVisibilityScope.EhScreen(navigator: DestinationsNavigator) = Screen(
                     )
                 }
             }
-            val audioDownmixing = Settings.media3AudioDownmixing.asMutableState()
-            val audioEntries = stringArrayResource(id = com.hippo.ehviewer.R.array.media3_audio_downmixing_entries)
-            val audioIndex = audioDownmixing.value.coerceIn(0, audioEntries.lastIndex)
             SimpleMenuPreferenceInt(
-                title = stringResource(id = R.string.settings_media3_audio_downmixing),
-                summary = audioEntries[audioIndex],
-                entry = com.hippo.ehviewer.R.array.media3_audio_downmixing_entries,
-                entryValueRes = com.hippo.ehviewer.R.array.media3_audio_downmixing_values,
-                state = audioDownmixing,
-            )
-            SwitchPreference(
                 title = stringResource(id = R.string.settings_video_scroll_to_next),
+                entry = com.hippo.ehviewer.R.array.video_scroll_to_next_entries,
+                entryValueRes = com.hippo.ehviewer.R.array.video_scroll_to_next_values,
                 state = Settings.videoScrollToNext.asMutableState(),
             )
             var defaultVideoPlayer by Settings.defaultVideoPlayerComponent.asMutableState()

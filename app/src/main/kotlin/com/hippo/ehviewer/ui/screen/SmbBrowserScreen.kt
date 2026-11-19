@@ -489,9 +489,6 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
         base.filterByBrowseSearch(search.keyword) { it.name }
     }
 
-    val libraryPhotoDate by Settings.libraryPhotoSortByDate.collectAsState()
-    val libraryDateSort = fromLibrary && libraryOpenUsesDateSort(libraryPhotoDate)
-
     /**
      * Image RegularFiles in name order. Folder Name/Date does not change this.
      * The photo grid applies its own visit-only Date override on top.
@@ -503,7 +500,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
             .sortedWith { a, b -> naturalCompare(a.name, b.name) }
     }
     val photoGridKey = if (photoGrid) "$sourceId|${photoGridDir.orEmpty()}" else null
-    val gridSort = rememberPhotoGridSort(photoGridKey, libraryDateSort && photoGridKey != null)
+    val gridSort = rememberPhotoGridSort(photoGridKey)
     val photoGridImages = remember(folderImages, photoGrid, gridSort.mode, gridSort.ascending) {
         if (!photoGrid) {
             folderImages

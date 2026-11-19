@@ -185,11 +185,8 @@ object Settings : DataStorePreferences(null) {
      */
     val useMedia3PlayerForLocalFiles = boolPref("use_media3_player_for_local_files", true)
 
-    /**
-     * In-app player: swipe up/down moves to the next/previous video.
-     * Independent of [videoRotateWithVideo]. Default on.
-     */
-    val videoScrollToNext = boolPref("video_scroll_to_next", true)
+    // Maximum video length in minutes for playlist swipes.
+    val videoScrollToNext = intPref("video_scroll_to_next_mode", 5)
 
     /**
      * When true (default): tap HTML → loopback HTTP + default browser, serving the
@@ -1037,6 +1034,11 @@ object Settings : DataStorePreferences(null) {
      * In-app player position restore. [MEDIA3_RESUME_AUTO] seeks only when the
      * video is longer than 3 minutes. [MEDIA3_RESUME_ON] always. [MEDIA3_RESUME_OFF] starts at 0.
      */
+    const val MEDIA3_HDR = 0
+    const val MEDIA3_SKIV = 1
+    const val MEDIA3_SKIV_PIECEWISE = 2
+    val media3HdrToneMapping = intPref("media3_hdr_tone_mapping", MEDIA3_HDR)
+
     val media3PlaybackResume = intPref("media3_playback_resume", MEDIA3_RESUME_AUTO)
 
     const val MEDIA3_AUDIO_OFF = 0

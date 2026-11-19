@@ -1,15 +1,29 @@
 package com.hippo.ehviewer.ui.player
 
+import android.content.ActivityNotFoundException
 import android.content.Context
+import android.content.Intent
+import android.graphics.Rect
+import android.graphics.drawable.GradientDrawable
 import android.os.SystemClock
+import android.provider.Settings
 import android.util.AttributeSet
+import android.util.TypedValue
 import android.view.GestureDetector
+import android.view.Gravity
+import android.view.LayoutInflater
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewConfiguration
 import android.view.ViewGroup
-import android.widget.PopupMenu
+import android.view.WindowInsets
+import android.view.accessibility.CaptioningManager
+import android.widget.ArrayAdapter
+import android.widget.ImageButton
+import android.widget.ListView
 import android.widget.PopupWindow
+import android.widget.TextView
+import android.widget.Toast
 import androidx.media3.common.C
 import androidx.media3.common.Format
 import androidx.media3.common.MimeTypes
@@ -19,6 +33,7 @@ import androidx.media3.common.Tracks
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.ui.DefaultTrackNameProvider
 import androidx.media3.ui.PlayerView
+import androidx.window.core.layout.WindowSizeClass.Companion.WIDTH_DP_MEDIUM_LOWER_BOUND
 import com.ehviewer.core.i18n.R as I18nR
 import com.hippo.ehviewer.R
 import kotlin.math.abs
@@ -42,14 +57,17 @@ class SeekPlayerView @JvmOverloads constructor(
     /** Double-tap on the video. The activity finishes so playback and the window both go away. */
     var onClosePlayer: (() -> Unit)? = null
 
-    /** Vertical swipe while [scrollToNextEnabled]: +1 next (up), -1 previous (down). */
+    /** Vertical swipe: +1 next (up), -1 previous (down). */
     var onPlaylistScroll: ((Int) -> Unit)? = null
 
     /** Shorts-style swipe between playlist items. Horizontal scrub stays available. */
-    var scrollToNextEnabled: Boolean = false
+    var playlistSwipeMinutes = 0
+
+    internal var onTrackSelectionChanged: ((Int) -> Unit)? = null
 
     private val touchSlop = ViewConfiguration.get(context).scaledTouchSlop
-    private val scrubStartPx = maxOf(touchSlop * 3f, 32f * resources.displayMetrics.density)
+    private val edgeGuardPx = 32f * resources.displayMetrics.density
+    private val scrubStartPx = maxOf(touchSlop * 3f, edgeGuardPx)
     private var downX = 0f
     private var downY = 0f
     private var seekStartMs = 0L
@@ -59,9 +77,15 @@ class SeekPlayerView @JvmOverloads constructor(
     private var lastSeekAt = 0L
     private var controllerGesture = false
     private var shownOnThisTap = false
+    private var canStartDrag = false
 
-    /** Track-popup taps must not start the auto-hide, or the window loses its anchor. */
-    private var holdChrome = false
+    private var controlMenu: PopupWindow? = null
+    private val captions = context.getSystemService(CaptioningManager::class.java)
+    private val captionListener = object : CaptioningManager.CaptioningChangeListener() {
+        override fun onEnabledChanged(enabled: Boolean) = updateCaptionStyle()
+        override fun onFontScaleChanged(fontScale: Float) = updateCaptionStyle()
+        override fun onUserStyleChanged(userStyle: CaptioningManager.CaptionStyle) = updateCaptionStyle()
+    }
 
     /** Caller-facing auto-hide timeout; Media3's own timer is kept at 0 (see [setControllerShowTimeoutMs]). */
     private var autoHideTimeoutMs = 0
@@ -83,6 +107,7 @@ class SeekPlayerView @JvmOverloads constructor(
         }
 
         override fun onTracksChanged(tracks: Tracks) {
+            updateSubtitleButton()
             updateAudioTrackButton()
             post { updateAudioTrackButton() }
         }
@@ -101,9 +126,41 @@ class SeekPlayerView @JvmOverloads constructor(
                 v.layoutParams = lp
             }
         }
-        findViewById<View>(R.id.video_controls_buttons)?.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
-            balanceTrackSpacer()
+        addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
+            layoutControls()
+            layoutSubtitles()
         }
+        findViewById<View>(R.id.video_controls_buttons)?.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
+            layoutControls()
+        }
+        findViewById<View>(androidx.media3.ui.R.id.exo_audio_track)?.setOnClickListener {
+            showTrackMenu(it, C.TRACK_TYPE_AUDIO)
+        }
+        findViewById<View>(R.id.video_subtitle)?.setOnClickListener {
+            showTrackMenu(it, C.TRACK_TYPE_TEXT)
+        }
+        subtitleView?.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> layoutSubtitles() }
+    }
+
+    private fun layoutSubtitles() {
+        val subtitles = subtitleView ?: return
+        if (subtitles.width <= 0 || subtitles.height <= 0 || width <= 0 || height <= 0) return
+        // The content frame can extend past the screen in crop mode. Keep captions in the visible part.
+        val hiddenWidth = (subtitles.width - width).coerceAtLeast(0)
+        val hiddenHeight = (subtitles.height - height).coerceAtLeast(0)
+        subtitles.setPadding(hiddenWidth / 2, hiddenHeight / 2, (hiddenWidth + 1) / 2, (hiddenHeight + 1) / 2)
+        val scale = if (captions?.isEnabled == true) captions.fontScale else 1f
+        val textSizePx = minOf(
+            (subtitles.width - hiddenWidth) * 0.042f,
+            (subtitles.height - hiddenHeight) * 0.075f,
+            24f * resources.displayMetrics.density,
+        )
+        subtitles.setFixedTextSize(TypedValue.COMPLEX_UNIT_PX, textSizePx * scale)
+    }
+
+    private fun updateCaptionStyle() {
+        subtitleView?.setUserDefaultStyle()
+        layoutSubtitles()
     }
 
     private val controllerView: View?
@@ -128,6 +185,7 @@ class SeekPlayerView @JvmOverloads constructor(
         super.setPlayer(player)
         player?.addListener(playbackListener)
         onPlaybackUiChanged()
+        updateSubtitleButton()
         updateAudioTrackButton()
         post { updateAudioTrackButton() }
     }
@@ -135,7 +193,6 @@ class SeekPlayerView @JvmOverloads constructor(
     /** No audio track, or only one, has nothing to pick. Leave the button visible and grey. */
     private fun updateAudioTrackButton() {
         val button = findViewById<View>(androidx.media3.ui.R.id.exo_audio_track) ?: return
-        button.setOnClickListener { showAudioTrackMenu(button) }
         val tracks = player?.currentTracks
         var count = 0
         if (tracks != null) {
@@ -152,46 +209,90 @@ class SeekPlayerView @JvmOverloads constructor(
         button.alpha = if (enabled) 1f else 0.35f
     }
 
-    private fun showAudioTrackMenu(anchor: View) {
-        val current = player ?: return
-        val popup = PopupMenu(context, anchor)
+    private fun updateSubtitleButton() {
+        val button = findViewById<ImageButton>(R.id.video_subtitle) ?: return
+        val enabled = player?.currentTracks?.isTypeSelected(C.TRACK_TYPE_TEXT) == true
+        button.setImageResource(
+            if (enabled) {
+                androidx.media3.ui.R.drawable.exo_styled_controls_subtitle_on
+            } else {
+                androidx.media3.ui.R.drawable.exo_styled_controls_subtitle_off
+            },
+        )
+        button.stateDescription = context.getString(
+            if (enabled) {
+                androidx.media3.ui.R.string.exo_controls_cc_enabled_description
+            } else {
+                androidx.media3.ui.R.string.exo_controls_cc_disabled_description
+            },
+        )
+    }
+
+    private fun openCaptionPreferences() {
+        try {
+            context.startActivity(Intent(Settings.ACTION_CAPTIONING_SETTINGS))
+        } catch (_: ActivityNotFoundException) {
+            Toast.makeText(context, I18nR.string.browse_action_not_supported, Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    internal fun showTrackMenu(anchor: View, trackType: Int) {
+        val isSubtitle = trackType == C.TRACK_TYPE_TEXT
+        val captionPreferences = if (isSubtitle) context.getString(R.string.video_caption_preferences) else null
+        val current = player
+        if (current == null || !current.isCommandAvailable(Player.COMMAND_SET_TRACK_SELECTION_PARAMETERS)) {
+            if (captionPreferences != null) showControlMenu(anchor, listOf(captionPreferences), -1) { openCaptionPreferences() }
+            return
+        }
         val nameProvider = DefaultTrackNameProvider(resources)
-        val overrides = current.trackSelectionParameters.overrides
-        val auto = popup.menu.add(context.getString(I18nR.string.video_audio_auto))
-        auto.isCheckable = true
-        auto.isChecked = current.currentTracks.groups.none {
-            it.type == C.TRACK_TYPE_AUDIO && overrides.containsKey(it.mediaTrackGroup)
-        }
-        auto.setOnMenuItemClickListener {
-            current.trackSelectionParameters = current.trackSelectionParameters.buildUpon()
-                .clearOverridesOfType(C.TRACK_TYPE_AUDIO).build()
-            true
-        }
+        val labels = mutableListOf(
+            context.getString(
+                if (isSubtitle) androidx.media3.ui.R.string.exo_track_selection_none else I18nR.string.video_audio_auto,
+            ),
+        )
+        val overrides = mutableListOf<TrackSelectionOverride>()
+        var selected = 0
         for (group in current.currentTracks.groups) {
-            if (group.type != C.TRACK_TYPE_AUDIO) continue
+            if (group.type != trackType) continue
             for (index in 0 until group.length) {
                 if (!group.isTrackSupported(index)) continue
                 val format = group.getTrackFormat(index)
-                val codec = audioCodecLabel(format)
-                val title = nameProvider.getTrackName(format) + (codec?.let { " ($it)" } ?: "")
-                val item = popup.menu.add(title)
-                item.isCheckable = true
-                item.isChecked = group.isTrackSelected(index)
-                item.setOnMenuItemClickListener {
-                    current.trackSelectionParameters = current.trackSelectionParameters.buildUpon()
-                        .setOverrideForType(TrackSelectionOverride(group.mediaTrackGroup, index))
-                        .build()
-                    true
+                val codec = if (isSubtitle) null else audioCodecLabel(format)
+                val name = if (isSubtitle) {
+                    format.label?.takeIf { it.isNotBlank() } ?: nameProvider.getTrackName(format)
+                } else {
+                    nameProvider.getTrackName(format)
+                }
+                labels += name + (codec?.let { " ($it)" } ?: "")
+                overrides += TrackSelectionOverride(group.mediaTrackGroup, index)
+                if (group.isTrackSelected(index) &&
+                    (isSubtitle || current.trackSelectionParameters.overrides.containsKey(group.mediaTrackGroup))
+                ) {
+                    selected = labels.lastIndex
                 }
             }
         }
-        popup.show()
+        showControlMenu(anchor, labels, selected, captionPreferences) { choice ->
+            if (choice == labels.size) {
+                openCaptionPreferences()
+            } else if (player === current) {
+                val parameters = current.trackSelectionParameters.buildUpon()
+                    .clearOverridesOfType(trackType)
+                if (choice > 0) {
+                    parameters.setOverrideForType(overrides[choice - 1])
+                } else if (isSubtitle) {
+                    // Match Media3's None option, which still permits forced subtitles.
+                    parameters.hideVideoSubtitles()
+                }
+                current.trackSelectionParameters = parameters.build()
+                onTrackSelectionChanged?.invoke(trackType)
+            }
+        }
     }
 
     private fun audioCodecLabel(format: Format): String? = when (format.sampleMimeType) {
         MimeTypes.AUDIO_DTS_HD -> "DTS-HD"
-        MimeTypes.AUDIO_DTS_X -> "DTS:X"
-        MimeTypes.AUDIO_DTS_UHD_P2 -> "DTS-UHD"
+        MimeTypes.AUDIO_DTS_UHD_P2 -> "DTS:X"
         MimeTypes.AUDIO_DTS, MimeTypes.AUDIO_DTS_EXPRESS -> "DTS"
         MimeTypes.AUDIO_E_AC3_JOC -> "Dolby Atmos"
         MimeTypes.AUDIO_E_AC3 -> "E-AC-3"
@@ -245,95 +346,164 @@ class SeekPlayerView @JvmOverloads constructor(
 
     private fun scheduleAutoHide() {
         removeCallbacks(autoHideRunnable)
-        if (holdChrome || autoHideTimeoutMs <= 0 || hiding) return
+        if (controlMenu != null || autoHideTimeoutMs <= 0 || hiding) return
         if (!shouldAutoHide()) return
         postDelayed(autoHideRunnable, autoHideTimeoutMs.toLong())
     }
 
-    /**
-     * Pad the narrower of the track buttons and the rotate/PiP buttons so the transport
-     * cluster stays centered. Drop the pad when the row cannot hold it.
-     */
-    private fun balanceTrackSpacer() {
-        val tracks = findViewById<View>(R.id.video_track_buttons) ?: return
-        val transport = findViewById<View>(R.id.video_transport) ?: return
-        val actions = findViewById<View>(R.id.video_extra_buttons) ?: return
-        val start = findViewById<View>(R.id.video_balance_start) ?: return
-        val end = findViewById<View>(R.id.video_balance_end) ?: return
-        val row = tracks.parent as? View ?: return
-        if (tracks.width == 0 || transport.width == 0 || row.width == 0) return
+    private fun layoutControls() {
+        val row = findViewById<View>(R.id.video_controls_buttons) ?: return
+        val more = findViewById<View>(R.id.video_more) ?: return
+        val left = findViewById<ViewGroup>(R.id.video_track_buttons) ?: return
+        val right = findViewById<ViewGroup>(R.id.video_extra_buttons) ?: return
+        val transport = findViewById<ViewGroup>(R.id.video_transport) ?: return
+        if (row.width == 0) return
         val available = row.width - row.paddingLeft - row.paddingRight
-        val diff = tracks.width - actions.width
-        val gap = abs(diff)
-        val fits = available >= tracks.width + actions.width + transport.width + gap
-        val startW = if (fits && diff < 0) -diff else 0
-        val endW = if (fits && diff > 0) diff else 0
-        if (start.layoutParams.width == startW && end.layoutParams.width == endW) return
-        if (start.layoutParams.width != startW) {
-            start.layoutParams = start.layoutParams.apply { width = startW }
+        val buttonWidth = more.layoutParams.width
+        var transportWidth = 0
+        for (index in 0 until transport.childCount) transportWidth += transport.getChildAt(index).layoutParams.width
+        val portrait = width < height
+        val tabletPortrait = portrait && resources.configuration.smallestScreenWidthDp >= WIDTH_DP_MEDIUM_LOWER_BOUND
+        val compact = !tabletPortrait &&
+            (portrait || available < transportWidth + 2 * buttonWidth * maxOf(left.childCount, right.childCount))
+        val rewind = findViewById<View>(R.id.video_rewind)
+        val forward = findViewById<View>(R.id.video_forward)
+        val minTransportWidth = transportWidth - rewind.layoutParams.width - forward.layoutParams.width
+        val fit = findViewById<View>(R.id.video_fit)
+        val showFit = tabletPortrait || (!portrait && available >= minTransportWidth + buttonWidth * (1 + right.childCount))
+        fit.visibility = if (showFit) VISIBLE else GONE
+        val rightWidth = (0 until right.childCount).sumOf { index ->
+            val button = right.getChildAt(index)
+            if (button.visibility == GONE) 0 else button.layoutParams.width
         }
-        if (end.layoutParams.width != endW) {
-            end.layoutParams = end.layoutParams.apply { width = endW }
-        }
+        val showSteps = !portrait && (!compact || available >= transportWidth + buttonWidth + rightWidth)
+        left.visibility = if (compact) GONE else VISIBLE
+        more.visibility = if (compact) VISIBLE else GONE
+        rewind.visibility = if (showSteps) VISIBLE else GONE
+        forward.visibility = rewind.visibility
+        if (!showSteps) transportWidth = minTransportWidth
+
+        // Keep transport centered where possible while clearing the controls on either side.
+        val gap = (available - transportWidth) / 2f
+        val leftWidth = if (compact) buttonWidth else (0 until left.childCount).sumOf { left.getChildAt(it).layoutParams.width }
+        val minShift = leftWidth - gap
+        transport.translationX = 0f.coerceIn(minShift, maxOf(minShift, gap - rightWidth))
     }
 
-    private fun touchHitsTrackButton(event: MotionEvent): Boolean = trackButtonAt(event) != null
+    internal fun showControlMenu(
+        anchor: View,
+        labels: List<String>,
+        selected: Int,
+        actionLabel: String? = null,
+        onSelection: (Int) -> Unit,
+    ) {
+        if (!anchor.isAttachedToWindow) return
+        controlMenu?.dismiss()
 
-    private fun trackButtonAt(event: MotionEvent): View? {
-        val audio = findViewById<View>(androidx.media3.ui.R.id.exo_audio_track)
-        val subtitle = findViewById<View>(androidx.media3.ui.R.id.exo_subtitle)
-        return when {
-            hitsView(audio, event) -> audio
-            hitsView(subtitle, event) -> subtitle
-            else -> null
+        val density = resources.displayMetrics.density
+        val gap = (8 * density).toInt()
+        val frame = Rect()
+        anchor.getWindowVisibleDisplayFrame(frame)
+        if (frame.width() <= 2 * gap) return
+
+        val itemLayout = if (selected in labels.indices) {
+            android.R.layout.simple_list_item_single_choice
+        } else {
+            android.R.layout.simple_list_item_1
         }
-    }
-
-    /**
-     * Media3's settings popup uses the controller's right edge as its horizontal anchor.
-     * Move it so the list sits just above the button that opened it.
-     */
-    private fun placeTrackPopupAbove(anchor: View) {
-        val popup = settingsPopup() ?: return
-        if (!popup.isShowing) {
-            anchor.post {
-                if (popup.isShowing) applyTrackPopupAbove(anchor, popup)
+        val adapter = ArrayAdapter(context, itemLayout, labels)
+        val colors = context.obtainStyledAttributes(intArrayOf(android.R.attr.colorBackgroundFloating))
+        val menuColor = colors.getColor(0, context.getColor(android.R.color.background_dark))
+        colors.recycle()
+        val shape = GradientDrawable().apply {
+            cornerRadius = 12 * density
+            setColor(menuColor)
+        }
+        val list = ListView(context).apply {
+            divider = null
+            setPadding(0, gap, 0, gap)
+            background = shape
+            clipToOutline = true
+        }
+        if (actionLabel != null) {
+            val action = LayoutInflater.from(context).inflate(android.R.layout.simple_list_item_1, list, false) as TextView
+            action.text = actionLabel
+            list.addFooterView(action, null, true)
+        }
+        list.apply {
+            setAdapter(adapter)
+            if (selected in labels.indices) {
+                choiceMode = ListView.CHOICE_MODE_SINGLE
+                setItemChecked(selected, true)
             }
-            return
         }
-        applyTrackPopupAbove(anchor, popup)
+
+        val unspecified = MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED)
+        var contentWidth = (160 * density).toInt()
+        val menuAdapter = list.adapter
+        for (index in 0 until menuAdapter.count) {
+            val item = menuAdapter.getView(index, null, list)
+            item.measure(unspecified, unspecified)
+            contentWidth = maxOf(contentWidth, item.measuredWidth)
+        }
+        val popupWidth = contentWidth.coerceAtMost(minOf(frame.width() - 2 * gap, (360 * density).toInt()))
+        val location = IntArray(2)
+        anchor.getLocationOnScreen(location)
+        val above = location[1] - frame.top - gap
+        val below = frame.bottom - location[1] - anchor.height - gap
+        val availableHeight = maxOf(above, below)
+        if (availableHeight <= 0) return
+        list.measure(
+            MeasureSpec.makeMeasureSpec(popupWidth, MeasureSpec.EXACTLY),
+            MeasureSpec.makeMeasureSpec(availableHeight, MeasureSpec.AT_MOST),
+        )
+        val popupHeight = list.measuredHeight
+        val showAbove = popupHeight <= above
+        val left = location[0].coerceIn(frame.left + gap, frame.right - gap - popupWidth)
+        val top = if (showAbove) location[1] - popupHeight - gap else location[1] + anchor.height + gap
+        val popup = PopupWindow(list, popupWidth, popupHeight, true).apply {
+            setBackgroundDrawable(
+                GradientDrawable().apply {
+                    cornerRadius = shape.cornerRadius
+                    setColor(menuColor)
+                },
+            )
+            isOutsideTouchable = true
+            setIsLaidOutInScreen(true)
+            setIsClippedToScreen(true)
+            inputMethodMode = PopupWindow.INPUT_METHOD_NOT_NEEDED
+            elevation = 8 * density
+            enterTransition = null
+            exitTransition = null
+            animationStyle = R.style.VideoControlMenuAnimation
+        }
+        list.setOnItemClickListener { _, _, position, _ ->
+            popup.dismiss()
+            onSelection(position)
+        }
+        popup.setOnDismissListener {
+            if (controlMenu === popup) controlMenu = null
+            scheduleAutoHide()
+        }
+        controlMenu = popup
+        showController()
+        popup.showAtLocation(anchor, Gravity.TOP or Gravity.LEFT, left, top)
+        list.post {
+            if (popup.isShowing && selected > list.lastVisiblePosition) list.setSelection(selected)
+        }
     }
 
-    private fun applyTrackPopupAbove(anchor: View, popup: PopupWindow) {
-        val gap = (8f * resources.displayMetrics.density).toInt()
-        val yOff = -(anchor.height + popup.height + gap)
-        val loc = IntArray(2)
-        anchor.getLocationOnScreen(loc)
-        val screenRight = resources.displayMetrics.widthPixels - gap
-        var xOff = 0
-        if (loc[0] + popup.width > screenRight) {
-            xOff = screenRight - popup.width - loc[0]
-        }
-        if (loc[0] + xOff < gap) xOff = gap - loc[0]
-        popup.update(anchor, xOff, yOff, -1, -1)
+    override fun onAttachedToWindow() {
+        super.onAttachedToWindow()
+        captions?.addCaptioningChangeListener(captionListener)
+        updateCaptionStyle()
     }
 
-    private fun settingsPopup(): PopupWindow? {
-        val controller = controllerView ?: return null
-        return runCatching {
-            var type: Class<*>? = controller.javaClass
-            while (type != null && type != Any::class.java) {
-                val field = type.declaredFields.firstOrNull {
-                    PopupWindow::class.java.isAssignableFrom(it.type)
-                }
-                if (field != null) {
-                    field.isAccessible = true
-                    return@runCatching field.get(controller) as? PopupWindow
-                }
-                type = type.superclass
-            }
-            null
-        }.getOrNull()
+    override fun onDetachedFromWindow() {
+        captions?.removeCaptioningChangeListener(captionListener)
+        controlMenu?.dismiss()
+        removeCallbacks(autoHideRunnable)
+        super.onDetachedFromWindow()
     }
 
     private fun hitsView(view: View?, event: MotionEvent): Boolean {
@@ -400,11 +570,12 @@ class SeekPlayerView @JvmOverloads constructor(
                 distanceX: Float,
                 distanceY: Float,
             ): Boolean {
+                if (!canStartDrag) return false
                 val current = player ?: return false
                 val totalX = e2.x - downX
                 val totalY = e2.y - downY
                 if (scrollingNext) return true
-                if (!seeking && scrollToNextEnabled &&
+                if (!seeking && playlistSwipeAllowed(playlistSwipeMinutes, current.duration) &&
                     abs(totalY) >= scrubStartPx && abs(totalY) > abs(totalX) * 1.5f
                 ) {
                     scrollingNext = true
@@ -441,15 +612,17 @@ class SeekPlayerView @JvmOverloads constructor(
         if (event.actionMasked == MotionEvent.ACTION_DOWN) {
             downX = event.x
             downY = event.y
+            val insets = rootWindowInsets?.getInsets(WindowInsets.Type.systemGestures())
+            val left = maxOf(edgeGuardPx, (insets?.left ?: 0).toFloat())
+            val right = maxOf(edgeGuardPx, (insets?.right ?: 0).toFloat())
+            canStartDrag = downX in left..(width - right)
             seeking = false
             scrollingNext = false
             lastSeekMs = C.TIME_UNSET
             lastSeekAt = 0L
             shownOnThisTap = false
             controllerGesture = isControllerFullyVisible &&
-                event.y >= height - 132f * resources.displayMetrics.density
-            // Subtitle / audio open a PopupWindow. Keep the bar up until some other touch.
-            holdChrome = controllerGesture && touchHitsTrackButton(event)
+                hitsView(findViewById(androidx.media3.ui.R.id.exo_bottom_bar), event)
             if (controllerGesture) {
                 // User is interacting with the bar — defer auto-hide.
                 removeCallbacks(autoHideRunnable)
@@ -458,12 +631,7 @@ class SeekPlayerView @JvmOverloads constructor(
         if (controllerGesture) {
             val handled = super.onTouchEvent(event)
             when (event.actionMasked) {
-                MotionEvent.ACTION_UP -> {
-                    // Media3 anchors the list to the right edge. Sit it on the button instead.
-                    trackButtonAt(event)?.let(::placeTrackPopupAbove)
-                    scheduleAutoHide()
-                }
-                MotionEvent.ACTION_CANCEL -> scheduleAutoHide()
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> scheduleAutoHide()
             }
             return handled
         }
@@ -481,7 +649,7 @@ class SeekPlayerView @JvmOverloads constructor(
                     return true
                 }
                 val wasSeeking = seeking
-                if (seeking && lastSeekMs != C.TIME_UNSET) {
+                if (event.actionMasked == MotionEvent.ACTION_UP && seeking && lastSeekMs != C.TIME_UNSET) {
                     player?.seekTo(lastSeekMs)
                 }
                 seeking = false
@@ -506,7 +674,7 @@ class SeekPlayerView @JvmOverloads constructor(
 
     companion object {
         private const val SCRUB_INTERVAL_MS = 120L
-        private const val FADE_MS = 200L
+        private const val FADE_MS = 120L
     }
 }
 
@@ -533,3 +701,6 @@ internal const val SCRUB_WINDOW_PORTRAIT_MS = 60L * 1000L
 internal const val SCRUB_WINDOW_LANDSCAPE_MS = 2L * 60L * 1000L
 
 internal fun scrubWindowMs(viewWidthPx: Int, viewHeightPx: Int): Long = if (viewWidthPx >= viewHeightPx) SCRUB_WINDOW_LANDSCAPE_MS else SCRUB_WINDOW_PORTRAIT_MS
+
+// Negative means Always. Unknown duration is eligible only in that mode.
+internal fun playlistSwipeAllowed(minutes: Int, durationMs: Long): Boolean = minutes < 0 || minutes > 0 && durationMs in 1..(minutes * 60_000L)
