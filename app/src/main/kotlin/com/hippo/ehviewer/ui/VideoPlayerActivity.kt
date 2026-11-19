@@ -538,6 +538,7 @@ class VideoPlayerActivity : AppCompatActivity() {
                     if (hdrMode != Settings.MEDIA3_HDR &&
                         (
                             error.errorCode == PlaybackException.ERROR_CODE_VIDEO_FRAME_PROCESSING_FAILED ||
+                                error.errorCode == PlaybackException.ERROR_CODE_VIDEO_FRAME_PROCESSOR_INIT_FAILED ||
                                 error.errorCode == PlaybackException.ERROR_CODE_DECODER_INIT_FAILED
                             )
                     ) {

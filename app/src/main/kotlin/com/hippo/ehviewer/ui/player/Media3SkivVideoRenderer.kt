@@ -3,12 +3,21 @@ package com.hippo.ehviewer.ui.player
 import android.content.Context
 import android.content.ContextWrapper
 import android.content.res.Resources
+import android.media.MediaFormat
+import androidx.media3.common.C
 import androidx.media3.common.ColorInfo
 import androidx.media3.common.DebugViewProvider
+import androidx.media3.common.Format
+import androidx.media3.common.MimeTypes
+import androidx.media3.common.PlaybackException
 import androidx.media3.common.VideoGraph
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.effect.R as EffectResources
 import androidx.media3.effect.SingleInputVideoGraph
+import androidx.media3.exoplayer.RendererCapabilities
+import androidx.media3.exoplayer.mediacodec.MediaCodecInfo
+import androidx.media3.exoplayer.mediacodec.MediaCodecSelector
+import androidx.media3.exoplayer.mediacodec.MediaCodecUtil
 import androidx.media3.exoplayer.video.MediaCodecVideoRenderer
 import androidx.media3.exoplayer.video.PlaybackVideoGraphWrapper
 import androidx.media3.exoplayer.video.VideoFrameReleaseControl
@@ -18,6 +27,73 @@ import java.util.concurrent.Executor
 
 @UnstableApi
 internal class Media3SkivVideoRenderer(builder: Builder, private val piecewise: Boolean) : MediaCodecVideoRenderer(builder) {
+    override fun supportsFormat(mediaCodecSelector: MediaCodecSelector, format: Format): Int {
+        val selector = skivDecoderSelector(mediaCodecSelector, format)
+        val support = super.supportsFormat(selector, format)
+        if (selector !== mediaCodecSelector && RendererCapabilities.getFormatSupport(support) < C.FORMAT_EXCEEDS_CAPABILITIES) {
+            // Let playback select the track and report a decoder error so it can retry in HDR.
+            return super.supportsFormat(mediaCodecSelector, format)
+        }
+        return support
+    }
+
+    override fun getDecoderInfos(
+        mediaCodecSelector: MediaCodecSelector,
+        format: Format,
+        requiresSecureDecoder: Boolean,
+    ): List<MediaCodecInfo> = super.getDecoderInfos(skivDecoderSelector(mediaCodecSelector, format), format, requiresSecureDecoder)
+
+    override fun getMediaFormat(
+        format: Format,
+        codecMimeType: String,
+        codecMaxValues: CodecMaxValues,
+        codecOperatingRate: Float,
+        deviceNeedsNoPostProcessWorkaround: Boolean,
+        tunnelingAudioSessionId: Int,
+    ): MediaFormat {
+        // Media3 otherwise puts the Dolby Vision profile number into the base decoder's config.
+        val codecFormat = if (format.sampleMimeType == MimeTypes.VIDEO_DOLBY_VISION && codecMimeType != MimeTypes.VIDEO_DOLBY_VISION) {
+            format.buildUpon().setSampleMimeType(codecMimeType).setCodecs(null).build()
+        } else {
+            format
+        }
+        return super.getMediaFormat(
+            codecFormat,
+            codecMimeType,
+            codecMaxValues,
+            codecOperatingRate,
+            deviceNeedsNoPostProcessWorkaround,
+            tunnelingAudioSessionId,
+        )
+    }
+
+    override fun maybeInitializeProcessingPipeline(format: Format): Boolean {
+        if (format.sampleMimeType == MimeTypes.VIDEO_DOLBY_VISION && !hasCompatibleHdrBase(format)) {
+            throw createRendererException(
+                UnsupportedOperationException("SKIV needs a compatible Dolby Vision HDR base layer"),
+                format,
+                PlaybackException.ERROR_CODE_VIDEO_FRAME_PROCESSOR_INIT_FAILED,
+            )
+        }
+        return super.maybeInitializeProcessingPipeline(format)
+    }
+
+    // A native Dolby Vision decoder can process the RPU itself. Use the compatible base
+    // decoder so the OpenGL sampler receives the PQ or HLG signal described by the track.
+    private fun skivDecoderSelector(selector: MediaCodecSelector, format: Format): MediaCodecSelector {
+        if (!hasCompatibleHdrBase(format)) return selector
+        return MediaCodecSelector { mimeType, secure, tunneling ->
+            if (mimeType == MimeTypes.VIDEO_DOLBY_VISION) emptyList() else selector.getDecoderInfos(mimeType, secure, tunneling)
+        }
+    }
+
+    private fun hasCompatibleHdrBase(format: Format): Boolean {
+        if (format.sampleMimeType != MimeTypes.VIDEO_DOLBY_VISION) return false
+        val color = format.colorInfo ?: return false
+        return color.isDataSpaceValid && color.colorSpace == C.COLOR_SPACE_BT2020 &&
+            ColorInfo.isTransferHdr(color) && MediaCodecUtil.getAlternativeCodecMimeType(format) != null
+    }
+
     override fun createPlaybackVideoGraphWrapper(
         context: Context,
         videoFrameReleaseControl: VideoFrameReleaseControl,

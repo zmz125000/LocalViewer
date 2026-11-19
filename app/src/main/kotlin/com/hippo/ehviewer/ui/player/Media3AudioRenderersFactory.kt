@@ -2,6 +2,7 @@ package com.hippo.ehviewer.ui.player
 
 import android.content.Context
 import android.os.Handler
+import androidx.media3.common.AudioAttributes
 import androidx.media3.common.audio.AudioProcessor
 import androidx.media3.common.audio.ChannelMixingAudioProcessor
 import androidx.media3.common.audio.ChannelMixingMatrix
@@ -79,7 +80,7 @@ internal class Media3AudioRenderersFactory(
 
         val outputChannels = when (mode) {
             Settings.MEDIA3_AUDIO_STEREO -> 2
-            Settings.MEDIA3_AUDIO_DEVICE -> AudioCapabilities.getCapabilities(context)
+            Settings.MEDIA3_AUDIO_DEVICE -> AudioCapabilities.getCapabilities(context, AudioAttributes.DEFAULT, null, emptyList())
                 .maxChannelCount.coerceIn(2, 8)
             else -> 0
         }

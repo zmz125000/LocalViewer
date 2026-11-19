@@ -230,8 +230,7 @@ class SeekPlayerView @JvmOverloads constructor(
 
     private fun audioCodecLabel(format: Format): String? = when (format.sampleMimeType) {
         MimeTypes.AUDIO_DTS_HD -> "DTS-HD"
-        MimeTypes.AUDIO_DTS_X -> "DTS:X"
-        MimeTypes.AUDIO_DTS_UHD_P2 -> "DTS-UHD"
+        MimeTypes.AUDIO_DTS_UHD_P2 -> "DTS:X"
         MimeTypes.AUDIO_DTS, MimeTypes.AUDIO_DTS_EXPRESS -> "DTS"
         MimeTypes.AUDIO_E_AC3_JOC -> "Dolby Atmos"
         MimeTypes.AUDIO_E_AC3 -> "E-AC-3"
@@ -363,10 +362,12 @@ class SeekPlayerView @JvmOverloads constructor(
         val left = location[0].coerceIn(frame.left + gap, frame.right - gap - popupWidth)
         val top = if (showAbove) location[1] - popupHeight - gap else location[1] + anchor.height + gap
         val popup = PopupWindow(list, popupWidth, popupHeight, true).apply {
-            setBackgroundDrawable(GradientDrawable().apply {
-                cornerRadius = shape.cornerRadius
-                setColor(menuColor)
-            })
+            setBackgroundDrawable(
+                GradientDrawable().apply {
+                    cornerRadius = shape.cornerRadius
+                    setColor(menuColor)
+                },
+            )
             isOutsideTouchable = true
             setIsLaidOutInScreen(true)
             setIsClippedToScreen(true)
