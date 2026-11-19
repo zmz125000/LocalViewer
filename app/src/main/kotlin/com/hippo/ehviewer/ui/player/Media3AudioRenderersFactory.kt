@@ -2,6 +2,7 @@ package com.hippo.ehviewer.ui.player
 
 import android.content.Context
 import android.os.Handler
+import androidx.media3.common.audio.AudioProcessor
 import androidx.media3.common.audio.ChannelMixingAudioProcessor
 import androidx.media3.common.audio.ChannelMixingMatrix
 import androidx.media3.common.util.UnstableApi
@@ -21,6 +22,7 @@ internal class Media3AudioRenderersFactory(
     context: Context,
     private val mode: Int,
     private val hdrMode: Int,
+    private val audioBoost: Media3AudioBoostProcessor,
 ) : DefaultRenderersFactory(context) {
     init {
         setExtensionRendererMode(EXTENSION_RENDERER_MODE_ON)
@@ -81,6 +83,7 @@ internal class Media3AudioRenderersFactory(
                 .maxChannelCount.coerceIn(2, 8)
             else -> 0
         }
+        val processors = mutableListOf<AudioProcessor>()
         if (outputChannels > 0) {
             val mixer = ChannelMixingAudioProcessor()
             for (inputChannels in 1..16) {
@@ -94,9 +97,10 @@ internal class Media3AudioRenderersFactory(
                 }
                 mixer.putChannelMixingMatrix(matrix)
             }
-            builder.setAudioProcessors(arrayOf(mixer))
+            processors += mixer
         }
-        return builder.build()
+        processors += audioBoost
+        return builder.setAudioProcessors(processors.toTypedArray()).build()
     }
 
     private fun surroundToStereo(channels: Int): ChannelMixingMatrix {

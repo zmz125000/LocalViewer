@@ -18,6 +18,7 @@ import android.util.Rational
 import android.view.View
 import android.view.WindowManager
 import android.widget.ImageButton
+import android.widget.PopupMenu
 import androidx.activity.SystemBarStyle
 import androidx.activity.enableEdgeToEdge
 import androidx.appcompat.app.AppCompatActivity
@@ -47,12 +48,13 @@ import com.hippo.ehviewer.provider.StreamDocumentProvider
 import com.hippo.ehviewer.provider.StreamDocumentRegistry
 import com.hippo.ehviewer.ui.player.InternalVideoPlaylistRegistry
 import com.hippo.ehviewer.ui.player.InternalVideoSource
+import com.hippo.ehviewer.ui.player.Media3AudioBoostProcessor
 import com.hippo.ehviewer.ui.player.Media3AudioRenderersFactory
 import com.hippo.ehviewer.ui.player.PreparedInternalVideo
 import com.hippo.ehviewer.ui.player.SeekPlayerView
 import com.hippo.ehviewer.ui.player.StreamDocDataSource
 import com.hippo.ehviewer.ui.player.progressGid
-import com.hippo.ehviewer.util.setHdrColorMode
+import com.hippo.ehviewer.util.setReaderColorMode
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 
@@ -67,6 +69,8 @@ class VideoPlayerActivity : AppCompatActivity() {
     private var player: ExoPlayer? = null
     private var playerUsesNetworkSource: Boolean? = null
     private var playerHdrMode = Settings.MEDIA3_HDR
+    private var audioBoostDb = 0
+    private var audioBoostProcessor: Media3AudioBoostProcessor? = null
     private var streamToken: String? = null
     private var subtitleTokens: List<String> = emptyList()
     private var playerView: SeekPlayerView? = null
@@ -110,7 +114,6 @@ class VideoPlayerActivity : AppCompatActivity() {
             statusBarStyle = SystemBarStyle.dark(android.graphics.Color.BLACK),
             navigationBarStyle = SystemBarStyle.dark(android.graphics.Color.BLACK),
         )
-        setHdrColorMode(on = true)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         setContentView(R.layout.activity_video_player)
 
@@ -240,6 +243,15 @@ class VideoPlayerActivity : AppCompatActivity() {
         findViewById<ImageButton>(R.id.video_next).setOnClickListener { moveInPlaylist(1) }
         findViewById<ImageButton>(R.id.video_rewind).setOnClickListener { seekByStep(forward = false) }
         findViewById<ImageButton>(R.id.video_forward).setOnClickListener { seekByStep(forward = true) }
+        findViewById<ImageButton>(R.id.video_audio_boost).apply {
+            tooltipText = contentDescription
+            setOnClickListener(::showAudioBoostMenu)
+        }
+        findViewById<ImageButton>(R.id.video_hdr).apply {
+            tooltipText = contentDescription
+            setOnClickListener(::showHdrMenu)
+        }
+        updatePlaybackOptionButtons()
         rotateWithVideo = Settings.videoRotateWithVideo.value
         scrollToNext = Settings.videoScrollToNext.value
         playerView?.scrollToNextEnabled = scrollToNext
@@ -250,6 +262,68 @@ class VideoPlayerActivity : AppCompatActivity() {
         val pipAvailable = packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)
         pip.visibility = if (pipAvailable) View.VISIBLE else View.GONE
         pip.setOnClickListener { enterPip() }
+    }
+
+    private fun audioBoostLabel(gainDb: Int): String = if (gainDb == 0) {
+        getString(R.string.video_audio_boost_off)
+    } else {
+        getString(R.string.video_audio_boost_gain, gainDb)
+    }
+
+    private fun showAudioBoostMenu(anchor: View) {
+        val levels = listOf(0, 3, 6, 9)
+        showPlaybackOptions(anchor, levels.map(::audioBoostLabel), levels.indexOf(audioBoostDb)) { index ->
+            val level = levels[index]
+            if (level == audioBoostDb) return@showPlaybackOptions
+            val previous = audioBoostDb
+            audioBoostDb = level
+            val passthrough = Settings.media3AudioDownmixing.value == Settings.MEDIA3_AUDIO_PASSTHROUGH
+            if (passthrough && (level == 0 || previous == 0)) {
+                if (!restartCurrentMediaItem(playerHdrMode)) audioBoostDb = previous
+            } else {
+                audioBoostProcessor?.setGainDb(level)
+            }
+            updatePlaybackOptionButtons()
+        }
+    }
+
+    private fun showHdrMenu(anchor: View) {
+        val labels = resources.getStringArray(R.array.media3_hdr_tone_mapping_entries)
+        val modes = resources.getIntArray(R.array.media3_hdr_tone_mapping_values)
+        showPlaybackOptions(anchor, labels.asList(), modes.indexOf(playerHdrMode)) { index ->
+            val mode = modes[index]
+            if (mode == playerHdrMode || restartCurrentMediaItem(mode)) {
+                Settings.media3HdrToneMapping.value = mode
+            }
+        }
+    }
+
+    private fun showPlaybackOptions(anchor: View, labels: List<String>, selected: Int, onSelection: (Int) -> Unit) {
+        val popup = PopupMenu(this, anchor)
+        labels.forEachIndexed { index, label ->
+            popup.menu.add(0, index, index, label).isCheckable = true
+        }
+        popup.menu.setGroupCheckable(0, true, true)
+        popup.menu.findItem(selected)?.isChecked = true
+        popup.setOnMenuItemClickListener {
+            onSelection(it.itemId)
+            true
+        }
+        playerView?.showControlMenu(popup)
+    }
+
+    private fun updatePlaybackOptionButtons() {
+        findViewById<ImageButton>(R.id.video_audio_boost).apply {
+            isSelected = audioBoostDb > 0
+            alpha = if (isSelected) 1f else 0.6f
+            stateDescription = audioBoostLabel(audioBoostDb)
+        }
+        findViewById<ImageButton>(R.id.video_hdr).apply {
+            isSelected = playerHdrMode == Settings.MEDIA3_HDR
+            alpha = if (isSelected) 1f else 0.6f
+            val modes = resources.getIntArray(R.array.media3_hdr_tone_mapping_values)
+            stateDescription = resources.getStringArray(R.array.media3_hdr_tone_mapping_entries)[modes.indexOf(playerHdrMode)]
+        }
     }
 
     private fun toggleRotateWithVideo() {
@@ -394,20 +468,39 @@ class VideoPlayerActivity : AppCompatActivity() {
         startMediaItem(mediaItem, network, !holdForResume, hdrMode)
     }
 
+    private fun restartCurrentMediaItem(hdrMode: Int): Boolean {
+        val current = player ?: return false
+        val mediaItem = current.currentMediaItem ?: return false
+        return runCatching {
+            startMediaItem(
+                mediaItem,
+                playerUsesNetworkSource == true,
+                current.playWhenReady,
+                hdrMode,
+                current.currentPosition,
+                preservePlaybackSettings = true,
+            )
+        }.onFailure { logcat("VideoPlayer", it) }.isSuccess
+    }
+
     private fun startMediaItem(
         mediaItem: MediaItem,
         network: Boolean,
         playWhenReady: Boolean,
         hdrMode: Int,
         positionMs: Long = C.TIME_UNSET,
+        preservePlaybackSettings: Boolean = false,
     ) {
         val previous = player
-        player = null
-        playerUsesNetworkSource = null
-        playerView?.player = null
-        runCatching { previous?.release() }
-
-        val renderersFactory = Media3AudioRenderersFactory(this, Settings.media3AudioDownmixing.value, hdrMode)
+        val configuredAudioMode = Settings.media3AudioDownmixing.value
+        // Boost needs decoded PCM. Restore passthrough when the boost is turned off.
+        val audioMode = if (configuredAudioMode == Settings.MEDIA3_AUDIO_PASSTHROUGH && audioBoostDb > 0) {
+            Settings.MEDIA3_AUDIO_DEVICE
+        } else {
+            configuredAudioMode
+        }
+        val boost = Media3AudioBoostProcessor(audioBoostDb)
+        val renderersFactory = Media3AudioRenderersFactory(this, audioMode, hdrMode, boost)
         val builder = ExoPlayer.Builder(this, renderersFactory)
             .setAudioAttributes(
                 AudioAttributes.Builder()
@@ -427,20 +520,17 @@ class VideoPlayerActivity : AppCompatActivity() {
         }
 
         val exo = builder.build()
-        exo.setMediaItem(mediaItem, positionMs)
-        if (hdrMode != Settings.MEDIA3_HDR) {
-            // An empty effect list still enables the shader graph.
-            exo.setVideoEffects(emptyList())
-        }
         exo.addListener(
             object : Player.Listener {
                 override fun onVideoSizeChanged(videoSize: VideoSize) {
+                    if (player !== exo) return
                     lastVideoSize = videoSize
                     applySystemOrientationForVideo(videoSize)
                     updatePipParams()
                 }
 
                 override fun onIsPlayingChanged(isPlaying: Boolean) {
+                    if (player !== exo) return
                     updatePipParams()
                     if (isPlaying) {
                         scheduleProgressSave()
@@ -451,6 +541,7 @@ class VideoPlayerActivity : AppCompatActivity() {
                 }
 
                 override fun onPlaybackStateChanged(playbackState: Int) {
+                    if (player !== exo) return
                     if (playbackState == Player.STATE_READY) tryResume()
                     if (playbackState == Player.STATE_ENDED) moveInPlaylist(1)
                     updatePipParams()
@@ -465,20 +556,33 @@ class VideoPlayerActivity : AppCompatActivity() {
                             )
                     ) {
                         // Some devices cannot expose their HDR decoder output to OpenGL.
-                        val position = exo.currentPosition
-                        val playing = exo.playWhenReady
-                        val item = exo.currentMediaItem ?: return
                         playerView?.post {
-                            if (player === exo) startMediaItem(item, network, playing, Settings.MEDIA3_HDR, position)
+                            if (player === exo) restartCurrentMediaItem(Settings.MEDIA3_HDR)
                         }
                     }
                 }
             },
         )
         try {
+            if (preservePlaybackSettings && previous != null) {
+                exo.trackSelectionParameters = previous.trackSelectionParameters
+                exo.playbackParameters = previous.playbackParameters
+                exo.volume = previous.volume
+            }
+            exo.setMediaItem(mediaItem, positionMs)
+            if (hdrMode != Settings.MEDIA3_HDR) {
+                // An empty effect list still enables the shader graph.
+                exo.setVideoEffects(emptyList())
+            }
+            player = null
+            playerView?.player = null
+            runCatching { previous?.release() }
             player = exo
             playerUsesNetworkSource = network
             playerHdrMode = hdrMode
+            audioBoostProcessor = boost
+            setReaderColorMode(hdr = hdrMode == Settings.MEDIA3_HDR)
+            updatePlaybackOptionButtons()
             playerView?.player = exo
             exo.prepare()
             exo.playWhenReady = playWhenReady
@@ -486,6 +590,7 @@ class VideoPlayerActivity : AppCompatActivity() {
             if (player === exo) {
                 player = null
                 playerUsesNetworkSource = null
+                audioBoostProcessor = null
             }
             if (playerView?.player === exo) playerView?.player = null
             exo.release()
@@ -662,6 +767,7 @@ class VideoPlayerActivity : AppCompatActivity() {
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
         hideSystemBars()
+        setReaderColorMode(hdr = playerHdrMode == Settings.MEDIA3_HDR, force = true)
         playerView?.requestLayout()
     }
 
@@ -670,6 +776,7 @@ class VideoPlayerActivity : AppCompatActivity() {
         player?.release()
         player = null
         playerUsesNetworkSource = null
+        audioBoostProcessor = null
     }
 
     private fun updatePlaylistButtons() {

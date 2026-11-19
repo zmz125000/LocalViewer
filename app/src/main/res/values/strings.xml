@@ -2,5 +2,8 @@
 <resources>
     <string name="video_rotate_with_video">Rotate with video</string>
     <string name="video_picture_in_picture">Picture in picture</string>
+    <string name="video_audio_boost">Audio boost</string>
+    <string name="video_audio_boost_off">Off</string>
+    <string name="video_audio_boost_gain">+%1$d dB</string>
     <string name="settings_media3_hdr_tone_mapping">Media3 HDR tone mapping</string>
 </resources>

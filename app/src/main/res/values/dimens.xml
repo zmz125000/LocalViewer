@@ -16,6 +16,9 @@
 
 <resources>
 
+    <dimen name="video_transport_height">72dp</dimen>
+    <dimen name="video_action_height">48dp</dimen>
+
     <dimen name="signinscreen_landscape_caption_frame_width">480dp</dimen>
     <dimen name="gallery_detail_card_landscape_width">480dp</dimen>
 

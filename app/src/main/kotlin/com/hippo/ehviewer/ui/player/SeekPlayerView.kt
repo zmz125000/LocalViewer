@@ -3,11 +3,15 @@ package com.hippo.ehviewer.ui.player
 import android.content.Context
 import android.os.SystemClock
 import android.util.AttributeSet
+import android.util.TypedValue
 import android.view.GestureDetector
+import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewConfiguration
 import android.view.ViewGroup
+import android.view.accessibility.CaptioningManager
+import android.widget.FrameLayout
 import android.widget.PopupMenu
 import android.widget.PopupWindow
 import androidx.media3.common.C
@@ -101,8 +105,24 @@ class SeekPlayerView @JvmOverloads constructor(
                 v.layoutParams = lp
             }
         }
-        findViewById<View>(R.id.video_controls_buttons)?.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
-            balanceTrackSpacer()
+        for (id in intArrayOf(R.id.video_controls_buttons, R.id.video_track_buttons, R.id.video_extra_buttons)) {
+            findViewById<View>(id)?.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
+                layoutControlRows()
+            }
+        }
+        subtitleView?.let { subtitles ->
+            val captions = context.getSystemService(CaptioningManager::class.java)
+            subtitles.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
+                if (subtitles.width <= 0 || subtitles.height <= 0) return@addOnLayoutChangeListener
+                val scale = if (captions?.isEnabled == true) captions.fontScale else 1f
+                // Size plain text to the video bounds and cap the default size on large displays.
+                val textSizePx = minOf(
+                    subtitles.width * 0.042f,
+                    subtitles.height * 0.075f,
+                    24f * resources.displayMetrics.density,
+                )
+                subtitles.setFixedTextSize(TypedValue.COMPLEX_UNIT_PX, textSizePx * scale)
+            }
         }
     }
 
@@ -250,31 +270,36 @@ class SeekPlayerView @JvmOverloads constructor(
         postDelayed(autoHideRunnable, autoHideTimeoutMs.toLong())
     }
 
-    /**
-     * Pad the narrower of the track buttons and the rotate/PiP buttons so the transport
-     * cluster stays centered. Drop the pad when the row cannot hold it.
-     */
-    private fun balanceTrackSpacer() {
+    /** Keep transport centered and place the side buttons on a second row when space is tight. */
+    private fun layoutControlRows() {
+        val row = findViewById<View>(R.id.video_controls_buttons) ?: return
         val tracks = findViewById<View>(R.id.video_track_buttons) ?: return
         val transport = findViewById<View>(R.id.video_transport) ?: return
         val actions = findViewById<View>(R.id.video_extra_buttons) ?: return
-        val start = findViewById<View>(R.id.video_balance_start) ?: return
-        val end = findViewById<View>(R.id.video_balance_end) ?: return
-        val row = tracks.parent as? View ?: return
-        if (tracks.width == 0 || transport.width == 0 || row.width == 0) return
+        val actionRow = findViewById<View>(R.id.video_action_row) ?: return
+        if (transport.width == 0 || row.width == 0) return
         val available = row.width - row.paddingLeft - row.paddingRight
-        val diff = tracks.width - actions.width
-        val gap = abs(diff)
-        val fits = available >= tracks.width + actions.width + transport.width + gap
-        val startW = if (fits && diff < 0) -diff else 0
-        val endW = if (fits && diff > 0) diff else 0
-        if (start.layoutParams.width == startW && end.layoutParams.width == endW) return
-        if (start.layoutParams.width != startW) {
-            start.layoutParams = start.layoutParams.apply { width = startW }
+        val compact = available < transport.width + 2 * maxOf(tracks.width, actions.width)
+        val height = transport.layoutParams.height + if (compact) actionRow.layoutParams.height else 0
+        val gravity = if (compact) Gravity.BOTTOM else Gravity.CENTER_VERTICAL
+        val actionParams = actionRow.layoutParams as FrameLayout.LayoutParams
+        if (actionParams.gravity != gravity) {
+            actionParams.gravity = gravity
+            actionRow.layoutParams = actionParams
         }
-        if (end.layoutParams.width != endW) {
-            end.layoutParams = end.layoutParams.apply { width = endW }
+        if (row.layoutParams.height != height) {
+            row.layoutParams = row.layoutParams.apply { this.height = height }
         }
+    }
+
+    internal fun showControlMenu(popup: PopupMenu) {
+        holdChrome = true
+        removeCallbacks(autoHideRunnable)
+        popup.setOnDismissListener {
+            holdChrome = false
+            scheduleAutoHide()
+        }
+        popup.show()
     }
 
     private fun touchHitsTrackButton(event: MotionEvent): Boolean = trackButtonAt(event) != null
@@ -447,7 +472,7 @@ class SeekPlayerView @JvmOverloads constructor(
             lastSeekAt = 0L
             shownOnThisTap = false
             controllerGesture = isControllerFullyVisible &&
-                event.y >= height - 132f * resources.displayMetrics.density
+                hitsView(findViewById(androidx.media3.ui.R.id.exo_bottom_bar), event)
             // Subtitle / audio open a PopupWindow. Keep the bar up until some other touch.
             holdChrome = controllerGesture && touchHitsTrackButton(event)
             if (controllerGesture) {
