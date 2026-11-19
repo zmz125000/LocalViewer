@@ -10,6 +10,7 @@ import androidx.media3.common.DebugViewProvider
 import androidx.media3.common.Format
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackException
+import androidx.media3.common.Tracks
 import androidx.media3.common.VideoGraph
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.effect.DefaultVideoFrameProcessor
@@ -25,6 +26,33 @@ import androidx.media3.exoplayer.video.VideoFrameReleaseControl
 import com.hippo.ehviewer.R
 import java.io.InputStream
 import java.util.concurrent.Executor
+
+internal fun Tracks.supportsSkivToneMapping(): Boolean? {
+    var selectedVideo = false
+    for (group in groups) {
+        if (group.type != C.TRACK_TYPE_VIDEO || !group.isSelected) continue
+        for (index in 0 until group.length) {
+            if (!group.isTrackSelected(index)) continue
+            selectedVideo = true
+            if (!group.getTrackFormat(index).supportsSkivToneMapping()) return false
+        }
+    }
+    return true.takeIf { selectedVideo }
+}
+
+private fun Format.supportsSkivToneMapping(): Boolean = colorInfo?.colorSpace == C.COLOR_SPACE_BT2020 && ColorInfo.isTransferHdr(colorInfo) &&
+    (sampleMimeType != MimeTypes.VIDEO_DOLBY_VISION || MediaCodecUtil.getAlternativeCodecMimeType(this) != null)
+
+internal fun Format.withSkivColorRange(decodedRange: Int = Format.NO_VALUE): Format {
+    val color = colorInfo ?: return this
+    if (!supportsSkivToneMapping() || color.colorRange == C.COLOR_RANGE_LIMITED || color.colorRange == C.COLOR_RANGE_FULL) {
+        return this
+    }
+    // HDR tracks can leave the range in the in-band SPS. Media3's video graph treats
+    // incomplete ColorInfo as SDR. Use the decoder's range when available, or limited range.
+    val range = if (decodedRange == MediaFormat.COLOR_RANGE_FULL) C.COLOR_RANGE_FULL else C.COLOR_RANGE_LIMITED
+    return buildUpon().setColorInfo(color.buildUpon().setColorRange(range).build()).build()
+}
 
 @UnstableApi
 internal class Media3SkivVideoRenderer(
@@ -80,7 +108,12 @@ internal class Media3SkivVideoRenderer(
                 PlaybackException.ERROR_CODE_VIDEO_FRAME_PROCESSOR_INIT_FAILED,
             )
         }
-        return super.maybeInitializeProcessingPipeline(format)
+        return super.maybeInitializeProcessingPipeline(format.withSkivColorRange())
+    }
+
+    override fun onOutputFormatChanged(format: Format, mediaFormat: MediaFormat?) {
+        val decodedRange = mediaFormat?.getInteger(MediaFormat.KEY_COLOR_RANGE, Format.NO_VALUE) ?: Format.NO_VALUE
+        super.onOutputFormatChanged(format.withSkivColorRange(decodedRange), mediaFormat)
     }
 
     // A native Dolby Vision decoder can process the RPU itself. Use the compatible base
@@ -92,12 +125,7 @@ internal class Media3SkivVideoRenderer(
         }
     }
 
-    private fun hasCompatibleHdrBase(format: Format): Boolean {
-        if (format.sampleMimeType != MimeTypes.VIDEO_DOLBY_VISION) return false
-        val color = format.colorInfo ?: return false
-        return color.isDataSpaceValid && color.colorSpace == C.COLOR_SPACE_BT2020 &&
-            ColorInfo.isTransferHdr(color) && MediaCodecUtil.getAlternativeCodecMimeType(format) != null
-    }
+    private fun hasCompatibleHdrBase(format: Format): Boolean = format.sampleMimeType == MimeTypes.VIDEO_DOLBY_VISION && format.supportsSkivToneMapping()
 
     override fun createPlaybackVideoGraphWrapper(
         context: Context,
