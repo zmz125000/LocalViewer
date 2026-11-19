@@ -799,6 +799,17 @@
         <item>2</item>
     </integer-array>
 
+    <string-array name="media3_hdr_tone_mapping_entries">
+        <item>HDR</item>
+        <item>SKIV (SDR)</item>
+        <item>SKIV Piecewise (SDR)</item>
+    </string-array>
+    <integer-array name="media3_hdr_tone_mapping_values" translatable="false">
+        <item>0</item>
+        <item>1</item>
+        <item>2</item>
+    </integer-array>
+
     <string-array name="media3_audio_downmixing_entries">
         <item>@string/settings_media3_audio_off</item>
         <item>@string/settings_media3_audio_device</item>

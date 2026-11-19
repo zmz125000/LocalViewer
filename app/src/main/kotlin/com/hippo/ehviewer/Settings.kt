@@ -1037,6 +1037,11 @@ object Settings : DataStorePreferences(null) {
      * In-app player position restore. [MEDIA3_RESUME_AUTO] seeks only when the
      * video is longer than 3 minutes. [MEDIA3_RESUME_ON] always. [MEDIA3_RESUME_OFF] starts at 0.
      */
+    const val MEDIA3_HDR = 0
+    const val MEDIA3_SKIV = 1
+    const val MEDIA3_SKIV_PIECEWISE = 2
+    val media3HdrToneMapping = intPref("media3_hdr_tone_mapping", MEDIA3_HDR)
+
     val media3PlaybackResume = intPref("media3_playback_resume", MEDIA3_RESUME_AUTO)
 
     const val MEDIA3_AUDIO_OFF = 0

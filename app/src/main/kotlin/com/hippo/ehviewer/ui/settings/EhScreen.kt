@@ -304,6 +304,15 @@ fun AnimatedVisibilityScope.EhScreen(navigator: DestinationsNavigator) = Screen(
                     )
                 }
             }
+            val hdrToneMapping = Settings.media3HdrToneMapping.asMutableState()
+            val hdrEntries = stringArrayResource(id = com.hippo.ehviewer.R.array.media3_hdr_tone_mapping_entries)
+            SimpleMenuPreferenceInt(
+                title = stringResource(id = com.hippo.ehviewer.R.string.settings_media3_hdr_tone_mapping),
+                summary = hdrEntries.getOrElse(hdrToneMapping.value) { hdrEntries.first() },
+                entry = com.hippo.ehviewer.R.array.media3_hdr_tone_mapping_entries,
+                entryValueRes = com.hippo.ehviewer.R.array.media3_hdr_tone_mapping_values,
+                state = hdrToneMapping,
+            )
             val audioDownmixing = Settings.media3AudioDownmixing.asMutableState()
             val audioEntries = stringArrayResource(id = com.hippo.ehviewer.R.array.media3_audio_downmixing_entries)
             val audioIndex = audioDownmixing.value.coerceIn(0, audioEntries.lastIndex)

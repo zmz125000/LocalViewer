@@ -66,6 +66,7 @@ import kotlinx.coroutines.launch
 class VideoPlayerActivity : AppCompatActivity() {
     private var player: ExoPlayer? = null
     private var playerUsesNetworkSource: Boolean? = null
+    private var playerHdrMode = Settings.MEDIA3_HDR
     private var streamToken: String? = null
     private var subtitleTokens: List<String> = emptyList()
     private var playerView: SeekPlayerView? = null
@@ -378,20 +379,35 @@ class VideoPlayerActivity : AppCompatActivity() {
             }
             .build()
 
-        player?.takeIf { playerUsesNetworkSource == network }?.let { existing ->
+        val hdrMode = when (Settings.media3HdrToneMapping.value) {
+            Settings.MEDIA3_SKIV -> Settings.MEDIA3_SKIV
+            Settings.MEDIA3_SKIV_PIECEWISE -> Settings.MEDIA3_SKIV_PIECEWISE
+            else -> Settings.MEDIA3_HDR
+        }
+        player?.takeIf { playerUsesNetworkSource == network && playerHdrMode == hdrMode }?.let { existing ->
             existing.setMediaItem(mediaItem)
             existing.prepare()
             existing.playWhenReady = !holdForResume
             return
         }
 
+        startMediaItem(mediaItem, network, !holdForResume, hdrMode)
+    }
+
+    private fun startMediaItem(
+        mediaItem: MediaItem,
+        network: Boolean,
+        playWhenReady: Boolean,
+        hdrMode: Int,
+        positionMs: Long = C.TIME_UNSET,
+    ) {
         val previous = player
         player = null
         playerUsesNetworkSource = null
         playerView?.player = null
         runCatching { previous?.release() }
 
-        val renderersFactory = Media3AudioRenderersFactory(this, Settings.media3AudioDownmixing.value)
+        val renderersFactory = Media3AudioRenderersFactory(this, Settings.media3AudioDownmixing.value, hdrMode)
         val builder = ExoPlayer.Builder(this, renderersFactory)
             .setAudioAttributes(
                 AudioAttributes.Builder()
@@ -411,7 +427,11 @@ class VideoPlayerActivity : AppCompatActivity() {
         }
 
         val exo = builder.build()
-        exo.setMediaItem(mediaItem)
+        exo.setMediaItem(mediaItem, positionMs)
+        if (hdrMode != Settings.MEDIA3_HDR) {
+            // An empty effect list still enables the shader graph.
+            exo.setVideoEffects(emptyList())
+        }
         exo.addListener(
             object : Player.Listener {
                 override fun onVideoSizeChanged(videoSize: VideoSize) {
@@ -438,15 +458,30 @@ class VideoPlayerActivity : AppCompatActivity() {
 
                 override fun onPlayerError(error: PlaybackException) {
                     logcat("VideoPlayer", error)
+                    if (hdrMode != Settings.MEDIA3_HDR &&
+                        (
+                            error.errorCode == PlaybackException.ERROR_CODE_VIDEO_FRAME_PROCESSING_FAILED ||
+                                error.errorCode == PlaybackException.ERROR_CODE_DECODER_INIT_FAILED
+                            )
+                    ) {
+                        // Some devices cannot expose their HDR decoder output to OpenGL.
+                        val position = exo.currentPosition
+                        val playing = exo.playWhenReady
+                        val item = exo.currentMediaItem ?: return
+                        playerView?.post {
+                            if (player === exo) startMediaItem(item, network, playing, Settings.MEDIA3_HDR, position)
+                        }
+                    }
                 }
             },
         )
         try {
             player = exo
             playerUsesNetworkSource = network
+            playerHdrMode = hdrMode
             playerView?.player = exo
             exo.prepare()
-            exo.playWhenReady = !holdForResume
+            exo.playWhenReady = playWhenReady
         } catch (e: Throwable) {
             if (player === exo) {
                 player = null
