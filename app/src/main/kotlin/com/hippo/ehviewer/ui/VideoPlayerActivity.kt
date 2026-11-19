@@ -300,6 +300,7 @@ class VideoPlayerActivity : AppCompatActivity() {
         findViewById<ImageButton>(R.id.video_rotate).setOnClickListener { toggleRotateWithVideo() }
         refreshRotateButton()
         findViewById<ImageButton>(R.id.video_fit).setOnClickListener { toggleVideoFit() }
+        findViewById<ImageButton>(R.id.video_portrait_fit).setOnClickListener { toggleVideoFit() }
         refreshVideoFitButton()
         val pip = findViewById<ImageButton>(R.id.video_pip)
         val pipAvailable = packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)
@@ -409,7 +410,9 @@ class VideoPlayerActivity : AppCompatActivity() {
             R.id.video_hdr,
         ).map { findViewById<ImageButton>(it) }.filter { it.isEnabled && it.visibility == View.VISIBLE }.toMutableList()
         val fit = findViewById<ImageButton>(R.id.video_fit)
-        if (fit.visibility == View.GONE) buttons += fit
+        if (fit.visibility == View.GONE && findViewById<View>(R.id.video_portrait_fit).visibility == View.GONE) {
+            buttons += fit
+        }
         val labels = buttons.map { it.contentDescription.toString() }
         view.showControlMenu(anchor, labels, -1) { index ->
             val button = buttons[index]
@@ -484,16 +487,18 @@ class VideoPlayerActivity : AppCompatActivity() {
 
     private fun refreshVideoFitButton() {
         val cropped = playerView?.resizeMode == AspectRatioFrameLayout.RESIZE_MODE_ZOOM
-        findViewById<ImageButton>(R.id.video_fit).apply {
-            setImageResource(
-                if (cropped) {
-                    androidx.media3.ui.R.drawable.exo_styled_controls_fullscreen_exit
-                } else {
-                    androidx.media3.ui.R.drawable.exo_styled_controls_fullscreen_enter
-                },
-            )
-            contentDescription = getString(if (cropped) R.string.video_fit_to_screen else R.string.video_crop_to_fill)
-            tooltipText = contentDescription
+        val icon = if (cropped) {
+            androidx.media3.ui.R.drawable.exo_styled_controls_fullscreen_exit
+        } else {
+            androidx.media3.ui.R.drawable.exo_styled_controls_fullscreen_enter
+        }
+        val description = getString(if (cropped) R.string.video_fit_to_screen else R.string.video_crop_to_fill)
+        for (id in listOf(R.id.video_fit, R.id.video_portrait_fit)) {
+            findViewById<ImageButton>(id).apply {
+                setImageResource(icon)
+                contentDescription = description
+                tooltipText = description
+            }
         }
     }
 

@@ -357,6 +357,7 @@ class SeekPlayerView @JvmOverloads constructor(
     private fun layoutControls() {
         val row = findViewById<View>(R.id.video_controls_buttons) ?: return
         val more = findViewById<View>(R.id.video_more) ?: return
+        val compactButtons = findViewById<ViewGroup>(R.id.video_compact_buttons) ?: return
         val left = findViewById<ViewGroup>(R.id.video_track_buttons) ?: return
         val right = findViewById<ViewGroup>(R.id.video_extra_buttons) ?: return
         val transport = findViewById<ViewGroup>(R.id.video_transport) ?: return
@@ -367,6 +368,7 @@ class SeekPlayerView @JvmOverloads constructor(
         for (index in 0 until transport.childCount) transportWidth += transport.getChildAt(index).layoutParams.width
         val portrait = width < height
         val tabletPortrait = portrait && resources.configuration.smallestScreenWidthDp >= WIDTH_DP_MEDIUM_LOWER_BOUND
+        val phonePortrait = portrait && !tabletPortrait
         val compact = !tabletPortrait &&
             (portrait || available < transportWidth + 2 * buttonWidth * maxOf(left.childCount, right.childCount))
         val rewind = findViewById<View>(R.id.video_rewind)
@@ -375,20 +377,38 @@ class SeekPlayerView @JvmOverloads constructor(
         val fit = findViewById<View>(R.id.video_fit)
         val showFit = tabletPortrait || (!portrait && available >= minTransportWidth + buttonWidth * (1 + right.childCount))
         fit.visibility = if (showFit) VISIBLE else GONE
+        val portraitFit = findViewById<View>(R.id.video_portrait_fit)
+        portraitFit.visibility = if (phonePortrait) VISIBLE else GONE
         val rightWidth = (0 until right.childCount).sumOf { index ->
             val button = right.getChildAt(index)
             if (button.visibility == GONE) 0 else button.layoutParams.width
         }
         val showSteps = !portrait && (!compact || available >= transportWidth + buttonWidth + rightWidth)
         left.visibility = if (compact) GONE else VISIBLE
-        more.visibility = if (compact) VISIBLE else GONE
+        compactButtons.visibility = if (compact) VISIBLE else GONE
         rewind.visibility = if (showSteps) VISIBLE else GONE
         forward.visibility = rewind.visibility
         if (!showSteps) transportWidth = minTransportWidth
 
+        val leftWidth = when {
+            phonePortrait -> buttonWidth + portraitFit.layoutParams.width
+            compact -> buttonWidth
+            else -> (0 until left.childCount).sumOf { left.getChildAt(it).layoutParams.width }
+        }
+        // On narrow phones, let the transport buttons share the space between the side controls.
+        val centerWidth = (available - leftWidth - rightWidth).coerceAtLeast(1)
+        val transportLayoutWidth = if (phonePortrait && centerWidth < transportWidth) {
+            transportWidth = centerWidth
+            centerWidth
+        } else {
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        }
+        if (transport.layoutParams.width != transportLayoutWidth) {
+            transport.layoutParams = transport.layoutParams.apply { width = transportLayoutWidth }
+        }
+
         // Keep transport centered where possible while clearing the controls on either side.
         val gap = (available - transportWidth) / 2f
-        val leftWidth = if (compact) buttonWidth else (0 until left.childCount).sumOf { left.getChildAt(it).layoutParams.width }
         val minShift = leftWidth - gap
         transport.translationX = 0f.coerceIn(minShift, maxOf(minShift, gap - rightWidth))
     }

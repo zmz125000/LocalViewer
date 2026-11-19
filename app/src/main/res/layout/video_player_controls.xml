@@ -174,17 +174,36 @@
 
             </LinearLayout>
 
-            <ImageButton
-                android:id="@+id/video_more"
-                android:layout_width="48dp"
-                android:layout_height="48dp"
+            <LinearLayout
+                android:id="@+id/video_compact_buttons"
+                android:layout_width="wrap_content"
+                android:layout_height="@dimen/video_action_height"
                 android:layout_gravity="start|center_vertical"
-                android:background="?attr/selectableItemBackgroundBorderless"
-                android:contentDescription="@string/abc_action_menu_overflow_description"
-                android:padding="12dp"
-                android:src="@drawable/ic_video_more"
-                android:tint="@android:color/white"
-                android:visibility="gone" />
+                android:orientation="horizontal"
+                android:visibility="gone">
+
+                <ImageButton
+                    android:id="@+id/video_more"
+                    android:layout_width="48dp"
+                    android:layout_height="48dp"
+                    android:background="?attr/selectableItemBackgroundBorderless"
+                    android:contentDescription="@string/abc_action_menu_overflow_description"
+                    android:padding="12dp"
+                    android:src="@drawable/ic_video_more"
+                    android:tint="@android:color/white" />
+
+                <ImageButton
+                    android:id="@+id/video_portrait_fit"
+                    android:layout_width="48dp"
+                    android:layout_height="48dp"
+                    android:background="?attr/selectableItemBackgroundBorderless"
+                    android:contentDescription="@string/video_crop_to_fill"
+                    android:padding="12dp"
+                    android:src="@drawable/exo_styled_controls_fullscreen_enter"
+                    android:tint="@android:color/white"
+                    android:visibility="gone" />
+
+            </LinearLayout>
 
             <LinearLayout
                 android:id="@+id/video_transport"
@@ -208,6 +227,7 @@
                     android:id="@+id/video_previous"
                     android:layout_width="48dp"
                     android:layout_height="48dp"
+                    android:layout_weight="1"
                     android:background="?attr/selectableItemBackgroundBorderless"
                     android:contentDescription="@string/exo_controls_previous_description"
                     android:padding="12dp"
@@ -218,6 +238,7 @@
                     android:id="@id/exo_play_pause"
                     android:layout_width="56dp"
                     android:layout_height="56dp"
+                    android:layout_weight="1"
                     android:background="?attr/selectableItemBackgroundBorderless"
                     android:contentDescription="@string/exo_controls_play_description"
                     android:padding="14dp"
@@ -228,6 +249,7 @@
                     android:id="@+id/video_next"
                     android:layout_width="48dp"
                     android:layout_height="48dp"
+                    android:layout_weight="1"
                     android:background="?attr/selectableItemBackgroundBorderless"
                     android:contentDescription="@string/exo_controls_next_description"
                     android:padding="12dp"
