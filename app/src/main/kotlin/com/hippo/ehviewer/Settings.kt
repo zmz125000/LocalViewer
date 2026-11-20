@@ -801,7 +801,7 @@ object Settings : DataStorePreferences(null) {
     val imageConversionKeepExif = boolPref("image_conversion_keep_exif", true)
     val imageConversionExtendedSrgbBt2020 = boolPref("image_conversion_scrgb_bt2020", true)
     val imageConversionToneMapper = intPref("image_conversion_sdr_tone_mapper", 2)
-    val imageConversionToneShoulder = intPref("image_conversion_tone_shoulder", 67)
+    val imageConversionToneShoulder = intPref("image_conversion_tone_shoulder", 50)
     val imageConversionToneRange = intPref("image_conversion_tone_range", 10000)
     val imageConversionSrgbClamp = boolPref("image_conversion_srgb_clamp", false)
     val imageConversionJxlJpegTranscoding = boolPref("image_conversion_jxl_jpeg_transcoding", false)
@@ -1156,7 +1156,7 @@ object Settings : DataStorePreferences(null) {
         get() = !readerHdrDisplay.value && readerHdrToneMapper.value != 0
 
     val readerHdrToneMapper = intPref("reader_hdr_tone_mapper", 0)
-    val readerHdrToneShoulder = intPref("reader_hdr_tone_shoulder", 67)
+    val readerHdrToneShoulder = intPref("reader_hdr_tone_shoulder", 50)
     val readerHdrToneRange = intPref("reader_hdr_tone_range", 10000)
 
     val readerHdrDisplay = boolPref("pref_reader_hdr_display", true)
