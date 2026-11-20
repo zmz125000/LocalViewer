@@ -19,7 +19,7 @@ highp float mpcvrSpline(highp float linearLight, highp float knee,
 }
 
 highp vec3 mpcvrToSdr(highp vec3 bt2020) {
-    const highp float sdrWhite = 125.0 / 10000.0;
+    const highp float sdrWhite = float(MPCVR_SDR_WHITE_NITS) / 10000.0;
     const highp float peak = float(MPCVR_PEAK_NITS) / 10000.0;
     const highp float flatAt = 4000.0 / 10000.0;
     const highp vec3 luminance = vec3(0.2627, 0.6780, 0.0593);
@@ -31,7 +31,14 @@ highp vec3 mpcvrToSdr(highp vec3 bt2020) {
          3.436606694, -0.791329556, -0.025949900,
         -2.506452119,  1.983600452, -0.098913715,
          0.069845424, -0.192270896,  1.124863614);
-    const highp mat3 toBt709 = XYZ_TO_RGB_BT709 * RGB_BT2020_TO_XYZ;
+#if MPCVR_WCG
+    const highp mat3 toDisplay = mat3(
+         1.343578, -0.065298,  0.002822,
+        -0.282180,  1.075788, -0.019598,
+        -0.061398, -0.010490,  1.016777);
+#else
+    const highp mat3 toDisplay = XYZ_TO_RGB_BT709 * RGB_BT2020_TO_XYZ;
+#endif
 
     if (uInputColorTransfer == COLOR_TRANSFER_HLG) {
         bt2020 *= 0.1 * pow(max(dot(luminance, bt2020), 0.0), 0.2);
@@ -39,7 +46,7 @@ highp vec3 mpcvrToSdr(highp vec3 bt2020) {
     highp float y = dot(luminance, bt2020);
     // The original test uses 1e-6 nits, equivalent to 1e-10 here.
     if (y <= 1e-10) {
-        return clamp(toBt709 * bt2020 / sdrWhite, 0.0, 1.0);
+        return clamp(toDisplay * bt2020 / sdrWhite, 0.0, 1.0);
     }
 
     highp float white = pqOetf(vec3(sdrWhite)).x;
@@ -67,10 +74,10 @@ highp vec3 mpcvrToSdr(highp vec3 bt2020) {
         mpcvrSpline(lms.y, knee, width, endpoint, white),
         mpcvrSpline(lms.z, knee, width, endpoint, white)), 0.0);
 
-    highp vec3 scaled709 = toBt709 * scaled;
-    highp float overshoot = max(max(scaled709.r, max(scaled709.g, scaled709.b)) / sdrWhite, 1.0);
+    highp vec3 scaledDisplay = toDisplay * scaled;
+    highp float overshoot = max(max(scaledDisplay.r, max(scaledDisplay.g, scaledDisplay.b)) / sdrWhite, 1.0);
     highp float lmsMix = 1.0 - (1.0 - 0.2003) * pow(overshoot, -2.73);
-    highp vec3 mapped709 = toBt709 * max(mix(scaled, channels, lmsMix), 0.0);
-    highp float mappedMax = max(mapped709.r, max(mapped709.g, mapped709.b));
-    return clamp(mapped709 / max(sdrWhite, mappedMax), 0.0, 1.0);
+    highp vec3 mapped = toDisplay * max(mix(scaled, channels, lmsMix), 0.0);
+    highp float mappedMax = max(mapped.r, max(mapped.g, mapped.b));
+    return clamp(mapped / max(sdrWhite, mappedMax), 0.0, 1.0);
 }

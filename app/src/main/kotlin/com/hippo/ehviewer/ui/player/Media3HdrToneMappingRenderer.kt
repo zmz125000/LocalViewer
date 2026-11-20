@@ -56,6 +56,8 @@ internal fun Format.withHdrToneMappingColorRange(decodedRange: Int = Format.NO_V
     return buildUpon().setColorInfo(color.buildUpon().setColorRange(range).build()).build()
 }
 
+private const val MPCVR_SDR_WHITE_NITS = 203
+
 internal fun mpcvrPeakNits(hdrStaticInfo: ByteBuffer?): Int? {
     // Android's 25-byte CTA-861.3 Type 1 descriptor stores mastering max and MaxCLL as LE uint16.
     if (hdrStaticInfo == null || hdrStaticInfo.remaining() < 25) return null
@@ -63,7 +65,7 @@ internal fun mpcvrPeakNits(hdrStaticInfo: ByteBuffer?): Int? {
     if (descriptor.get(0).toInt() != 0) return null
     val maxCll = descriptor.getShort(21).toInt() and 0xffff
     val masteringMax = descriptor.getShort(17).toInt() and 0xffff
-    return (maxCll.takeIf { it > 10 } ?: masteringMax.takeIf { it > 10 })?.coerceIn(126, 10000)
+    return (maxCll.takeIf { it > 10 } ?: masteringMax.takeIf { it > 10 })?.coerceIn(MPCVR_SDR_WHITE_NITS + 1, 10000)
 }
 
 @UnstableApi
@@ -236,7 +238,9 @@ private class HdrToneMappingShaderContext(
             val end = if (start >= 0) source.indexOf("\n}", start) else -1
             check(end >= 0) { "Media3 HDR sampler shader has changed" }
             val mode = if (mpcvrPeakNits != null) {
-                "#define MPCVR_PEAK_NITS ${mpcvrPeakNits()}"
+                "#define MPCVR_PEAK_NITS ${mpcvrPeakNits()}\n" +
+                    "#define MPCVR_SDR_WHITE_NITS $MPCVR_SDR_WHITE_NITS\n" +
+                    "#define MPCVR_WCG ${if (wideColor) 1 else 0}"
             } else {
                 "#define SKIV_PIECEWISE ${if (piecewise) 1 else 0}\n#define SKIV_WCG ${if (wideColor) 1 else 0}"
             }

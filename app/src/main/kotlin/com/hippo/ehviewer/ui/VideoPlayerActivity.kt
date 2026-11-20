@@ -688,7 +688,7 @@ class VideoPlayerActivity : AppCompatActivity() {
 
     private fun effectiveVideoColorMode(mode: Int): Int {
         if (trackSupportsHdrToneMapping != true) return Settings.MEDIA3_HDR
-        if (mode !in Settings.MEDIA3_HDR..Settings.MEDIA3_MPCVR) return Settings.MEDIA3_HDR
+        if (mode !in Settings.MEDIA3_HDR..Settings.MEDIA3_MPCVR_WCG) return Settings.MEDIA3_HDR
         val sdrMode = Settings.media3SdrFallback(mode)
         return if (mode != sdrMode && (wideColorOutputFailed || !supportsWideColorGamut())) sdrMode else mode
     }

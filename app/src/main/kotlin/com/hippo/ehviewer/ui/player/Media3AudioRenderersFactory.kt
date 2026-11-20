@@ -64,7 +64,7 @@ internal class Media3AudioRenderersFactory(
             builder,
             piecewise = sdrMode == Settings.MEDIA3_SKIV_PIECEWISE,
             wideColor = hdrMode != sdrMode,
-            mpcvr = hdrMode == Settings.MEDIA3_MPCVR,
+            mpcvr = sdrMode == Settings.MEDIA3_MPCVR,
         )
     }
 
