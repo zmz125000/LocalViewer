@@ -71,7 +71,7 @@ internal fun mpcvrPeakNits(hdrStaticInfo: ByteBuffer?): Int? {
 @UnstableApi
 internal class Media3HdrToneMappingRenderer(
     builder: Builder,
-    private val piecewise: Boolean,
+    private val piecewiseShoulder: Int?,
     private val wideColor: Boolean,
     private val mpcvr: Boolean,
 ) : MediaCodecVideoRenderer(builder) {
@@ -173,7 +173,7 @@ internal class Media3HdrToneMappingRenderer(
                     .apply { if (wideColor) setGlObjectsProvider(Media3WideColorGlObjects()) }
                     .build(),
             ).create(
-                HdrToneMappingShaderContext(context.applicationContext, piecewise, wideColor, if (mpcvr) ::mpcvrShaderPeak else null),
+                HdrToneMappingShaderContext(context.applicationContext, piecewiseShoulder, wideColor, if (mpcvr) ::mpcvrShaderPeak else null),
                 outputColorInfo,
                 debugViewProvider,
                 listener,
@@ -195,7 +195,7 @@ internal class Media3HdrToneMappingRenderer(
 @Suppress("DEPRECATION")
 private class HdrToneMappingShaderContext(
     context: Context,
-    piecewise: Boolean,
+    piecewiseShoulder: Int?,
     wideColor: Boolean,
     mpcvrPeakNits: (() -> Int)?,
 ) : ContextWrapper(context) {
@@ -242,7 +242,9 @@ private class HdrToneMappingShaderContext(
                     "#define MPCVR_SDR_WHITE_NITS $MPCVR_SDR_WHITE_NITS\n" +
                     "#define MPCVR_WCG ${if (wideColor) 1 else 0}"
             } else {
-                "#define SKIV_PIECEWISE ${if (piecewise) 1 else 0}\n#define SKIV_WCG ${if (wideColor) 1 else 0}"
+                "#define SKIV_PIECEWISE ${if (piecewiseShoulder != null) 1 else 0}\n" +
+                    "#define SKIV_SHOULDER_PERCENT ${piecewiseShoulder ?: 0}\n" +
+                    "#define SKIV_WCG ${if (wideColor) 1 else 0}"
             }
             val toneMap = if (mpcvrPeakNits != null) "mpcvrToSdr" else "skivToSdr"
             val colorEncoding = if (wideColor) displayP3Shader else ""

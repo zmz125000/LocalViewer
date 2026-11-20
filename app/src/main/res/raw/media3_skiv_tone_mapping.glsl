@@ -69,7 +69,8 @@ highp vec3 skivToSdr(highp vec3 bt2020) {
     highp float outputNits = 80.0;
 #if SKIV_PIECEWISE
     outputNits = 203.0;
-    highp float knee = pqOetf(vec3(0.67 * outputNits / 10000.0)).x;
+    const highp float shoulder = float(SKIV_SHOULDER_PERCENT) / 100.0;
+    highp float knee = pqOetf(vec3(shoulder * outputNits / 10000.0)).x;
     if (inputIntensity <= knee)
         return clamp(xyzToOutputRgb * xyz * (10000.0 / outputNits), 0.0, 1.0);
 

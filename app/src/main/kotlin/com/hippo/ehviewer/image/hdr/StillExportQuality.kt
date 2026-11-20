@@ -50,7 +50,7 @@ internal data class SdrToneMapping(
 
     companion object {
         fun current() = SdrToneMapping(
-            Settings.imageConversionToneMapper.value.coerceIn(0, 2),
+            Settings.imageConversionToneMapper.value.coerceIn(0, 3),
             Settings.imageConversionToneShoulder.value.coerceIn(0, 95) / 100f,
             Settings.imageConversionToneRange.value.coerceIn(204, 10000).toFloat(),
         )
