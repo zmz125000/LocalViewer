@@ -32,8 +32,14 @@ import androidx.compose.ui.unit.dp
 import com.ehviewer.core.ui.component.Slider
 
 @Composable
-fun SpinnerChoice(title: String, entries: Array<String>, values: List<Int>, field: MutableState<Int>) {
-    var value by field
+fun SpinnerChoice(
+    title: String,
+    entries: Array<String>,
+    values: List<Int>,
+    field: MutableState<Int>,
+    onSelected: (Int) -> Unit = { field.value = it },
+) {
+    val value by field
     var dropdown by remember { mutableStateOf(false) }
     val data = remember { entries zip values }
     Row(
@@ -54,7 +60,7 @@ fun SpinnerChoice(title: String, entries: Array<String>, values: List<Int>, fiel
                         text = { Text(text = k) },
                         onClick = {
                             dropdown = false
-                            value = v
+                            onSelected(v)
                         },
                         modifier = Modifier.width(192.dp),
                         leadingIcon = {

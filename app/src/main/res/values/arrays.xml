@@ -815,8 +815,8 @@
     <string-array name="media3_hdr_tone_mapping_entries">
         <item>HDR</item>
         <item>SKIV (SDR)</item>
-        <item>SKIV Piecewise (SDR)</item>
         <item>SKIV (WCG)</item>
+        <item>SKIV Piecewise (SDR)</item>
         <item>SKIV Piecewise (WCG)</item>
         <item>MPCVR (SDR)</item>
         <item>MPCVR (WCG)</item>
