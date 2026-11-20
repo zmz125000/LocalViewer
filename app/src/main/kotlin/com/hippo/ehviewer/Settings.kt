@@ -801,7 +801,7 @@ object Settings : DataStorePreferences(null) {
     val imageConversionKeepExif = boolPref("image_conversion_keep_exif", true)
     val imageConversionExtendedSrgbBt2020 = boolPref("image_conversion_scrgb_bt2020", true)
     val imageConversionToneMapper = intPref("image_conversion_sdr_tone_mapper", 2)
-    val imageConversionToneShoulder = intPref("image_conversion_tone_shoulder", 67)
+    val imageConversionToneShoulder = intPref("image_conversion_tone_shoulder", 50)
     val imageConversionToneRange = intPref("image_conversion_tone_range", 10000)
     val imageConversionSrgbClamp = boolPref("image_conversion_srgb_clamp", false)
     val imageConversionJxlJpegTranscoding = boolPref("image_conversion_jxl_jpeg_transcoding", false)
@@ -1039,11 +1039,14 @@ object Settings : DataStorePreferences(null) {
     const val MEDIA3_SKIV_PIECEWISE = 2
     const val MEDIA3_SKIV_WCG = 3
     const val MEDIA3_SKIV_PIECEWISE_WCG = 4
+    const val MEDIA3_MPCVR = 5
+    const val MEDIA3_MPCVR_WCG = 6
     val media3HdrToneMapping = intPref("media3_hdr_tone_mapping", MEDIA3_HDR)
 
     fun media3SdrFallback(mode: Int): Int = when (mode) {
         MEDIA3_SKIV_WCG -> MEDIA3_SKIV
         MEDIA3_SKIV_PIECEWISE_WCG -> MEDIA3_SKIV_PIECEWISE
+        MEDIA3_MPCVR_WCG -> MEDIA3_MPCVR
         else -> mode
     }
 
@@ -1057,6 +1060,8 @@ object Settings : DataStorePreferences(null) {
 
     /** In-app video audio output: original, device layout, stereo, or encoded passthrough. */
     val media3AudioDownmixing = intPref("media3_audio_downmixing", MEDIA3_AUDIO_DEVICE)
+    internal val media3PlayerBrightness = intPref("media3_player_brightness", -1)
+    internal val media3PlayerVolume = floatPref("media3_player_volume", -1f)
 
     /**
      * Coil decode size vs shorter screen edge:
@@ -1151,7 +1156,7 @@ object Settings : DataStorePreferences(null) {
         get() = !readerHdrDisplay.value && readerHdrToneMapper.value != 0
 
     val readerHdrToneMapper = intPref("reader_hdr_tone_mapper", 0)
-    val readerHdrToneShoulder = intPref("reader_hdr_tone_shoulder", 67)
+    val readerHdrToneShoulder = intPref("reader_hdr_tone_shoulder", 50)
     val readerHdrToneRange = intPref("reader_hdr_tone_range", 10000)
 
     val readerHdrDisplay = boolPref("pref_reader_hdr_display", true)

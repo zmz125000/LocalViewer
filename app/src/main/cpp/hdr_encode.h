@@ -17,8 +17,8 @@ struct StillEncodeQuality {
     size_t exif_size = 0;
     bool jxl_scrgb = false;
     bool srgb_clamp = false;
-    int sdr_mapper = 0; // Off / SKIV / SKIV custom.
-    float sdr_shoulder = .67f, sdr_range_nits = 10000.f;
+    int sdr_mapper = 0; // Off / SKIV / SKIV custom / MPCVR.
+    float sdr_shoulder = .50f, sdr_range_nits = 10000.f;
     unsigned source_bits = 32; // Source precision, independent of working-buffer storage.
     int preset;
     float custom_distance;

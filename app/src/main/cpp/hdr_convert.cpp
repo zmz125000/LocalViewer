@@ -24,6 +24,7 @@
 
 #include "hdr_encode.h"
 #include "sdr_tone_map.h"
+#include "mpcvr_tone_map.h"
 #include "reader_pixels.h"
 #include "hdr_parallel.h"
 #include "ultrahdr_api.h"
@@ -1825,7 +1826,7 @@ static bool read_tone_controls(JNIEnv* env,jfloatArray controls,StillEncodeQuali
     float v[3];env->GetFloatArrayRegion(controls,0,3,v);
     if(env->ExceptionCheck())return false;
     for(float value:v)if(!std::isfinite(value))return false;
-    if(v[0]<0.f||v[0]>2.f||v[0]!=std::floor(v[0])||v[1]<0.f||v[1]>.95f||v[2]<204.f||v[2]>10000.f)return false;
+    if(v[0]<0.f||v[0]>3.f||v[0]!=std::floor(v[0])||v[1]<0.f||v[1]>.95f||v[2]<204.f||v[2]>10000.f)return false;
     quality.sdr_mapper=int(v[0]);quality.sdr_shoulder=v[1];quality.sdr_range_nits=v[2];return true;
 }
 
@@ -1961,8 +1962,12 @@ int encode_still_export_f32(float* src,unsigned w,unsigned h,int gamut,int mode,
             for(unsigned c=0;c<3;++c)if(std::isfinite(src[i*4+c]))peak=std::max(peak,src[i*4+c]);
         if(peak>1.f) {
             const int working_gamut=cg==UHDR_CG_BT_2100?2:cg==UHDR_CG_DISPLAY_P3?1:0;
-            mapped=tone_map_skiv_base(std::vector<float>(src,src+pixels*4),working_gamut,
-                quality.sdr_mapper==2,quality.sdr_shoulder,quality.sdr_range_nits);
+            if (quality.sdr_mapper == 3) {
+                mapped = tone_map_mpcvr_base(std::vector<float>(src, src + pixels * 4), working_gamut, peak);
+            } else {
+                mapped = tone_map_skiv_base(std::vector<float>(src, src + pixels * 4), working_gamut,
+                    quality.sdr_mapper == 2, quality.sdr_shoulder, quality.sdr_range_nits);
+            }
             if(mode==kExportJpegHdr||mode==kExportAvifGainMap)sdr_base=mapped.data();
             else src=mapped.data();
         }

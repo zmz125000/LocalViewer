@@ -818,6 +818,8 @@
         <item>SKIV Piecewise (SDR)</item>
         <item>SKIV (WCG)</item>
         <item>SKIV Piecewise (WCG)</item>
+        <item>MPCVR (SDR)</item>
+        <item>MPCVR (WCG)</item>
     </string-array>
     <integer-array name="media3_hdr_tone_mapping_values" translatable="false">
         <item>0</item>
@@ -825,6 +827,8 @@
         <item>2</item>
         <item>3</item>
         <item>4</item>
+        <item>5</item>
+        <item>6</item>
     </integer-array>
 
     <string-array name="media3_audio_downmixing_entries">
@@ -840,8 +844,9 @@
         <item>@string/image_conversion_tone_off</item>
         <item>@string/image_conversion_tone_skiv</item>
         <item>@string/image_conversion_tone_custom</item>
+        <item>MPCVR</item>
     </string-array>
-    <integer-array name="sdr_tone_mapper_values" translatable="false"><item>0</item><item>1</item><item>2</item></integer-array>
+    <integer-array name="sdr_tone_mapper_values" translatable="false"><item>0</item><item>1</item><item>2</item><item>3</item></integer-array>
     <string-array name="reader_tone_mapper_entries">
         <item>@string/image_conversion_tone_off</item>
         <item>@string/image_conversion_tone_skiv</item>
