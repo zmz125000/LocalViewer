@@ -46,6 +46,7 @@ fun ReaderModeSetting(
         entries = stringArrayResource(id = com.hippo.ehviewer.R.array.viewers_selector),
         values = ReadingModeType.entries.map { it.prefValue },
         field = readingMode,
+        onSelected = Settings::selectReadingMode,
     )
     if (supportsPageTransitions) {
         SpinnerChoice(

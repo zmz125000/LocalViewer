@@ -1,7 +1,9 @@
 package eu.kanade.tachiyomi.ui.reader
 
 import android.content.res.Configuration
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
@@ -19,17 +21,21 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.Text
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.ehviewer.core.i18n.R
@@ -59,14 +65,19 @@ fun BottomReaderBar(
 ) {
     // 1. Reading mode
     val readingMode by Settings.readingMode.collectAsState { ReadingModeType.fromPreference(it) }
+    val previousMode = if (onClickContents == null) {
+        val previous by Settings.previousReadingMode.collectAsState()
+        ReadingModeType.entries.find { it.prefValue == previous && it != readingMode }
+    } else {
+        null
+    }
     DropdownIconButton(
         label = stringResource(R.string.viewer),
         menuItems = ReadingModeType.entries,
         selectedItem = readingMode,
-        onSelectedItemChange = {
-            Settings.readingMode.value = it.prefValue
-        },
+        onSelectedItemChange = { Settings.selectReadingMode(it.prefValue) },
         minMenuWidth = 192.dp,
+        onLongClick = previousMode?.let { mode -> { Settings.selectReadingMode(mode.prefValue) } },
     )
     if (onClickContents != null) {
         ActionButton(
@@ -181,6 +192,7 @@ private fun DropdownIconButton(
     onSelectedItemChange: (PreferenceType) -> Unit,
     modifier: Modifier = Modifier,
     minMenuWidth: Dp = Dp.Unspecified,
+    onLongClick: (() -> Unit)? = null,
 ) {
     var expanded by remember { mutableStateOf(false) }
     ExposedDropdownMenuBox(
@@ -188,12 +200,34 @@ private fun DropdownIconButton(
         onExpandedChange = { expanded = it },
         modifier = modifier,
     ) {
-        ActionButton(
-            onClick = {},
-            imageVector = selectedItem.icon,
-            contentDescription = label,
-            modifier = Modifier.menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable),
-        )
+        if (onLongClick == null) {
+            ActionButton(
+                onClick = {},
+                imageVector = selectedItem.icon,
+                contentDescription = label,
+                modifier = Modifier.menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable),
+            )
+        } else {
+            Box(
+                modifier = Modifier
+                    .menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable, enabled = false)
+                    .minimumInteractiveComponentSize()
+                    .size(IconButtonDefaults.mediumContainerSize(IconButtonDefaults.IconButtonWidthOption.Wide))
+                    .clip(IconButtonDefaults.mediumRoundShape)
+                    .combinedClickable(
+                        role = Role.Button,
+                        onClick = { expanded = true },
+                        onLongClick = onLongClick,
+                    ),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = selectedItem.icon,
+                    contentDescription = label,
+                    modifier = Modifier.size(IconButtonDefaults.mediumIconSize),
+                )
+            }
+        }
         ExposedDropdownMenu(
             expanded = expanded,
             onDismissRequest = { expanded = false },
