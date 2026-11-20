@@ -33,6 +33,14 @@ sealed interface InternalVideoSource {
     }
 }
 
+internal fun InternalVideoSource.audioBoostFolder(): String = when (this) {
+    is InternalVideoSource.Local -> ZipPaths.parse(path)?.let { (archive, member) ->
+        "zip:$archive!${member.substringBeforeLast('/', "")}"
+    } ?: "local:${path.substringBeforeLast('/', "")}"
+    is InternalVideoSource.Smb -> "smb:$sourceId:${remotePath.replace('\\', '/').trim('/').substringBeforeLast('/', "")}"
+    is InternalVideoSource.WebDav -> "dav:$sourceId:${remotePath.trim('/').substringBeforeLast('/', "")}"
+}
+
 /**
  * Same gallery id [com.hippo.ehviewer.library.LocalHistory] writes for this file,
  * so playback position shares the reader progress row.

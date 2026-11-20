@@ -14,6 +14,7 @@ import android.graphics.Rect
 import android.graphics.drawable.Icon
 import android.media.AudioManager
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.provider.Settings as AndroidSettings
 import android.util.Log
@@ -46,6 +47,7 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.AspectRatioFrameLayout
 import com.ehviewer.core.database.model.ProgressInfo
+import com.ehviewer.core.preferences.MutableSnapshot
 import com.ehviewer.core.util.logcat
 import com.ehviewer.core.util.withNonCancellableContext
 import com.hippo.ehviewer.EhDB
@@ -63,6 +65,7 @@ import com.hippo.ehviewer.ui.player.SeekPlayerView
 import com.hippo.ehviewer.ui.player.SiblingTrackChoice
 import com.hippo.ehviewer.ui.player.StreamDocDataSource
 import com.hippo.ehviewer.ui.player.applyVideoSubtitleHistory
+import com.hippo.ehviewer.ui.player.audioBoostFolder
 import com.hippo.ehviewer.ui.player.progressGid
 import com.hippo.ehviewer.ui.player.restoreSiblingTrack
 import com.hippo.ehviewer.ui.player.restoreVideoTrack
@@ -96,7 +99,11 @@ class VideoPlayerActivity : AppCompatActivity() {
     private var playerAudioMode = Settings.MEDIA3_AUDIO_DEVICE
     private var defaultTrackSelection = TrackSelectionParameters.DEFAULT
     private var audioBoostDb = 0
+    private var audioBoostFolder: String? = null
     private val audioManager by lazy { getSystemService(AudioManager::class.java) }
+    private var customMediaVolume: Float? = null
+    private var playerBrightness: Int? = null
+    private val originalMediaVolumes = mutableMapOf<List<Int>, Int>()
     private var audioBoostProcessor: Media3AudioBoostProcessor? = null
     private var streamToken: String? = null
     private var subtitleTokens: List<String> = emptyList()
@@ -147,6 +154,9 @@ class VideoPlayerActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         subtitleHistory = Settings.media3SubtitleHistory.value
+        customMediaVolume = Settings.media3PlayerVolume.value.takeIf { it in 0f..1f }
+        playerBrightness = Settings.media3PlayerBrightness.value.takeIf { it in 1..100 }
+        applyBrightness()
         volumeControlStream = AudioManager.STREAM_MUSIC
         enableEdgeToEdge(
             statusBarStyle = SystemBarStyle.dark(android.graphics.Color.BLACK),
@@ -211,6 +221,7 @@ class VideoPlayerActivity : AppCompatActivity() {
                 subtitleTokens = nextSubtitleTokens,
                 holdForResume = nextSource != null,
                 inheritTracks = nextSource != null && nextSource != previousSource && previousSource in nextItems,
+                boostFolder = nextSource?.audioBoostFolder(),
             )
         } catch (e: Throwable) {
             Log.e("VideoPlayer", "Unable to open the media item", e)
@@ -234,6 +245,10 @@ class VideoPlayerActivity : AppCompatActivity() {
 
     override fun onStart() {
         super.onStart()
+        customMediaVolume?.let { fraction ->
+            setPlayerMediaVolume((fraction * audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)).roundToInt())
+            updateVolumeButton()
+        }
         // Resume seeks once duration is known. Starting here would play from 0 first.
         if (pendingResumeGid == 0L) player?.playWhenReady = true
     }
@@ -243,6 +258,7 @@ class VideoPlayerActivity : AppCompatActivity() {
         savePlaybackProgress()
         // PiP stays started. Pausing here would freeze the small window.
         if (!isInPictureInPictureMode) player?.playWhenReady = false
+        if (!isInPictureInPictureMode || isFinishing) restoreSystemMediaVolume()
         super.onStop()
     }
 
@@ -256,6 +272,7 @@ class VideoPlayerActivity : AppCompatActivity() {
             finish()
             return
         }
+        applyBrightness(isInPictureInPictureMode)
         playerView?.useController = !isInPictureInPictureMode
         if (isInPictureInPictureMode) {
             playerView?.hideController()
@@ -268,6 +285,7 @@ class VideoPlayerActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         unregisterPipControl()
+        restoreSystemMediaVolume()
         releasePlayer()
         streamToken?.let(StreamDocumentRegistry::remove)
         streamToken = null
@@ -357,6 +375,15 @@ class VideoPlayerActivity : AppCompatActivity() {
             } else {
                 audioBoostProcessor?.setGainDb(level)
             }
+            if (audioBoostDb != previous) {
+                audioBoostFolder?.let { folder ->
+                    if (audioBoostDb == 0) {
+                        sessionAudioBoostByFolder.remove(folder)
+                    } else {
+                        sessionAudioBoostByFolder[folder] = audioBoostDb
+                    }
+                }
+            }
             updatePlaybackOptionButtons()
         }
     }
@@ -381,19 +408,65 @@ class VideoPlayerActivity : AppCompatActivity() {
             getString(R.string.video_volume),
             audioManager.getStreamMinVolume(stream)..audioManager.getStreamMaxVolume(stream),
             volume,
+            systemLevel = originalMediaVolumes[mediaVolumeRoute()] ?: volume,
             adjustable = !audioManager.isVolumeFixed,
         ) { level ->
-            if (level != null && level != audioManager.getStreamVolume(stream)) {
-                audioManager.setStreamVolume(stream, level, 0)
+            val current = if (level == null) {
+                rememberPlayerVolume(null)
+                restoreSystemMediaVolume()
+                audioManager.getStreamVolume(stream)
+            } else {
+                setPlayerMediaVolume(level).also(::rememberCurrentPlayerVolume)
             }
-            val current = audioManager.getStreamVolume(stream)
             updateVolumeButton(current)
             current
         }
     }
 
-    private fun brightnessLevel(): Int? = window.attributes.screenBrightness.takeIf { it >= 0f }
-        ?.let { (it * 100).roundToInt() }
+    private fun mediaVolumeRoute(): List<Int> {
+        if (Build.VERSION.SDK_INT < 33) return emptyList()
+        val attributes = android.media.AudioAttributes.Builder()
+            .setUsage(android.media.AudioAttributes.USAGE_MEDIA)
+            .setContentType(android.media.AudioAttributes.CONTENT_TYPE_MOVIE)
+            .build()
+        return audioManager.getAudioDevicesForAttributes(attributes).map { it.id }.sorted()
+    }
+
+    private fun setPlayerMediaVolume(level: Int): Int {
+        val stream = AudioManager.STREAM_MUSIC
+        if (!audioManager.isVolumeFixed) {
+            val current = audioManager.getStreamVolume(stream)
+            originalMediaVolumes.putIfAbsent(mediaVolumeRoute(), current)
+            val next = level.coerceIn(audioManager.getStreamMinVolume(stream), audioManager.getStreamMaxVolume(stream))
+            if (next != current) audioManager.setStreamVolume(stream, next, 0)
+        }
+        return audioManager.getStreamVolume(stream)
+    }
+
+    private fun restoreSystemMediaVolume() {
+        if (originalMediaVolumes.isEmpty()) return
+        val original = originalMediaVolumes[mediaVolumeRoute()]
+        originalMediaVolumes.clear()
+        val stream = AudioManager.STREAM_MUSIC
+        if (original != null && original != audioManager.getStreamVolume(stream)) audioManager.setStreamVolume(stream, original, 0)
+    }
+
+    private fun rememberCurrentPlayerVolume(level: Int) {
+        val max = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC).coerceAtLeast(1)
+        rememberPlayerVolume((level.toFloat() / max).coerceIn(0f, 1f))
+    }
+
+    private fun rememberPlayerVolume(fraction: Float?) {
+        if (fraction == customMediaVolume) return
+        customMediaVolume = fraction
+        storePlayerSettings { it[Settings.media3PlayerVolume] = fraction ?: -1f }
+    }
+
+    private fun storePlayerSettings(update: (MutableSnapshot) -> Unit) {
+        lifecycleScope.launch(start = CoroutineStart.UNDISPATCHED) {
+            withNonCancellableContext { Settings.withMutableSnapshot(update) }
+        }
+    }
 
     private fun showBrightnessMenu(anchor: View) {
         val brightness = AndroidSettings.System.getInt(contentResolver, AndroidSettings.System.SCREEN_BRIGHTNESS, 128)
@@ -401,16 +474,26 @@ class VideoPlayerActivity : AppCompatActivity() {
             anchor,
             getString(R.string.video_brightness),
             1..100,
-            brightnessLevel(),
+            playerBrightness,
             systemLevel = (brightness * 100f / 255f).roundToInt(),
         ) { level ->
-            if (level != brightnessLevel()) {
-                window.attributes = window.attributes.apply {
-                    screenBrightness = level?.div(100f) ?: WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
-                }
+            if (level != playerBrightness) {
+                playerBrightness = level
+                applyBrightness()
+                storePlayerSettings { it[Settings.media3PlayerBrightness] = level ?: -1 }
                 updateBrightnessButton()
             }
             level
+        }
+    }
+
+    private fun applyBrightness(inPip: Boolean = isInPictureInPictureMode) {
+        val level = playerBrightness.takeUnless { inPip }
+        val brightness = level?.div(100f) ?: WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
+        val attributes = window.attributes
+        if (attributes.screenBrightness != brightness) {
+            attributes.screenBrightness = brightness
+            window.attributes = attributes
         }
     }
 
@@ -428,7 +511,7 @@ class VideoPlayerActivity : AppCompatActivity() {
 
     private fun updateBrightnessButton() {
         findViewById<ImageButton>(R.id.video_brightness).stateDescription =
-            brightnessLevel()?.let { getString(R.string.video_level_percent, it) } ?: getString(R.string.video_level_system)
+            playerBrightness?.let { getString(R.string.video_level_percent, it) } ?: getString(R.string.video_level_system)
     }
 
     private fun showMoreControls(anchor: View) {
@@ -592,6 +675,7 @@ class VideoPlayerActivity : AppCompatActivity() {
                 subtitleTokens = prepared.subtitleTokens,
                 holdForResume = true,
                 inheritTracks = true,
+                boostFolder = source.audioBoostFolder(),
             )
         } catch (e: Throwable) {
             prepared.subtitleTokens.forEach(StreamDocumentRegistry::remove)
@@ -614,6 +698,7 @@ class VideoPlayerActivity : AppCompatActivity() {
         subtitleTokens: List<String>,
         holdForResume: Boolean,
         inheritTracks: Boolean,
+        boostFolder: String?,
     ) {
         // Drop the previous file's id before prepare callbacks, so a reset position
         // is not written over the progress just saved for that file.
@@ -658,16 +743,19 @@ class VideoPlayerActivity : AppCompatActivity() {
             .build()
 
         // Start on the direct path. The selected video track enables tone mapping only if it is HDR.
-        player?.takeIf { playerUsesNetworkSource == network && playerHdrMode == Settings.MEDIA3_HDR }?.let { existing ->
+        val boost = boostFolder?.let { sessionAudioBoostByFolder[it] } ?: 0
+        player?.takeIf { playerUsesNetworkSource == network && playerHdrMode == Settings.MEDIA3_HDR && audioBoostDb == boost }?.let { existing ->
             existing.playWhenReady = false
             existing.trackSelectionParameters = defaultTrackSelection
             existing.setMediaItem(mediaItem)
             existing.prepare()
             existing.playWhenReady = !holdForResume
+            audioBoostFolder = boostFolder
             return
         }
 
-        startMediaItem(mediaItem, network, !holdForResume, Settings.MEDIA3_HDR)
+        startMediaItem(mediaItem, network, !holdForResume, Settings.MEDIA3_HDR, boostDb = boost)
+        audioBoostFolder = boostFolder
     }
 
     private fun restartCurrentMediaItem(hdrMode: Int, audioOutputMode: Int = playerAudioMode): Boolean {
@@ -709,15 +797,16 @@ class VideoPlayerActivity : AppCompatActivity() {
         positionMs: Long = C.TIME_UNSET,
         preservePlaybackSettings: Boolean = false,
         audioOutputMode: Int = playerAudioMode,
+        boostDb: Int = audioBoostDb,
     ) {
         val previous = player
         // Audio boost needs decoded PCM to control the audio samples.
-        val audioMode = if (audioOutputMode == Settings.MEDIA3_AUDIO_PASSTHROUGH && audioBoostDb > 0) {
+        val audioMode = if (audioOutputMode == Settings.MEDIA3_AUDIO_PASSTHROUGH && boostDb > 0) {
             Settings.MEDIA3_AUDIO_DEVICE
         } else {
             audioOutputMode
         }
-        val boost = if (audioBoostDb > 0) Media3AudioBoostProcessor(audioBoostDb) else null
+        val boost = if (boostDb > 0) Media3AudioBoostProcessor(boostDb) else null
         val renderersFactory = Media3AudioRenderersFactory(this, audioMode, hdrMode, boost)
         val builder = ExoPlayer.Builder(this, renderersFactory)
             .setAudioAttributes(
@@ -758,6 +847,9 @@ class VideoPlayerActivity : AppCompatActivity() {
                     if (player !== exo) return
                     val current = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
                     updateVolumeButton(current)
+                    if (customMediaVolume != null && mediaVolumeRoute() in originalMediaVolumes) {
+                        rememberCurrentPlayerVolume(current)
+                    }
                     playerView?.refreshLevelMenu(R.id.video_volume, current)
                 }
 
@@ -828,6 +920,7 @@ class VideoPlayerActivity : AppCompatActivity() {
             playerAudioMode = audioOutputMode
             defaultTrackSelection = defaultTracks
             audioBoostProcessor = boost
+            audioBoostDb = boostDb
             applyVideoColorMode(hdrMode)
             updatePlaybackOptionButtons()
             playerView?.player = exo
@@ -1089,6 +1182,7 @@ class VideoPlayerActivity : AppCompatActivity() {
         const val EXTRA_PLAYLIST_INDEX = "playlist_index"
 
         private val progressIo = Mutex()
+        private val sessionAudioBoostByFolder = mutableMapOf<String, Int>()
 
         private const val CONTROLLER_TIMEOUT_MS = 2_800
         private const val PROGRESS_SAVE_INTERVAL_MS = 5_000L

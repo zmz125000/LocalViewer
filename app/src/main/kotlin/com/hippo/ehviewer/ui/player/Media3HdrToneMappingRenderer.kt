@@ -12,6 +12,7 @@ import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Tracks
 import androidx.media3.common.VideoGraph
+import androidx.media3.common.VideoSize
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.effect.DefaultVideoFrameProcessor
 import androidx.media3.effect.R as EffectResources
@@ -23,6 +24,8 @@ import androidx.media3.exoplayer.mediacodec.MediaCodecUtil
 import androidx.media3.exoplayer.video.MediaCodecVideoRenderer
 import androidx.media3.exoplayer.video.PlaybackVideoGraphWrapper
 import androidx.media3.exoplayer.video.VideoFrameReleaseControl
+import androidx.media3.exoplayer.video.VideoRendererEventListener
+import androidx.media3.exoplayer.video.VideoSink
 import com.hippo.ehviewer.R
 import java.io.InputStream
 import java.nio.ByteBuffer
@@ -71,6 +74,7 @@ internal fun mpcvrPeakNits(hdrStaticInfo: ByteBuffer?): Int? {
 @UnstableApi
 internal class Media3HdrToneMappingRenderer(
     builder: Builder,
+    private val videoEvents: VideoRendererEventListener.EventDispatcher,
     private val piecewiseShoulder: Int?,
     private val wideColor: Boolean,
     private val mpcvr: Boolean,
@@ -138,6 +142,18 @@ internal class Media3HdrToneMappingRenderer(
             contentPeakNits = mpcvrPeakNits(mediaFormat?.getByteBuffer(MediaFormat.KEY_HDR_STATIC_INFO))
         }
         super.onOutputFormatChanged(format.withHdrToneMappingColorRange(decodedRange), mediaFormat)
+    }
+
+    override fun changeVideoSinkInputStream(
+        videoSink: VideoSink,
+        inputType: Int,
+        format: Format,
+        firstFrameReleaseInstruction: Int,
+    ) {
+        super.changeVideoSinkInputStream(videoSink, inputType, format, firstFrameReleaseInstruction)
+        // Media3 suppresses video-size events from the effects sink. This format already
+        // contains the decoder crop, rotation and pixel aspect ratio, independent of the view size.
+        videoEvents.videoSizeChanged(VideoSize(format.width, format.height, format.pixelWidthHeightRatio))
     }
 
     // A native Dolby Vision decoder can process the RPU itself. Use the compatible base

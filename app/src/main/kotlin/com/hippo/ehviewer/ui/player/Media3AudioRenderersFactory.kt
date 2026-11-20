@@ -62,6 +62,7 @@ internal class Media3AudioRenderersFactory(
         val sdrMode = Settings.media3SdrFallback(hdrMode)
         out[videoIndex] = Media3HdrToneMappingRenderer(
             builder,
+            videoEvents = VideoRendererEventListener.EventDispatcher(eventHandler, eventListener),
             piecewiseShoulder = if (sdrMode == Settings.MEDIA3_SKIV_PIECEWISE) {
                 Settings.imageConversionToneShoulder.value.coerceIn(0, 95)
             } else {
