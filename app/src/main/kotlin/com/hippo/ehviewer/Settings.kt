@@ -1039,6 +1039,7 @@ object Settings : DataStorePreferences(null) {
     const val MEDIA3_SKIV_PIECEWISE = 2
     const val MEDIA3_SKIV_WCG = 3
     const val MEDIA3_SKIV_PIECEWISE_WCG = 4
+    const val MEDIA3_MPCVR = 5
     val media3HdrToneMapping = intPref("media3_hdr_tone_mapping", MEDIA3_HDR)
 
     fun media3SdrFallback(mode: Int): Int = when (mode) {

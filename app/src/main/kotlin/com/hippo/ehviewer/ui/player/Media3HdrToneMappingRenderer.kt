@@ -25,27 +25,29 @@ import androidx.media3.exoplayer.video.PlaybackVideoGraphWrapper
 import androidx.media3.exoplayer.video.VideoFrameReleaseControl
 import com.hippo.ehviewer.R
 import java.io.InputStream
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 import java.util.concurrent.Executor
 
-internal fun Tracks.supportsSkivToneMapping(): Boolean? {
+internal fun Tracks.supportsHdrToneMapping(): Boolean? {
     var selectedVideo = false
     for (group in groups) {
         if (group.type != C.TRACK_TYPE_VIDEO || !group.isSelected) continue
         for (index in 0 until group.length) {
             if (!group.isTrackSelected(index)) continue
             selectedVideo = true
-            if (!group.getTrackFormat(index).supportsSkivToneMapping()) return false
+            if (!group.getTrackFormat(index).supportsHdrToneMapping()) return false
         }
     }
     return true.takeIf { selectedVideo }
 }
 
-private fun Format.supportsSkivToneMapping(): Boolean = colorInfo?.colorSpace == C.COLOR_SPACE_BT2020 && ColorInfo.isTransferHdr(colorInfo) &&
+private fun Format.supportsHdrToneMapping(): Boolean = colorInfo?.colorSpace == C.COLOR_SPACE_BT2020 && ColorInfo.isTransferHdr(colorInfo) &&
     (sampleMimeType != MimeTypes.VIDEO_DOLBY_VISION || MediaCodecUtil.getAlternativeCodecMimeType(this) != null)
 
-internal fun Format.withSkivColorRange(decodedRange: Int = Format.NO_VALUE): Format {
+internal fun Format.withHdrToneMappingColorRange(decodedRange: Int = Format.NO_VALUE): Format {
     val color = colorInfo ?: return this
-    if (!supportsSkivToneMapping() || color.colorRange == C.COLOR_RANGE_LIMITED || color.colorRange == C.COLOR_RANGE_FULL) {
+    if (!supportsHdrToneMapping() || color.colorRange == C.COLOR_RANGE_LIMITED || color.colorRange == C.COLOR_RANGE_FULL) {
         return this
     }
     // HDR tracks can leave the range in the in-band SPS. Media3's video graph treats
@@ -54,14 +56,28 @@ internal fun Format.withSkivColorRange(decodedRange: Int = Format.NO_VALUE): For
     return buildUpon().setColorInfo(color.buildUpon().setColorRange(range).build()).build()
 }
 
+internal fun mpcvrPeakNits(hdrStaticInfo: ByteBuffer?): Int? {
+    // Android's 25-byte CTA-861.3 Type 1 descriptor stores mastering max and MaxCLL as LE uint16.
+    if (hdrStaticInfo == null || hdrStaticInfo.remaining() < 25) return null
+    val descriptor = hdrStaticInfo.slice().order(ByteOrder.LITTLE_ENDIAN)
+    if (descriptor.get(0).toInt() != 0) return null
+    val maxCll = descriptor.getShort(21).toInt() and 0xffff
+    val masteringMax = descriptor.getShort(17).toInt() and 0xffff
+    return (maxCll.takeIf { it > 10 } ?: masteringMax.takeIf { it > 10 })?.coerceIn(126, 10000)
+}
+
 @UnstableApi
-internal class Media3SkivVideoRenderer(
+internal class Media3HdrToneMappingRenderer(
     builder: Builder,
     private val piecewise: Boolean,
-    private val wideColor: Boolean = false,
+    private val wideColor: Boolean,
+    private val mpcvr: Boolean,
 ) : MediaCodecVideoRenderer(builder) {
+    @Volatile
+    private var contentPeakNits: Int? = null
+
     override fun supportsFormat(mediaCodecSelector: MediaCodecSelector, format: Format): Int {
-        val selector = skivDecoderSelector(mediaCodecSelector, format)
+        val selector = toneMappingDecoderSelector(mediaCodecSelector, format)
         val support = super.supportsFormat(selector, format)
         if (selector !== mediaCodecSelector && RendererCapabilities.getFormatSupport(support) < C.FORMAT_EXCEEDS_CAPABILITIES) {
             // Let playback select the track and report a decoder error so it can retry in HDR.
@@ -74,7 +90,7 @@ internal class Media3SkivVideoRenderer(
         mediaCodecSelector: MediaCodecSelector,
         format: Format,
         requiresSecureDecoder: Boolean,
-    ): List<MediaCodecInfo> = super.getDecoderInfos(skivDecoderSelector(mediaCodecSelector, format), format, requiresSecureDecoder)
+    ): List<MediaCodecInfo> = super.getDecoderInfos(toneMappingDecoderSelector(mediaCodecSelector, format), format, requiresSecureDecoder)
 
     override fun getMediaFormat(
         format: Format,
@@ -103,29 +119,35 @@ internal class Media3SkivVideoRenderer(
     override fun maybeInitializeProcessingPipeline(format: Format): Boolean {
         if (format.sampleMimeType == MimeTypes.VIDEO_DOLBY_VISION && !hasCompatibleHdrBase(format)) {
             throw createRendererException(
-                UnsupportedOperationException("SKIV needs a compatible Dolby Vision HDR base layer"),
+                UnsupportedOperationException("HDR tone mapping needs a compatible Dolby Vision HDR base layer"),
                 format,
                 PlaybackException.ERROR_CODE_VIDEO_FRAME_PROCESSOR_INIT_FAILED,
             )
         }
-        return super.maybeInitializeProcessingPipeline(format.withSkivColorRange())
+        if (mpcvr) contentPeakNits = mpcvrPeakNits(format.colorInfo?.hdrStaticInfo?.let(ByteBuffer::wrap))
+        return super.maybeInitializeProcessingPipeline(format.withHdrToneMappingColorRange())
     }
 
     override fun onOutputFormatChanged(format: Format, mediaFormat: MediaFormat?) {
         val decodedRange = mediaFormat?.getInteger(MediaFormat.KEY_COLOR_RANGE, Format.NO_VALUE) ?: Format.NO_VALUE
-        super.onOutputFormatChanged(format.withSkivColorRange(decodedRange), mediaFormat)
+        // Some files provide static HDR metadata only in-band. The decoder can expose
+        // it here, before super registers the first stream and the GL sampler is built.
+        if (mpcvr && contentPeakNits == null) {
+            contentPeakNits = mpcvrPeakNits(mediaFormat?.getByteBuffer(MediaFormat.KEY_HDR_STATIC_INFO))
+        }
+        super.onOutputFormatChanged(format.withHdrToneMappingColorRange(decodedRange), mediaFormat)
     }
 
     // A native Dolby Vision decoder can process the RPU itself. Use the compatible base
     // decoder so the OpenGL sampler receives the PQ or HLG signal described by the track.
-    private fun skivDecoderSelector(selector: MediaCodecSelector, format: Format): MediaCodecSelector {
+    private fun toneMappingDecoderSelector(selector: MediaCodecSelector, format: Format): MediaCodecSelector {
         if (!hasCompatibleHdrBase(format)) return selector
         return MediaCodecSelector { mimeType, secure, tunneling ->
             if (mimeType == MimeTypes.VIDEO_DOLBY_VISION) emptyList() else selector.getDecoderInfos(mimeType, secure, tunneling)
         }
     }
 
-    private fun hasCompatibleHdrBase(format: Format): Boolean = format.sampleMimeType == MimeTypes.VIDEO_DOLBY_VISION && format.supportsSkivToneMapping()
+    private fun hasCompatibleHdrBase(format: Format): Boolean = format.sampleMimeType == MimeTypes.VIDEO_DOLBY_VISION && format.supportsHdrToneMapping()
 
     override fun createPlaybackVideoGraphWrapper(
         context: Context,
@@ -149,7 +171,7 @@ internal class Media3SkivVideoRenderer(
                     .apply { if (wideColor) setGlObjectsProvider(Media3WideColorGlObjects()) }
                     .build(),
             ).create(
-                SkivShaderContext(context.applicationContext, piecewise, wideColor),
+                HdrToneMappingShaderContext(context.applicationContext, piecewise, wideColor, if (mpcvr) ::mpcvrShaderPeak else null),
                 outputColorInfo,
                 debugViewProvider,
                 listener,
@@ -160,17 +182,25 @@ internal class Media3SkivVideoRenderer(
         })
         .build()
         .apply { setRequestOpenGlToneMapping(true) }
+
+    private fun mpcvrShaderPeak() = contentPeakNits ?: 1000
 }
 
 /**
  * Media3 applies its HDR-to-SDR curve in the input sampler before the video effects run.
- * Use SKIV and retain dark HDR values in the pinned Media3 shaders for this graph.
+ * Insert the chosen curve and retain dark HDR values in the pinned Media3 shaders.
  */
 @Suppress("DEPRECATION")
-private class SkivShaderContext(context: Context, piecewise: Boolean, wideColor: Boolean) : ContextWrapper(context) {
+private class HdrToneMappingShaderContext(
+    context: Context,
+    piecewise: Boolean,
+    wideColor: Boolean,
+    mpcvrPeakNits: (() -> Int)?,
+) : ContextWrapper(context) {
     private val base = context.resources
-    private val skivShader by lazy {
-        base.openRawResource(R.raw.media3_skiv_tone_mapping).bufferedReader().use { it.readText() }
+    private val toneMappingShader by lazy {
+        val resource = if (mpcvrPeakNits != null) R.raw.media3_mpcvr_tone_mapping else R.raw.media3_skiv_tone_mapping
+        base.openRawResource(resource).bufferedReader().use { it.readText() }
     }
     private val displayP3Shader by lazy {
         base.openRawResource(R.raw.media3_display_p3).bufferedReader().use { it.readText() }
@@ -205,12 +235,17 @@ private class SkivShaderContext(context: Context, piecewise: Boolean, wideColor:
             val start = source.indexOf(function)
             val end = if (start >= 0) source.indexOf("\n}", start) else -1
             check(end >= 0) { "Media3 HDR sampler shader has changed" }
-            val mode = "#define SKIV_PIECEWISE ${if (piecewise) 1 else 0}\n#define SKIV_WCG ${if (wideColor) 1 else 0}"
+            val mode = if (mpcvrPeakNits != null) {
+                "#define MPCVR_PEAK_NITS ${mpcvrPeakNits()}"
+            } else {
+                "#define SKIV_PIECEWISE ${if (piecewise) 1 else 0}\n#define SKIV_WCG ${if (wideColor) 1 else 0}"
+            }
+            val toneMap = if (mpcvrPeakNits != null) "mpcvrToSdr" else "skivToSdr"
             val colorEncoding = if (wideColor) displayP3Shader else ""
             val shader = source.replaceRange(
                 start,
                 end + 2,
-                "$mode\n$colorEncoding\n$skivShader\n$function\n  return skivToSdr(linearRgbBt2020);\n}",
+                "$mode\n$colorEncoding\n$toneMappingShader\n$function\n  return $toneMap(linearRgbBt2020);\n}",
             )
             return if (wideColor) {
                 shader.replace("return gamma22Oetf(linearColor);", "return displayP3Encode(linearColor);").byteInputStream()

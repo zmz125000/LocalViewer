@@ -60,10 +60,11 @@ internal class Media3AudioRenderersFactory(
             .setEventListener(eventListener)
             .setMaxDroppedFramesToNotify(MAX_DROPPED_VIDEO_FRAME_COUNT_TO_NOTIFY)
         val sdrMode = Settings.media3SdrFallback(hdrMode)
-        out[videoIndex] = Media3SkivVideoRenderer(
+        out[videoIndex] = Media3HdrToneMappingRenderer(
             builder,
             piecewise = sdrMode == Settings.MEDIA3_SKIV_PIECEWISE,
             wideColor = hdrMode != sdrMode,
+            mpcvr = hdrMode == Settings.MEDIA3_MPCVR,
         )
     }
 

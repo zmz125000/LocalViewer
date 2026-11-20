@@ -67,7 +67,7 @@ import com.hippo.ehviewer.ui.player.progressGid
 import com.hippo.ehviewer.ui.player.restoreSiblingTrack
 import com.hippo.ehviewer.ui.player.restoreVideoTrack
 import com.hippo.ehviewer.ui.player.siblingTrackChoice
-import com.hippo.ehviewer.ui.player.supportsSkivToneMapping
+import com.hippo.ehviewer.ui.player.supportsHdrToneMapping
 import com.hippo.ehviewer.ui.player.updateVideoSubtitleHistory
 import com.hippo.ehviewer.ui.player.videoTrackKey
 import com.hippo.ehviewer.util.setReaderColorMode
@@ -91,7 +91,7 @@ class VideoPlayerActivity : AppCompatActivity() {
     private var player: ExoPlayer? = null
     private var playerUsesNetworkSource: Boolean? = null
     private var playerHdrMode = Settings.MEDIA3_HDR
-    private var trackSupportsSkiv: Boolean? = null
+    private var trackSupportsHdrToneMapping: Boolean? = null
     private var wideColorOutputFailed = false
     private var playerAudioMode = Settings.MEDIA3_AUDIO_DEVICE
     private var defaultTrackSelection = TrackSelectionParameters.DEFAULT
@@ -461,7 +461,7 @@ class VideoPlayerActivity : AppCompatActivity() {
     private fun showHdrMenu(anchor: View) {
         val labels = resources.getStringArray(R.array.media3_hdr_tone_mapping_entries)
         val modes = resources.getIntArray(R.array.media3_hdr_tone_mapping_values)
-        val checkedMode = if (trackSupportsSkiv == true) playerHdrMode else Settings.media3HdrToneMapping.value
+        val checkedMode = if (trackSupportsHdrToneMapping == true) playerHdrMode else Settings.media3HdrToneMapping.value
         playerView?.showControlMenu(anchor, labels.asList(), modes.indexOf(checkedMode)) { index ->
             val requestedMode = modes[index]
             val mode = effectiveVideoColorMode(requestedMode)
@@ -629,7 +629,7 @@ class VideoPlayerActivity : AppCompatActivity() {
         siblingSubtitleFromHistory = inheritTracks && subtitleChoiceFromHistory
         subtitleChoiceFromHistory = false
         savedSubtitleTrack = null
-        trackSupportsSkiv = null
+        trackSupportsHdrToneMapping = null
         val mediaItem = MediaItem.Builder()
             .setUri(uri)
             .apply {
@@ -657,7 +657,7 @@ class VideoPlayerActivity : AppCompatActivity() {
             }
             .build()
 
-        // Start on the direct path. The selected video track enables SKIV only if it is HDR.
+        // Start on the direct path. The selected video track enables tone mapping only if it is HDR.
         player?.takeIf { playerUsesNetworkSource == network && playerHdrMode == Settings.MEDIA3_HDR }?.let { existing ->
             existing.playWhenReady = false
             existing.trackSelectionParameters = defaultTrackSelection
@@ -687,8 +687,8 @@ class VideoPlayerActivity : AppCompatActivity() {
     }
 
     private fun effectiveVideoColorMode(mode: Int): Int {
-        if (trackSupportsSkiv != true) return Settings.MEDIA3_HDR
-        if (mode !in Settings.MEDIA3_HDR..Settings.MEDIA3_SKIV_PIECEWISE_WCG) return Settings.MEDIA3_HDR
+        if (trackSupportsHdrToneMapping != true) return Settings.MEDIA3_HDR
+        if (mode !in Settings.MEDIA3_HDR..Settings.MEDIA3_MPCVR) return Settings.MEDIA3_HDR
         val sdrMode = Settings.media3SdrFallback(mode)
         return if (mode != sdrMode && (wideColorOutputFailed || !supportsWideColorGamut())) sdrMode else mode
     }
@@ -742,12 +742,12 @@ class VideoPlayerActivity : AppCompatActivity() {
             object : Player.Listener {
                 override fun onTracksChanged(tracks: Tracks) {
                     if (player !== exo) return
-                    val supportsSkiv = tracks.supportsSkivToneMapping() ?: return
-                    if (trackSupportsSkiv == supportsSkiv) return
-                    trackSupportsSkiv = supportsSkiv
+                    val supportsToneMapping = tracks.supportsHdrToneMapping() ?: return
+                    if (trackSupportsHdrToneMapping == supportsToneMapping) return
+                    trackSupportsHdrToneMapping = supportsToneMapping
                     if (effectiveVideoColorMode(Settings.media3HdrToneMapping.value) != playerHdrMode) {
                         playerView?.post {
-                            if (player !== exo || trackSupportsSkiv != supportsSkiv) return@post
+                            if (player !== exo || trackSupportsHdrToneMapping != supportsToneMapping) return@post
                             val target = effectiveVideoColorMode(Settings.media3HdrToneMapping.value)
                             if (target != playerHdrMode) restartCurrentMediaItem(target)
                         }
