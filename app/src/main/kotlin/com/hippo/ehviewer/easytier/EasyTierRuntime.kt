@@ -3,6 +3,7 @@ package com.hippo.ehviewer.easytier
 import android.content.Context
 import android.os.Build
 import android.os.Looper
+import android.os.PowerManager
 import com.easytier.jni.EasyTierJNI
 import com.easytier.jni.EasyTierManager
 import com.easytier.jni.EasyTierVpnService
@@ -43,24 +44,10 @@ object EasyTierRuntime {
     @Volatile
     private var manager: EasyTierManager? = null
 
-    private val statusPoll = object : Runnable {
-        override fun run() {
-            val m = manager
-            if (m == null) return
-            val json = m.latestNetworkInfoJson
-            val running = m.running
-            _state.update {
-                it.copy(
-                    running = running && !json.isNullOrEmpty(),
-                    connectingOrRunning = running,
-                    statusJson = json,
-                )
-            }
-            if (running) {
-                mainHandler.postDelayed(this, STATUS_POLL_MS)
-            }
-        }
-    }
+    private var appForeground = false
+    private var screenInteractive = false
+
+    private fun isInteractive() = appForeground && screenInteractive
 
     private val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
 
@@ -69,6 +56,7 @@ object EasyTierRuntime {
         val app = context.applicationContext
         appContext = app
         store = EasyTierConfigStore(app)
+        screenInteractive = app.getSystemService(PowerManager::class.java)?.isInteractive != false
         EasyTierVpnService.onRevokedListener = { onSystemVpnRevoked() }
         _state.update {
             it.copy(
@@ -76,6 +64,23 @@ object EasyTierRuntime {
                 config = store!!.loadUiState(),
             )
         }
+    }
+
+    fun onAppForegroundChanged(foreground: Boolean) {
+        val wasInteractive = isInteractive()
+        appForeground = foreground
+        updateMonitoring(wasInteractive)
+    }
+
+    fun onScreenPowerChanged(interactive: Boolean) {
+        val wasInteractive = isInteractive()
+        screenInteractive = interactive
+        updateMonitoring(wasInteractive)
+    }
+
+    private fun updateMonitoring(wasInteractive: Boolean) {
+        val interactive = isInteractive()
+        if (wasInteractive != interactive) manager?.scheduleMonitor(immediate = interactive)
     }
 
     fun loadConfig(): EasyTierConfigUiState {
@@ -139,16 +144,7 @@ object EasyTierRuntime {
         if (ok) {
             // Virtual routes / TUN just came up — drop half-open SMB sockets on the old path.
             notifySmbPathChanged("easytier-start")
-            _state.update {
-                it.copy(
-                    connectingOrRunning = true,
-                    running = false,
-                    lastError = null,
-                    statusJson = null,
-                )
-            }
-            mainHandler.removeCallbacks(statusPoll)
-            mainHandler.post(statusPoll)
+            publishStatus(m, clearError = true)
         } else {
             val err = EasyTierJNI.getLastError() ?: "start failed"
             _state.update {
@@ -163,7 +159,6 @@ object EasyTierRuntime {
     }
 
     fun stop() {
-        mainHandler.removeCallbacks(statusPoll)
         manager?.stop(closeVpnService = true)
         manager = null
         notifySmbPathChanged("easytier-stop")
@@ -186,7 +181,6 @@ object EasyTierRuntime {
             val wasActive = _state.value.connectingOrRunning || _state.value.running
             if (!wasActive && manager == null) return@Runnable
             logcat(TAG, LogPriority.WARN) { "System VPN revoked — stopping EasyTier" }
-            mainHandler.removeCallbacks(statusPoll)
             manager?.stop(closeVpnService = false)
             manager = null
             notifySmbPathChanged("easytier-vpn-revoked")
@@ -207,12 +201,18 @@ object EasyTierRuntime {
     }
 
     fun refreshStatus() {
-        val json = manager?.latestNetworkInfoJson
+        manager?.scheduleMonitor(immediate = true)
+    }
+
+    private fun publishStatus(source: EasyTierManager, clearError: Boolean = false) {
         _state.update {
+            if (manager !== source || !source.running) return@update it
+            val json = source.latestNetworkInfoJson
             it.copy(
                 statusJson = json,
-                running = manager?.running == true && !json.isNullOrEmpty(),
-                connectingOrRunning = manager?.running == true,
+                running = !json.isNullOrEmpty(),
+                connectingOrRunning = true,
+                lastError = if (clearError) null else it.lastError,
             )
         }
     }
@@ -221,7 +221,7 @@ object EasyTierRuntime {
         val ctx = appContext ?: return
         val s = store ?: EasyTierConfigStore(ctx).also { store = it }
         manager?.stop(closeVpnService = true)
-        manager = EasyTierManager(ctx, INSTANCE_NAME, s.loadToml())
+        manager = EasyTierManager(ctx, INSTANCE_NAME, s.loadToml(), ::isInteractive) { publishStatus(it) }
     }
 
     /**
@@ -237,8 +237,6 @@ object EasyTierRuntime {
     fun isArm64Device(): Boolean = Build.SUPPORTED_ABIS.any { it == "arm64-v8a" }
 
     private const val TAG = "EasyTierRuntime"
-    private const val STATUS_POLL_MS = 1500L
-
     private val nativeIo = java.util.concurrent.Executors.newSingleThreadExecutor { runnable ->
         Thread(runnable, "easytier-io").apply { isDaemon = true }
     }

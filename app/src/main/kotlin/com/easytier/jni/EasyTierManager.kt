@@ -16,6 +16,8 @@ class EasyTierManager(
     context: Context,
     private val instanceName: String,
     private val networkConfig: String,
+    private val isInteractive: () -> Boolean,
+    private val onStatusChanged: (EasyTierManager) -> Unit,
 ) {
     private val appContext = context.applicationContext
     private val handler = Handler(Looper.getMainLooper())
@@ -38,11 +40,23 @@ class EasyTierManager(
 
     private val monitorRunnable = object : Runnable {
         override fun run() {
-            if (isRunning) {
-                monitorNetworkStatus()
-                handler.postDelayed(this, MONITOR_INTERVAL_MS)
-            }
+            if (!isRunning) return
+            monitorNetworkStatus()
+            if (!isRunning) return
+            onStatusChanged(this@EasyTierManager)
+            handler.postDelayed(this, monitorInterval())
         }
+    }
+
+    // Route changes still matter to streams that are active with the screen off.
+    private fun monitorInterval() = if (isInteractive()) MONITOR_INTERVAL_MS else BACKGROUND_MONITOR_INTERVAL_MS
+
+    fun scheduleMonitor(immediate: Boolean) {
+        val schedule = Runnable {
+            handler.removeCallbacks(monitorRunnable)
+            if (isRunning) handler.postDelayed(monitorRunnable, if (immediate) 0L else monitorInterval())
+        }
+        if (Looper.myLooper() == handler.looper) schedule.run() else handler.post(schedule)
     }
 
     fun start(): Boolean {
@@ -58,7 +72,7 @@ class EasyTierManager(
             if (rc == 0) {
                 isRunning = true
                 logcat(TAG) { "EasyTier instance started: $instanceName" }
-                handler.post(monitorRunnable)
+                scheduleMonitor(immediate = true)
                 true
             } else {
                 logcat(TAG, LogPriority.ERROR) {
@@ -208,5 +222,6 @@ class EasyTierManager(
     companion object {
         private const val TAG = "EasyTierManager"
         private const val MONITOR_INTERVAL_MS = 3000L
+        private const val BACKGROUND_MONITOR_INTERVAL_MS = 30_000L
     }
 }

@@ -135,6 +135,7 @@ class EhApplication : Application(), SingletonImageLoader.Factory {
             LifecycleEventObserver { _, event ->
                 when (event) {
                     Lifecycle.Event.ON_STOP -> {
+                        EasyTierRuntime.onAppForegroundChanged(false)
                         // Pause all thumbs (local library included) so MMR is never left
                         // in media.extractor at 100% after the UI is gone. Browse sockets stay pooled.
                         VideoThumbnail.onAppBackgrounded()
@@ -144,6 +145,7 @@ class EhApplication : Application(), SingletonImageLoader.Factory {
                         MediaStoreWatch.onAppBackgrounded()
                     }
                     Lifecycle.Event.ON_START -> {
+                        EasyTierRuntime.onAppForegroundChanged(true)
                         VideoThumbnail.onAppForegrounded()
                         SmbGateway.onAppForegrounded()
                         WebDavClient.onAppForegrounded()
@@ -227,10 +229,12 @@ class EhApplication : Application(), SingletonImageLoader.Factory {
             override fun onReceive(context: Context, intent: Intent?) {
                 when (intent?.action) {
                     Intent.ACTION_SCREEN_OFF -> {
+                        EasyTierRuntime.onScreenPowerChanged(false)
                         StreamKeepAlivePolicy.onScreenOff()
                         MediaStoreWatch.onScreenOff()
                     }
                     Intent.ACTION_SCREEN_ON -> {
+                        EasyTierRuntime.onScreenPowerChanged(true)
                         StreamKeepAlivePolicy.onScreenOn(context)
                         MediaStoreWatch.onScreenOn()
                     }
