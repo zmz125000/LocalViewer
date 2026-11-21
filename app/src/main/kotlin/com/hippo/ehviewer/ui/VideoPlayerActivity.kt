@@ -94,6 +94,7 @@ class VideoPlayerActivity : AppCompatActivity() {
     private var player: ExoPlayer? = null
     private var playerUsesNetworkSource: Boolean? = null
     private var playerHdrMode = Settings.MEDIA3_HDR
+    private var requestedHdrMode = Settings.MEDIA3_HDR
     private var trackSupportsHdrToneMapping: Boolean? = null
     private var wideColorOutputFailed = false
     private var playerAudioMode = Settings.MEDIA3_AUDIO_DEVICE
@@ -155,6 +156,7 @@ class VideoPlayerActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         subtitleHistory = Settings.media3SubtitleHistory.value
+        requestedHdrMode = Settings.media3HdrToneMapping.value
         customMediaVolume = Settings.media3PlayerVolume.value.takeIf { it in 0f..1f }
         playerBrightness = Settings.media3PlayerBrightness.value.takeIf { it in 1..100 }
         applyBrightness()
@@ -381,7 +383,7 @@ class VideoPlayerActivity : AppCompatActivity() {
         findViewById<ImageButton>(R.id.video_rotate).setOnClickListener { toggleRotateWithVideo() }
         refreshRotateButton()
         findViewById<ImageButton>(R.id.video_fit).setOnClickListener { toggleVideoFit() }
-        refreshVideoFitButton()
+        applyVideoFit(Settings.media3PlayerCrop.value)
         val pip = findViewById<ImageButton>(R.id.video_pip)
         val pipAvailable = packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)
         pip.visibility = if (pipAvailable) View.VISIBLE else View.GONE
@@ -575,12 +577,13 @@ class VideoPlayerActivity : AppCompatActivity() {
     private fun showHdrMenu(anchor: View) {
         val labels = resources.getStringArray(R.array.media3_hdr_tone_mapping_entries)
         val modes = resources.getIntArray(R.array.media3_hdr_tone_mapping_values)
-        val checkedMode = if (trackSupportsHdrToneMapping == true) playerHdrMode else Settings.media3HdrToneMapping.value
-        playerView?.showControlMenu(anchor, labels.asList(), modes.indexOf(checkedMode)) { index ->
+        playerView?.showControlMenu(anchor, labels.asList(), modes.indexOf(requestedHdrMode)) { index ->
             val requestedMode = modes[index]
             val mode = effectiveVideoColorMode(requestedMode)
             if (mode == playerHdrMode || restartCurrentMediaItem(mode)) {
-                Settings.media3HdrToneMapping.value = requestedMode
+                requestedHdrMode = requestedMode
+                storePlayerSettings { it[Settings.media3HdrToneMapping] = requestedMode }
+                refreshHdrButton()
             }
         }
     }
@@ -595,11 +598,16 @@ class VideoPlayerActivity : AppCompatActivity() {
             val modes = resources.getIntArray(R.array.media3_audio_downmixing_values)
             stateDescription = resources.getStringArray(R.array.media3_audio_downmixing_entries).getOrNull(modes.indexOf(playerAudioMode))
         }
+        refreshHdrButton()
+    }
+
+    private fun refreshHdrButton() {
+        // The selected mode stays stable while the renderer probes the track or falls back.
         findViewById<ImageButton>(R.id.video_hdr).apply {
-            isSelected = playerHdrMode == Settings.MEDIA3_HDR
+            isSelected = requestedHdrMode == Settings.MEDIA3_HDR
             alpha = if (isSelected) 1f else 0.6f
             val modes = resources.getIntArray(R.array.media3_hdr_tone_mapping_values)
-            stateDescription = resources.getStringArray(R.array.media3_hdr_tone_mapping_entries)[modes.indexOf(playerHdrMode)]
+            stateDescription = resources.getStringArray(R.array.media3_hdr_tone_mapping_entries).getOrNull(modes.indexOf(requestedHdrMode))
         }
     }
 
@@ -623,16 +631,17 @@ class VideoPlayerActivity : AppCompatActivity() {
 
     private fun toggleVideoFit() {
         val view = playerView ?: return
-        view.resizeMode = if (view.resizeMode == AspectRatioFrameLayout.RESIZE_MODE_ZOOM) {
-            AspectRatioFrameLayout.RESIZE_MODE_FIT
-        } else {
-            AspectRatioFrameLayout.RESIZE_MODE_ZOOM
-        }
-        refreshVideoFitButton()
+        val cropped = view.resizeMode != AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+        applyVideoFit(cropped)
+        storePlayerSettings { it[Settings.media3PlayerCrop] = cropped }
     }
 
-    private fun refreshVideoFitButton() {
-        val cropped = playerView?.resizeMode == AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+    private fun applyVideoFit(cropped: Boolean) {
+        playerView?.resizeMode = if (cropped) {
+            AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+        } else {
+            AspectRatioFrameLayout.RESIZE_MODE_FIT
+        }
         val icon = if (cropped) {
             androidx.media3.ui.R.drawable.exo_styled_controls_fullscreen_exit
         } else {
@@ -877,10 +886,10 @@ class VideoPlayerActivity : AppCompatActivity() {
                     val supportsToneMapping = tracks.supportsHdrToneMapping() ?: return
                     if (trackSupportsHdrToneMapping == supportsToneMapping) return
                     trackSupportsHdrToneMapping = supportsToneMapping
-                    if (effectiveVideoColorMode(Settings.media3HdrToneMapping.value) != playerHdrMode) {
+                    if (effectiveVideoColorMode(requestedHdrMode) != playerHdrMode) {
                         playerView?.post {
                             if (player !== exo || trackSupportsHdrToneMapping != supportsToneMapping) return@post
-                            val target = effectiveVideoColorMode(Settings.media3HdrToneMapping.value)
+                            val target = effectiveVideoColorMode(requestedHdrMode)
                             if (target != playerHdrMode) restartCurrentMediaItem(target)
                         }
                     }
