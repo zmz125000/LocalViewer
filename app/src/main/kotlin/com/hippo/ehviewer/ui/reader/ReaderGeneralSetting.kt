@@ -15,6 +15,7 @@ import androidx.compose.ui.res.stringResource
 import com.ehviewer.core.i18n.R
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.asMutableState
+import com.hippo.ehviewer.image.hdr.ReaderToneMapper
 
 @Composable
 fun ReaderGeneralSetting(
@@ -32,7 +33,7 @@ fun ReaderGeneralSetting(
     SpinnerChoice(
         title = stringResource(R.string.pref_reader_hdr_tone_mapping),
         entries = stringArrayResource(com.hippo.ehviewer.R.array.reader_tone_mapper_entries),
-        values = listOf(0, 1, 2, 3, 4),
+        values = ReaderToneMapper.entries.indices.toList(),
         field = toneMapper,
     )
     if (isDocument) {
@@ -105,7 +106,7 @@ fun ReaderGeneralSetting(
                 stringResource(id = R.string.pref_decode_size_3x),
                 stringResource(id = R.string.pref_decode_size_origin),
             ),
-            values = listOf(0, 1, 2, 3, 4),
+            values = ReaderToneMapper.entries.indices.toList(),
             field = Settings.readerDecodeSize.asMutableState(),
         )
     }

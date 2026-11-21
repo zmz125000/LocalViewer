@@ -87,7 +87,7 @@ data class LibDirectResult(
     val sourcePrimaries: Int? = null,
     /** Explicit floating-point linear sRGB with an 80-nit reference white. */
     val sourceIsScRgb: Boolean = false,
-    val gpuToneMapping: SkivGpuToneMapping? = null,
+    val gpuToneMapping: ReaderGpuToneMapping? = null,
 )
 
 /**
@@ -944,28 +944,20 @@ object LibDirectDecode {
         val transfer = outInfo[5]
         if (w <= 0 || h <= 0) return null
         val f16 = format == 1
-        var gpuToneMapping: SkivGpuToneMapping? = null
+        var gpuToneMapping: ReaderGpuToneMapping? = null
         if (f16 && isHdr && outInfo.getOrNull(7) != 1 && !Settings.readerHdrDisplay.value) {
-            val selected = Settings.readerHdrToneMapper.value.coerceIn(0, 4)
-            val mapper = if (selected >= 3 && !SkivGpuToneMapping.supported) selected - 2 else selected
-            if (mapper != 0) {
-                val peak = if (mapper >= 3) FloatArray(1) else null
+            val mapper = ReaderToneMapper.fromPreference(Settings.readerHdrToneMapper.value).supportedMode()
+            if (mapper != ReaderToneMapper.OFF) {
+                val peak = if (mapper.gpu) FloatArray(1) else null
+                val shoulder = Settings.readerHdrToneShoulder.value.coerceIn(0, 95) / 100f
+                val cap = Settings.readerHdrToneRange.value.coerceIn(210, 10000).toFloat()
                 val success = com.hippo.ehviewer.jni.toneMapReaderPixels(
-                    pixels, nativePixels, w, h, gamut, mapper,
-                    Settings.readerHdrToneShoulder.value.coerceIn(0, 95) / 100f,
-                    Settings.readerHdrToneRange.value.coerceIn(210, 10000).toFloat(),
-                    peak,
+                    pixels, nativePixels, w, h, gamut, mapper.ordinal, shoulder, cap, peak,
                 )
                 if (success && peak != null) {
-                    gpuToneMapping = SkivGpuToneMapping(
-                        gamut,
-                        mapper == 4,
-                        peak[0],
-                        Settings.readerHdrToneShoulder.value.coerceIn(0, 95) / 100f,
-                        Settings.readerHdrToneRange.value.coerceIn(210, 10000).toFloat(),
-                    )
+                    gpuToneMapping = ReaderGpuToneMapping(mapper, gamut, peak[0], shoulder, cap)
                 }
-                if (!success) Log.w("ReaderColor", "SKIV presentation failed; retaining original pixels")
+                if (!success) Log.w("ReaderColor", "Reader tone mapping failed; retaining original pixels")
             }
         }
         val colorSpace = resolveColorSpace(f16, gamut, transfer)

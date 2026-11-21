@@ -108,6 +108,7 @@ import com.hippo.ehviewer.gallery.useStreamArchivePageLoader
 import com.hippo.ehviewer.gallery.useTarChunkPageLoader
 import com.hippo.ehviewer.gallery.useWebDavFolderPageLoader
 import com.hippo.ehviewer.gallery.useZipFolderPageLoader
+import com.hippo.ehviewer.image.hdr.ReaderToneMapper
 import com.hippo.ehviewer.image.hdr.StillExportTarget
 import com.hippo.ehviewer.image.hdr.isStillExportFileName
 import com.hippo.ehviewer.library.FolderGalleryIndex
@@ -538,8 +539,8 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
                 // Advanced color changes F16 pack / CS for lib-direct — re-decode.
                 readerAdvancedColor.changesFlow(),
                 readerHdrToneMapper.changesFlow().filter { !readerHdrDisplay.value },
-                readerHdrToneShoulder.changesFlow().filter { !readerHdrDisplay.value && readerHdrToneMapper.value in listOf(2, 4) },
-                readerHdrToneRange.changesFlow().filter { !readerHdrDisplay.value && readerHdrToneMapper.value in listOf(2, 4) },
+                readerHdrToneShoulder.changesFlow().filter { !readerHdrDisplay.value && ReaderToneMapper.fromPreference(readerHdrToneMapper.value).custom },
+                readerHdrToneRange.changesFlow().filter { !readerHdrDisplay.value && ReaderToneMapper.fromPreference(readerHdrToneMapper.value).custom },
                 // ProXDR HEIC → UHDR convert path changes display file.
                 readerOppoProxdr.changesFlow(),
                 // HDR display changes whether a non-original decode is redone at

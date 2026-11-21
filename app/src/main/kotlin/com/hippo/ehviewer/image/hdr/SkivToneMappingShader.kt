@@ -8,21 +8,21 @@ import kotlin.math.pow
 
 /** Matches sdr_tone_map.h; only global constants are calculated on the CPU. */
 @RequiresApi(33)
-internal fun configureSkivShader(shader: RuntimeShader, controls: SkivGpuToneMapping) {
+internal fun configureSkivShader(shader: RuntimeShader, controls: ReaderGpuToneMapping) {
     fun pq(value: Double): Double {
         val p = (max(value, 0.0) / 125.0).pow(.1593017578125)
         return ((.8359375 + 18.8515625 * p) / (1.0 + 18.6875 * p)).pow(78.84375)
     }
     fun intensity(input: Double, peak: Double, white: Double) = input.pow(1.18) *
         (1.0 + white / (peak * peak) * input) / (1.0 + input / white)
-    val cap = if (controls.custom) controls.capNits.toDouble().coerceIn(204.0, 10000.0) else 10000.0
+    val cap = if (controls.mapper.custom) controls.capNits.toDouble().coerceIn(204.0, 10000.0) else 10000.0
     val peak = min(controls.peakNits.toDouble().coerceAtLeast(0.0), cap) / 80.0
     val white = pq(1.5)
     val peakPq = max(white, pq(peak))
     val knee = pq(controls.shoulder.toDouble().coerceIn(0.0, .99) * 203.0 / 80.0)
     val outputWhite = pq(203.0 / 80.0)
     val customPeak = max(peakPq, outputWhite)
-    shader.setIntUniform("customMode", if (controls.custom) 1 else 0)
+    shader.setIntUniform("customMode", if (controls.mapper.custom) 1 else 0)
     shader.setIntUniform("sourceGamut", controls.gamut)
     shader.setFloatUniform("curve", white.toFloat(), peakPq.toFloat(), knee.toFloat(), outputWhite.toFloat())
     shader.setFloatUniform(
@@ -32,6 +32,17 @@ internal fun configureSkivShader(shader: RuntimeShader, controls: SkivGpuToneMap
         intensity(customPeak, customPeak, white).toFloat(),
     )
 }
+
+internal val readerPqShaderFunctions = """
+    float3 pq(float3 v) {
+        float3 p = pow(max(v, float3(0.)) / 125., float3(.1593017578125));
+        return pow((.8359375 + 18.8515625*p)/(1.+18.6875*p), float3(78.84375));
+    }
+    float3 inversePq(float3 v) {
+        float3 p = pow(max(v,float3(0.)),float3(1./78.84375));
+        return 125.*pow(max(p-.8359375,float3(0.))/max(18.8515625-18.6875*p,float3(1.e-12)),float3(1./.1593017578125));
+    }
+""".trimIndent()
 
 // setInputBuffer bypasses Android's source-to-window transform. Decode pixels
 // stay linear, premultiplied, in their native gamut until the mapping is done.
@@ -65,14 +76,7 @@ internal val skivShaderSource = """
             dot(xyz,float3(-.9692436457,1.8759675026,.0415550582)),
             dot(xyz,float3(.0556300804,-.2039769590,1.0569715500)));
     }
-    float3 pq(float3 v) {
-        float3 p = pow(max(v, float3(0.)) / 125., float3(.1593017578125));
-        return pow((.8359375 + 18.8515625*p)/(1.+18.6875*p), float3(78.84375));
-    }
-    float3 inversePq(float3 v) {
-        float3 p = pow(max(v,float3(0.)),float3(1./78.84375));
-        return 125.*pow(max(p-.8359375,float3(0.))/max(18.8515625-18.6875*p,float3(1.e-12)),float3(1./.1593017578125));
-    }
+    $readerPqShaderFunctions
     float intensity(float v, float peak) {
         return pow(max(v,0.),1.18)*(1.+curve.x/(peak*peak)*v)/(1.+v/curve.x);
     }

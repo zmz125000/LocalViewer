@@ -10,8 +10,10 @@ import android.graphics.RuntimeShader
 import android.graphics.Shader
 import android.os.Build
 import androidx.annotation.RequiresApi
+import com.hippo.ehviewer.image.hdr.ReaderGpuToneMapping
+import com.hippo.ehviewer.image.hdr.ReaderToneMapper
+import com.hippo.ehviewer.image.hdr.configureMpcvrReaderShader
 import com.hippo.ehviewer.image.hdr.configureSkivShader
-import com.hippo.ehviewer.image.hdr.skivShaderSource
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
@@ -30,7 +32,7 @@ import kotlin.math.roundToInt
 internal object DisplayScaler {
     fun wantsShader(mode: Int): Boolean = mode in 3..6 && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
 
-    fun create(bitmap: Bitmap, toneMapping: com.hippo.ehviewer.image.hdr.SkivGpuToneMapping? = null): Any {
+    fun create(bitmap: Bitmap, toneMapping: ReaderGpuToneMapping? = null): Any {
         check(Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU)
         return PageScaler(bitmap, toneMapping)
     }
@@ -53,7 +55,7 @@ internal object DisplayScaler {
  * filtering; its shader handles source gamut and final destination conversion.
  */
 @RequiresApi(33)
-internal class PageScaler(bitmap: Bitmap, private val toneMapping: com.hippo.ehviewer.image.hdr.SkivGpuToneMapping? = null) {
+internal class PageScaler(bitmap: Bitmap, private val toneMapping: ReaderGpuToneMapping? = null) {
     private val sampling = BitmapShader(bitmap, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP).apply {
         setFilterMode(if (toneMapping == null) BitmapShader.FILTER_MODE_NEAREST else BitmapShader.FILTER_MODE_LINEAR)
     }
@@ -176,10 +178,14 @@ internal class PageScaler(bitmap: Bitmap, private val toneMapping: com.hippo.ehv
     }
 
     private fun newShader(mode: Int): RuntimeShader {
-        val shader = RuntimeShader(if (toneMapping != null) skivShaderSource else shaderSource(mode))
+        val shader = RuntimeShader(toneMapping?.mapper?.shaderSource ?: shaderSource(mode))
         if (toneMapping != null) {
             shader.setInputBuffer("contents", sampling)
-            configureSkivShader(shader, toneMapping)
+            if (toneMapping.mapper == ReaderToneMapper.MPCVR_GPU) {
+                configureMpcvrReaderShader(shader, toneMapping)
+            } else {
+                configureSkivShader(shader, toneMapping)
+            }
         } else {
             shader.setInputShader("contents", sampling)
         }

@@ -27,6 +27,7 @@ import com.ehviewer.core.i18n.R
 import com.ehviewer.core.ui.component.RollingNumber
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.asMutableState
+import com.hippo.ehviewer.image.hdr.ReaderToneMapper
 import com.hippo.ehviewer.ui.settings.Preference
 import com.hippo.ehviewer.util.HdrDisplayInfo
 import kotlin.math.roundToInt
@@ -38,7 +39,7 @@ fun ColorFilterSetting(
 ) = Column(modifier = Modifier.verticalScroll(rememberScrollState()).navigationBarsPadding()) {
     val toneMapper = Settings.readerHdrToneMapper.asMutableState()
     val hdrDisplay = Settings.readerHdrDisplay.asMutableState()
-    AnimatedVisibility(visible = toneMapper.value in listOf(2, 4) && !hdrDisplay.value) {
+    AnimatedVisibility(visible = ReaderToneMapper.fromPreference(toneMapper.value).custom && !hdrDisplay.value) {
         Column {
             CommitSliderChoice(
                 title = stringResource(R.string.image_conversion_tone_shoulder),

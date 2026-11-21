@@ -145,6 +145,7 @@ import com.hippo.ehviewer.gallery.Page
 import com.hippo.ehviewer.gallery.PageLoader
 import com.hippo.ehviewer.gallery.PdfRamPageLoader
 import com.hippo.ehviewer.gallery.ReaderNavigation
+import com.hippo.ehviewer.image.hdr.ReaderToneMapper
 import com.hippo.ehviewer.library.ArchiveByteSource
 import com.hippo.ehviewer.library.BlockCacheArchiveByteSource
 import com.hippo.ehviewer.library.BrowseThumbComposeJobs
@@ -2249,8 +2250,8 @@ private fun PdfReaderScreen(
                 readerHiResSoftwareDownscale.changesFlow(),
                 readerAdvancedColor.changesFlow(),
                 readerHdrToneMapper.changesFlow().filter { !readerHdrDisplay.value },
-                readerHdrToneShoulder.changesFlow().filter { readerSdrToneMappingEnabled && readerHdrToneMapper.value in listOf(2, 4) },
-                readerHdrToneRange.changesFlow().filter { readerSdrToneMappingEnabled && readerHdrToneMapper.value in listOf(2, 4) },
+                readerHdrToneShoulder.changesFlow().filter { readerSdrToneMappingEnabled && ReaderToneMapper.fromPreference(readerHdrToneMapper.value).custom },
+                readerHdrToneRange.changesFlow().filter { readerSdrToneMappingEnabled && ReaderToneMapper.fromPreference(readerHdrToneMapper.value).custom },
                 readerHdrDisplay.changesFlow().filter { readerHdrToneMapper.value != 0 },
                 readerOppoProxdr.changesFlow(),
             ).collect {

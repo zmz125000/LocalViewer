@@ -372,14 +372,15 @@ class VideoPlayerActivity : AppCompatActivity() {
             }
             savePlaybackProgress()
         }
-        findViewById<ImageButton>(R.id.video_playlist).apply {
-            tooltipText = contentDescription
-            setOnClickListener(::showPlaylist)
+        for (id in listOf(R.id.video_playlist, R.id.video_portrait_playlist)) {
+            findViewById<ImageButton>(id).apply {
+                tooltipText = contentDescription
+                setOnClickListener(::showPlaylist)
+            }
         }
         findViewById<ImageButton>(R.id.video_rotate).setOnClickListener { toggleRotateWithVideo() }
         refreshRotateButton()
         findViewById<ImageButton>(R.id.video_fit).setOnClickListener { toggleVideoFit() }
-        findViewById<ImageButton>(R.id.video_portrait_fit).setOnClickListener { toggleVideoFit() }
         refreshVideoFitButton()
         val pip = findViewById<ImageButton>(R.id.video_pip)
         val pipAvailable = packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)
@@ -554,7 +555,7 @@ class VideoPlayerActivity : AppCompatActivity() {
             R.id.video_hdr,
         ).map { findViewById<ImageButton>(it) }.filter { it.isEnabled && it.visibility == View.VISIBLE }.toMutableList()
         val fit = findViewById<ImageButton>(R.id.video_fit)
-        if (fit.visibility == View.GONE && findViewById<View>(R.id.video_portrait_fit).visibility == View.GONE) {
+        if (fit.visibility == View.GONE) {
             buttons += fit
         }
         val labels = buttons.map { it.contentDescription.toString() }
@@ -638,12 +639,10 @@ class VideoPlayerActivity : AppCompatActivity() {
             androidx.media3.ui.R.drawable.exo_styled_controls_fullscreen_enter
         }
         val description = getString(if (cropped) R.string.video_fit_to_screen else R.string.video_crop_to_fill)
-        for (id in listOf(R.id.video_fit, R.id.video_portrait_fit)) {
-            findViewById<ImageButton>(id).apply {
-                setImageResource(icon)
-                contentDescription = description
-                tooltipText = description
-            }
+        findViewById<ImageButton>(R.id.video_fit).apply {
+            setImageResource(icon)
+            contentDescription = description
+            tooltipText = description
         }
     }
 
@@ -1202,7 +1201,9 @@ class VideoPlayerActivity : AppCompatActivity() {
         val nextEnabled = !changingItem && session?.items?.getOrNull(playlistIndex + 1) != null
         findViewById<ImageButton>(R.id.video_previous).setEnabledAppearance(previousEnabled)
         findViewById<ImageButton>(R.id.video_next).setEnabledAppearance(nextEnabled)
-        findViewById<ImageButton>(R.id.video_playlist).setEnabledAppearance(!changingItem && session?.discoverSiblings == false)
+        val playlistEnabled = !changingItem && session?.discoverSiblings == false
+        findViewById<ImageButton>(R.id.video_playlist).setEnabledAppearance(playlistEnabled)
+        findViewById<ImageButton>(R.id.video_portrait_playlist).setEnabledAppearance(playlistEnabled)
     }
 
     private fun ImageButton.setEnabledAppearance(value: Boolean) {

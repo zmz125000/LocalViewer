@@ -29,7 +29,7 @@ class BitmapPainter(
      * Reading it here redraws once, then the kernel bakes at that scale.
      */
     private val settledZoom: FloatState,
-    private val toneMapping: com.hippo.ehviewer.image.hdr.SkivGpuToneMapping? = null,
+    private val toneMapping: com.hippo.ehviewer.image.hdr.ReaderGpuToneMapping? = null,
 ) : Painter() {
     private val srcRect = intrinsicSize.toRect().toAndroidRectF()
     private val dstRect = RectF()

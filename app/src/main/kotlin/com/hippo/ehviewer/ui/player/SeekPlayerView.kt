@@ -379,6 +379,9 @@ class SeekPlayerView @JvmOverloads constructor(
         val portrait = playerWidth < playerHeight
         val tabletPortrait = portrait && resources.configuration.smallestScreenWidthDp >= WIDTH_DP_MEDIUM_LOWER_BOUND
         val phonePortrait = portrait && !tabletPortrait
+        findViewById<View>(R.id.video_playlist).visibility = if (phonePortrait) GONE else VISIBLE
+        val portraitPlaylist = findViewById<View>(R.id.video_portrait_playlist)
+        portraitPlaylist.visibility = if (phonePortrait) VISIBLE else GONE
         val fit = findViewById<View>(R.id.video_fit)
         val expandedLeftWidth = (0 until left.childCount).sumOf { left.getChildAt(it).layoutParams.width }
         val rightWidthWithoutFit = (0 until right.childCount).sumOf { index ->
@@ -393,8 +396,6 @@ class SeekPlayerView @JvmOverloads constructor(
         val minTransportWidth = transportWidth - rewind.layoutParams.width - forward.layoutParams.width
         val showFit = tabletPortrait || (!portrait && available >= minTransportWidth + buttonWidth + expandedRightWidth)
         fit.visibility = if (showFit) VISIBLE else GONE
-        val portraitFit = findViewById<View>(R.id.video_portrait_fit)
-        portraitFit.visibility = if (phonePortrait) VISIBLE else GONE
         val rightWidth = if (showFit) expandedRightWidth else rightWidthWithoutFit
         val showSteps = !portrait && (!compact || available >= transportWidth + buttonWidth + rightWidth)
         left.visibility = if (compact) GONE else VISIBLE
@@ -404,7 +405,7 @@ class SeekPlayerView @JvmOverloads constructor(
         if (!showSteps) transportWidth = minTransportWidth
 
         val leftWidth = when {
-            phonePortrait -> buttonWidth + portraitFit.layoutParams.width
+            phonePortrait -> buttonWidth + portraitPlaylist.layoutParams.width
             compact -> buttonWidth
             else -> expandedLeftWidth
         }
