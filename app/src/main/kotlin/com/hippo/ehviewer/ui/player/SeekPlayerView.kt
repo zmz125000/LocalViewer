@@ -129,13 +129,7 @@ class SeekPlayerView @JvmOverloads constructor(
                 v.layoutParams = lp
             }
         }
-        addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
-            layoutControls()
-            layoutSubtitles()
-        }
-        findViewById<View>(R.id.video_controls_buttons)?.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
-            layoutControls()
-        }
+        addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> layoutSubtitles() }
         findViewById<View>(androidx.media3.ui.R.id.exo_audio_track)?.setOnClickListener {
             showTrackMenu(it, C.TRACK_TYPE_AUDIO)
         }
@@ -364,35 +358,44 @@ class SeekPlayerView @JvmOverloads constructor(
         postDelayed(autoHideRunnable, autoHideTimeoutMs.toLong())
     }
 
-    private fun layoutControls() {
+    override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+        // Set visibility before the control groups measure their children for this orientation.
+        layoutControls(MeasureSpec.getSize(widthMeasureSpec), MeasureSpec.getSize(heightMeasureSpec))
+        super.onMeasure(widthMeasureSpec, heightMeasureSpec)
+    }
+
+    private fun layoutControls(playerWidth: Int, playerHeight: Int) {
         val row = findViewById<View>(R.id.video_controls_buttons) ?: return
         val more = findViewById<View>(R.id.video_more) ?: return
         val compactButtons = findViewById<ViewGroup>(R.id.video_compact_buttons) ?: return
         val left = findViewById<ViewGroup>(R.id.video_track_buttons) ?: return
         val right = findViewById<ViewGroup>(R.id.video_extra_buttons) ?: return
         val transport = findViewById<ViewGroup>(R.id.video_transport) ?: return
-        if (row.width == 0) return
-        val available = row.width - row.paddingLeft - row.paddingRight
+        val available = playerWidth - paddingLeft - paddingRight - row.paddingLeft - row.paddingRight
+        if (available <= 0) return
         val buttonWidth = more.layoutParams.width
         var transportWidth = 0
         for (index in 0 until transport.childCount) transportWidth += transport.getChildAt(index).layoutParams.width
-        val portrait = width < height
+        val portrait = playerWidth < playerHeight
         val tabletPortrait = portrait && resources.configuration.smallestScreenWidthDp >= WIDTH_DP_MEDIUM_LOWER_BOUND
         val phonePortrait = portrait && !tabletPortrait
+        val fit = findViewById<View>(R.id.video_fit)
+        val expandedLeftWidth = (0 until left.childCount).sumOf { left.getChildAt(it).layoutParams.width }
+        val rightWidthWithoutFit = (0 until right.childCount).sumOf { index ->
+            val button = right.getChildAt(index)
+            if (button == fit || button.visibility == GONE) 0 else button.layoutParams.width
+        }
+        val expandedRightWidth = rightWidthWithoutFit + fit.layoutParams.width
         val compact = !tabletPortrait &&
-            (portrait || available < transportWidth + 2 * buttonWidth * maxOf(left.childCount, right.childCount))
+            (portrait || available < transportWidth + 2 * maxOf(expandedLeftWidth, expandedRightWidth))
         val rewind = findViewById<View>(R.id.video_rewind)
         val forward = findViewById<View>(R.id.video_forward)
         val minTransportWidth = transportWidth - rewind.layoutParams.width - forward.layoutParams.width
-        val fit = findViewById<View>(R.id.video_fit)
-        val showFit = tabletPortrait || (!portrait && available >= minTransportWidth + buttonWidth * (1 + right.childCount))
+        val showFit = tabletPortrait || (!portrait && available >= minTransportWidth + buttonWidth + expandedRightWidth)
         fit.visibility = if (showFit) VISIBLE else GONE
         val portraitFit = findViewById<View>(R.id.video_portrait_fit)
         portraitFit.visibility = if (phonePortrait) VISIBLE else GONE
-        val rightWidth = (0 until right.childCount).sumOf { index ->
-            val button = right.getChildAt(index)
-            if (button.visibility == GONE) 0 else button.layoutParams.width
-        }
+        val rightWidth = if (showFit) expandedRightWidth else rightWidthWithoutFit
         val showSteps = !portrait && (!compact || available >= transportWidth + buttonWidth + rightWidth)
         left.visibility = if (compact) GONE else VISIBLE
         compactButtons.visibility = if (compact) VISIBLE else GONE
@@ -403,11 +406,11 @@ class SeekPlayerView @JvmOverloads constructor(
         val leftWidth = when {
             phonePortrait -> buttonWidth + portraitFit.layoutParams.width
             compact -> buttonWidth
-            else -> (0 until left.childCount).sumOf { left.getChildAt(it).layoutParams.width }
+            else -> expandedLeftWidth
         }
         // On narrow phones, let the transport buttons share the space between the side controls.
         val centerWidth = (available - leftWidth - rightWidth).coerceAtLeast(1)
-        val transportLayoutWidth = if (phonePortrait && centerWidth < transportWidth) {
+        val transportLayoutWidth = if (centerWidth < transportWidth) {
             transportWidth = centerWidth
             centerWidth
         } else {
@@ -428,6 +431,7 @@ class SeekPlayerView @JvmOverloads constructor(
         labels: List<String>,
         selected: Int,
         actionLabel: String? = null,
+        widthDp: Int? = null,
         onSelection: (Int) -> Unit,
     ) {
         if (!anchor.isAttachedToWindow) return
@@ -457,13 +461,15 @@ class SeekPlayerView @JvmOverloads constructor(
             }
         }
 
-        val unspecified = MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED)
-        var contentWidth = (160 * density).toInt()
-        val menuAdapter = list.adapter
-        for (index in 0 until menuAdapter.count) {
-            val item = menuAdapter.getView(index, null, list)
-            item.measure(unspecified, unspecified)
-            contentWidth = maxOf(contentWidth, item.measuredWidth)
+        var contentWidth = ((widthDp ?: 160) * density).toInt()
+        if (widthDp == null) {
+            val unspecified = MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED)
+            val menuAdapter = list.adapter
+            for (index in 0 until menuAdapter.count) {
+                val item = menuAdapter.getView(index, null, list)
+                item.measure(unspecified, unspecified)
+                contentWidth = maxOf(contentWidth, item.measuredWidth)
+            }
         }
 
         val popup = showControlsPopup(anchor, list, contentWidth) ?: return

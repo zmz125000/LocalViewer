@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string name="video_playlist">Playlist</string>
     <string name="video_rotate_with_video">Rotate with video</string>
     <string name="video_picture_in_picture">Picture in picture</string>
     <string name="video_audio_boost">Audio boost</string>

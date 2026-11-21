@@ -142,6 +142,16 @@
                 android:orientation="horizontal">
 
                 <ImageButton
+                    android:id="@+id/video_playlist"
+                    android:layout_width="48dp"
+                    android:layout_height="48dp"
+                    android:background="?attr/selectableItemBackgroundBorderless"
+                    android:contentDescription="@string/video_playlist"
+                    android:padding="12dp"
+                    android:src="@drawable/ic_video_playlist"
+                    android:tint="@android:color/white" />
+
+                <ImageButton
                     android:id="@+id/video_rotate"
                     android:layout_width="48dp"
                     android:layout_height="48dp"

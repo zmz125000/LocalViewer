@@ -346,6 +346,10 @@ class VideoPlayerActivity : AppCompatActivity() {
             }
             savePlaybackProgress()
         }
+        findViewById<ImageButton>(R.id.video_playlist).apply {
+            tooltipText = contentDescription
+            setOnClickListener(::showPlaylist)
+        }
         findViewById<ImageButton>(R.id.video_rotate).setOnClickListener { toggleRotateWithVideo() }
         refreshRotateButton()
         findViewById<ImageButton>(R.id.video_fit).setOnClickListener { toggleVideoFit() }
@@ -633,10 +637,23 @@ class VideoPlayerActivity : AppCompatActivity() {
         exo.seekTo(target)
     }
 
-    private fun moveInPlaylist(delta: Int) {
-        if (changingItem) return
+    private fun showPlaylist(anchor: View) {
         val session = InternalVideoPlaylistRegistry.get(playlistSessionId) ?: return
-        val target = playlistIndex + delta
+        playerView?.showControlMenu(
+            anchor,
+            session.items.map { it.displayName },
+            playlistIndex,
+            widthDp = 360,
+        ) { index ->
+            if (playlistSessionId == session.id) openPlaylistItem(index)
+        }
+    }
+
+    private fun moveInPlaylist(delta: Int) = openPlaylistItem(playlistIndex + delta)
+
+    private fun openPlaylistItem(target: Int) {
+        if (changingItem || target == playlistIndex) return
+        val session = InternalVideoPlaylistRegistry.get(playlistSessionId) ?: return
         val source = session.items.getOrNull(target) ?: return
         changingItem = true
         updatePlaylistButtons()
@@ -1159,6 +1176,7 @@ class VideoPlayerActivity : AppCompatActivity() {
         val nextEnabled = !changingItem && session?.items?.getOrNull(playlistIndex + 1) != null
         findViewById<ImageButton>(R.id.video_previous).setEnabledAppearance(previousEnabled)
         findViewById<ImageButton>(R.id.video_next).setEnabledAppearance(nextEnabled)
+        findViewById<ImageButton>(R.id.video_playlist).setEnabledAppearance(!changingItem && session != null)
     }
 
     private fun ImageButton.setEnabledAppearance(value: Boolean) {
