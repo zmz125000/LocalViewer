@@ -669,6 +669,7 @@ class VideoPlayerActivity : AppCompatActivity() {
             session.items.map { it.displayName },
             playlistIndex,
             widthDp = 360,
+            rowGapDp = 4,
         ) { index ->
             if (playlistSessionId == session.id) openPlaylistItem(index)
         }

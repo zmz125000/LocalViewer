@@ -3,7 +3,9 @@ package com.hippo.ehviewer.ui.player
 import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
+import android.graphics.Color
 import android.graphics.Rect
+import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.GradientDrawable
 import android.os.SystemClock
 import android.provider.Settings
@@ -433,6 +435,7 @@ class SeekPlayerView @JvmOverloads constructor(
         selected: Int,
         actionLabel: String? = null,
         widthDp: Int? = null,
+        rowGapDp: Int = 0,
         onSelection: (Int) -> Unit,
     ) {
         if (!anchor.isAttachedToWindow) return
@@ -446,7 +449,8 @@ class SeekPlayerView @JvmOverloads constructor(
         }
         val adapter = ArrayAdapter(context, itemLayout, labels)
         val list = ListView(context).apply {
-            divider = null
+            divider = if (rowGapDp > 0) ColorDrawable(Color.TRANSPARENT) else null
+            dividerHeight = (rowGapDp * density).roundToInt()
             setPadding(0, gap, 0, gap)
         }
         if (actionLabel != null) {
