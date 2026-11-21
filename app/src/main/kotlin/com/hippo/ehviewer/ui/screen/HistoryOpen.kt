@@ -20,6 +20,7 @@ import com.hippo.ehviewer.library.LocalFolderListing
 import com.hippo.ehviewer.library.LocalHistory
 import com.hippo.ehviewer.library.LocalHistoryTarget
 import com.hippo.ehviewer.library.LocalLibrary
+import com.hippo.ehviewer.library.ReaderGalleryPlaylist
 import com.hippo.ehviewer.library.SMB_ARCHIVE_TOKEN
 import com.hippo.ehviewer.library.SMB_FOLDER_TOKEN
 import com.hippo.ehviewer.library.WEBDAV_ARCHIVE_TOKEN
@@ -75,6 +76,9 @@ fun openHistoryRecord(context: Context, info: GalleryEntity, filterQuery: String
         launch { withIOContext { recordDeviceSearchHistory(filterQuery) } }
     }
     launch {
+        // A folder or library playlist describes the previous browse view. History
+        // opens resolve the actual parent in the reader, independently of opening.
+        ReaderGalleryPlaylist.clear()
         when (val target = LocalHistory.parse(info)) {
             is LocalHistoryTarget.LibraryGallery -> {
                 val local = withIOContext { LocalLibrary.loadGallery(target.galleryId) }

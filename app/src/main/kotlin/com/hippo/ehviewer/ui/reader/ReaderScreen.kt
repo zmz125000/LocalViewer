@@ -992,6 +992,12 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
         }
         // Same path as double-tap prev/next gallery (folder mode); shared by gesture + FABs.
         val folderNavBusy = remember { java.util.concurrent.atomic.AtomicBoolean(false) }
+        var nextGallery by remember(args) { mutableStateOf<ReaderScreenArgs?>(null) }
+        LaunchedEffect(args) {
+            nextGallery = withIOContext {
+                runCatching { GallerySiblingNavigator.sibling(args, next = true) }.getOrNull()
+            }
+        }
         suspend fun openSiblingGallery(sibling: ReaderScreenArgs) {
             // Progress FK for sibling gallery + bump History (library gallery or browse path).
             sibling.let { s ->
@@ -1096,7 +1102,7 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
             // Compose "Cannot start a writer when a reader is pending" crashes.
             launch {
                 try {
-                    val sibling = withIOContext {
+                    val sibling = nextGallery.takeIf { next } ?: withIOContext {
                         runCatching { GallerySiblingNavigator.sibling(args, next) }.getOrNull()
                     } ?: return@launch
                     openSiblingGallery(sibling)
@@ -1197,14 +1203,8 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
         // Next-gallery FAB: show on last page (if a sibling exists); hide on page-up.
         var showGoFirstFab by remember { mutableStateOf(false) }
         var showNextGalleryFab by remember { mutableStateOf(false) }
-        var hasNextGallery by remember { mutableStateOf(false) }
         var lastTrackedPage by remember { mutableIntStateOf(syncState.sliderValue) }
         var peakPageSinceScrollDown by remember { mutableIntStateOf(syncState.sliderValue) }
-        LaunchedEffect(args) {
-            hasNextGallery = withIOContext {
-                runCatching { GallerySiblingNavigator.sibling(args, next = true) }.getOrNull() != null
-            }
-        }
         LaunchedEffect(pageLoader, slideshow, slideshowPlayback, pagerDual, landscapeCover) {
             pageLoader.setSlideshowShuffle(
                 enabled = slideshow && slideshowPlayback == SlideshowPlaybackMode.SHUFFLE,
@@ -1304,7 +1304,7 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
         }
         LaunchedEffect(Unit) {
             snapshotFlow {
-                Triple(syncState.sliderValue, pageLoader.size, hasNextGallery)
+                Triple(syncState.sliderValue, pageLoader.size, nextGallery != null)
             }.collect { (page, total, canNext) ->
                 val prev = lastTrackedPage
                 lastTrackedPage = page

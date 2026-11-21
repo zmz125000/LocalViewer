@@ -110,6 +110,7 @@ class VideoPlayerActivity : AppCompatActivity() {
     private var playerView: SeekPlayerView? = null
     private var playlistSessionId: String? = null
     private var playlistIndex: Int = 0
+    private var playlistDiscovery: Job? = null
     private var changingItem = false
     private var rotateWithVideo = true
     private var lastVideoSize: VideoSize = VideoSize.UNKNOWN
@@ -240,7 +241,31 @@ class VideoPlayerActivity : AppCompatActivity() {
             InternalVideoPlaylistRegistry.remove(oldPlaylist)
         }
         updatePlaylistButtons()
+        discoverPlaylistSiblings(nextSource)
         return true
+    }
+
+    private fun discoverPlaylistSiblings(current: InternalVideoSource?) {
+        playlistDiscovery?.cancel()
+        val session = InternalVideoPlaylistRegistry.get(playlistSessionId) ?: return
+        if (!session.discoverSiblings || current == null) return
+        playlistDiscovery = lifecycleScope.launch {
+            val siblings = try {
+                OpenFileExternally.loadInternalVideoSiblings(current)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w("VideoPlayer", "Unable to list sibling videos", e)
+                emptyList()
+            }
+            if (playlistSessionId != session.id) return@launch
+            val result = InternalVideoPlaylistRegistry.completeDiscovery(session, current, siblings) ?: return@launch
+            playlistIndex = result.initialIndex
+            updatePlaylistButtons()
+            if (player?.let { it.playWhenReady && it.playbackState == Player.STATE_ENDED } == true) {
+                moveInPlaylist(1)
+            }
+        }
     }
 
     override fun onStart() {
@@ -284,6 +309,7 @@ class VideoPlayerActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
+        playlistDiscovery?.cancel()
         unregisterPipControl()
         restoreSystemMediaVolume()
         releasePlayer()
@@ -1176,7 +1202,7 @@ class VideoPlayerActivity : AppCompatActivity() {
         val nextEnabled = !changingItem && session?.items?.getOrNull(playlistIndex + 1) != null
         findViewById<ImageButton>(R.id.video_previous).setEnabledAppearance(previousEnabled)
         findViewById<ImageButton>(R.id.video_next).setEnabledAppearance(nextEnabled)
-        findViewById<ImageButton>(R.id.video_playlist).setEnabledAppearance(!changingItem && session != null)
+        findViewById<ImageButton>(R.id.video_playlist).setEnabledAppearance(!changingItem && session?.discoverSiblings == false)
     }
 
     private fun ImageButton.setEnabledAppearance(value: Boolean) {
