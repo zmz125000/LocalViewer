@@ -64,6 +64,7 @@ import com.hippo.ehviewer.ui.player.PreparedInternalVideo
 import com.hippo.ehviewer.ui.player.SeekPlayerView
 import com.hippo.ehviewer.ui.player.SiblingTrackChoice
 import com.hippo.ehviewer.ui.player.StreamDocDataSource
+import com.hippo.ehviewer.ui.player.VideoLoopMode
 import com.hippo.ehviewer.ui.player.applyVideoSubtitleHistory
 import com.hippo.ehviewer.ui.player.audioBoostFolder
 import com.hippo.ehviewer.ui.player.progressGid
@@ -94,6 +95,7 @@ class VideoPlayerActivity : AppCompatActivity() {
     private var player: ExoPlayer? = null
     private var playerUsesNetworkSource: Boolean? = null
     private var playerHdrMode = Settings.MEDIA3_HDR
+    private var requestedHdrMode = Settings.MEDIA3_HDR
     private var trackSupportsHdrToneMapping: Boolean? = null
     private var wideColorOutputFailed = false
     private var playerAudioMode = Settings.MEDIA3_AUDIO_DEVICE
@@ -110,6 +112,7 @@ class VideoPlayerActivity : AppCompatActivity() {
     private var playerView: SeekPlayerView? = null
     private var playlistSessionId: String? = null
     private var playlistIndex: Int = 0
+    private var loopMode = VideoLoopMode.OFF
     private var playlistDiscovery: Job? = null
     private var changingItem = false
     private var rotateWithVideo = true
@@ -155,6 +158,8 @@ class VideoPlayerActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         subtitleHistory = Settings.media3SubtitleHistory.value
+        requestedHdrMode = Settings.media3HdrToneMapping.value
+        loopMode = VideoLoopMode.entries.getOrNull(Settings.media3VideoLoopMode.value) ?: VideoLoopMode.OFF
         customMediaVolume = Settings.media3PlayerVolume.value.takeIf { it in 0f..1f }
         playerBrightness = Settings.media3PlayerBrightness.value.takeIf { it in 1..100 }
         applyBrightness()
@@ -262,9 +267,7 @@ class VideoPlayerActivity : AppCompatActivity() {
             val result = InternalVideoPlaylistRegistry.completeDiscovery(session, current, siblings) ?: return@launch
             playlistIndex = result.initialIndex
             updatePlaylistButtons()
-            if (player?.let { it.playWhenReady && it.playbackState == Player.STATE_ENDED } == true) {
-                moveInPlaylist(1)
-            }
+            player?.takeIf { it.playWhenReady && it.playbackState == Player.STATE_ENDED }?.let(::onVideoEnded)
         }
     }
 
@@ -378,10 +381,15 @@ class VideoPlayerActivity : AppCompatActivity() {
                 setOnClickListener(::showPlaylist)
             }
         }
+        findViewById<ImageButton>(R.id.video_loop).apply {
+            tooltipText = contentDescription
+            setOnClickListener(::showLoopMenu)
+        }
+        refreshLoopButton()
         findViewById<ImageButton>(R.id.video_rotate).setOnClickListener { toggleRotateWithVideo() }
         refreshRotateButton()
         findViewById<ImageButton>(R.id.video_fit).setOnClickListener { toggleVideoFit() }
-        refreshVideoFitButton()
+        applyVideoFit(Settings.media3PlayerCrop.value)
         val pip = findViewById<ImageButton>(R.id.video_pip)
         val pipAvailable = packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)
         pip.visibility = if (pipAvailable) View.VISIBLE else View.GONE
@@ -554,9 +562,9 @@ class VideoPlayerActivity : AppCompatActivity() {
             R.id.video_audio_output,
             R.id.video_hdr,
         ).map { findViewById<ImageButton>(it) }.filter { it.isEnabled && it.visibility == View.VISIBLE }.toMutableList()
-        val fit = findViewById<ImageButton>(R.id.video_fit)
-        if (fit.visibility == View.GONE) {
-            buttons += fit
+        for (id in listOf(R.id.video_loop, R.id.video_fit)) {
+            val button = findViewById<ImageButton>(id)
+            if (button.visibility == View.GONE) buttons += button
         }
         val labels = buttons.map { it.contentDescription.toString() }
         view.showControlMenu(anchor, labels, -1) { index ->
@@ -567,6 +575,7 @@ class VideoPlayerActivity : AppCompatActivity() {
                 R.id.video_audio_boost -> showAudioBoostMenu(anchor)
                 R.id.video_audio_output -> showAudioOutputMenu(anchor)
                 R.id.video_hdr -> showHdrMenu(anchor)
+                R.id.video_loop -> showLoopMenu(anchor)
                 R.id.video_fit -> toggleVideoFit()
             }
         }
@@ -575,12 +584,13 @@ class VideoPlayerActivity : AppCompatActivity() {
     private fun showHdrMenu(anchor: View) {
         val labels = resources.getStringArray(R.array.media3_hdr_tone_mapping_entries)
         val modes = resources.getIntArray(R.array.media3_hdr_tone_mapping_values)
-        val checkedMode = if (trackSupportsHdrToneMapping == true) playerHdrMode else Settings.media3HdrToneMapping.value
-        playerView?.showControlMenu(anchor, labels.asList(), modes.indexOf(checkedMode)) { index ->
+        playerView?.showControlMenu(anchor, labels.asList(), modes.indexOf(requestedHdrMode)) { index ->
             val requestedMode = modes[index]
             val mode = effectiveVideoColorMode(requestedMode)
             if (mode == playerHdrMode || restartCurrentMediaItem(mode)) {
-                Settings.media3HdrToneMapping.value = requestedMode
+                requestedHdrMode = requestedMode
+                storePlayerSettings { it[Settings.media3HdrToneMapping] = requestedMode }
+                refreshHdrButton()
             }
         }
     }
@@ -595,11 +605,16 @@ class VideoPlayerActivity : AppCompatActivity() {
             val modes = resources.getIntArray(R.array.media3_audio_downmixing_values)
             stateDescription = resources.getStringArray(R.array.media3_audio_downmixing_entries).getOrNull(modes.indexOf(playerAudioMode))
         }
+        refreshHdrButton()
+    }
+
+    private fun refreshHdrButton() {
+        // The selected mode stays stable while the renderer probes the track or falls back.
         findViewById<ImageButton>(R.id.video_hdr).apply {
-            isSelected = playerHdrMode == Settings.MEDIA3_HDR
+            isSelected = requestedHdrMode == Settings.MEDIA3_HDR
             alpha = if (isSelected) 1f else 0.6f
             val modes = resources.getIntArray(R.array.media3_hdr_tone_mapping_values)
-            stateDescription = resources.getStringArray(R.array.media3_hdr_tone_mapping_entries)[modes.indexOf(playerHdrMode)]
+            stateDescription = resources.getStringArray(R.array.media3_hdr_tone_mapping_entries).getOrNull(modes.indexOf(requestedHdrMode))
         }
     }
 
@@ -623,16 +638,17 @@ class VideoPlayerActivity : AppCompatActivity() {
 
     private fun toggleVideoFit() {
         val view = playerView ?: return
-        view.resizeMode = if (view.resizeMode == AspectRatioFrameLayout.RESIZE_MODE_ZOOM) {
-            AspectRatioFrameLayout.RESIZE_MODE_FIT
-        } else {
-            AspectRatioFrameLayout.RESIZE_MODE_ZOOM
-        }
-        refreshVideoFitButton()
+        val cropped = view.resizeMode != AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+        applyVideoFit(cropped)
+        storePlayerSettings { it[Settings.media3PlayerCrop] = cropped }
     }
 
-    private fun refreshVideoFitButton() {
-        val cropped = playerView?.resizeMode == AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+    private fun applyVideoFit(cropped: Boolean) {
+        playerView?.resizeMode = if (cropped) {
+            AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+        } else {
+            AspectRatioFrameLayout.RESIZE_MODE_FIT
+        }
         val icon = if (cropped) {
             androidx.media3.ui.R.drawable.exo_styled_controls_fullscreen_exit
         } else {
@@ -675,7 +691,50 @@ class VideoPlayerActivity : AppCompatActivity() {
         }
     }
 
-    private fun moveInPlaylist(delta: Int) = openPlaylistItem(playlistIndex + delta)
+    private fun loopModeLabel(mode: VideoLoopMode): String = getString(
+        when (mode) {
+            VideoLoopMode.OFF -> R.string.video_loop_off
+            VideoLoopMode.VIDEO -> R.string.video_loop_video
+            VideoLoopMode.PLAYLIST -> R.string.video_playlist
+        },
+    )
+
+    private fun showLoopMenu(anchor: View) {
+        playerView?.showControlMenu(anchor, VideoLoopMode.entries.map(::loopModeLabel), loopMode.ordinal) { index ->
+            loopMode = VideoLoopMode.entries[index]
+            player?.repeatMode = videoRepeatMode()
+            storePlayerSettings { it[Settings.media3VideoLoopMode] = index }
+            refreshLoopButton()
+            updatePlaylistButtons()
+        }
+    }
+
+    private fun refreshLoopButton() {
+        findViewById<ImageButton>(R.id.video_loop).apply {
+            isSelected = loopMode != VideoLoopMode.OFF
+            alpha = if (isSelected) 1f else 0.6f
+            stateDescription = loopModeLabel(loopMode)
+        }
+    }
+
+    private fun videoRepeatMode() = if (loopMode == VideoLoopMode.VIDEO) Player.REPEAT_MODE_ONE else Player.REPEAT_MODE_OFF
+
+    private fun moveInPlaylist(delta: Int) {
+        val session = InternalVideoPlaylistRegistry.get(playlistSessionId) ?: return
+        loopMode.adjacentIndex(playlistIndex, session.items.size, delta)?.let(::openPlaylistItem)
+    }
+
+    private fun onVideoEnded(exo: ExoPlayer) {
+        if (changingItem || loopMode == VideoLoopMode.VIDEO) return
+        val session = InternalVideoPlaylistRegistry.get(playlistSessionId)
+        if (session?.discoverSiblings == true) return
+        val target = loopMode.adjacentIndex(playlistIndex, session?.items?.size ?: 0, 1)
+        if (target != null) {
+            openPlaylistItem(target)
+        } else if (loopMode == VideoLoopMode.PLAYLIST) {
+            exo.seekTo(0L)
+        }
+    }
 
     private fun openPlaylistItem(target: Int) {
         if (changingItem || target == playlistIndex) return
@@ -689,7 +748,7 @@ class VideoPlayerActivity : AppCompatActivity() {
                 switchToPrepared(target, source, OpenFileExternally.prepareInternalVideo(source))
                 // Next/prev (and end-of-file auto-next) skips browse open — record here.
                 // Parent browse-dir pin is bumped inside putHistoryInfo.
-                OpenFileExternally.recordVideoPlaybackHistory(source)
+                OpenFileExternally.scheduleRecordVideoPlaybackHistory(source)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Throwable) {
@@ -877,10 +936,10 @@ class VideoPlayerActivity : AppCompatActivity() {
                     val supportsToneMapping = tracks.supportsHdrToneMapping() ?: return
                     if (trackSupportsHdrToneMapping == supportsToneMapping) return
                     trackSupportsHdrToneMapping = supportsToneMapping
-                    if (effectiveVideoColorMode(Settings.media3HdrToneMapping.value) != playerHdrMode) {
+                    if (effectiveVideoColorMode(requestedHdrMode) != playerHdrMode) {
                         playerView?.post {
                             if (player !== exo || trackSupportsHdrToneMapping != supportsToneMapping) return@post
-                            val target = effectiveVideoColorMode(Settings.media3HdrToneMapping.value)
+                            val target = effectiveVideoColorMode(requestedHdrMode)
                             if (target != playerHdrMode) restartCurrentMediaItem(target)
                         }
                     }
@@ -917,7 +976,7 @@ class VideoPlayerActivity : AppCompatActivity() {
                 override fun onPlaybackStateChanged(playbackState: Int) {
                     if (player !== exo) return
                     if (playbackState == Player.STATE_READY) tryResume()
-                    if (playbackState == Player.STATE_ENDED) moveInPlaylist(1)
+                    if (playbackState == Player.STATE_ENDED) onVideoEnded(exo)
                     updatePipParams()
                 }
 
@@ -949,6 +1008,7 @@ class VideoPlayerActivity : AppCompatActivity() {
                 exo.trackSelectionParameters = previous.trackSelectionParameters
                 exo.playbackParameters = previous.playbackParameters
             }
+            exo.repeatMode = videoRepeatMode()
             exo.setMediaItem(mediaItem, positionMs)
             if (hdrMode != Settings.MEDIA3_HDR) {
                 // An empty effect list still enables the shader graph.
@@ -1198,8 +1258,9 @@ class VideoPlayerActivity : AppCompatActivity() {
 
     private fun updatePlaylistButtons() {
         val session = InternalVideoPlaylistRegistry.get(playlistSessionId)
-        val previousEnabled = !changingItem && session?.items?.getOrNull(playlistIndex - 1) != null
-        val nextEnabled = !changingItem && session?.items?.getOrNull(playlistIndex + 1) != null
+        val count = session?.items?.size ?: 0
+        val previousEnabled = !changingItem && loopMode.adjacentIndex(playlistIndex, count, -1) != null
+        val nextEnabled = !changingItem && loopMode.adjacentIndex(playlistIndex, count, 1) != null
         findViewById<ImageButton>(R.id.video_previous).setEnabledAppearance(previousEnabled)
         findViewById<ImageButton>(R.id.video_next).setEnabledAppearance(nextEnabled)
         val playlistEnabled = !changingItem && session?.discoverSiblings == false

@@ -382,6 +382,7 @@ class SeekPlayerView @JvmOverloads constructor(
         val tabletPortrait = portrait && resources.configuration.smallestScreenWidthDp >= WIDTH_DP_MEDIUM_LOWER_BOUND
         val phonePortrait = portrait && !tabletPortrait
         findViewById<View>(R.id.video_playlist).visibility = if (phonePortrait) GONE else VISIBLE
+        findViewById<View>(R.id.video_loop).visibility = if (phonePortrait) GONE else VISIBLE
         val portraitPlaylist = findViewById<View>(R.id.video_portrait_playlist)
         portraitPlaylist.visibility = if (phonePortrait) VISIBLE else GONE
         val fit = findViewById<View>(R.id.video_fit)

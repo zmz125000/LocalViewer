@@ -152,6 +152,16 @@
                     android:tint="@android:color/white" />
 
                 <ImageButton
+                    android:id="@+id/video_loop"
+                    android:layout_width="48dp"
+                    android:layout_height="48dp"
+                    android:background="?attr/selectableItemBackgroundBorderless"
+                    android:contentDescription="@string/video_loop"
+                    android:padding="12dp"
+                    android:src="@drawable/ic_video_loop"
+                    android:tint="@android:color/white" />
+
+                <ImageButton
                     android:id="@+id/video_rotate"
                     android:layout_width="48dp"
                     android:layout_height="48dp"
