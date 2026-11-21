@@ -112,7 +112,7 @@ class Image private constructor(
      * the platform blit.
      */
     val displayScaler: Boolean = false,
-    val gpuToneMapping: com.hippo.ehviewer.image.hdr.SkivGpuToneMapping? = null,
+    val gpuToneMapping: com.hippo.ehviewer.image.hdr.ReaderGpuToneMapping? = null,
     private val decodedColorSpaceIsSource: Boolean = true,
 ) {
     var metadata: ImageMetadata = ImageMetadata()

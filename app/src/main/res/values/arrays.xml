@@ -850,8 +850,10 @@
     <string-array name="reader_tone_mapper_entries">
         <item>@string/image_conversion_tone_off</item>
         <item>@string/image_conversion_tone_skiv</item>
-        <item>@string/image_conversion_tone_custom</item>
         <item>@string/reader_tone_skiv_gpu</item>
+        <item>@string/image_conversion_tone_custom</item>
         <item>@string/reader_tone_custom_gpu</item>
+        <item>MPCVR</item>
+        <item>MPCVR (GPU)</item>
     </string-array>
 </resources>

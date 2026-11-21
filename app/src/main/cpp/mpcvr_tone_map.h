@@ -5,9 +5,20 @@
 
 #include "sdr_tone_map.h"
 
-// Input and output are linear RGB in the encoder's gamut, with 1.0 = 203 nits.
-// Still images use the peak already measured for the export.
-inline std::vector<float> tone_map_mpcvr_base(std::vector<float> image, int gamut, float peak) {
+// Linear RGB, with 1.0 = 203 nits. Ignore invisible pixels for the content peak.
+template<class Pixels> inline float mpcvr_content_peak(const Pixels& image) {
+    float peak = 0.f;
+    for (size_t i = 0; i < image.size(); i += 4) {
+        if (!std::isfinite(image[i + 3]) || image[i + 3] <= 0.f) continue;
+        for (unsigned c = 0; c < 3; ++c) {
+            const float value = image[i + c];
+            if (std::isfinite(value)) peak = std::max(peak, value);
+        }
+    }
+    return peak;
+}
+
+template<class Pixels> inline void tone_map_mpcvr_in_place(Pixels& image, int gamut, float peak) {
     using skiv::Matrix;
     using skiv::RGB;
     using skiv::transform;
@@ -43,17 +54,19 @@ inline std::vector<float> tone_map_mpcvr_base(std::vector<float> image, int gamu
         return 80.0 * skiv::inverse_pq(std::min(mapped, white));
     };
     const auto max_channel = [](const RGB& rgb) { return std::max({rgb[0], rgb[1], rgb[2]}); };
+    const auto& source = image;
     const size_t pixels = image.size() / 4;
     hdr_parallel_pixels(pixels, hdr_pixel_jobs(pixels), [&](size_t begin, size_t end, unsigned) {
         for (size_t pixel = begin; pixel < end; ++pixel) {
-            float* rgba = image.data() + pixel * 4;
-            if (!std::isfinite(rgba[3]) || rgba[3] <= 0.f) {
-                std::fill_n(rgba, 3, 0.f);
+            const size_t i = pixel * 4;
+            if (!std::isfinite(source[i + 3]) || source[i + 3] <= 0.f) {
+                image[i] = image[i + 1] = image[i + 2] = 0.f;
                 continue;
             }
             RGB rgb{};
             for (unsigned c = 0; c < 3; ++c) {
-                rgb[c] = std::isfinite(rgba[c]) ? rgba[c] * sdr_white : 0.0;
+                const float value = source[i + c];
+                rgb[c] = std::isfinite(value) ? value * sdr_white : 0.0;
             }
             auto bt2020 = transform(xyz_to_bt2020, transform(to_xyz, rgb));
             for (double& channel : bt2020) channel = std::clamp(channel, 0.0, 10000.0);
@@ -79,9 +92,13 @@ inline std::vector<float> tone_map_mpcvr_base(std::vector<float> image, int gamu
             const auto display = to_display(mapped);
             const double normalization = std::max(sdr_white, max_channel(display));
             for (unsigned c = 0; c < 3; ++c) {
-                rgba[c] = float(std::clamp(display[c] / normalization, 0.0, 1.0));
+                image[i + c] = float(std::clamp(display[c] / normalization, 0.0, 1.0));
             }
         }
     });
+}
+
+inline std::vector<float> tone_map_mpcvr_base(std::vector<float> image, int gamut, float peak) {
+    tone_map_mpcvr_in_place(image, gamut, peak);
     return image;
 }

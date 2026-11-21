@@ -142,6 +142,16 @@
                 android:orientation="horizontal">
 
                 <ImageButton
+                    android:id="@+id/video_playlist"
+                    android:layout_width="48dp"
+                    android:layout_height="48dp"
+                    android:background="?attr/selectableItemBackgroundBorderless"
+                    android:contentDescription="@string/video_playlist"
+                    android:padding="12dp"
+                    android:src="@drawable/ic_video_playlist"
+                    android:tint="@android:color/white" />
+
+                <ImageButton
                     android:id="@+id/video_rotate"
                     android:layout_width="48dp"
                     android:layout_height="48dp"
@@ -193,13 +203,13 @@
                     android:tint="@android:color/white" />
 
                 <ImageButton
-                    android:id="@+id/video_portrait_fit"
+                    android:id="@+id/video_portrait_playlist"
                     android:layout_width="48dp"
                     android:layout_height="48dp"
                     android:background="?attr/selectableItemBackgroundBorderless"
-                    android:contentDescription="@string/video_crop_to_fill"
+                    android:contentDescription="@string/video_playlist"
                     android:padding="12dp"
-                    android:src="@drawable/exo_styled_controls_fullscreen_enter"
+                    android:src="@drawable/ic_video_playlist"
                     android:tint="@android:color/white"
                     android:visibility="gone" />
 

@@ -693,6 +693,30 @@ object OpenFileExternally {
         }
     }
 
+    internal suspend fun loadInternalVideoSiblings(current: InternalVideoSource): List<InternalVideoSource> = withIOContext {
+        fun List<String>.videoNames() = asSequence()
+            .mapNotNull(::directChildName)
+            .filter(::isBrowseVideoFileName)
+
+        when (current) {
+            is InternalVideoSource.Local -> findLocalSiblingNames(current.path).videoNames()
+                .mapNotNull { name -> siblingPath(current.path, name)?.let { InternalVideoSource.Local(it) } }
+                .toList()
+            is InternalVideoSource.Smb -> {
+                val source = SmbRepository.load(current.sourceId) ?: return@withIOContext emptyList()
+                val parent = parentRelative(current.remotePath)
+                listSmbDirChildNames(source.id, source, SmbPasswordStore.get(source.id), parent).videoNames()
+                    .map { current.copy(remotePath = SmbGateway.joinRelativePath(parent, it)) }.toList()
+            }
+            is InternalVideoSource.WebDav -> {
+                val source = WebDavRepository.load(current.sourceId) ?: return@withIOContext emptyList()
+                val parent = parentRelative(current.remotePath)
+                listWebDavDirChildNames(source.id, source, WebDavPasswordStore.get(source.id), parent).videoNames()
+                    .map { current.copy(remotePath = WebDavGateway.joinRelative(parent, it)) }.toList()
+            }
+        }
+    }
+
     internal suspend fun prepareInternalVideo(
         source: InternalVideoSource,
         displayName: String = source.displayName,

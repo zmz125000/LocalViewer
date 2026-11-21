@@ -95,6 +95,7 @@ RAW images from [rawsamples.ch](https://www.rawsamples.ch/index.php/en/canon).
 * Instant scanning and classification for media files in local and network folders.
 * One for all folder listing mode (Videos/Photos/Documents all with their own tags and filters).
 * Fully working on Meta Quest 3.
+* Fully functional media3 video player with custom HDR supports.
 * Open or share files like a file manager.
 * Fine-tuned page loader, image prefetch with no OOM crashes.
 * Gallery folder covers and reading progress.
@@ -191,6 +192,8 @@ while ($true) {
 - [cchenhen](https://github.com/cchenhen) for txtautotoc.
 - [miaoxin2003](https://github.com/miaoxin2003) for improvements to PDF.
 - [WWSBB1](https://github.com/WWSBB1/LocalViewer) bugfixes.
+- [SKIV](https://github.com/SpecialKO/SKIV) for HDR tone mapper.
+- [MPCVR](https://github.com/Aleksoid1978/VideoRenderer/) for HDR tone mapper.
 
 Here is the libraries
 

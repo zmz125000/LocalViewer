@@ -3,6 +3,7 @@ package com.hippo.ehviewer.ui.player
 import android.net.Uri
 import com.hippo.ehviewer.library.ZipPaths
 import com.hippo.ehviewer.library.mimeTypeForFileName
+import com.hippo.ehviewer.library.naturalCompare
 import com.hippo.ehviewer.library.stableGalleryId
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
@@ -67,6 +68,7 @@ object InternalVideoPlaylistRegistry {
     data class Session(
         val id: String,
         val items: List<InternalVideoSource>,
+        val discoverSiblings: Boolean = false,
     )
 
     data class Created(
@@ -88,7 +90,7 @@ object InternalVideoPlaylistRegistry {
             if (seen.add(current.identity)) add(current)
         }
         val id = UUID.randomUUID().toString()
-        val session = Session(id = id, items = items)
+        val session = Session(id = id, items = items, discoverSiblings = candidates.isEmpty())
         sessions[id] = session
         return Created(
             session = session,
@@ -97,6 +99,19 @@ object InternalVideoPlaylistRegistry {
     }
 
     fun get(id: String?): Session? = id?.let(sessions::get)
+
+    fun completeDiscovery(
+        session: Session,
+        current: InternalVideoSource,
+        siblings: List<InternalVideoSource>,
+    ): Created? {
+        val items = (listOf(current) + siblings)
+            .distinctBy { it.identity }
+            .sortedWith { a, b -> naturalCompare(a.displayName, b.displayName) }
+        val updated = session.copy(items = items, discoverSiblings = false)
+        if (!sessions.replace(session.id, session, updated)) return null
+        return Created(updated, items.indexOf(current))
+    }
 
     fun remove(id: String?) {
         if (id != null) sessions.remove(id)

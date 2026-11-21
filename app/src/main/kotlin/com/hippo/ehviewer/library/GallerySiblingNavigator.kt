@@ -1,6 +1,7 @@
 package com.hippo.ehviewer.library
 
 import com.ehviewer.core.model.BaseGalleryInfo
+import com.ehviewer.core.model.GalleryInfo
 import com.ehviewer.core.model.GalleryInfo.Companion.NOT_FAVORITED
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.smb.SmbGateway
@@ -52,9 +53,10 @@ object GallerySiblingNavigator {
         next: Boolean,
         slideshow: Boolean,
     ): ReaderScreenArgs? = when (args) {
-        is ReaderScreenArgs.LocalFolder -> localPathSibling(args.path, next, slideshow)
-        is ReaderScreenArgs.LocalZipFolder -> localPathSibling(args.zipPath, next, slideshow)
-        is ReaderScreenArgs.Archive -> localPathSibling(args.path, next, slideshow)
+        is ReaderScreenArgs.LocalFolder -> localPathSibling(args.path, args.info, next, slideshow)
+        is ReaderScreenArgs.LocalZipFolder -> localZipSibling(args, next, slideshow)
+            ?: localPathSibling(args.zipPath, args.info, next, slideshow)
+        is ReaderScreenArgs.Archive -> localPathSibling(args.path, args.info, next, slideshow)
         is ReaderScreenArgs.SmbFolder -> smbPathSibling(args.sourceId, args.remoteDir, next, slideshow)
         is ReaderScreenArgs.SmbStreamArchive -> smbPathSibling(args.sourceId, args.remotePath, next, slideshow)
         is ReaderScreenArgs.WebDavFolder -> webDavPathSibling(args.sourceId, args.remoteDir, next, slideshow)
@@ -93,9 +95,60 @@ object GallerySiblingNavigator {
         )
     }
 
+    private suspend fun savedLocalFolder(info: GalleryInfo?): LocalHistoryTarget.LocalFolderGallery? = when (val target = info?.let(LocalHistory::parse)) {
+        is LocalHistoryTarget.LocalFolderGallery -> target
+        is LocalHistoryTarget.LibraryGallery -> LocalLibrary.loadGallery(target.galleryId)?.let {
+            LocalHistoryTarget.LocalFolderGallery(it.rootId, it.relativePath)
+        }
+        else -> null
+    }
+
+    private suspend fun localZipSibling(
+        args: ReaderScreenArgs.LocalZipFolder,
+        next: Boolean,
+        slideshow: Boolean,
+    ): ReaderScreenArgs.LocalZipFolder? {
+        if (args.innerRel.isEmpty()) return null
+        val path = args.zipPath.toPath()
+        val saved = savedLocalFolder(args.info)
+        val savedZip = saved?.let { ZipAsDirListing.parseZipGalleryRelative(it.relativePath)?.first }
+        val root = saved?.takeIf { savedZip != null }?.let { LocalLibrary.loadRoot(it.rootId) }
+        val parent = parentRelativeOfFile(args.innerRel)
+        val entries = LocalFolderListing.listZipVirtualDirectory(
+            rootId = root?.id ?: 0L,
+            rootPath = root?.let { LocalLibrary.rootPath(it) },
+            zipPath = path,
+            zipRel = savedZip ?: args.zipPath.trimStart('/'),
+            inner = parent,
+            currentDirName = parent.substringAfterLast('/').ifEmpty { path.name },
+            preferMediaStore = root?.prefersMediaStore ?: true,
+        ).orEmpty().filterIsInstance<BrowseEntry.FolderGallery>()
+        val current = entries.indexOfFirst { it.relativeName == args.innerRel }
+        if (current < 0) return null
+        val target = selectOpenable(entries, current, next, slideshow) { false } ?: return null
+        val info = if (root != null && savedZip != null) {
+            val relative = if (target.relativeName.isEmpty()) savedZip else "$savedZip|${target.relativeName}"
+            BaseGalleryInfo(
+                gid = stableGalleryId(root.id, "zip:$relative"),
+                token = LOCAL_FOLDER_TOKEN,
+                title = target.name,
+                pages = if (target.pageCountCapped) 0 else target.pageCount,
+                favoriteSlot = NOT_FAVORITED,
+                rating = -1f,
+                thumbKey = target.coverPath?.toString(),
+                uploader = "${root.id}\u0000$relative",
+                category = 0,
+            )
+        } else {
+            null
+        }
+        return ReaderScreenArgs.LocalZipFolder(args.zipPath, target.relativeName, emptyList(), info = info)
+    }
+
     /** Local folder gallery or archive file in the same parent listing. */
     private suspend fun localPathSibling(
         currentPath: String,
+        info: GalleryInfo?,
         next: Boolean,
         slideshow: Boolean = false,
     ): ReaderScreenArgs? {
@@ -103,14 +156,27 @@ object GallerySiblingNavigator {
         val parent = path.parent ?: return null
         // Prefer the browse listing for the current stack frame when it matches this parent
         // (includes dual gallery rows the user saw), else list the parent path.
-        val frame = BrowseSession.localStack.lastOrNull()
-        val preferMedia = frame?.preferMediaStore ?: true
+        val stack = BrowseSession.localStack
+        val frame = stack.lastOrNull { it.path == parent.toString() || it.path == currentPath }
+        val savedFolder = savedLocalFolder(info)?.takeIf { normalizeBrowseRel(it.relativePath).isNotEmpty() }
+        val rootId = savedFolder?.rootId ?: frame?.rootId ?: 0L
+        val root = savedFolder?.let { LocalLibrary.loadRoot(it.rootId) }
+        val rootPath = root?.let { LocalLibrary.rootPath(it) }
+        val preferMedia = root?.prefersMediaStore ?: frame?.preferMediaStore ?: true
+        val parentRel = if (savedFolder != null) {
+            val relative = ZipAsDirListing.parseZipGalleryRelative(savedFolder.relativePath)?.first ?: savedFolder.relativePath
+            parentRelativeOfFile(normalizeBrowseRel(relative))
+        } else if (frame != null) {
+            siblingListingParentRelative(stack, currentPath)
+        } else {
+            ""
+        }
         val listing = when {
-            frame != null && frame.path == parent.toString() ->
-                BrowseSession.getLocalListing(BrowseSession.pathKey(parent))
-                    ?: listLocalDirectory(parent, useCache = true, preferMediaStore = preferMedia)
+            rootPath != null -> LocalFolderListing.listDirectory(rootId, rootPath, parentRel, parent, preferMediaStore = preferMedia)
             else -> listLocalDirectory(parent, useCache = true, preferMediaStore = preferMedia)
         }
+        val effectivePath = resolveBrowsePath(parent, preferMedia).resolveRelative(path.name)
+        fun matches(path: okio.Path): Boolean = path.toString() == currentPath || path == effectivePath
         val openable = listing.mapNotNull { e ->
             when (e) {
                 is BrowseEntry.FolderGallery -> e
@@ -125,9 +191,9 @@ object GallerySiblingNavigator {
         if (openable.isEmpty()) return null
         val idx = openable.indexOfFirst { e ->
             when (e) {
-                is BrowseEntry.FolderGallery -> e.path.toString() == currentPath
-                is BrowseEntry.ArchiveGallery -> e.path.toString() == currentPath
-                is BrowseEntry.RegularFile -> e.path.toString() == currentPath
+                is BrowseEntry.FolderGallery -> matches(e.path)
+                is BrowseEntry.ArchiveGallery -> matches(e.path)
+                is BrowseEntry.RegularFile -> matches(e.path)
                 is BrowseEntry.Directory,
                 is BrowseEntry.VideoFile,
                 -> false
@@ -138,11 +204,6 @@ object GallerySiblingNavigator {
         return when (target) {
             is BrowseEntry.ArchiveGallery -> ReaderScreenArgs.Archive(target.path.toString())
             is BrowseEntry.FolderGallery -> {
-                // Parent relative is the directory that contains both galleries.
-                // Inside rawbig, the top frame is rawbig itself — joining that
-                // relative with the sibling name saved `rawbig/untitled folder`.
-                val rootId = frame?.rootId ?: 0L
-                val parentRel = siblingListingParentRelative(BrowseSession.localStack, currentPath)
                 zipAsDirSiblingArgs(rootId, parentRel, target) ?: run {
                     val rel = folderGalleryRelativeUnder(
                         parentRel,
@@ -197,7 +258,7 @@ object GallerySiblingNavigator {
     ): ReaderScreenArgs? {
         val source = SmbRepository.load(sourceId) ?: return null
         val password = SmbPasswordStore.get(source.id)
-        val galleryPath = currentRemote.trim('/')
+        val galleryPath = BrowseSession.normalizeBrowseRelativeDir(currentRemote)
         val cached = FolderGalleryIndex.siblingListingSmb(
             source.id,
             SmbGateway.sourceConfigKey(source),
@@ -237,7 +298,7 @@ object GallerySiblingNavigator {
             else -> ""
         }
 
-        val idx = openable.indexOfFirst { remoteOf(it).trim('/') == galleryPath }
+        val idx = openable.indexOfFirst { BrowseSession.normalizeBrowseRelativeDir(remoteOf(it)) == galleryPath }
         if (idx < 0) return null
         val target = selectOpenable(openable, idx, next, slideshow, BrowseEntryRemote::isSlideshowEbook) ?: return null
         return when (target) {
@@ -307,7 +368,7 @@ object GallerySiblingNavigator {
     ): ReaderScreenArgs? {
         val source = WebDavRepository.load(sourceId) ?: return null
         val password = WebDavPasswordStore.get(source.id)
-        val galleryPath = currentRemote.trim('/')
+        val galleryPath = BrowseSession.normalizeBrowseRelativeDir(currentRemote)
         val cached = FolderGalleryIndex.siblingListingWebDav(
             source.id,
             WebDavGateway.sourceConfigKey(source),
@@ -347,7 +408,7 @@ object GallerySiblingNavigator {
             else -> ""
         }
 
-        val idx = openable.indexOfFirst { remoteOf(it).trim('/') == galleryPath }
+        val idx = openable.indexOfFirst { BrowseSession.normalizeBrowseRelativeDir(remoteOf(it)) == galleryPath }
         if (idx < 0) return null
         val target = selectOpenable(openable, idx, next, slideshow, BrowseEntryRemote::isSlideshowEbook) ?: return null
         return when (target) {

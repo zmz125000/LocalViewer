@@ -110,6 +110,7 @@ class VideoPlayerActivity : AppCompatActivity() {
     private var playerView: SeekPlayerView? = null
     private var playlistSessionId: String? = null
     private var playlistIndex: Int = 0
+    private var playlistDiscovery: Job? = null
     private var changingItem = false
     private var rotateWithVideo = true
     private var lastVideoSize: VideoSize = VideoSize.UNKNOWN
@@ -240,7 +241,31 @@ class VideoPlayerActivity : AppCompatActivity() {
             InternalVideoPlaylistRegistry.remove(oldPlaylist)
         }
         updatePlaylistButtons()
+        discoverPlaylistSiblings(nextSource)
         return true
+    }
+
+    private fun discoverPlaylistSiblings(current: InternalVideoSource?) {
+        playlistDiscovery?.cancel()
+        val session = InternalVideoPlaylistRegistry.get(playlistSessionId) ?: return
+        if (!session.discoverSiblings || current == null) return
+        playlistDiscovery = lifecycleScope.launch {
+            val siblings = try {
+                OpenFileExternally.loadInternalVideoSiblings(current)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w("VideoPlayer", "Unable to list sibling videos", e)
+                emptyList()
+            }
+            if (playlistSessionId != session.id) return@launch
+            val result = InternalVideoPlaylistRegistry.completeDiscovery(session, current, siblings) ?: return@launch
+            playlistIndex = result.initialIndex
+            updatePlaylistButtons()
+            if (player?.let { it.playWhenReady && it.playbackState == Player.STATE_ENDED } == true) {
+                moveInPlaylist(1)
+            }
+        }
     }
 
     override fun onStart() {
@@ -284,6 +309,7 @@ class VideoPlayerActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
+        playlistDiscovery?.cancel()
         unregisterPipControl()
         restoreSystemMediaVolume()
         releasePlayer()
@@ -346,10 +372,15 @@ class VideoPlayerActivity : AppCompatActivity() {
             }
             savePlaybackProgress()
         }
+        for (id in listOf(R.id.video_playlist, R.id.video_portrait_playlist)) {
+            findViewById<ImageButton>(id).apply {
+                tooltipText = contentDescription
+                setOnClickListener(::showPlaylist)
+            }
+        }
         findViewById<ImageButton>(R.id.video_rotate).setOnClickListener { toggleRotateWithVideo() }
         refreshRotateButton()
         findViewById<ImageButton>(R.id.video_fit).setOnClickListener { toggleVideoFit() }
-        findViewById<ImageButton>(R.id.video_portrait_fit).setOnClickListener { toggleVideoFit() }
         refreshVideoFitButton()
         val pip = findViewById<ImageButton>(R.id.video_pip)
         val pipAvailable = packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)
@@ -524,7 +555,7 @@ class VideoPlayerActivity : AppCompatActivity() {
             R.id.video_hdr,
         ).map { findViewById<ImageButton>(it) }.filter { it.isEnabled && it.visibility == View.VISIBLE }.toMutableList()
         val fit = findViewById<ImageButton>(R.id.video_fit)
-        if (fit.visibility == View.GONE && findViewById<View>(R.id.video_portrait_fit).visibility == View.GONE) {
+        if (fit.visibility == View.GONE) {
             buttons += fit
         }
         val labels = buttons.map { it.contentDescription.toString() }
@@ -608,12 +639,10 @@ class VideoPlayerActivity : AppCompatActivity() {
             androidx.media3.ui.R.drawable.exo_styled_controls_fullscreen_enter
         }
         val description = getString(if (cropped) R.string.video_fit_to_screen else R.string.video_crop_to_fill)
-        for (id in listOf(R.id.video_fit, R.id.video_portrait_fit)) {
-            findViewById<ImageButton>(id).apply {
-                setImageResource(icon)
-                contentDescription = description
-                tooltipText = description
-            }
+        findViewById<ImageButton>(R.id.video_fit).apply {
+            setImageResource(icon)
+            contentDescription = description
+            tooltipText = description
         }
     }
 
@@ -633,10 +662,24 @@ class VideoPlayerActivity : AppCompatActivity() {
         exo.seekTo(target)
     }
 
-    private fun moveInPlaylist(delta: Int) {
-        if (changingItem) return
+    private fun showPlaylist(anchor: View) {
         val session = InternalVideoPlaylistRegistry.get(playlistSessionId) ?: return
-        val target = playlistIndex + delta
+        playerView?.showControlMenu(
+            anchor,
+            session.items.map { it.displayName },
+            playlistIndex,
+            widthDp = 360,
+            rowGapDp = 4,
+        ) { index ->
+            if (playlistSessionId == session.id) openPlaylistItem(index)
+        }
+    }
+
+    private fun moveInPlaylist(delta: Int) = openPlaylistItem(playlistIndex + delta)
+
+    private fun openPlaylistItem(target: Int) {
+        if (changingItem || target == playlistIndex) return
+        val session = InternalVideoPlaylistRegistry.get(playlistSessionId) ?: return
         val source = session.items.getOrNull(target) ?: return
         changingItem = true
         updatePlaylistButtons()
@@ -1159,6 +1202,9 @@ class VideoPlayerActivity : AppCompatActivity() {
         val nextEnabled = !changingItem && session?.items?.getOrNull(playlistIndex + 1) != null
         findViewById<ImageButton>(R.id.video_previous).setEnabledAppearance(previousEnabled)
         findViewById<ImageButton>(R.id.video_next).setEnabledAppearance(nextEnabled)
+        val playlistEnabled = !changingItem && session?.discoverSiblings == false
+        findViewById<ImageButton>(R.id.video_playlist).setEnabledAppearance(playlistEnabled)
+        findViewById<ImageButton>(R.id.video_portrait_playlist).setEnabledAppearance(playlistEnabled)
     }
 
     private fun ImageButton.setEnabledAppearance(value: Boolean) {
