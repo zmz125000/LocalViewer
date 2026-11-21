@@ -1072,6 +1072,7 @@ object Settings : DataStorePreferences(null) {
     internal val media3PlayerBrightness = intPref("media3_player_brightness", -1)
     internal val media3PlayerVolume = floatPref("media3_player_volume", -1f)
     internal val media3PlayerCrop = boolPref("media3_player_crop", false)
+    internal val media3VideoLoopMode = intPref("media3_video_loop_mode", 0)
 
     /**
      * Coil decode size vs shorter screen edge:
