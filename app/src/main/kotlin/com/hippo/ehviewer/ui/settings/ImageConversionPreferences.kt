@@ -119,6 +119,10 @@ private fun ColumnScope.HdrToneMappingPreferences() {
     )
     AnimatedVisibility(visible = mapper.value == 2) {
         Column {
+            SwitchPreference(
+                title = stringResource(R.string.image_conversion_tone_auto_curve),
+                state = Settings.imageConversionAutoToneCurve.asMutableState(),
+            )
             me.zhanghai.compose.preference.IntSliderPreference(
                 state = shoulder,
                 sliderState = sliderShoulder,

@@ -1369,8 +1369,9 @@
     <string name="transfer_current">Current</string>
     <string name="transfer_current_not_folder">Open a writable folder.</string>
     <string name="transfer_same_destination">The destination is the source folder or would copy an item onto itself. Choose another folder.</string>
+    <string name="image_conversion_tone_auto_curve">Auto tone curve</string>
     <string name="image_conversion_tone_shoulder">SDR shoulder</string>
-    <string name="image_conversion_tone_shoulder_summary">SKIV (custom) keeps pixels below %1$d nits unchanged.</string>
+    <string name="image_conversion_tone_shoulder_summary">Highlight compression starts at %1$d nits.</string>
     <string name="image_conversion_tone_range">HDR range cap</string>
     <string name="image_conversion_tone_range_summary">Fit the image highlight range up to %1$d nits into SDR; brighter highlights clip.</string>
     <string name="image_conversion_tone_mapper">SDR tone mapper</string>

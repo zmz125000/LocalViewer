@@ -2250,6 +2250,7 @@ private fun PdfReaderScreen(
                 readerHiResSoftwareDownscale.changesFlow(),
                 readerAdvancedColor.changesFlow(),
                 readerHdrToneMapper.changesFlow().filter { !readerHdrDisplay.value },
+                readerHdrAutoToneCurve.changesFlow().filter { readerSdrToneMappingEnabled && ReaderToneMapper.fromPreference(readerHdrToneMapper.value).custom },
                 readerHdrToneShoulder.changesFlow().filter { readerSdrToneMappingEnabled && ReaderToneMapper.fromPreference(readerHdrToneMapper.value).custom },
                 readerHdrToneRange.changesFlow().filter { readerSdrToneMappingEnabled && ReaderToneMapper.fromPreference(readerHdrToneMapper.value).custom },
                 readerHdrDisplay.changesFlow().filter { readerHdrToneMapper.value != 0 },

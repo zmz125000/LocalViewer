@@ -539,6 +539,7 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
                 // Advanced color changes F16 pack / CS for lib-direct — re-decode.
                 readerAdvancedColor.changesFlow(),
                 readerHdrToneMapper.changesFlow().filter { !readerHdrDisplay.value },
+                readerHdrAutoToneCurve.changesFlow().filter { !readerHdrDisplay.value && ReaderToneMapper.fromPreference(readerHdrToneMapper.value).custom },
                 readerHdrToneShoulder.changesFlow().filter { !readerHdrDisplay.value && ReaderToneMapper.fromPreference(readerHdrToneMapper.value).custom },
                 readerHdrToneRange.changesFlow().filter { !readerHdrDisplay.value && ReaderToneMapper.fromPreference(readerHdrToneMapper.value).custom },
                 // ProXDR HEIC → UHDR convert path changes display file.

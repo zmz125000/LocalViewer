@@ -18,6 +18,7 @@ struct StillEncodeQuality {
     bool jxl_scrgb = false;
     bool srgb_clamp = false;
     int sdr_mapper = 0; // Off / SKIV / SKIV custom / MPCVR.
+    bool sdr_auto_curve = false;
     float sdr_shoulder = .50f, sdr_range_nits = 10000.f;
     unsigned source_bits = 32; // Source precision, independent of working-buffer storage.
     int preset;

@@ -43,16 +43,18 @@ internal data class SdrToneMapping(
     val mapper: Int = 2,
     val shoulder: Float = .50f,
     val rangeNits: Float = 10000f,
+    val autoToneCurve: Boolean = false,
 ) {
     val enabled: Boolean get() = mapper != 0
 
-    fun nativeControls() = floatArrayOf(mapper.toFloat(), shoulder, rangeNits)
+    fun nativeControls() = floatArrayOf(mapper.toFloat(), shoulder, rangeNits, if (autoToneCurve) 1f else 0f)
 
     companion object {
         fun current() = SdrToneMapping(
             Settings.imageConversionToneMapper.value.coerceIn(0, 3),
             Settings.imageConversionToneShoulder.value.coerceIn(0, 95) / 100f,
             Settings.imageConversionToneRange.value.coerceIn(204, 10000).toFloat(),
+            Settings.imageConversionAutoToneCurve.value,
         )
     }
 }

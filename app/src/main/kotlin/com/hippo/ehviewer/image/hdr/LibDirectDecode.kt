@@ -948,14 +948,15 @@ object LibDirectDecode {
         if (f16 && isHdr && outInfo.getOrNull(7) != 1 && !Settings.readerHdrDisplay.value) {
             val mapper = ReaderToneMapper.fromPreference(Settings.readerHdrToneMapper.value).supportedMode()
             if (mapper != ReaderToneMapper.OFF) {
-                val peak = if (mapper.gpu) FloatArray(1) else null
+                val curve = if (mapper.gpu) FloatArray(2) else null
                 val shoulder = Settings.readerHdrToneShoulder.value.coerceIn(0, 95) / 100f
                 val cap = Settings.readerHdrToneRange.value.coerceIn(210, 10000).toFloat()
+                val autoToneCurve = mapper.custom && Settings.readerHdrAutoToneCurve.value
                 val success = com.hippo.ehviewer.jni.toneMapReaderPixels(
-                    pixels, nativePixels, w, h, gamut, mapper.ordinal, shoulder, cap, peak,
+                    pixels, nativePixels, w, h, gamut, mapper.ordinal, shoulder, cap, autoToneCurve, curve,
                 )
-                if (success && peak != null) {
-                    gpuToneMapping = ReaderGpuToneMapping(mapper, gamut, peak[0], shoulder, cap)
+                if (success && curve != null) {
+                    gpuToneMapping = ReaderGpuToneMapping(mapper, gamut, curve[0], shoulder, cap, curve[1])
                 }
                 if (!success) Log.w("ReaderColor", "Reader tone mapping failed; retaining original pixels")
             }

@@ -80,38 +80,69 @@ template<class Pixels> inline RGB input_xyz(const Pixels& pixels,size_t at,const
     for(unsigned c=0;c<3;++c)rgb[c]=(std::isfinite(pixels[at+c])?double(pixels[at+c]):0.)*(203./80.);
     return transform(space,rgb);
 }
-// Match SKIV's 65536-bin, 99.94th-percentile luminance estimate. Ignore fully
-// invisible pixels and handle a constant image without a zero-range division.
-template<class Pixels> inline double content_peak(const Pixels& pixels,const Matrix& space) {
-    double low=std::numeric_limits<double>::infinity(),high=-low;uint64_t count=0;
-    for(size_t i=0;i<pixels.size();i+=4)if(std::isfinite(pixels[i+3])&&pixels[i+3]>0.f) {
-        const double y=input_xyz(pixels,i,space)[1];low=std::min(low,y);high=std::max(high,y);++count;
+inline double midtone_gain(double y,float midtones) {
+    if(midtones==0.f)return 1.;
+    const double linear=std::max(y,0.)*(80./203.);
+    const double distance=(linear/(1.+linear)-.33)/.14;
+    return std::exp2(midtones*std::exp(-.5*distance*distance));
+}
+struct ToneAnalysis {
+    double peak = 0.; // scRGB units, 80 nits per unit.
+    float midtones = 0.f;
+};
+
+// Match SKIV's 65536-bin, 99.94th-percentile luminance estimate. Measure
+// visible HDR area in the same pass as the histogram bounds.
+template<class Pixels> inline ToneAnalysis analyze_tone(const Pixels& pixels,const Matrix& space,bool auto_curve) {
+    double low=std::numeric_limits<double>::infinity(),high=-low;
+    uint64_t count=0;
+    double visible=0.,hdr=0.;
+    for(size_t i=0;i<pixels.size();i+=4) {
+        const float alpha=pixels[i+3];
+        if(!std::isfinite(alpha)||alpha<=0.f)continue;
+        const double y=input_xyz(pixels,i,space)[1];
+        low=std::min(low,y);high=std::max(high,y);++count;
+        if(auto_curve) {
+            const float weight=std::min(alpha,1.f);
+            visible+=weight;
+            if(y>203./80.)hdr+=weight;
+        }
     }
-    if(!count)return 0.;
-    if(high<=low)return std::max(high,0.);
-    std::vector<uint64_t> histogram(65536);
-    for(size_t i=0;i<pixels.size();i+=4)if(std::isfinite(pixels[i+3])&&pixels[i+3]>0.f) {
-        const double y=std::max(input_xyz(pixels,i,space)[1],0.);
-        const auto bin=size_t(std::clamp(std::round((y-low)/(high-low)*65536.),0.,65535.));++histogram[bin];
+    if(!count)return {};
+    const float midtones=visible>0. ? -.72f*float(std::min(hdr/(visible*.08),1.)) : 0.f;
+    double peak=std::max(high,0.);
+    if(high>low) {
+        std::vector<uint64_t> histogram(65536);
+        for(size_t i=0;i<pixels.size();i+=4)if(std::isfinite(pixels[i+3])&&pixels[i+3]>0.f) {
+            const double y=std::max(input_xyz(pixels,i,space)[1],0.);
+            const auto bin=size_t(std::clamp(std::round((y-low)/(high-low)*65536.),0.,65535.));++histogram[bin];
+        }
+        double percent=100.;
+        for(int bin=65535;bin>=0;--bin) {
+            percent-=100.*double(histogram[size_t(bin)])/double(count);
+            if(percent<=99.94) {
+                peak=std::max(0.,low+(high-low)*double(bin)/65536.);
+                break;
+            }
+        }
     }
-    double percent=100.;
-    for(int bin=65535;bin>=0;--bin) {
-        percent-=100.*double(histogram[size_t(bin)])/double(count);
-        if(percent<=99.94)return std::max(0.,low+(high-low)*double(bin)/65536.);
-    }
-    return std::max(high,0.);
+    // The midtone adjustment is monotonic in luminance, so it can be applied
+    // directly to the percentile once instead of evaluating it per bin or pixel.
+    return {peak*midtone_gain(peak,midtones),midtones};
 }
 } // namespace skiv
 
 // gamut: 0 BT.709, 1 Display P3, 2 BT.2020. Working pixels use 203-nit units.
 // Stock follows SKIV export's 120-nit PQ target, 10000-nit cap and 1.18 power.
 // Custom anchors that curve at the manual shoulder and 203-nit SDR white.
-template<class Pixels> inline void tone_map_skiv_in_place(Pixels& hdr,int gamut,bool custom,float shoulder,float cap_nits) {
+template<class Pixels> inline void tone_map_skiv_in_place(Pixels& hdr,int gamut,bool custom,float shoulder,float cap_nits,bool auto_curve=false) {
     using namespace skiv;
     const Matrix& space=gamut==2?rgb2020_xyz:gamut==1?rgbp3_xyz:rgb709_xyz;
     const Matrix from_xyz=inverse(space);
     const double cap=custom?std::clamp(double(cap_nits),204.,10000.):10000.;
-    const double peak=std::min(content_peak(hdr,space),cap/80.);
+    const auto analysis=analyze_tone(hdr,space,custom&&auto_curve);
+    const float midtones=analysis.midtones;
+    const double peak=std::min(analysis.peak,cap/80.);
     const double white=pq(1.5),peak_pq=std::max(white,pq(peak));
     const double knee=std::clamp(double(shoulder),0.,.99);
     const double input_knee=pq(knee*203./80.),output_white=pq(203./80.);
@@ -124,9 +155,18 @@ template<class Pixels> inline void tone_map_skiv_in_place(Pixels& hdr,int gamut,
     for(size_t pixel=begin;pixel<end;++pixel) {
         const size_t i=pixel*4;
         if(!std::isfinite(source[i+3])||source[i+3]<=0.f){output[i]=output[i+1]=output[i+2]=0.f;continue;}
-        auto lms=transform(xyz_lms,input_xyz(source,i,space));for(auto& value:lms)value=pq(value);
+        auto xyz=input_xyz(source,i,space);
+        const double gain=midtone_gain(xyz[1],midtones);
+        if(midtones!=0.f)for(auto& value:xyz)value*=gain;
+        auto lms=transform(xyz_lms,xyz);for(auto& value:lms)value=pq(value);
         auto ictcp=transform(lms_ictcp,lms);const double input=std::max(ictcp[0],0.);
-        if(custom&&input<=input_knee)continue;
+        if(custom&&input<=input_knee) {
+            if(midtones!=0.f)for(unsigned c=0;c<3;++c) {
+                const float value=source[i+c];
+                output[i+c]=std::isfinite(value)?float(value*gain):0.f;
+            }
+            continue;
+        }
         double reference,mapped;
         if(custom) {
             const double clipped=std::min(input,custom_peak);
@@ -147,7 +187,7 @@ template<class Pixels> inline void tone_map_skiv_in_place(Pixels& hdr,int gamut,
     });
 }
 
-inline std::vector<float> tone_map_skiv_base(std::vector<float> hdr,int gamut,bool custom,float shoulder,float cap_nits) {
-    tone_map_skiv_in_place(hdr,gamut,custom,shoulder,cap_nits);
+inline std::vector<float> tone_map_skiv_base(std::vector<float> hdr,int gamut,bool custom,float shoulder,float cap_nits,bool auto_curve=false) {
+    tone_map_skiv_in_place(hdr,gamut,custom,shoulder,cap_nits,auto_curve);
     return hdr;
 }

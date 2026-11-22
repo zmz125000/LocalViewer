@@ -24,6 +24,7 @@ internal fun configureSkivShader(shader: RuntimeShader, controls: ReaderGpuToneM
     val customPeak = max(peakPq, outputWhite)
     shader.setIntUniform("customMode", if (controls.mapper.custom) 1 else 0)
     shader.setIntUniform("sourceGamut", controls.gamut)
+    shader.setFloatUniform("midtones", controls.midtones)
     shader.setFloatUniform("curve", white.toFloat(), peakPq.toFloat(), knee.toFloat(), outputWhite.toFloat())
     shader.setFloatUniform(
         "customCurve",
@@ -54,6 +55,7 @@ internal val skivShaderSource = """
     uniform float2 dstOrigin;
     uniform int customMode;
     uniform int sourceGamut;
+    uniform float midtones;
     uniform float4 curve;
     uniform float3 customCurve;
 
@@ -85,6 +87,11 @@ internal val skivShaderSource = """
         float alpha = pixel.a;
         if (alpha <= 0.) return float4(0.);
         float3 xyz = sourceXyz(pixel.rgb / alpha);
+        if (midtones != 0.) {
+            float y = max(xyz.y, 0.);
+            float d = (y / (1. + y) - .33) / .14;
+            xyz *= exp2(midtones * exp(-.5 * d * d));
+        }
         float3 lms = pq(float3(
             dot(xyz,float3(.3592,.6976,-.0358)),
             dot(xyz,float3(-.1922,1.1004,.0755)),

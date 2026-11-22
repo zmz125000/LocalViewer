@@ -42,6 +42,10 @@ fun ColorFilterSetting(
     val hdrDisplay = Settings.readerHdrDisplay.asMutableState()
     AnimatedVisibility(visible = ReaderToneMapper.fromPreference(toneMapper.value).custom && !hdrDisplay.value) {
         Column {
+            SwitchChoice(
+                title = stringResource(R.string.image_conversion_tone_auto_curve),
+                field = Settings.readerHdrAutoToneCurve.asMutableState(),
+            )
             CommitSliderChoice(
                 title = stringResource(R.string.image_conversion_tone_shoulder),
                 range = 0..95,
