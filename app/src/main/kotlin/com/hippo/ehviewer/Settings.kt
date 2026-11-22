@@ -881,6 +881,7 @@ object Settings : DataStorePreferences(null) {
     val comicLevelsEnabled = boolPref("comic_levels_enabled", false)
     val comicBlackLevel = intPref("comic_black_level", 0)
     val comicWhiteLevel = intPref("comic_white_level", 255)
+    val readerGrayscaleDithering = boolPref("reader_grayscale_dithering", false)
     val customBrightness = boolPref("pref_custom_brightness_key", false)
     val customBrightnessValue = intPref("custom_brightness_value", 0)
     val readingMode = intPref("pref_default_reading_mode_key", ReadingModeType.WEBTOON.prefValue)

@@ -36,6 +36,7 @@ import kotlin.math.roundToInt
 fun ColorFilterSetting(
     showImageScaler: Boolean = true,
     showCameraRaw: Boolean = false,
+    showGrayscaleDithering: Boolean = true,
 ) = Column(modifier = Modifier.verticalScroll(rememberScrollState()).navigationBarsPadding()) {
     val toneMapper = Settings.readerHdrToneMapper.asMutableState()
     val hdrDisplay = Settings.readerHdrDisplay.asMutableState()
@@ -124,6 +125,13 @@ fun ColorFilterSetting(
         title = stringResource(id = R.string.pref_inverted_colors),
         field = Settings.invertedColors.asMutableState(),
     )
+    if (showGrayscaleDithering) {
+        SwitchChoice(
+            title = stringResource(id = R.string.pref_reader_grayscale_dithering),
+            field = Settings.readerGrayscaleDithering.asMutableState(),
+            summary = stringResource(id = R.string.pref_reader_grayscale_dithering_summary),
+        )
+    }
 }
 
 @Composable

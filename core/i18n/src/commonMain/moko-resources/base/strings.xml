@@ -1079,6 +1079,8 @@
     <string name="pref_comic_black_level">Black level</string>
     <string name="pref_comic_white_level">White level</string>
     <string name="pref_grayscale">Grayscale</string>
+    <string name="pref_reader_grayscale_dithering">Grayscale dithering</string>
+    <string name="pref_reader_grayscale_dithering_summary">Use 16 gray levels for standard-color still images.</string>
     <string name="pref_inverted_colors">Inverted</string>
     <string name="pref_custom_color_filter">Custom color filter</string>
     <string name="pref_color_filter_mode">Color filter blend mode</string>

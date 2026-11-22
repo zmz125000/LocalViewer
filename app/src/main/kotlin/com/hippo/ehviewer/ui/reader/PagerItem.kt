@@ -87,6 +87,7 @@ fun PagerItem(
     horizontalStrip: Boolean = false,
     /** PDF and ebook pages stay on the platform blit. */
     allowDisplayScaler: Boolean = true,
+    allowGrayscaleDithering: Boolean = true,
 ) {
     // Scheduling is driven by one ReaderNavigation from the viewport. This item only renders
     // status and owns a display pin; Compose retention no longer determines decode-ahead.
@@ -271,12 +272,18 @@ fun PagerItem(
                 val colorFilter = rememberComicColorFilter(
                     enabled = !image.isHdrContent && !image.isWideGamutContent,
                 )
+                val displayedImage = shown.image ?: image
+                val ditheredPainter = if (allowGrayscaleDithering) {
+                    rememberGrayscaleDitheredPainter(displayedImage, colorFilter) { inViewport }
+                } else {
+                    null
+                }
                 FitPageImage(
-                    painter = painter,
+                    painter = ditheredPainter ?: painter,
                     rotate = rotate,
                     clockwise = clockwise,
                     contentScale = contentScale,
-                    colorFilter = colorFilter,
+                    colorFilter = colorFilter.takeIf { ditheredPainter == null },
                     horizontalStrip = horizontalStrip,
                     modifier = Modifier
                         .onVisibilityChanged(
