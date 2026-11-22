@@ -133,7 +133,6 @@ fun ColorFilterSetting(
         SwitchChoice(
             title = stringResource(id = R.string.pref_reader_grayscale_dithering),
             field = Settings.readerGrayscaleDithering.asMutableState(),
-            summary = stringResource(id = R.string.pref_reader_grayscale_dithering_summary),
         )
     }
 }
