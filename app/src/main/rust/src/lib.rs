@@ -3,6 +3,8 @@
 
 mod ffi;
 pub mod img;
+#[cfg(feature = "jxl-decoder")]
+mod jxl_decode;
 pub mod parser;
 
 use serde::{Serialize, Serializer, ser::SerializeTuple};

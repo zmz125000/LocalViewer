@@ -4,6 +4,13 @@ option(EHVIEWER_JXL_ENCODER "Include JPEG XL export encoder" ON)
 include(ExternalProject)
 include(FetchContent)
 
+# Keep the existing lightweight stubs on 32-bit builds.
+set(EHVIEWER_HDR_CODECS OFF)
+if (ANDROID_ABI STREQUAL "arm64-v8a" OR ANDROID_ABI STREQUAL "x86_64")
+    set(EHVIEWER_HDR_CODECS ON)
+endif ()
+message(STATUS "EHVIEWER_HDR_CODECS=${EHVIEWER_HDR_CODECS} (ANDROID_ABI=${ANDROID_ABI})")
+
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
@@ -171,24 +178,18 @@ FetchContent_Declare(
 )
 
 FetchContent_MakeAvailable(Corrosion)
+set(EHVIEWER_RUST_FEATURES $<IF:$<VERSION_GREATER_EQUAL:${ANDROID_NATIVE_API_LEVEL},26>,android-26,android>)
+if (EHVIEWER_HDR_CODECS)
+    list(APPEND EHVIEWER_RUST_FEATURES jxl-decoder)
+endif ()
 corrosion_import_crate(
         MANIFEST_PATH ../rust/Cargo.toml
         LOCKED
-        FEATURES $<IF:$<VERSION_GREATER_EQUAL:${ANDROID_NATIVE_API_LEVEL},26>,android-26,android>
+        FEATURES ${EHVIEWER_RUST_FEATURES}
         FLAGS $<$<NOT:$<CONFIG:Debug>>:-Z build-std -Z build-std-features=>
 )
 corrosion_add_target_rustflags(ehviewer_rust $<$<NOT:$<CONFIG:Debug>>:-Z unstable-options -C panic=immediate-abort -Z location-detail=none -Z fmt-debug=none>)
 corrosion_link_libraries(ehviewer_rust android jnigraphics log webp webpdemux)
-
-# ── HDR convert codecs (jxr / avif / jxl / libultrahdr / future heic) ────
-# Ship only on 64-bit ABIs to keep armeabi-v7a APK size and CI time down.
-# Same branch/code: 32-bit builds link hdr_stubs.cpp (JNI returns -100).
-# AGP sets ANDROID_ABI per externalNativeBuild variant (arm64-v8a / x86_64 / armeabi-v7a).
-set(EHVIEWER_HDR_CODECS OFF)
-if (ANDROID_ABI STREQUAL "arm64-v8a" OR ANDROID_ABI STREQUAL "x86_64")
-    set(EHVIEWER_HDR_CODECS ON)
-endif ()
-message(STATUS "EHVIEWER_HDR_CODECS=${EHVIEWER_HDR_CODECS} (ANDROID_ABI=${ANDROID_ABI})")
 
 set(EHVIEWER_HDR_SOURCES "")
 set(EHVIEWER_HDR_LIBS "")
@@ -334,7 +335,8 @@ if (EHVIEWER_HDR_CODECS)
         message(FATAL_ERROR "libavif: dav1d target missing (set AVIF_CODEC_DAV1D=LOCAL)")
     endif ()
 
-    # ── libjxl (JPEG XL decode → Ultra HDR) ──────────────────────────────
+    # libjxl supplies the static encoder and the shared skcms color transforms.
+    # JPEG XL decoding is in ehviewer_rust. Never link the standalone jxl_dec library.
     set(JPEGXL_ENABLE_TOOLS OFF CACHE BOOL "" FORCE)
     set(JPEGXL_ENABLE_DEVTOOLS OFF CACHE BOOL "" FORCE)
     set(JPEGXL_ENABLE_BENCHMARK OFF CACHE BOOL "" FORCE)
@@ -356,6 +358,7 @@ if (EHVIEWER_HDR_CODECS)
             GIT_SUBMODULES "third_party/brotli;third_party/highway;third_party/skcms"
     )
     FetchContent_MakeAvailable(libjxl)
+    set_target_properties(jxl_dec PROPERTIES EXCLUDE_FROM_ALL TRUE)
 
     # Absolute PQ/HLG HEIF needs actual high-bit-depth HEVC planes. Platform
     # MediaCodec frequently exposes only 8-bit YUV, so bundle a software decoder.
@@ -416,18 +419,9 @@ if (EHVIEWER_HDR_CODECS)
     else ()
         message(FATAL_ERROR "libavif CMake target not found (expected avif)")
     endif ()
-    if (EHVIEWER_JXL_ENCODER AND TARGET jxl)
-        list(APPEND EHVIEWER_HDR_LIBS jxl)
-    elseif (NOT EHVIEWER_JXL_ENCODER AND TARGET jxl_dec)
-        list(APPEND EHVIEWER_HDR_LIBS jxl_dec)
-    else ()
-        message(FATAL_ERROR "libjxl CMake target not found for selected encoder mode")
-    endif ()
-    if (TARGET jxl_threads)
-        list(APPEND EHVIEWER_HDR_LIBS jxl_threads)
-    endif ()
-    if (TARGET jxl_cms)
-        list(APPEND EHVIEWER_HDR_LIBS jxl_cms)
+    list(APPEND EHVIEWER_HDR_LIBS jxl_cms)
+    if (EHVIEWER_JXL_ENCODER)
+        list(APPEND EHVIEWER_HDR_LIBS jxl jxl_threads)
     endif ()
     list(APPEND EHVIEWER_HDR_LIBS jxrlib)
 

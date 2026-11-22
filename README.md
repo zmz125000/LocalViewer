@@ -227,7 +227,8 @@ Here is the libraries
 **Native codecs**
 
 - [libwebp](https://github.com/webmproject/libwebp)
-- [libjxl](https://github.com/libjxl/libjxl)
+- [jxl-rs](https://github.com/libjxl/jxl-rs) for JPEG XL decoding
+- [libjxl](https://github.com/libjxl/libjxl) for JPEG XL encoding
 - [libavif](https://github.com/AOMediaCodec/libavif) and [dav1d](https://code.videolan.org/videolan/dav1d)
 - [libde265](https://github.com/strukturag/libde265) (PQ/HLG HEIF software decode)
 - [jpegxr](https://github.com/bvibber/jpegxr)
