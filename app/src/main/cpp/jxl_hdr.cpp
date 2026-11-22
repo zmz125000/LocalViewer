@@ -1,13 +1,6 @@
 #include "working_pixels.h"
-/*
- * JPEG XL → one linear RGBA_F16 working contract via libjxl's CMS.
- *
- * libjxl's CMS owns XYB and HDR transfer conversion. Original-profile/modular
- * frames retain source samples: use the HDR CMS explicitly, skcms for SDR ICC,
- * or an identity path for a matching linear profile. Never apply a second EOTF.
- *
- * JNI: com.hippo.ehviewer.jni.HdrConvertKt.convertJxlBytesToUltraHdr
- */
+// JPEG XL decodes to straight-alpha linear RGB in the same working space
+// as the other HDR codecs. The decoder's output profile describes its samples.
 #include <android/log.h>
 #include <jni.h>
 #include "thumbnail_mapped_input.h"
@@ -24,9 +17,7 @@
 
 #include <jxl/cms.h>
 #include <jxl/color_encoding.h>
-#include <jxl/decode.h>
-#include <jxl/decode_cxx.h>
-#include <jxl/resizable_parallel_runner_cxx.h>
+#include "jxl_rs.h"
 
 #include "hdr_encode.h"
 #include "hdr_parallel.h"
@@ -46,15 +37,6 @@
 #define ALOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
 
 namespace {
-
-void set_linear_rgb(JxlColorEncoding* enc, JxlPrimaries primaries) {
-    *enc = {};
-    enc->color_space = JXL_COLOR_SPACE_RGB;
-    enc->white_point = JXL_WHITE_POINT_D65;
-    enc->primaries = primaries;
-    enc->transfer_function = JXL_TRANSFER_FUNCTION_LINEAR;
-    enc->rendering_intent = JXL_RENDERING_INTENT_RELATIVE;
-}
 
 /** Build the linear RGB profile matching the gamut handed to the shared encoder/packer. */
 bool make_linear_output_profile(uhdr_color_gamut_t cg, skcms_ICCProfile* profile) {
@@ -82,13 +64,7 @@ bool make_linear_output_profile(uhdr_color_gamut_t cg, skcms_ICCProfile* profile
     return skcms_MakeUsableAsDestination(profile);
 }
 
-/**
- * libjxl 0.11.1 does not run its requested output CMS stage for modular / lossless
- * codestreams (`uses_original_profile=true`): their color transform is kNone, so
- * float output remains in the original encoded transfer function. Run the same
- * source ICC to linear-working-gamut conversion explicitly for those frames.
- */
-bool transform_original_profile_to_linear(std::vector<float>& rgba, size_t npx,
+bool jxl_profile_to_linear(std::vector<float>& rgba, size_t npx,
                                           const std::vector<uint8_t>& source_icc,
                                           uhdr_color_gamut_t cg) {
     if (npx == 0 || rgba.size() < npx * 4 || source_icc.empty()) return false;
@@ -120,7 +96,7 @@ bool transform_original_profile_to_linear(std::vector<float>& rgba, size_t npx,
  * and applies PQ/HLG without that fallback, unlike a plain skcms ICC transform.
  * Process small RGB batches in place so this needs no second complete frame.
  */
-bool transform_original_hdr_to_linear(std::vector<float>& rgba, size_t pixels,
+bool jxl_hdr_profile_to_linear(std::vector<float>& rgba, size_t pixels,
                                       const std::vector<uint8_t>& source_icc,
                                       uhdr_color_gamut_t cg, size_t channels, float intensity) {
     auto destination = ultrahdr::IccHelper::writeIccProfile(UHDR_CT_LINEAR, cg);
@@ -155,30 +131,41 @@ bool transform_original_hdr_to_linear(std::vector<float>& rgba, size_t pixels,
     return success;
 }
 
-/** Pick a known linear destination; [out_cg] always names the resulting samples. */
-void choose_linear_output(const JxlColorEncoding* src, bool have_src, bool is_pq, bool is_hlg,
-                          JxlColorEncoding* out, uhdr_color_gamut_t* out_cg) {
-    if (is_pq || is_hlg || (have_src && src->primaries == JXL_PRIMARIES_2100)) {
-        set_linear_rgb(out, JXL_PRIMARIES_2100);
-        *out_cg = UHDR_CG_BT_2100;
-    } else if (have_src && src->primaries == JXL_PRIMARIES_P3) {
-        set_linear_rgb(out, JXL_PRIMARIES_P3);
-        *out_cg = UHDR_CG_DISPLAY_P3;
-    } else if (have_src && src->primaries == JXL_PRIMARIES_SRGB) {
-        set_linear_rgb(out, JXL_PRIMARIES_SRGB);
-        *out_cg = UHDR_CG_BT_709;
-    } else {
-        // ICC-only/custom content gets a wide linear intermediate. The CMS does
-        // the conversion, so tagging it BT.2020 is accurate rather than a hint.
-        set_linear_rgb(out, JXL_PRIMARIES_2100);
-        *out_cg = UHDR_CG_BT_2100;
-    }
+// The generated grayscale ICC has no HDR CICP tag. Decode its declared transfer
+// directly, keeping the same intensity normalization as the RGB HDR CMS.
+void gray_hdr_to_linear(std::vector<float>& rgba, size_t pixels, bool pq, float intensity) {
+    const float gamma = intensity >= 295.f && intensity <= 305.f ? 1.f :
+        1.2f * std::pow(1.111f, std::log2(intensity / 1000.f));
+    hdr_parallel_pixels(pixels, hdr_pixel_jobs(pixels), [&](size_t begin, size_t end, unsigned) {
+        for (size_t i = begin; i < end; ++i) {
+            const float code = std::clamp(rgba[i * 4], 0.f, 1.f);
+            float linear;
+            if (pq) {
+                const double p = std::pow(code, 32.0 / 2523.0);
+                linear = float(std::pow(std::max(0.0, p - 3424.0 / 4096.0) /
+                    (2413.0 / 128.0 - (2392.0 / 128.0) * p), 16384.0 / 2610.0) * kMaxNits / intensity);
+            } else {
+                const float scene = code <= .5f ? code * code / 3.f :
+                    (std::exp((code - .55991073f) / .17883277f) + .28466892f) / 12.f;
+                linear = std::pow(scene, gamma);
+            }
+            rgba[i * 4] = rgba[i * 4 + 1] = rgba[i * 4 + 2] = linear;
+        }
+    });
+}
+
+/** Pick a known linear destination. The gamut also tags the resulting samples. */
+uhdr_color_gamut_t linear_gamut(const JxlRsColor& color, bool structured, bool hdr) {
+    if (hdr || (structured && color.primaries == JXL_PRIMARIES_2100)) return UHDR_CG_BT_2100;
+    if (structured && color.primaries == JXL_PRIMARIES_P3) return UHDR_CG_DISPLAY_P3;
+    if (structured && color.primaries == JXL_PRIMARIES_SRGB) return UHDR_CG_BT_709;
+    return UHDR_CG_BT_2100;
 }
 
 // A structured linear profile already in our chosen working gamut is an
 // identity transform. Going through quantized ICC matrices adds color error
 // and a complete CMS pass, especially for our lossless linear F16 exports.
-bool is_linear_working_encoding(const JxlColorEncoding& src, uhdr_color_gamut_t cg) {
+bool is_linear_working_encoding(const JxlRsColor& src, uhdr_color_gamut_t cg) {
     if (src.color_space != JXL_COLOR_SPACE_RGB || src.white_point != JXL_WHITE_POINT_D65 ||
         src.transfer_function != JXL_TRANSFER_FUNCTION_LINEAR) return false;
     return (src.primaries == JXL_PRIMARIES_SRGB && cg == UHDR_CG_BT_709) ||
@@ -196,8 +183,7 @@ int decode_jxl_to_linear(const uint8_t* data, size_t len, std::vector<Sample>& o
                              unsigned& w, unsigned& h, uhdr_color_gamut_t* out_cg,
                              bool* out_force_hdr = nullptr, int* out_transfer_cicp = nullptr,
                              bool composite_alpha_on_black = true, unsigned thumbnail_edge = 0,
-                             bool export_bt2020 = false, std::vector<uint8_t>* out_exif = nullptr, int* out_source_depth = nullptr, DecodedImageInfo* source = nullptr,
-                             bool progressive_preview = true) {
+                             bool export_bt2020 = false, std::vector<uint8_t>* out_exif = nullptr, int* out_source_depth = nullptr, DecodedImageInfo* source = nullptr) {
     const bool preserve_extended = export_pixels_preserve_scrgb();
     if (out_source_depth) *out_source_depth = 0;
     if (out_exif) out_exif->clear();
@@ -206,211 +192,74 @@ int decode_jxl_to_linear(const uint8_t* data, size_t len, std::vector<Sample>& o
     if (out_transfer_cicp) *out_transfer_cicp = 0;
     if (!data || len == 0) return -1;
 
-    auto runner = JxlResizableParallelRunnerMake(nullptr);
-    auto dec = JxlDecoderMake(nullptr);
-    if (!dec) return -2;
+    JxlRsReader decoder(data, len);
+    if (!decoder) return -2;
+    const auto& info = decoder.info();
+    w = info.xsize;
+    h = info.ysize;
+    if (!w || !h || w > 16384 || h > 16384 ||
+        (std::is_same_v<Sample, float> && uint64_t(w) * h > 80000000)) return -8;
+    if (out_source_depth) *out_source_depth = static_cast<int>(info.bits_per_sample);
 
-    const JxlCmsInterface* cms = JxlGetDefaultCms();
-    if (!cms) {
-        ALOGE("libjxl default CMS unavailable");
-        return -3;
-    }
-    if (JxlDecoderSetCms(dec.get(), *cms) != JXL_DEC_SUCCESS) {
-        ALOGE("libjxl default CMS setup failed");
-        return -3;
-    }
-    (void)JxlDecoderSetUnpremultiplyAlpha(dec.get(), JXL_TRUE);
-
-    const int events = JXL_DEC_BASIC_INFO | JXL_DEC_COLOR_ENCODING | JXL_DEC_FULL_IMAGE |
-        (thumbnail_edge > 0 && progressive_preview ? JXL_DEC_FRAME_PROGRESSION : 0) |
-        (out_exif ? JXL_DEC_BOX | JXL_DEC_BOX_COMPLETE : 0);
-    if (JxlDecoderSubscribeEvents(dec.get(), events) !=
-        JXL_DEC_SUCCESS) {
-        return -4;
-    }
-    if (out_exif && JxlDecoderSetDecompressBoxes(dec.get(), JXL_TRUE) != JXL_DEC_SUCCESS) return -4;
-    if (thumbnail_edge > 0 && progressive_preview &&
-        JxlDecoderSetProgressiveDetail(dec.get(), kLastPasses) != JXL_DEC_SUCCESS) return -4;
-    JxlDecoderSetParallelRunner(dec.get(), JxlResizableParallelRunner, runner.get());
-
-    JxlDecoderSetInput(dec.get(), data, len);
-    JxlDecoderCloseInput(dec.get());
-
-    JxlBasicInfo info{};
-    JxlColorEncoding src_encoding{};
-    bool have_src = false;
-    bool is_pq = false;
-    bool is_hlg = false;
-    uhdr_color_gamut_t cg = UHDR_CG_BT_709;
-    std::vector<uint8_t> source_icc;
-    std::vector<float> pixels;
-    std::vector<float> black;
-    int black_index = -1;
-    JxlPixelFormat format = {4, JXL_TYPE_FLOAT, JXL_NATIVE_ENDIAN, 0};
-    std::vector<uint8_t> exif_box;
-    bool collecting_exif = false;
-    bool exif_finished = false;
-    bool frame_complete = false;
-
-    for (;;) {
-        JxlDecoderStatus status = JxlDecoderProcessInput(dec.get());
-        if (status == JXL_DEC_ERROR) {
-            // Malformed trailing metadata must not invalidate an already decoded image.
-            if (frame_complete) break;
-            ALOGE("JxlDecoderProcessInput error");
-            return -5;
-        }
-        if (status == JXL_DEC_NEED_MORE_INPUT) {
-            if (frame_complete) break;
-            ALOGE("JXL truncated");
-            return -6;
-        }
-        if (status == JXL_DEC_BOX && out_exif && !exif_finished) {
-            JxlBoxType type;
-            if (JxlDecoderGetBoxType(dec.get(), type, JXL_TRUE) == JXL_DEC_SUCCESS && memcmp(type, "Exif", 4) == 0) {
-                exif_box.resize(1024 * 1024);
-                collecting_exif = JxlDecoderSetBoxBuffer(dec.get(), exif_box.data(), exif_box.size()) == JXL_DEC_SUCCESS;
-            }
-        } else if (status == JXL_DEC_BOX_COMPLETE && collecting_exif) {
-            const size_t count = exif_box.size() - JxlDecoderReleaseBoxBuffer(dec.get());
-            exif_box.resize(count);
-            *out_exif = std::move(exif_box);
-            collecting_exif = false;
-            exif_finished = true;
-            if (frame_complete) break;
-        } else if (status == JXL_DEC_BOX_NEED_MORE_OUTPUT && collecting_exif) {
-            // Oversized EXIF is optional; stop buffering it and keep decoding pixels.
-            JxlDecoderReleaseBoxBuffer(dec.get());
-            collecting_exif = false;
-            exif_finished = true;
-            exif_box.clear();
-            if (frame_complete) break;
-        } else if (status == JXL_DEC_BASIC_INFO) {
-            if (JxlDecoderGetBasicInfo(dec.get(), &info) != JXL_DEC_SUCCESS) return -7;
-            for (unsigned i = 0; i < info.num_extra_channels; ++i) {
-                JxlExtraChannelInfo extra{};
-                if (JxlDecoderGetExtraChannelInfo(dec.get(), i, &extra) != JXL_DEC_SUCCESS) return -7;
-                if (extra.type == JXL_CHANNEL_BLACK) black_index = static_cast<int>(i);
-            }
-            if (out_source_depth) *out_source_depth = static_cast<int>(info.bits_per_sample);
-            w = info.xsize;
-            h = info.ysize;
-            if (source) {
-                source->width = jint(w);
-                source->height = jint(h);
-                source->depth = jint(info.bits_per_sample);
-            }
-            if (w == 0 || h == 0 || w > 16384 || h > 16384 ||
-                (std::is_same_v<Sample, float> && uint64_t(w) * h > 80000000)) return -8;
-            JxlResizableParallelRunnerSetThreads(
-                runner.get(), std::min<size_t>(JxlResizableParallelRunnerSuggestThreads(w, h), hdr_pixel_jobs(static_cast<size_t>(w) * h)));
-        } else if (status == JXL_DEC_COLOR_ENCODING) {
-            have_src = JxlDecoderGetColorAsEncodedProfile(
-                           dec.get(), JXL_COLOR_PROFILE_TARGET_ORIGINAL, &src_encoding) ==
-                JXL_DEC_SUCCESS;
-            if (have_src) {
-                is_pq = src_encoding.transfer_function == JXL_TRANSFER_FUNCTION_PQ;
-                is_hlg = src_encoding.transfer_function == JXL_TRANSFER_FUNCTION_HLG;
-            }
-            if (source && have_src) {
-                source->primaries = src_encoding.primaries == JXL_PRIMARIES_SRGB ? 1 :
-                    src_encoding.primaries == JXL_PRIMARIES_2100 ? 9 :
-                    src_encoding.primaries == JXL_PRIMARIES_P3 ?
-                        (src_encoding.white_point == JXL_WHITE_POINT_DCI ? 11 :
-                         src_encoding.white_point == JXL_WHITE_POINT_D65 ? 12 : 0) : 0;
-                if (src_encoding.white_point != JXL_WHITE_POINT_D65 &&
-                    source->primaries != 11) source->primaries = 0;
-                // GAMMA is libjxl's sentinel, not a CICP transfer identifier.
-                source->transfer = src_encoding.transfer_function == JXL_TRANSFER_FUNCTION_GAMMA ?
-                    0 : jint(src_encoding.transfer_function);
-            }
-            JxlColorEncoding linear_output{};
-            choose_linear_output(have_src ? &src_encoding : nullptr, have_src, is_pq, is_hlg,
-                                 &linear_output, &cg);
-
-            // TARGET_DATA incorrectly remains the original profile for modular images in
-            // libjxl 0.11.1, so retain TARGET_ORIGINAL for the explicit transform below.
-            if (info.uses_original_profile && !(have_src && is_linear_working_encoding(src_encoding, cg))) {
-                size_t icc_size = 0;
-                if (JxlDecoderGetICCProfileSize(dec.get(), JXL_COLOR_PROFILE_TARGET_ORIGINAL,
-                                                &icc_size) == JXL_DEC_SUCCESS &&
-                    icc_size > 0 && icc_size <= 16u * 1024u * 1024u) {
-                    source_icc.resize(icc_size);
-                    if (JxlDecoderGetColorAsICCProfile(
-                            dec.get(), JXL_COLOR_PROFILE_TARGET_ORIGINAL, source_icc.data(),
-                            source_icc.size()) != JXL_DEC_SUCCESS) {
-                        source_icc.clear();
-                    }
-                }
-            }
-            if (!info.uses_original_profile) {
-                if (JxlDecoderSetOutputColorProfile(dec.get(), &linear_output, nullptr, 0) !=
-                    JXL_DEC_SUCCESS) {
-                    ALOGE("libjxl cannot convert source profile to linear output");
-                    return -9;
-                }
-            }
-            if (out_cg) *out_cg = cg;
-        } else if (status == JXL_DEC_NEED_IMAGE_OUT_BUFFER) {
-            size_t buffer_size = 0;
-            if (JxlDecoderImageOutBufferSize(dec.get(), &format, &buffer_size) != JXL_DEC_SUCCESS) {
-                return -10;
-            }
-            pixels.resize(buffer_size / sizeof(float));
-            if (JxlDecoderSetImageOutBuffer(dec.get(), &format, pixels.data(), buffer_size) !=
-                JXL_DEC_SUCCESS) {
-                return -11;
-            }
-            if (black_index >= 0) {
-                const JxlPixelFormat black_format = {1, JXL_TYPE_FLOAT, JXL_NATIVE_ENDIAN, 0};
-                size_t black_size = 0;
-                if (JxlDecoderExtraChannelBufferSize(dec.get(), &black_format, &black_size,
-                                                     black_index) != JXL_DEC_SUCCESS) return -11;
-                black.resize(black_size / sizeof(float));
-                if (JxlDecoderSetExtraChannelBuffer(dec.get(), &black_format, black.data(),
-                                                     black_size, black_index) != JXL_DEC_SUCCESS) return -11;
-            }
-        } else if (status == JXL_DEC_FRAME_PROGRESSION && thumbnail_edge > 0 && progressive_preview) {
-            const size_t ratio = JxlDecoderGetIntendedDownsamplingRatio(dec.get());
-            // Finish the first progressive rendition with enough source detail.
-            // Files without suitable steps simply continue to the complete frame.
-            if (ratio > 0 && (std::max(w, h) + ratio - 1) / ratio >= thumbnail_edge &&
-                JxlDecoderFlushImage(dec.get()) == JXL_DEC_SUCCESS) break;
-        } else if (status == JXL_DEC_FULL_IMAGE) {
-            frame_complete = true;
-            if (!out_exif || exif_finished) break;
-            // Preserve the reader's first-frame behavior while scanning trailing boxes.
-            JxlDecoderSkipFrames(dec.get(), 0x7fffffffu);
-        } else if (status == JXL_DEC_SUCCESS) {
-            break;
+    JxlRsColor src_encoding{};
+    const bool have_src = decoder.color(src_encoding, true);
+    const bool is_pq = have_src && src_encoding.transfer_function == JXL_TRANSFER_FUNCTION_PQ;
+    const bool is_hlg = have_src && src_encoding.transfer_function == JXL_TRANSFER_FUNCTION_HLG;
+    if (source) {
+        source->width = jint(w);
+        source->height = jint(h);
+        source->depth = jint(info.bits_per_sample);
+        if (have_src) {
+            source->primaries = src_encoding.white_point != JXL_WHITE_POINT_D65 ?
+                (src_encoding.primaries == JXL_PRIMARIES_P3 && src_encoding.white_point == JXL_WHITE_POINT_DCI ? 11 : 0) :
+                src_encoding.primaries == JXL_PRIMARIES_SRGB ? 1 :
+                src_encoding.primaries == JXL_PRIMARIES_2100 ? 9 :
+                src_encoding.primaries == JXL_PRIMARIES_P3 ? 12 : 0;
+            source->transfer = src_encoding.transfer_function == JXL_TRANSFER_FUNCTION_GAMMA ?
+                0 : src_encoding.transfer_function;
         }
     }
 
-    if (pixels.empty() || w == 0 || h == 0) return -12;
+    auto cg = linear_gamut(src_encoding, have_src, is_pq || is_hlg);
+    if (out_cg) *out_cg = cg;
+    if (!decoder.set_format(JxlRsFormat::f32, info.has_black)) return -9;
+    JxlRsColor output_color{};
+    const bool structured_output = decoder.color(output_color);
+    const bool already_linear = structured_output && is_linear_working_encoding(output_color, cg);
+    const auto icc = already_linear ? std::vector<uint8_t>{} : decoder.icc();
+    const bool cmyk = icc.size() >= 20 && !memcmp(icc.data() + 16, "CMYK", 4);
+    if (cmyk && !info.has_black) return -13;
 
-    const size_t pixels_n = static_cast<size_t>(w) * static_cast<size_t>(h);
-    // CMYK JXL stores inverse C/M/Y in the color planes and inverse K in a
-    // BLACK extra channel, not alpha. Supply all four inks to the ICC transform.
-    const bool cmyk = source_icc.size() >= 20 && !memcmp(source_icc.data() + 16, "CMYK", 4);
+    const size_t pixels_n = static_cast<size_t>(w) * h;
+    std::vector<float> pixels(pixels_n * 4);
+    std::vector<float> black(info.has_black ? pixels_n : 0);
+    double duration = 0;
+    if (decoder.next(pixels.data(), pixels.size() * sizeof(float), duration,
+                     black.data(), black.size() * sizeof(float)) != 1) return -5;
+    if (out_exif) *out_exif = JxlRsReader::exif(data, len);
+
+    // CMYK uses an extra plane for inverse K. Keep alpha separate while the CMS sees the four inks.
     std::vector<float> alpha;
     if (cmyk) {
-        if (black.size() != pixels_n || !info.uses_original_profile) return -13;
-        if (info.alpha_bits) alpha.resize(pixels_n);
+        if (info.has_alpha) alpha.resize(pixels_n);
         for (size_t i = 0; i < pixels_n; ++i) {
             if (!alpha.empty()) alpha[i] = pixels[i * 4 + 3];
             pixels[i * 4 + 3] = black[i];
         }
     }
-    // Release the extra ink plane before allocating the display buffer.
     std::vector<float>().swap(black);
-    const bool original_profile = info.uses_original_profile == JXL_TRUE;
-    const bool hdr_cms = original_profile && (is_pq || is_hlg);
-    const float cms_intensity = std::clamp(std::isfinite(info.intensity_target) && info.intensity_target > 0.f ? info.intensity_target : 1000.f, is_pq ? 1.f : kSdrWhiteNits, kMaxNits);
+    const bool hdr_cms = structured_output &&
+        (output_color.transfer_function == JXL_TRANSFER_FUNCTION_PQ || output_color.transfer_function == JXL_TRANSFER_FUNCTION_HLG);
+    const float cms_intensity = std::clamp(
+        std::isfinite(info.intensity_target) && info.intensity_target > 0.f ? info.intensity_target : 1000.f,
+        is_pq ? 1.f : kSdrWhiteNits, kMaxNits);
     if (hdr_cms) {
-        const size_t channels = have_src && src_encoding.color_space == JXL_COLOR_SPACE_GRAY ? 1 : 3;
-        if (!transform_original_hdr_to_linear(pixels, pixels_n, source_icc, cg, channels, cms_intensity)) return -13;
-    } else if (original_profile && !(have_src && is_linear_working_encoding(src_encoding, cg)) &&
-               !transform_original_profile_to_linear(pixels, pixels_n, source_icc, cg)) {
+        if (output_color.color_space == JXL_COLOR_SPACE_GRAY) {
+            gray_hdr_to_linear(pixels, pixels_n, is_pq, cms_intensity);
+        } else if (!jxl_hdr_profile_to_linear(pixels, pixels_n, icc, cg, 3, cms_intensity)) {
+            return -13;
+        }
+    } else if (!already_linear && !jxl_profile_to_linear(pixels, pixels_n, icc, cg)) {
         return -13;
     }
     if (!alpha.empty()) {
@@ -418,7 +267,7 @@ int decode_jxl_to_linear(const uint8_t* data, size_t len, std::vector<Sample>& o
     }
     std::vector<float>().swap(alpha);
 
-    // BasicInfo.intensity_target: libjxl default for SDR is **255** nits — NOT HDR.
+    // The usual 255-nit intensity target is SDR.
     const float intensity = info.intensity_target;
     const bool intensity_hdr = std::isfinite(intensity) && intensity >= 400.f;
     const bool scrgb = info.exponent_bits_per_sample > 0 && have_src && intensity == 80.f &&
@@ -454,8 +303,7 @@ int decode_jxl_to_linear(const uint8_t* data, size_t len, std::vector<Sample>& o
     // the codestream intensity target; SDR's common 255-nit metadata stays 1.0.
     float scale = 1.f;
     if (declared_hdr) {
-        // Both the decoder CMS and the explicit original-profile HDR CMS return
-        // linear values relative to intensity_target, not 203-nit SDR white.
+        // Restore the absolute brightness from the CMS intensity normalization.
         float peak_nits = hdr_cms ? cms_intensity : intensity;
         if (!std::isfinite(peak_nits) || peak_nits < 1.f) peak_nits = 1000.f;
         // PQ content peaks can be below SDR white; undo its CMS normalization
@@ -552,7 +400,7 @@ int decode_jxl_to_linear(const uint8_t* data, size_t len, std::vector<Sample>& o
 
     ALOGI("JXL CMS %ux%u cg=%d pq=%d hlg=%d original=%d intensity=%.1f scale=%.3f hdr=%d "
           "composite=%d",
-          w, h, (int)cg, is_pq ? 1 : 0, is_hlg ? 1 : 0, original_profile ? 1 : 0, intensity, scale,
+          w, h, (int)cg, is_pq ? 1 : 0, is_hlg ? 1 : 0, decoder.outputs_original_profile() ? 1 : 0, intensity, scale,
           declared_hdr ? 1 : 0, composite_alpha_on_black ? 1 : 0);
     return 0;
 }
@@ -733,14 +581,13 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeJxlBytesToDirect(JNIEnv* env, jcl
     DecodedImageInfo source;
     jbyteArray result = nullptr;
     // Resize linear float samples in parallel before allocating display F16.
-    // Reader pages finish all passes and trailing EXIF; preview flushing is thumb-only.
     // Exports retain the existing full-resolution F16 + explicit resize path.
     int rc = decode_jxl_to_linear(reinterpret_cast<const uint8_t*>(bytes),
                                       static_cast<size_t>(len), rgba, w, h, &cg, &force_hdr,
                                       &transfer_cicp, /*composite_alpha_on_black=*/false,
                                       !export_pixels_capture() && maxEdge > 0 ? static_cast<unsigned>(maxEdge) : 0u,
                                       exportBt2020 == JNI_TRUE && export_pixels_capture(), jOutExif ? &exif : nullptr,
-                                      &source_depth, &source, /*progressive_preview=*/false);
+                                      &source_depth, &source);
     if (rc == 0) {
         publish_decoded_exif(env, jOutExif, exif, true);
         if (maxEdge > 0) {
@@ -799,14 +646,13 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeJxlBufferToDirect(JNIEnv* env, jc
     DecodedImageInfo source;
     jbyteArray result = nullptr;
     // Resize linear float samples in parallel before allocating display F16.
-    // Reader pages finish all passes and trailing EXIF; preview flushing is thumb-only.
     // Exports retain the existing full-resolution F16 + explicit resize path.
     int rc = decode_jxl_to_linear(reinterpret_cast<const uint8_t*>(bytes),
                                       static_cast<size_t>(len), rgba, w, h, &cg, &force_hdr,
                                       &transfer_cicp, /*composite_alpha_on_black=*/false,
                                       !export_pixels_capture() && maxEdge > 0 ? static_cast<unsigned>(maxEdge) : 0u,
                                       exportBt2020 == JNI_TRUE && export_pixels_capture(), jOutExif ? &exif : nullptr,
-                                      &source_depth, &source, /*progressive_preview=*/false);
+                                      &source_depth, &source);
     if (rc == 0) {
         publish_decoded_exif(env, jOutExif, exif, true);
         if (maxEdge > 0) {
@@ -828,47 +674,12 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeJxlBufferToDirect(JNIEnv* env, jc
     return nullptr;
 }
 
-// Extract only the EXIF box (including Brotli-compressed boxes), not image pixels.
-static jbyteArray extract_jxl_exif(JNIEnv* env, const uint8_t* data, size_t size, StillExifInput* input) {
-    auto decoder = JxlDecoderMake(nullptr);
-    if (!decoder || JxlDecoderSubscribeEvents(decoder.get(), JXL_DEC_BOX | JXL_DEC_BOX_COMPLETE) != JXL_DEC_SUCCESS ||
-        JxlDecoderSetDecompressBoxes(decoder.get(), JXL_TRUE) != JXL_DEC_SUCCESS) return nullptr;
-    std::vector<uint8_t> chunk;
-    uint64_t offset = 0;
-    if (!input) {
-        JxlDecoderSetInput(decoder.get(), data, size);
-        JxlDecoderCloseInput(decoder.get());
-    }
-    std::vector<uint8_t> box;
-    bool collecting = false;
-    for (;;) {
-        const auto status = JxlDecoderProcessInput(decoder.get());
-        if (status == JXL_DEC_BOX) {
-            JxlBoxType type;
-            if (JxlDecoderGetBoxType(decoder.get(), type, JXL_TRUE) != JXL_DEC_SUCCESS) return nullptr;
-            if (memcmp(type, "Exif", 4) == 0) {
-                box.resize(1024 * 1024);
-                if (JxlDecoderSetBoxBuffer(decoder.get(), box.data(), box.size()) != JXL_DEC_SUCCESS) return nullptr;
-                collecting = true;
-            }
-        } else if (status == JXL_DEC_BOX_COMPLETE && collecting) {
-            const size_t count = box.size() - JxlDecoderReleaseBoxBuffer(decoder.get());
-            if (!count) return nullptr;
-            auto result = env->NewByteArray(static_cast<jsize>(count));
-            if (result) env->SetByteArrayRegion(result, 0, static_cast<jsize>(count), reinterpret_cast<const jbyte*>(box.data()));
-            return result;
-        } else if (status == JXL_DEC_NEED_MORE_INPUT && input) {
-            const size_t remaining = JxlDecoderReleaseInput(decoder.get());
-            if (remaining > chunk.size()) return nullptr;
-            offset += chunk.size() - remaining;
-            if (!input->read(offset, 64 * 1024, chunk) || chunk.size() <= remaining) return nullptr;
-            if (JxlDecoderSetInput(decoder.get(), chunk.data(), chunk.size()) != JXL_DEC_SUCCESS) return nullptr;
-            if (chunk.size() < 64 * 1024) JxlDecoderCloseInput(decoder.get());
-        } else if (status == JXL_DEC_SUCCESS || status == JXL_DEC_ERROR ||
-                   status == JXL_DEC_NEED_MORE_INPUT || status == JXL_DEC_BOX_NEED_MORE_OUTPUT) {
-            return nullptr;
-        }
-    }
+static jbyteArray jxl_exif_bytes(JNIEnv* env, const std::vector<uint8_t>& exif) {
+    if (exif.empty()) return nullptr;
+    const auto size = static_cast<jsize>(exif.size());
+    auto result = env->NewByteArray(size);
+    if (result) env->SetByteArrayRegion(result, 0, size, reinterpret_cast<const jbyte*>(exif.data()));
+    return result;
 }
 
 extern "C" JNIEXPORT jbyteArray JNICALL
@@ -877,12 +688,19 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_extractJxlExif(JNIEnv* env, jclass, job
     const auto* data = static_cast<const uint8_t*>(env->GetDirectBufferAddress(input));
     const jlong size = env->GetDirectBufferCapacity(input);
     if (!data || size <= 0) return nullptr;
-    return extract_jxl_exif(env, data, static_cast<size_t>(size), nullptr);
+    return jxl_exif_bytes(env, JxlRsReader::exif(data, static_cast<size_t>(size)));
 } catch (...) { return nullptr; }
 
 extern "C" JNIEXPORT jbyteArray JNICALL
 Java_com_hippo_ehviewer_jni_HdrConvertKt_extractJxlExifInput(JNIEnv* env, jclass, jobject input) try {
     if (!input) return nullptr;
     StillExifInput reader(env, input);
-    return extract_jxl_exif(env, nullptr, 0, &reader);
+    std::vector<uint8_t> chunk;
+    struct Input { StillExifInput& reader; std::vector<uint8_t>& chunk; } source{reader, chunk};
+    return jxl_exif_bytes(env, JxlRsReader::exif(&source, [](void* context, uint64_t offset, uint8_t* bytes, size_t length) -> size_t {
+        auto& input = *static_cast<Input*>(context);
+        if (!input.reader.read(offset, length, input.chunk) || input.chunk.size() > length) return 0;
+        if (!input.chunk.empty()) std::memcpy(bytes, input.chunk.data(), input.chunk.size());
+        return input.chunk.size();
+    }));
 } catch (...) { return nullptr; }
