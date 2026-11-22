@@ -44,6 +44,7 @@ import androidx.media3.common.Player
 import androidx.media3.common.TrackSelectionParameters
 import androidx.media3.common.Tracks
 import androidx.media3.common.VideoSize
+import androidx.media3.common.util.StuckPlayerException
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.exoplayer.ExoPlayer
@@ -998,13 +999,18 @@ class VideoPlayerActivity : AppCompatActivity() {
                 }
 
                 override fun onPlayerError(error: PlaybackException) {
-                    Log.e("VideoPlayer", "Media3 playback failed", error)
-                    val timeout = error.cause as? ExoTimeoutException
-                    if (timeout?.timeoutOperation == ExoTimeoutException.TIMEOUT_OPERATION_RELEASE) {
+                    val timeoutReason = when (val cause = error.cause) {
+                        is StuckPlayerException -> "watchdog timeout (${cause.message})"
+                        is ExoTimeoutException -> "release timeout"
+                            .takeIf { cause.timeoutOperation == ExoTimeoutException.TIMEOUT_OPERATION_RELEASE }
+                        else -> null
+                    }
+                    if (timeoutReason != null) {
                         val playback = exo.playbackLooper.thread
                         val trace = Throwable(playback.name).apply { stackTrace = playback.stackTrace }
-                        Log.w("VideoPlayer", "Playback thread at release timeout (HDR mode $hdrMode, network=$network)", trace)
+                        Log.w("VideoPlayer", "Playback thread at $timeoutReason (HDR mode $hdrMode, network=$network)", trace)
                     }
+                    Log.e("VideoPlayer", "Media3 playback failed", error)
                     if (player === exo && hdrMode != Settings.MEDIA3_HDR &&
                         (
                             error.errorCode == PlaybackException.ERROR_CODE_VIDEO_FRAME_PROCESSING_FAILED ||

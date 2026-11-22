@@ -53,9 +53,17 @@ object StreamKeepAlivePolicy {
 
     @Volatile private var uploadWantsFgs = false
 
-    fun unlimited(): Boolean = Settings.streamKeepAliveUnlimited.value
+    @Volatile private var unlimited = Settings.streamKeepAliveUnlimited.defaultValue
 
-    fun taskHoldsFgs(): Boolean = uploadWantsFgs || (Settings.browseTaskForegroundService.value && taskWantsFgs)
+    @Volatile private var browseTaskForegroundService = Settings.browseTaskForegroundService.defaultValue
+
+    /** Load saved values before playback. Media3 can interrupt its loader during close. */
+    fun initialize() {
+        unlimited = Settings.streamKeepAliveUnlimited.value
+        browseTaskForegroundService = Settings.browseTaskForegroundService.value
+    }
+
+    fun taskHoldsFgs(): Boolean = uploadWantsFgs || (browseTaskForegroundService && taskWantsFgs)
 
     fun setUploadActive(active: Boolean) {
         uploadWantsFgs = active
@@ -66,7 +74,7 @@ object StreamKeepAlivePolicy {
      * Idle grant lifetime. Null = never age out (unlimited).
      * Callers must skip age-prune when this is null.
      */
-    fun tokenMaxAgeMs(): Long? = if (unlimited()) null else LIMITED_TOKEN_MAX_AGE_MS
+    fun tokenMaxAgeMs(): Long? = if (unlimited) null else LIMITED_TOKEN_MAX_AGE_MS
 
     fun isPlaying(): Boolean = StreamDocumentRegistry.networkOpenCount() > 0 ||
         ExternalHttpStreamServer.networkActivityCount() > 0
@@ -77,7 +85,8 @@ object StreamKeepAlivePolicy {
 
     fun shouldHoldFgs(): Boolean = isPlaying() || hasIdleGrant() || taskHoldsFgs()
 
-    fun onUnlimitedChanged() {
+    fun onUnlimitedChanged(enabled: Boolean) {
+        unlimited = enabled
         StreamDocumentRegistry.pruneStale()
         ExternalHttpStreamServer.pruneStale()
         reconcileFgs(appCtx)
@@ -92,7 +101,8 @@ object StreamKeepAlivePolicy {
         runCatching { reconcileFgs() }
     }
 
-    fun onBrowseTaskSettingChanged() {
+    fun onBrowseTaskSettingChanged(enabled: Boolean) {
+        browseTaskForegroundService = enabled
         runCatching { reconcileFgs() }
     }
 
@@ -126,7 +136,7 @@ object StreamKeepAlivePolicy {
     fun runtimeSnapshot(): String {
         val stickyInUse = SmbGateway.httpStickyPoolSize() - SmbGateway.httpStickyPoolAvailable()
         return buildString {
-            append("unlimited=").append(unlimited())
+            append("unlimited=").append(unlimited)
             append(" taskFgs=").append(taskHoldsFgs())
             append(" fgs=").append(StreamKeepAliveService.isRunning())
             append(" playing=").append(isPlaying())
