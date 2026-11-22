@@ -255,6 +255,6 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodePngRgbToDirect(
 
 extern "C" JNIEXPORT jboolean JNICALL
 Java_com_hippo_ehviewer_jni_HdrConvertKt_toneMapReaderPixels(
-        JNIEnv*, jclass, jbyteArray, jobject, jint, jint, jint, jint, jfloat, jfloat, jfloatArray) {
+        JNIEnv*, jclass, jbyteArray, jobject, jint, jint, jint, jint, jfloat, jfloat, jboolean, jfloatArray) {
     return JNI_FALSE;
 }

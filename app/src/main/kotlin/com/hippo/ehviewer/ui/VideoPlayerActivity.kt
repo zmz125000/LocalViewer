@@ -16,6 +16,9 @@ import android.media.AudioManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.HandlerThread
+import android.os.Process
 import android.provider.Settings as AndroidSettings
 import android.util.Log
 import android.util.Rational
@@ -44,6 +47,7 @@ import androidx.media3.common.VideoSize
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.ExoTimeoutException
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.AspectRatioFrameLayout
 import com.ehviewer.core.database.model.ProgressInfo
@@ -92,12 +96,16 @@ import kotlinx.coroutines.sync.withLock
  */
 @UnstableApi
 class VideoPlayerActivity : AppCompatActivity() {
+    private val playbackThread = lazy {
+        HandlerThread("LocalViewer:Playback", Process.THREAD_PRIORITY_AUDIO).apply { start() }
+    }
     private var player: ExoPlayer? = null
     private var playerUsesNetworkSource: Boolean? = null
     private var playerHdrMode = Settings.MEDIA3_HDR
     private var requestedHdrMode = Settings.MEDIA3_HDR
     private var trackSupportsHdrToneMapping: Boolean? = null
     private var wideColorOutputFailed = false
+    private var hdrToneMappingFailed = false
     private var playerAudioMode = Settings.MEDIA3_AUDIO_DEVICE
     private var defaultTrackSelection = TrackSelectionParameters.DEFAULT
     private var audioBoostDb = 0
@@ -316,6 +324,10 @@ class VideoPlayerActivity : AppCompatActivity() {
         unregisterPipControl()
         restoreSystemMediaVolume()
         releasePlayer()
+        if (playbackThread.isInitialized()) {
+            val thread = playbackThread.value
+            Handler(thread.looper).post { thread.quitSafely() }
+        }
         streamToken?.let(StreamDocumentRegistry::remove)
         streamToken = null
         subtitleTokens.forEach(StreamDocumentRegistry::remove)
@@ -585,7 +597,9 @@ class VideoPlayerActivity : AppCompatActivity() {
         val labels = resources.getStringArray(R.array.media3_hdr_tone_mapping_entries)
         val modes = resources.getIntArray(R.array.media3_hdr_tone_mapping_values)
         playerView?.showControlMenu(anchor, labels.asList(), modes.indexOf(requestedHdrMode)) { index ->
+            if (playerView?.player !== player) return@showControlMenu
             val requestedMode = modes[index]
+            hdrToneMappingFailed = false
             val mode = effectiveVideoColorMode(requestedMode)
             if (mode == playerHdrMode || restartCurrentMediaItem(mode)) {
                 requestedHdrMode = requestedMode
@@ -817,6 +831,7 @@ class VideoPlayerActivity : AppCompatActivity() {
         subtitleChoiceFromHistory = false
         savedSubtitleTrack = null
         trackSupportsHdrToneMapping = null
+        hdrToneMappingFailed = false
         val mediaItem = MediaItem.Builder()
             .setUri(uri)
             .apply {
@@ -850,7 +865,7 @@ class VideoPlayerActivity : AppCompatActivity() {
             existing.playWhenReady = false
             existing.trackSelectionParameters = defaultTrackSelection
             existing.setMediaItem(mediaItem)
-            existing.prepare()
+            if (playerView?.player === existing) existing.prepare()
             existing.playWhenReady = !holdForResume
             audioBoostFolder = boostFolder
             return
@@ -862,6 +877,7 @@ class VideoPlayerActivity : AppCompatActivity() {
 
     private fun restartCurrentMediaItem(hdrMode: Int, audioOutputMode: Int = playerAudioMode): Boolean {
         val current = player ?: return false
+        if (playerView?.player !== current) return false
         val mediaItem = current.currentMediaItem ?: return false
         return runCatching {
             startMediaItem(
@@ -877,7 +893,7 @@ class VideoPlayerActivity : AppCompatActivity() {
     }
 
     private fun effectiveVideoColorMode(mode: Int): Int {
-        if (trackSupportsHdrToneMapping != true) return Settings.MEDIA3_HDR
+        if (hdrToneMappingFailed || trackSupportsHdrToneMapping != true) return Settings.MEDIA3_HDR
         if (mode !in Settings.MEDIA3_HDR..Settings.MEDIA3_MPCVR_WCG) return Settings.MEDIA3_HDR
         val sdrMode = Settings.media3SdrFallback(mode)
         return if (mode != sdrMode && (wideColorOutputFailed || !supportsWideColorGamut())) sdrMode else mode
@@ -911,6 +927,7 @@ class VideoPlayerActivity : AppCompatActivity() {
         val boost = if (boostDb > 0) Media3AudioBoostProcessor(boostDb) else null
         val renderersFactory = Media3AudioRenderersFactory(this, audioMode, hdrMode, boost)
         val builder = ExoPlayer.Builder(this, renderersFactory)
+            .setPlaybackLooper(playbackThread.value.looper)
             .setAudioAttributes(
                 AudioAttributes.Builder()
                     .setUsage(C.USAGE_MEDIA)
@@ -982,7 +999,13 @@ class VideoPlayerActivity : AppCompatActivity() {
 
                 override fun onPlayerError(error: PlaybackException) {
                     Log.e("VideoPlayer", "Media3 playback failed", error)
-                    if (hdrMode != Settings.MEDIA3_HDR &&
+                    val timeout = error.cause as? ExoTimeoutException
+                    if (timeout?.timeoutOperation == ExoTimeoutException.TIMEOUT_OPERATION_RELEASE) {
+                        val playback = exo.playbackLooper.thread
+                        val trace = Throwable(playback.name).apply { stackTrace = playback.stackTrace }
+                        Log.w("VideoPlayer", "Playback thread at release timeout (HDR mode $hdrMode, network=$network)", trace)
+                    }
+                    if (player === exo && hdrMode != Settings.MEDIA3_HDR &&
                         (
                             error.errorCode == PlaybackException.ERROR_CODE_VIDEO_FRAME_PROCESSING_FAILED ||
                                 error.errorCode == PlaybackException.ERROR_CODE_VIDEO_FRAME_PROCESSOR_INIT_FAILED ||
@@ -997,6 +1020,7 @@ class VideoPlayerActivity : AppCompatActivity() {
                                 if (restartCurrentMediaItem(sdrMode)) return@post
                             }
                             // Some devices cannot expose their HDR decoder output to OpenGL.
+                            hdrToneMappingFailed = true
                             restartCurrentMediaItem(Settings.MEDIA3_HDR)
                         }
                     }
@@ -1014,9 +1038,7 @@ class VideoPlayerActivity : AppCompatActivity() {
                 // An empty effect list still enables the shader graph.
                 exo.setVideoEffects(emptyList())
             }
-            player = null
-            playerView?.player = null
-            runCatching { previous?.release() }
+            releasePlayer()
             player = exo
             playerUsesNetworkSource = network
             playerHdrMode = hdrMode
@@ -1024,21 +1046,38 @@ class VideoPlayerActivity : AppCompatActivity() {
             defaultTrackSelection = defaultTracks
             audioBoostProcessor = boost
             audioBoostDb = boostDb
-            applyVideoColorMode(hdrMode)
             updatePlaybackOptionButtons()
-            playerView?.player = exo
-            exo.prepare()
             exo.playWhenReady = playWhenReady
+            if (previous == null) {
+                attachAndPrepare(exo)
+            } else {
+                // release() can return before the playback thread has released its
+                // codec and video graph. Keep the SurfaceView detached until then.
+                val main = Handler(exo.applicationLooper)
+                Handler(exo.playbackLooper).post {
+                    main.post prepare@{
+                        if (player !== exo || isFinishing || isDestroyed) return@prepare
+                        runCatching { attachAndPrepare(exo) }.onFailure {
+                            Log.e("VideoPlayer", "Unable to prepare replacement player", it)
+                            releasePlayer()
+                        }
+                    }
+                }
+            }
         } catch (e: Throwable) {
             if (player === exo) {
-                player = null
-                playerUsesNetworkSource = null
-                audioBoostProcessor = null
+                releasePlayer()
+            } else {
+                exo.release()
             }
-            if (playerView?.player === exo) playerView?.player = null
-            exo.release()
             throw e
         }
+    }
+
+    private fun attachAndPrepare(exo: ExoPlayer) {
+        applyVideoColorMode(playerHdrMode)
+        playerView?.player = exo
+        exo.prepare()
     }
 
     private fun applySystemOrientationForVideo(videoSize: VideoSize) {
@@ -1249,9 +1288,11 @@ class VideoPlayerActivity : AppCompatActivity() {
     }
 
     private fun releasePlayer() {
-        playerView?.player = null
-        player?.release()
+        val previous = player
         player = null
+        runCatching { previous?.release() }
+            .onFailure { Log.e("VideoPlayer", "Unable to release player", it) }
+        playerView?.player = null
         playerUsesNetworkSource = null
         audioBoostProcessor = null
     }

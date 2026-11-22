@@ -50,7 +50,10 @@ internal class Media3AudioRenderersFactory(
             allowedVideoJoiningTimeMs,
             out,
         )
-        if (hdrMode == Settings.MEDIA3_HDR) return
+        if (hdrMode == Settings.MEDIA3_HDR) {
+            (out[videoIndex] as? MediaCodecVideoRenderer)?.setRenderTimeLimitMs(VIDEO_RENDER_TIME_LIMIT_MS)
+            return
+        }
         val builder = MediaCodecVideoRenderer.Builder(context)
             .setCodecAdapterFactory(codecAdapterFactory)
             .setMediaCodecSelector(mediaCodecSelector)
@@ -70,7 +73,7 @@ internal class Media3AudioRenderersFactory(
             },
             wideColor = hdrMode != sdrMode,
             mpcvr = sdrMode == Settings.MEDIA3_MPCVR,
-        )
+        ).apply { setRenderTimeLimitMs(VIDEO_RENDER_TIME_LIMIT_MS) }
     }
 
     override fun buildAudioSink(
@@ -142,5 +145,10 @@ internal class Media3AudioRenderersFactory(
             coefficients[input * outputChannels + (input % outputChannels)] = gain
         }
         return ChannelMixingMatrix(inputChannels, outputChannels, coefficients)
+    }
+
+    private companion object {
+        // Yield to pending stop and release messages between decoder render calls.
+        const val VIDEO_RENDER_TIME_LIMIT_MS = 10L
     }
 }

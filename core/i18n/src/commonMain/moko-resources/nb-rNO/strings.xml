@@ -187,8 +187,9 @@
     <string name="settings_privacy">Personvern</string>
     <string name="no_archives">Ingen arkiver</string>
     <string name="action_save_to">Lagre i …</string>
+    <string name="image_conversion_tone_auto_curve">Automatisk tonekurve</string>
     <string name="image_conversion_tone_shoulder">SDR-skulder</string>
-    <string name="image_conversion_tone_shoulder_summary">SKIV (egendefinert) lar piksler under %1$d nit være uendret.</string>
+    <string name="image_conversion_tone_shoulder_summary">Kompresjon av høylys starter ved %1$d nit.</string>
     <string name="image_conversion_tone_range">Øvre HDR-grense</string>
     <string name="image_conversion_tone_range_summary">Tilpasser bildets høylys opptil %1$d nit til SDR; lysere høylys klippes.</string>
     <string name="reader_tone_skiv_gpu">SKIV (GPU)</string>

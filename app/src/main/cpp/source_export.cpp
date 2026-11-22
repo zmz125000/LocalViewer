@@ -7,9 +7,8 @@
 #include "ultrahdr/icc.h"
 #include <avif/avif.h>
 #include "skcms.h"
-#include <jxl/decode_cxx.h>
-#include <jxl/cms.h>
-#include <jxl/resizable_parallel_runner_cxx.h>
+#include "jxl_rs.h"
+#include <jxl/color_encoding.h>
 #include <android/log.h>
 #include <algorithm>
 #include <cstring>
@@ -143,102 +142,77 @@ Image jxl_image(const uint8_t* data,size_t size,int target,StillEncodeQuality qu
     unsupported=false;
     const bool linear_only = target == 3;
     if (linear_only) target = 1;
-    bool scrgb = false;
-    auto runner=JxlResizableParallelRunnerMake(nullptr);
-    auto decoder=JxlDecoderMake(nullptr);if(!decoder || !runner)return Image(nullptr,avifImageDestroy);
-    JxlDecoderSetParallelRunner(decoder.get(),JxlResizableParallelRunner,runner.get());
-    int events=JXL_DEC_BASIC_INFO|JXL_DEC_COLOR_ENCODING|JXL_DEC_FULL_IMAGE;
-    if(keep_exif)events|=JXL_DEC_BOX|JXL_DEC_BOX_COMPLETE;
-    if(JxlDecoderSubscribeEvents(decoder.get(),events)!=JXL_DEC_SUCCESS)return Image(nullptr,avifImageDestroy);
-    if(keep_exif)JxlDecoderSetDecompressBoxes(decoder.get(),JXL_TRUE);
-    const auto* cms=JxlGetDefaultCms();if(cms)JxlDecoderSetCms(decoder.get(),*cms);
-    JxlDecoderSetUnpremultiplyAlpha(decoder.get(),JXL_TRUE);
-    JxlDecoderSetInput(decoder.get(),data,size);JxlDecoderCloseInput(decoder.get());
-    JxlBasicInfo info{};JxlColorEncoding color{};bool structured=false,complete=false,collecting=false;
-    std::vector<uint8_t> pixels,box,black;
-    int black_index=-1;
-    bool cmyk=false;
-    JxlPixelFormat format{4,JXL_TYPE_UINT8,JXL_NATIVE_ENDIAN,0};
-    for(;;) {
-        const auto status=JxlDecoderProcessInput(decoder.get());
-        if(status==JXL_DEC_BASIC_INFO) {
-            if(JxlDecoderGetBasicInfo(decoder.get(),&info)!=JXL_DEC_SUCCESS || uint64_t(info.xsize)*info.ysize>kLimit)return Image(nullptr,avifImageDestroy);
-            for(unsigned i=0;i<info.num_extra_channels;++i) {
-                JxlExtraChannelInfo extra{};
-                if(JxlDecoderGetExtraChannelInfo(decoder.get(),i,&extra)!=JXL_DEC_SUCCESS)return Image(nullptr,avifImageDestroy);
-                if(extra.type==JXL_CHANNEL_BLACK)black_index=static_cast<int>(i);
-            }
-            // This direct four-component representation cannot also store alpha.
-            if(black_index>=0 && info.alpha_bits){unsupported=true;return Image(nullptr,avifImageDestroy);}
-            JxlResizableParallelRunnerSetThreads(runner.get(),std::min<size_t>(4,hdr_pixel_jobs(size_t(info.xsize)*info.ysize)));
-            format.data_type=info.exponent_bits_per_sample && target==1?
-                (info.bits_per_sample<=16?JXL_TYPE_FLOAT16:JXL_TYPE_FLOAT):info.bits_per_sample>8?JXL_TYPE_UINT16:JXL_TYPE_UINT8;
-        } else if(status==JXL_DEC_COLOR_ENCODING) {
-            structured=JxlDecoderGetColorAsEncodedProfile(decoder.get(),JXL_COLOR_PROFILE_TARGET_ORIGINAL,&color)==JXL_DEC_SUCCESS;
-            scrgb = structured && info.exponent_bits_per_sample > 0 && info.intensity_target == 80.f &&
-                color.color_space == JXL_COLOR_SPACE_RGB && color.white_point == JXL_WHITE_POINT_D65 &&
-                color.primaries == JXL_PRIMARIES_SRGB && color.transfer_function == JXL_TRANSFER_FUNCTION_LINEAR;
-            if(tone_mapping&&!linear_only&&(info.exponent_bits_per_sample>0||
-                (structured&&(color.transfer_function==JXL_TRANSFER_FUNCTION_PQ||color.transfer_function==JXL_TRANSFER_FUNCTION_HLG)))) {
-                unsupported=true;return Image(nullptr,avifImageDestroy);
-            }
-            if ((linear_only && !scrgb) || (target != 1 && scrgb)) {
-                // Decide during the normal color event, before allocating/decoding pixels.
-                unsupported = true; return Image(nullptr, avifImageDestroy);
-            }
-            if(target!=1 && info.exponent_bits_per_sample && info.intensity_target>255.f &&
-               (!structured || (color.transfer_function!=JXL_TRANSFER_FUNCTION_PQ && color.transfer_function!=JXL_TRANSFER_FUNCTION_HLG))) {
-                unsupported=true;return Image(nullptr,avifImageDestroy);
-            }
-            size_t count=0;
-            if(JxlDecoderGetICCProfileSize(decoder.get(),JXL_COLOR_PROFILE_TARGET_ORIGINAL,&count)!=JXL_DEC_SUCCESS || count>16*1024*1024)return Image(nullptr,avifImageDestroy);
-            icc.resize(count);
-            if (count && JxlDecoderGetColorAsICCProfile(decoder.get(), JXL_COLOR_PROFILE_TARGET_ORIGINAL,
-                    icc.data(), icc.size()) != JXL_DEC_SUCCESS) return Image(nullptr, avifImageDestroy);
-            cmyk=icc.size()>=20 && !memcmp(icc.data()+16,"CMYK",4);
-            // Keep RGB JXL-to-JPEG on its existing rendered path; this direct
-            // JPEG branch is only for preserving CMYK inks and their profile.
-            if(target==0 && !cmyk){unsupported=true;return Image(nullptr,avifImageDestroy);}
-            if (cmyk && (black_index<0 || info.exponent_bits_per_sample || !info.uses_original_profile)) {
-                unsupported = true; return Image(nullptr, avifImageDestroy);
-            }
-            // Non-XYB samples already are in the original space (libjxl rejects re-targeting them);
-            // XYB would otherwise decode an ICC-only original as linear sRGB.
-            if(count && !info.uses_original_profile && JxlDecoderSetOutputColorProfile(decoder.get(),nullptr,icc.data(),icc.size())!=JXL_DEC_SUCCESS)return Image(nullptr,avifImageDestroy);
-        } else if(status==JXL_DEC_NEED_IMAGE_OUT_BUFFER) {
-            size_t count=0;if(JxlDecoderImageOutBufferSize(decoder.get(),&format,&count)!=JXL_DEC_SUCCESS)return Image(nullptr,avifImageDestroy);
-            pixels.resize(count);if(JxlDecoderSetImageOutBuffer(decoder.get(),&format,pixels.data(),pixels.size())!=JXL_DEC_SUCCESS)return Image(nullptr,avifImageDestroy);
-            if(cmyk) {
-                const JxlPixelFormat black_format{1,format.data_type,JXL_NATIVE_ENDIAN,0};
-                if(JxlDecoderExtraChannelBufferSize(decoder.get(),&black_format,&count,black_index)!=JXL_DEC_SUCCESS)return Image(nullptr,avifImageDestroy);
-                black.resize(count);
-                if(JxlDecoderSetExtraChannelBuffer(decoder.get(),&black_format,black.data(),black.size(),black_index)!=JXL_DEC_SUCCESS)return Image(nullptr,avifImageDestroy);
-            }
-        } else if(status==JXL_DEC_BOX) {
-            JxlBoxType type;
-            if(JxlDecoderGetBoxType(decoder.get(),type,JXL_TRUE)==JXL_DEC_SUCCESS && !memcmp(type,"Exif",4)) {
-                box.resize(1024*1024);collecting=JxlDecoderSetBoxBuffer(decoder.get(),box.data(),box.size())==JXL_DEC_SUCCESS;
-            }
-        } else if(status==JXL_DEC_BOX_COMPLETE && collecting) {
-            box.resize(box.size()-JxlDecoderReleaseBoxBuffer(decoder.get()));collecting=false;
-            if(box.size()>=4) {
-                const uint32_t offset=uint32_t(box[0])<<24|uint32_t(box[1])<<16|uint32_t(box[2])<<8|box[3];
-                if(offset<=box.size()-4)exif.assign(box.begin()+4+offset,box.end());
-            }
-            if(complete)break;
-        } else if(status==JXL_DEC_BOX_NEED_MORE_OUTPUT && collecting) {
-            JxlDecoderReleaseBoxBuffer(decoder.get());collecting=false;if(complete)break;
-        } else if(status==JXL_DEC_FULL_IMAGE) {
-            complete=true;if(!keep_exif || !exif.empty())break;
-            JxlDecoderSkipFrames(decoder.get(),0x7fffffffu);
-        } else if(status==JXL_DEC_SUCCESS)break;
-        else if(status==JXL_DEC_ERROR || status==JXL_DEC_NEED_MORE_INPUT) {
-            if(complete)break;return Image(nullptr,avifImageDestroy);
+    JxlRsReader decoder(data, size);
+    if (!decoder) return Image(nullptr, avifImageDestroy);
+    const auto& info = decoder.info();
+    const uint64_t pixel_count = uint64_t(info.xsize) * info.ysize;
+    if (!pixel_count || pixel_count > kLimit) return Image(nullptr, avifImageDestroy);
+
+    const auto format = info.exponent_bits_per_sample && target == 1 ?
+        (info.bits_per_sample <= 16 ? JxlRsFormat::f16 : JxlRsFormat::f32) :
+        info.bits_per_sample > 8 ? JxlRsFormat::u16 : JxlRsFormat::u8;
+    const size_t stride = format == JxlRsFormat::u8 ? 1 : format == JxlRsFormat::f32 ? 4 : 2;
+    JxlRsColor color{};
+    bool structured = decoder.color(color, true);
+    const bool scrgb = structured && info.exponent_bits_per_sample > 0 && info.intensity_target == 80.f &&
+        color.color_space == JXL_COLOR_SPACE_RGB && color.white_point == JXL_WHITE_POINT_D65 &&
+        color.primaries == JXL_PRIMARIES_SRGB && color.transfer_function == JXL_TRANSFER_FUNCTION_LINEAR;
+    const bool encoded_hdr = structured &&
+        (color.transfer_function == JXL_TRANSFER_FUNCTION_PQ || color.transfer_function == JXL_TRANSFER_FUNCTION_HLG);
+    if ((linear_only && !scrgb) || (target != 1 && scrgb) ||
+        (tone_mapping && !linear_only && (info.exponent_bits_per_sample || encoded_hdr)) ||
+        (target != 1 && info.exponent_bits_per_sample && info.intensity_target > 255.f && !encoded_hdr) ||
+        (info.has_black && info.has_alpha)) {
+        unsupported = true;
+        return Image(nullptr, avifImageDestroy);
+    }
+
+    if (!decoder.set_format(format, info.has_black)) return Image(nullptr, avifImageDestroy);
+    const bool convert_profile = !decoder.outputs_original_profile();
+    icc = decoder.icc(convert_profile);
+    if (icc.empty()) return Image(nullptr, avifImageDestroy);
+    bool cmyk = icc.size() >= 20 && !std::memcmp(icc.data() + 16, "CMYK", 4);
+    if ((target == 0 && !cmyk) || (cmyk && (!info.has_black || info.exponent_bits_per_sample || convert_profile))) {
+        unsupported = true;
+        return Image(nullptr, avifImageDestroy);
+    }
+
+    const auto samples = static_cast<size_t>(pixel_count) * 4;
+    std::vector<uint8_t> pixels(samples * stride);
+    std::vector<uint8_t> black(info.has_black ? static_cast<size_t>(pixel_count) * stride : 0);
+    double duration = 0;
+    if (convert_profile) {
+        // XYB with an ICC-only original decodes to sRGB. Convert float samples
+        // back to the embedded profile before quantizing so wide colors survive.
+        if (!decoder.set_format(JxlRsFormat::f32)) return Image(nullptr, avifImageDestroy);
+        const auto decoded_icc = decoder.icc();
+        skcms_ICCProfile from{}, to{};
+        if (!skcms_Parse(decoded_icc.data(), decoded_icc.size(), &from) ||
+            !skcms_Parse(icc.data(), icc.size(), &to) || !skcms_MakeUsableAsDestination(&to)) {
+            unsupported = true;
+            return Image(nullptr, avifImageDestroy);
+        }
+        const auto type = format == JxlRsFormat::u8 ? skcms_PixelFormat_RGBA_8888 :
+            format == JxlRsFormat::u16 ? skcms_PixelFormat_RGBA_16161616LE :
+            format == JxlRsFormat::f16 ? skcms_PixelFormat_RGBA_hhhh : skcms_PixelFormat_RGBA_ffff;
+        std::vector<float> working(samples);
+        if (decoder.next(working.data(), working.size() * sizeof(float), duration) != 1 ||
+            !skcms_Transform(working.data(), skcms_PixelFormat_RGBA_ffff, skcms_AlphaFormat_Unpremul, &from,
+                             pixels.data(), type, skcms_AlphaFormat_Unpremul, &to, pixel_count)) {
+            unsupported = true;
+            return Image(nullptr, avifImageDestroy);
+        }
+    } else if (decoder.next(pixels.data(), pixels.size(), duration, black.data(), black.size()) != 1) {
+        return Image(nullptr, avifImageDestroy);
+    }
+    if (keep_exif) {
+        const auto box = JxlRsReader::exif(data, size);
+        if (box.size() >= 4) {
+            const uint32_t offset = uint32_t(box[0]) << 24 | uint32_t(box[1]) << 16 | uint32_t(box[2]) << 8 | box[3];
+            if (offset <= box.size() - 4) exif.assign(box.begin() + 4 + offset, box.end());
         }
     }
-    if(!complete)return Image(nullptr,avifImageDestroy);
-    if(cmyk) {
-        const size_t stride=format.data_type==JXL_TYPE_UINT8?1:2;
+    if (cmyk) {
         const size_t count=size_t(info.xsize)*info.ysize;
         if(black.size()!=count*stride)return Image(nullptr,avifImageDestroy);
         for(size_t i=0;i<count;++i)std::memcpy(pixels.data()+(i*4+3)*stride,black.data()+i*stride,stride);
@@ -258,7 +232,8 @@ Image jxl_image(const uint8_t* data,size_t size,int target,StillEncodeQuality qu
     }
     int p=2,t=2;
     if(structured) {
-        p=color.primaries==JXL_PRIMARIES_P3?(color.white_point==JXL_WHITE_POINT_DCI?11:12):static_cast<int>(color.primaries);
+        p=color.color_space==JXL_COLOR_SPACE_GRAY && color.white_point==JXL_WHITE_POINT_D65?1:
+            color.primaries==JXL_PRIMARIES_P3?(color.white_point==JXL_WHITE_POINT_DCI?11:12):static_cast<int>(color.primaries);
         t=color.transfer_function==JXL_TRANSFER_FUNCTION_GAMMA?
             (std::abs(color.gamma-1.0/2.2)<0.0001?4:std::abs(color.gamma-1.0/2.8)<0.0001?5:2):static_cast<int>(color.transfer_function);
     }
@@ -268,7 +243,8 @@ Image jxl_image(const uint8_t* data,size_t size,int target,StillEncodeQuality qu
     }
     if(target==1) {
         StillSourceColor source;source.bits=info.bits_per_sample;source.exponent_bits=info.exponent_bits_per_sample;
-        source.cmyk=cmyk;source.gray=info.num_color_channels==1;
+        source.cmyk=cmyk;source.gray=(structured && color.color_space == JXL_COLOR_SPACE_GRAY) ||
+            (icc.size() >= 20 && !std::memcmp(icc.data() + 16, "GRAY", 4));
         source.intensity_target=info.intensity_target;source.primaries=p;source.transfer=t;
         source.icc=icc.data();source.icc_size=icc.size();
         if (((t==16 || t==18) && (p==1 || p==9 || p==12)) || scrgb) source.icc_size=0;
@@ -294,7 +270,7 @@ Image jxl_image(const uint8_t* data,size_t size,int target,StillEncodeQuality qu
     const bool gray=icc.size()>=20 && !std::memcmp(icc.data()+16,"GRAY",4);
     auto image=from_rgb(info.xsize,info.ysize,pixels.data(),info.bits_per_sample>8,avif_source_depth(info.bits_per_sample,quality),p,t,quality,false,gray);
     if(image && !icc.empty() && avifImageSetProfileICC(image.get(),icc.data(),icc.size())!=AVIF_RESULT_OK)image.reset();
-    // libjxl already applied orientation to the pixels.
+    // The decoder already applied orientation to the pixels.
     if(image && image->exif.size)avifRWDataFree(&image->exif);
     return image;
 }

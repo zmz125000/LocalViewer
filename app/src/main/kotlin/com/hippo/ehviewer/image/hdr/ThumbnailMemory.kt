@@ -116,9 +116,9 @@ internal object ThumbnailMemory {
         val thumb = edge.coerceIn(64, 2048).toLong().let { it * it * 24 }
         // Mapped input has one file-backed view; arrays may also be copied by JNI.
         val compressed = if (sourceBytes >= 0) sourceBytes.coerceAtMost(Long.MAX_VALUE / 4) * (if (mapped) 1 else 2) else Long.MAX_VALUE / 4
-        // JNI can pin/copy the compressed array; JXL still needs full-frame float
-        // planes even when progressive thumbnail output is requested. Account for
-        // full source planes conservatively when a codec-specific estimate is absent.
+        // JNI can pin/copy the compressed array. JXL decodes to a full-frame
+        // float buffer before resizing. Budget for full source planes when a
+        // codec-specific estimate is absent.
         // Bitmap pixel planes live on the native heap on supported Android versions.
         // HEVC assembles Annex-B access units for libde265 even from mapped HEIF.
         val hevcNative = codec == LibCodec.HevcHdr

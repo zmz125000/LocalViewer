@@ -801,6 +801,7 @@ object Settings : DataStorePreferences(null) {
     val imageConversionKeepExif = boolPref("image_conversion_keep_exif", true)
     val imageConversionExtendedSrgbBt2020 = boolPref("image_conversion_scrgb_bt2020", true)
     val imageConversionToneMapper = intPref("image_conversion_sdr_tone_mapper", 2)
+    val imageConversionAutoToneCurve = boolPref("image_conversion_auto_tone_curve", false)
     val imageConversionToneShoulder = intPref("image_conversion_tone_shoulder_v2", 50)
     val imageConversionToneRange = intPref("image_conversion_tone_range", 10000)
     val imageConversionSrgbClamp = boolPref("image_conversion_srgb_clamp", false)
@@ -881,6 +882,7 @@ object Settings : DataStorePreferences(null) {
     val comicLevelsEnabled = boolPref("comic_levels_enabled", false)
     val comicBlackLevel = intPref("comic_black_level", 0)
     val comicWhiteLevel = intPref("comic_white_level", 255)
+    val readerGrayscaleDithering = boolPref("reader_grayscale_dithering", false)
     val customBrightness = boolPref("pref_custom_brightness_key", false)
     val customBrightnessValue = intPref("custom_brightness_value", 0)
     val readingMode = intPref("pref_default_reading_mode_key", ReadingModeType.WEBTOON.prefValue)
@@ -1167,6 +1169,7 @@ object Settings : DataStorePreferences(null) {
         get() = !readerHdrDisplay.value && readerHdrToneMapper.value != 0
 
     val readerHdrToneMapper = intPref("reader_hdr_tone_mapper", 0)
+    val readerHdrAutoToneCurve = boolPref("reader_hdr_auto_tone_curve", false)
     val readerHdrToneShoulder = intPref("reader_hdr_tone_shoulder_v2", 50)
     val readerHdrToneRange = intPref("reader_hdr_tone_range", 10000)
 

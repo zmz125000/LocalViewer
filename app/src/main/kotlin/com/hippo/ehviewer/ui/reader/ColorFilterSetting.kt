@@ -36,11 +36,16 @@ import kotlin.math.roundToInt
 fun ColorFilterSetting(
     showImageScaler: Boolean = true,
     showCameraRaw: Boolean = false,
+    showGrayscaleDithering: Boolean = true,
 ) = Column(modifier = Modifier.verticalScroll(rememberScrollState()).navigationBarsPadding()) {
     val toneMapper = Settings.readerHdrToneMapper.asMutableState()
     val hdrDisplay = Settings.readerHdrDisplay.asMutableState()
     AnimatedVisibility(visible = ReaderToneMapper.fromPreference(toneMapper.value).custom && !hdrDisplay.value) {
         Column {
+            SwitchChoice(
+                title = stringResource(R.string.image_conversion_tone_auto_curve),
+                field = Settings.readerHdrAutoToneCurve.asMutableState(),
+            )
             CommitSliderChoice(
                 title = stringResource(R.string.image_conversion_tone_shoulder),
                 range = 0..95,
@@ -124,6 +129,12 @@ fun ColorFilterSetting(
         title = stringResource(id = R.string.pref_inverted_colors),
         field = Settings.invertedColors.asMutableState(),
     )
+    if (showGrayscaleDithering) {
+        SwitchChoice(
+            title = stringResource(id = R.string.pref_reader_grayscale_dithering),
+            field = Settings.readerGrayscaleDithering.asMutableState(),
+        )
+    }
 }
 
 @Composable

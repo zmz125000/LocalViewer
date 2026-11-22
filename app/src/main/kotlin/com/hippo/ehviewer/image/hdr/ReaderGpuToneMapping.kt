@@ -41,4 +41,5 @@ data class ReaderGpuToneMapping(
     val peakNits: Float,
     val shoulder: Float,
     val capNits: Float,
+    val midtones: Float,
 )

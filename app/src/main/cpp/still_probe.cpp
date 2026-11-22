@@ -1,8 +1,11 @@
 #include <jni.h>
 #include <cstdint>
+#include <fcntl.h>
 #include <fstream>
+#include <unistd.h>
 #include <vector>
-#include <jxl/decode_cxx.h>
+#include "jxl_rs.h"
+#include "thumbnail_mapped_input.h"
 #include <libraw/libraw.h>
 
 namespace {
@@ -13,6 +16,30 @@ uint16_t read_le16(const uint8_t* bytes) {
 uint32_t read_le32(const uint8_t* bytes) {
     return static_cast<uint32_t>(bytes[0]) | (static_cast<uint32_t>(bytes[1]) << 8) |
            (static_cast<uint32_t>(bytes[2]) << 16) | (static_cast<uint32_t>(bytes[3]) << 24);
+}
+
+void probe_jxl_size(const char* path, uint32_t& width, uint32_t& height) {
+    // jxl-rs reports BasicInfo after the ICC profile, which can exceed the
+    // bounded read used for non-mappable inputs. Mapping avoids a full-file copy.
+    const int fd = open(path, O_RDONLY | O_CLOEXEC);
+    if (fd < 0) return;
+    ThumbnailMappedInput mapped(fd);
+    close(fd);
+    std::vector<uint8_t> header;
+    const uint8_t* data = mapped.data;
+    size_t size = mapped.size;
+    if (!data) {
+        std::ifstream file(path, std::ios::binary);
+        header.resize(256 * 1024);
+        file.read(reinterpret_cast<char*>(header.data()), header.size());
+        data = header.data();
+        size = static_cast<size_t>(file.gcount());
+    }
+    JxlRsReader decoder(data, size);
+    if (decoder) {
+        width = decoder.info().xsize;
+        height = decoder.info().ysize;
+    }
 }
 
 // JXR's TIFF-like container stores width/height as inline LONG values. Probe
@@ -59,18 +86,7 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_probeStillExportSize(JNIEnv* env, jclas
     uint32_t w = 0, h = 0;
     try {
         if (kind == 0) {
-            std::ifstream file(path, std::ios::binary);
-            std::vector<uint8_t> header(256 * 1024);
-            file.read(reinterpret_cast<char*>(header.data()), header.size());
-            header.resize(static_cast<size_t>(file.gcount()));
-            auto dec = JxlDecoderMake(nullptr);
-            if (dec && !header.empty() && JxlDecoderSubscribeEvents(dec.get(), JXL_DEC_BASIC_INFO) == JXL_DEC_SUCCESS) {
-                JxlDecoderSetInput(dec.get(), header.data(), header.size());
-                if (JxlDecoderProcessInput(dec.get()) == JXL_DEC_BASIC_INFO) {
-                    JxlBasicInfo info{};
-                    if (JxlDecoderGetBasicInfo(dec.get(), &info) == JXL_DEC_SUCCESS) { w = info.xsize; h = info.ysize; }
-                }
-            }
+            probe_jxl_size(path, w, h);
         } else if (kind == 1) {
             probe_jxr_size(path, w, h);
         } else if (kind == 2) {

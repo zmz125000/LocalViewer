@@ -19,7 +19,7 @@ import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 
-/** libjxl composes one frame at a time into two reusable bitmaps. */
+/** The JPEG XL decoder composes one frame at a time into two reusable bitmaps. */
 internal class AnimatedJxlDrawable(source: ByteBuffer) : Drawable(), Animatable {
     val encodedBytes: Int = source.remaining()
     private val scope = CoroutineScope(Dispatchers.IO.limitedParallelism(1))

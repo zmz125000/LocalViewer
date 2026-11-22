@@ -1378,7 +1378,7 @@ struct ReaderTonePixels {
 extern "C" JNIEXPORT jboolean JNICALL
 Java_com_hippo_ehviewer_jni_HdrConvertKt_toneMapReaderPixels(
         JNIEnv* env, jclass, jbyteArray array, jobject direct, jint width, jint height,
-        jint gamut, jint mapper, jfloat shoulder, jfloat cap, jfloatArray out_peak) try {
+        jint gamut, jint mapper, jfloat shoulder, jfloat cap, jboolean auto_curve, jfloatArray out_curve) try {
     if(width<=0||height<=0||mapper<1||mapper>6||gamut<0||gamut>2)return JNI_FALSE;
     const uint64_t count=uint64_t(width)*uint64_t(height);
     if(count>SIZE_MAX/8)return JNI_FALSE;
@@ -1398,14 +1398,21 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_toneMapReaderPixels(
     ReaderTonePixels pixels{data,size_t(count)*4};
     // IDs follow the reader spinner: CPU and GPU are adjacent for each mapper.
     if(mapper==2||mapper==4||mapper==6) {
-        if(!out_peak||env->GetArrayLength(out_peak)<1)return JNI_FALSE;
+        if(!out_curve||env->GetArrayLength(out_curve)<2)return JNI_FALSE;
         const auto& space=gamut==2?skiv::rgb2020_xyz:gamut==1?skiv::rgbp3_xyz:skiv::rgb709_xyz;
-        const jfloat peak=mapper==6 ? mpcvr_content_peak(pixels)*203.f : float(skiv::content_peak(pixels,space)*80.);
-        env->SetFloatArrayRegion(out_peak,0,1,&peak);
+        jfloat curve[2]{};
+        if(mapper==6) {
+            curve[0]=mpcvr_content_peak(pixels)*203.f;
+        } else {
+            const auto analysis=skiv::analyze_tone(pixels,space,mapper==4&&auto_curve);
+            curve[0]=float(analysis.peak*80.);
+            curve[1]=analysis.midtones;
+        }
+        env->SetFloatArrayRegion(out_curve,0,2,curve);
         return env->ExceptionCheck()?JNI_FALSE:JNI_TRUE;
     }
     if(mapper==5) tone_map_mpcvr_in_place(pixels,gamut,mpcvr_content_peak(pixels));
-    else tone_map_skiv_in_place(pixels,gamut,mapper==3,shoulder,cap);
+    else tone_map_skiv_in_place(pixels,gamut,mapper==3,shoulder,cap,auto_curve);
     if(!direct)env->SetByteArrayRegion(array,0,jsize(bytes),reinterpret_cast<const jbyte*>(data));
     return env->ExceptionCheck()?JNI_FALSE:JNI_TRUE;
 } catch (...) { return JNI_FALSE; }
@@ -1824,12 +1831,14 @@ static bool tone_map_export_mode(int mode) {
 // JNI settings are immutable per queued export, never reader/display controls.
 static bool read_tone_controls(JNIEnv* env,jfloatArray controls,StillEncodeQuality& quality) {
     if(!controls)return true;
-    if(env->GetArrayLength(controls)!=3)return false;
-    float v[3];env->GetFloatArrayRegion(controls,0,3,v);
+    if(env->GetArrayLength(controls)!=4)return false;
+    float v[4];env->GetFloatArrayRegion(controls,0,4,v);
     if(env->ExceptionCheck())return false;
     for(float value:v)if(!std::isfinite(value))return false;
     if(v[0]<0.f||v[0]>3.f||v[0]!=std::floor(v[0])||v[1]<0.f||v[1]>.95f||v[2]<204.f||v[2]>10000.f)return false;
-    quality.sdr_mapper=int(v[0]);quality.sdr_shoulder=v[1];quality.sdr_range_nits=v[2];return true;
+    if(v[3]!=0.f&&v[3]!=1.f)return false;
+    quality.sdr_mapper=int(v[0]);quality.sdr_shoulder=v[1];quality.sdr_range_nits=v[2];quality.sdr_auto_curve=v[3]==1.f;
+    return true;
 }
 
 int encode_still_export(const uint8_t* src, size_t src_len, unsigned w, unsigned h, bool f16,
@@ -1968,7 +1977,7 @@ int encode_still_export_f32(float* src,unsigned w,unsigned h,int gamut,int mode,
                 mapped = tone_map_mpcvr_base(std::vector<float>(src, src + pixels * 4), working_gamut, peak);
             } else {
                 mapped = tone_map_skiv_base(std::vector<float>(src, src + pixels * 4), working_gamut,
-                    quality.sdr_mapper == 2, quality.sdr_shoulder, quality.sdr_range_nits);
+                    quality.sdr_mapper == 2, quality.sdr_shoulder, quality.sdr_range_nits, quality.sdr_auto_curve);
             }
             if(mode==kExportJpegHdr||mode==kExportAvifGainMap)sdr_base=mapped.data();
             else src=mapped.data();

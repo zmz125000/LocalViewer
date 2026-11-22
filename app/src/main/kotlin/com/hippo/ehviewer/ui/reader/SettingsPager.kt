@@ -41,6 +41,7 @@ fun SettingsPager(
     supportsSlideshow: Boolean = true,
     supportsPageTransitions: Boolean = true,
     supportsScreenWidget: Boolean = true,
+    showGrayscaleDithering: Boolean = true,
     modifier: Modifier = Modifier,
 ) {
     val showCameraRaw by rawLoaded.collectAsState()
@@ -76,7 +77,7 @@ fun SettingsPager(
                 when (page) {
                     0 -> ReaderModeSetting(isWebtoon, isDocument, supportsSlideshow, supportsPageTransitions, supportsScreenWidget)
                     1 -> ReaderGeneralSetting(isDocument, showDirectImage)
-                    2 -> ColorFilterSetting(showImageScaler, showCameraRaw)
+                    2 -> ColorFilterSetting(showImageScaler, showCameraRaw, showGrayscaleDithering)
                 }
             }
         }
