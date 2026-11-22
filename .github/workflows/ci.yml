@@ -150,13 +150,6 @@ jobs:
           name: slim-x86_64-${{ github.sha }}
           path: app/build/outputs/apk/slim/release/app-slim-x86_64-release.apk
 
-      - name: Upload slim ARM32
-        if: steps.channel.outputs.name == 'default'
-        uses: actions/upload-artifact@v7
-        with:
-          name: slim-armeabi-v7a-${{ github.sha }}
-          path: app/build/outputs/apk/slim/release/app-slim-armeabi-v7a-release.apk
-
       - name: Upload mapping
         if: always()
         uses: actions/upload-artifact@v7

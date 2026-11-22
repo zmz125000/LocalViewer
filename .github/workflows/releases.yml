@@ -91,10 +91,11 @@ jobs:
         if: matrix.suffix == 'default'
         run: |
           TAG="${{ github.ref_name }}"
-          for flavor in default slim; do
-            for abi in universal arm64-v8a x86_64 armeabi-v7a; do
-              mv "app/build/outputs/apk/${flavor}/release/app-${flavor}-${abi}-release.apk" "LocalViewer-${TAG}-${flavor}-${abi}.apk"
-            done
+          for abi in universal arm64-v8a x86_64 armeabi-v7a; do
+            mv "app/build/outputs/apk/default/release/app-default-${abi}-release.apk" "LocalViewer-${TAG}-default-${abi}.apk"
+          done
+          for abi in arm64-v8a x86_64; do
+            mv "app/build/outputs/apk/slim/release/app-slim-${abi}-release.apk" "LocalViewer-${TAG}-slim-${abi}.apk"
           done
 
       - name: Rename Apks (easytier)
@@ -114,10 +115,8 @@ jobs:
             LocalViewer-${{ github.ref_name }}-default-arm64-v8a.apk
             LocalViewer-${{ github.ref_name }}-default-x86_64.apk
             LocalViewer-${{ github.ref_name }}-default-armeabi-v7a.apk
-            LocalViewer-${{ github.ref_name }}-slim-universal.apk
             LocalViewer-${{ github.ref_name }}-slim-arm64-v8a.apk
             LocalViewer-${{ github.ref_name }}-slim-x86_64.apk
-            LocalViewer-${{ github.ref_name }}-slim-armeabi-v7a.apk
 
       - name: Releases (easytier)
         if: matrix.suffix == 'easytier'

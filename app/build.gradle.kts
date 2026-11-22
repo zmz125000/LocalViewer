@@ -1,3 +1,4 @@
+import com.android.build.api.variant.FilterConfiguration.FilterType.ABI
 import com.mikepenz.aboutlibraries.plugin.DuplicateMode
 import com.mikepenz.aboutlibraries.plugin.DuplicateRule
 import java.util.regex.Pattern
@@ -14,10 +15,11 @@ plugins {
     alias(libs.plugins.baselineprofile)
 }
 
-// App ships all three ABIs in release; HDR *convert codecs* (jxr/avif/jxl/uhdr)
+// Default ships all three ABIs in release; HDR *convert codecs* (jxr/avif/jxl/uhdr)
 // are only compiled into arm64-v8a + x86_64 (see CMake EHVIEWER_HDR_CODECS).
 // armeabi-v7a still gets libehviewer.so (archive/rust) with HDR JNI stubs.
-val supportedAbis = arrayOf("arm64-v8a", "x86_64", "armeabi-v7a")
+val slimAbis = setOf("arm64-v8a", "x86_64")
+val supportedAbis = slimAbis + "armeabi-v7a"
 // Ship JPEG XL export by default; allow smaller builds with -PjxlEncoder=false.
 val jxlEncoderEnabled = providers.gradleProperty("jxlEncoder").map(String::toBoolean).getOrElse(true)
 
@@ -42,11 +44,11 @@ android {
                     include("arm64-v8a")
                     isUniversalApk = false
                 } else {
-                    include(*supportedAbis)
+                    include(*supportedAbis.toTypedArray())
                     isUniversalApk = true
                 }
             } else {
-                include("arm64-v8a", "x86_64")
+                include(*slimAbis.toTypedArray())
             }
         }
     }
@@ -97,11 +99,6 @@ android {
         buildConfigField("String", "REPO_NAME", "\"$repoName\"")
         buildConfigField("String", "RELEASE_CHANNEL", "\"$releaseChannel\"")
         ndk {
-            if (isRelease) {
-                if (releaseChannel != "easytier") {
-                    abiFilters.addAll(supportedAbis)
-                }
-            }
             debugSymbolLevel = "FULL"
         }
     }
@@ -121,6 +118,8 @@ android {
                 buildConfigField("boolean", "JXL_ENCODER_ENABLED", "false")
                 externalNativeBuild {
                     cmake {
+                        // Limit native compilation independently of the app-wide APK splits.
+                        abiFilters.addAll(slimAbis)
                         arguments += "-DEHVIEWER_STILL_ENCODERS=OFF"
                     }
                 }
@@ -206,6 +205,15 @@ android {
     }
 
     namespace = "com.hippo.ehviewer"
+}
+
+androidComponents {
+    onVariants(selector().withFlavor("api" to "slim")) { variant ->
+        // The app-wide splits also include Default's universal and ARM32 APKs.
+        variant.outputs.forEach { output ->
+            output.enabled.set(output.filters.any { it.filterType == ABI && it.identifier in slimAbis })
+        }
+    }
 }
 
 baselineProfile {

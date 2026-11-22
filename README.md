@@ -141,14 +141,12 @@ RAW images from [rawsamples.ch](https://www.rawsamples.ch/index.php/en/canon).
 
 | Flavor      | Minimum Android Version | Features                       |
 |-------------|-------------------------|--------------------------------|
-| Slim        | 12                      | Basic                          |
+| Slim        | 12 (arm64-v8a, x86-64)  | Basic                          |
 | Slim        | 14 (arm64-v8a, x86-64)  | HDR viewing, GPU Shaders, RAW  |
 | Default     | 12                      | HDR image conversion           |
 | Default     | 14 (arm64-v8a, x86-64)  | HDR, GPU Shaders, RAW          |
 | EasyTier    | 12 (arm64-v8a)          | Basic, EasyTier                |
 | EasyTier    | 14 (arm64-v8a)          | HDR, GPU Shaders, RAW, EasyTier|
-
-Slim omits native image conversion and keeps the same app ID as Default, so you can switch between the two without a separate install.
 
 <a href="https://github.com/zmz125000/LocalViewer/releases">
 <img alt="Get it on GitHub" src="https://github.com/zmz125000/LocalViewer-art/blob/master/get-it-on-github.svg" width="200px"/>
