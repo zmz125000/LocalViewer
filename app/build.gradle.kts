@@ -21,8 +21,8 @@ val supportedAbis = arrayOf("arm64-v8a", "x86_64", "armeabi-v7a")
 // Ship JPEG XL export by default; allow smaller builds with -PjxlEncoder=false.
 val jxlEncoderEnabled = providers.gradleProperty("jxlEncoder").map(String::toBoolean).getOrElse(true)
 
-// GitHub release APKs: LocalViewer-<tag>-{default|easytier}-<abi>.apk
-// Product flavor stays "default"; channel identifies the installed build family.
+// GitHub release APKs: LocalViewer-<tag>-{default|slim|easytier}-<abi>.apk
+// The EasyTier branch still uses the default Gradle flavor.
 val releaseChannel = if (
     file("src/main/jniLibs/arm64-v8a/libeasytier_android_jni.so").exists()
 ) {
@@ -84,6 +84,7 @@ android {
             "1.13.41"
         }
         buildConfigField("boolean", "SNAPSHOT", "$snapshot")
+        buildConfigField("boolean", "STILL_ENCODERS_ENABLED", "true")
         buildConfigField("boolean", "JXL_ENCODER_ENABLED", "$jxlEncoderEnabled")
         externalNativeBuild {
             cmake {
@@ -110,6 +111,20 @@ android {
     productFlavors {
         create("default") {
             minSdk = 31
+        }
+        if (releaseChannel == "default") {
+            create("slim") {
+                minSdk = 31
+                matchingFallbacks += "default" // Reuse the default benchmark/profile.
+                buildConfigField("String", "RELEASE_CHANNEL", "\"slim\"")
+                buildConfigField("boolean", "STILL_ENCODERS_ENABLED", "false")
+                buildConfigField("boolean", "JXL_ENCODER_ENABLED", "false")
+                externalNativeBuild {
+                    cmake {
+                        arguments += "-DEHVIEWER_STILL_ENCODERS=OFF"
+                    }
+                }
+            }
         }
     }
 

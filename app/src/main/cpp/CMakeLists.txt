@@ -1,5 +1,6 @@
 cmake_minimum_required(VERSION 3.14)
 project(ehviewer C CXX)
+option(EHVIEWER_STILL_ENCODERS "Include native still-image export encoders" ON)
 option(EHVIEWER_JXL_ENCODER "Include JPEG XL export encoder" ON)
 include(ExternalProject)
 include(FetchContent)
@@ -189,7 +190,13 @@ corrosion_import_crate(
         FLAGS $<$<NOT:$<CONFIG:Debug>>:-Z build-std -Z build-std-features=>
 )
 corrosion_add_target_rustflags(ehviewer_rust $<$<NOT:$<CONFIG:Debug>>:-Z unstable-options -C panic=immediate-abort -Z location-detail=none -Z fmt-debug=none>)
-corrosion_link_libraries(ehviewer_rust android jnigraphics log webp webpdemux)
+if (NOT EHVIEWER_STILL_ENCODERS)
+    # The demux target normally depends on the combined encoder/decoder library.
+    set_target_properties(webpdemux PROPERTIES
+            LINK_LIBRARIES webpdecoder
+            INTERFACE_LINK_LIBRARIES webpdecoder)
+endif ()
+corrosion_link_libraries(ehviewer_rust android jnigraphics log webpdemux)
 
 set(EHVIEWER_HDR_SOURCES "")
 set(EHVIEWER_HDR_LIBS "")
@@ -272,7 +279,9 @@ if (EHVIEWER_HDR_CODECS)
             GIT_SHALLOW 1
     )
     FetchContent_MakeAvailable(libultrahdr)
-    include("${CMAKE_CURRENT_LIST_DIR}/cmake/UltraHdrMetadata.cmake")
+    if (EHVIEWER_STILL_ENCODERS)
+        include("${CMAKE_CURRENT_LIST_DIR}/cmake/UltraHdrMetadata.cmake")
+    endif ()
 
     # ── libavif: dav1d reader + encode-only libaom exports ──────────────
     # Keep dav1d as the sole decoder. libaom supplies 8/10/12-bit AV1 encode.
@@ -281,9 +290,13 @@ if (EHVIEWER_HDR_CODECS)
     # LocalDav1d.cmake needs host meson (+ ninja on PATH; see above).
     # x86/x86_64 also need nasm (dav1d -Denable_asm=true); arm64 uses gas.
     set(AVIF_CODEC_DAV1D "LOCAL" CACHE STRING "" FORCE)
-    set(AVIF_CODEC_AOM "LOCAL" CACHE STRING "" FORCE)
+    if (EHVIEWER_STILL_ENCODERS)
+        set(AVIF_CODEC_AOM "LOCAL" CACHE STRING "" FORCE)
+    else ()
+        set(AVIF_CODEC_AOM "OFF" CACHE STRING "" FORCE)
+    endif ()
     set(AVIF_CODEC_AOM_DECODE OFF CACHE BOOL "" FORCE)
-    set(AVIF_CODEC_AOM_ENCODE ON CACHE BOOL "" FORCE)
+    set(AVIF_CODEC_AOM_ENCODE ${EHVIEWER_STILL_ENCODERS} CACHE BOOL "" FORCE)
     set(CONFIG_AV1_HIGHBITDEPTH 1 CACHE BOOL "" FORCE)
     if (ANDROID_ABI STREQUAL "arm64-v8a")
         set(AOM_TARGET_CPU "arm64" CACHE STRING "" FORCE)
@@ -328,7 +341,7 @@ if (EHVIEWER_HDR_CODECS)
             GIT_SHALLOW 1
     )
     FetchContent_MakeAvailable(libavif)
-    if (NOT TARGET aom)
+    if (EHVIEWER_STILL_ENCODERS AND NOT TARGET aom)
         message(FATAL_ERROR "libavif: encode-only aom target missing")
     endif ()
     if (NOT TARGET dav1d::dav1d AND NOT TARGET dav1d)
@@ -398,12 +411,15 @@ if (EHVIEWER_HDR_CODECS)
     target_include_directories(de265 INTERFACE
             $<BUILD_INTERFACE:${libde265_SOURCE_DIR}>
             $<BUILD_INTERFACE:${libde265_BINARY_DIR}>)
-    if (EHVIEWER_JXL_ENCODER)
-        set(EHVIEWER_JXL_EXPORT_SOURCE still_jxl.cpp)
-    else ()
-        set(EHVIEWER_JXL_EXPORT_SOURCE still_jxl_stub.cpp)
+    set(EHVIEWER_HDR_SOURCES hdr_convert.cpp avif_hdr.cpp jxl_hdr.cpp jxl_animation.cpp hevc_decode.cpp still_probe.cpp)
+    if (EHVIEWER_STILL_ENCODERS)
+        list(APPEND EHVIEWER_HDR_SOURCES still_avif.cpp source_export.cpp jpeg_source.cpp)
+        if (EHVIEWER_JXL_ENCODER)
+            list(APPEND EHVIEWER_HDR_SOURCES still_jxl.cpp)
+        else ()
+            list(APPEND EHVIEWER_HDR_SOURCES still_jxl_stub.cpp)
+        endif ()
     endif ()
-    set(EHVIEWER_HDR_SOURCES hdr_convert.cpp avif_hdr.cpp still_avif.cpp source_export.cpp jpeg_source.cpp jxl_hdr.cpp jxl_animation.cpp hevc_decode.cpp ${EHVIEWER_JXL_EXPORT_SOURCE} still_probe.cpp)
     list(APPEND EHVIEWER_HDR_LIBS de265)
 
     if (TARGET uhdr)
@@ -423,7 +439,7 @@ if (EHVIEWER_HDR_CODECS)
         message(FATAL_ERROR "libavif CMake target not found (expected avif)")
     endif ()
     list(APPEND EHVIEWER_HDR_LIBS jxl_cms)
-    if (EHVIEWER_JXL_ENCODER)
+    if (EHVIEWER_STILL_ENCODERS AND EHVIEWER_JXL_ENCODER)
         list(APPEND EHVIEWER_HDR_LIBS jxl jxl_threads)
     endif ()
     list(APPEND EHVIEWER_HDR_LIBS jxrlib)
@@ -468,6 +484,9 @@ if (EHVIEWER_HDR_CODECS)
 else ()
     set(EHVIEWER_HDR_SOURCES hdr_stubs.cpp)
 endif ()
+if (NOT EHVIEWER_HDR_CODECS OR NOT EHVIEWER_STILL_ENCODERS)
+    list(APPEND EHVIEWER_HDR_SOURCES still_encode_stubs.cpp)
+endif ()
 
 # JPEG 2000 (JP2 / J2K). ImageDecoder cannot open it. Static OpenJPEG, all ABIs.
 set(_eh_build_shared "${BUILD_SHARED_LIBS}")
@@ -503,8 +522,11 @@ target_include_directories(${PROJECT_NAME} PRIVATE
 )
 if (EHVIEWER_HDR_CODECS)
     target_compile_definitions(${PROJECT_NAME} PRIVATE EHVIEWER_HDR_CODECS)
-    # raw_still.cpp includes jpeglib.h. jconfig.h appears when libjpeg-turbo is configured,
-    # which finishes before the uhdr target.
+    if (EHVIEWER_STILL_ENCODERS)
+        target_compile_definitions(${PROJECT_NAME} PRIVATE EHVIEWER_STILL_ENCODERS)
+    endif ()
+    # LibRaw uses libjpeg-turbo for lossy DNG decoding. The generated
+    # jconfig.h is available after the Ultra HDR dependency builds.
     if (TARGET uhdr)
         add_dependencies(${PROJECT_NAME} uhdr)
     elseif (TARGET libuhdr)
@@ -531,6 +553,11 @@ if (EHVIEWER_HDR_CODECS)
             ${libjxl_SOURCE_DIR}/third_party/skcms
     )
     list(APPEND EHVIEWER_HDR_LIBS ${EH_JPEG_LIB})
+endif ()
+if (NOT EHVIEWER_STILL_ENCODERS)
+    # Shared codec archives can contain encoder and decoder functions in one object.
+    # Keep only the sections reachable from the exported JNI entry points.
+    target_link_options(${PROJECT_NAME} PRIVATE -Wl,--gc-sections)
 endif ()
 target_link_libraries(
         ${PROJECT_NAME} archive_static ehviewer_rust z ${EHVIEWER_HDR_LIBS} openjp2 jnigraphics log android

@@ -36,6 +36,7 @@ import com.ehviewer.core.i18n.R
 import com.ehviewer.core.util.launch
 import com.ehviewer.core.util.launchIO
 import com.ehviewer.core.util.logcat
+import com.hippo.ehviewer.BuildConfig
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.asMutableState
 import com.hippo.ehviewer.download.downloadLocation
@@ -147,35 +148,37 @@ fun AnimatedVisibilityScope.DownloadScreen(navigator: DestinationsNavigator) = S
                     title = { Text(stringResource(R.string.ask_where_to_save)) },
                 )
             }
-            val conversionLocationSummary = conversionLocation.value?.let { saved ->
-                runCatching {
-                    val treeUri = Uri.parse(saved)
-                    DocumentsContract.buildDocumentUriUsingTree(
-                        treeUri,
-                        DocumentsContract.getTreeDocumentId(treeUri),
-                    ).toOkioPath().toUri().displayPath
-                }.getOrNull()
-            } ?: stringResource(R.string.image_conversion_default_location_not_set)
-            Preference(
-                title = stringResource(R.string.image_conversion_default_location),
-                summary = conversionLocationSummary,
-            ) {
-                try {
-                    selectConversionDirLauncher.launch(null)
-                } catch (_: ActivityNotFoundException) {
-                    launchSnackbar(cannotGetDownloadLocation)
+            if (BuildConfig.STILL_ENCODERS_ENABLED) {
+                val conversionLocationSummary = conversionLocation.value?.let { saved ->
+                    runCatching {
+                        val treeUri = Uri.parse(saved)
+                        DocumentsContract.buildDocumentUriUsingTree(
+                            treeUri,
+                            DocumentsContract.getTreeDocumentId(treeUri),
+                        ).toOkioPath().toUri().displayPath
+                    }.getOrNull()
+                } ?: stringResource(R.string.image_conversion_default_location_not_set)
+                Preference(
+                    title = stringResource(R.string.image_conversion_default_location),
+                    summary = conversionLocationSummary,
+                ) {
+                    try {
+                        selectConversionDirLauncher.launch(null)
+                    } catch (_: ActivityNotFoundException) {
+                        launchSnackbar(cannotGetDownloadLocation)
+                    }
                 }
-            }
-            DarkSwitchTheme {
-                me.zhanghai.compose.preference.SwitchPreference(
-                    value = askWhereToSave.value,
-                    onValueChange = { ask ->
-                        launchIO {
-                            with(contextOf<Context>()) { BrowseSaveAs.updateAskWhereToSave(ask) }
-                        }
-                    },
-                    title = { Text(stringResource(R.string.browse_ask_where_to_save)) },
-                )
+                DarkSwitchTheme {
+                    me.zhanghai.compose.preference.SwitchPreference(
+                        value = askWhereToSave.value,
+                        onValueChange = { ask ->
+                            launchIO {
+                                with(contextOf<Context>()) { BrowseSaveAs.updateAskWhereToSave(ask) }
+                            }
+                        },
+                        title = { Text(stringResource(R.string.browse_ask_where_to_save)) },
+                    )
+                }
             }
             val mediaScan = Settings.mediaScan.asMutableState()
             SwitchPreference(
@@ -183,7 +186,7 @@ fun AnimatedVisibilityScope.DownloadScreen(navigator: DestinationsNavigator) = S
                 summary = if (mediaScan.value) stringResource(id = R.string.settings_download_media_scan_summary_on) else stringResource(id = R.string.settings_download_media_scan_summary_off),
                 state = mediaScan,
             )
-            ImageConversionPreferences()
+            if (BuildConfig.STILL_ENCODERS_ENABLED) ImageConversionPreferences()
             SwitchPreference(
                 title = stringResource(id = R.string.settings_download_save_as_cbz),
                 state = Settings.saveAsCbz.asMutableState(),

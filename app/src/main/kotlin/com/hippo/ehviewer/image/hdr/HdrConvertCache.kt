@@ -7,6 +7,7 @@ import android.util.Log
 import com.ehviewer.core.files.metadataOrNull
 import com.ehviewer.core.files.openFileDescriptor
 import com.ehviewer.core.files.toUri
+import com.hippo.ehviewer.BuildConfig
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.coil.hasJxlAnimation
 import com.hippo.ehviewer.image.ImageSource
@@ -119,7 +120,7 @@ object HdrConvertCache {
     fun usesNetworkLibConvert(fileName: String): Boolean = isRamPipelineCandidate(fileName) && !keepOriginalOnNetwork(fileName)
 
     /** Keep original bytes on network finalize (no UHDR encode). */
-    private fun keepOriginalOnNetwork(fileName: String): Boolean = Settings.readerLibDirectBitmap.value || Settings.readerSdrToneMappingEnabled ||
+    private fun keepOriginalOnNetwork(fileName: String): Boolean = Settings.readerUsesLibDirectBitmap || Settings.readerSdrToneMappingEnabled ||
         keepHeifPrecisionOriginal(fileName, Settings.readerAdvancedColor.value, Settings.preferNativeHeifAvif.value)
 
     /** Derived Ultra HDR for local files (user originals untouched). */
@@ -158,7 +159,7 @@ object HdrConvertCache {
      * pure [uhdrSiblingOf] + an in-memory set (see Smb/WebDav `isPageCached`).
      */
     fun resolvePagePath(primary: Path): Path {
-        if ((Settings.readerLibDirectBitmap.value || Settings.readerSdrToneMappingEnabled || keepHeifPrecisionOriginal(primary.name, Settings.readerAdvancedColor.value, Settings.preferNativeHeifAvif.value)) && isPresent(primary)) return primary
+        if ((Settings.readerUsesLibDirectBitmap || Settings.readerSdrToneMappingEnabled || keepHeifPrecisionOriginal(primary.name, Settings.readerAdvancedColor.value, Settings.preferNativeHeifAvif.value)) && isPresent(primary)) return primary
         val uhdr = uhdrSiblingOf(primary)
         if (uhdr.toString() != primary.toString() && isPresent(uhdr)) {
             if (primary.name.endsWith(".avif", ignoreCase = true) && isPresent(primary)) {
@@ -189,6 +190,7 @@ object HdrConvertCache {
      * Platform / gain-map return [source] unchanged.
      */
     suspend fun ensureDisplayFile(source: Path, fileNameHint: String = source.name): Path = withContext(Dispatchers.IO) {
+        if (!BuildConfig.STILL_ENCODERS_ENABLED) return@withContext source
         val route = classifyPath(source, fileNameHint)
         if (!route.needsUhdr) return@withContext source
         ensureUhdrLocal(source, (route as StillRoute.Lib).codec)
@@ -206,6 +208,7 @@ object HdrConvertCache {
      * - Lib (JXR/JXL/JPEG 2000/PQ-AVIF) → JPEG under [localRoot]
      */
     suspend fun ensureCoilReady(source: Path, fileNameHint: String = source.name): Path = withContext(Dispatchers.IO) {
+        if (!BuildConfig.STILL_ENCODERS_ENABLED) return@withContext source
         val ext = FileUtils.getExtensionFromFilename(fileNameHint)?.lowercase()
             ?: FileUtils.getExtensionFromFilename(source.name)?.lowercase()
         if (!isHdrConvertCandidateExtension(ext)) return@withContext source
@@ -229,7 +232,7 @@ object HdrConvertCache {
         if (bytes.isEmpty()) error("empty image buffer: $fileNameHint")
         val route = classify(bytes, bytes.size, fileNameHint)
         when {
-            route.needsUhdr -> ensureUhdrFromBytes(bytes, fileNameHint)
+            BuildConfig.STILL_ENCODERS_ENABLED && route.needsUhdr -> ensureUhdrFromBytes(bytes, fileNameHint)
             else -> {
                 // Platform / gain-map / ProXDR: materialize so PathSource open is uniform.
                 ensureLocalRoot()
@@ -331,8 +334,16 @@ object HdrConvertCache {
                     }
                     writeHeifThumb(input, dest, edge, quality)
                 } else if (route.needsUhdr) {
-                    val lib = route as StillRoute.Lib
-                    writeConvertThumb(source, dest, edge, fileNameHint, lib.codec)
+                    if (BuildConfig.STILL_ENCODERS_ENABLED) {
+                        writeConvertThumb(source, dest, edge, fileNameHint, (route as StillRoute.Lib).codec)
+                    } else {
+                        val input = object : PathSource {
+                            override val source = source
+                            override val type = FileUtils.getExtensionFromFilename(fileNameHint).orEmpty()
+                            override fun close() = Unit
+                        }
+                        writeDecodedThumb(input, fileNameHint, route, dest, edge, quality)
+                    }
                 } else {
                     writePlatformThumb(source, dest, edge, quality)
                 }
@@ -500,8 +511,11 @@ object HdrConvertCache {
                 val ok = if (route is StillRoute.Lib && route.codec == LibCodec.HevcHdr) {
                     writeHeifThumb(byteBufferSource(ByteBuffer.wrap(bytes)) {}, destJpeg, edge, quality)
                 } else if (route.needsUhdr) {
-                    val lib = route as StillRoute.Lib
-                    writeConvertThumbBytes(bytes, destJpeg, edge, lib.codec)
+                    if (BuildConfig.STILL_ENCODERS_ENABLED) {
+                        writeConvertThumbBytes(bytes, destJpeg, edge, (route as StillRoute.Lib).codec)
+                    } else {
+                        writeDecodedThumb(byteBufferSource(ByteBuffer.wrap(bytes)) {}, fileNameHint, route, destJpeg, edge, quality)
+                    }
                 } else {
                     writePlatformThumbBytes(bytes, destJpeg, edge, quality)
                 }
@@ -816,6 +830,9 @@ object HdrConvertCache {
     }
 
     private suspend fun writeHeifThumb(source: ImageSource, dest: File, edge: Int, quality: Int): Boolean {
+        if (!BuildConfig.STILL_ENCODERS_ENABLED) {
+            return writeDecodedThumb(source, "thumb.heic", StillRoute.Lib(LibCodec.HevcHdr), dest, edge, quality)
+        }
         val output = OriginDiskCache.jpegSibling(dest)
         return pathLocks.getOrPut(output.absolutePath) { Mutex() }.withLock {
             if (output.isFile && output.length() > 0L) return@withLock true
@@ -831,6 +848,40 @@ object HdrConvertCache {
                 throw error
             } catch (error: Exception) {
                 Log.e(TAG, "Native HEIF thumbnail failed", error)
+                false
+            } finally {
+                tmp.delete()
+            }
+        }
+    }
+
+    private suspend fun writeDecodedThumb(
+        source: ImageSource,
+        hint: String,
+        route: StillRoute,
+        dest: File,
+        edge: Int,
+        quality: Int,
+    ): Boolean {
+        val output = OriginDiskCache.jpegSibling(dest)
+        return pathLocks.getOrPut(output.absolutePath) { Mutex() }.withLock {
+            if (output.isFile && output.length() > 0L) return@withLock true
+            val tmp = File("${output.absolutePath}.tmp.${System.nanoTime()}")
+            try {
+                val bitmap = LibDirectDecode.decode(source, hint, edge, route)?.bitmap ?: return@withLock false
+                val written = try {
+                    output.parentFile?.mkdirs()
+                    bitmap.writeThumbnailJpeg(tmp, quality)
+                } finally {
+                    bitmap.recycle()
+                }
+                if (!written || tmp.length() <= 0L) return@withLock false
+                commitTmp(tmp, output)
+                true
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                Log.e(TAG, "Decoded thumbnail failed: $hint", error)
                 false
             } finally {
                 tmp.delete()
@@ -987,5 +1038,14 @@ object HdrConvertCache {
         val md = MessageDigest.getInstance("SHA-256")
         val dig = md.digest(bytes)
         return dig.joinToString("") { b -> "%02x".format(b) }
+    }
+}
+
+private fun Bitmap.writeThumbnailJpeg(output: File, quality: Int): Boolean {
+    val software = if (config == Bitmap.Config.HARDWARE) copy(Bitmap.Config.RGBA_F16, false) ?: return false else this
+    return try {
+        output.outputStream().use { software.compress(Bitmap.CompressFormat.JPEG, quality, it) }
+    } finally {
+        if (software !== this) software.recycle()
     }
 }

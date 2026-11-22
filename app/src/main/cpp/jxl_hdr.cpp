@@ -407,6 +407,7 @@ int decode_jxl_to_linear(const uint8_t* data, size_t len, std::vector<Sample>& o
 
 }  // namespace
 
+#if defined(EHVIEWER_STILL_ENCODERS)
 extern "C" JNIEXPORT jint JNICALL
 Java_com_hippo_ehviewer_jni_HdrConvertKt_convertJxlBytesToUltraHdr(JNIEnv* env, jclass,
                                                                    jbyteArray jInput,
@@ -551,6 +552,7 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_convertJxlFdToUltraHdrMaxEdge(
     // In particular, do not let std::bad_alloc terminate the process at JNI.
     return -30;
 }
+#endif  // EHVIEWER_STILL_ENCODERS
 
 /**
  * JXL → direct display pixels (skip UHDR JPEG).

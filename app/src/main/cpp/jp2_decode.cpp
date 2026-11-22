@@ -635,6 +635,7 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeJpeg2000BufferToDirect(
     return nullptr;
 }
 
+#if defined(EHVIEWER_STILL_ENCODERS)
 static jint encode_jpeg2000(JNIEnv* env, jbyteArray input, jstring output, jint maxEdge) {
     if (!input || !output) return -10;
     const jsize n = env->GetArrayLength(input);
@@ -739,5 +740,5 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_convertJpeg2000FdToUltraHdrMaxEdge(
     // In particular, do not let std::bad_alloc terminate the process at JNI.
     return -30;
 }
-
-#endif
+#endif  // EHVIEWER_STILL_ENCODERS
+#endif  // EHVIEWER_HDR_CODECS

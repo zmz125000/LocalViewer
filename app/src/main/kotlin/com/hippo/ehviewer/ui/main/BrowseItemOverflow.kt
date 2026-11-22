@@ -31,6 +31,7 @@ import androidx.compose.ui.semantics.Role
 import com.ehviewer.core.i18n.R
 import com.ehviewer.core.util.logcat
 import com.ehviewer.core.util.withIOContext
+import com.hippo.ehviewer.BuildConfig
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.collectAsState
 import com.hippo.ehviewer.image.hdr.StillExportTarget
@@ -134,7 +135,7 @@ fun BrowseItemOverflowButton(
     val explorer = LocalExplorerPanel.current
     val galleryConvert = galleryConversionRoot(actions)
     val resolvedGallery = resolvedGalleryConversion(actions)
-    val canConvert = galleryConvert != null || resolvedGallery || (actions.onConvert != null && actions.convertStill != null)
+    val canConvert = BuildConfig.STILL_ENCODERS_ENABLED && (galleryConvert != null || resolvedGallery || (actions.onConvert != null && actions.convertStill != null))
     val shortcutUnsupported = stringResource(R.string.browse_shortcut_unsupported)
     val grid = placement == BrowseOverflowPlacement.GridBottomEnd
     val more = stringResource(R.string.browse_item_more)

@@ -164,7 +164,7 @@ abstract class PageLoader(
      */
     private val decodeSlotCount = when {
         Settings.disableReaderNetworkCache.value -> 2
-        Settings.readerLibDirectBitmap.value -> 2
+        Settings.readerUsesLibDirectBitmap -> 2
         else -> 4
     }
     private val serialDecodeSlots = Semaphore(1)
@@ -355,7 +355,7 @@ abstract class PageLoader(
         val precision = if (advanced && route == StillRoute.Platform) PlatformHeifDecode.precision(raw, nameHint) else null
         val deepHeif = precision?.highDepth == true
         if (rawStill) noteRawLoaded()
-        if (!rawStill && !hevcHdr && !avifDirect && !deepHeif && !Settings.readerLibDirectBitmap.value && !Settings.readerSdrToneMappingEnabled) return null
+        if (!rawStill && !hevcHdr && !avifDirect && !deepHeif && !Settings.readerUsesLibDirectBitmap && !Settings.readerSdrToneMappingEnabled) return null
         if (!route.needsLibDecode && !rawStill && !deepHeif) return null
         val maxEdge = Image.maxEdgeForReader(forceOriginal)
         val direct = (if (deepHeif) PlatformHeifDecode.decode(raw, precision, maxEdge) else null)

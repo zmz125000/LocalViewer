@@ -755,6 +755,7 @@ int decode_avif_to_linear(const uint8_t* data, size_t len, std::vector<Sample>& 
 
 }  // namespace
 
+#if defined(EHVIEWER_STILL_ENCODERS)
 extern "C" JNIEXPORT jint JNICALL
 Java_com_hippo_ehviewer_jni_HdrConvertKt_convertAvifBytesToUltraHdr(JNIEnv* env, jclass,
                                                                     jbyteArray jInput,
@@ -913,6 +914,7 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_convertAvifFdToUltraHdrMaxEdge(
     // In particular, do not let std::bad_alloc terminate the process at JNI.
     return -30;
 }
+#endif  // EHVIEWER_STILL_ENCODERS
 
 /**
  * PQ/HLG AVIF → direct display pixels (skip UHDR JPEG).

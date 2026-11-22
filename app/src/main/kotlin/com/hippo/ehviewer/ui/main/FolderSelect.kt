@@ -70,6 +70,7 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.window.DialogWindowProvider
 import com.ehviewer.core.i18n.R
 import com.ehviewer.core.util.withUIContext
+import com.hippo.ehviewer.BuildConfig
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.asMutableState
 import com.hippo.ehviewer.image.hdr.RawExportControls
@@ -1780,7 +1781,7 @@ private fun SelectionOverflowControl(
                         },
                     )
                 }
-                if (selectionActions && convertible > 0) {
+                if (BuildConfig.STILL_ENCODERS_ENABLED && selectionActions && convertible > 0) {
                     DropdownMenuItem(
                         text = { Text(stringResource(R.string.convert_to)) },
                         onClick = { convertMenu = true },
@@ -1869,21 +1870,23 @@ private fun SelectionOverflowControl(
                         FolderSelectHost.batch?.wake()
                     },
                 )
-                DropdownMenuItem(
-                    text = { Text(stringResource(R.string.browse_ask_for_dest)) },
-                    trailingIcon = {
-                        Box(Modifier.size(24.dp), contentAlignment = Alignment.Center) {
-                            if (askWhereToSave.value) Icon(Icons.Default.Check, contentDescription = null)
-                        }
-                    },
-                    onClick = {
-                        val ask = !askWhereToSave.value
-                        menu = false
-                        scope.launch {
-                            with(snackbar) { with(context) { BrowseSaveAs.updateAskWhereToSave(ask) } }
-                        }
-                    },
-                )
+                if (BuildConfig.STILL_ENCODERS_ENABLED) {
+                    DropdownMenuItem(
+                        text = { Text(stringResource(R.string.browse_ask_for_dest)) },
+                        trailingIcon = {
+                            Box(Modifier.size(24.dp), contentAlignment = Alignment.Center) {
+                                if (askWhereToSave.value) Icon(Icons.Default.Check, contentDescription = null)
+                            }
+                        },
+                        onClick = {
+                            val ask = !askWhereToSave.value
+                            menu = false
+                            scope.launch {
+                                with(snackbar) { with(context) { BrowseSaveAs.updateAskWhereToSave(ask) } }
+                            }
+                        },
+                    )
+                }
             }
         }
     }

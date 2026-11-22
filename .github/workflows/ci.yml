@@ -98,11 +98,7 @@ jobs:
           key: cmake-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.native-tools.outputs.cache-key }}-default-${{ hashFiles('rust-toolchain.toml', 'settings.gradle.kts', 'app/build.gradle.kts', 'gradle/libs.versions.toml', 'app/src/main/cpp/**', 'app/src/main/rust/Cargo.lock') }}
           restore-keys: cmake-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.native-tools.outputs.cache-key }}-default-
 
-      - name: Build
-        run: ./gradlew assembleDefaultRelease
-
-      # Artifact channel token must match BuildConfig.RELEASE_CHANNEL (default | easytier)
-      # so in-app CI update picks the same build family as the installed app.
+      # In-app updates use BuildConfig.RELEASE_CHANNEL to select the artifact family.
       - name: Detect release channel
         id: channel
         run: |
@@ -110,6 +106,14 @@ jobs:
             echo "name=easytier" >> "$GITHUB_OUTPUT"
           else
             echo "name=default" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build
+        run: |
+          if [ "${{ steps.channel.outputs.name }}" = default ]; then
+            ./gradlew :app:assembleDefaultRelease :app:assembleSlimRelease
+          else
+            ./gradlew :app:assembleDefaultRelease
           fi
 
       - name: Upload ARM64
@@ -131,6 +135,27 @@ jobs:
         with:
           name: ${{ steps.channel.outputs.name }}-armeabi-v7a-${{ github.sha }}
           path: app/build/outputs/apk/default/release/app-default-armeabi-v7a-release.apk
+
+      - name: Upload slim ARM64
+        if: steps.channel.outputs.name == 'default'
+        uses: actions/upload-artifact@v7
+        with:
+          name: slim-arm64-v8a-${{ github.sha }}
+          path: app/build/outputs/apk/slim/release/app-slim-arm64-v8a-release.apk
+
+      - name: Upload slim x86_64
+        if: steps.channel.outputs.name == 'default'
+        uses: actions/upload-artifact@v7
+        with:
+          name: slim-x86_64-${{ github.sha }}
+          path: app/build/outputs/apk/slim/release/app-slim-x86_64-release.apk
+
+      - name: Upload slim ARM32
+        if: steps.channel.outputs.name == 'default'
+        uses: actions/upload-artifact@v7
+        with:
+          name: slim-armeabi-v7a-${{ github.sha }}
+          path: app/build/outputs/apk/slim/release/app-slim-armeabi-v7a-release.apk
 
       - name: Upload mapping
         if: always()

@@ -1,5 +1,6 @@
 package com.hippo.ehviewer.image.hdr
 
+import com.hippo.ehviewer.BuildConfig
 import com.hippo.ehviewer.coil.hasJxlAnimation
 import com.hippo.ehviewer.image.ByteBufferSource
 import com.hippo.ehviewer.image.ImageSource
@@ -34,9 +35,12 @@ object DisplaySource {
         src: ImageSource,
         fileNameHint: String = "page.bin",
         persistTo: Path? = null,
-    ): ImageSource = when (src) {
-        is PathSource -> ensureReadyPath(src, persistTo)
-        is ByteBufferSource -> ensureReadyBuffer(src, fileNameHint, persistTo)
+    ): ImageSource {
+        if (!BuildConfig.STILL_ENCODERS_ENABLED) return src
+        return when (src) {
+            is PathSource -> ensureReadyPath(src, persistTo)
+            is ByteBufferSource -> ensureReadyBuffer(src, fileNameHint, persistTo)
+        }
     }
 
     private suspend fun ensureReadyPath(src: PathSource, persistTo: Path?): PathSource {

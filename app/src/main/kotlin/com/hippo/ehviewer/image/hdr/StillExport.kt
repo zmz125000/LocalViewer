@@ -21,7 +21,7 @@ enum class StillExportTarget {
 
     private val jpegXl: Boolean get() = this == Jxl || this == JxlHdr || this == JxlScRgb || this == JxlPq || this == JxlHlg
 
-    val available: Boolean get() = BuildConfig.JXL_ENCODER_ENABLED || !jpegXl
+    val available: Boolean get() = BuildConfig.STILL_ENCODERS_ENABLED && (BuildConfig.JXL_ENCODER_ENABLED || !jpegXl)
 }
 
 /** Filename-only HDR selection group; deliberately does not inspect file contents. */

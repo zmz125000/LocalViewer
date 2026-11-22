@@ -15,7 +15,7 @@ data class GithubRelease(
     @SerialName("assets") val assets: List<GitHubAssets> = emptyList(),
 ) {
     fun getDownloadLink(): String {
-        // Match installed build: default vs easytier, and device ABI.
+        // Match installed build: release channel and device ABI.
         // Do not fall back to a random APK (would install the wrong channel).
         val asset = assets.find { AppConfig.matchVariant(it.name) }
             ?: error(

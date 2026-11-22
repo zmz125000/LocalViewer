@@ -3,64 +3,13 @@
  * (armeabi-v7a / 32-bit). Real implementations live in hdr_convert.cpp,
  * avif_hdr.cpp, jxl_hdr.cpp and are only linked for arm64-v8a + x86_64.
  *
- * Return codes: non-zero so Kotlin treats convert as failed without
- * UnsatisfiedLinkError.
+ * Shared encoder stubs are defined in still_encode_stubs.cpp.
  */
 #include <jni.h>
-
-namespace {
-
-constexpr jint kUnsupportedAbi = -100;
-
-}  // namespace
-
-extern "C" JNIEXPORT jint JNICALL
-Java_com_hippo_ehviewer_jni_HdrConvertKt_convertJxrToUltraHdr(JNIEnv*, jclass, jstring, jstring) {
-    return kUnsupportedAbi;
-}
-
-extern "C" JNIEXPORT jint JNICALL
-Java_com_hippo_ehviewer_jni_HdrConvertKt_convertJxrBytesToUltraHdr(JNIEnv*, jclass, jbyteArray,
-                                                                   jstring) {
-    return kUnsupportedAbi;
-}
-
-extern "C" JNIEXPORT jint JNICALL
-Java_com_hippo_ehviewer_jni_HdrConvertKt_convertJxrBytesToUltraHdrMaxEdge(JNIEnv*, jclass,
-                                                                          jbyteArray, jstring,
-                                                                          jint) {
-    return kUnsupportedAbi;
-}
-
-extern "C" JNIEXPORT jint JNICALL
-Java_com_hippo_ehviewer_jni_HdrConvertKt_convertAvifBytesToUltraHdr(JNIEnv*, jclass, jbyteArray,
-                                                                    jstring) {
-    return kUnsupportedAbi;
-}
-
-extern "C" JNIEXPORT jint JNICALL
-Java_com_hippo_ehviewer_jni_HdrConvertKt_convertAvifBytesToUltraHdrMaxEdge(JNIEnv*, jclass,
-                                                                           jbyteArray, jstring,
-                                                                           jint) {
-    return kUnsupportedAbi;
-}
 
 extern "C" JNIEXPORT jint JNICALL
 Java_com_hippo_ehviewer_jni_HdrConvertKt_probeAvifHdrKind(JNIEnv*, jclass, jbyteArray) {
     return 0;  // not AVIF / unsupported on this ABI
-}
-
-extern "C" JNIEXPORT jint JNICALL
-Java_com_hippo_ehviewer_jni_HdrConvertKt_convertJxlBytesToUltraHdr(JNIEnv*, jclass, jbyteArray,
-                                                                   jstring) {
-    return kUnsupportedAbi;
-}
-
-extern "C" JNIEXPORT jint JNICALL
-Java_com_hippo_ehviewer_jni_HdrConvertKt_convertJxlBytesToUltraHdrMaxEdge(JNIEnv*, jclass,
-                                                                          jbyteArray, jstring,
-                                                                          jint) {
-    return kUnsupportedAbi;
 }
 
 extern "C" JNIEXPORT jbyteArray JNICALL
@@ -75,18 +24,6 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeJpeg2000BytesToDirect(JNIEnv*, jc
                                                                      jint, jboolean, jintArray,
                                                                      jfloatArray) {
     return nullptr;
-}
-
-extern "C" JNIEXPORT jint JNICALL
-Java_com_hippo_ehviewer_jni_HdrConvertKt_convertJpeg2000BytesToUltraHdr(JNIEnv*, jclass, jbyteArray,
-                                                                        jstring) {
-    return kUnsupportedAbi;
-}
-
-extern "C" JNIEXPORT jint JNICALL
-Java_com_hippo_ehviewer_jni_HdrConvertKt_convertJpeg2000BytesToUltraHdrMaxEdge(
-        JNIEnv*, jclass, jbyteArray, jstring, jint) {
-    return kUnsupportedAbi;
 }
 
 extern "C" JNIEXPORT jbyteArray JNICALL
@@ -111,12 +48,6 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_linearizeHeifIcc(JNIEnv*, jclass, jbyte
     return JNI_FALSE;
 }
 
-extern "C" JNIEXPORT jint JNICALL
-Java_com_hippo_ehviewer_jni_HdrConvertKt_encodeStillExport(JNIEnv*, jclass, jbyteArray, jint, jint,
-                                                           jboolean, jint, jint, jboolean, jstring, jint, jint, jfloat, jint, jint, jboolean, jbyteArray, jint, jboolean, jboolean, jfloatArray) {
-    return kUnsupportedAbi;
-}
-
 extern "C" JNIEXPORT jboolean JNICALL
 Java_com_hippo_ehviewer_jni_HdrConvertKt_convertExportGamut(JNIEnv*, jclass, jobject, jint) {
     return JNI_FALSE;
@@ -125,41 +56,6 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_convertExportGamut(JNIEnv*, jclass, job
 extern "C" JNIEXPORT jlong JNICALL
 Java_com_hippo_ehviewer_jni_HdrConvertKt_probeStillExportSize(JNIEnv*, jclass, jstring, jint) {
     return 0;
-}
-
-extern "C" JNIEXPORT jint JNICALL
-Java_com_hippo_ehviewer_jni_HdrConvertKt_encodeNativeStillExport(JNIEnv*, jclass, jobject, jint, jint,
-                                                             jint, jint, jint, jboolean, jstring, jint, jint, jfloat, jint, jint, jboolean, jbyteArray, jint, jboolean, jboolean, jfloatArray) {
-    return kUnsupportedAbi;
-}
-
-extern "C" JNIEXPORT jint JNICALL
-Java_com_hippo_ehviewer_jni_HdrConvertKt_transcodeJpegToJxl(JNIEnv*, jclass, jbyteArray, jstring, jboolean) {
-    return -100;
-}
-
-extern "C" JNIEXPORT jint JNICALL
-Java_com_hippo_ehviewer_jni_HdrConvertKt_convertJxrFdToUltraHdrMaxEdge(
-        JNIEnv*, jclass, jint, jstring, jint) {
-    return kUnsupportedAbi;
-}
-
-extern "C" JNIEXPORT jint JNICALL
-Java_com_hippo_ehviewer_jni_HdrConvertKt_convertJxlFdToUltraHdrMaxEdge(
-        JNIEnv*, jclass, jint, jstring, jint) {
-    return kUnsupportedAbi;
-}
-
-extern "C" JNIEXPORT jint JNICALL
-Java_com_hippo_ehviewer_jni_HdrConvertKt_convertAvifFdToUltraHdrMaxEdge(
-        JNIEnv*, jclass, jint, jstring, jint) {
-    return kUnsupportedAbi;
-}
-
-extern "C" JNIEXPORT jint JNICALL
-Java_com_hippo_ehviewer_jni_HdrConvertKt_convertJpeg2000FdToUltraHdrMaxEdge(
-        JNIEnv*, jclass, jint, jstring, jint) {
-    return kUnsupportedAbi;
 }
 
 extern "C" JNIEXPORT jbyteArray JNICALL
@@ -193,32 +89,7 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeJpeg2000BufferToDirect(
 }
 
 extern "C" JNIEXPORT jint JNICALL
-Java_com_hippo_ehviewer_jni_HdrConvertKt_convertJxrBufferToUltraHdr(JNIEnv*, jclass, jobject, jstring) {
-    return kUnsupportedAbi;
-}
-
-extern "C" JNIEXPORT jint JNICALL
-Java_com_hippo_ehviewer_jni_HdrConvertKt_convertJxlBufferToUltraHdr(JNIEnv*, jclass, jobject, jstring) {
-    return kUnsupportedAbi;
-}
-
-extern "C" JNIEXPORT jint JNICALL
-Java_com_hippo_ehviewer_jni_HdrConvertKt_convertAvifBufferToUltraHdr(JNIEnv*, jclass, jobject, jstring) {
-    return kUnsupportedAbi;
-}
-
-extern "C" JNIEXPORT jint JNICALL
-Java_com_hippo_ehviewer_jni_HdrConvertKt_convertJpeg2000BufferToUltraHdr(JNIEnv*, jclass, jobject, jstring) {
-    return kUnsupportedAbi;
-}
-
-extern "C" JNIEXPORT jint JNICALL
 Java_com_hippo_ehviewer_jni_HdrConvertKt_probeAvifBufferHdrKind(JNIEnv*, jclass, jobject) { return 0; }
-
-extern "C" JNIEXPORT jint JNICALL
-Java_com_hippo_ehviewer_jni_HdrConvertKt_transcodeJpegBufferToJxl(JNIEnv*, jclass, jobject, jstring, jboolean) {
-    return -100;
-}
 
 extern "C" JNIEXPORT jobject JNICALL
 Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeHevcAnnexBBuffer(JNIEnv*, jclass, jbyteArray, jbyteArray, jintArray) { return nullptr; }
@@ -240,14 +111,6 @@ extern "C" JNIEXPORT jbyteArray JNICALL
 Java_com_hippo_ehviewer_jni_HdrConvertKt_extractJxlExifInput(JNIEnv*, jclass, jobject) { return nullptr; }
 extern "C" JNIEXPORT jbyteArray JNICALL
 Java_com_hippo_ehviewer_jni_HdrConvertKt_extractAvifExifInput(JNIEnv*, jclass, jobject) { return nullptr; }
-
-extern "C" JNIEXPORT jint JNICALL
-Java_com_hippo_ehviewer_jni_HdrConvertKt_convertSourceEncodedStill(
-    JNIEnv*,jclass,jobject,jint,jint,jstring,jint,jfloat,jint,jint,jboolean,jboolean,jintArray,jboolean) { return 0; }
-extern "C" JNIEXPORT jint JNICALL
-Java_com_hippo_ehviewer_jni_HdrConvertKt_encodeSourceRgb(
-    JNIEnv*,jclass,jobject,jint,jint,jint,jint,jint,jbyteArray,jint,jint,jstring,jint,jfloat,jint,jint,jboolean,jbyteArray,
-    jobject,jint,jint,jboolean,jfloatArray,jintArray) { return -100; }
 
 extern "C" JNIEXPORT jbyteArray JNICALL
 Java_com_hippo_ehviewer_jni_HdrConvertKt_decodePngRgbToDirect(

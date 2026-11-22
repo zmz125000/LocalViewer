@@ -397,7 +397,6 @@ bool decode_jxr_from_memory(const uint8_t* data, size_t len, std::vector<Sample>
     if (!data || len == 0) return false;
 
     PKFactory* factory = nullptr;
-    PKCodecFactory* codecFactory = nullptr;
     struct WMPStream* stream = nullptr;
     PKImageDecode* decoder = nullptr;
     bool ok = false;
@@ -411,10 +410,6 @@ bool decode_jxr_from_memory(const uint8_t* data, size_t len, std::vector<Sample>
             stream->Close(&stream);
             stream = nullptr;
         }
-        if (codecFactory) {
-            codecFactory->Release(&codecFactory);
-            codecFactory = nullptr;
-        }
         if (factory) {
             factory->Release(&factory);
             factory = nullptr;
@@ -426,12 +421,7 @@ bool decode_jxr_from_memory(const uint8_t* data, size_t len, std::vector<Sample>
         ALOGE("PKCreateFactory failed: %d", err);
         return false;
     }
-    err = PKCreateCodecFactory(&codecFactory, WMP_SDK_VERSION);
-    if (Failed(err) || !codecFactory) {
-        ALOGE("PKCreateCodecFactory failed: %d", err);
-        release_all();
-        return false;
-    }
+
     err = factory->CreateStreamFromMemory(&stream, const_cast<uint8_t*>(data), len);
     if (Failed(err) || !stream) {
         ALOGE("CreateStreamFromMemory failed: %d", err);
@@ -867,6 +857,7 @@ bool decode_jxr_to_rgba_f16(const char* path, std::vector<uint16_t>& out_rgba, u
 
 }  // namespace
 
+#if defined(EHVIEWER_STILL_ENCODERS)
 static bool write_file(const char* path, const void* data, size_t size) {
     std::ofstream out(path, std::ios::binary);
     if (!out) return false;
@@ -1020,6 +1011,7 @@ int encode_baseline_sdr_jpeg(unsigned w, unsigned h, const uint16_t* rgba, const
 }
 
 }  // namespace
+#endif  // EHVIEWER_STILL_ENCODERS
 
 static void clamp_export_f16(uint16_t* rgba, size_t pixels, int gamut) {
     hdr_parallel_pixels(pixels, hdr_pixel_jobs(pixels), [&](size_t begin, size_t end, unsigned) {
@@ -1070,6 +1062,7 @@ static void clamp_export_srgb16(uint16_t* rgba, size_t pixels, int gamut) {
     });
 }
 
+#if defined(EHVIEWER_STILL_ENCODERS)
 /**
  * Encode LINEAR half-float RGB → Ultra HDR JPEG (HDR) or baseline JPEG (pure SDR).
  *
@@ -1304,6 +1297,7 @@ int encode_linear_rgba_f16_to_uhdr(unsigned w, unsigned h, const uint16_t* rgba,
     uhdr_release_encoder(enc);
     return 0;
 }
+#endif  // EHVIEWER_STILL_ENCODERS
 
 namespace {
 
@@ -1675,6 +1669,7 @@ jbyteArray retain_export_f32(JNIEnv* env, std::vector<float>& rgba, unsigned w, 
     return token;
 }
 
+#if defined(EHVIEWER_STILL_ENCODERS)
 namespace {
 
 constexpr int kExportJpeg = 0;
@@ -2298,6 +2293,7 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_convertJxrFdToUltraHdrMaxEdge(
     // In particular, do not let std::bad_alloc terminate the process at JNI.
     return -30;
 }
+#endif  // EHVIEWER_STILL_ENCODERS
 
 /**
  * Untagged linear scRGB → panel headroom, after [rebase_untagged_scrgb].

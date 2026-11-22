@@ -44,10 +44,8 @@ object AppConfig {
     } ?: "universal"
 
     /**
-     * Installed release channel: `default` or `easytier`.
-     * Must match the token in GitHub asset names
-     * (`LocalViewer-<tag>-default-arm64-v8a.apk` / `…-easytier-arm64-v8a.apk`).
-     * Not the same as [BuildConfig.FLAVOR] (both channels use product flavor `default`).
+     * Installed release channel (`default`, `slim`, or `easytier`).
+     * Matches the token in GitHub asset names. EasyTier uses the default Gradle flavor.
      */
     val releaseChannel: String = BuildConfig.RELEASE_CHANNEL
 

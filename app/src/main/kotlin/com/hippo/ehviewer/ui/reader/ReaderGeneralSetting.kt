@@ -13,6 +13,7 @@ import androidx.compose.ui.res.integerArrayResource
 import androidx.compose.ui.res.stringArrayResource
 import androidx.compose.ui.res.stringResource
 import com.ehviewer.core.i18n.R
+import com.hippo.ehviewer.BuildConfig
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.asMutableState
 import com.hippo.ehviewer.image.hdr.ReaderToneMapper
@@ -72,11 +73,13 @@ fun ReaderGeneralSetting(
             field = Settings.readerAllowNetworkCacheRaw.asMutableState(),
         )
     }
-    SwitchChoice(
-        title = stringResource(id = R.string.pref_reader_lib_direct_bitmap),
-        summary = stringResource(id = R.string.pref_reader_lib_direct_bitmap_summary),
-        field = Settings.readerLibDirectBitmap.asMutableState(),
-    )
+    if (BuildConfig.STILL_ENCODERS_ENABLED) {
+        SwitchChoice(
+            title = stringResource(id = R.string.pref_reader_lib_direct_bitmap),
+            summary = stringResource(id = R.string.pref_reader_lib_direct_bitmap_summary),
+            field = Settings.readerLibDirectBitmap.asMutableState(),
+        )
+    }
     SwitchChoice(
         title = stringResource(id = R.string.pref_reader_hardware_bitmap),
         summary = stringResource(id = R.string.pref_reader_hardware_bitmap_summary),

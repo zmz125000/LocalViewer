@@ -41,8 +41,9 @@
 #include "reader_pixels.h"
 
 #if defined(EHVIEWER_HDR_CODECS)
-#include <jpeglib.h>
 #include "libraw/libraw.h"
+#if defined(EHVIEWER_STILL_ENCODERS)
+#include <jpeglib.h>
 
 struct RawJpegError {
     jpeg_error_mgr pub;
@@ -54,7 +55,8 @@ extern "C" void raw_still_jpeg_bail(j_common_ptr cinfo) {
     auto* err = reinterpret_cast<RawJpegError*>(cinfo->err);
     longjmp(err->jump, 1);
 }
-#endif
+#endif  // EHVIEWER_STILL_ENCODERS
+#endif  // EHVIEWER_HDR_CODECS
 
 namespace {
 
@@ -214,6 +216,7 @@ bool write_embedded_jpeg(const uint8_t* data, size_t len, const char* out_path) 
 
 #if defined(EHVIEWER_HDR_CODECS)
 
+#if defined(EHVIEWER_STILL_ENCODERS)
 bool write_rgba8_jpeg(const uint8_t* rgba, int w, int h, const char* path, int quality) {
     if (!rgba || w <= 0 || h <= 0 || !path) return false;
     FILE* fp = std::fopen(path, "wb");
@@ -252,6 +255,7 @@ bool write_rgba8_jpeg(const uint8_t* rgba, int w, int h, const char* path, int q
     std::fclose(fp);
     return true;
 }
+#endif  // EHVIEWER_STILL_ENCODERS
 
 uint16_t float_to_half(float value) {
     uint32_t bits = 0;
@@ -1029,16 +1033,20 @@ bool libraw_thumb_file(const char* path, const uint8_t* mem, size_t mem_len, con
         if (android_jpeg(img->data, img->data_size, &px, &jlen) && jlen >= 512) {
             ok = write_file(out_path, img->data, jlen);
         }
-    } else if (img->type == LIBRAW_IMAGE_BITMAP && img->bits == 8 && img->colors >= 3) {
+    }
+#if defined(EHVIEWER_STILL_ENCODERS)
+    if (img->type == LIBRAW_IMAGE_BITMAP && img->bits == 8 && img->colors >= 3) {
         Decoded packed;
         if (pack_image(img, 0, /*present=*/0, 1.f, 0.f, 0.f, nullptr, false, 0.5f, 0.f, 0.f, 0.f, 0.f, packed)) {
             ok = write_rgba8_jpeg(packed.pixels.data(), packed.w, packed.h, out_path, 85);
         }
     }
+#endif
     LibRaw::dcraw_clear_mem(img);
     return ok;
 }
 
+#if defined(EHVIEWER_STILL_ENCODERS)
 bool demosaic_cover_jpeg(const char* path, const uint8_t* mem, size_t mem_len, const char* out_path) {
     HeadroomRaw raw;
     request_embedded_matrix(raw, /*wb_mode=*/0);
@@ -1053,6 +1061,7 @@ bool demosaic_cover_jpeg(const char* path, const uint8_t* mem, size_t mem_len, c
     if (decoded.format != 0) return false;
     return write_rgba8_jpeg(decoded.pixels.data(), decoded.w, decoded.h, out_path, 85);
 }
+#endif  // EHVIEWER_STILL_ENCODERS
 
 jbyteArray decoded_to_java(JNIEnv* env, Decoded& decoded, jintArray j_info, jfloatArray j_boost, jint source_depth = 0) {
     if (env->GetArrayLength(j_info) < 6 || env->GetArrayLength(j_boost) < 1) return nullptr;
@@ -1123,7 +1132,7 @@ int extract_preview(const char* path, const uint8_t* mem, size_t mem_len, const 
         std::vector<uint8_t> bytes;
         if (read_file(path, bytes) && write_embedded_jpeg(bytes.data(), bytes.size(), out_path)) return 0;
     }
-#if defined(EHVIEWER_HDR_CODECS)
+#if defined(EHVIEWER_STILL_ENCODERS)
     if (demosaic) {
         try {
             if (demosaic_cover_jpeg(path, mem, mem_len, out_path)) return 0;

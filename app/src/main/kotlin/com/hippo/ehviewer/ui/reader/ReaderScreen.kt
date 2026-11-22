@@ -86,6 +86,7 @@ import com.ehviewer.core.util.launch
 import com.ehviewer.core.util.launchIO
 import com.ehviewer.core.util.unreachable
 import com.ehviewer.core.util.withIOContext
+import com.hippo.ehviewer.BuildConfig
 import com.hippo.ehviewer.EhDB
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.collectAsState
@@ -977,7 +978,7 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
                                 },
                                 sourceName = pageLoader.sourceLeafName(page.index),
                                 convert = pageLoader.sourceLeafName(page.index)
-                                    ?.takeIf { isStillExportFileName(it) }
+                                    ?.takeIf { BuildConfig.STILL_ENCODERS_ENABLED && isStillExportFileName(it) }
                                     ?.let {
                                         { target: StillExportTarget ->
                                             launchIO { with(pageLoader) { convertTo(page, target) } }

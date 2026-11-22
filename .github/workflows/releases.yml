@@ -79,18 +79,23 @@ jobs:
           -Pandroid.testoptions.manageddevices.emulator.gpu="swiftshader_indirect"
           -Prelease
 
-      - name: Build
-        run: ./gradlew assembleRelease
-          -Prelease
+      - name: Build (main)
+        if: matrix.suffix == 'default'
+        run: ./gradlew :app:assembleDefaultRelease :app:assembleSlimRelease -Prelease
+
+      - name: Build (easytier)
+        if: matrix.suffix == 'easytier'
+        run: ./gradlew :app:assembleDefaultRelease -Prelease
 
       - name: Rename Apks (main)
         if: matrix.suffix == 'default'
         run: |
           TAG="${{ github.ref_name }}"
-          mv app/build/outputs/apk/default/release/app-default-universal-release.apk LocalViewer-${TAG}-default-universal.apk
-          mv app/build/outputs/apk/default/release/app-default-arm64-v8a-release.apk LocalViewer-${TAG}-default-arm64-v8a.apk
-          mv app/build/outputs/apk/default/release/app-default-x86_64-release.apk LocalViewer-${TAG}-default-x86_64.apk
-          mv app/build/outputs/apk/default/release/app-default-armeabi-v7a-release.apk LocalViewer-${TAG}-default-armeabi-v7a.apk
+          for flavor in default slim; do
+            for abi in universal arm64-v8a x86_64 armeabi-v7a; do
+              mv "app/build/outputs/apk/${flavor}/release/app-${flavor}-${abi}-release.apk" "LocalViewer-${TAG}-${flavor}-${abi}.apk"
+            done
+          done
 
       - name: Rename Apks (easytier)
         if: matrix.suffix == 'easytier'
@@ -109,6 +114,10 @@ jobs:
             LocalViewer-${{ github.ref_name }}-default-arm64-v8a.apk
             LocalViewer-${{ github.ref_name }}-default-x86_64.apk
             LocalViewer-${{ github.ref_name }}-default-armeabi-v7a.apk
+            LocalViewer-${{ github.ref_name }}-slim-universal.apk
+            LocalViewer-${{ github.ref_name }}-slim-arm64-v8a.apk
+            LocalViewer-${{ github.ref_name }}-slim-x86_64.apk
+            LocalViewer-${{ github.ref_name }}-slim-armeabi-v7a.apk
 
       - name: Releases (easytier)
         if: matrix.suffix == 'easytier'

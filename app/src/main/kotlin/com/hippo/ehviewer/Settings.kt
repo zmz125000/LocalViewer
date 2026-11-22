@@ -1152,6 +1152,7 @@ object Settings : DataStorePreferences(null) {
      * Camera RAW always uses the direct bitmap, whether this is on or off.
      */
     val readerLibDirectBitmap = boolPref("pref_reader_lib_direct_bitmap_v2", true)
+    val readerUsesLibDirectBitmap: Boolean get() = !BuildConfig.STILL_ENCODERS_ENABLED || readerLibDirectBitmap.value
 
     /**
      * Window HDR presentation only: when a composed page has a gain map and the
