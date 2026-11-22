@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.ContextWrapper
 import android.content.res.Resources
 import android.media.MediaFormat
+import android.util.Log
 import androidx.media3.common.C
 import androidx.media3.common.ColorInfo
 import androidx.media3.common.DebugViewProvider
@@ -14,6 +15,7 @@ import androidx.media3.common.Tracks
 import androidx.media3.common.VideoGraph
 import androidx.media3.common.VideoSize
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.common.util.Util
 import androidx.media3.effect.DefaultVideoFrameProcessor
 import androidx.media3.effect.R as EffectResources
 import androidx.media3.effect.SingleInputVideoGraph
@@ -31,6 +33,7 @@ import java.io.InputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.concurrent.Executor
+import java.util.concurrent.TimeUnit
 
 internal fun Tracks.supportsHdrToneMapping(): Boolean? {
     var selectedVideo = false
@@ -79,6 +82,9 @@ internal class Media3HdrToneMappingRenderer(
     private val wideColor: Boolean,
     private val mpcvr: Boolean,
 ) : MediaCodecVideoRenderer(builder) {
+    private val glExecutor = Util.newSingleThreadScheduledExecutor("LocalViewer:VideoGL")
+    private val wideColorGl = if (wideColor) Media3WideColorGlObjects() else null
+
     @Volatile
     private var contentPeakNits: Int? = null
 
@@ -167,6 +173,26 @@ internal class Media3HdrToneMappingRenderer(
 
     private fun hasCompatibleHdrBase(format: Format): Boolean = format.sampleMimeType == MimeTypes.VIDEO_DOLBY_VISION && format.supportsHdrToneMapping()
 
+    override fun onRelease() {
+        try {
+            super.onRelease()
+        } finally {
+            // Media3 queues the processor's cleanup on our executor. Drain it before
+            // another renderer can connect a producer to the same SurfaceView.
+            wideColorGl?.let { provider ->
+                glExecutor.execute {
+                    runCatching { provider.release() }
+                        .onFailure { Log.e("VideoPlayer", "Unable to release Display P3 video resources", it) }
+                }
+            }
+            glExecutor.shutdown()
+            if (!glExecutor.awaitTermination(500, TimeUnit.MILLISECONDS)) {
+                Log.w("VideoPlayer", "Waiting for the previous HDR tone mapper to release OpenGL")
+                glExecutor.awaitTermination(Long.MAX_VALUE, TimeUnit.NANOSECONDS)
+            }
+        }
+    }
+
     override fun createPlaybackVideoGraphWrapper(
         context: Context,
         videoFrameReleaseControl: VideoFrameReleaseControl,
@@ -186,7 +212,8 @@ internal class Media3HdrToneMappingRenderer(
                 renderFramesAutomatically: Boolean,
             ): VideoGraph = SingleInputVideoGraph.Factory(
                 DefaultVideoFrameProcessor.Factory.Builder()
-                    .apply { if (wideColor) setGlObjectsProvider(Media3WideColorGlObjects()) }
+                    .setExecutorService(glExecutor)
+                    .apply { wideColorGl?.let { setGlObjectsProvider(it) } }
                     .build(),
             ).create(
                 HdrToneMappingShaderContext(context.applicationContext, piecewiseShoulder, wideColor, if (mpcvr) ::mpcvrShaderPeak else null),
