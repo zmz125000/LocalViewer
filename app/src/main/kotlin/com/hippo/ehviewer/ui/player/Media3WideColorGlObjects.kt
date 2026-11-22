@@ -15,8 +15,10 @@ internal class Media3WideColorGlObjects(
     private val delegate: DefaultGlObjectsProvider = DefaultGlObjectsProvider(),
 ) : GlObjectsProvider by delegate {
     private lateinit var outputConfig: EGLConfig
+    private var display: EGLDisplay? = null
 
     override fun createEglContext(eglDisplay: EGLDisplay, openGlVersion: Int, configAttributes: IntArray): EGLContext {
+        display = eglDisplay
         val extensions = EGL14.eglQueryString(eglDisplay, EGL14.EGL_EXTENSIONS).orEmpty().split(' ')
         GlUtil.checkGlException(
             "EGL_EXT_gl_colorspace_display_p3_passthrough" in extensions,
@@ -46,6 +48,12 @@ internal class Media3WideColorGlObjects(
         GlUtil.checkEglException("Could not create the 10-bit Display P3 video surface")
         GlUtil.checkGlException(output != null && output != EGL14.EGL_NO_SURFACE, "No Display P3 video surface")
         return checkNotNull(output)
+    }
+
+    // With a caller-owned executor Media3 also leaves the custom provider to the caller.
+    fun release() {
+        display?.let(delegate::release)
+        display = null
     }
 
     private companion object {
