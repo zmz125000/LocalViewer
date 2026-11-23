@@ -22,9 +22,8 @@
 
 highp vec3 pqOetf(highp vec3 linearColor);
 
-// The Media3 sampler provides PQ display light in 10000-nit units or
-// HLG scene light. Convert HLG using a 1000-nit reference display and gamma 1.2.
-highp vec3 skivToSdr(highp vec3 bt2020) {
+// XYZ is display light in 10000-nit units.
+highp vec3 skivMapXyz(highp vec3 xyz, highp float peakNits) {
 #if SKIV_WCG
     const highp mat3 xyzToOutputRgb = mat3(
          2.493497, -0.829489,  0.035846,
@@ -50,30 +49,31 @@ highp vec3 skivToSdr(highp vec3 bt2020) {
         0.008605146, -0.008605146, 0.560048860,
         0.111035604, -0.111035604, -0.320637470 );
 
-    highp vec3 xyz = RGB_BT2020_TO_XYZ * bt2020;
-    // The input shader has no frame histogram or mastering metadata. Use a
-    // fixed peak per transfer to avoid brightness changes across frames.
-    highp float peakNits = SKIV_PIECEWISE == 1 ? 2000.0 : 1000.0;
-    if (uInputColorTransfer == COLOR_TRANSFER_HLG) {
-        xyz *= 0.1 * pow(max(xyz.y, 0.0), 0.2);
-        peakNits = 1000.0;
-    }
-
-    highp vec3 ictcp = lmsToIctcp * pqOetf(max(xyzToLms * xyz, vec3(0.0)));
+    highp vec3 linearLms = max(xyzToLms * xyz, vec3(0.0));
+#if SKIV_PIECEWISE
+    const highp float outputNits = 203.0;
+    const highp float shoulder = float(SKIV_SHOULDER_PERCENT) / 100.0;
+    const highp float linearKnee = shoulder * outputNits / 10000.0;
+    // ICtCp intensity averages PQ-encoded L and M. If both are below the
+    // linear knee, their encoded average is below the PQ knee as well.
+    if (max(linearLms.x, linearLms.y) <= linearKnee)
+        return clamp(xyzToOutputRgb * xyz * (10000.0 / outputNits), 0.0, 1.0);
+#else
+    const highp float outputNits = 80.0;
+#endif
+    highp vec3 ictcp = lmsToIctcp * pqOetf(linearLms);
     highp float inputIntensity = ictcp.x;
+#if SKIV_PIECEWISE
+    highp float knee = pqOetf(vec3(linearKnee)).x;
+    if (inputIntensity <= knee)
+        return clamp(xyzToOutputRgb * xyz * (10000.0 / outputNits), 0.0, 1.0);
+#endif
     highp float peak = pqOetf(vec3(peakNits / 10000.0)).x;
     highp float white = pqOetf(vec3(120.0 / 10000.0)).x;
     highp float reference = pow(inputIntensity, 1.18);
     highp float mapped = reference * (1.0 + white * inputIntensity / (peak * peak)) /
                                     (1.0 + inputIntensity / white);
-    highp float outputNits = 80.0;
 #if SKIV_PIECEWISE
-    outputNits = 203.0;
-    const highp float shoulder = float(SKIV_SHOULDER_PERCENT) / 100.0;
-    highp float knee = pqOetf(vec3(shoulder * outputNits / 10000.0)).x;
-    if (inputIntensity <= knee)
-        return clamp(xyzToOutputRgb * xyz * (10000.0 / outputNits), 0.0, 1.0);
-
     highp float target = pqOetf(vec3(outputNits / 10000.0)).x;
     highp float lo = pow(knee, 1.18) * (1.0 + white * knee / (peak * peak)) / (1.0 + knee / white);
     highp float hi = pow(peak, 1.18) * (1.0 + white / peak) / (1.0 + peak / white);
@@ -82,6 +82,20 @@ highp vec3 skivToSdr(highp vec3 bt2020) {
 #endif
     ictcp.x = mapped;
     ictcp.yz *= min(reference, mapped) / max(max(reference, mapped), 1e-6);
-    highp vec3 linearLms = pqEotf(ictcpToLms * ictcp);
+    linearLms = pqEotf(ictcpToLms * ictcp);
     return clamp(xyzToOutputRgb * (lmsToXyz * linearLms) * (10000.0 / outputNits), 0.0, 1.0);
 }
+
+// The Media3 sampler provides PQ display light in 10000-nit units or
+// HLG scene light. Convert HLG using a 1000-nit reference display and gamma 1.2.
+#ifndef SKIV_AUTO_TONE
+highp vec3 skivToSdr(highp vec3 bt2020) {
+    highp vec3 xyz = RGB_BT2020_TO_XYZ * bt2020;
+    highp float peakNits = SKIV_PIECEWISE == 1 ? 2000.0 : 1000.0;
+    if (uInputColorTransfer == COLOR_TRANSFER_HLG) {
+        xyz *= 0.1 * pow(max(xyz.y, 0.0), 0.2);
+        peakNits = 1000.0;
+    }
+    return skivMapXyz(xyz, peakNits);
+}
+#endif

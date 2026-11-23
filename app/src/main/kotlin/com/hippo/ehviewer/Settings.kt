@@ -801,7 +801,7 @@ object Settings : DataStorePreferences(null) {
     val imageConversionKeepExif = boolPref("image_conversion_keep_exif", true)
     val imageConversionExtendedSrgbBt2020 = boolPref("image_conversion_scrgb_bt2020", true)
     val imageConversionToneMapper = intPref("image_conversion_sdr_tone_mapper", 2)
-    val imageConversionAutoToneCurve = boolPref("image_conversion_auto_tone_curve", false)
+    val imageConversionAutoToneCurve = boolPref("image_conversion_auto_tone_curve", true)
     val imageConversionToneShoulder = intPref("image_conversion_tone_shoulder_v2", 50)
     val imageConversionToneRange = intPref("image_conversion_tone_range", 10000)
     val imageConversionSrgbClamp = boolPref("image_conversion_srgb_clamp", false)
@@ -1052,11 +1052,14 @@ object Settings : DataStorePreferences(null) {
     const val MEDIA3_SKIV_PIECEWISE_WCG = 4
     const val MEDIA3_MPCVR = 5
     const val MEDIA3_MPCVR_WCG = 6
+    const val MEDIA3_SKIV_AUTO = 7
+    const val MEDIA3_SKIV_AUTO_WCG = 8
     val media3HdrToneMapping = intPref("media3_hdr_tone_mapping", MEDIA3_HDR)
 
     fun media3SdrFallback(mode: Int): Int = when (mode) {
         MEDIA3_SKIV_WCG -> MEDIA3_SKIV
         MEDIA3_SKIV_PIECEWISE_WCG -> MEDIA3_SKIV_PIECEWISE
+        MEDIA3_SKIV_AUTO_WCG -> MEDIA3_SKIV_AUTO
         MEDIA3_MPCVR_WCG -> MEDIA3_MPCVR
         else -> mode
     }
@@ -1169,7 +1172,7 @@ object Settings : DataStorePreferences(null) {
         get() = !readerHdrDisplay.value && readerHdrToneMapper.value != 0
 
     val readerHdrToneMapper = intPref("reader_hdr_tone_mapper", 0)
-    val readerHdrAutoToneCurve = boolPref("reader_hdr_auto_tone_curve", false)
+    val readerHdrAutoToneCurve = boolPref("reader_hdr_auto_tone_curve", true)
     val readerHdrToneShoulder = intPref("reader_hdr_tone_shoulder_v2", 50)
     val readerHdrToneRange = intPref("reader_hdr_tone_range", 10000)
 

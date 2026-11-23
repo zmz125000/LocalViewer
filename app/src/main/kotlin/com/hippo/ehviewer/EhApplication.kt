@@ -106,6 +106,7 @@ class EhApplication : Application(), SingletonImageLoader.Factory {
         // observed() only runs on later pref changes; default was previously applied
         // from launchIO (late / wrong thread), which left light-mode status bar icons white.
         applyNightMode(Settings.theme.value)
+        StreamKeepAlivePolicy.initialize()
         launchIO {
             runCatching { SmbGateway.prewarm() }
         }

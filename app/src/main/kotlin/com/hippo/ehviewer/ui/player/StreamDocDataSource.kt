@@ -145,13 +145,14 @@ class StreamDocDataSource(
                 transferEnded()
             }
         } finally {
-            retainedToken?.let { StreamDocumentRegistry.release(it) }
+            val token = retainedToken
             retainedToken = null
             // Detach only — token backend stays for seek / rebuffer.
             source = null
             uri = null
             readPosition = 0L
             bytesRemaining = 0L
+            token?.let { StreamDocumentRegistry.release(it) }
         }
     }
 

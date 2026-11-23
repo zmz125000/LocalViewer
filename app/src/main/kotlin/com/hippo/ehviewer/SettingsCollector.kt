@@ -74,14 +74,12 @@ suspend fun updateWhenSaveFileMarkersChanges(enabled: Boolean) {
     }
 }
 
-@Suppress("UNUSED_PARAMETER")
 fun updateWhenStreamKeepAliveUnlimitedChanges(enabled: Boolean) {
-    com.hippo.ehviewer.provider.StreamKeepAlivePolicy.onUnlimitedChanged()
+    com.hippo.ehviewer.provider.StreamKeepAlivePolicy.onUnlimitedChanged(enabled)
 }
 
-@Suppress("UNUSED_PARAMETER")
 fun updateWhenBrowseTaskForegroundServiceChanges(enabled: Boolean) {
-    com.hippo.ehviewer.provider.StreamKeepAlivePolicy.onBrowseTaskSettingChanged()
+    com.hippo.ehviewer.provider.StreamKeepAlivePolicy.onBrowseTaskSettingChanged(enabled)
 }
 
 /** Folder vs single-file HTTP tokens are incompatible — drop every loopback session. */

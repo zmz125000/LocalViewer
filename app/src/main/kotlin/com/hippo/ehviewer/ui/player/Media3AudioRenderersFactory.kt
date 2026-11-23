@@ -4,7 +4,6 @@ import android.content.Context
 import android.os.Handler
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.audio.AudioProcessor
-import androidx.media3.common.audio.ChannelMixingAudioProcessor
 import androidx.media3.common.audio.ChannelMixingMatrix
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.DefaultRenderersFactory
@@ -66,11 +65,12 @@ internal class Media3AudioRenderersFactory(
         out[videoIndex] = Media3HdrToneMappingRenderer(
             builder,
             videoEvents = VideoRendererEventListener.EventDispatcher(eventHandler, eventListener),
-            piecewiseShoulder = if (sdrMode == Settings.MEDIA3_SKIV_PIECEWISE) {
+            piecewiseShoulder = if (sdrMode == Settings.MEDIA3_SKIV_PIECEWISE || sdrMode == Settings.MEDIA3_SKIV_AUTO) {
                 Settings.imageConversionToneShoulder.value.coerceIn(0, 95)
             } else {
                 null
             },
+            skivAutoTone = sdrMode == Settings.MEDIA3_SKIV_AUTO,
             wideColor = hdrMode != sdrMode,
             mpcvr = sdrMode == Settings.MEDIA3_MPCVR,
         ).apply { setRenderTimeLimitMs(VIDEO_RENDER_TIME_LIMIT_MS) }
@@ -100,7 +100,7 @@ internal class Media3AudioRenderersFactory(
         }
         val processors = mutableListOf<AudioProcessor>()
         if (outputChannels > 0) {
-            val mixer = ChannelMixingAudioProcessor()
+            val mixer = Media3ChannelMixingAudioProcessor()
             for (inputChannels in 1..16) {
                 val matrix = when {
                     inputChannels <= outputChannels -> ChannelMixingMatrix.createForConstantGain(inputChannels, inputChannels)

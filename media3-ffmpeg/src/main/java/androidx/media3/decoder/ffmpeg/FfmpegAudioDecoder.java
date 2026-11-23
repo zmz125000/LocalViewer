@@ -134,23 +134,35 @@ public final class FfmpegAudioDecoder
       return null;
     }
     if (!hasOutputFormat) {
-      channelCount = ffmpegGetChannelCount(nativeContext);
-      sampleRate = ffmpegGetSampleRate(nativeContext);
-      if (sampleRate == 0 && "alac".equals(codecName)) {
+      int decodedChannelCount = ffmpegGetChannelCount(nativeContext);
+      int decodedSampleRate = ffmpegGetSampleRate(nativeContext);
+      if (decodedSampleRate == 0 && "alac".equals(codecName)) {
         checkNotNull(extraData);
         // ALAC decoder did not set the sample rate in earlier versions of FFmpeg. See
         // https://trac.ffmpeg.org/ticket/6096.
         ParsableByteArray parsableExtraData = new ParsableByteArray(extraData);
         parsableExtraData.setPosition(extraData.length - 4);
-        sampleRate = parsableExtraData.readUnsignedIntToInt();
+        decodedSampleRate = parsableExtraData.readUnsignedIntToInt();
       }
+      if (decodedChannelCount <= 0 || decodedSampleRate <= 0) {
+        outputBuffer.shouldBeSkipped = true;
+        return null;
+      }
+      channelCount = decodedChannelCount;
+      sampleRate = decodedSampleRate;
       hasOutputFormat = true;
+    }
+    int frameSize = Util.getPcmFrameSize(encoding, channelCount);
+    int alignedResult = frameSize > 0 ? result - (result % frameSize) : result;
+    if (alignedResult == 0) {
+      outputBuffer.shouldBeSkipped = true;
+      return null;
     }
     // Get a new reference to the output ByteBuffer in case the native decode method reallocated the
     // buffer to grow its size.
     outputData = checkNotNull(outputBuffer.data);
     outputData.position(0);
-    outputData.limit(result);
+    outputData.limit(alignedResult);
     return null;
   }
 
