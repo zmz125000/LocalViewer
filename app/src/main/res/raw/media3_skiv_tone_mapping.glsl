@@ -22,9 +22,8 @@
 
 highp vec3 pqOetf(highp vec3 linearColor);
 
-// The Media3 sampler provides PQ display light in 10000-nit units or
-// HLG scene light. Convert HLG using a 1000-nit reference display and gamma 1.2.
-highp vec3 skivToSdr(highp vec3 bt2020) {
+// XYZ is display light in 10000-nit units.
+highp vec3 skivMapXyz(highp vec3 xyz, highp float peakNits) {
 #if SKIV_WCG
     const highp mat3 xyzToOutputRgb = mat3(
          2.493497, -0.829489,  0.035846,
@@ -49,15 +48,6 @@ highp vec3 skivToSdr(highp vec3 bt2020) {
         1.0, 1.0, 1.0,
         0.008605146, -0.008605146, 0.560048860,
         0.111035604, -0.111035604, -0.320637470 );
-
-    highp vec3 xyz = RGB_BT2020_TO_XYZ * bt2020;
-    // The input shader has no frame histogram or mastering metadata. Use a
-    // fixed peak per transfer to avoid brightness changes across frames.
-    highp float peakNits = SKIV_PIECEWISE == 1 ? 2000.0 : 1000.0;
-    if (uInputColorTransfer == COLOR_TRANSFER_HLG) {
-        xyz *= 0.1 * pow(max(xyz.y, 0.0), 0.2);
-        peakNits = 1000.0;
-    }
 
     highp vec3 ictcp = lmsToIctcp * pqOetf(max(xyzToLms * xyz, vec3(0.0)));
     highp float inputIntensity = ictcp.x;
@@ -85,3 +75,17 @@ highp vec3 skivToSdr(highp vec3 bt2020) {
     highp vec3 linearLms = pqEotf(ictcpToLms * ictcp);
     return clamp(xyzToOutputRgb * (lmsToXyz * linearLms) * (10000.0 / outputNits), 0.0, 1.0);
 }
+
+// The Media3 sampler provides PQ display light in 10000-nit units or
+// HLG scene light. Convert HLG using a 1000-nit reference display and gamma 1.2.
+#ifndef SKIV_AUTO_TONE
+highp vec3 skivToSdr(highp vec3 bt2020) {
+    highp vec3 xyz = RGB_BT2020_TO_XYZ * bt2020;
+    highp float peakNits = SKIV_PIECEWISE == 1 ? 2000.0 : 1000.0;
+    if (uInputColorTransfer == COLOR_TRANSFER_HLG) {
+        xyz *= 0.1 * pow(max(xyz.y, 0.0), 0.2);
+        peakNits = 1000.0;
+    }
+    return skivMapXyz(xyz, peakNits);
+}
+#endif

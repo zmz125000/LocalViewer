@@ -66,11 +66,12 @@ internal class Media3AudioRenderersFactory(
         out[videoIndex] = Media3HdrToneMappingRenderer(
             builder,
             videoEvents = VideoRendererEventListener.EventDispatcher(eventHandler, eventListener),
-            piecewiseShoulder = if (sdrMode == Settings.MEDIA3_SKIV_PIECEWISE) {
+            piecewiseShoulder = if (sdrMode == Settings.MEDIA3_SKIV_PIECEWISE || sdrMode == Settings.MEDIA3_SKIV_AUTO) {
                 Settings.imageConversionToneShoulder.value.coerceIn(0, 95)
             } else {
                 null
             },
+            skivAutoTone = sdrMode == Settings.MEDIA3_SKIV_AUTO,
             wideColor = hdrMode != sdrMode,
             mpcvr = sdrMode == Settings.MEDIA3_MPCVR,
         ).apply { setRenderTimeLimitMs(VIDEO_RENDER_TIME_LIMIT_MS) }

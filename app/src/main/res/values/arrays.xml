@@ -818,6 +818,8 @@
         <item>SKIV (WCG)</item>
         <item>SKIV Piecewise (SDR)</item>
         <item>SKIV Piecewise (WCG)</item>
+        <item>SKIV Auto Tone (SDR)</item>
+        <item>SKIV Auto Tone (WCG)</item>
         <item>MPCVR (SDR)</item>
         <item>MPCVR (WCG)</item>
     </string-array>
@@ -827,6 +829,8 @@
         <item>2</item>
         <item>3</item>
         <item>4</item>
+        <item>7</item>
+        <item>8</item>
         <item>5</item>
         <item>6</item>
     </integer-array>

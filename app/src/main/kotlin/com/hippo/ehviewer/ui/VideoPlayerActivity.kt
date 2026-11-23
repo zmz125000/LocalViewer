@@ -895,7 +895,7 @@ class VideoPlayerActivity : AppCompatActivity() {
 
     private fun effectiveVideoColorMode(mode: Int): Int {
         if (hdrToneMappingFailed || trackSupportsHdrToneMapping != true) return Settings.MEDIA3_HDR
-        if (mode !in Settings.MEDIA3_HDR..Settings.MEDIA3_MPCVR_WCG) return Settings.MEDIA3_HDR
+        if (mode !in Settings.MEDIA3_HDR..Settings.MEDIA3_SKIV_AUTO_WCG) return Settings.MEDIA3_HDR
         val sdrMode = Settings.media3SdrFallback(mode)
         return if (mode != sdrMode && (wideColorOutputFailed || !supportsWideColorGamut())) sdrMode else mode
     }
@@ -1001,8 +1001,9 @@ class VideoPlayerActivity : AppCompatActivity() {
                 override fun onPlayerError(error: PlaybackException) {
                     val timeoutReason = when (val cause = error.cause) {
                         is StuckPlayerException -> "watchdog timeout (${cause.message})"
-                        is ExoTimeoutException -> "release timeout"
-                            .takeIf { cause.timeoutOperation == ExoTimeoutException.TIMEOUT_OPERATION_RELEASE }
+                        is ExoTimeoutException ->
+                            "release timeout"
+                                .takeIf { cause.timeoutOperation == ExoTimeoutException.TIMEOUT_OPERATION_RELEASE }
                         else -> null
                     }
                     if (timeoutReason != null) {

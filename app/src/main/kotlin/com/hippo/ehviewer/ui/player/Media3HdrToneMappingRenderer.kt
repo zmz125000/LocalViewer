@@ -8,6 +8,7 @@ import android.util.Log
 import androidx.media3.common.C
 import androidx.media3.common.ColorInfo
 import androidx.media3.common.DebugViewProvider
+import androidx.media3.common.Effect
 import androidx.media3.common.Format
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackException
@@ -79,6 +80,7 @@ internal class Media3HdrToneMappingRenderer(
     builder: Builder,
     private val videoEvents: VideoRendererEventListener.EventDispatcher,
     private val piecewiseShoulder: Int?,
+    private val skivAutoTone: Boolean,
     private val wideColor: Boolean,
     private val mpcvr: Boolean,
 ) : MediaCodecVideoRenderer(builder) {
@@ -210,20 +212,46 @@ internal class Media3HdrToneMappingRenderer(
                 listenerExecutor: Executor,
                 initialTimestampOffsetUs: Long,
                 renderFramesAutomatically: Boolean,
-            ): VideoGraph = SingleInputVideoGraph.Factory(
-                DefaultVideoFrameProcessor.Factory.Builder()
-                    .setExecutorService(glExecutor)
-                    .apply { wideColorGl?.let { setGlObjectsProvider(it) } }
-                    .build(),
-            ).create(
-                HdrToneMappingShaderContext(context.applicationContext, piecewiseShoulder, wideColor, if (mpcvr) ::mpcvrShaderPeak else null),
-                outputColorInfo,
-                debugViewProvider,
-                listener,
-                listenerExecutor,
-                initialTimestampOffsetUs,
-                renderFramesAutomatically,
-            )
+            ): VideoGraph {
+                val graph = SingleInputVideoGraph.Factory(
+                    DefaultVideoFrameProcessor.Factory.Builder()
+                        .setExecutorService(glExecutor)
+                        .apply { wideColorGl?.let { setGlObjectsProvider(it) } }
+                        .build(),
+                ).create(
+                    HdrToneMappingShaderContext(
+                        context.applicationContext,
+                        piecewiseShoulder,
+                        wideColor,
+                        skivAutoTone,
+                        if (mpcvr) ::mpcvrShaderPeak else null,
+                    ),
+                    outputColorInfo,
+                    debugViewProvider,
+                    listener,
+                    listenerExecutor,
+                    initialTimestampOffsetUs,
+                    renderFramesAutomatically,
+                )
+                if (!skivAutoTone) return graph
+                return object : VideoGraph by graph {
+                    override fun registerInputStream(
+                        inputIndex: Int,
+                        inputType: Int,
+                        format: Format,
+                        effects: List<Effect>,
+                        offsetToAddUs: Long,
+                    ) {
+                        val autoEffects = if (ColorInfo.isTransferHdr(format.colorInfo)) {
+                            val hlg = format.colorInfo?.colorTransfer == C.COLOR_TRANSFER_HLG
+                            listOf(Media3SkivAutoToneEffect(checkNotNull(piecewiseShoulder), wideColor, hlg)) + effects
+                        } else {
+                            effects
+                        }
+                        graph.registerInputStream(inputIndex, inputType, format, autoEffects, offsetToAddUs)
+                    }
+                }
+            }
         })
         .build()
         .apply { setRequestOpenGlToneMapping(true) }
@@ -240,6 +268,7 @@ private class HdrToneMappingShaderContext(
     context: Context,
     piecewiseShoulder: Int?,
     wideColor: Boolean,
+    skivAutoTone: Boolean,
     mpcvrPeakNits: (() -> Int)?,
 ) : ContextWrapper(context) {
     private val base = context.resources
@@ -274,6 +303,28 @@ private class HdrToneMappingShaderContext(
                 return source.replace("void main() {", "$displayP3Shader\nvoid main() {")
                     .replace("convertToOutputColors(transformedColors.rgb)", "srgbToDisplayP3(convertToOutputColors(transformedColors.rgb))")
                     .byteInputStream()
+            }
+
+            if (skivAutoTone) {
+                // Media3 allocates an RGBA16F sampler texture for HDR input.
+                // Keep BT.2020 display light there for the measurement and mapping passes.
+                val output = "outColor = vec4(applyOetf(clampedColors), 1.0);"
+                check(output in source) { "Media3 HDR sampler shader has changed" }
+                return source.replace(
+                    output,
+                    """
+                    if (uApplyHdrToSdrToneMapping == 1) {
+                        highp vec3 rgb = opticalColorBt2020;
+                        if (uInputColorTransfer == COLOR_TRANSFER_HLG) {
+                            highp float y = (RGB_BT2020_TO_XYZ * rgb).y;
+                            rgb *= 0.1 * pow(max(y, 0.0), 0.2);
+                        }
+                        outColor = vec4(rgb * $SKIV_HDR_TEXTURE_SCALE, 1.0);
+                    } else {
+                        $output
+                    }
+                    """.trimIndent(),
+                ).byteInputStream()
             }
 
             val function = "highp vec3 applyBt2020ToBt709Ootf(highp vec3 linearRgbBt2020) {"
