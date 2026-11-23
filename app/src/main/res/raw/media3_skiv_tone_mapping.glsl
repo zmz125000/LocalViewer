@@ -49,21 +49,31 @@ highp vec3 skivMapXyz(highp vec3 xyz, highp float peakNits) {
         0.008605146, -0.008605146, 0.560048860,
         0.111035604, -0.111035604, -0.320637470 );
 
-    highp vec3 ictcp = lmsToIctcp * pqOetf(max(xyzToLms * xyz, vec3(0.0)));
+    highp vec3 linearLms = max(xyzToLms * xyz, vec3(0.0));
+#if SKIV_PIECEWISE
+    const highp float outputNits = 203.0;
+    const highp float shoulder = float(SKIV_SHOULDER_PERCENT) / 100.0;
+    const highp float linearKnee = shoulder * outputNits / 10000.0;
+    // ICtCp intensity averages PQ-encoded L and M. If both are below the
+    // linear knee, their encoded average is below the PQ knee as well.
+    if (max(linearLms.x, linearLms.y) <= linearKnee)
+        return clamp(xyzToOutputRgb * xyz * (10000.0 / outputNits), 0.0, 1.0);
+#else
+    const highp float outputNits = 80.0;
+#endif
+    highp vec3 ictcp = lmsToIctcp * pqOetf(linearLms);
     highp float inputIntensity = ictcp.x;
+#if SKIV_PIECEWISE
+    highp float knee = pqOetf(vec3(linearKnee)).x;
+    if (inputIntensity <= knee)
+        return clamp(xyzToOutputRgb * xyz * (10000.0 / outputNits), 0.0, 1.0);
+#endif
     highp float peak = pqOetf(vec3(peakNits / 10000.0)).x;
     highp float white = pqOetf(vec3(120.0 / 10000.0)).x;
     highp float reference = pow(inputIntensity, 1.18);
     highp float mapped = reference * (1.0 + white * inputIntensity / (peak * peak)) /
                                     (1.0 + inputIntensity / white);
-    highp float outputNits = 80.0;
 #if SKIV_PIECEWISE
-    outputNits = 203.0;
-    const highp float shoulder = float(SKIV_SHOULDER_PERCENT) / 100.0;
-    highp float knee = pqOetf(vec3(shoulder * outputNits / 10000.0)).x;
-    if (inputIntensity <= knee)
-        return clamp(xyzToOutputRgb * xyz * (10000.0 / outputNits), 0.0, 1.0);
-
     highp float target = pqOetf(vec3(outputNits / 10000.0)).x;
     highp float lo = pow(knee, 1.18) * (1.0 + white * knee / (peak * peak)) / (1.0 + knee / white);
     highp float hi = pow(peak, 1.18) * (1.0 + white / peak) / (1.0 + peak / white);
@@ -72,7 +82,7 @@ highp vec3 skivMapXyz(highp vec3 xyz, highp float peakNits) {
 #endif
     ictcp.x = mapped;
     ictcp.yz *= min(reference, mapped) / max(max(reference, mapped), 1e-6);
-    highp vec3 linearLms = pqEotf(ictcpToLms * ictcp);
+    linearLms = pqEotf(ictcpToLms * ictcp);
     return clamp(xyzToOutputRgb * (lmsToXyz * linearLms) * (10000.0 / outputNits), 0.0, 1.0);
 }
 

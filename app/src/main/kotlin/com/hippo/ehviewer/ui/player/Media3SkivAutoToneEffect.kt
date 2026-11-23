@@ -39,12 +39,16 @@ internal data class Media3SkivAutoToneEffect(
                 out vec4 outColor;
                 #define SKIV_HDR_SCALE $SKIV_HDR_TEXTURE_SCALE
             """.trimIndent()
-            val measure = GlProgram(VERTEX_SHADER, "$header\n#define SKIV_MEASURE 1\n$autoTone")
+            val measure = GlProgram(
+                "$VERTEX_SHADER\nvoid main() { gl_Position = fullscreenPosition(); }",
+                "$header\n#define SKIV_VERTEX 0\n#define SKIV_MEASURE 1\n$autoTone",
+            )
             try {
                 val mapping = GlProgram(
-                    VERTEX_SHADER,
+                    "$VERTEX_SHADER\n#define SKIV_VERTEX 1\n#define SKIV_MEASURE 0\n$autoTone",
                     """
                     $header
+                    #define SKIV_VERTEX 0
                     #define SKIV_MEASURE 0
                     #define SKIV_AUTO_TONE 1
                     #define SKIV_PIECEWISE 1
@@ -134,9 +138,9 @@ internal data class Media3SkivAutoToneEffect(
         const val C_NO_BUFFER = -1
         val VERTEX_SHADER = """
             #version 300 es
-            void main() {
+            vec4 fullscreenPosition() {
                 vec2 p = vec2((gl_VertexID << 1) & 2, gl_VertexID & 2);
-                gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0);
+                return vec4(p * 2.0 - 1.0, 0.0, 1.0);
             }
         """.trimIndent()
     }
