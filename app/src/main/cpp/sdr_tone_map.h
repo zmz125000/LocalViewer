@@ -75,46 +75,111 @@ inline double inverse_pq(double code) {
 inline double intensity(double input,double peak,double white) {
     return std::pow(std::max(input,0.),1.18)*(1.+white/(peak*peak)*input)/(1.+input/white);
 }
-template<class Pixels> inline RGB input_xyz(const Pixels& pixels,size_t at,const Matrix& space) {
+template<class Pixels> inline RGB input_rgb(const Pixels& pixels,size_t at,bool nonnegative=false) {
     RGB rgb{};
-    for(unsigned c=0;c<3;++c)rgb[c]=(std::isfinite(pixels[at+c])?double(pixels[at+c]):0.)*(203./80.);
-    return transform(space,rgb);
+    for(unsigned c=0;c<3;++c) {
+        const float value=pixels[at+c];
+        rgb[c]=(std::isfinite(value)?double(value):0.)*(203./80.);
+        if(nonnegative)rgb[c]=std::max(rgb[c],0.);
+    }
+    return rgb;
 }
-inline double midtone_gain(double y,float midtones) {
-    if(midtones==0.f)return 1.;
-    const double linear=std::max(y,0.)*(80./203.);
-    const double distance=(linear/(1.+linear)-.33)/.14;
-    return std::exp2(midtones*std::exp(-.5*distance*distance));
+struct AutoTone {
+    float strength_ev = 0.f;
+    float center_pq = .52f;
+    float hi_pq = .78f;
+    double lo_y = 0., hi_y = 0.; // scRGB, 80 nits per unit
+    bool active() const { return strength_ev > 1e-4f; }
+};
+inline float smooth(float lo,float hi,float x) {
+    const float t=std::clamp((x-lo)/(hi-lo),0.f,1.f);
+    return t*t*(3.f-2.f*t);
+}
+inline double metering_pq(double y) {
+    return y>0. ? pq(std::min(y,125.)) : 0.;
+}
+inline double auto_tone_gain(double y,const AutoTone& tone) {
+    constexpr float lo_pq=.25f;
+    if(!tone.active()||y<=tone.lo_y||y>=tone.hi_y)return 1.;
+    const float p=float(metering_pq(y));
+    const float weight=p<tone.center_pq?smooth(lo_pq,tone.center_pq,p):
+        1.f-smooth(tone.center_pq,tone.hi_pq,p);
+    return std::exp2(-tone.strength_ev*weight);
 }
 struct ToneAnalysis {
     double peak = 0.; // scRGB units, 80 nits per unit.
-    float midtones = 0.f;
+    AutoTone auto_tone;
 };
 
-// Match SKIV's 65536-bin, 99.94th-percentile luminance estimate. Measure
-// visible HDR area in the same pass as the histogram bounds.
-template<class Pixels> inline ToneAnalysis analyze_tone(const Pixels& pixels,const Matrix& space,bool auto_curve) {
+struct ToneStats {
     double low=std::numeric_limits<double>::infinity(),high=-low;
+    double clipped_low=low,clipped_high=high;
+    double visible=0.,sum_pq=0.,hdr_area=0.,excess_pq=0.;
     uint64_t count=0;
-    double visible=0.,hdr=0.;
-    for(size_t i=0;i<pixels.size();i+=4) {
-        const float alpha=pixels[i+3];
-        if(!std::isfinite(alpha)||alpha<=0.f)continue;
-        const double y=input_xyz(pixels,i,space)[1];
-        low=std::min(low,y);high=std::max(high,y);++count;
-        if(auto_curve) {
-            const float weight=std::min(alpha,1.f);
-            visible+=weight;
-            if(y>203./80.)hdr+=weight;
+};
+
+// SKIV peak and JXRConverter's perceptual auto tone meter share the bounds scan.
+template<class Pixels> inline ToneAnalysis analyze_tone(const Pixels& pixels,const Matrix& space,bool auto_curve) {
+    const size_t count_pixels=pixels.size()/4;
+    const unsigned jobs=hdr_pixel_jobs(count_pixels);
+    std::vector<ToneStats> partials(jobs);
+    const double shoulder_pq=pq(.5*203./80.);
+    hdr_parallel_pixels(count_pixels,jobs,[&](size_t begin,size_t end,unsigned job) {
+        auto& local=partials[job];
+        for(size_t pixel=begin;pixel<end;++pixel) {
+            const size_t i=pixel*4;
+            const float alpha=pixels[i+3];
+            if(!std::isfinite(alpha)||alpha<=0.f)continue;
+            auto rgb=input_rgb(pixels,i);
+            const double y=transform(space,rgb)[1];
+            local.low=std::min(local.low,y);local.high=std::max(local.high,y);++local.count;
+            if(!auto_curve)continue;
+            for(auto& value:rgb)value=std::max(value,0.);
+            const double luminance=transform(space,rgb)[1];
+            const double p=metering_pq(luminance);
+            const double weight=std::min(alpha,1.f);
+            local.clipped_low=std::min(local.clipped_low,luminance);
+            local.clipped_high=std::max(local.clipped_high,luminance);
+            local.visible+=weight;
+            local.sum_pq+=weight*p;
+            if(luminance>203./80.)local.hdr_area+=weight;
+            local.excess_pq+=weight*std::max(p-shoulder_pq,0.);
+        }
+    });
+    ToneStats total;
+    for(const auto& local:partials) {
+        total.low=std::min(total.low,local.low);total.high=std::max(total.high,local.high);
+        total.clipped_low=std::min(total.clipped_low,local.clipped_low);
+        total.clipped_high=std::max(total.clipped_high,local.clipped_high);
+        total.count+=local.count;
+        total.visible+=local.visible;total.sum_pq+=local.sum_pq;
+        total.hdr_area+=local.hdr_area;total.excess_pq+=local.excess_pq;
+    }
+    const uint64_t count=total.count;
+    if(!count)return {};
+    AutoTone tone;
+    if(total.visible>0.) {
+        const float mean_pq=float(total.sum_pq/total.visible);
+        const float hdr_gate=smooth(.01f,.08f,float(total.hdr_area/total.visible));
+        const float daylight_gate=smooth(.395f,.470f,mean_pq);
+        const float pressure=std::sqrt(std::clamp(float(total.excess_pq/total.visible)/.085f,0.f,1.f));
+        tone.strength_ev=1.20f*hdr_gate*daylight_gate*pressure;
+        if(tone.active()) {
+            tone.center_pq=std::clamp(.52f+.55f*(mean_pq-.43f),.52f,.60f);
+            tone.hi_pq=std::clamp(tone.center_pq+.26f,.78f,.86f);
+            tone.lo_y=inverse_pq(.25f);
+            tone.hi_y=inverse_pq(tone.hi_pq);
+        } else {
+            tone.strength_ev=0.f;
         }
     }
-    if(!count)return {};
-    const float midtones=visible>0. ? -.72f*float(std::min(hdr/(visible*.08),1.)) : 0.f;
+    const double low=tone.active()?total.clipped_low:total.low;
+    const double high=tone.active()?total.clipped_high:total.high;
     double peak=std::max(high,0.);
     if(high>low) {
         std::vector<uint64_t> histogram(65536);
         for(size_t i=0;i<pixels.size();i+=4)if(std::isfinite(pixels[i+3])&&pixels[i+3]>0.f) {
-            const double y=std::max(input_xyz(pixels,i,space)[1],0.);
+            const double y=std::max(transform(space,input_rgb(pixels,i,tone.active()))[1],0.);
             const auto bin=size_t(std::clamp(std::round((y-low)/(high-low)*65536.),0.,65535.));++histogram[bin];
         }
         double percent=100.;
@@ -126,9 +191,8 @@ template<class Pixels> inline ToneAnalysis analyze_tone(const Pixels& pixels,con
             }
         }
     }
-    // The midtone adjustment is monotonic in luminance, so it can be applied
-    // directly to the percentile once instead of evaluating it per bin or pixel.
-    return {peak*midtone_gain(peak,midtones),midtones};
+    // The perceptual curve is monotonic, so adjust the percentile once.
+    return {peak*auto_tone_gain(peak,tone),tone};
 }
 } // namespace skiv
 
@@ -141,7 +205,7 @@ template<class Pixels> inline void tone_map_skiv_in_place(Pixels& hdr,int gamut,
     const Matrix from_xyz=inverse(space);
     const double cap=custom?std::clamp(double(cap_nits),204.,10000.):10000.;
     const auto analysis=analyze_tone(hdr,space,custom&&auto_curve);
-    const float midtones=analysis.midtones;
+    const auto& tone=analysis.auto_tone;
     const double peak=std::min(analysis.peak,cap/80.);
     const double white=pq(1.5),peak_pq=std::max(white,pq(peak));
     const double knee=std::clamp(double(shoulder),0.,.99);
@@ -155,16 +219,14 @@ template<class Pixels> inline void tone_map_skiv_in_place(Pixels& hdr,int gamut,
     for(size_t pixel=begin;pixel<end;++pixel) {
         const size_t i=pixel*4;
         if(!std::isfinite(source[i+3])||source[i+3]<=0.f){output[i]=output[i+1]=output[i+2]=0.f;continue;}
-        auto xyz=input_xyz(source,i,space);
-        const double gain=midtone_gain(xyz[1],midtones);
-        if(midtones!=0.f)for(auto& value:xyz)value*=gain;
+        const auto rgb_input=input_rgb(source,i,tone.active());
+        auto xyz=transform(space,rgb_input);
+        const double gain=auto_tone_gain(xyz[1],tone);
+        if(tone.active())for(auto& value:xyz)value*=gain;
         auto lms=transform(xyz_lms,xyz);for(auto& value:lms)value=pq(value);
         auto ictcp=transform(lms_ictcp,lms);const double input=std::max(ictcp[0],0.);
         if(custom&&input<=input_knee) {
-            if(midtones!=0.f)for(unsigned c=0;c<3;++c) {
-                const float value=source[i+c];
-                output[i+c]=std::isfinite(value)?float(value*gain):0.f;
-            }
+            if(tone.active())for(unsigned c=0;c<3;++c)output[i+c]=float(rgb_input[c]*gain*(80./203.));
             continue;
         }
         double reference,mapped;

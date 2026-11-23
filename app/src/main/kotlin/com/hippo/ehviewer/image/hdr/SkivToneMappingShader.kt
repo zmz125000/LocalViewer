@@ -24,7 +24,7 @@ internal fun configureSkivShader(shader: RuntimeShader, controls: ReaderGpuToneM
     val customPeak = max(peakPq, outputWhite)
     shader.setIntUniform("customMode", if (controls.mapper.custom) 1 else 0)
     shader.setIntUniform("sourceGamut", controls.gamut)
-    shader.setFloatUniform("midtones", controls.midtones)
+    shader.setFloatUniform("autoTone", controls.autoStrengthEv, controls.autoCenterPq)
     shader.setFloatUniform("curve", white.toFloat(), peakPq.toFloat(), knee.toFloat(), outputWhite.toFloat())
     shader.setFloatUniform(
         "customCurve",
@@ -55,7 +55,7 @@ internal val skivShaderSource = """
     uniform float2 dstOrigin;
     uniform int customMode;
     uniform int sourceGamut;
-    uniform float midtones;
+    uniform float2 autoTone;
     uniform float4 curve;
     uniform float3 customCurve;
 
@@ -86,11 +86,15 @@ internal val skivShaderSource = """
         float4 pixel = contents.eval((position + dstOrigin) * srcSize / dstSize);
         float alpha = pixel.a;
         if (alpha <= 0.) return float4(0.);
-        float3 xyz = sourceXyz(pixel.rgb / alpha);
-        if (midtones != 0.) {
-            float y = max(xyz.y, 0.);
-            float d = (y / (1. + y) - .33) / .14;
-            xyz *= exp2(midtones * exp(-.5 * d * d));
+        float3 sourceRgb = pixel.rgb / alpha;
+        if (autoTone.x > 0.) sourceRgb = max(sourceRgb, float3(0.));
+        float3 xyz = sourceXyz(sourceRgb);
+        if (autoTone.x > 0.) {
+            float p = pq(float3(min(xyz.y * (203. / 80.), 125.))).x;
+            float center = autoTone.y;
+            float high = clamp(center + .26, .78, .86);
+            float weight = p < center ? smoothstep(.25, center, p) : 1. - smoothstep(center, high, p);
+            xyz *= exp2(-autoTone.x * weight);
         }
         float3 lms = pq(float3(
             dot(xyz,float3(.3592,.6976,-.0358)),

@@ -77,7 +77,7 @@ internal data class Media3SkivAutoToneEffect(
 
         override fun configure(inputWidth: Int, inputHeight: Int): Size {
             if (stats === GlTextureInfo.UNSET) {
-                val texture = GlUtil.createTexture(1, 1, false)
+                val texture = GlUtil.createTexture(1, 1, true)
                 try {
                     stats = GlTextureInfo(texture, GlUtil.createFboForTexture(texture), C_NO_BUFFER, 1, 1)
                 } catch (e: GlUtil.GlException) {

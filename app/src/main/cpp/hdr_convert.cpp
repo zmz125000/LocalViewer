@@ -1398,17 +1398,18 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_toneMapReaderPixels(
     ReaderTonePixels pixels{data,size_t(count)*4};
     // IDs follow the reader spinner: CPU and GPU are adjacent for each mapper.
     if(mapper==2||mapper==4||mapper==6) {
-        if(!out_curve||env->GetArrayLength(out_curve)<2)return JNI_FALSE;
+        if(!out_curve||env->GetArrayLength(out_curve)<3)return JNI_FALSE;
         const auto& space=gamut==2?skiv::rgb2020_xyz:gamut==1?skiv::rgbp3_xyz:skiv::rgb709_xyz;
-        jfloat curve[2]{};
+        jfloat curve[3]{};
         if(mapper==6) {
             curve[0]=mpcvr_content_peak(pixels)*203.f;
         } else {
             const auto analysis=skiv::analyze_tone(pixels,space,mapper==4&&auto_curve);
             curve[0]=float(analysis.peak*80.);
-            curve[1]=analysis.midtones;
+            curve[1]=analysis.auto_tone.strength_ev;
+            curve[2]=analysis.auto_tone.center_pq;
         }
-        env->SetFloatArrayRegion(out_curve,0,2,curve);
+        env->SetFloatArrayRegion(out_curve,0,3,curve);
         return env->ExceptionCheck()?JNI_FALSE:JNI_TRUE;
     }
     if(mapper==5) tone_map_mpcvr_in_place(pixels,gamut,mpcvr_content_peak(pixels));
