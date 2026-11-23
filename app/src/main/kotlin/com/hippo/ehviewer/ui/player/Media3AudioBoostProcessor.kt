@@ -25,14 +25,28 @@ internal class Media3AudioBoostProcessor(gainDb: Int) : BaseAudioProcessor() {
     }
 
     override fun queueInput(inputBuffer: ByteBuffer) {
-        val output = replaceOutputBuffer(inputBuffer.remaining())
+        val remaining = inputBuffer.remaining()
+        val alignedBytes = remaining and 1.inv()
+        val output = replaceOutputBuffer(alignedBytes)
         val multiplier = gain
         if (multiplier == 1f) {
-            output.put(inputBuffer)
+            if (alignedBytes == remaining) {
+                output.put(inputBuffer)
+            } else {
+                val limit = inputBuffer.limit()
+                inputBuffer.limit(inputBuffer.position() + alignedBytes)
+                output.put(inputBuffer)
+                inputBuffer.limit(limit)
+                inputBuffer.position(limit)
+            }
         } else {
-            while (inputBuffer.hasRemaining()) {
+            val end = inputBuffer.position() + alignedBytes
+            while (inputBuffer.position() < end) {
                 val sample = (inputBuffer.short * multiplier).roundToInt()
                 output.putShort(sample.coerceIn(Short.MIN_VALUE.toInt(), Short.MAX_VALUE.toInt()).toShort())
+            }
+            if (inputBuffer.hasRemaining()) {
+                inputBuffer.position(inputBuffer.limit())
             }
         }
         output.flip()
