@@ -213,6 +213,7 @@ internal class Media3HdrToneMappingRenderer(
                 initialTimestampOffsetUs: Long,
                 renderFramesAutomatically: Boolean,
             ): VideoGraph {
+                val autoToneState = if (skivAutoTone) Media3SkivAutoToneState() else null
                 val graph = SingleInputVideoGraph.Factory(
                     DefaultVideoFrameProcessor.Factory.Builder()
                         .setExecutorService(glExecutor)
@@ -223,7 +224,7 @@ internal class Media3HdrToneMappingRenderer(
                         context.applicationContext,
                         piecewiseShoulder,
                         wideColor,
-                        skivAutoTone,
+                        autoToneState,
                         if (mpcvr) ::mpcvrShaderPeak else null,
                     ),
                     outputColorInfo,
@@ -233,7 +234,7 @@ internal class Media3HdrToneMappingRenderer(
                     initialTimestampOffsetUs,
                     renderFramesAutomatically,
                 )
-                if (!skivAutoTone) return graph
+                if (autoToneState == null) return graph
                 return object : VideoGraph by graph {
                     override fun registerInputStream(
                         inputIndex: Int,
@@ -244,7 +245,10 @@ internal class Media3HdrToneMappingRenderer(
                     ) {
                         val autoEffects = if (ColorInfo.isTransferHdr(format.colorInfo)) {
                             val hlg = format.colorInfo?.colorTransfer == C.COLOR_TRANSFER_HLG
-                            listOf(Media3SkivAutoToneEffect(checkNotNull(piecewiseShoulder), wideColor, hlg)) + effects
+                            listOf(
+                                Media3SkivAutoToneEffect(hlg, autoToneState),
+                                Media3SkivAutoToneMatrix(hlg),
+                            ) + effects
                         } else {
                             effects
                         }
@@ -268,19 +272,39 @@ private class HdrToneMappingShaderContext(
     context: Context,
     piecewiseShoulder: Int?,
     wideColor: Boolean,
-    skivAutoTone: Boolean,
+    autoToneState: Media3SkivAutoToneState?,
     mpcvrPeakNits: (() -> Int)?,
 ) : ContextWrapper(context) {
     private val base = context.resources
+    private val skivAutoTone = autoToneState != null
     private val toneMappingShader by lazy {
         val resource = if (mpcvrPeakNits != null) R.raw.media3_mpcvr_tone_mapping else R.raw.media3_skiv_tone_mapping
         base.openRawResource(resource).bufferedReader().use { it.readText() }
+    }
+    private val autoToneShader by lazy {
+        base.openRawResource(R.raw.media3_skiv_auto_tone).bufferedReader().use { it.readText() }
     }
     private val displayP3Shader by lazy {
         base.openRawResource(R.raw.media3_display_p3).bufferedReader().use { it.readText() }
     }
     private val patchedResources = object : Resources(base.assets, base.displayMetrics, base.configuration) {
         override fun openRawResource(id: Int): InputStream {
+            val autoToneHlg = autoToneState?.activeHlg
+            if (autoToneHlg != null) {
+                if (id == EffectResources.raw.vertex_shader_transformation_es2) {
+                    return buildSkivAutoToneVertexShader(autoToneShader).byteInputStream()
+                }
+                if (id == EffectResources.raw.fragment_shader_transformation_es2) {
+                    return buildSkivAutoToneFragmentShader(
+                        autoTone = autoToneShader,
+                        skiv = toneMappingShader,
+                        displayP3 = if (wideColor) displayP3Shader else "",
+                        shoulder = checkNotNull(piecewiseShoulder),
+                        wideColor = wideColor,
+                        hlg = autoToneHlg,
+                    ).byteInputStream()
+                }
+            }
             val hdrSampler = id == EffectResources.raw.fragment_shader_transformation_external_yuv_es3 ||
                 id == EffectResources.raw.fragment_shader_transformation_hdr_internal_es3
             val sdrSampler = wideColor && (
@@ -307,7 +331,7 @@ private class HdrToneMappingShaderContext(
 
             if (skivAutoTone) {
                 // Media3 allocates an RGBA16F sampler texture for HDR input.
-                // Keep BT.2020 display light there for the measurement and mapping passes.
+                // Keep BT.2020 display light there for the final presentation pass to measure and map.
                 val output = "outColor = vec4(applyOetf(clampedColors), 1.0);"
                 check(output in source) { "Media3 HDR sampler shader has changed" }
                 return source.replace(

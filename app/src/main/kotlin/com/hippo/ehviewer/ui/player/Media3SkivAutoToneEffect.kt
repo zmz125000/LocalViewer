@@ -1,147 +1,108 @@
 package com.hippo.ehviewer.ui.player
 
 import android.content.Context
-import android.opengl.GLES30
-import androidx.media3.common.GlTextureInfo
-import androidx.media3.common.VideoFrameProcessingException
-import androidx.media3.common.util.GlProgram
-import androidx.media3.common.util.GlUtil
-import androidx.media3.common.util.Size
 import androidx.media3.common.util.UnstableApi
-import androidx.media3.effect.BaseGlShaderProgram
 import androidx.media3.effect.GlEffect
-import com.hippo.ehviewer.R
+import androidx.media3.effect.GlShaderProgram
+import androidx.media3.effect.PassthroughShaderProgram
+import androidx.media3.effect.RgbMatrix
 
 // Scale display light in the RGBA16F input texture to retain dark PQ values on GPUs
 // that flush half-precision subnormals.
 internal const val SKIV_HDR_TEXTURE_SCALE = 1024.0
 
-@UnstableApi
-internal data class Media3SkivAutoToneEffect(
-    private val shoulder: Int,
-    private val wideColor: Boolean,
-    private val hlg: Boolean,
-) : GlEffect {
-    override fun toGlShaderProgram(context: Context, useHdr: Boolean): BaseGlShaderProgram {
-        try {
-            val resources = context.resources
-            val autoTone = resources.openRawResource(R.raw.media3_skiv_auto_tone).bufferedReader().use { it.readText() }
-            val skiv = resources.openRawResource(R.raw.media3_skiv_tone_mapping).bufferedReader().use { it.readText() }
-            val displayP3 = if (wideColor) {
-                resources.openRawResource(R.raw.media3_display_p3).bufferedReader().use { it.readText() }
-            } else {
-                ""
-            }
-            val header = """
-                #version 300 es
-                precision highp float;
-                uniform highp sampler2D uFrame;
-                out vec4 outColor;
-                #define SKIV_HDR_SCALE $SKIV_HDR_TEXTURE_SCALE
-            """.trimIndent()
-            val measure = GlProgram(
-                "$VERTEX_SHADER\nvoid main() { gl_Position = fullscreenPosition(); }",
-                "$header\n#define SKIV_VERTEX 0\n#define SKIV_MEASURE 1\n$autoTone",
-            )
-            try {
-                val mapping = GlProgram(
-                    "$VERTEX_SHADER\n#define SKIV_VERTEX 1\n#define SKIV_MEASURE 0\n$autoTone",
-                    """
-                    $header
-                    #define SKIV_VERTEX 0
-                    #define SKIV_MEASURE 0
-                    #define SKIV_AUTO_TONE 1
-                    #define SKIV_PIECEWISE 1
-                    #define SKIV_WCG ${if (wideColor) 1 else 0}
-                    #define SKIV_SHOULDER_PERCENT $shoulder
-                    #define SKIV_PEAK_NITS ${if (hlg) "1000.0" else "2000.0"}
-                    $autoTone
-                    $skiv
-                    $displayP3
-                    """.trimIndent(),
-                )
-                return AutoToneProgram(measure, mapping, wideColor)
-            } catch (e: GlUtil.GlException) {
-                runCatching { measure.delete() }.exceptionOrNull()?.let(e::addSuppressed)
-                throw e
-            }
-        } catch (e: GlUtil.GlException) {
-            throw VideoFrameProcessingException(e)
-        }
+/**
+ * Tracks whether the currently configured Media3 input stream on the GL thread is an HDR
+ * auto-tone stream so the final presentation shader can fuse frame measurement and tone
+ * mapping into the existing surface draw without an extra full-resolution pass.
+ */
+internal class Media3SkivAutoToneState {
+    private var owner: Any? = null
+
+    @Volatile
+    var activeHlg: Boolean? = null
+        private set
+
+    fun activate(token: Any, hlg: Boolean) {
+        owner = token
+        activeHlg = hlg
     }
 
-    private class AutoToneProgram(
-        private val measure: GlProgram,
-        private val mapping: GlProgram,
-        wideColor: Boolean,
-    ) : BaseGlShaderProgram(wideColor, 1) {
-        private var stats = GlTextureInfo.UNSET
-        private val framebuffer = IntArray(1)
-        private var outputSize = Size.UNKNOWN
-
-        override fun configure(inputWidth: Int, inputHeight: Int): Size {
-            if (stats === GlTextureInfo.UNSET) {
-                val texture = GlUtil.createTexture(1, 1, true)
-                try {
-                    stats = GlTextureInfo(texture, GlUtil.createFboForTexture(texture), C_NO_BUFFER, 1, 1)
-                } catch (e: GlUtil.GlException) {
-                    runCatching { GlUtil.deleteTexture(texture) }.exceptionOrNull()?.let(e::addSuppressed)
-                    throw VideoFrameProcessingException(e)
-                }
-            }
-            outputSize = Size(inputWidth, inputHeight)
-            return outputSize
+    fun deactivate(token: Any) {
+        if (owner === token) {
+            owner = null
+            activeHlg = null
         }
+    }
+}
 
-        override fun drawFrame(inputTexId: Int, presentationTimeUs: Long) {
-            try {
-                GLES30.glGetIntegerv(GLES30.GL_FRAMEBUFFER_BINDING, framebuffer, 0)
-                try {
-                    GlUtil.focusFramebufferUsingCurrentContext(stats.fboId, 1, 1)
-                    measure.use()
-                    measure.setSamplerTexIdUniform("uFrame", inputTexId, 0)
-                    measure.bindAttributesAndUniforms()
-                    GLES30.glDrawArrays(GLES30.GL_TRIANGLES, 0, 3)
-                } finally {
-                    GlUtil.focusFramebufferUsingCurrentContext(framebuffer[0], outputSize.width, outputSize.height)
-                }
-
-                mapping.use()
-                mapping.setSamplerTexIdUniform("uFrame", inputTexId, 0)
-                mapping.setSamplerTexIdUniform("uStats", stats.texId, 1)
-                mapping.bindAttributesAndUniforms()
-                GLES30.glDrawArrays(GLES30.GL_TRIANGLES, 0, 3)
-                GlUtil.checkGlError()
-            } catch (e: GlUtil.GlException) {
-                throw VideoFrameProcessingException(e, presentationTimeUs)
-            }
+/**
+ * Zero-copy passthrough effect that marks the lifetime of an HDR auto-tone stream on
+ * Media3's GL thread (activated during pipeline configuration and cleared before the next
+ * stream's sampler shaders are compiled).
+ */
+@UnstableApi
+internal data class Media3SkivAutoToneEffect(
+    private val hlg: Boolean,
+    private val state: Media3SkivAutoToneState,
+) : GlEffect {
+    override fun toGlShaderProgram(context: Context, useHdr: Boolean): GlShaderProgram = object : PassthroughShaderProgram() {
+        init {
+            state.activate(this, hlg)
         }
 
         override fun release() {
             try {
                 super.release()
             } finally {
-                try {
-                    stats.release()
-                } finally {
-                    try {
-                        measure.delete()
-                    } finally {
-                        mapping.delete()
-                    }
-                }
+                state.deactivate(this)
             }
         }
     }
+}
+
+/**
+ * Folded into Media3's FinalShaderProgramWrapper so HDR streams select the patched
+ * transformation shader while SDR streams continue using the untouched copy shader.
+ */
+@UnstableApi
+internal data class Media3SkivAutoToneMatrix(
+    private val hlg: Boolean,
+) : RgbMatrix {
+    override fun getMatrix(presentationTimeUs: Long, useHdr: Boolean): FloatArray = IDENTITY
 
     private companion object {
-        const val C_NO_BUFFER = -1
-        val VERTEX_SHADER = """
-            #version 300 es
-            vec4 fullscreenPosition() {
-                vec2 p = vec2((gl_VertexID << 1) & 2, gl_VertexID & 2);
-                return vec4(p * 2.0 - 1.0, 0.0, 1.0);
-            }
-        """.trimIndent()
+        val IDENTITY = floatArrayOf(
+            1f, 0f, 0f, 0f,
+            0f, 1f, 0f, 0f,
+            0f, 0f, 1f, 0f,
+            0f, 0f, 0f, 1f,
+        )
     }
 }
+
+internal fun buildSkivAutoToneVertexShader(autoTone: String): String = """
+    #version 300 es
+    precision highp float;
+    #define SKIV_HDR_SCALE $SKIV_HDR_TEXTURE_SCALE
+    #define SKIV_VERTEX 1
+""".trimIndent() + "\n$autoTone"
+
+internal fun buildSkivAutoToneFragmentShader(
+    autoTone: String,
+    skiv: String,
+    displayP3: String,
+    shoulder: Int,
+    wideColor: Boolean,
+    hlg: Boolean,
+): String = """
+    #version 300 es
+    precision highp float;
+    #define SKIV_HDR_SCALE $SKIV_HDR_TEXTURE_SCALE
+    #define SKIV_VERTEX 0
+    #define SKIV_AUTO_TONE 1
+    #define SKIV_PIECEWISE 1
+    #define SKIV_WCG ${if (wideColor) 1 else 0}
+    #define SKIV_SHOULDER_PERCENT $shoulder
+    #define SKIV_PEAK_NITS ${if (hlg) "1000.0" else "2000.0"}
+""".trimIndent() + "\n$autoTone\n$skiv\n$displayP3"
