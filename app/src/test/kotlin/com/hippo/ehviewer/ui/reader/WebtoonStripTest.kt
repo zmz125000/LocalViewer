@@ -258,9 +258,9 @@ class WebtoonStripTest {
         for (i in 0 until 10) h.markLoaded(i, 1000)
 
         val atRest = h.layout()
-        // At rest on page 0 ([0, 1000]): page 1 is pre-placed in the cache window without entering visibleItems.
+        // At rest on page 0 ([0, 1000]): page 1 stays composed in the cache window without entering visibleItems.
         assertEquals(listOf(0), atRest.visibleItems.map { it.index })
-        assertEquals(listOf(0, 1), atRest.placedItems.map { it.index })
+        assertEquals(listOf(0, 1), atRest.composedItems.map { it.index })
 
         var res = atRest
         repeat(10) {
@@ -273,10 +273,10 @@ class WebtoonStripTest {
         assertEquals(-4, res.visibleItems.first { it.index == 0 }.offset)
         assertEquals(listOf(0, 1), res.visibleItems.map { it.index })
 
-        // Approaching page 2 within cacheBufferPx (750px) brings page 2 into placedItems only.
+        // Approaching page 2 within cacheBufferPx (750px) brings page 2 into composedItems only.
         val nearPage2 = h.layout(scrollDelta = 300f)
         assertEquals(listOf(0, 1), nearPage2.visibleItems.map { it.index })
-        assertEquals(listOf(0, 1, 2), nearPage2.placedItems.map { it.index })
+        assertEquals(listOf(0, 1, 2), nearPage2.composedItems.map { it.index })
     }
 
     @Test

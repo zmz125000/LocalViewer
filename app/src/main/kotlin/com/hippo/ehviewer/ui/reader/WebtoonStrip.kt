@@ -81,7 +81,8 @@ data class WebtoonStripLayoutInfo(
 
 internal data class WebtoonMeasureResult(
     val visibleItems: List<WebtoonStripItem>,
-    val placedItems: List<WebtoonStripItem>,
+    /** Visible items plus keep-around cache neighbors that stay composed and measured. */
+    val composedItems: List<WebtoonStripItem>,
     val anchor: WebtoonAnchor,
     val direction: WebtoonScrollDirection,
     val pinAnchorUntilStable: Boolean,
@@ -122,7 +123,7 @@ internal fun measureWebtoonStrip(
     if (itemCount <= 0 || viewportMainSize <= 0) {
         return WebtoonMeasureResult(
             visibleItems = emptyList(),
-            placedItems = emptyList(),
+            composedItems = emptyList(),
             anchor = WebtoonAnchor(0, WebtoonAnchorEdge.Start, 0f),
             direction = lastDirection,
             pinAnchorUntilStable = false,
@@ -230,32 +231,32 @@ internal fun measureWebtoonStrip(
         if (fallback != null) visibleSlots.add(fallback)
     }
 
-    // Build placed list = visible + keep-around cache neighbors.
-    val placedSlots = ArrayDeque<MeasuredSlot>(visibleSlots.size + maxCacheItems * 2)
-    visibleSlots.forEach { placedSlots.addLast(it) }
-    if (placedSlots.isNotEmpty() && cacheBufferPx > 0 && maxCacheItems > 0) {
+    // Build composed list = visible + keep-around cache neighbors (kept composed & measured, not placed).
+    val composedSlots = ArrayDeque<MeasuredSlot>(visibleSlots.size + maxCacheItems * 2)
+    visibleSlots.forEach { composedSlots.addLast(it) }
+    if (composedSlots.isNotEmpty() && cacheBufferPx > 0 && maxCacheItems > 0) {
         var addedBefore = 0
         while (
             addedBefore < maxCacheItems &&
-            placedSlots.first().index > 0 &&
-            placedSlots.first().start > -cacheBufferPx
+            composedSlots.first().index > 0 &&
+            composedSlots.first().start > -cacheBufferPx
         ) {
-            val idx = placedSlots.first().index - 1
+            val idx = composedSlots.first().index - 1
             val size = sizeOf(idx)
-            val end = placedSlots.first().start - safeGap
-            placedSlots.addFirst(MeasuredSlot(idx, end - size, size))
+            val end = composedSlots.first().start - safeGap
+            composedSlots.addFirst(MeasuredSlot(idx, end - size, size))
             addedBefore++
         }
         var addedAfter = 0
         while (
             addedAfter < maxCacheItems &&
-            placedSlots.last().index < itemCount - 1 &&
-            placedSlots.last().end < viewportMainSize + cacheBufferPx
+            composedSlots.last().index < itemCount - 1 &&
+            composedSlots.last().end < viewportMainSize + cacheBufferPx
         ) {
-            val idx = placedSlots.last().index + 1
+            val idx = composedSlots.last().index + 1
             val size = sizeOf(idx)
-            val start = placedSlots.last().end + safeGap
-            placedSlots.addLast(MeasuredSlot(idx, start, size))
+            val start = composedSlots.last().end + safeGap
+            composedSlots.addLast(MeasuredSlot(idx, start, size))
             addedAfter++
         }
     }
@@ -271,7 +272,7 @@ internal fun measureWebtoonStrip(
     }
 
     val visibleItems = visibleSlots.map { it.toStripItem() }
-    val placedItems = placedSlots.map { it.toStripItem() }
+    val composedItems = composedSlots.map { it.toStripItem() }
 
     val firstVisible = visibleSlots.first()
     val lastVisible = visibleSlots.last()
@@ -300,7 +301,7 @@ internal fun measureWebtoonStrip(
 
     return WebtoonMeasureResult(
         visibleItems = visibleItems,
-        placedItems = placedItems,
+        composedItems = composedItems,
         anchor = nextAnchor,
         direction = direction,
         pinAnchorUntilStable = keepPinned,
@@ -570,7 +571,9 @@ fun WebtoonStrip(
         )
 
         layout(viewportWidth, viewportHeight) {
-            for (item in result.placedItems) {
+            // Only place items intersecting the viewport so offscreen cache neighbors stay
+            // composed and measured without entering the draw pass (matches LazyLayoutCacheWindow).
+            for (item in result.visibleItems) {
                 val placeables = measuredPlaceables[item.index] ?: continue
                 val x = if (horizontal) item.screenStart else sidePaddingPx
                 val y = if (horizontal) sidePaddingPx else item.screenStart
