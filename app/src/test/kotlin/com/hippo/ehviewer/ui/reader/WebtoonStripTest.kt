@@ -280,12 +280,15 @@ class WebtoonStripTest {
     }
 
     @Test
-    fun lookaheadFollowedByMainMeasurePreservesConsumedScrollDelta() {
-        val state = WebtoonStripState(initialFirstVisibleItemIndex = 0)
-        val sizes = IntArray(5) { 1000 }
-        val viewport = IntSize(1000, 1000)
+    fun lookaheadWithLargerViewportDoesNotClampActualScroll() {
+        val state = WebtoonStripState(
+            initialFirstVisibleItemIndex = 1,
+            initialFirstVisibleItemScrollOffset = 350,
+        )
+        val sizes = IntArray(2) { 1000 }
+        val viewport = IntSize(1000, 600)
 
-        fun runMeasurePass() {
+        fun runMeasurePass(viewport: IntSize, isLookingAhead: Boolean = false) {
             val result = measureWebtoonStrip(
                 itemCount = sizes.size,
                 viewportMainSize = viewport.height,
@@ -296,7 +299,7 @@ class WebtoonStripTest {
                 anchor = state.anchor,
                 lastDirection = state.lastDirection,
                 pinAnchorUntilStable = state.pinAnchorUntilStable,
-                scrollDelta = state.consumePendingScrollDelta(),
+                scrollDelta = state.pendingScrollDelta,
                 isSizeStable = { true },
                 measureItem = { sizes[it] },
             )
@@ -305,6 +308,7 @@ class WebtoonStripTest {
                 viewportSize = viewport,
                 viewportMainSize = viewport.height,
                 totalItemsCount = sizes.size,
+                isLookingAhead = isLookingAhead,
             )
         }
 
@@ -313,20 +317,26 @@ class WebtoonStripTest {
         state.remeasurementModifier.onRemeasurementAvailable(
             object : Remeasurement {
                 override fun forceRemeasure() {
-                    runMeasurePass()
-                    runMeasurePass()
+                    val actualBeforeLookahead = state.layoutInfo
+                    runMeasurePass(IntSize(1000, 1000), isLookingAhead = true)
+                    assertEquals(actualBeforeLookahead, state.layoutInfo)
+                    runMeasurePass(viewport)
                 }
             },
         )
-        runMeasurePass()
-        runMeasurePass()
+        runMeasurePass(viewport)
 
-        val consumedForward = state.dispatchRawDelta(250f)
-        assertEquals(250f, consumedForward, 0.01f)
-        assertEquals(-250, state.layoutInfo.visibleItemsInfo.first { it.index == 0 }.offset)
+        val consumedForward = state.dispatchRawDelta(25f)
+        assertEquals(25f, consumedForward, 0.01f)
+        assertEquals(-375, state.layoutInfo.visibleItemsInfo.single().offset)
 
         val consumedBackward = state.dispatchRawDelta(-100f)
         assertEquals(-100f, consumedBackward, 0.01f)
-        assertEquals(-150, state.layoutInfo.visibleItemsInfo.first { it.index == 0 }.offset)
+        assertEquals(-275, state.layoutInfo.visibleItemsInfo.single().offset)
+
+        val consumedAtEnd = state.dispatchRawDelta(150f)
+        assertEquals(125f, consumedAtEnd, 0.01f)
+        assertEquals(-400, state.layoutInfo.visibleItemsInfo.single().offset)
+        assertFalse(state.canScrollForward)
     }
 }

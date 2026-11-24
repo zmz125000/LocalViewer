@@ -13,6 +13,9 @@ import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -23,12 +26,23 @@ import androidx.compose.ui.layout.Placeable
 import androidx.compose.ui.layout.Remeasurement
 import androidx.compose.ui.layout.RemeasurementModifier
 import androidx.compose.ui.layout.SubcomposeLayout
+import androidx.compose.ui.semantics.CollectionInfo
+import androidx.compose.ui.semantics.ScrollAxisRange
+import androidx.compose.ui.semantics.collectionInfo
+import androidx.compose.ui.semantics.getScrollViewportLength
+import androidx.compose.ui.semantics.horizontalScrollAxisRange
+import androidx.compose.ui.semantics.indexForKey
+import androidx.compose.ui.semantics.isTraversalGroup
+import androidx.compose.ui.semantics.scrollToIndex
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.verticalScrollAxisRange
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import kotlin.math.abs
 import kotlin.math.roundToInt
+import kotlinx.coroutines.launch
 
 /** Edge of an anchor item held fixed across dynamic item-size changes. */
 internal enum class WebtoonAnchorEdge {
@@ -359,6 +373,13 @@ class WebtoonStripState(
     val firstVisibleItemScrollOffset: Int
         get() = layoutInfo.visibleItemsInfo.firstOrNull()?.let { (-it.offset).coerceAtLeast(0) } ?: 0
 
+    internal val accessibilityScrollPosition: Float
+        get() {
+            val item = layoutInfo.visibleItemsInfo.firstOrNull() ?: return 0f
+            val fraction = if (item.size > 0) (-item.offset.toFloat() / item.size).coerceIn(0f, 1f) else 0f
+            return item.index + fraction
+        }
+
     override val canScrollForward: Boolean
         get() = layoutInfo.canScrollForward
 
@@ -416,24 +437,20 @@ class WebtoonStripState(
         return lastConsumedScrollDelta
     }
 
-    internal fun consumePendingScrollDelta(): Float {
-        val delta = pendingScrollDelta
-        pendingScrollDelta = 0f
-        return delta
-    }
-
     internal fun applyMeasureResult(
         result: WebtoonMeasureResult,
         viewportSize: IntSize,
         viewportMainSize: Int,
         totalItemsCount: Int,
+        isLookingAhead: Boolean,
     ) {
+        // A speculative viewport can clamp the anchor differently. Keep the same input
+        // for the actual measure, which alone owns the scroll delta and reading position.
+        if (isLookingAhead) return
+        pendingScrollDelta = 0f
         anchor = result.anchor
         lastDirection = result.direction
         pinAnchorUntilStable = result.pinAnchorUntilStable
-        // Inside LookaheadScope (e.g. SharedTransitionLayout), forceRemeasure runs a lookahead
-        // measure pass followed by a main measure pass. The first pass consumes pendingScrollDelta;
-        // the second pass runs with scrollDelta = 0f and must not overwrite lastConsumedScrollDelta.
         lastConsumedScrollDelta += result.consumedDelta
         layoutInfoState.value = WebtoonStripLayoutInfo(
             visibleItemsInfo = result.visibleItems,
@@ -496,10 +513,38 @@ fun WebtoonStrip(
     // Horizontal physical RTL: dragging finger RIGHT (dx > 0) pulls left pages in (delta > 0) -> reverseDirection = false.
     val reverseDirection = !horizontal
     val overscrollEffect = rememberOverscrollEffect()
+    val scope = rememberCoroutineScope()
+    val currentItemContent = rememberUpdatedState(itemContent)
+    // Subcompose compares content identity even when the slot key is unchanged.
+    val slotContent = remember { HashMap<Int, @Composable () -> Unit>() }
 
     SubcomposeLayout(
         modifier = modifier
             .clipToBounds()
+            .semantics {
+                isTraversalGroup = true
+                collectionInfo = if (horizontal) CollectionInfo(1, itemCount) else CollectionInfo(itemCount, 1)
+                indexForKey { itemKey -> (0 until itemCount).firstOrNull { key(it) == itemKey } ?: -1 }
+                getScrollViewportLength { state.layoutInfo.viewportMainSize.toFloat() }
+                val range = ScrollAxisRange(
+                    value = { state.accessibilityScrollPosition },
+                    maxValue = {
+                        if (state.canScrollForward) itemCount.toFloat() else state.accessibilityScrollPosition
+                    },
+                    reverseScrolling = horizontal,
+                )
+                if (horizontal) horizontalScrollAxisRange = range else verticalScrollAxisRange = range
+                if (userScrollEnabled) {
+                    scrollToIndex { index ->
+                        if (index !in 0 until itemCount) {
+                            false
+                        } else {
+                            scope.launch { state.scrollToItem(index) }
+                            true
+                        }
+                    }
+                }
+            }
             .overscroll(overscrollEffect)
             .scrollable(
                 state = state,
@@ -541,7 +586,6 @@ fun WebtoonStrip(
         val cacheBufferPx = (viewportMainSize * cacheFraction.coerceAtLeast(0f)).roundToInt()
 
         val measuredPlaceables = HashMap<Int, List<Placeable>>(8)
-        val scrollDelta = state.consumePendingScrollDelta()
         val result = measureWebtoonStrip(
             itemCount = itemCount,
             viewportMainSize = viewportMainSize,
@@ -552,11 +596,12 @@ fun WebtoonStrip(
             anchor = state.anchor,
             lastDirection = state.lastDirection,
             pinAnchorUntilStable = state.pinAnchorUntilStable,
-            scrollDelta = scrollDelta,
+            scrollDelta = state.pendingScrollDelta,
             isSizeStable = isSizeStable,
             measureItem = { index ->
                 val placeables = measuredPlaceables.getOrPut(index) {
-                    subcompose(key(index)) { itemContent(index) }
+                    val content = slotContent.getOrPut(index) { @Composable { currentItemContent.value(index) } }
+                    subcompose(key(index), content)
                         .map { it.measure(childConstraints) }
                 }
                 placeables.maxOfOrNull { if (horizontal) it.width else it.height } ?: 0
@@ -568,7 +613,9 @@ fun WebtoonStrip(
             viewportSize = IntSize(viewportWidth, viewportHeight),
             viewportMainSize = viewportMainSize,
             totalItemsCount = itemCount,
+            isLookingAhead = isLookingAhead,
         )
+        if (!isLookingAhead) slotContent.keys.retainAll(measuredPlaceables.keys)
 
         layout(viewportWidth, viewportHeight) {
             // Only place items intersecting the viewport so offscreen cache neighbors stay
