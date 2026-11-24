@@ -1,7 +1,6 @@
 package com.hippo.ehviewer.ui.reader
 
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.pager.PagerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -26,7 +25,7 @@ import eu.kanade.tachiyomi.ui.reader.viewer.ViewerNavigation
 fun GalleryPager(
     type: ReadingModeType,
     pagerState: PagerState,
-    lazyListState: LazyListState,
+    webtoonStripState: WebtoonStripState,
     pageLoader: ReaderSession,
     showNavigationOverlay: Boolean,
     onNavigationModeChange: () -> Unit,
@@ -98,7 +97,7 @@ fun GalleryPager(
         )
     } else {
         WebtoonViewer(
-            lazyListState = lazyListState,
+            stripState = webtoonStripState,
             withGaps = type == CONTINUOUS_VERTICAL,
             pageLoader = pageLoader,
             navigator = { navigator },
@@ -108,7 +107,7 @@ fun GalleryPager(
             onNextFolder = onNextFolder,
             onBack = onBack,
             horizontal = webtoonHorizontal,
-            modifier = modifier.readerMouseWheelList(lazyListState),
+            modifier = modifier.readerMouseWheelList(webtoonStripState),
         )
     }
     NavigationOverlay(showNavigationOverlay, regions, modifier = Modifier.fillMaxSize())

@@ -24,8 +24,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.layout.windowInsetsPadding
-import androidx.compose.foundation.lazy.layout.LazyLayoutCacheWindow
-import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.NavigateNext
@@ -641,14 +639,8 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
     val uiController = rememberSystemUiController()
     // Immersive enter/exit is owned by the outer ReaderScreen destination so loading
     // placeholders and sibling replace do not drop fullscreen. Only sync chrome here.
-    // Cache window is a rememberSaveable key: horizontal dual uses a short window so
-    // Original-size pages do not keep a full extra viewport of multi‑MP bitmaps composed.
-    // Orientation flip recreates state from [pageLoader.startPage] (same as rotate "fix").
-    val webtoonCacheFraction =
-        if (webtoonHorizontal) WEBTOON_HORIZONTAL_CACHE_FRACTION else SCROLL_FRACTION
-    val lazyListState = rememberLazyListState(
-        LazyLayoutCacheWindow(webtoonCacheFraction, webtoonCacheFraction),
-        pageLoader.startPage,
+    val webtoonStripState = rememberWebtoonStripState(
+        initialFirstVisibleItemIndex = pageLoader.startPage,
     )
     // Snapshot-backed [PageLoader.size] so pager pageCount tracks solid lazy-list growth.
     // Dual LTR/RTL/Vertical: pager pages are spreads; slider/startPage stay on real page indices.
@@ -668,7 +660,7 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
     val autoScrollState = remember(pagerState, pageLoader, slideshow, slideshowAutoScroll, effectiveSlideshowScrollSpeed, slideshowRelativeScrollSpeed, slideshowPlayback, pagerDual, landscapeCover, isLandscape) {
         SlideshowAutoScrollState(relativeSpeed = slideshowRelativeScrollSpeed)
     }
-    val syncState = rememberSliderPagerDoubleSyncState(lazyListState, pagerState, pageLoader)
+    val syncState = rememberSliderPagerDoubleSyncState(webtoonStripState, pagerState, pageLoader)
     var appbarVisible by remember { mutableStateOf(false) }
     var photoGridOpen by remember { mutableStateOf(false) }
     val isWebtoon by rememberUpdatedState(ReadingModeType.isWebtoon(readingMode))
@@ -710,18 +702,18 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
                 )
             }
             if (isWebtoon) {
-                val visibleItems = lazyListState.layoutInfo.visibleItemsInfo
+                val visibleItems = webtoonStripState.layoutInfo.visibleItemsInfo
                 val fallback = (syncState.sliderValue - 1).coerceIn(0, last)
                 val first = visibleItems.minOfOrNull { it.index }?.coerceIn(0, last) ?: fallback
                 val end = visibleItems.maxOfOrNull { it.index }?.coerceIn(first, last) ?: fallback
-                val anchor = lazyListState.layoutInfo
+                val anchor = webtoonStripState.layoutInfo
                     .webtoonReadingIndex(horizontal = webtoonHorizontal)
                     ?.coerceIn(first, end)
                     ?: fallback.coerceIn(first, end)
                 ReaderNavigation(
                     anchor = anchor,
                     visiblePages = first..end,
-                    kind = if (lazyListState.isScrollInProgress) NavigationKind.Scroll else NavigationKind.Settled,
+                    kind = if (webtoonStripState.isScrollInProgress) NavigationKind.Scroll else NavigationKind.Settled,
                 )
             } else {
                 val layout = pagerState.layoutInfo
@@ -800,7 +792,7 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
                 return (c - 1).coerceAtLeast(0)..(c + 1).coerceAtMost(last)
             }
             if (isWebtoon) {
-                val items = lazyListState.layoutInfo.visibleItemsInfo
+                val items = webtoonStripState.layoutInfo.visibleItemsInfo
                 if (items.isEmpty()) {
                     around(syncState.sliderValue - 1)
                 } else {
@@ -899,8 +891,8 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
             movePrevious = {
                 launch {
                     when {
-                        isWebtoon && webtoonHorizontal -> lazyListState.scrollLeft()
-                        isWebtoon -> lazyListState.scrollUp()
+                        isWebtoon && webtoonHorizontal -> webtoonStripState.scrollLeft()
+                        isWebtoon -> webtoonStripState.scrollUp()
                         else -> pagerState.moveToPrevious()
                     }
                 }
@@ -908,8 +900,8 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
             moveNext = {
                 launch {
                     when {
-                        isWebtoon && webtoonHorizontal -> lazyListState.scrollRight()
-                        isWebtoon -> lazyListState.scrollDown()
+                        isWebtoon && webtoonHorizontal -> webtoonStripState.scrollRight()
+                        isWebtoon -> webtoonStripState.scrollDown()
                         else -> pagerState.moveToNext()
                     }
                 }
@@ -1136,7 +1128,7 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
             GalleryPager(
                 type = readingMode,
                 pagerState = pagerState,
-                lazyListState = lazyListState,
+                webtoonStripState = webtoonStripState,
                 pageLoader = pageLoader,
                 slideshowAutoScroll = autoScrollState.takeIf { slideshow && slideshowAutoScroll },
                 showNavigationOverlay = showNavigationOverlay,

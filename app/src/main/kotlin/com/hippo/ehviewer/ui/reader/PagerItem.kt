@@ -45,6 +45,7 @@ import androidx.compose.ui.layout.onVisibilityChanged
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Constraints
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.toSize
 import coil3.BitmapImage
@@ -92,7 +93,17 @@ fun PagerItem(
     // Scheduling is driven by one ReaderNavigation from the viewport. This item only renders
     // status and owns a display pin; Compose retention no longer determines decode-ahead.
     val defaultError = stringResource(id = R.string.decode_image_error)
-    val aspect = page.layoutAspect.takeIf { it > 0f } ?: DEFAULT_ASPECT
+    val autoRotateMode = slideshowAutoRotateMode()
+    val rawAspect = page.layoutAspect.takeIf { it > 0f } ?: DEFAULT_ASPECT
+    val aspect = if (
+        page.layoutWidth > 0 &&
+        page.layoutHeight > 0 &&
+        shouldAutoRotate(IntSize(page.layoutWidth, page.layoutHeight), viewportSize, autoRotateMode)
+    ) {
+        (1f / rawAspect).coerceAtLeast(0.01f)
+    } else {
+        rawAspect
+    }
     val placeholderMod = if (horizontalStrip) {
         modifier.fillMaxHeight().aspectRatio(aspect, matchHeightConstraintsFirst = true)
     } else {
@@ -265,7 +276,6 @@ fun PagerItem(
             }
             painter?.let { painter ->
                 val drawable = (painter as? DrawablePainter)?.drawable
-                val autoRotateMode = slideshowAutoRotateMode()
                 val imgSize = image.intrinsicSize
                 val rotate = shouldAutoRotate(imgSize, viewportSize, autoRotateMode)
                 val clockwise = isAutoRotateClockwise(autoRotateMode)

@@ -2,7 +2,6 @@ package com.hippo.ehviewer.ui.reader
 
 import androidx.compose.foundation.interaction.collectIsDraggedAsState
 import androidx.compose.foundation.lazy.LazyListLayoutInfo
-import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.pager.PagerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -21,7 +20,7 @@ import kotlinx.coroutines.flow.filterNotNull
 
 @Stable
 class SliderPagerDoubleSync(
-    private val lazyListState: LazyListState,
+    private val webtoonStripState: WebtoonStripState,
     private val pagerState: PagerState,
     private val pageLoader: ReaderSession,
 ) {
@@ -55,7 +54,7 @@ class SliderPagerDoubleSync(
         if (pagerDual) this.landscapeCover = landscapeCover
         val page = pageLoader.startPage.coerceIn(0, (pageLoader.size - 1).coerceAtLeast(0))
         if (webtoon) {
-            lazyListState.scrollToItem(page)
+            webtoonStripState.scrollToItem(page)
         } else {
             val target = if (pagerDual) dualSpreadIndex(page, landscapeCover) else page
             pagerState.scrollToPage(
@@ -75,7 +74,7 @@ class SliderPagerDoubleSync(
         webtoonHorizontal: Boolean,
     ) = if (webtoon) {
         snapshotFlow {
-            lazyListState.layoutInfo.webtoonReadingIndex(horizontal = webtoonHorizontal)
+            webtoonStripState.layoutInfo.webtoonReadingIndex(horizontal = webtoonHorizontal)
         }.filterNotNull()
     } else if (pagerDual) {
         // Pager page = spread; expose first real page of the spread.
@@ -92,8 +91,8 @@ class SliderPagerDoubleSync(
         landscapeCover: Boolean = false,
     ) {
         if (pagerDual) this.landscapeCover = landscapeCover
-        // Drag on the list/pager reclaims follow (volume keys / fling after seek).
-        val listDragged by lazyListState.interactionSource.collectIsDraggedAsState()
+        // Drag on the strip/pager reclaims follow (volume keys / fling after seek).
+        val listDragged by webtoonStripState.interactionSource.collectIsDraggedAsState()
         val pagerDragged by pagerState.interactionSource.collectIsDraggedAsState()
         LaunchedEffect(listDragged, pagerDragged) {
             if (listDragged || pagerDragged) {
@@ -102,7 +101,7 @@ class SliderPagerDoubleSync(
             }
         }
 
-        val currentIndexFlow = remember(webtoon, pagerDual, webtoonHorizontal, lazyListState, pagerState) {
+        val currentIndexFlow = remember(webtoon, pagerDual, webtoonHorizontal, webtoonStripState, pagerState) {
             currentPageFlow(webtoon, pagerDual, webtoonHorizontal)
         }
         if (sliderFollowPager) {
@@ -118,7 +117,7 @@ class SliderPagerDoubleSync(
                 snapshotFlow { sliderValue - 1 }.collectLatest { index ->
                     val safe = index.coerceIn(0, (pageLoader.size - 1).coerceAtLeast(0))
                     if (webtoon) {
-                        lazyListState.scrollToItem(safe)
+                        webtoonStripState.scrollToItem(safe)
                     } else if (pagerDual) {
                         pagerState.performScrollToPage(
                             dualSpreadIndex(safe, this@SliderPagerDoubleSync.landscapeCover),
@@ -163,9 +162,9 @@ internal fun LazyListLayoutInfo.webtoonReadingIndex(horizontal: Boolean): Int? {
 @Stable
 @Composable
 fun rememberSliderPagerDoubleSyncState(
-    lazyListState: LazyListState,
+    webtoonStripState: WebtoonStripState,
     pagerState: PagerState,
     pageLoader: ReaderSession,
-): SliderPagerDoubleSync = remember(lazyListState, pagerState, pageLoader) {
-    SliderPagerDoubleSync(lazyListState, pagerState, pageLoader)
+): SliderPagerDoubleSync = remember(webtoonStripState, pagerState, pageLoader) {
+    SliderPagerDoubleSync(webtoonStripState, pagerState, pageLoader)
 }

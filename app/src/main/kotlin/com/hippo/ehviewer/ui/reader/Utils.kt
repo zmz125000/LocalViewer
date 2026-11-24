@@ -3,6 +3,7 @@ package com.hippo.ehviewer.ui.reader
 import android.app.Activity
 import android.view.WindowManager
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.gestures.ScrollableState
 import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.lazy.LazyListState
@@ -121,7 +122,7 @@ suspend fun PagerState.moveToPrevious() = moveByPage(-1)
 
 suspend fun PagerState.moveToNext() = moveByPage(1)
 
-suspend fun LazyListState.performScrollBy(value: Float) {
+suspend fun ScrollableState.performScrollBy(value: Float) {
     when (PageTransitionType.fromPreference(Settings.effectivePageTransition())) {
         PageTransitionType.NONE -> scrollBy(value)
         PageTransitionType.SLIDE -> animateScrollBy(value, animationSpec = tween(450, easing = PageTransitionEaseOut))
@@ -153,10 +154,32 @@ suspend fun LazyListState.scrollRight() {
     performScrollBy(scrollDistanceHorizontal)
 }
 
+suspend fun WebtoonStripState.scrollUp() {
+    performScrollBy(-scrollDistanceVertical)
+}
+
+suspend fun WebtoonStripState.scrollDown() {
+    performScrollBy(scrollDistanceVertical)
+}
+
+suspend fun WebtoonStripState.scrollLeft() {
+    performScrollBy(-scrollDistanceHorizontal)
+}
+
+suspend fun WebtoonStripState.scrollRight() {
+    performScrollBy(scrollDistanceHorizontal)
+}
+
 private val LazyListState.scrollDistanceVertical
     get() = layoutInfo.viewportSize.height * SCROLL_FRACTION
 
 private val LazyListState.scrollDistanceHorizontal
+    get() = layoutInfo.viewportSize.width * SCROLL_FRACTION
+
+private val WebtoonStripState.scrollDistanceVertical
+    get() = layoutInfo.viewportSize.height * SCROLL_FRACTION
+
+private val WebtoonStripState.scrollDistanceHorizontal
     get() = layoutInfo.viewportSize.width * SCROLL_FRACTION
 
 /** Tap / volume-key scroll step as a fraction of the viewport. */
