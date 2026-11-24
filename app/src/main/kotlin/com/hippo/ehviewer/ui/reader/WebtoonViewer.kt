@@ -1,11 +1,6 @@
 package com.hippo.ehviewer.ui.reader
 
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxHeight
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyListState
-import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
@@ -41,7 +36,7 @@ import me.saket.telephoto.zoomable.zoomable
 
 @Composable
 fun WebtoonViewer(
-    lazyListState: LazyListState,
+    stripState: WebtoonStripState,
     withGaps: Boolean,
     pageLoader: ReaderSession,
     navigator: () -> NavigationRegions,
@@ -69,7 +64,7 @@ fun WebtoonViewer(
     // Horizontal dual webtoon reads RTL like a manga strip.
     val isRtl = horizontal
     val paddingPercent by Settings.webtoonSidePadding.collectAsState()
-    // Viewport from onSizeChanged only (not layoutInfo). Reading layoutInfo inside Lazy
+    // Viewport from onSizeChanged only (not layoutInfo). Reading layoutInfo inside strip
     // items recomposes every scroll frame; landscape dual shows many narrow pages so that
     // thrash is much worse than portrait webtoon (1–2 tall items).
     var viewportPx by remember { mutableStateOf(IntSize.Zero) }
@@ -93,7 +88,7 @@ fun WebtoonViewer(
         )
     }
 
-    // At 1×: pinch only — one-finger drag belongs to LazyColumn/Row.
+    // At 1×: pinch only — one-finger drag belongs to WebtoonStrip.
     // When zoomed: pan + pinch so content can be moved; edge pass-through via Telephoto canPan.
     val zoomFraction = zoomableState.zoomFraction ?: 0f
     val zoomedIn = zoomFraction > 0.01f
@@ -103,7 +98,7 @@ fun WebtoonViewer(
         EnabledZoomGestures(zoom = true, pan = false)
     }
 
-    // While 2+ fingers are down, stop list scroll so pinch can own the pointer stream.
+    // While 2+ fingers are down, stop strip scroll so pinch can own the pointer stream.
     var multiTouch by remember { mutableStateOf(false) }
 
     val listModifier = modifier
@@ -123,7 +118,7 @@ fun WebtoonViewer(
             gestures = gestures,
             onClick = { offset ->
                 scope.launch {
-                    with(lazyListState) {
+                    with(stripState) {
                         // Prefer stable size; fall back to layoutInfo only for the tap gesture.
                         val w = viewportPx.width.takeIf { it > 0 }
                             ?: layoutInfo.viewportSize.width
@@ -131,7 +126,7 @@ fun WebtoonViewer(
                             ?: layoutInfo.viewportSize.height
                         if (w <= 0 || h <= 0) return@with
                         val (x, y) = offset
-                        // Index++ = next page. With reverseLayout, that is still scrollRight().
+                        // Index++ = next page. With physical RTL horizontal, that is still scrollRight().
                         // LEFT/RIGHT zones flip in RTL so the left side advances (manga).
                         when (navigator().getAction(Offset(x / w, y / h))) {
                             NavigationRegion.MENU -> onMenuRegionClick()
@@ -160,20 +155,12 @@ fun WebtoonViewer(
                 }
             },
             onLongClick = { ofs ->
-                val info = if (horizontal) {
-                    // reverseLayout may place items with negative offsets; hit-test both axes.
-                    lazyListState.layoutInfo.visibleItemsInfo.find { info ->
-                        val start = info.offset.toFloat()
-                        val end = start + info.size
-                        ofs.x in start..end || ofs.x in end..start
-                    }
-                } else {
-                    lazyListState.layoutInfo.visibleItemsInfo.find { info ->
-                        info.offset <= ofs.y && info.offset + info.size > ofs.y
-                    }
+                val coord = if (horizontal) ofs.x else ofs.y
+                val info = stripState.layoutInfo.visibleItemsInfo.find { item ->
+                    coord >= item.screenStart && coord < item.screenEnd
                 }
                 if (info != null) {
-                    onSelectPage(items[info.index])
+                    items.getOrNull(info.index)?.let(onSelectPage)
                 }
             },
             onDoubleClick = doubleTap,
@@ -181,55 +168,35 @@ fun WebtoonViewer(
 
     val gap = if (withGaps) 15.dp else 0.dp
     val contentScale = if (horizontal) ContentScale.FillHeight else ContentScale.FillWidth
+    val cacheFraction = if (horizontal) WEBTOON_HORIZONTAL_CACHE_FRACTION else SCROLL_FRACTION
 
-    // key axis so LazyColumn ↔ LazyRow swap does not reuse incompatible item measure.
+    // key axis so vertical ↔ horizontal swap does not reuse incompatible item measure.
     readerDrawScaleProvider(zoomableState) {
         key(horizontal) {
-            if (horizontal) {
-                LazyRow(
-                    modifier = listModifier,
-                    state = lazyListState,
-                    reverseLayout = true,
-                    userScrollEnabled = !multiTouch,
-                    contentPadding = PaddingValues(vertical = sidePadding),
-                    horizontalArrangement = Arrangement.spacedBy(gap),
-                ) {
-                    items(
-                        count = pageCount,
-                        key = { index -> items.getOrNull(index)?.index ?: index },
-                    ) { index ->
-                        val page = items.getOrNull(index) ?: return@items
-                        PagerItem(
-                            page = page,
-                            pageLoader = pageLoader,
-                            contentScale = contentScale,
-                            viewportSize = viewportSize,
-                            horizontalStrip = true,
-                            modifier = Modifier.fillMaxHeight(),
-                        )
-                    }
-                }
-            } else {
-                LazyColumn(
-                    modifier = listModifier,
-                    state = lazyListState,
-                    userScrollEnabled = !multiTouch,
-                    contentPadding = PaddingValues(horizontal = sidePadding),
-                    verticalArrangement = Arrangement.spacedBy(gap),
-                ) {
-                    items(
-                        count = pageCount,
-                        key = { index -> items.getOrNull(index)?.index ?: index },
-                    ) { index ->
-                        val page = items.getOrNull(index) ?: return@items
-                        PagerItem(
-                            page = page,
-                            pageLoader = pageLoader,
-                            contentScale = contentScale,
-                            viewportSize = viewportSize,
-                        )
-                    }
-                }
+            WebtoonStrip(
+                state = stripState,
+                itemCount = pageCount,
+                horizontal = horizontal,
+                userScrollEnabled = !multiTouch,
+                sidePadding = sidePadding,
+                gap = gap,
+                cacheFraction = cacheFraction,
+                key = { index -> items.getOrNull(index)?.index ?: index },
+                isSizeStable = { index ->
+                    val page = items.getOrNull(index)
+                    page != null && page.layoutWidth > 0 && page.layoutHeight > 0
+                },
+                modifier = listModifier,
+            ) { index ->
+                val page = items.getOrNull(index) ?: return@WebtoonStrip
+                PagerItem(
+                    page = page,
+                    pageLoader = pageLoader,
+                    contentScale = contentScale,
+                    viewportSize = viewportSize,
+                    horizontalStrip = horizontal,
+                    modifier = if (horizontal) Modifier.fillMaxHeight() else Modifier,
+                )
             }
         }
     }

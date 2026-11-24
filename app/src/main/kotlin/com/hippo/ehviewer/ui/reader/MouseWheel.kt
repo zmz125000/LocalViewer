@@ -1,8 +1,8 @@
 package com.hippo.ehviewer.ui.reader
 
 import android.view.ViewConfiguration
+import androidx.compose.foundation.gestures.ScrollableState
 import androidx.compose.foundation.gestures.scrollBy
-import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -65,7 +65,7 @@ fun Modifier.readerMouseWheelPages(onStep: suspend (forward: Boolean) -> Unit): 
 
 /** Wheel scrolls a continuous strip. Vertical wheel drives a horizontal strip too. */
 @Composable
-fun Modifier.readerMouseWheelList(state: LazyListState): Modifier {
+fun Modifier.readerMouseWheelList(state: ScrollableState): Modifier {
     val context = LocalContext.current
     val pxPerLine = remember(context) {
         ViewConfiguration.get(context).scaledVerticalScrollFactor

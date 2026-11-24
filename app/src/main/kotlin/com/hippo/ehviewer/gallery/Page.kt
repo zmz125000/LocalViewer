@@ -14,8 +14,11 @@ class Page(
     val displayReadyFlow = MutableStateFlow(false)
 
     /** Last decoded pixel size; [reset] does not clear this so placeholders keep list height. */
+    @Volatile
     var layoutWidth: Int = 0
         private set
+
+    @Volatile
     var layoutHeight: Int = 0
         private set
 

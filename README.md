@@ -85,8 +85,11 @@ https://github.com/zmz125000/JXRConverter
 <img alt="Get it on GitHub" src="https://github.com/zmz125000/LocalViewer-art/blob/master/get-it-on-github.svg" width="200px"/>
 </a>
 
-![LocalViewer screenshot main](https://github.com/zmz125000/LocalViewer-art/blob/master/screenshots-04.webp)
-RAW images from [rawsamples.ch](https://www.rawsamples.ch/index.php/en/canon).
+![LocalViewer screenshot main](https://github.com/zmz125000/LocalViewer-art/blob/master/screenshots-04.webp)  
+
+![LocalViewer SMB video player](https://github.com/zmz125000/LocalViewer-art/blob/master/Screenshots/Screenshot_12.webp)  
+
+RAW image samples from [rawsamples.ch](https://www.rawsamples.ch/index.php/en/canon).
 ## Features
 * Webtoon gallery reader.
 * Local and network libraries for photo/video/comic/ebook.

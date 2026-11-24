@@ -88,7 +88,7 @@ private suspend fun Bitmap.ditherGrayscale(colorFilter: ColorFilter?): Bitmap? {
         for (y in 0 until height) {
             coroutineContext.ensureActive()
             output.getPixels(pixels, 0, width, 0, y, width, 1)
-            ditherRow(pixels, current, next)
+            ditherGrayscaleRow(pixels, current, next)
             output.setPixels(pixels, 0, width, 0, y, width, 1)
             val finished = current
             current = next
@@ -102,20 +102,28 @@ private suspend fun Bitmap.ditherGrayscale(colorFilter: ColorFilter?): Bitmap? {
     }
 }
 
-// Floyd–Steinberg error diffusion with the sample's 16-level palette and integer rounding.
-private fun ditherRow(pixels: IntArray, current: IntArray, next: IntArray) {
+private const val GRAY_SCALE = 1 shl 12
+private const val PALETTE_STEP = 17
+private const val SCALED_STEP = PALETTE_STEP * GRAY_SCALE
+
+// The padded rows store fractional gray levels in fixed point. Rounding each
+// share to a whole gray level would discard error and darken the result.
+internal fun ditherGrayscaleRow(pixels: IntArray, current: IntArray, next: IntArray) {
     for (x in pixels.indices) {
         val pixel = pixels[x]
         val red = pixel ushr 16 and 255
         val green = pixel ushr 8 and 255
         val blue = pixel and 255
-        val gray = (299 * red + 587 * green + 114 * blue) / 1000 + current[x + 1]
-        val quantized = ((gray + 8) / 17).coerceIn(0, 15) * 17
+        val luma = 299 * red + 587 * green + 114 * blue
+        val gray = (luma * GRAY_SCALE + 500) / 1000 + current[x + 1]
+        val quantized = ((gray + SCALED_STEP / 2) / SCALED_STEP).coerceIn(0, 15) * PALETTE_STEP
         pixels[x] = (pixel and -0x1000000) or (quantized * 0x010101)
-        val error = gray - quantized
-        current[x + 2] += (error * 7) shr 4
-        next[x] += (error * 3) shr 4
-        next[x + 1] += (error * 5) shr 4
-        next[x + 2] += error shr 4
+        val error = gray - quantized * GRAY_SCALE
+        // Round each signed fraction to nearest, with ties away from zero.
+        val rounding = if (error < 0) 7 else 8
+        current[x + 2] += (error * 7 + rounding) shr 4
+        next[x] += (error * 3 + rounding) shr 4
+        next[x + 1] += (error * 5 + rounding) shr 4
+        next[x + 2] += (error + rounding) shr 4
     }
 }

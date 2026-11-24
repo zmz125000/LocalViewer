@@ -1004,9 +1004,16 @@ abstract class PageLoader(
         val keepMax = ((if (slideshowShuffle != null) visible?.last else desired.maxOrNull()) ?: 0) + 1
         fun keep(i: Int) = i in desired || i in keepMin..keepMax
         for (i in 0 until n) {
-            if (keep(i)) continue
-            releaseRamPage(i)
             val page = pages.getOrNull(i) ?: continue
+            if (keep(i)) {
+                // prioritizeDecode already cancelled decode work outside [desired];
+                // don't leave an idle ±1 neighbor stuck in Loading with no active job.
+                if (i !in desired && page.status is PageStatus.Loading) {
+                    page.reset()
+                }
+                continue
+            }
+            releaseRamPage(i)
             when (page.status) {
                 is PageStatus.Ready, is PageStatus.Blocked, is PageStatus.Loading -> page.reset()
                 else -> Unit
