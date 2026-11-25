@@ -35,17 +35,18 @@
                 android:id="@id/exo_position"
                 android:layout_width="wrap_content"
                 android:layout_height="match_parent"
+                android:layout_marginStart="8dp"
                 android:fontFeatureSettings="tnum"
                 android:gravity="center"
-                android:minWidth="64dp"
                 android:textColor="@android:color/white"
                 android:textSize="13sp" />
 
-            <androidx.media3.ui.DefaultTimeBar
+            <!-- The track already has a 10dp inset for the dragged scrubber. -->
+            <com.hippo.ehviewer.ui.player.VideoScrubTimeBar
                 android:id="@id/exo_progress"
                 android:layout_width="0dp"
                 android:layout_height="match_parent"
-                android:layout_marginHorizontal="4dp"
+                android:layout_marginHorizontal="10dp"
                 android:layout_weight="1"
                 app:bar_gravity="center"
                 app:bar_height="3dp"
@@ -57,9 +58,9 @@
                 android:id="@id/exo_duration"
                 android:layout_width="wrap_content"
                 android:layout_height="match_parent"
+                android:layout_marginEnd="8dp"
                 android:fontFeatureSettings="tnum"
                 android:gravity="center"
-                android:minWidth="64dp"
                 android:textColor="@android:color/white"
                 android:textSize="13sp" />
 
@@ -78,7 +79,8 @@
         <FrameLayout
             android:id="@+id/video_controls_buttons"
             android:layout_width="match_parent"
-            android:layout_height="@dimen/video_transport_height"
+            android:layout_height="wrap_content"
+            android:paddingBottom="8dp"
             android:paddingHorizontal="4dp">
 
             <LinearLayout

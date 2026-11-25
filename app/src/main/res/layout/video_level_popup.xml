@@ -1,44 +1,36 @@
 <?xml version="1.0" encoding="utf-8"?>
-<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
-    android:layout_height="wrap_content"
-    android:paddingHorizontal="8dp"
-    android:paddingBottom="8dp">
+    android:layout_height="48dp"
+    android:clipChildren="false"
+    android:gravity="center_vertical"
+    android:layoutDirection="ltr"
+    android:orientation="horizontal">
 
-    <LinearLayout
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:orientation="vertical">
+    <ImageButton
+        android:id="@+id/video_level_icon"
+        android:layout_width="48dp"
+        android:layout_height="48dp"
+        android:background="@null"
+        android:padding="12dp"
+        android:tint="?android:attr/textColorPrimary" />
 
-        <LinearLayout
-            android:id="@+id/video_level_header"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:gravity="bottom"
-            android:minHeight="48dp"
-            android:orientation="horizontal"
-            android:paddingBottom="8dp"
-            android:paddingHorizontal="12dp">
+    <SeekBar
+        android:id="@+id/video_level_slider"
+        android:layout_width="0dp"
+        android:layout_height="48dp"
+        android:layout_weight="1"
+        android:background="@null"
+        android:paddingStart="0dp"
+        android:paddingEnd="0dp" />
 
-            <TextView
-                android:id="@+id/video_level_title"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:textAppearance="?android:attr/textAppearanceListItemSmall" />
+    <TextView
+        android:id="@+id/video_level_value"
+        android:layout_width="wrap_content"
+        android:layout_height="match_parent"
+        android:fontFeatureSettings="tnum"
+        android:gravity="center"
+        android:paddingHorizontal="12dp"
+        android:textAppearance="?android:attr/textAppearanceListItemSmall" />
 
-            <TextView
-                android:id="@+id/video_level_value"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginStart="24dp"
-                android:textAppearance="?android:attr/textAppearanceListItemSmall" />
-        </LinearLayout>
-
-        <SeekBar
-            android:id="@+id/video_level_slider"
-            android:layout_width="match_parent"
-            android:layout_height="48dp"
-            android:paddingHorizontal="12dp" />
-    </LinearLayout>
-</ScrollView>
+</LinearLayout>

@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.input.TextFieldLineLimits
 import androidx.compose.foundation.text.input.TextFieldState
@@ -37,6 +38,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
+import androidx.compose.material3.TopAppBarState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -335,10 +337,27 @@ fun Modifier.browseSearchClearFocusOnInteract(state: BrowseFolderSearchState): M
         }
 }
 
-/** Folder name in the folder-view top bar. Tap toggles the explorer side panel. */
+internal class BrowseScrollToTop(private val appBar: TopAppBarState) {
+    private var activeGrid: LazyGridState? = null
+
+    @Composable
+    fun Attach(state: LazyGridState) {
+        DisposableEffect(this, state) {
+            activeGrid = state
+            onDispose { if (activeGrid === state) activeGrid = null }
+        }
+    }
+
+    fun scroll() {
+        activeGrid?.requestScrollToItem(0)
+        appBar.heightOffset = 0f
+        appBar.contentOffset = 0f
+    }
+}
+
+/** Folder name in the folder-view top bar. Tap returns to the top of the listing. */
 @Composable
-fun BrowseTopBarFolderTitle(title: String) {
-    val panel = LocalExplorerPanel.current
+fun BrowseTopBarFolderTitle(title: String, onClick: () -> Unit) {
     Text(
         title,
         maxLines = 1,
@@ -348,7 +367,7 @@ fun BrowseTopBarFolderTitle(title: String) {
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null,
-                onClick = { panel.toggle() },
+                onClick = onClick,
             ),
     )
 }

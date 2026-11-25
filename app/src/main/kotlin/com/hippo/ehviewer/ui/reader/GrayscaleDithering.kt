@@ -1,9 +1,6 @@
 package com.hippo.ehviewer.ui.reader
 
 import android.graphics.Bitmap
-import android.graphics.Canvas
-import android.graphics.Paint
-import android.graphics.Rect
 import android.util.Log
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -11,17 +8,16 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.graphics.ColorMatrix
+import androidx.compose.ui.graphics.ColorMatrixColorFilter
 import androidx.compose.ui.graphics.FilterQuality
-import androidx.compose.ui.graphics.asAndroidColorFilter
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.painter.BitmapPainter
 import androidx.compose.ui.graphics.painter.Painter
 import coil3.BitmapImage
-import com.hippo.ehviewer.Settings
-import com.hippo.ehviewer.collectAsState
 import com.hippo.ehviewer.image.Image
 import kotlin.coroutines.coroutineContext
+import kotlin.math.roundToInt
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ensureActive
@@ -33,17 +29,14 @@ private val ditheringDispatcher = Dispatchers.Default.limitedParallelism(1)
 @Composable
 internal fun rememberGrayscaleDitheredPainter(
     image: Image,
-    colorFilter: ColorFilter?,
-    isVisible: () -> Boolean,
+    colorFilter: ColorMatrixColorFilter,
 ): Painter? {
-    val enabled by Settings.readerGrayscaleDithering.collectAsState()
-    if (!enabled || image.isHdrContent || image.isWideGamutContent || !isVisible()) return null
     val source = (image.innerImage as? BitmapImage)?.bitmap ?: return null
     var painter by remember(image, colorFilter) { mutableStateOf<Painter?>(null) }
     LaunchedEffect(image, colorFilter) {
         if (!image.pin()) return@LaunchedEffect
         val bitmap = try {
-            withContext(ditheringDispatcher) { source.ditherGrayscale(colorFilter) }
+            withContext(ditheringDispatcher) { source.ditherGrayscale(colorFilter.copyColorMatrix()) }
         } catch (e: CancellationException) {
             throw e
         } catch (e: RuntimeException) {
@@ -60,27 +53,10 @@ internal fun rememberGrayscaleDitheredPainter(
     return painter
 }
 
-private suspend fun Bitmap.ditherGrayscale(colorFilter: ColorFilter?): Bitmap? {
-    val output = if (colorFilter == null) {
-        copy(Bitmap.Config.ARGB_8888, true) ?: return null
-    } else {
-        Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
-    }
+private suspend fun Bitmap.ditherGrayscale(grayscale: ColorMatrix): Bitmap? {
+    val output = copy(Bitmap.Config.ARGB_8888, true) ?: return null
 
     try {
-        if (colorFilter != null) {
-            val source = if (config == Bitmap.Config.HARDWARE) {
-                checkNotNull(copy(Bitmap.Config.ARGB_8888, false))
-            } else {
-                this
-            }
-            try {
-                val paint = Paint().apply { this.colorFilter = colorFilter.asAndroidColorFilter() }
-                Canvas(output).drawBitmap(source, null, Rect(0, 0, width, height), paint)
-            } finally {
-                if (source !== this) source.recycle()
-            }
-        }
         val pixels = IntArray(width)
         // Pad both sides so diffusion beyond the bitmap is discarded at the edges.
         var current = IntArray(width + 2)
@@ -88,7 +64,7 @@ private suspend fun Bitmap.ditherGrayscale(colorFilter: ColorFilter?): Bitmap? {
         for (y in 0 until height) {
             coroutineContext.ensureActive()
             output.getPixels(pixels, 0, width, 0, y, width, 1)
-            ditherGrayscaleRow(pixels, current, next)
+            ditherGrayscaleRow(pixels, current, next, grayscale)
             output.setPixels(pixels, 0, width, 0, y, width, 1)
             val finished = current
             current = next
@@ -106,16 +82,29 @@ private const val GRAY_SCALE = 1 shl 12
 private const val PALETTE_STEP = 17
 private const val SCALED_STEP = PALETTE_STEP * GRAY_SCALE
 
+internal fun ditherGrayscaleMatrix() = ColorMatrix(
+    floatArrayOf(
+        .299f, .587f, .114f, 0f, 0f,
+        .299f, .587f, .114f, 0f, 0f,
+        .299f, .587f, .114f, 0f, 0f,
+        0f, 0f, 0f, 1f, 0f,
+    ),
+)
+
 // The padded rows store fractional gray levels in fixed point. Rounding each
 // share to a whole gray level would discard error and darken the result.
-internal fun ditherGrayscaleRow(pixels: IntArray, current: IntArray, next: IntArray) {
+internal fun ditherGrayscaleRow(pixels: IntArray, current: IntArray, next: IntArray, grayscale: ColorMatrix) {
+    val r = grayscale[0, 0]
+    val g = grayscale[0, 1]
+    val b = grayscale[0, 2]
+    val offset = grayscale[0, 4]
     for (x in pixels.indices) {
         val pixel = pixels[x]
         val red = pixel ushr 16 and 255
         val green = pixel ushr 8 and 255
         val blue = pixel and 255
-        val luma = 299 * red + 587 * green + 114 * blue
-        val gray = (luma * GRAY_SCALE + 500) / 1000 + current[x + 1]
+        val luma = (r * red + g * green + b * blue + offset).coerceIn(0f, 255f)
+        val gray = (luma * GRAY_SCALE).roundToInt() + current[x + 1]
         val quantized = ((gray + SCALED_STEP / 2) / SCALED_STEP).coerceIn(0, 15) * PALETTE_STEP
         pixels[x] = (pixel and -0x1000000) or (quantized * 0x010101)
         val error = gray - quantized * GRAY_SCALE

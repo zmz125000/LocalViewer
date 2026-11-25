@@ -69,6 +69,8 @@ import com.hippo.ehviewer.ui.player.PreparedInternalVideo
 import com.hippo.ehviewer.ui.player.SeekPlayerView
 import com.hippo.ehviewer.ui.player.SiblingTrackChoice
 import com.hippo.ehviewer.ui.player.StreamDocDataSource
+import com.hippo.ehviewer.ui.player.VideoLevelAdjustment
+import com.hippo.ehviewer.ui.player.VideoLevelControl
 import com.hippo.ehviewer.ui.player.VideoLoopMode
 import com.hippo.ehviewer.ui.player.applyVideoSubtitleHistory
 import com.hippo.ehviewer.ui.player.audioBoostFolder
@@ -121,7 +123,7 @@ class VideoPlayerActivity : AppCompatActivity() {
     private var playerView: SeekPlayerView? = null
     private var playlistSessionId: String? = null
     private var playlistIndex: Int = 0
-    private var loopMode = VideoLoopMode.OFF
+    private var loopMode = VideoLoopMode.NEXT
     private var playlistDiscovery: Job? = null
     private var changingItem = false
     private var rotateWithVideo = true
@@ -168,7 +170,7 @@ class VideoPlayerActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         subtitleHistory = Settings.media3SubtitleHistory.value
         requestedHdrMode = Settings.media3HdrToneMapping.value
-        loopMode = VideoLoopMode.entries.getOrNull(Settings.media3VideoLoopMode.value) ?: VideoLoopMode.OFF
+        loopMode = VideoLoopMode.entries.getOrNull(Settings.media3VideoLoopMode.value) ?: VideoLoopMode.NEXT
         customMediaVolume = Settings.media3PlayerVolume.value.takeIf { it in 0f..1f }
         playerBrightness = Settings.media3PlayerBrightness.value.takeIf { it in 1..100 }
         applyBrightness()
@@ -312,6 +314,7 @@ class VideoPlayerActivity : AppCompatActivity() {
         applyBrightness(isInPictureInPictureMode)
         playerView?.useController = !isInPictureInPictureMode
         if (isInPictureInPictureMode) {
+            playerView?.cancelSurfaceDrag()
             playerView?.hideController()
         } else {
             hideSystemBars()
@@ -358,11 +361,17 @@ class VideoPlayerActivity : AppCompatActivity() {
         }
         findViewById<ImageButton>(R.id.video_volume).apply {
             tooltipText = contentDescription
-            setOnClickListener(::showVolumeMenu)
+            setOnClickListener { playerView?.showLevelMenu(it, VideoLevelControl.VOLUME) }
         }
         findViewById<ImageButton>(R.id.video_brightness).apply {
             tooltipText = contentDescription
-            setOnClickListener(::showBrightnessMenu)
+            setOnClickListener { playerView?.showLevelMenu(it, VideoLevelControl.BRIGHTNESS) }
+        }
+        playerView?.levelAdjustment = { control ->
+            when (control) {
+                VideoLevelControl.VOLUME -> volumeAdjustment()
+                VideoLevelControl.BRIGHTNESS -> brightnessAdjustment()
+            }
         }
         updateVolumeButton()
         updateBrightnessButton()
@@ -451,16 +460,14 @@ class VideoPlayerActivity : AppCompatActivity() {
         }
     }
 
-    private fun showVolumeMenu(anchor: View) {
+    private fun volumeAdjustment(): VideoLevelAdjustment {
         val stream = AudioManager.STREAM_MUSIC
         val volume = audioManager.getStreamVolume(stream)
         updateVolumeButton(volume)
-        playerView?.showLevelMenu(
-            anchor,
-            getString(R.string.video_volume),
-            audioManager.getStreamMinVolume(stream)..audioManager.getStreamMaxVolume(stream),
-            volume,
-            systemLevel = originalMediaVolumes[mediaVolumeRoute()] ?: volume,
+        return VideoLevelAdjustment(
+            range = audioManager.getStreamMinVolume(stream)..audioManager.getStreamMaxVolume(stream),
+            level = volume.takeIf { customMediaVolume != null },
+            systemLevel = { audioManager.getStreamVolume(stream) },
             adjustable = !audioManager.isVolumeFixed,
         ) { level ->
             val current = if (level == null) {
@@ -471,7 +478,7 @@ class VideoPlayerActivity : AppCompatActivity() {
                 setPlayerMediaVolume(level).also(::rememberCurrentPlayerVolume)
             }
             updateVolumeButton(current)
-            current
+            current.takeIf { level != null }
         }
     }
 
@@ -520,23 +527,21 @@ class VideoPlayerActivity : AppCompatActivity() {
         }
     }
 
-    private fun showBrightnessMenu(anchor: View) {
-        val brightness = AndroidSettings.System.getInt(contentResolver, AndroidSettings.System.SCREEN_BRIGHTNESS, 128)
-        playerView?.showLevelMenu(
-            anchor,
-            getString(R.string.video_brightness),
-            1..100,
-            playerBrightness,
-            systemLevel = (brightness * 100f / 255f).roundToInt(),
-        ) { level ->
-            if (level != playerBrightness) {
-                playerBrightness = level
-                applyBrightness()
-                storePlayerSettings { it[Settings.media3PlayerBrightness] = level ?: -1 }
-                updateBrightnessButton()
-            }
-            level
+    private fun brightnessAdjustment(): VideoLevelAdjustment = VideoLevelAdjustment(
+        range = 1..100,
+        level = playerBrightness,
+        systemLevel = {
+            val brightness = AndroidSettings.System.getInt(contentResolver, AndroidSettings.System.SCREEN_BRIGHTNESS, 128)
+            (brightness * 100f / 255f).roundToInt()
+        },
+    ) { level ->
+        if (level != playerBrightness) {
+            playerBrightness = level
+            applyBrightness()
+            storePlayerSettings { it[Settings.media3PlayerBrightness] = level ?: -1 }
+            updateBrightnessButton()
         }
+        level
     }
 
     private fun applyBrightness(inPip: Boolean = isInPictureInPictureMode) {
@@ -711,6 +716,8 @@ class VideoPlayerActivity : AppCompatActivity() {
             VideoLoopMode.OFF -> R.string.video_loop_off
             VideoLoopMode.VIDEO -> R.string.video_loop_video
             VideoLoopMode.PLAYLIST -> R.string.video_playlist
+            VideoLoopMode.NEXT -> R.string.video_loop_next
+            VideoLoopMode.EXIT -> R.string.video_loop_exit
         },
     )
 
@@ -726,7 +733,7 @@ class VideoPlayerActivity : AppCompatActivity() {
 
     private fun refreshLoopButton() {
         findViewById<ImageButton>(R.id.video_loop).apply {
-            isSelected = loopMode != VideoLoopMode.OFF
+            isSelected = loopMode == VideoLoopMode.VIDEO || loopMode == VideoLoopMode.PLAYLIST
             alpha = if (isSelected) 1f else 0.6f
             stateDescription = loopModeLabel(loopMode)
         }
@@ -740,14 +747,21 @@ class VideoPlayerActivity : AppCompatActivity() {
     }
 
     private fun onVideoEnded(exo: ExoPlayer) {
-        if (changingItem || loopMode == VideoLoopMode.VIDEO) return
-        val session = InternalVideoPlaylistRegistry.get(playlistSessionId)
-        if (session?.discoverSiblings == true) return
-        val target = loopMode.adjacentIndex(playlistIndex, session?.items?.size ?: 0, 1)
-        if (target != null) {
-            openPlaylistItem(target)
-        } else if (loopMode == VideoLoopMode.PLAYLIST) {
-            exo.seekTo(0L)
+        if (changingItem || isFinishing || !exo.playWhenReady) return
+        when (loopMode) {
+            VideoLoopMode.OFF -> exo.pause()
+            VideoLoopMode.EXIT -> finish()
+            VideoLoopMode.VIDEO -> Unit // Media3 handles repeat-one itself.
+            VideoLoopMode.NEXT, VideoLoopMode.PLAYLIST -> {
+                val session = InternalVideoPlaylistRegistry.get(playlistSessionId)
+                if (session?.discoverSiblings == true) return
+                val target = loopMode.adjacentIndex(playlistIndex, session?.items?.size ?: 0, 1)
+                if (target != null) {
+                    openPlaylistItem(target)
+                } else if (loopMode == VideoLoopMode.PLAYLIST) {
+                    exo.seekTo(0L)
+                }
+            }
         }
     }
 
@@ -970,7 +984,7 @@ class VideoPlayerActivity : AppCompatActivity() {
                     if (customMediaVolume != null && mediaVolumeRoute() in originalMediaVolumes) {
                         rememberCurrentPlayerVolume(current)
                     }
-                    playerView?.refreshLevelMenu(R.id.video_volume, current)
+                    playerView?.refreshLevelMenu(R.id.video_volume, current.takeIf { customMediaVolume != null })
                 }
 
                 override fun onVideoSizeChanged(videoSize: VideoSize) {

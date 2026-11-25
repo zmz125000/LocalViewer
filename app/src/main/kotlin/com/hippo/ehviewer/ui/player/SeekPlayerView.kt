@@ -21,9 +21,12 @@ import android.view.ViewGroup
 import android.view.WindowInsets
 import android.view.accessibility.CaptioningManager
 import android.widget.ArrayAdapter
+import android.widget.FrameLayout
 import android.widget.ImageButton
+import android.widget.ImageView
 import android.widget.ListView
 import android.widget.PopupWindow
+import android.widget.ProgressBar
 import android.widget.SeekBar
 import android.widget.TextView
 import android.widget.Toast
@@ -41,11 +44,11 @@ import com.ehviewer.core.i18n.R as I18nR
 import com.hippo.ehviewer.R
 import kotlin.math.abs
 import kotlin.math.roundToInt
+import kotlin.math.sign
 
 /**
  * Stock [PlayerView] plus surface gestures: tap toggles chrome, double-tap closes the player,
- * horizontal drag seeks (rate-limited: one minute per screen width in portrait, two in
- * landscape). Touches on the
+ * horizontal drag seeks (rate-limited, with more travel in landscape and on long videos). Touches on the
  * visible bottom bar go to Media3.
  *
  * Media3's built-in chrome animation slides the bottom bar; we disable it and fade alpha
@@ -68,6 +71,7 @@ class SeekPlayerView @JvmOverloads constructor(
     var playlistSwipeMinutes = 0
 
     internal var onTrackSelectionChanged: ((type: Int, subtitleLanguage: String?) -> Unit)? = null
+    internal var levelAdjustment: ((VideoLevelControl) -> VideoLevelAdjustment)? = null
 
     private val touchSlop = ViewConfiguration.get(context).scaledTouchSlop
     private val edgeGuardPx = 32f * resources.displayMetrics.density
@@ -84,7 +88,9 @@ class SeekPlayerView @JvmOverloads constructor(
     private var canStartDrag = false
 
     private var controlMenu: PopupWindow? = null
-    private var levelMenuRefresh: ((Int, Int) -> Unit)? = null
+    private var levelMenuRefresh: ((Int, Int?) -> Unit)? = null
+    private var levelDrag: LevelDrag? = null
+    private var fadingLevelPanel: View? = null
     private val captions = context.getSystemService(CaptioningManager::class.java)
     private val captionListener = object : CaptioningManager.CaptioningChangeListener() {
         override fun onEnabledChanged(enabled: Boolean) = updateCaptionStyle()
@@ -180,7 +186,9 @@ class SeekPlayerView @JvmOverloads constructor(
     override fun getControllerShowTimeoutMs(): Int = autoHideTimeoutMs
 
     override fun setPlayer(player: Player?) {
-        getPlayer()?.removeListener(playbackListener)
+        val previous = getPlayer()
+        if (previous !== player) cancelSurfaceDrag()
+        previous?.removeListener(playbackListener)
         super.setPlayer(player)
         player?.addListener(playbackListener)
         onPlaybackUiChanged()
@@ -355,7 +363,7 @@ class SeekPlayerView @JvmOverloads constructor(
 
     private fun scheduleAutoHide() {
         removeCallbacks(autoHideRunnable)
-        if (controlMenu != null || autoHideTimeoutMs <= 0 || hiding) return
+        if (controlMenu != null || levelDrag != null || seeking || autoHideTimeoutMs <= 0 || hiding) return
         if (!shouldAutoHide()) return
         postDelayed(autoHideRunnable, autoHideTimeoutMs.toLong())
     }
@@ -488,68 +496,198 @@ class SeekPlayerView @JvmOverloads constructor(
         }
     }
 
-    internal fun showLevelMenu(
-        anchor: View,
-        title: String,
-        range: IntRange,
-        level: Int?,
-        systemLevel: Int? = null,
-        adjustable: Boolean = true,
-        onLevelChanged: (Int?) -> Int?,
+    private inner class LevelPanel(
+        private val control: VideoLevelControl,
+        private val adjustment: VideoLevelAdjustment,
+        vertical: Boolean = false,
     ) {
-        val panel = LayoutInflater.from(context).inflate(R.layout.video_level_popup, null)
-        val header = panel.findViewById<View>(R.id.video_level_header)
-        val titleView = panel.findViewById<TextView>(R.id.video_level_title)
-        val value = panel.findViewById<TextView>(R.id.video_level_value)
-        val slider = panel.findViewById<SeekBar>(R.id.video_level_slider)
-        val systemLabel = context.getString(R.string.video_level_system)
-        slider.contentDescription = title
-        slider.min = range.first
-        slider.max = range.last
-        slider.isEnabled = adjustable
+        val view: View = LayoutInflater.from(context).inflate(
+            if (vertical) R.layout.video_level_gesture_overlay else R.layout.video_level_popup,
+            null,
+        )
+        private val icon = view.findViewById<ImageView>(R.id.video_level_icon)
+        private val value = view.findViewById<TextView>(R.id.video_level_value)
+        private val slider = view.findViewById<ProgressBar>(R.id.video_level_slider)
+        private val systemLabel = context.getString(R.string.video_level_system)
+        private val shortSystemLabel = context.getString(R.string.video_level_system_short)
+        private val valueWidth: Int
 
-        fun showLevel(current: Int?) {
-            slider.progress = (current ?: systemLevel ?: range.first).coerceIn(range)
-            value.text = if (current == null) {
-                systemLabel
-            } else {
-                val percent = (current * 100.0 / maxOf(range.last, 1)).roundToInt()
-                context.getString(R.string.video_level_percent, percent)
+        init {
+            slider.contentDescription = context.getString(control.title)
+            slider.min = adjustment.range.first
+            slider.max = adjustment.range.last
+            slider.isEnabled = adjustment.adjustable
+            val widestValue = maxOf(
+                value.paint.measureText(shortSystemLabel),
+                value.paint.measureText(maxOf(100, adjustment.range.last).toString()),
+            )
+            valueWidth = widestValue.roundToInt() + 2 * dp(12)
+            if (!vertical) value.minWidth = valueWidth
+            render(adjustment.level)
+        }
+
+        fun popupWidth(availableWidth: Int): Int = dp(48) + valueWidth + (referenceSliderWidth(availableWidth) * 3f / 5).roundToInt()
+
+        fun sizeVerticalTrack(availableWidth: Int, availableHeight: Int) {
+            value.measure(
+                MeasureSpec.makeMeasureSpec(dp(48).coerceAtMost(availableWidth), MeasureSpec.EXACTLY),
+                MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED),
+            )
+            val availableTrackHeight = availableHeight - icon.layoutParams.height - value.measuredHeight
+            val length = (referenceSliderWidth(availableWidth) * .5f).roundToInt()
+                .coerceIn(1, availableTrackHeight.coerceAtLeast(1))
+            val track = view.findViewById<View>(R.id.video_level_track)
+            track.layoutParams = track.layoutParams.apply { height = length }
+            slider.layoutParams = slider.layoutParams.apply { width = length }
+        }
+
+        private fun referenceSliderWidth(availableWidth: Int): Int = (minOf(dp(264), availableWidth) - dp(48) - valueWidth).coerceAtLeast(1)
+
+        fun render(current: Int?) {
+            val effective = (current ?: adjustment.systemLevel()).coerceIn(adjustment.range)
+            slider.progress = effective
+            icon.setImageResource(control.icon(effective))
+            value.text = current?.toString() ?: shortSystemLabel
+            value.contentDescription = systemLabel.takeIf { current == null }
+        }
+
+        fun enableControls() {
+            (slider as SeekBar).setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onStartTrackingTouch(seekBar: SeekBar) = Unit
+                override fun onStopTrackingTouch(seekBar: SeekBar) = Unit
+
+                override fun onProgressChanged(seekBar: SeekBar, progress: Int, fromUser: Boolean) {
+                    if (fromUser) render(adjustment.setLevel(progress))
+                }
+            })
+            icon.contentDescription = context.getString(
+                if (control == VideoLevelControl.VOLUME) R.string.video_volume_mute else R.string.video_level_reset_system,
+            )
+            icon.setOnClickListener {
+                val level = if (control == VideoLevelControl.VOLUME) adjustment.range.first else null
+                render(adjustment.setLevel(level))
             }
-        }
-
-        val maxLabel = context.getString(R.string.video_level_percent, 100)
-        value.text = listOf(systemLabel, maxLabel).maxBy { value.paint.measureText(it) }
-        // Reserve the same width for both overlays, including translated titles.
-        val unspecified = MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED)
-        val headerWidth = listOf(R.string.video_volume, R.string.video_brightness).maxOf { titleRes ->
-            titleView.setText(titleRes)
-            header.measure(unspecified, unspecified)
-            header.measuredWidth
-        }
-        val popupWidth = headerWidth + panel.paddingLeft + panel.paddingRight
-        titleView.text = title
-        showLevel(level)
-        if (showControlsPopup(anchor, panel, popupWidth) == null) return
-        levelMenuRefresh = { anchorId, current ->
-            if (anchorId == anchor.id) showLevel(current)
-        }
-        slider.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-            override fun onStartTrackingTouch(seekBar: SeekBar) = Unit
-            override fun onStopTrackingTouch(seekBar: SeekBar) = Unit
-
-            override fun onProgressChanged(seekBar: SeekBar, progress: Int, fromUser: Boolean) {
-                if (fromUser) showLevel(onLevelChanged(progress))
-            }
-        })
-        if (systemLevel != null) {
-            header.isFocusable = true
-            header.setOnClickListener { showLevel(onLevelChanged(null)) }
+            icon.isEnabled = adjustment.adjustable
+            value.isFocusable = true
+            value.setOnClickListener { render(adjustment.setLevel(null)) }
         }
     }
 
-    internal fun refreshLevelMenu(anchorId: Int, level: Int) {
+    private inner class LevelDrag(
+        val control: VideoLevelControl,
+        private val adjustment: VideoLevelAdjustment,
+        private val activationY: Float,
+    ) {
+        val panel = LevelPanel(control, adjustment, vertical = true)
+        private val startLevel = (adjustment.level ?: adjustment.systemLevel()).coerceIn(adjustment.range)
+        private var requestedLevel = startLevel
+
+        fun update(totalY: Float) {
+            val target = videoDragLevel(startLevel, totalY - activationY, height, adjustment.range)
+            if (target == requestedLevel) return
+            requestedLevel = target
+            panel.render(adjustment.setLevel(target))
+        }
+    }
+
+    internal fun showLevelMenu(anchor: View, control: VideoLevelControl) {
+        val adjustment = levelAdjustment?.invoke(control) ?: return
+        val panel = LevelPanel(control, adjustment)
+        panel.enableControls()
+        val frame = Rect()
+        anchor.getWindowVisibleDisplayFrame(frame)
+        if (showControlsPopup(anchor, panel.view, panel.popupWidth(frame.width() - 2 * dp(8))) == null) return
+        levelMenuRefresh = { anchorId, current ->
+            if (anchorId == anchor.id) panel.render(current)
+        }
+    }
+
+    internal fun refreshLevelMenu(anchorId: Int, level: Int?) {
         levelMenuRefresh?.invoke(anchorId, level)
+        if (anchorId == R.id.video_volume) {
+            levelDrag?.takeIf { it.control == VideoLevelControl.VOLUME }?.panel?.render(level)
+        }
+    }
+
+    private fun dp(value: Int): Int = (value * resources.displayMetrics.density).roundToInt()
+
+    private fun startLevelDrag(control: VideoLevelControl, totalY: Float): Boolean {
+        val adjustment = levelAdjustment?.invoke(control)?.takeIf { it.adjustable } ?: return false
+        val drag = LevelDrag(control, adjustment, totalY.sign * scrubStartPx)
+        val panel = drag.panel.view
+        val gap = dp(16)
+        val insets = rootWindowInsets?.getInsets(WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout())
+        val left = gap + (insets?.left ?: 0)
+        val right = gap + (insets?.right ?: 0)
+        val controlsHeight = if (isControllerFullyVisible) {
+            findViewById<View>(androidx.media3.ui.R.id.exo_bottom_bar)?.height ?: 0
+        } else {
+            0
+        }
+        val bottom = gap + maxOf(controlsHeight, insets?.bottom ?: 0)
+        val availableWidth = (width - left - right).coerceAtLeast(1)
+        drag.panel.sizeVerticalTrack(availableWidth, height - bottom - gap - (insets?.top ?: 0))
+        panel.background = controlMenuBackground()
+        panel.clipToOutline = true
+        panel.elevation = 8 * resources.displayMetrics.density
+        panel.importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
+        panel.alpha = 0f
+        val side = if (control == VideoLevelControl.VOLUME) Gravity.LEFT else Gravity.RIGHT
+        addView(
+            panel,
+            FrameLayout.LayoutParams(
+                dp(48).coerceAtMost(availableWidth),
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                Gravity.BOTTOM or side,
+            ).apply {
+                leftMargin = left
+                rightMargin = right
+                bottomMargin = bottom
+            },
+        )
+        panel.animate().alpha(1f).setDuration(LEVEL_OVERLAY_FADE_MS).start()
+        levelDrag = drag
+        removeCallbacks(autoHideRunnable)
+        drag.update(totalY)
+        return true
+    }
+
+    private fun clearLevelDrag(fade: Boolean = false) {
+        fadingLevelPanel?.let {
+            it.animate().cancel()
+            removeView(it)
+            fadingLevelPanel = null
+        }
+        val drag = levelDrag ?: return
+        levelDrag = null
+        val panel = drag.panel.view
+        panel.animate().cancel()
+        if (!fade) {
+            removeView(panel)
+            return
+        }
+        fadingLevelPanel = panel
+        panel.animate().alpha(0f).setDuration(LEVEL_OVERLAY_FADE_MS).withEndAction {
+            fadingLevelPanel = null
+            removeView(panel)
+        }.start()
+    }
+
+    internal fun cancelSurfaceDrag() {
+        clearLevelDrag()
+        finishSeekDrag()
+        scrollingNext = false
+        canStartDrag = false
+    }
+
+    private fun controlMenuBackground(): GradientDrawable {
+        val colors = context.obtainStyledAttributes(intArrayOf(android.R.attr.colorBackgroundFloating))
+        val color = colors.getColor(0, context.getColor(android.R.color.background_dark))
+        colors.recycle()
+        return GradientDrawable().apply {
+            cornerRadius = 12 * resources.displayMetrics.density
+            setColor(color)
+        }
     }
 
     private fun showControlsPopup(anchor: View, content: View, contentWidth: Int): PopupWindow? {
@@ -576,22 +714,10 @@ class SeekPlayerView @JvmOverloads constructor(
         val showAbove = popupHeight <= above
         val left = location[0].coerceIn(frame.left + gap, frame.right - gap - popupWidth)
         val top = if (showAbove) location[1] - popupHeight - gap else location[1] + anchor.height + gap
-        val colors = context.obtainStyledAttributes(intArrayOf(android.R.attr.colorBackgroundFloating))
-        val menuColor = colors.getColor(0, context.getColor(android.R.color.background_dark))
-        colors.recycle()
-        val shape = GradientDrawable().apply {
-            cornerRadius = 12 * density
-            setColor(menuColor)
-        }
-        content.background = shape
+        content.background = controlMenuBackground()
         content.clipToOutline = true
         val popup = PopupWindow(content, popupWidth, popupHeight, true).apply {
-            setBackgroundDrawable(
-                GradientDrawable().apply {
-                    cornerRadius = shape.cornerRadius
-                    setColor(menuColor)
-                },
-            )
+            setBackgroundDrawable(controlMenuBackground())
             isOutsideTouchable = true
             setIsLaidOutInScreen(true)
             setIsClippedToScreen(true)
@@ -623,6 +749,7 @@ class SeekPlayerView @JvmOverloads constructor(
     override fun onDetachedFromWindow() {
         captions?.removeCaptioningChangeListener(captionListener)
         controlMenu?.dismiss()
+        cancelSurfaceDrag()
         removeCallbacks(autoHideRunnable)
         super.onDetachedFromWindow()
     }
@@ -691,16 +818,20 @@ class SeekPlayerView @JvmOverloads constructor(
                 distanceX: Float,
                 distanceY: Float,
             ): Boolean {
-                if (!canStartDrag) return false
+                if (!canStartDrag || !useController) return false
                 val current = player ?: return false
                 val totalX = e2.x - downX
                 val totalY = e2.y - downY
-                if (scrollingNext) return true
-                if (!seeking && playlistSwipeAllowed(playlistSwipeMinutes, current.duration) &&
-                    abs(totalY) >= scrubStartPx && abs(totalY) > abs(totalX) * 1.5f
-                ) {
-                    scrollingNext = true
+                levelDrag?.let {
+                    it.update(totalY)
                     return true
+                }
+                if (scrollingNext) return true
+                if (!seeking && abs(totalY) >= scrubStartPx && abs(totalY) > abs(totalX) * 1.5f) {
+                    val control = videoLevelControlAt(downX, width)
+                    if (control != null) return startLevelDrag(control, totalY)
+                    scrollingNext = playlistSwipeAllowed(playlistSwipeMinutes, current.duration)
+                    return scrollingNext
                 }
                 if (!seeking) {
                     if (abs(totalX) < scrubStartPx || abs(totalX) <= abs(totalY) * 1.5f) return false
@@ -723,6 +854,7 @@ class SeekPlayerView @JvmOverloads constructor(
                         scrubWindowMs(width, height),
                     )
                     ).coerceIn(0L, duration)
+                scrubTimeBar?.showDragPosition(target)
                 dispatchSeek(current, target)
                 return true
             }
@@ -736,9 +868,8 @@ class SeekPlayerView @JvmOverloads constructor(
             val insets = rootWindowInsets?.getInsets(WindowInsets.Type.systemGestures())
             val left = maxOf(edgeGuardPx, (insets?.left ?: 0).toFloat())
             val right = maxOf(edgeGuardPx, (insets?.right ?: 0).toFloat())
+            cancelSurfaceDrag()
             canStartDrag = downX in left..(width - right)
-            seeking = false
-            scrollingNext = false
             lastSeekMs = C.TIME_UNSET
             lastSeekAt = 0L
             shownOnThisTap = false
@@ -760,6 +891,12 @@ class SeekPlayerView @JvmOverloads constructor(
         val handled = gestures.onTouchEvent(event)
         when (event.actionMasked) {
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                if (levelDrag != null) {
+                    if (event.actionMasked == MotionEvent.ACTION_UP) levelDrag?.update(event.y - downY)
+                    clearLevelDrag(fade = true)
+                    if (isControllerFullyVisible) scheduleAutoHide()
+                    return true
+                }
                 if (scrollingNext) {
                     val up = event.actionMasked == MotionEvent.ACTION_UP
                     val totalY = event.y - downY
@@ -769,13 +906,12 @@ class SeekPlayerView @JvmOverloads constructor(
                     }
                     return true
                 }
-                val wasSeeking = seeking
-                if (event.actionMasked == MotionEvent.ACTION_UP && seeking && lastSeekMs != C.TIME_UNSET) {
-                    player?.seekTo(lastSeekMs)
-                }
-                seeking = false
-                lastSeekMs = C.TIME_UNSET
-                if (wasSeeking) {
+                if (seeking) {
+                    val current = player
+                    if (event.actionMasked == MotionEvent.ACTION_UP && lastSeekMs != C.TIME_UNSET) {
+                        current?.seekTo(lastSeekMs)
+                    }
+                    finishSeekDrag(current?.currentPosition)
                     if (isControllerFullyVisible) scheduleAutoHide()
                     return true
                 }
@@ -783,6 +919,16 @@ class SeekPlayerView @JvmOverloads constructor(
         }
         if (seeking) return true
         return handled || super.onTouchEvent(event)
+    }
+
+    private val scrubTimeBar: VideoScrubTimeBar?
+        get() = findViewById(androidx.media3.ui.R.id.exo_progress)
+
+    private fun finishSeekDrag(positionMs: Long? = null) {
+        if (!seeking) return
+        seeking = false
+        lastSeekMs = C.TIME_UNSET
+        scrubTimeBar?.finishDrag(positionMs)
     }
 
     private fun dispatchSeek(current: Player, targetMs: Long) {
@@ -796,13 +942,13 @@ class SeekPlayerView @JvmOverloads constructor(
     companion object {
         private const val SCRUB_INTERVAL_MS = 120L
         private const val FADE_MS = 120L
+        private const val LEVEL_OVERLAY_FADE_MS = 100L
     }
 }
 
 /**
  * Horizontal scrub distance mapped to a seek delta.
- * A full screen width moves at most [maxWindowMs]. Portrait uses one minute and landscape two,
- * so a short drag does not jump through the movie.
+ * A full screen width moves up to [maxWindowMs], doubled for videos longer than 20 minutes.
  */
 internal fun scrubSeekDeltaMs(
     dragXPx: Float,
@@ -811,7 +957,7 @@ internal fun scrubSeekDeltaMs(
     maxWindowMs: Long = SCRUB_WINDOW_PORTRAIT_MS,
 ): Long {
     if (durationMs <= 0L || viewWidthPx <= 0) return 0L
-    val window = minOf(durationMs, maxWindowMs)
+    val window = minOf(durationMs, if (durationMs > 20 * 60_000L) maxWindowMs * 2 else maxWindowMs)
     return (dragXPx / viewWidthPx.toFloat() * window).toLong()
 }
 

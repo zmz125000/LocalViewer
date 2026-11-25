@@ -22,6 +22,7 @@ import androidx.compose.foundation.lazy.grid.LazyGridScope
 import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.grid.itemsIndexed
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.LibraryBooks
 import androidx.compose.material.icons.filled.Explore
@@ -273,6 +274,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
     val focusManager = LocalFocusManager.current
     // Scroll down hides the top bar; scroll up brings it back (enterAlways).
     val scrollBehavior = TopAppBarDefaults.enterAlwaysScrollBehavior()
+    val scrollToTop = remember(scrollBehavior.state) { BrowseScrollToTop(scrollBehavior.state) }
     // FAB tracks the same enterAlways state (hide when bar collapses, show when it reappears).
     val showScrollFab by remember {
         derivedStateOf { scrollBehavior.state.collapsedFraction < 0.5f }
@@ -2948,7 +2950,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                         if (search.active) {
                             BrowseTopBarSearchField(state = search, hint = searchHint)
                         } else {
-                            BrowseTopBarFolderTitle(title)
+                            BrowseTopBarFolderTitle(title, onClick = scrollToTop::scroll)
                         }
                     },
                     windowInsets = WindowInsets.safeDrawing.only(WindowInsetsSides.Top),
@@ -3058,8 +3060,11 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                     if (roots.isEmpty()) {
                         BrowseEmptyHint(stringResource(R.string.folder_no_roots))
                     } else {
+                        val rootGridState = rememberLazyGridState()
+                        scrollToTop.Attach(rootGridState)
                         FastScrollLazyVerticalGrid(
                             columns = GalleryGridDefaults.listColumns(),
+                            state = rootGridState,
                             modifier = Modifier.fillMaxSize(),
                         ) {
                             items(roots, key = { it.id }) { root ->
@@ -3613,6 +3618,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                 photoGridImages.map { it.name },
                             ),
                         )
+                        scrollToTop.Attach(listState)
                         CompositionLocalProvider(LocalBrowseListHeaderInset provides GalleryGridDefaults.margin()) {
                             FastScrollLazyVerticalGrid(
                                 columns = GalleryGridDefaults.listColumns(),
@@ -3667,6 +3673,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                 photoGridImages.map { it.name },
                             ),
                         )
+                        scrollToTop.Attach(gridState)
                         val gridSpacing = GalleryGridDefaults.spacedBy()
                         FastScrollLazyVerticalGrid(
                             columns = GalleryGridDefaults.columns(),
@@ -3698,6 +3705,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                         }
                     } else if (useGrid) {
                         val gridState = rememberBrowseGridState(pathKey, scrollLayoutKey)
+                        scrollToTop.Attach(gridState)
                         val gridSpacing = GalleryGridDefaults.spacedBy()
                         FastScrollLazyVerticalGrid(
                             columns = GalleryGridDefaults.columns(),
@@ -3876,6 +3884,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                         }
                     } else {
                         val listState = rememberBrowseGridState(pathKey, scrollLayoutKey)
+                        scrollToTop.Attach(listState)
                         CompositionLocalProvider(LocalBrowseListHeaderInset provides GalleryGridDefaults.margin()) {
                             FastScrollLazyVerticalGrid(
                                 columns = GalleryGridDefaults.listColumns(),

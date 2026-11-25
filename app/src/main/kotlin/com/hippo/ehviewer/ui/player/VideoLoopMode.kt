@@ -4,6 +4,8 @@ internal enum class VideoLoopMode {
     OFF,
     VIDEO,
     PLAYLIST,
+    NEXT,
+    EXIT,
     ;
 
     fun adjacentIndex(current: Int, count: Int, delta: Int): Int? {

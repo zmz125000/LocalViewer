@@ -322,6 +322,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
     val removedFromFavourites = stringResource(id = R.string.remove_from_favourites)
     // Scroll down hides the top bar; scroll up brings it back (enterAlways).
     val scrollBehavior = TopAppBarDefaults.enterAlwaysScrollBehavior()
+    val scrollToTop = remember(scrollBehavior.state) { BrowseScrollToTop(scrollBehavior.state) }
     // FAB tracks the same enterAlways state (hide when bar collapses, show when it reappears).
     val showScrollFab by remember {
         derivedStateOf { scrollBehavior.state.collapsedFraction < 0.5f }
@@ -2487,7 +2488,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                         if (search.active) {
                             BrowseTopBarSearchField(state = search, hint = searchHint)
                         } else {
-                            BrowseTopBarFolderTitle(title)
+                            BrowseTopBarFolderTitle(title, onClick = scrollToTop::scroll)
                         }
                     },
                     windowInsets = WindowInsets.safeDrawing.only(WindowInsetsSides.Top),
@@ -3204,6 +3205,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                                 photoGridImages.map { it.name },
                             ),
                         )
+                        scrollToTop.Attach(listState)
                         CompositionLocalProvider(LocalBrowseListHeaderInset provides GalleryGridDefaults.margin()) {
                             FastScrollLazyVerticalGrid(
                                 columns = GalleryGridDefaults.listColumns(),
@@ -3245,6 +3247,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                                 photoGridImages.map { it.name },
                             ),
                         )
+                        scrollToTop.Attach(gridState)
                         val gridSpacing = GalleryGridDefaults.spacedBy()
                         FastScrollLazyVerticalGrid(
                             columns = GalleryGridDefaults.columns(),
@@ -3273,6 +3276,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                         }
                     } else if (useGrid) {
                         val gridState = rememberSmbBrowseGridState(sourceId, "dav|$dirKey", scrollLayoutKey)
+                        scrollToTop.Attach(gridState)
                         val gridSpacing = GalleryGridDefaults.spacedBy()
                         FastScrollLazyVerticalGrid(
                             columns = GalleryGridDefaults.columns(),
@@ -3453,6 +3457,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                         }
                     } else {
                         val listState = rememberSmbBrowseGridState(sourceId, "dav|$dirKey", scrollLayoutKey)
+                        scrollToTop.Attach(listState)
                         CompositionLocalProvider(LocalBrowseListHeaderInset provides GalleryGridDefaults.margin()) {
                             FastScrollLazyVerticalGrid(
                                 columns = GalleryGridDefaults.listColumns(),
