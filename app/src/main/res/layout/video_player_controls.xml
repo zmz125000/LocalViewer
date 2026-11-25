@@ -41,7 +41,7 @@
                 android:textColor="@android:color/white"
                 android:textSize="13sp" />
 
-            <androidx.media3.ui.DefaultTimeBar
+            <com.hippo.ehviewer.ui.player.VideoScrubTimeBar
                 android:id="@id/exo_progress"
                 android:layout_width="0dp"
                 android:layout_height="match_parent"

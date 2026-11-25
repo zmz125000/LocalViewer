@@ -32,4 +32,21 @@ class SeekScrubTest {
         assertEquals(0L, scrubSeekDeltaMs(400f, 1000, durationMs = -1L))
         assertEquals(0L, scrubSeekDeltaMs(400f, 0, durationMs = 60_000L))
     }
+
+    @Test
+    fun verticalGesturesReserveTheMiddleHalfForThePlaylist() {
+        assertEquals(VideoLevelControl.VOLUME, videoLevelControlAt(249f, 1000))
+        assertEquals(null, videoLevelControlAt(250f, 1000))
+        assertEquals(null, videoLevelControlAt(749f, 1000))
+        assertEquals(VideoLevelControl.BRIGHTNESS, videoLevelControlAt(750f, 1000))
+    }
+
+    @Test
+    fun verticalLevelDragUsesSliderStepsAndClampsToItsRange() {
+        assertEquals(7, videoDragLevel(7, -4f, 1000, 0..15))
+        assertEquals(10, videoDragLevel(7, -100f, 1000, 0..15))
+        assertEquals(0, videoDragLevel(7, 600f, 1000, 0..15))
+        assertEquals(1, videoDragLevel(50, 300f, 600, 1..100))
+        assertEquals(100, videoDragLevel(50, -300f, 600, 1..100))
+    }
 }

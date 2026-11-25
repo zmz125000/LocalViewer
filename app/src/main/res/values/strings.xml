@@ -17,5 +17,6 @@
     <string name="video_brightness">Brightness</string>
     <string name="video_level_system">System</string>
     <string name="video_volume_mute">Mute</string>
+    <string name="video_level_reset_system">Reset to system</string>
     <string name="video_level_percent">%1$d%%</string>
 </resources>

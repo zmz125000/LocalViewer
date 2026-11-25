@@ -69,6 +69,8 @@ import com.hippo.ehviewer.ui.player.PreparedInternalVideo
 import com.hippo.ehviewer.ui.player.SeekPlayerView
 import com.hippo.ehviewer.ui.player.SiblingTrackChoice
 import com.hippo.ehviewer.ui.player.StreamDocDataSource
+import com.hippo.ehviewer.ui.player.VideoLevelAdjustment
+import com.hippo.ehviewer.ui.player.VideoLevelControl
 import com.hippo.ehviewer.ui.player.VideoLoopMode
 import com.hippo.ehviewer.ui.player.applyVideoSubtitleHistory
 import com.hippo.ehviewer.ui.player.audioBoostFolder
@@ -312,6 +314,7 @@ class VideoPlayerActivity : AppCompatActivity() {
         applyBrightness(isInPictureInPictureMode)
         playerView?.useController = !isInPictureInPictureMode
         if (isInPictureInPictureMode) {
+            playerView?.cancelSurfaceDrag()
             playerView?.hideController()
         } else {
             hideSystemBars()
@@ -358,11 +361,17 @@ class VideoPlayerActivity : AppCompatActivity() {
         }
         findViewById<ImageButton>(R.id.video_volume).apply {
             tooltipText = contentDescription
-            setOnClickListener(::showVolumeMenu)
+            setOnClickListener { playerView?.showLevelMenu(it, VideoLevelControl.VOLUME) }
         }
         findViewById<ImageButton>(R.id.video_brightness).apply {
             tooltipText = contentDescription
-            setOnClickListener(::showBrightnessMenu)
+            setOnClickListener { playerView?.showLevelMenu(it, VideoLevelControl.BRIGHTNESS) }
+        }
+        playerView?.levelAdjustment = { control ->
+            when (control) {
+                VideoLevelControl.VOLUME -> volumeAdjustment()
+                VideoLevelControl.BRIGHTNESS -> brightnessAdjustment()
+            }
         }
         updateVolumeButton()
         updateBrightnessButton()
@@ -451,15 +460,13 @@ class VideoPlayerActivity : AppCompatActivity() {
         }
     }
 
-    private fun showVolumeMenu(anchor: View) {
+    private fun volumeAdjustment(): VideoLevelAdjustment {
         val stream = AudioManager.STREAM_MUSIC
         val volume = audioManager.getStreamVolume(stream)
         updateVolumeButton(volume)
-        playerView?.showLevelMenu(
-            anchor,
-            getString(R.string.video_volume),
-            audioManager.getStreamMinVolume(stream)..audioManager.getStreamMaxVolume(stream),
-            volume,
+        return VideoLevelAdjustment(
+            range = audioManager.getStreamMinVolume(stream)..audioManager.getStreamMaxVolume(stream),
+            level = volume,
             systemLevel = originalMediaVolumes[mediaVolumeRoute()] ?: volume,
             adjustable = !audioManager.isVolumeFixed,
         ) { level ->
@@ -520,13 +527,11 @@ class VideoPlayerActivity : AppCompatActivity() {
         }
     }
 
-    private fun showBrightnessMenu(anchor: View) {
+    private fun brightnessAdjustment(): VideoLevelAdjustment {
         val brightness = AndroidSettings.System.getInt(contentResolver, AndroidSettings.System.SCREEN_BRIGHTNESS, 128)
-        playerView?.showLevelMenu(
-            anchor,
-            getString(R.string.video_brightness),
-            1..100,
-            playerBrightness,
+        return VideoLevelAdjustment(
+            range = 1..100,
+            level = playerBrightness,
             systemLevel = (brightness * 100f / 255f).roundToInt(),
         ) { level ->
             if (level != playerBrightness) {
