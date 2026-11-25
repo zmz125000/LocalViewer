@@ -13,7 +13,7 @@ class VideoLoopModeTest {
 
     @Test
     fun otherModesKeepPlaylistBoundaries() {
-        for (mode in listOf(VideoLoopMode.OFF, VideoLoopMode.VIDEO)) {
+        for (mode in VideoLoopMode.entries.filter { it != VideoLoopMode.PLAYLIST }) {
             assertEquals(2, mode.adjacentIndex(1, 3, 1))
             assertNull(mode.adjacentIndex(2, 3, 1))
             assertNull(mode.adjacentIndex(0, 3, -1))

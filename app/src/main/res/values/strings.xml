@@ -4,6 +4,8 @@
     <string name="video_loop">Loop mode</string>
     <string name="video_loop_off">Off</string>
     <string name="video_loop_video">Video</string>
+    <string name="video_loop_next">Next</string>
+    <string name="video_loop_exit">Exit</string>
     <string name="video_rotate_with_video">Rotate with video</string>
     <string name="video_picture_in_picture">Picture in picture</string>
     <string name="video_audio_boost">Audio boost</string>
