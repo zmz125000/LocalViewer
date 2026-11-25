@@ -79,7 +79,8 @@
         <FrameLayout
             android:id="@+id/video_controls_buttons"
             android:layout_width="match_parent"
-            android:layout_height="@dimen/video_transport_height"
+            android:layout_height="wrap_content"
+            android:paddingBottom="8dp"
             android:paddingHorizontal="4dp">
 
             <LinearLayout

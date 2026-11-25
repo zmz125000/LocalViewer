@@ -529,8 +529,13 @@ class SeekPlayerView @JvmOverloads constructor(
         fun popupWidth(availableWidth: Int): Int = dp(48) + valueWidth + (referenceSliderWidth(availableWidth) * 3f / 5).roundToInt()
 
         fun sizeVerticalTrack(availableWidth: Int, availableHeight: Int) {
+            value.measure(
+                MeasureSpec.makeMeasureSpec(dp(48).coerceAtMost(availableWidth), MeasureSpec.EXACTLY),
+                MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED),
+            )
+            val availableTrackHeight = availableHeight - icon.layoutParams.height - value.measuredHeight
             val length = (referenceSliderWidth(availableWidth) * .5f).roundToInt()
-                .coerceIn(1, (availableHeight - dp(48) - dp(32)).coerceAtLeast(1))
+                .coerceIn(1, availableTrackHeight.coerceAtLeast(1))
             val track = view.findViewById<View>(R.id.video_level_track)
             track.layoutParams = track.layoutParams.apply { height = length }
             slider.layoutParams = slider.layoutParams.apply { width = length }
@@ -610,7 +615,7 @@ class SeekPlayerView @JvmOverloads constructor(
         val adjustment = levelAdjustment?.invoke(control)?.takeIf { it.adjustable } ?: return false
         val drag = LevelDrag(control, adjustment, totalY.sign * scrubStartPx)
         val panel = drag.panel.view
-        val gap = dp(8)
+        val gap = dp(16)
         val insets = rootWindowInsets?.getInsets(WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout())
         val left = gap + (insets?.left ?: 0)
         val right = gap + (insets?.right ?: 0)
@@ -937,7 +942,7 @@ class SeekPlayerView @JvmOverloads constructor(
     companion object {
         private const val SCRUB_INTERVAL_MS = 120L
         private const val FADE_MS = 120L
-        private const val LEVEL_OVERLAY_FADE_MS = 50L
+        private const val LEVEL_OVERLAY_FADE_MS = 100L
     }
 }
 
