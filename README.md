@@ -99,6 +99,7 @@ RAW image samples from [rawsamples.ch](https://www.rawsamples.ch/index.php/en/ca
 * One for all folder listing mode (Videos/Photos/Documents all with their own tags and filters).
 * Fully working on Meta Quest 3.
 * Fully functional media3 video player with custom HDR supports.
+* Media3 video player supports HDR to SDR tone mapping, easy to access folder and network playlist, next/prev video button and audio boost, with a compact and modern UI and full playback history.
 * Open or share files like a file manager.
 * Fine-tuned page loader, image prefetch with no OOM crashes.
 * Gallery folder covers and reading progress.
