@@ -2677,7 +2677,8 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
             modifier = Modifier
                 .padding(padding)
                 .fillMaxSize()
-                .browseSearchClearFocusOnInteract(search),
+                .browseSearchClearFocusOnInteract(search)
+                .then(scrollToTop.fadeModifier()),
         ) {
             when {
                 loading && (entries.isEmpty() || listedDir != relativeDir) -> {

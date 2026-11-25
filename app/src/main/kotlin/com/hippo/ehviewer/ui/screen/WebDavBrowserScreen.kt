@@ -2576,7 +2576,8 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
             modifier = Modifier
                 .padding(padding)
                 .fillMaxSize()
-                .browseSearchClearFocusOnInteract(search),
+                .browseSearchClearFocusOnInteract(search)
+                .then(scrollToTop.fadeModifier()),
         ) {
             when {
                 loading && (entries.isEmpty() || listedDir != relativeDir) -> {
