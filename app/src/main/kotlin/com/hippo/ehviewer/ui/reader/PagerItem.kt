@@ -279,12 +279,18 @@ fun PagerItem(
                 val imgSize = image.intrinsicSize
                 val rotate = shouldAutoRotate(imgSize, viewportSize, autoRotateMode)
                 val clockwise = isAutoRotateClockwise(autoRotateMode)
-                val colorFilter = rememberComicColorFilter(
-                    enabled = !image.isHdrContent && !image.isWideGamutContent,
-                )
                 val displayedImage = shown.image ?: image
-                val ditheredPainter = if (allowGrayscaleDithering) {
-                    rememberGrayscaleDitheredPainter(displayedImage, colorFilter) { inViewport }
+                val filterEnabled = !displayedImage.isHdrContent && !displayedImage.isWideGamutContent
+                val ditherGrayscale = if (allowGrayscaleDithering && filterEnabled && displayedImage.innerImage is BitmapImage) {
+                    val enabled by Settings.readerGrayscaleDithering.collectAsState()
+                    enabled
+                } else {
+                    false
+                }
+                // Draw the same grayscale transform while the worker prepares the dithered pixels.
+                val colorFilter = rememberComicColorFilter(filterEnabled, ditherGrayscale)
+                val ditheredPainter = if (ditherGrayscale && colorFilter != null && inViewport) {
+                    rememberGrayscaleDitheredPainter(displayedImage, colorFilter)
                 } else {
                     null
                 }

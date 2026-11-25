@@ -1142,7 +1142,7 @@
     <string name="pref_comic_black_level">黑色色階</string>
     <string name="pref_comic_white_level">白色色階</string>
     <string name="pref_grayscale">灰階</string>
-    <string name="pref_reader_grayscale_dithering">灰階抖動（256級）</string>
+    <string name="pref_reader_grayscale_dithering">Floyd–Steinberg 灰階抖動（16級）</string>
     <string name="automatic_background">自動</string>
     <string name="pref_inverted_colors">反轉</string>
     <string name="label_default">預設</string>
