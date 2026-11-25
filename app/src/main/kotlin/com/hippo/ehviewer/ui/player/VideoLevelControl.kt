@@ -18,7 +18,7 @@ internal enum class VideoLevelControl(val title: Int) {
 internal class VideoLevelAdjustment(
     val range: IntRange,
     val level: Int?,
-    val systemLevel: Int,
+    val systemLevel: () -> Int,
     val adjustable: Boolean = true,
     val setLevel: (Int?) -> Int?,
 )

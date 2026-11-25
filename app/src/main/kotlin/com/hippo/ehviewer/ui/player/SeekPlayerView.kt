@@ -46,8 +46,7 @@ import kotlin.math.sign
 
 /**
  * Stock [PlayerView] plus surface gestures: tap toggles chrome, double-tap closes the player,
- * horizontal drag seeks (rate-limited: one minute per screen width in portrait, two in
- * landscape). Touches on the
+ * horizontal drag seeks (rate-limited, with more travel in landscape and on long videos). Touches on the
  * visible bottom bar go to Media3.
  *
  * Media3's built-in chrome animation slides the bottom bar; we disable it and fade alpha
@@ -87,7 +86,7 @@ class SeekPlayerView @JvmOverloads constructor(
     private var canStartDrag = false
 
     private var controlMenu: PopupWindow? = null
-    private var levelMenuRefresh: ((Int, Int) -> Unit)? = null
+    private var levelMenuRefresh: ((Int, Int?) -> Unit)? = null
     private var levelDrag: LevelDrag? = null
     private val captions = context.getSystemService(CaptioningManager::class.java)
     private val captionListener = object : CaptioningManager.CaptioningChangeListener() {
@@ -503,24 +502,27 @@ class SeekPlayerView @JvmOverloads constructor(
         private val value = view.findViewById<TextView>(R.id.video_level_value)
         private val slider = view.findViewById<SeekBar>(R.id.video_level_slider)
         private val systemLabel = context.getString(R.string.video_level_system)
+        private val shortSystemLabel = context.getString(R.string.video_level_system_short)
 
         init {
             slider.contentDescription = context.getString(control.title)
             slider.min = adjustment.range.first
             slider.max = adjustment.range.last
             slider.isEnabled = adjustment.adjustable
-            value.minWidth = maxOf(
-                value.minWidth,
-                value.paint.measureText(systemLabel).roundToInt() + value.paddingStart + value.paddingEnd,
+            val widestValue = maxOf(
+                value.paint.measureText(shortSystemLabel),
+                value.paint.measureText(maxOf(100, adjustment.range.last).toString()),
             )
+            value.minWidth = widestValue.roundToInt() + value.paddingStart + value.paddingEnd
             render(adjustment.level)
         }
 
         fun render(current: Int?) {
-            val effective = (current ?: adjustment.systemLevel).coerceIn(adjustment.range)
+            val effective = (current ?: adjustment.systemLevel()).coerceIn(adjustment.range)
             slider.progress = effective
             icon.setImageResource(control.icon(effective))
-            value.text = current?.toString() ?: systemLabel
+            value.text = current?.toString() ?: shortSystemLabel
+            value.contentDescription = systemLabel.takeIf { current == null }
         }
 
         fun enableControls() {
@@ -551,7 +553,7 @@ class SeekPlayerView @JvmOverloads constructor(
         private val activationY: Float,
     ) {
         val panel = LevelPanel(control, adjustment)
-        private val startLevel = (adjustment.level ?: adjustment.systemLevel).coerceIn(adjustment.range)
+        private val startLevel = (adjustment.level ?: adjustment.systemLevel()).coerceIn(adjustment.range)
         private var requestedLevel = startLevel
 
         fun update(totalY: Float) {
@@ -572,7 +574,7 @@ class SeekPlayerView @JvmOverloads constructor(
         }
     }
 
-    internal fun refreshLevelMenu(anchorId: Int, level: Int) {
+    internal fun refreshLevelMenu(anchorId: Int, level: Int?) {
         levelMenuRefresh?.invoke(anchorId, level)
         if (anchorId == R.id.video_volume) {
             levelDrag?.takeIf { it.control == VideoLevelControl.VOLUME }?.panel?.render(level)
@@ -898,8 +900,7 @@ class SeekPlayerView @JvmOverloads constructor(
 
 /**
  * Horizontal scrub distance mapped to a seek delta.
- * A full screen width moves at most [maxWindowMs]. Portrait uses one minute and landscape two,
- * so a short drag does not jump through the movie.
+ * A full screen width moves up to [maxWindowMs], doubled for videos longer than 20 minutes.
  */
 internal fun scrubSeekDeltaMs(
     dragXPx: Float,
@@ -908,7 +909,7 @@ internal fun scrubSeekDeltaMs(
     maxWindowMs: Long = SCRUB_WINDOW_PORTRAIT_MS,
 ): Long {
     if (durationMs <= 0L || viewWidthPx <= 0) return 0L
-    val window = minOf(durationMs, maxWindowMs)
+    val window = minOf(durationMs, if (durationMs > 20 * 60_000L) maxWindowMs * 2 else maxWindowMs)
     return (dragXPx / viewWidthPx.toFloat() * window).toLong()
 }
 

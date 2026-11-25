@@ -7,7 +7,7 @@ class SeekScrubTest {
     @Test
     fun fullWidthDragDependsOnOrientation() {
         val width = 1000
-        val movie = 2L * 60L * 60L * 1000L
+        val movie = 20 * 60_000L
         assertEquals(60_000L, SCRUB_WINDOW_PORTRAIT_MS)
         assertEquals(120_000L, SCRUB_WINDOW_LANDSCAPE_MS)
         assertEquals(SCRUB_WINDOW_PORTRAIT_MS, scrubWindowMs(viewWidthPx = 1080, viewHeightPx = 1920))
@@ -20,6 +20,13 @@ class SeekScrubTest {
             -SCRUB_WINDOW_LANDSCAPE_MS,
             scrubSeekDeltaMs(-width.toFloat(), width, movie, SCRUB_WINDOW_LANDSCAPE_MS),
         )
+    }
+
+    @Test
+    fun videosLongerThanTwentyMinutesDoubleTheSeekDistance() {
+        val movie = 20 * 60_000L + 1
+        assertEquals(120_000L, scrubSeekDeltaMs(1000f, 1000, movie, SCRUB_WINDOW_PORTRAIT_MS))
+        assertEquals(-240_000L, scrubSeekDeltaMs(-1000f, 1000, movie, SCRUB_WINDOW_LANDSCAPE_MS))
     }
 
     @Test

@@ -466,8 +466,8 @@ class VideoPlayerActivity : AppCompatActivity() {
         updateVolumeButton(volume)
         return VideoLevelAdjustment(
             range = audioManager.getStreamMinVolume(stream)..audioManager.getStreamMaxVolume(stream),
-            level = volume,
-            systemLevel = originalMediaVolumes[mediaVolumeRoute()] ?: volume,
+            level = volume.takeIf { customMediaVolume != null },
+            systemLevel = { audioManager.getStreamVolume(stream) },
             adjustable = !audioManager.isVolumeFixed,
         ) { level ->
             val current = if (level == null) {
@@ -478,7 +478,7 @@ class VideoPlayerActivity : AppCompatActivity() {
                 setPlayerMediaVolume(level).also(::rememberCurrentPlayerVolume)
             }
             updateVolumeButton(current)
-            current
+            current.takeIf { level != null }
         }
     }
 
@@ -528,11 +528,13 @@ class VideoPlayerActivity : AppCompatActivity() {
     }
 
     private fun brightnessAdjustment(): VideoLevelAdjustment {
-        val brightness = AndroidSettings.System.getInt(contentResolver, AndroidSettings.System.SCREEN_BRIGHTNESS, 128)
         return VideoLevelAdjustment(
             range = 1..100,
             level = playerBrightness,
-            systemLevel = (brightness * 100f / 255f).roundToInt(),
+            systemLevel = {
+                val brightness = AndroidSettings.System.getInt(contentResolver, AndroidSettings.System.SCREEN_BRIGHTNESS, 128)
+                (brightness * 100f / 255f).roundToInt()
+            },
         ) { level ->
             if (level != playerBrightness) {
                 playerBrightness = level
@@ -984,7 +986,7 @@ class VideoPlayerActivity : AppCompatActivity() {
                     if (customMediaVolume != null && mediaVolumeRoute() in originalMediaVolumes) {
                         rememberCurrentPlayerVolume(current)
                     }
-                    playerView?.refreshLevelMenu(R.id.video_volume, current)
+                    playerView?.refreshLevelMenu(R.id.video_volume, current.takeIf { customMediaVolume != null })
                 }
 
                 override fun onVideoSizeChanged(videoSize: VideoSize) {
