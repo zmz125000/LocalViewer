@@ -527,23 +527,21 @@ class VideoPlayerActivity : AppCompatActivity() {
         }
     }
 
-    private fun brightnessAdjustment(): VideoLevelAdjustment {
-        return VideoLevelAdjustment(
-            range = 1..100,
-            level = playerBrightness,
-            systemLevel = {
-                val brightness = AndroidSettings.System.getInt(contentResolver, AndroidSettings.System.SCREEN_BRIGHTNESS, 128)
-                (brightness * 100f / 255f).roundToInt()
-            },
-        ) { level ->
-            if (level != playerBrightness) {
-                playerBrightness = level
-                applyBrightness()
-                storePlayerSettings { it[Settings.media3PlayerBrightness] = level ?: -1 }
-                updateBrightnessButton()
-            }
-            level
+    private fun brightnessAdjustment(): VideoLevelAdjustment = VideoLevelAdjustment(
+        range = 1..100,
+        level = playerBrightness,
+        systemLevel = {
+            val brightness = AndroidSettings.System.getInt(contentResolver, AndroidSettings.System.SCREEN_BRIGHTNESS, 128)
+            (brightness * 100f / 255f).roundToInt()
+        },
+    ) { level ->
+        if (level != playerBrightness) {
+            playerBrightness = level
+            applyBrightness()
+            storePlayerSettings { it[Settings.media3PlayerBrightness] = level ?: -1 }
+            updateBrightnessButton()
         }
+        level
     }
 
     private fun applyBrightness(inPip: Boolean = isInPictureInPictureMode) {
