@@ -3052,7 +3052,8 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
             modifier = Modifier
                 .padding(padding)
                 .fillMaxSize()
-                .browseSearchClearFocusOnInteract(search),
+                .browseSearchClearFocusOnInteract(search)
+                .then(scrollToTop.fadeModifier()),
         ) {
             when {
                 stack.isEmpty() -> {

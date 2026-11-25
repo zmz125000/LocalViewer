@@ -1,7 +1,9 @@
 package com.hippo.ehviewer.ui.screen
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.MutableTransitionState
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -44,6 +46,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -57,6 +60,7 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
@@ -77,6 +81,7 @@ import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.collectAsState
 import com.hippo.ehviewer.library.BrowseSession
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -338,18 +343,39 @@ fun Modifier.browseSearchClearFocusOnInteract(state: BrowseFolderSearchState): M
 }
 
 internal class BrowseScrollToTop(private val appBar: TopAppBarState) {
-    private var activeGrid: LazyGridState? = null
+    private class Grid(val state: LazyGridState, val scope: CoroutineScope) {
+        val opacity = Animatable(1f)
+    }
+
+    private var activeGrid by mutableStateOf<Grid?>(null)
 
     @Composable
     fun Attach(state: LazyGridState) {
-        DisposableEffect(this, state) {
-            activeGrid = state
-            onDispose { if (activeGrid === state) activeGrid = null }
+        key(state) {
+            val scope = rememberCoroutineScope()
+            val grid = remember { Grid(state, scope) }
+            DisposableEffect(this, grid) {
+                activeGrid = grid
+                onDispose { if (activeGrid === grid) activeGrid = null }
+            }
         }
     }
 
+    fun fadeModifier(): Modifier = Modifier.graphicsLayer {
+        alpha = activeGrid?.opacity?.value ?: 1f
+    }
+
     fun scroll() {
-        activeGrid?.requestScrollToItem(0)
+        activeGrid?.let { grid ->
+            val wasScrolled = grid.state.canScrollBackward
+            grid.state.requestScrollToItem(0)
+            if (wasScrolled) {
+                grid.scope.launch(start = CoroutineStart.UNDISPATCHED) {
+                    grid.opacity.snapTo(0f)
+                    grid.opacity.animateTo(1f, tween(400))
+                }
+            }
+        }
         appBar.heightOffset = 0f
         appBar.contentOffset = 0f
     }
