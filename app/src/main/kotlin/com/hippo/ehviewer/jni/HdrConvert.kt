@@ -136,6 +136,7 @@ external fun decodeJxlBytesToDirect(
     outBoost: FloatArray,
     exportBt2020: Boolean = false,
     outExif: Array<ByteArray?>? = null,
+    readerGainMap: Int = 0,
 ): ByteArray?
 
 external fun decodeAvifBytesToDirect(
@@ -326,7 +327,7 @@ external fun convertJpeg2000FdToUltraHdrMaxEdge(fd: Int, outputPath: String, max
 internal external fun mapStillInput(fd: Int): java.nio.ByteBuffer?
 internal external fun unmapStillInput(buffer: java.nio.ByteBuffer)
 internal external fun decodeJxrBufferToDirect(input: java.nio.ByteBuffer, maxEdge: Int, advancedColor: Boolean, panelBoost: Float, outInfo: IntArray, outBoost: FloatArray, exportBt2020: Boolean = false): ByteArray?
-internal external fun decodeJxlBufferToDirect(input: java.nio.ByteBuffer, maxEdge: Int, advancedColor: Boolean, outInfo: IntArray, outBoost: FloatArray, exportBt2020: Boolean = false, outExif: Array<ByteArray?>? = null): ByteArray?
+internal external fun decodeJxlBufferToDirect(input: java.nio.ByteBuffer, maxEdge: Int, advancedColor: Boolean, outInfo: IntArray, outBoost: FloatArray, exportBt2020: Boolean = false, outExif: Array<ByteArray?>? = null, readerGainMap: Int = 0): ByteArray?
 internal external fun decodeAvifBufferToDirect(input: java.nio.ByteBuffer, maxEdge: Int, advancedColor: Boolean, outInfo: IntArray, outBoost: FloatArray, outExif: Array<ByteArray?>? = null): ByteArray?
 
 /** Malloc-owned base F16 and gain (ALPHA_8 or F16) planes; release both with releaseStillBuffer.

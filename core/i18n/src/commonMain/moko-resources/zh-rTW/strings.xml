@@ -1199,6 +1199,7 @@
     <string name="pref_slideshow_show_color_space">色彩空間</string>
     <string name="pref_slideshow_show_exif_info">EXIF 資訊</string>
     <string name="pref_slideshow_show_lens_model">鏡頭型號</string>
+    <string name="slideshow_info_animated">動畫</string>
     <string name="slideshow_info_bit_depth">%1$d 位元</string>
     <string name="slideshow_info_transfer_linear">線性</string>
     <string name="slideshow_info_transfer_gain_map">增益圖</string>

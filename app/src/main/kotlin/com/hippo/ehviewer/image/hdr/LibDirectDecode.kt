@@ -81,6 +81,7 @@ data class LibDirectResult(
     val sourceBitDepth: Int? = null,
     /** Gain map applied during native decoding, even when the returned bitmap is flattened HDR. */
     val sourceHasGainmap: Boolean = false,
+    val sourceHdr: Boolean? = null,
     /** Original source tags, captured before resizing or working-space conversion. */
     val sourceWidth: Int? = null,
     val sourceHeight: Int? = null,
@@ -339,10 +340,12 @@ object LibDirectDecode {
                 packed.outInfo,
                 packed.outBoost,
                 nativePixels = nativePixels,
+                reconstructGainMap = route == StillRoute.Lib(LibCodec.Jxl),
             )?.copy(
                 sourceExif = packed.sourceExif,
                 sourceBitDepth = packed.outInfo.getOrNull(6)?.takeIf { it in 1..32 },
                 sourceHasGainmap = packed.outInfo.getOrNull(7) == 1,
+                sourceHdr = packed.outInfo.getOrNull(13)?.takeIf { it != 0 }?.let { it == 2 },
                 sourceWidth = packed.outInfo.getOrNull(8)?.takeIf { it > 0 },
                 sourceHeight = packed.outInfo.getOrNull(9)?.takeIf { it > 0 },
                 sourcePrimaries = packed.outInfo.getOrNull(10)?.takeIf { it > 0 },
@@ -415,16 +418,21 @@ object LibDirectDecode {
     ): PackedPixels? = withStillInput(src) { buffer ->
         if (!buffer.hasRemaining()) return@withStillInput null
         if (codec == LibCodec.HevcHdr) return@withStillInput decodeHevcHdrPacked(buffer, maxEdge, advanced, export)
-        val outInfo = IntArray(13)
+        val outInfo = IntArray(14)
         val outBoost = FloatArray(1)
         // Existing RAM-backed pages reuse the source array; mapped archive/local
         // inputs go directly to JNI without a compressed Java-array copy.
         val bytes by lazy { buffer.heapBytesForConvert() }
         val panelBoost = if (!export && codec == LibCodec.Jxr) jxrHighlightCap() else 1f
         val outExif = if (!export && (codec == LibCodec.Jxl || codec == LibCodec.AvifPq)) arrayOfNulls<ByteArray>(1) else null
+        val jxlGainMap = when {
+            export || codec != LibCodec.Jxl -> 0
+            Settings.readerHdrDisplay.value || Settings.readerSdrToneMappingEnabled -> 2
+            else -> 1
+        }
         val pixels = if (buffer.isDirect) {
             when (codec) {
-                LibCodec.Jxl -> decodeJxlBufferToDirect(buffer, maxEdge, advanced, outInfo, outBoost, export && extendedSrgbBt2020, outExif)
+                LibCodec.Jxl -> decodeJxlBufferToDirect(buffer, maxEdge, advanced, outInfo, outBoost, export && extendedSrgbBt2020, outExif, jxlGainMap)
                 LibCodec.Jxr -> decodeJxrBufferToDirect(buffer, maxEdge, advanced, panelBoost, outInfo, outBoost, export && extendedSrgbBt2020)
                 LibCodec.AvifPq -> decodeAvifBufferToDirect(buffer, maxEdge, advanced, outInfo, outBoost, outExif)
                 LibCodec.Jpeg2000 -> decodeJpeg2000BufferToDirect(buffer, maxEdge, advanced, outInfo, outBoost)
@@ -433,7 +441,7 @@ object LibDirectDecode {
             }
         } else {
             when (codec) {
-                LibCodec.Jxl -> decodeJxlBytesToDirect(bytes, maxEdge, advanced, outInfo, outBoost, export && extendedSrgbBt2020, outExif)
+                LibCodec.Jxl -> decodeJxlBytesToDirect(bytes, maxEdge, advanced, outInfo, outBoost, export && extendedSrgbBt2020, outExif, jxlGainMap)
                 LibCodec.Jxr -> decodeJxrBytesToDirect(bytes, maxEdge, advanced, panelBoost, outInfo, outBoost, export && extendedSrgbBt2020)
                 LibCodec.Jpeg2000 -> decodeJpeg2000BytesToDirect(bytes, maxEdge, advanced, outInfo, outBoost)
                     ?: packJpeg2000(bytes, maxEdge, outInfo, outBoost)
@@ -930,11 +938,33 @@ object LibDirectDecode {
         }
     }
 
+    /** Reader animations share the still packer and use CPU equivalents for GPU tone-mapping selections. */
+    internal fun decodeAnimationFrame(info: IntArray, boost: FloatArray, decode: () -> ByteArray?): LibDirectResult? {
+        val handle = beginNativeReaderPixels()
+        try {
+            val packed = decode()
+            val pixels = endNativeReaderPixels(handle)
+            if (packed == null) return null
+            return bitmapFromPacked(packed, info, boost, pixels, animated = true)?.copy(
+                sourceBitDepth = info[6].takeIf { it > 0 },
+                sourceWidth = info[8].takeIf { it > 0 },
+                sourceHeight = info[9].takeIf { it > 0 },
+                sourcePrimaries = info[10].takeIf { it > 0 },
+                sourceTransfer = info[11].takeIf { it > 0 } ?: info[5],
+                sourceIsScRgb = info[12] != 0,
+            )
+        } finally {
+            releaseNativeReaderPixels(handle)
+        }
+    }
+
     private fun bitmapFromPacked(
         pixels: ByteArray,
         outInfo: IntArray,
         outBoost: FloatArray,
         nativePixels: ByteBuffer?,
+        animated: Boolean = false,
+        reconstructGainMap: Boolean = false,
     ): LibDirectResult? {
         val w = outInfo[0]
         val h = outInfo[1]
@@ -945,8 +975,9 @@ object LibDirectDecode {
         if (w <= 0 || h <= 0) return null
         val f16 = format == 1
         var gpuToneMapping: ReaderGpuToneMapping? = null
-        if (f16 && isHdr && outInfo.getOrNull(7) != 1 && !Settings.readerHdrDisplay.value) {
-            val mapper = ReaderToneMapper.fromPreference(Settings.readerHdrToneMapper.value).supportedMode()
+        if (f16 && isHdr && (reconstructGainMap || outInfo.getOrNull(7) != 1) && !Settings.readerHdrDisplay.value) {
+            val preference = ReaderToneMapper.fromPreference(Settings.readerHdrToneMapper.value).supportedMode()
+            val mapper = if (animated && preference.gpu) ReaderToneMapper.entries[preference.ordinal - 1] else preference
             if (mapper != ReaderToneMapper.OFF) {
                 val curve = if (mapper.gpu) FloatArray(3) else null
                 val shoulder = Settings.readerHdrToneShoulder.value.coerceIn(0, 95) / 100f

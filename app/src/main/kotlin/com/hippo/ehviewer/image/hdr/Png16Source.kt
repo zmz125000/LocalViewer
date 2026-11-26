@@ -8,7 +8,12 @@ import java.util.zip.InflaterInputStream
 import kotlin.math.abs
 
 /** PNG integer samples must not pass through an F16 bitmap before a lossless export. */
-internal fun pngSourcePixels(input: ByteBuffer, width: Int, height: Int): NativeStillBuffer? {
+internal fun pngSourcePixels(
+    input: ByteBuffer,
+    width: Int,
+    height: Int,
+    frameChunks: List<ByteBuffer>? = null,
+): NativeStillBuffer? {
     val file = input.asReadOnlyBuffer().order(ByteOrder.BIG_ENDIAN)
     if (file.remaining() < 33) return null
     val depth = file.get(24).toInt()
@@ -24,7 +29,7 @@ internal fun pngSourcePixels(input: ByteBuffer, width: Int, height: Int): Native
         else -> return null
     }
     check(width in 1..65536 && height in 1..65536 && width.toLong() * height <= 80_000_000)
-    check(file.getInt(16) == width && file.getInt(20) == height)
+    check(frameChunks != null || file.getInt(16) == width && file.getInt(20) == height)
     check(file.get(26).toInt() == 0 && file.get(27).toInt() == 0)
     val interlace = file.get(28).toInt()
     check(interlace in 0..1)
@@ -37,7 +42,10 @@ internal fun pngSourcePixels(input: ByteBuffer, width: Int, height: Int): Native
         val size = file.int.toLong() and 0xffffffffL
         val type = file.int
         check(size <= file.remaining() - 4L)
-        if (type == 0x49444154) chunks += file.slice().apply { limit(size.toInt()) } // IDAT
+        if (type == 0x49444154) {
+            if (frameChunks != null) break
+            chunks += file.slice().apply { limit(size.toInt()) }
+        }
         if (type == 0x504c5445 && size in 3..768 && size % 3 == 0L) palette = ByteArray(size.toInt()).also { file.duplicate().get(it) }
         if (type == 0x74524e53 && color == 3 && size <= 256) paletteAlpha = ByteArray(size.toInt()).also { file.duplicate().get(it) }
         if (type == 0x74524e53 && (color == 0 || color == 2) && size == (if (color == 0) 2 else 6).toLong()) {
@@ -47,6 +55,7 @@ internal fun pngSourcePixels(input: ByteBuffer, width: Int, height: Int): Native
         file.position(file.position() + size.toInt() + 4)
         if (type == 0x49454e44) break
     }
+    if (frameChunks != null) chunks.addAll(frameChunks.map { it.duplicate() })
     val pixels = NativeStillBuffer.allocate(width.toLong() * height * 8)
     try {
         val compressed = object : InputStream() {

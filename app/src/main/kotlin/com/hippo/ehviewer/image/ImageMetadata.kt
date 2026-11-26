@@ -113,6 +113,7 @@ data class ImageMetadata(
     val focalLength: Double? = null,
     val iso: Int? = null,
     val lensModel: String? = null,
+    val animated: Boolean = false,
 )
 
 /** Header/EXIF reads only: never decodes pixels or retains the compressed source. */

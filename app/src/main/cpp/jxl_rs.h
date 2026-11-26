@@ -38,6 +38,8 @@ int jxl_rs_next(JxlRsDecoder&, const uint8_t*, size_t, void* pixels, size_t pixe
 
 using JxlRsReadAt = size_t (*)(void*, uint64_t, uint8_t*, size_t);
 size_t jxl_rs_exif(void*, JxlRsReadAt, uint8_t*, size_t);
+uint8_t* jxl_rs_gain_map_icc(const uint8_t*, size_t color_size, const uint8_t*, size_t icc_size, JxlRsColor&, size_t&);
+void jxl_rs_free_icc(uint8_t*, size_t);
 }
 
 class JxlRsReader {

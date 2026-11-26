@@ -547,7 +547,7 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
                 // A RAW page's bitmap itself follows this switch (deep color + HDR),
                 // so those galleries reload at any decode size.
                 readerHdrDisplay.changesFlow().filter {
-                    readerHdrToneMapper.value != 0 || pageLoader.containsRawStill() || (
+                    readerHdrToneMapper.value != 0 || pageLoader.containsRawStill() || pageLoader.hasDecodedJxlGainMap() || (
                         !effectiveReaderHiResOptimize() && !effectiveReaderDecodeSize().isOriginal
                         )
                 },
@@ -837,7 +837,7 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
             // Any status emission in the window → re-evaluate HDR (WCG stays session-wide).
             statusFlows.merge().collect {
                 var anyHdr = false
-                var anyGainMap = false
+                var automaticHeadroom = false
                 var directBoost = 1f
                 for (idx in range) {
                     val img = (pageLoader.pages.getOrNull(idx)?.status as? PageStatus.Ready)
@@ -846,15 +846,15 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
                     // Gain-map Ultra HDR or lib-direct absolute HDR (F16 / linear extended).
                     if (!img.isHdrContent) continue
                     anyHdr = true
-                    if (img.hasGainmap) {
-                        anyGainMap = true
+                    if (img.hasGainmap || img.isColorAnimation) {
+                        automaticHeadroom = true
                     } else {
                         directBoost = maxOf(directBoost, img.contentHdrBoost)
                     }
                 }
-                // A gain map in the window stays on automatic headroom. Direct F16
+                // Gain maps and animations use automatic headroom. Still F16
                 // asks for its fitted peak so the highlight tail is inside the panel.
-                val headroom = if (anyGainMap) 1f else directBoost
+                val headroom = if (automaticHeadroom) 1f else directBoost
                 // Option A: advanced → session WCG (not only when isWideGamutContent).
                 // HDR still wins the single colorMode slot in setReaderColorMode.
                 applyColorMode(anyHdr, headroom)

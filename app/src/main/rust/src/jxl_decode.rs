@@ -525,3 +525,45 @@ unsafe extern "C" fn jxl_rs_exif(
     )
     .unwrap_or(0)
 }
+
+// The gain-map container stores the same color encoding and compressed ICC
+// fields as the codestream, but outside its primary image header.
+#[unsafe(no_mangle)]
+unsafe extern "C" fn jxl_rs_gain_map_icc(
+    encoded_color: *const u8,
+    color_size: usize,
+    encoded_icc: *const u8,
+    icc_size: usize,
+    color: &mut Color,
+    size: &mut usize,
+) -> *mut u8 {
+    *size = 0;
+    const ICC_LIMIT: usize = 16 * 1024 * 1024;
+    if encoded_color.is_null() || encoded_icc.is_null() || color_size > 255 || icc_size > ICC_LIMIT {
+        return std::ptr::null_mut();
+    }
+    // SAFETY: the caller has bounds-checked both fields in the gain map box.
+    let encoding = unsafe { slice::from_raw_parts(encoded_color, color_size) };
+    let compressed_icc = unsafe { slice::from_raw_parts(encoded_icc, icc_size) };
+    let Ok(profile) = JxlColorProfile::from_raw_bytes(encoding, compressed_icc)
+    else {
+        return std::ptr::null_mut();
+    };
+    *color = Color::from(&profile);
+    let Some(icc) = profile.try_as_icc(255.0) else {
+        return std::ptr::null_mut();
+    };
+    if icc.is_empty() || icc.len() > ICC_LIMIT {
+        return std::ptr::null_mut();
+    }
+    *size = icc.len();
+    Box::into_raw(icc.into_owned().into_boxed_slice()).cast()
+}
+
+#[unsafe(no_mangle)]
+unsafe extern "C" fn jxl_rs_free_icc(icc: *mut u8, size: usize) {
+    if !icc.is_null() {
+        // SAFETY: the caller returns the original allocation and its length once.
+        drop(unsafe { Box::from_raw(std::ptr::slice_from_raw_parts_mut(icc, size)) });
+    }
+}
