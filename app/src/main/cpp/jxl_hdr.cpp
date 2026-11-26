@@ -79,11 +79,19 @@ bool jxl_profile_to_linear(std::vector<float>& rgba, size_t npx,
         ALOGE("JXL linear destination profile failed cg=%d", (int)cg);
         return false;
     }
-    if (!skcms_Transform(rgba.data(), skcms_PixelFormat_RGBA_ffff,
-                         skcms_AlphaFormat_Unpremul, &src, rgba.data(),
-                         skcms_PixelFormat_RGBA_ffff,
-                         src.data_color_space == skcms_Signature_CMYK ? skcms_AlphaFormat_Opaque : skcms_AlphaFormat_Unpremul,
-                         &dst, npx)) {
+    const skcms_AlphaFormat dst_alpha =
+        src.data_color_space == skcms_Signature_CMYK ? skcms_AlphaFormat_Opaque : skcms_AlphaFormat_Unpremul;
+    const unsigned jobs = hdr_pixel_jobs(npx);
+    std::atomic<bool> success{true};
+    hdr_parallel_pixels(npx, jobs, [&](size_t begin, size_t end, unsigned) {
+        if (!skcms_Transform(rgba.data() + begin * 4, skcms_PixelFormat_RGBA_ffff,
+                             skcms_AlphaFormat_Unpremul, &src, rgba.data() + begin * 4,
+                             skcms_PixelFormat_RGBA_ffff, dst_alpha,
+                             &dst, end - begin)) {
+            success.store(false, std::memory_order_relaxed);
+        }
+    });
+    if (!success.load(std::memory_order_relaxed)) {
         ALOGE("JXL original-profile CMS transform failed cg=%d", (int)cg);
         return false;
     }
@@ -230,13 +238,73 @@ int decode_jxl_to_linear(const uint8_t* data, size_t len, std::vector<Sample>& o
     const bool cmyk = icc.size() >= 20 && !memcmp(icc.data() + 16, "CMYK", 4);
     if (cmyk && !info.has_black) return -13;
 
-    const size_t pixels_n = static_cast<size_t>(w) * h;
+    size_t pixels_n = static_cast<size_t>(w) * h;
     std::vector<float> pixels(pixels_n * 4);
     std::vector<float> black(info.has_black ? pixels_n : 0);
     double duration = 0;
     if (decoder.next(pixels.data(), pixels.size() * sizeof(float), duration,
                      black.data(), black.size() * sizeof(float)) != 1) return -5;
     if (out_exif) *out_exif = JxlRsReader::exif(data, len);
+
+    if (thumbnail_edge > 0 && std::max(w, h) > thumbnail_edge) {
+        // Downsize before CMS so thumbnails/capped display decodes don't run
+        // skcms/HDR CMS across full-resolution float planes, and release the
+        // full-frame decode buffer immediately.
+        const unsigned edge = std::max(w, h);
+        const unsigned nw = std::max(1u, static_cast<unsigned>(static_cast<uint64_t>(w) * thumbnail_edge / edge));
+        const unsigned nh = std::max(1u, static_cast<unsigned>(static_cast<uint64_t>(h) * thumbnail_edge / edge));
+        const size_t reduced_n = static_cast<size_t>(nw) * nh;
+        std::vector<float> reduced(reduced_n * 4);
+        std::vector<float> reduced_black(cmyk ? reduced_n : 0);
+        hdr_parallel_pixels(nh, hdr_pixel_jobs(pixels_n), [&](size_t begin, size_t end, unsigned) {
+            for (unsigned y = begin; y < end; ++y) {
+                const double top = double(y) * h / nh, bottom = double(y + 1) * h / nh;
+                const unsigned sy0 = unsigned(top), sy1 = std::min(h, unsigned(std::ceil(bottom)));
+                for (unsigned x = 0; x < nw; ++x) {
+                    const double left = double(x) * w / nw, right = double(x + 1) * w / nw;
+                    const unsigned sx0 = unsigned(left), sx1 = std::min(w, unsigned(std::ceil(right)));
+                    double sum[5]{};
+                    for (unsigned sy = sy0; sy < sy1; ++sy) {
+                        const double wy = std::min(bottom, double(sy + 1)) - std::max(top, double(sy));
+                        const size_t row = static_cast<size_t>(sy) * w;
+                        for (unsigned sx = sx0; sx < sx1; ++sx) {
+                            const size_t si = row + sx;
+                            const double weight = wy * (std::min(right, double(sx + 1)) - std::max(left, double(sx)));
+                            float a = pixels[si * 4 + 3];
+                            if (!std::isfinite(a) || a < 0.f) a = 0.f;
+                            else if (a > 1.f) a = 1.f;
+                            const double aw = a * weight;
+                            for (unsigned c = 0; c < 3; ++c) {
+                                const float v = pixels[si * 4 + c];
+                                if (std::isfinite(v)) sum[c] += v * aw;
+                            }
+                            sum[3] += aw;
+                            if (cmyk) {
+                                const float k = black[si];
+                                if (std::isfinite(k)) sum[4] += k * aw;
+                            }
+                        }
+                    }
+                    const double count = (right - left) * (bottom - top);
+                    const size_t di = static_cast<size_t>(y) * nw + x;
+                    const size_t offset = di * 4;
+                    for (unsigned c = 0; c < 3; ++c) {
+                        reduced[offset + c] = sum[3] > 0.0 ? static_cast<float>(sum[c] / sum[3]) : 0.f;
+                    }
+                    reduced[offset + 3] = static_cast<float>(sum[3] / count);
+                    if (cmyk) {
+                        reduced_black[di] = sum[3] > 0.0 ? static_cast<float>(sum[4] / sum[3]) : 0.f;
+                    }
+                }
+            }
+        });
+        pixels = std::move(reduced);
+        if (cmyk) black = std::move(reduced_black);
+        else std::vector<float>().swap(black);
+        w = nw;
+        h = nh;
+        pixels_n = reduced_n;
+    }
 
     // CMYK uses an extra plane for inverse K. Keep alpha separate while the CMS sees the four inks.
     std::vector<float> alpha;
@@ -348,55 +416,18 @@ int decode_jxl_to_linear(const uint8_t* data, size_t len, std::vector<Sample>& o
         sample[2] = bl;
         sample[3] = a;
     };
-    if (thumbnail_edge > 0 && std::max(w, h) > thumbnail_edge) {
-        // Box-filter CMS-converted linear floats straight into the thumbnail.
-        // Avoid a full-resolution F16 allocation, conversion and second read.
-        // Alpha/compositing runs before averaging, as in the full-frame path.
-        const unsigned edge = std::max(w, h);
-        const unsigned nw = std::max(1u, static_cast<unsigned>(static_cast<uint64_t>(w) * thumbnail_edge / edge));
-        const unsigned nh = std::max(1u, static_cast<unsigned>(static_cast<uint64_t>(h) * thumbnail_edge / edge));
-        out_rgba.resize(static_cast<size_t>(nw) * nh * 4);
-        hdr_parallel_pixels(nh, hdr_pixel_jobs(pixels_n), [&](size_t begin, size_t end, unsigned) {
-            for (unsigned y = begin; y < end; ++y) {
-                const double top = double(y)*h/nh, bottom = double(y+1)*h/nh;
-                const unsigned sy0 = unsigned(top), sy1 = std::min(h, unsigned(std::ceil(bottom)));
-                for (unsigned x = 0; x < nw; ++x) {
-                    const double left = double(x)*w/nw, right = double(x+1)*w/nw;
-                    const unsigned sx0 = unsigned(left), sx1 = std::min(w, unsigned(std::ceil(right)));
-                    double sum[4]{};
-                    for (unsigned sy = sy0; sy < sy1; ++sy) {
-                        for (unsigned sx = sx0; sx < sx1; ++sx) {
-                            float sample[4];
-                            converted_sample(static_cast<size_t>(sy) * w + sx, sample);
-                            const double weight = (std::min(bottom, double(sy+1))-std::max(top, double(sy))) *
-                                (std::min(right, double(sx+1))-std::max(left, double(sx)));
-                            for (unsigned c = 0; c < 3; ++c) sum[c] += sample[c]*sample[3]*weight;
-                            sum[3] += sample[3]*weight;
-                        }
-                    }
-                    const double count = (right-left)*(bottom-top);
-                    const size_t offset = (static_cast<size_t>(y) * nw + x) * 4;
-                    for (unsigned c = 0; c < 3; ++c) out_rgba[offset+c] = store_working<Sample>(sum[3] > 0 ? float(sum[c]/sum[3]) : 0.f);
-                    out_rgba[offset+3] = store_working<Sample>(float(sum[3]/count));
-                }
+    if constexpr (!std::is_same_v<Sample, float>) out_rgba.resize(pixels_n * 4);
+    hdr_parallel_pixels(pixels_n, hdr_pixel_jobs(pixels_n), [&](size_t begin, size_t end, unsigned) {
+        for (size_t i = begin; i < end; ++i) {
+            float sample[4];
+            converted_sample(i, sample);
+            for (unsigned c = 0; c < 4; ++c) {
+                if constexpr (std::is_same_v<Sample, float>) pixels[i * 4 + c] = sample[c];
+                else out_rgba[i * 4 + c] = store_working<Sample>(sample[c]);
             }
-        });
-        w = nw;
-        h = nh;
-    } else {
-        if constexpr (!std::is_same_v<Sample, float>) out_rgba.resize(pixels_n * 4);
-        hdr_parallel_pixels(pixels_n, hdr_pixel_jobs(pixels_n), [&](size_t begin, size_t end, unsigned) {
-            for (size_t i = begin; i < end; ++i) {
-                float sample[4];
-                converted_sample(i, sample);
-                for (unsigned c = 0; c < 4; ++c) {
-                    if constexpr (std::is_same_v<Sample, float>) pixels[i*4+c] = sample[c];
-                    else out_rgba[i*4+c] = store_working<Sample>(sample[c]);
-                }
-            }
-        });
-        if constexpr (std::is_same_v<Sample, float>) out_rgba = std::move(pixels);
-    }
+        }
+    });
+    if constexpr (std::is_same_v<Sample, float>) out_rgba = std::move(pixels);
 
     ALOGI("JXL CMS %ux%u cg=%d pq=%d hlg=%d original=%d intensity=%.1f scale=%.3f hdr=%d "
           "composite=%d",
