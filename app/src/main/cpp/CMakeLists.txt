@@ -400,6 +400,8 @@ if (EHVIEWER_HDR_CODECS)
             $<BUILD_INTERFACE:${libde265_BINARY_DIR}>)
     if (EHVIEWER_JXL_ENCODER)
         set(EHVIEWER_JXL_EXPORT_SOURCE still_jxl.cpp)
+        # The jhgm bundle writer lives in libjxl extras. Build just that source.
+        target_sources(jxl_enc-obj PRIVATE ${libjxl_SOURCE_DIR}/lib/extras/gain_map.cc)
     else ()
         set(EHVIEWER_JXL_EXPORT_SOURCE still_jxl_stub.cpp)
     endif ()

@@ -128,7 +128,7 @@ internal object StillExportWork {
         // JXL already decodes to F32; retaining that buffer avoids the extra F16 copy.
         val preservingJxr = kind == 1 && (!quality.toneMapping.enabled || target != StillExportTarget.Jxl) && (!quality.extendedSrgbBt2020 || target == StillExportTarget.JxlScRgb) &&
             (target == StillExportTarget.Jxl || target == StillExportTarget.JxlHdr || target == StillExportTarget.JxlScRgb)
-        val floatPixels = ext == "jxl" || preservingJxr || quality.float32Processing && (raw || kind == 1 || ext == "avif")
+        val floatPixels = target == StillExportTarget.JxlGainMap || ext == "jxl" || preservingJxr || quality.float32Processing && (raw || kind == 1 || ext == "avif")
         // Codec working buffers live on the native heap, not inside the JVM's
         // maxMemory allowance. Keep both leases through encode, with separate limits.
         return heapBudget.withBytes(exportHeapBytes(width, height, sourceBytes, raw, nativePixels = true, mappedInput = true)) {
@@ -140,7 +140,7 @@ internal object StillExportWork {
                     raw,
                     floatPixels = floatPixels,
                     toneMapping = quality.toneMapping.enabled &&
-                        target in setOf(StillExportTarget.Jpeg, StillExportTarget.Jxl, StillExportTarget.Avif, StillExportTarget.JpegHdr, StillExportTarget.AvifGainMap),
+                        (target.needsSdrBase() || target in setOf(StillExportTarget.Jpeg, StillExportTarget.Jxl, StillExportTarget.Avif)),
                 ),
                 work,
             )

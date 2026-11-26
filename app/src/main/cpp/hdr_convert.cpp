@@ -1688,6 +1688,7 @@ constexpr int kExportAvifGainMap = 6;
 constexpr int kExportJxlPq = 7;
 constexpr int kExportJxlHlg = 8;
 constexpr int kExportAvifHlg = 9;
+constexpr int kExportJxlGainMap = 10;
 
 uhdr_color_gamut_t export_gamut(int gamut) {
     if (gamut == 1) return UHDR_CG_DISPLAY_P3;
@@ -1817,7 +1818,7 @@ int encode_srgb_jpeg_u8(unsigned w, unsigned h, const uint8_t* rgba, const char*
 
 /**
  * Encode a reader bitmap or a full-res direct pack.
- * mode: 0 JPEG, 1 Ultra HDR JPEG, 2 SDR JXL, 3 HDR JXL, 4 SDR AVIF, 5 PQ AVIF, 6 ISO AVIF, 7 PQ JXL, 8 HLG JXL, 9 HLG AVIF.
+ * mode: 0 JPEG, 1 Ultra HDR JPEG, 2 SDR JXL, 3 HDR JXL, 4 SDR AVIF, 5 PQ AVIF, 6 ISO AVIF, 7 PQ JXL, 8 HLG JXL, 9 HLG AVIF, 10 gain-map JXL.
  * 8-bit samples are already encoded. F16 samples are linear. SDR JPEG
  * apply the sRGB curve and embed an ICC profile for the pixel primaries
  * (BT.709, Display P3, or BT.2020). JXL keeps linear half precision and those primaries.
@@ -1825,8 +1826,12 @@ int encode_srgb_jpeg_u8(unsigned w, unsigned h, const uint8_t* rgba, const char*
  */
 int encode_still_export_f32(float*,unsigned,unsigned,int,int,const char*,StillEncodeQuality,const float*);
 
+static bool gain_map_export_mode(int mode) {
+    return mode == kExportJpegHdr || mode == kExportAvifGainMap || mode == kExportJxlGainMap;
+}
+
 static bool tone_map_export_mode(int mode) {
-    return mode==kExportJpeg||mode==kExportJxl||mode==kExportAvif||mode==kExportJpegHdr||mode==kExportAvifGainMap;
+    return mode == kExportJpeg || mode == kExportJxl || mode == kExportAvif || gain_map_export_mode(mode);
 }
 
 // JNI settings are immutable per queued export, never reader/display controls.
@@ -1845,14 +1850,14 @@ static bool read_tone_controls(JNIEnv* env,jfloatArray controls,StillEncodeQuali
 int encode_still_export(const uint8_t* src, size_t src_len, unsigned w, unsigned h, bool f16,
                         int gamut, int mode, bool premultiplied, const char* out_path, size_t sdr_offset = 0,
                         StillEncodeQuality quality = 1, bool mutable_input = false) {
-    if (!src || !out_path || w == 0 || h == 0 || mode < 0 || mode > kExportAvifHlg) return -50;
+    if (!src || !out_path || w == 0 || h == 0 || mode < 0 || mode > kExportJxlGainMap) return -50;
     const size_t pixels = static_cast<size_t>(w) * static_cast<size_t>(h);
     const size_t bpp = f16 ? 8u : 4u;
     if (pixels == 0 || pixels > 80000000u || src_len < pixels * bpp) return -51;
     if (sdr_offset && (!f16 || sdr_offset != pixels * 8u || sdr_offset > src_len || pixels * 8u > src_len - sdr_offset)) return -51;
-    // Promote only linear exports that use the SDR mapper. Encoded 8-bit
-    // sources and every HDR-only target retain their existing paths.
-    if(f16&&quality.sdr_mapper!=0&&!quality.jxl_scrgb&&tone_map_export_mode(mode)) {
+    // The JXL gain map and SDR mapper consume linear float pixels.
+    if (f16 && (mode == kExportJxlGainMap ||
+                (quality.sdr_mapper != 0 && !quality.jxl_scrgb && tone_map_export_mode(mode)))) {
         std::vector<float> linear(pixels*4),base(sdr_offset?pixels*4:0);
         const auto* half=reinterpret_cast<const uint16_t*>(src);
         for(size_t i=0;i<pixels*4;++i)linear[i]=half_to_float(half[i]);
@@ -1937,6 +1942,18 @@ int encode_still_export(const uint8_t* src, size_t src_len, unsigned w, unsigned
     }
     if (mode == kExportAvif) return encode_avif_u8(w, h, rgba, cg, out_path, quality);
     if (mode == kExportJxl) return encode_jxl_u8(w, h, rgba, cg, out_path, quality);
+    if (mode == kExportJxlGainMap) {
+        std::array<float, 256> linear_codes{};
+        for (size_t c = 0; c < linear_codes.size(); ++c) linear_codes[c] = srgb_eotf(c / 255.f);
+        std::vector<float> linear(pixels * 4);
+        hdr_parallel_pixels(pixels, hdr_pixel_jobs(pixels), [&](size_t begin, size_t end, unsigned) {
+            for (size_t i = begin; i < end; ++i) {
+                for (unsigned c = 0; c < 3; ++c) linear[i*4+c] = linear_codes[rgba[i*4+c]];
+                linear[i*4+3] = rgba[i*4+3] / 255.f;
+            }
+        });
+        return encode_jxl_gain_map(w, h, linear.data(), cg, out_path, quality, nullptr);
+    }
     if (mode == kExportJxlHdr || mode >= kExportAvifPq) {
         std::vector<uint16_t> linear(pixels * 4);
         std::array<uint16_t, 256> table{};
@@ -1959,7 +1976,7 @@ int encode_still_export(const uint8_t* src, size_t src_len, unsigned w, unsigned
 
 int encode_still_export_f32(float* src,unsigned w,unsigned h,int gamut,int mode,
                             const char* path,StillEncodeQuality quality,const float* sdr_base) {
-    if(!src||!path||!w||!h||mode<0||mode>kExportAvifHlg||uint64_t(w)*h>80000000)return -50;
+    if(!src||!path||!w||!h||mode<0||mode>kExportJxlGainMap||uint64_t(w)*h>80000000)return -50;
     auto cg=export_gamut(gamut);const size_t pixels=size_t(w)*h;
     const bool srgb_clamp=quality.srgb_clamp&&!quality.jxl_scrgb;
     std::vector<float> sdr_storage;
@@ -1980,10 +1997,11 @@ int encode_still_export_f32(float* src,unsigned w,unsigned h,int gamut,int mode,
                 mapped = tone_map_skiv_base(std::vector<float>(src, src + pixels * 4), working_gamut,
                     quality.sdr_mapper == 2, quality.sdr_shoulder, quality.sdr_range_nits, quality.sdr_auto_curve);
             }
-            if(mode==kExportJpegHdr||mode==kExportAvifGainMap)sdr_base=mapped.data();
+            if (gain_map_export_mode(mode)) sdr_base = mapped.data();
             else src=mapped.data();
         }
     }
+    if (mode == kExportJxlGainMap) return encode_jxl_gain_map(w, h, src, cg, path, quality, sdr_base);
     if(mode==kExportJxl||mode==kExportJxlHdr||mode==kExportJxlPq||mode==kExportJxlHlg)
         return encode_jxl_f32(w,h,src,cg,mode!=kExportJxl,path,quality,mode==kExportJxlPq,mode==kExportJxlHlg);
     if(mode==kExportAvifHlg) return encode_avif_f32(w,h,src,cg,3,path,quality);

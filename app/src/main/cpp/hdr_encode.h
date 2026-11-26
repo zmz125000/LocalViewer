@@ -51,8 +51,6 @@ struct StillEncodeQuality {
     unsigned avif_depth() const { return std::min(source_bits <= 8 ? 8u : source_bits <= 10 ? 10u : 12u, unsigned(preset == 4 ? custom_avif_depth : (preset == 0 || preset == 1) ? 12 : 10)); }
     unsigned jpeg_gain_map_scale() const { return gain_map_scale(); }
     unsigned avif_gain_map_scale() const { return gain_map_scale(); }
-
-private:
     unsigned gain_map_scale() const {
         return preset == 4 ? (custom_downsize_gain_map ? 2 : 1) : (preset == 2 || preset == 3) ? 2 : 1;
     }
@@ -410,3 +408,6 @@ void scale_rgba_f32_max_edge(std::vector<float>&, unsigned&, unsigned&, unsigned
 
 jbyteArray retain_export_f32(JNIEnv*, std::vector<float>&, unsigned, unsigned,
     uhdr_color_gamut_t, bool, int, jintArray, jfloatArray);
+
+int encode_jxl_gain_map(unsigned w, unsigned h, const float* rgba, uhdr_color_gamut_t gamut,
+                        const char* path, StillEncodeQuality quality, const float* sdr_base);
