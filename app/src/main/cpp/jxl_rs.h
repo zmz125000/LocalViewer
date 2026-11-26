@@ -27,6 +27,7 @@ enum class JxlRsFormat : int { u8, u16, f16, f32 };
 extern "C" {
 JxlRsDecoder* jxl_rs_open(const uint8_t*, size_t, JxlRsInfo&);
 void jxl_rs_close(JxlRsDecoder*);
+bool jxl_rs_set_downsample(JxlRsDecoder&, uint8_t factor, uint32_t& width, uint32_t& height);
 bool jxl_rs_set_format(JxlRsDecoder&, JxlRsFormat, bool black_plane);
 bool jxl_rs_color(const JxlRsDecoder&, bool original, JxlRsColor&);
 bool jxl_rs_original_output(const JxlRsDecoder&);
@@ -49,6 +50,9 @@ public:
 
     explicit operator bool() const { return static_cast<bool>(decoder_); }
     const JxlRsInfo& info() const { return info_; }
+    bool set_downsample(uint8_t factor) {
+        return jxl_rs_set_downsample(*decoder_, factor, info_.xsize, info_.ysize);
+    }
     bool set_format(JxlRsFormat format, bool black_plane = false) {
         return jxl_rs_set_format(*decoder_, format, black_plane);
     }
