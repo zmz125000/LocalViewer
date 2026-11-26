@@ -23,6 +23,9 @@ internal external fun toneMapReaderPixels(
     outCurve: FloatArray?,
 ): Boolean
 
+/** Encode captured premultiplied linear F16 into a preallocated ARGB_8888 animation bitmap. */
+internal external fun packReaderSdrAnimation(pixels: ByteBuffer, output: Bitmap, gamut: Int, displayP3: Boolean): Boolean
+
 /** In-place linear sRGB F16 to export gamut; alpha association stays unchanged. */
 internal external fun convertExportGamut(pixels: ByteBuffer, destinationGamut: Int): Boolean
 internal external fun endNativeReaderPixels(handle: Long): ByteBuffer?

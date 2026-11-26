@@ -29,10 +29,11 @@ internal data class ReaderAnimationFrame(val result: LibDirectResult, val durati
 internal class ReaderColorAnimation private constructor(
     private val decoder: ReaderFrameDecoder,
     private val advanced: Boolean,
+    private val hdrDisplay: Boolean,
     first: ReaderAnimationFrame,
 ) : Drawable(), Animatable {
     val estimatedBytes = decoder.encodedBytes + decoder.retainedPixelBytes +
-        2L * first.result.bitmap.width * first.result.bitmap.height * 8
+        2L * first.result.bitmap.width * first.result.bitmap.height * (if (hdrDisplay) 8 else 4)
     var source: LibDirectResult? = first.result
         private set
 
@@ -72,9 +73,9 @@ internal class ReaderColorAnimation private constructor(
             scope.launch {
                 val frame = withContext(Dispatchers.IO) {
                     try {
-                        val (next, end) = decode(decoder, advanced, false)
+                        val (next, end) = decode(decoder, advanced, hdrDisplay, false)
                         if (end && (++completedLoops < decoder.loops || decoder.loops == 0)) {
-                            decode(decoder, advanced, true).first
+                            decode(decoder, advanced, hdrDisplay, true).first
                         } else {
                             next
                         }
@@ -157,8 +158,9 @@ internal class ReaderColorAnimation private constructor(
             var retained = false
             try {
                 val advanced = Settings.readerAdvancedColor.value
-                val frame = decode(decoder, advanced, false).first ?: return null
-                return ReaderColorAnimation(decoder, advanced, frame).also { retained = true }
+                val hdrDisplay = LibDirectDecode.animationHdrDisplayEnabled()
+                val frame = decode(decoder, advanced, hdrDisplay, false).first ?: return null
+                return ReaderColorAnimation(decoder, advanced, hdrDisplay, frame).also { retained = true }
             } finally {
                 if (!retained) decoder.close()
             }
@@ -167,12 +169,13 @@ internal class ReaderColorAnimation private constructor(
         private fun decode(
             decoder: ReaderFrameDecoder,
             advanced: Boolean,
+            hdrDisplay: Boolean,
             restart: Boolean,
         ): Pair<ReaderAnimationFrame?, Boolean> {
             val info = IntArray(13)
             val boost = FloatArray(1)
             val delay = intArrayOf(-1)
-            val frame = LibDirectDecode.decodeAnimationFrame(info, boost) {
+            val frame = LibDirectDecode.decodeAnimationFrame(info, boost, hdrDisplay, advanced) {
                 decoder.next(restart, advanced, info, boost, delay)
             }
             return frame?.let { ReaderAnimationFrame(it, delay[0]) } to (delay[0] == 0)

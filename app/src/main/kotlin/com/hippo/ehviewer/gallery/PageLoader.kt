@@ -265,7 +265,12 @@ abstract class PageLoader(
         } else {
             null
         }
-        val image = Image.decodeReaderAnimation(raw, hint, ::readSourceMetadata)
+        val image = Image.decodeReaderAnimation(
+            raw,
+            hint,
+            onNativeAnimation = { hasHdrDependentImage = true },
+            beforeClose = ::readSourceMetadata,
+        )
             ?: tryDecodeLibDirect(index, raw, forceOriginal, hint, ::readSourceMetadata)
             ?: run {
                 readSourceMetadata()
@@ -370,7 +375,7 @@ abstract class PageLoader(
         // Read from the still-open original before Image takes ownership/closes it.
         // Native JXL/AVIF have already collected EXIF while decoding.
         readSourceMetadata(direct)
-        if (jxlGainMap && direct.sourceHasGainmap) decodedJxlGainMap = true
+        if (jxlGainMap && direct.sourceHasGainmap) hasHdrDependentImage = true
         thumbSoftwareBitmapBeforeHardware(index, raw, direct.bitmap)
         // Native decoding can be selected for precision/codec support even when
         // the preference is off. Its SDR base still needs the OEM/Apple map.
@@ -866,11 +871,11 @@ abstract class PageLoader(
 
     abstract override val title: String
 
-    // JXL selects a different rendition when HDR display is toggled.
+    // JXL gain maps and native color animations select different pixels for SDR and HDR display.
     @Volatile
-    private var decodedJxlGainMap = false
+    private var hasHdrDependentImage = false
 
-    override fun hasDecodedJxlGainMap(): Boolean = decodedJxlGainMap
+    override fun hasHdrDependentDecode(): Boolean = hasHdrDependentImage
 
     private val rawLoadedState = MutableStateFlow(false)
 

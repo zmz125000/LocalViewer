@@ -56,6 +56,7 @@ import com.hippo.ehviewer.coil.BitmapImageWithExtraInfo
 import com.hippo.ehviewer.coil.ColorApngDecoder
 import com.hippo.ehviewer.coil.ReaderApngDrawable
 import com.hippo.ehviewer.coil.ReaderColorAnimation
+import com.hippo.ehviewer.coil.ReaderFrameDecoder
 import com.hippo.ehviewer.coil.detectGainmap
 import com.hippo.ehviewer.coil.detectQrCode
 import com.hippo.ehviewer.coil.hardwareThreshold
@@ -898,8 +899,13 @@ class Image private constructor(
             ).also { it.noteHiResPreview(image.capped, image.previewEdge) }
         }
 
-        internal fun decodeReaderAnimation(src: ImageSource, fileNameHint: String, beforeClose: (LibDirectResult?) -> Unit): Image? {
-            val animation = readerAnimationDrawable(src, fileNameHint) ?: return null
+        internal fun decodeReaderAnimation(
+            src: ImageSource,
+            fileNameHint: String,
+            onNativeAnimation: () -> Unit,
+            beforeClose: (LibDirectResult?) -> Unit,
+        ): Image? {
+            val animation = readerAnimationDrawable(src, fileNameHint, onNativeAnimation) ?: return null
             val result = (animation as? ReaderColorAnimation)?.takeSource()
             try {
                 beforeClose(result)
@@ -1108,7 +1114,11 @@ private fun LibDirectResult.readerMetadata(colorSpace: ColorSpace? = bitmap.colo
 
 private val readerAnimationExtensions = setOf("jxl", "ajxl", "avif", "avifs", "png", "apng")
 
-private fun readerAnimationDrawable(src: ImageSource, fileNameHint: String): android.graphics.drawable.Drawable? {
+private fun readerAnimationDrawable(
+    src: ImageSource,
+    fileNameHint: String,
+    onNativeAnimation: () -> Unit,
+): android.graphics.drawable.Drawable? {
     if (src is PathSource) {
         val extension = FileUtils.getExtensionFromFilename(src.source.name)?.lowercase()
         val hint = fileNameHint.substringAfterLast('.', "").lowercase()
@@ -1118,20 +1128,24 @@ private fun readerAnimationDrawable(src: ImageSource, fileNameHint: String): and
             return null
         }
     }
+    fun createNative(decoder: ReaderFrameDecoder): ReaderColorAnimation? {
+        onNativeAnimation()
+        return ReaderColorAnimation.create(decoder)
+    }
     return try {
         withStillInput(src) { input ->
             if (input.remaining() !in 12..(128 * 1024 * 1024)) return@withStillInput null
             val native = android.os.Process.is64Bit()
             when {
-                native && input.looksLikeJxl() -> input.openReaderAnimation(avif = false)?.let(ReaderColorAnimation::create)
-                native && input.isAvifSequence() -> input.openReaderAnimation(avif = true)?.let(ReaderColorAnimation::create)
+                native && input.looksLikeJxl() -> input.openReaderAnimation(avif = false)?.let(::createNative)
+                native && input.isAvifSequence() -> input.openReaderAnimation(avif = true)?.let(::createNative)
                 input.hasApngAnimation() -> {
                     val encoded = ByteBuffer.allocateDirect(input.remaining())
                     encoded.put(input.duplicate())
                     encoded.flip()
                     val tags = if (native) PngHdrMetadata.probe(encoded, allowAnimation = true) else null
                     val decoder = tags?.takeIf { it.needsNativeReader }?.let { ColorApngDecoder.open(encoded, it) }
-                    decoder?.let(ReaderColorAnimation::create) ?: ReaderApngDrawable(encoded)
+                    decoder?.let(::createNative) ?: ReaderApngDrawable(encoded)
                 }
                 else -> null
             }

@@ -4,6 +4,7 @@
  * JPEG XR / HDR raster → Ultra HDR JPEG via libultrahdr.
  * JNI: com.hippo.ehviewer.jni.HdrConvertKt
  */
+#include <android/bitmap.h>
 #include <android/log.h>
 #include <jni.h>
 #include "thumbnail_mapped_input.h"
@@ -1416,6 +1417,69 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_toneMapReaderPixels(
     else tone_map_skiv_in_place(pixels,gamut,mapper==3,shoulder,cap,auto_curve);
     if(!direct)env->SetByteArrayRegion(array,0,jsize(bytes),reinterpret_cast<const jbyte*>(data));
     return env->ExceptionCheck()?JNI_FALSE:JNI_TRUE;
+} catch (...) { return JNI_FALSE; }
+
+// Tone mapping (when selected) has already run in the linear source gamut.
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_hippo_ehviewer_jni_HdrConvertKt_packReaderSdrAnimation(
+        JNIEnv* env, jclass, jobject source, jobject output, jint gamut, jboolean display_p3) try {
+    const auto* rgba = static_cast<const uint16_t*>(env->GetDirectBufferAddress(source));
+    const jlong bytes = env->GetDirectBufferCapacity(source);
+    AndroidBitmapInfo bitmap{};
+    if (!rgba || bytes <= 0 || AndroidBitmap_getInfo(env, output, &bitmap) != ANDROID_BITMAP_RESULT_SUCCESS ||
+        bitmap.format != ANDROID_BITMAP_FORMAT_RGBA_8888 || bitmap.stride < uint64_t(bitmap.width) * 4 ||
+        uint64_t(bitmap.width) * bitmap.height > uint64_t(bytes) / 8 ||
+        gamut < 0 || gamut > 2) return JNI_FALSE;
+
+    const int output_gamut = display_p3 ? 1 : 0;
+    const auto& srgb = half_srgb_table();
+    void* destination = nullptr;
+    if (AndroidBitmap_lockPixels(env, output, &destination) != ANDROID_BITMAP_RESULT_SUCCESS) return JNI_FALSE;
+    try {
+        hdr_parallel_pixels(bitmap.height, hdr_pixel_jobs(size_t(bitmap.width) * bitmap.height),
+            [&](size_t begin, size_t end, unsigned) {
+                for (size_t y = begin; y < end; ++y) {
+                    const uint16_t* pixel = rgba + y * bitmap.width * 4;
+                    auto* out = static_cast<uint8_t*>(destination) + y * bitmap.stride;
+                    for (unsigned x = 0; x < bitmap.width; ++x, pixel += 4, out += 4) {
+                        const float alpha = half_to_float(pixel[3]);
+                        if (alpha == 1.f && gamut == output_gamut) {
+                            for (unsigned c = 0; c < 3; ++c) out[c] = uint8_t(srgb[pixel[c]] * 255.f + 0.5f);
+                            out[3] = 255;
+                            continue;
+                        }
+                        if (!(alpha > 0.f)) {
+                            std::fill_n(out, 4, 0);
+                            continue;
+                        }
+                        const float inv_alpha = 1.f / alpha;
+                        float r = half_to_float(pixel[0]) * inv_alpha;
+                        float g = half_to_float(pixel[1]) * inv_alpha;
+                        float b = half_to_float(pixel[2]) * inv_alpha;
+                        if (gamut == 2 && display_p3) {
+                            // Linear BT.2020 to linear Display P3, both with D65 white.
+                            const float nr = 1.34357830f * r - 0.28217967f * g - 0.06139861f * b;
+                            const float ng = -0.06529749f * r + 1.07578791f * g - 0.01049046f * b;
+                            b = 0.00282179f * r - 0.01959849f * g + 1.01677674f * b;
+                            r = nr;
+                            g = ng;
+                        } else if (!display_p3) {
+                            clamp_linear_rgb_to_bt709(r, g, b, gamut);
+                        }
+                        const float scale = alpha * 255.f;
+                        // Associate alpha again after the nonlinear sRGB/P3 transfer.
+                        out[0] = uint8_t(srgb_oetf(r) * scale + 0.5f);
+                        out[1] = uint8_t(srgb_oetf(g) * scale + 0.5f);
+                        out[2] = uint8_t(srgb_oetf(b) * scale + 0.5f);
+                        out[3] = uint8_t(scale + 0.5f);
+                    }
+                }
+            });
+    } catch (...) {
+        AndroidBitmap_unlockPixels(env, output);
+        return JNI_FALSE;
+    }
+    return AndroidBitmap_unlockPixels(env, output) == ANDROID_BITMAP_RESULT_SUCCESS;
 } catch (...) { return JNI_FALSE; }
 
 int pack_linear_f16_for_direct(std::vector<uint16_t>& rgba, unsigned w, unsigned h, bool force_hdr,
