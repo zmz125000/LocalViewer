@@ -128,8 +128,7 @@ internal fun BoxScope.ReaderScreenWidget(page: Page?, slideshow: Boolean, source
             val depth = metadata.bitDepth?.let { stringResource(R.string.slideshow_info_bit_depth, it) }
             val extension = sourceName?.substringAfterLast('.', "")?.takeIf { it.isNotBlank() }?.uppercase(Locale.ROOT)
             val fileSize = metadata.fileSize?.takeIf { it > 0 }?.let(FileUtils::humanReadableByteCount)
-            val animated = if (metadata.animated) stringResource(R.string.slideshow_info_animated) else null
-            val imageInfo = listOfNotNull(dimensions, depth, extension, animated, fileSize).joinToString(" · ")
+            val imageInfo = listOfNotNull(dimensions, depth, extension, fileSize).joinToString(" · ")
             if (imageInfo.isNotEmpty()) Text(imageInfo, style = style, fontSize = 16.sp, lineHeight = 22.sp)
         }
         if (showExifInfo && metadata != null) {
@@ -163,7 +162,8 @@ internal fun BoxScope.ReaderScreenWidget(page: Page?, slideshow: Boolean, source
                     null -> null
                 }
             }
-            val colorInfo = listOfNotNull(colorSpace, dynamicRange, transfer).joinToString(" · ")
+            val animated = if (metadata.animated) stringResource(R.string.slideshow_info_animated) else null
+            val colorInfo = listOfNotNull(colorSpace, dynamicRange, transfer, animated).joinToString(" · ")
             if (colorInfo.isNotEmpty()) Text(colorInfo, style = style, fontSize = 16.sp, lineHeight = 22.sp)
         }
         if (showFileName) {

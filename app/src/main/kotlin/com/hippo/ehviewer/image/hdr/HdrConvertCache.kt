@@ -331,7 +331,7 @@ object HdrConvertCache {
                 OriginDiskCache.scheduleTrim()
                 return@withThumbConvertSlot true
             }
-            val route = classifyPath(source, fileNameHint)
+            val route = classifyPath(source, fileNameHint, forNativeThumbnail = android.os.Process.is64Bit())
             ThumbnailMemory.withPath(source, (route as? StillRoute.Lib)?.codec, edge) {
                 if (route is StillRoute.Lib && route.codec == LibCodec.Raw) {
                     val preview = RawPreviewCache.ensureJpeg(source, demosaicFallback = false) ?: return@withPath false
@@ -497,7 +497,7 @@ object HdrConvertCache {
         if (bytes.isEmpty()) return@withContext false
         withThumbConvertSlot {
             val edge = maxEdge.coerceIn(64, 2048)
-            val route = classify(bytes, bytes.size, fileNameHint)
+            val route = classify(bytes, bytes.size, fileNameHint, forNativeThumbnail = android.os.Process.is64Bit())
             ThumbnailMemory.withBytes(bytes, (route as? StillRoute.Lib)?.codec, edge) {
                 if (route is StillRoute.Lib && route.codec == LibCodec.Raw) {
                     val preview = File.createTempFile("rawprev", ".jpg", appCtx.cacheDir)

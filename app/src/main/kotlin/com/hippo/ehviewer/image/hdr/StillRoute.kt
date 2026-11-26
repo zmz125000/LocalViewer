@@ -138,7 +138,7 @@ fun isLibStillExtension(ext: String?): Boolean {
  */
 fun needsGeneratedPageThumb(ext: String?): Boolean {
     val e = ext?.lowercase()?.removePrefix(".") ?: return false
-    return isLibStillExtension(e) || e == "avif" || isHeicImageExtension(e)
+    return isLibStillExtension(e) || e == "avif" || e == "avifs" || isHeicImageExtension(e)
 }
 
 fun isRawStillExtension(ext: String?): Boolean {
@@ -208,7 +208,12 @@ fun classify(
 }
 
 /** Classify any Okio path. Lib stills can use extension; AVIF/gain-map need header bytes. */
-fun classifyPath(path: Path, fileNameHint: String? = null, maxBytes: Int = HDR_SNIFF_BYTES): StillRoute {
+fun classifyPath(
+    path: Path,
+    fileNameHint: String? = null,
+    maxBytes: Int = HDR_SNIFF_BYTES,
+    forNativeThumbnail: Boolean = false,
+): StillRoute {
     val hint = fileNameHint ?: path.name
     val byExt = classifyByExtension(hint)
     if (byExt.needsLibDecode) return byExt
@@ -224,7 +229,7 @@ fun classifyPath(path: Path, fileNameHint: String? = null, maxBytes: Int = HDR_S
         path.read {
             val bytes = ByteArray(maxBytes)
             val n = readAtMostTo(bytes)
-            if (n <= 0) StillRoute.Platform else classify(bytes, n, hint)
+            if (n <= 0) StillRoute.Platform else classify(bytes, n, hint, forNativeThumbnail)
         }
     }.getOrDefault(StillRoute.Platform)
 }
@@ -261,7 +266,12 @@ internal fun hasProxdrHeifTrailer(buffer: ByteBuffer, fileNameHint: String? = nu
  * Other gain-map markers → PlatformGainMap. Absolute PQ/HLG HEIC → Lib HevcHdr.
  * HEIC + OPPO ProXDR trailer (when setting on) → OppoProxdr (platform + attach).
  */
-fun classify(bytes: ByteArray, length: Int = bytes.size, fileNameHint: String? = null): StillRoute {
+fun classify(
+    bytes: ByteArray,
+    length: Int = bytes.size,
+    fileNameHint: String? = null,
+    forNativeThumbnail: Boolean = false,
+): StillRoute {
     val n = length.coerceIn(0, bytes.size)
     if (n <= 0) return StillRoute.Platform
 
@@ -288,6 +298,11 @@ fun classify(bytes: ByteArray, length: Int = bytes.size, fileNameHint: String? =
         return StillRoute.Lib(LibCodec.Jxr)
     }
 
+    // The AVIF thumbnail decoder can take a single frame from the track.
+    // Keep sequences intact on the regular reader and cache routes.
+    if (forNativeThumbnail && ByteBuffer.wrap(bytes, 0, n).isAvifSequence()) {
+        return StillRoute.Lib(LibCodec.AvifPq)
+    }
     val heifPrecision = if (isHeifFamily(bytes, n)) HeifPrecisionProbe.probe(bytes, n) else null
     if (heifPrecision?.animated == true) return StillRoute.Platform
     if (Settings.preferNativeHeifAvif.value &&
