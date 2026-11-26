@@ -15,7 +15,7 @@ internal data class PngHdrMetadata(val width: Int, val height: Int, val depth: I
             return bytes.remaining() >= 8 && bytes.long == 0x89504e470d0a1a0aUL.toLong()
         }
 
-        fun probe(input: ByteBuffer): PngHdrMetadata? {
+        fun probe(input: ByteBuffer, allowAnimation: Boolean = false): PngHdrMetadata? {
             val bytes = input.slice().order(ByteOrder.BIG_ENDIAN)
             if (!isPng(bytes) || bytes.remaining() < 33) return null
             bytes.position(8)
@@ -37,7 +37,7 @@ internal data class PngHdrMetadata(val width: Int, val height: Int, val depth: I
                 val type = bytes.int
                 if (size > bytes.remaining() - 4L) return null
                 when (type) {
-                    0x6163544c -> return null // acTL: preserve animation, including its default image.
+                    0x6163544c -> if (!allowAnimation) return null // acTL
                     0x63494350 -> { // cICP: RGB matrix, full-range samples, sRGB, PQ or HLG.
                         if (size != 4L || colorTags != null) return null
                         val p = bytes.get(bytes.position()).toInt() and 255

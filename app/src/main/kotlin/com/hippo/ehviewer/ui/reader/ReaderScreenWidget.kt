@@ -162,7 +162,8 @@ internal fun BoxScope.ReaderScreenWidget(page: Page?, slideshow: Boolean, source
                     null -> null
                 }
             }
-            val colorInfo = listOfNotNull(colorSpace, dynamicRange, transfer).joinToString(" · ")
+            val animated = if (metadata.animated) stringResource(R.string.slideshow_info_animated) else null
+            val colorInfo = listOfNotNull(colorSpace, dynamicRange, transfer, animated).joinToString(" · ")
             if (colorInfo.isNotEmpty()) Text(colorInfo, style = style, fontSize = 16.sp, lineHeight = 22.sp)
         }
         if (showFileName) {

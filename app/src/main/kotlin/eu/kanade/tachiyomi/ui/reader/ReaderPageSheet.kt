@@ -74,6 +74,7 @@ fun ReaderPageSheetMeta(
                 StillExportTarget.JxlScRgb to R.string.convert_jxl_scrgb,
                 StillExportTarget.JxlHlg to R.string.convert_jxl_hlg,
                 StillExportTarget.JxlPq to R.string.convert_jxl_pq,
+                StillExportTarget.JxlGainMap to R.string.convert_jxl_gain_map,
                 StillExportTarget.Avif to R.string.convert_avif,
                 StillExportTarget.AvifGainMap to R.string.convert_avif_gain_map,
                 StillExportTarget.AvifHlg to R.string.convert_avif_hlg,

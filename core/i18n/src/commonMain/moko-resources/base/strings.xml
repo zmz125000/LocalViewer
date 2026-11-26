@@ -1239,6 +1239,7 @@
     <string name="convert_avif">AVIF (SDR)</string>
     <string name="convert_avif_hlg">AVIF (HDR HLG)</string>
     <string name="convert_avif_pq">AVIF (HDR PQ)</string>
+    <string name="convert_jxl_gain_map">JXL (HDR gain map)</string>
     <string name="convert_avif_gain_map">AVIF (HDR)</string>
     <string name="wide_color_gamut">Use Display P3 color space</string>
     <string name="settings_eh_request_news_timepicker">Set time to request news</string>
@@ -1375,6 +1376,7 @@
     <string name="pref_slideshow_show_color_space">Color space</string>
     <string name="pref_slideshow_show_exif_info">EXIF info</string>
     <string name="pref_slideshow_show_lens_model">Lens model</string>
+    <string name="slideshow_info_animated">Animated</string>
     <string name="slideshow_info_bit_depth">%1$d-bit</string>
     <string name="slideshow_info_transfer_linear">Linear</string>
     <string name="slideshow_info_transfer_gain_map">Gain Map</string>

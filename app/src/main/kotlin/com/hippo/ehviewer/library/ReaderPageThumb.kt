@@ -1,6 +1,7 @@
 package com.hippo.ehviewer.library
 
 import android.graphics.Bitmap
+import android.util.LruCache
 import com.ehviewer.core.util.logcat
 import com.hippo.ehviewer.image.hdr.HdrConvertCache
 import java.io.File
@@ -9,7 +10,9 @@ import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import okio.Path
 import okio.Path.Companion.toOkioPath
@@ -35,11 +38,26 @@ object ReaderPageThumb {
 
     private val pathLocks = ConcurrentHashMap<String, Mutex>()
 
+    /** identity → existing thumb path. Main-thread hits avoid SHA-256 and disk stat. */
+    private val knownPresent = LruCache<String, Path>(2048)
+
+    /** Cap Compose cells queuing into IO/native thumbnail generation (matches VideoThumbnail). */
+    private val composeGenerateSemaphore = Semaphore(6)
+
+    suspend fun <T> withComposeGenerateJob(block: suspend () -> T): T = composeGenerateSemaphore.withPermit { block() }
+
     fun dest(identity: String): Path = root / OriginDiskCache.thumbFileName(sha256Hex("v$FORMAT_VERSION:$identity"))
 
     fun isThumbPath(path: Path): Boolean = path.toString().contains("/cache/page_thumb/")
 
-    fun find(identity: String): Path? = OriginDiskCache.existingThumb(dest(identity))
+    fun findIfKnown(identity: String): Path? = knownPresent[identity]
+
+    fun find(identity: String): Path? = OriginDiskCache.existingThumb(dest(identity))?.also {
+        knownPresent.put(identity, it)
+    } ?: run {
+        knownPresent.remove(identity)
+        null
+    }
 
     /** Store an already-encoded thumb (photo-grid WebP). Does not decode it again. */
     fun writeEncoded(identity: String, bytes: ByteArray): Path? {
@@ -63,7 +81,7 @@ object ReaderPageThumb {
                         tmp.delete()
                     }
                     OriginDiskCache.scheduleTrim()
-                    OriginDiskCache.existingThumb(destPath)
+                    OriginDiskCache.existingThumb(destPath)?.also { knownPresent.put(identity, it) }
                 } finally {
                     if (tmp.exists() && tmp.absolutePath != destFile.absolutePath) tmp.delete()
                 }
@@ -100,7 +118,7 @@ object ReaderPageThumb {
                         fileNameHint = fileNameHint,
                     )
                 }.onFailure { logcat("PageThumb", it) }.getOrDefault(false)
-                OriginDiskCache.existingThumb(destPath).takeIf { ok }
+                OriginDiskCache.existingThumb(destPath).takeIf { ok }?.also { knownPresent.put(identity, it) }
             }
         }
     }
@@ -152,7 +170,7 @@ object ReaderPageThumb {
                         tmp.delete()
                     }
                     OriginDiskCache.scheduleTrim()
-                    OriginDiskCache.existingThumb(destPath)
+                    OriginDiskCache.existingThumb(destPath)?.also { knownPresent.put(identity, it) }
                 } catch (e: Throwable) {
                     logcat("PageThumb", e)
                     tmp.delete()

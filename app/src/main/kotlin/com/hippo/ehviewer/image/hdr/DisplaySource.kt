@@ -1,6 +1,5 @@
 package com.hippo.ehviewer.image.hdr
 
-import com.hippo.ehviewer.coil.hasJxlAnimation
 import com.hippo.ehviewer.image.ByteBufferSource
 import com.hippo.ehviewer.image.ImageSource
 import com.hippo.ehviewer.image.PathSource
@@ -49,14 +48,11 @@ object DisplaySource {
                 if (t.isNotEmpty()) "$name.$t" else name
             }
         }
-        if ((
-                classifyByExtension(hint) == StillRoute.Lib(LibCodec.Jxl) ||
-                    src.type.trimStart('.').lowercase() in setOf("jxl", "ajxl")
-                ) &&
-            withStillInput(src) { it.hasJxlAnimation() } == true
-        ) {
-            return src
+        val codec = (classifyByExtension(hint) as? StillRoute.Lib)?.codec ?: when (hint.substringAfterLast('.').lowercase()) {
+            "avif", "avifs" -> LibCodec.AvifPq
+            else -> null
         }
+        if (codec != null && withStillInput(src) { it.keepReaderContainer(codec) } == true) return src
         val ready = convertLibToCoilReady(src.source, hint, persistTo)
         if (ready.toString() == src.source.toString()) return src
         val outer = src
@@ -74,7 +70,7 @@ object DisplaySource {
         persistTo: Path?,
     ): ImageSource {
         val route = classify(src.source, fileNameHint)
-        if (route == StillRoute.Lib(LibCodec.Jxl) && src.source.hasJxlAnimation()) return src
+        if (route is StillRoute.Lib && src.source.keepReaderContainer(route.codec)) return src
         if (!route.needsUhdr) return src
         val ready = if (src.source.isDirect) {
             HdrConvertCache.ensureCoilReadyFromBuffer(src.source, fileNameHint, persistTo)

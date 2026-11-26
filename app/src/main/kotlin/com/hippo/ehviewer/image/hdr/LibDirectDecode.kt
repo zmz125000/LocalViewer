@@ -46,6 +46,7 @@ import com.hippo.ehviewer.jni.extractRawPreviewBuffer
 import com.hippo.ehviewer.jni.extractRawPreviewBytes
 import com.hippo.ehviewer.jni.extractRawPreviewFd
 import com.hippo.ehviewer.jni.extractRawPreviewFile
+import com.hippo.ehviewer.jni.packReaderSdrAnimation
 import com.hippo.ehviewer.jni.releaseNativeReaderPixels
 import com.hippo.ehviewer.util.FileUtils
 import com.hippo.ehviewer.util.HdrDisplayInfo
@@ -81,6 +82,7 @@ data class LibDirectResult(
     val sourceBitDepth: Int? = null,
     /** Gain map applied during native decoding, even when the returned bitmap is flattened HDR. */
     val sourceHasGainmap: Boolean = false,
+    val sourceHdr: Boolean? = null,
     /** Original source tags, captured before resizing or working-space conversion. */
     val sourceWidth: Int? = null,
     val sourceHeight: Int? = null,
@@ -339,10 +341,12 @@ object LibDirectDecode {
                 packed.outInfo,
                 packed.outBoost,
                 nativePixels = nativePixels,
+                reconstructGainMap = route == StillRoute.Lib(LibCodec.Jxl),
             )?.copy(
                 sourceExif = packed.sourceExif,
                 sourceBitDepth = packed.outInfo.getOrNull(6)?.takeIf { it in 1..32 },
                 sourceHasGainmap = packed.outInfo.getOrNull(7) == 1,
+                sourceHdr = packed.outInfo.getOrNull(13)?.takeIf { it != 0 }?.let { it == 2 },
                 sourceWidth = packed.outInfo.getOrNull(8)?.takeIf { it > 0 },
                 sourceHeight = packed.outInfo.getOrNull(9)?.takeIf { it > 0 },
                 sourcePrimaries = packed.outInfo.getOrNull(10)?.takeIf { it > 0 },
@@ -415,16 +419,21 @@ object LibDirectDecode {
     ): PackedPixels? = withStillInput(src) { buffer ->
         if (!buffer.hasRemaining()) return@withStillInput null
         if (codec == LibCodec.HevcHdr) return@withStillInput decodeHevcHdrPacked(buffer, maxEdge, advanced, export)
-        val outInfo = IntArray(13)
+        val outInfo = IntArray(14)
         val outBoost = FloatArray(1)
         // Existing RAM-backed pages reuse the source array; mapped archive/local
         // inputs go directly to JNI without a compressed Java-array copy.
         val bytes by lazy { buffer.heapBytesForConvert() }
         val panelBoost = if (!export && codec == LibCodec.Jxr) jxrHighlightCap() else 1f
         val outExif = if (!export && (codec == LibCodec.Jxl || codec == LibCodec.AvifPq)) arrayOfNulls<ByteArray>(1) else null
+        val jxlGainMap = when {
+            export || codec != LibCodec.Jxl -> 0
+            Settings.readerHdrDisplay.value || Settings.readerSdrToneMappingEnabled -> 2
+            else -> 1
+        }
         val pixels = if (buffer.isDirect) {
             when (codec) {
-                LibCodec.Jxl -> decodeJxlBufferToDirect(buffer, maxEdge, advanced, outInfo, outBoost, export && extendedSrgbBt2020, outExif)
+                LibCodec.Jxl -> decodeJxlBufferToDirect(buffer, maxEdge, advanced, outInfo, outBoost, export && extendedSrgbBt2020, outExif, jxlGainMap)
                 LibCodec.Jxr -> decodeJxrBufferToDirect(buffer, maxEdge, advanced, panelBoost, outInfo, outBoost, export && extendedSrgbBt2020)
                 LibCodec.AvifPq -> decodeAvifBufferToDirect(buffer, maxEdge, advanced, outInfo, outBoost, outExif)
                 LibCodec.Jpeg2000 -> decodeJpeg2000BufferToDirect(buffer, maxEdge, advanced, outInfo, outBoost)
@@ -433,7 +442,7 @@ object LibDirectDecode {
             }
         } else {
             when (codec) {
-                LibCodec.Jxl -> decodeJxlBytesToDirect(bytes, maxEdge, advanced, outInfo, outBoost, export && extendedSrgbBt2020, outExif)
+                LibCodec.Jxl -> decodeJxlBytesToDirect(bytes, maxEdge, advanced, outInfo, outBoost, export && extendedSrgbBt2020, outExif, jxlGainMap)
                 LibCodec.Jxr -> decodeJxrBytesToDirect(bytes, maxEdge, advanced, panelBoost, outInfo, outBoost, export && extendedSrgbBt2020)
                 LibCodec.Jpeg2000 -> decodeJpeg2000BytesToDirect(bytes, maxEdge, advanced, outInfo, outBoost)
                     ?: packJpeg2000(bytes, maxEdge, outInfo, outBoost)
@@ -668,7 +677,7 @@ object LibDirectDecode {
         val mode = rawPresentMode(
             hdrDisplay = Settings.readerHdrDisplay.value,
             advancedColor = Settings.readerAdvancedColor.value,
-            panelHdr = rawPanelIsHdr(),
+            panelHdr = defaultDisplayIsHdr(),
         )
         return decodeRawPresent(input, maxEdge, mode) ?: rawPreviewPacked(input)
     }
@@ -864,7 +873,7 @@ object LibDirectDecode {
         else -> maxEdge.coerceAtMost(RAW_FULL_EDGE)
     }
 
-    private fun rawPanelIsHdr(): Boolean {
+    private fun defaultDisplayIsHdr(): Boolean {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) return false
         val display = appCtx.getSystemService(DisplayManager::class.java)
             ?.getDisplay(Display.DEFAULT_DISPLAY)
@@ -930,11 +939,50 @@ object LibDirectDecode {
         }
     }
 
+    internal fun animationHdrDisplayEnabled(): Boolean = Settings.readerHdrDisplay.value &&
+        (defaultDisplayIsHdr() || appCtx.resources.configuration.isScreenHdr)
+
+    /** Reader animations share the still packer and use CPU equivalents for GPU tone-mapping selections. */
+    internal fun decodeAnimationFrame(
+        info: IntArray,
+        boost: FloatArray,
+        hdrDisplay: Boolean,
+        advancedColor: Boolean,
+        decode: () -> ByteArray?,
+    ): LibDirectResult? {
+        val handle = beginNativeReaderPixels()
+        try {
+            val packed = decode()
+            val pixels = endNativeReaderPixels(handle)
+            if (packed == null) return null
+            return bitmapFromPacked(
+                packed,
+                info,
+                boost,
+                pixels,
+                animationHdrDisplay = hdrDisplay,
+                animationWideColor = advancedColor,
+            )?.copy(
+                sourceBitDepth = info[6].takeIf { it > 0 },
+                sourceWidth = info[8].takeIf { it > 0 },
+                sourceHeight = info[9].takeIf { it > 0 },
+                sourcePrimaries = info[10].takeIf { it > 0 },
+                sourceTransfer = info[11].takeIf { it > 0 } ?: info[5],
+                sourceIsScRgb = info[12] != 0,
+            )
+        } finally {
+            releaseNativeReaderPixels(handle)
+        }
+    }
+
     private fun bitmapFromPacked(
         pixels: ByteArray,
         outInfo: IntArray,
         outBoost: FloatArray,
         nativePixels: ByteBuffer?,
+        animationHdrDisplay: Boolean? = null,
+        animationWideColor: Boolean = false,
+        reconstructGainMap: Boolean = false,
     ): LibDirectResult? {
         val w = outInfo[0]
         val h = outInfo[1]
@@ -945,8 +993,10 @@ object LibDirectDecode {
         if (w <= 0 || h <= 0) return null
         val f16 = format == 1
         var gpuToneMapping: ReaderGpuToneMapping? = null
-        if (f16 && isHdr && outInfo.getOrNull(7) != 1 && !Settings.readerHdrDisplay.value) {
-            val mapper = ReaderToneMapper.fromPreference(Settings.readerHdrToneMapper.value).supportedMode()
+        val hdrDisplay = animationHdrDisplay ?: Settings.readerHdrDisplay.value
+        if (f16 && isHdr && (reconstructGainMap || outInfo.getOrNull(7) != 1) && !hdrDisplay) {
+            val preference = ReaderToneMapper.fromPreference(Settings.readerHdrToneMapper.value).supportedMode()
+            val mapper = if (animationHdrDisplay != null && preference.gpu) ReaderToneMapper.entries[preference.ordinal - 1] else preference
             if (mapper != ReaderToneMapper.OFF) {
                 val curve = if (mapper.gpu) FloatArray(3) else null
                 val shoulder = Settings.readerHdrToneShoulder.value.coerceIn(0, 95) / 100f
@@ -961,23 +1011,23 @@ object LibDirectDecode {
                 if (!success) Log.w("ReaderColor", "Reader tone mapping failed; retaining original pixels")
             }
         }
-        val colorSpace = resolveColorSpace(f16, gamut, transfer)
-        // All F16 reader frames go straight into a HardwareBuffer. HDR can produce
-        // F16 with advanced color off too; a software Bitmap here would only be
-        // copied into another hardware buffer by presentForReader immediately after.
-        // Captured native vectors upload without a full-frame Java array, preserving
-        // the exact linear scRGB/BT.2020 ColorSpace chosen above. Fall back to software
-        // when the device cannot wrap that color space.
-        // RAW deep color / HDR wraps even when the advanced-color switch is off, because
-        // HDR display ignores that switch and still packs float16.
-        val hardware = if (f16) {
-            tryHardwareF16FromPixels(pixels, w, h, colorSpace, nativePixels)
+        val bitmap = if (f16 && animationHdrDisplay != null && (!hdrDisplay || !isHdr)) {
+            val source = nativePixels ?: return null
+            val p3 = animationWideColor && gamut != 0
+            val colorSpace = ColorSpace.get(if (p3) ColorSpace.Named.DISPLAY_P3 else ColorSpace.Named.SRGB)
+            val sdr = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888, true, colorSpace)
+            if (!packReaderSdrAnimation(source, sdr, gamut, p3)) {
+                sdr.recycle()
+                return null
+            }
+            sdr
         } else {
-            null
+            val colorSpace = resolveColorSpace(f16, gamut, transfer)
+            // Upload native F16 directly into a HardwareBuffer when supported.
+            val hardware = if (f16) tryHardwareF16FromPixels(pixels, w, h, colorSpace, nativePixels) else null
+            hardware ?: pixelsToSoftwareBitmap(nativePixels ?: ByteBuffer.wrap(pixels), w, h, f16, colorSpace)
+                ?: return null
         }
-        val bitmap = hardware
-            ?: pixelsToSoftwareBitmap(nativePixels ?: ByteBuffer.wrap(pixels), w, h, f16, colorSpace)
-            ?: return null
         val boost = outBoost.getOrElse(0) { 1f }.coerceIn(1f, 64f)
         val wide = gamut == 1 || gamut == 2 ||
             (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && bitmap.colorSpace?.isWideGamut == true)

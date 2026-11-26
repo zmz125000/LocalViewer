@@ -4,6 +4,7 @@
  * JPEG XR / HDR raster → Ultra HDR JPEG via libultrahdr.
  * JNI: com.hippo.ehviewer.jni.HdrConvertKt
  */
+#include <android/bitmap.h>
 #include <android/log.h>
 #include <jni.h>
 #include "thumbnail_mapped_input.h"
@@ -1418,6 +1419,69 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_toneMapReaderPixels(
     return env->ExceptionCheck()?JNI_FALSE:JNI_TRUE;
 } catch (...) { return JNI_FALSE; }
 
+// Tone mapping (when selected) has already run in the linear source gamut.
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_hippo_ehviewer_jni_HdrConvertKt_packReaderSdrAnimation(
+        JNIEnv* env, jclass, jobject source, jobject output, jint gamut, jboolean display_p3) try {
+    const auto* rgba = static_cast<const uint16_t*>(env->GetDirectBufferAddress(source));
+    const jlong bytes = env->GetDirectBufferCapacity(source);
+    AndroidBitmapInfo bitmap{};
+    if (!rgba || bytes <= 0 || AndroidBitmap_getInfo(env, output, &bitmap) != ANDROID_BITMAP_RESULT_SUCCESS ||
+        bitmap.format != ANDROID_BITMAP_FORMAT_RGBA_8888 || bitmap.stride < uint64_t(bitmap.width) * 4 ||
+        uint64_t(bitmap.width) * bitmap.height > uint64_t(bytes) / 8 ||
+        gamut < 0 || gamut > 2) return JNI_FALSE;
+
+    const int output_gamut = display_p3 ? 1 : 0;
+    const auto& srgb = half_srgb_table();
+    void* destination = nullptr;
+    if (AndroidBitmap_lockPixels(env, output, &destination) != ANDROID_BITMAP_RESULT_SUCCESS) return JNI_FALSE;
+    try {
+        hdr_parallel_pixels(bitmap.height, hdr_pixel_jobs(size_t(bitmap.width) * bitmap.height),
+            [&](size_t begin, size_t end, unsigned) {
+                for (size_t y = begin; y < end; ++y) {
+                    const uint16_t* pixel = rgba + y * bitmap.width * 4;
+                    auto* out = static_cast<uint8_t*>(destination) + y * bitmap.stride;
+                    for (unsigned x = 0; x < bitmap.width; ++x, pixel += 4, out += 4) {
+                        const float alpha = half_to_float(pixel[3]);
+                        if (alpha == 1.f && gamut == output_gamut) {
+                            for (unsigned c = 0; c < 3; ++c) out[c] = uint8_t(srgb[pixel[c]] * 255.f + 0.5f);
+                            out[3] = 255;
+                            continue;
+                        }
+                        if (!(alpha > 0.f)) {
+                            std::fill_n(out, 4, 0);
+                            continue;
+                        }
+                        const float inv_alpha = 1.f / alpha;
+                        float r = half_to_float(pixel[0]) * inv_alpha;
+                        float g = half_to_float(pixel[1]) * inv_alpha;
+                        float b = half_to_float(pixel[2]) * inv_alpha;
+                        if (gamut == 2 && display_p3) {
+                            // Linear BT.2020 to linear Display P3, both with D65 white.
+                            const float nr = 1.34357830f * r - 0.28217967f * g - 0.06139861f * b;
+                            const float ng = -0.06529749f * r + 1.07578791f * g - 0.01049046f * b;
+                            b = 0.00282179f * r - 0.01959849f * g + 1.01677674f * b;
+                            r = nr;
+                            g = ng;
+                        } else if (!display_p3) {
+                            clamp_linear_rgb_to_bt709(r, g, b, gamut);
+                        }
+                        const float scale = alpha * 255.f;
+                        // Associate alpha again after the nonlinear sRGB/P3 transfer.
+                        out[0] = uint8_t(srgb_oetf(r) * scale + 0.5f);
+                        out[1] = uint8_t(srgb_oetf(g) * scale + 0.5f);
+                        out[2] = uint8_t(srgb_oetf(b) * scale + 0.5f);
+                        out[3] = uint8_t(scale + 0.5f);
+                    }
+                }
+            });
+    } catch (...) {
+        AndroidBitmap_unlockPixels(env, output);
+        return JNI_FALSE;
+    }
+    return AndroidBitmap_unlockPixels(env, output) == ANDROID_BITMAP_RESULT_SUCCESS;
+} catch (...) { return JNI_FALSE; }
+
 int pack_linear_f16_for_direct(std::vector<uint16_t>& rgba, unsigned w, unsigned h, bool force_hdr,
                                uhdr_color_gamut_t cg, bool advanced_color, int transfer_cicp,
                                std::vector<uint8_t>& out_pixels, int* out_format, int* out_is_hdr,
@@ -1688,6 +1752,7 @@ constexpr int kExportAvifGainMap = 6;
 constexpr int kExportJxlPq = 7;
 constexpr int kExportJxlHlg = 8;
 constexpr int kExportAvifHlg = 9;
+constexpr int kExportJxlGainMap = 10;
 
 uhdr_color_gamut_t export_gamut(int gamut) {
     if (gamut == 1) return UHDR_CG_DISPLAY_P3;
@@ -1817,7 +1882,7 @@ int encode_srgb_jpeg_u8(unsigned w, unsigned h, const uint8_t* rgba, const char*
 
 /**
  * Encode a reader bitmap or a full-res direct pack.
- * mode: 0 JPEG, 1 Ultra HDR JPEG, 2 SDR JXL, 3 HDR JXL, 4 SDR AVIF, 5 PQ AVIF, 6 ISO AVIF, 7 PQ JXL, 8 HLG JXL, 9 HLG AVIF.
+ * mode: 0 JPEG, 1 Ultra HDR JPEG, 2 SDR JXL, 3 HDR JXL, 4 SDR AVIF, 5 PQ AVIF, 6 ISO AVIF, 7 PQ JXL, 8 HLG JXL, 9 HLG AVIF, 10 gain-map JXL.
  * 8-bit samples are already encoded. F16 samples are linear. SDR JPEG
  * apply the sRGB curve and embed an ICC profile for the pixel primaries
  * (BT.709, Display P3, or BT.2020). JXL keeps linear half precision and those primaries.
@@ -1825,8 +1890,12 @@ int encode_srgb_jpeg_u8(unsigned w, unsigned h, const uint8_t* rgba, const char*
  */
 int encode_still_export_f32(float*,unsigned,unsigned,int,int,const char*,StillEncodeQuality,const float*);
 
+static bool gain_map_export_mode(int mode) {
+    return mode == kExportJpegHdr || mode == kExportAvifGainMap || mode == kExportJxlGainMap;
+}
+
 static bool tone_map_export_mode(int mode) {
-    return mode==kExportJpeg||mode==kExportJxl||mode==kExportAvif||mode==kExportJpegHdr||mode==kExportAvifGainMap;
+    return mode == kExportJpeg || mode == kExportJxl || mode == kExportAvif || gain_map_export_mode(mode);
 }
 
 // JNI settings are immutable per queued export, never reader/display controls.
@@ -1845,14 +1914,14 @@ static bool read_tone_controls(JNIEnv* env,jfloatArray controls,StillEncodeQuali
 int encode_still_export(const uint8_t* src, size_t src_len, unsigned w, unsigned h, bool f16,
                         int gamut, int mode, bool premultiplied, const char* out_path, size_t sdr_offset = 0,
                         StillEncodeQuality quality = 1, bool mutable_input = false) {
-    if (!src || !out_path || w == 0 || h == 0 || mode < 0 || mode > kExportAvifHlg) return -50;
+    if (!src || !out_path || w == 0 || h == 0 || mode < 0 || mode > kExportJxlGainMap) return -50;
     const size_t pixels = static_cast<size_t>(w) * static_cast<size_t>(h);
     const size_t bpp = f16 ? 8u : 4u;
     if (pixels == 0 || pixels > 80000000u || src_len < pixels * bpp) return -51;
     if (sdr_offset && (!f16 || sdr_offset != pixels * 8u || sdr_offset > src_len || pixels * 8u > src_len - sdr_offset)) return -51;
-    // Promote only linear exports that use the SDR mapper. Encoded 8-bit
-    // sources and every HDR-only target retain their existing paths.
-    if(f16&&quality.sdr_mapper!=0&&!quality.jxl_scrgb&&tone_map_export_mode(mode)) {
+    // The JXL gain map and SDR mapper consume linear float pixels.
+    if (f16 && (mode == kExportJxlGainMap ||
+                (quality.sdr_mapper != 0 && !quality.jxl_scrgb && tone_map_export_mode(mode)))) {
         std::vector<float> linear(pixels*4),base(sdr_offset?pixels*4:0);
         const auto* half=reinterpret_cast<const uint16_t*>(src);
         for(size_t i=0;i<pixels*4;++i)linear[i]=half_to_float(half[i]);
@@ -1937,6 +2006,18 @@ int encode_still_export(const uint8_t* src, size_t src_len, unsigned w, unsigned
     }
     if (mode == kExportAvif) return encode_avif_u8(w, h, rgba, cg, out_path, quality);
     if (mode == kExportJxl) return encode_jxl_u8(w, h, rgba, cg, out_path, quality);
+    if (mode == kExportJxlGainMap) {
+        std::array<float, 256> linear_codes{};
+        for (size_t c = 0; c < linear_codes.size(); ++c) linear_codes[c] = srgb_eotf(c / 255.f);
+        std::vector<float> linear(pixels * 4);
+        hdr_parallel_pixels(pixels, hdr_pixel_jobs(pixels), [&](size_t begin, size_t end, unsigned) {
+            for (size_t i = begin; i < end; ++i) {
+                for (unsigned c = 0; c < 3; ++c) linear[i*4+c] = linear_codes[rgba[i*4+c]];
+                linear[i*4+3] = rgba[i*4+3] / 255.f;
+            }
+        });
+        return encode_jxl_gain_map(w, h, linear.data(), cg, out_path, quality, nullptr);
+    }
     if (mode == kExportJxlHdr || mode >= kExportAvifPq) {
         std::vector<uint16_t> linear(pixels * 4);
         std::array<uint16_t, 256> table{};
@@ -1959,7 +2040,7 @@ int encode_still_export(const uint8_t* src, size_t src_len, unsigned w, unsigned
 
 int encode_still_export_f32(float* src,unsigned w,unsigned h,int gamut,int mode,
                             const char* path,StillEncodeQuality quality,const float* sdr_base) {
-    if(!src||!path||!w||!h||mode<0||mode>kExportAvifHlg||uint64_t(w)*h>80000000)return -50;
+    if(!src||!path||!w||!h||mode<0||mode>kExportJxlGainMap||uint64_t(w)*h>80000000)return -50;
     auto cg=export_gamut(gamut);const size_t pixels=size_t(w)*h;
     const bool srgb_clamp=quality.srgb_clamp&&!quality.jxl_scrgb;
     std::vector<float> sdr_storage;
@@ -1980,10 +2061,11 @@ int encode_still_export_f32(float* src,unsigned w,unsigned h,int gamut,int mode,
                 mapped = tone_map_skiv_base(std::vector<float>(src, src + pixels * 4), working_gamut,
                     quality.sdr_mapper == 2, quality.sdr_shoulder, quality.sdr_range_nits, quality.sdr_auto_curve);
             }
-            if(mode==kExportJpegHdr||mode==kExportAvifGainMap)sdr_base=mapped.data();
+            if (gain_map_export_mode(mode)) sdr_base = mapped.data();
             else src=mapped.data();
         }
     }
+    if (mode == kExportJxlGainMap) return encode_jxl_gain_map(w, h, src, cg, path, quality, sdr_base);
     if(mode==kExportJxl||mode==kExportJxlHdr||mode==kExportJxlPq||mode==kExportJxlHlg)
         return encode_jxl_f32(w,h,src,cg,mode!=kExportJxl,path,quality,mode==kExportJxlPq,mode==kExportJxlHlg);
     if(mode==kExportAvifHlg) return encode_avif_f32(w,h,src,cg,3,path,quality);

@@ -25,3 +25,7 @@ int encode_jxl_source(unsigned, unsigned, const void*, bool, const StillSourceCo
 }
 
 int encode_jxl_f32(unsigned, unsigned, float*, uhdr_color_gamut_t, bool, const char*, StillEncodeQuality, bool, bool) { return -100; }
+
+int encode_jxl_gain_map(unsigned, unsigned, const float*, uhdr_color_gamut_t, const char*, StillEncodeQuality, const float*) {
+    return -100;
+}

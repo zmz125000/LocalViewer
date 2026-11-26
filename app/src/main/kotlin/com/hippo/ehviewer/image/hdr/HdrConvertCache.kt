@@ -3,12 +3,12 @@ package com.hippo.ehviewer.image.hdr
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.ImageDecoder
+import android.os.Process
 import android.util.Log
 import com.ehviewer.core.files.metadataOrNull
 import com.ehviewer.core.files.openFileDescriptor
 import com.ehviewer.core.files.toUri
 import com.hippo.ehviewer.Settings
-import com.hippo.ehviewer.coil.hasJxlAnimation
 import com.hippo.ehviewer.image.ImageSource
 import com.hippo.ehviewer.image.PathSource
 import com.hippo.ehviewer.image.byteBufferSource
@@ -43,8 +43,11 @@ import java.nio.file.Files
 import java.nio.file.StandardCopyOption
 import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
@@ -94,6 +97,23 @@ object HdrConvertCache {
      * conversions; nested stages of one thumbnail reuse the same admission.
      */
     private val thumbConvertSlots = ThumbnailWorkGate()
+
+    /**
+     * Background-priority workers for native thumbnail decode/encode so folder
+     * scroll UI/RenderThread are not starved by software codecs.
+     */
+    private val thumbDispatcher by lazy {
+        val nextId = AtomicInteger(1)
+        Executors.newFixedThreadPool(3) { runnable ->
+            Thread(
+                {
+                    runCatching { Process.setThreadPriority(Process.THREAD_PRIORITY_BACKGROUND) }
+                    runnable.run()
+                },
+                "LocalViewer:Thumb-${nextId.getAndIncrement()}",
+            ).apply { isDaemon = true }
+        }.asCoroutineDispatcher()
+    }
 
     suspend fun <T> withThumbConvertSlot(block: suspend () -> T): T = thumbConvertSlots.run(block)
 
@@ -296,7 +316,7 @@ object HdrConvertCache {
         quality: Int = THUMB_WEBP_QUALITY,
         fileNameHint: String = source.name,
         onDecoded: ((width: Int, height: Int) -> Unit)? = null,
-    ): Boolean = withContext(Dispatchers.IO) {
+    ): Boolean = withContext(thumbDispatcher) {
         // Existing thumb is not a decode — do not report a size.
         if (OriginDiskCache.existingThumb(dest) != null) return@withContext true
         withThumbConvertSlot {
@@ -311,7 +331,7 @@ object HdrConvertCache {
                 OriginDiskCache.scheduleTrim()
                 return@withThumbConvertSlot true
             }
-            val route = classifyPath(source, fileNameHint)
+            val route = classifyPath(source, fileNameHint, forNativeThumbnail = android.os.Process.is64Bit())
             ThumbnailMemory.withPath(source, (route as? StillRoute.Lib)?.codec, edge) {
                 if (route is StillRoute.Lib && route.codec == LibCodec.Raw) {
                     val preview = RawPreviewCache.ensureJpeg(source, demosaicFallback = false) ?: return@withPath false
@@ -394,7 +414,7 @@ object HdrConvertCache {
         }
         val route = classify(bytes, bytes.size, originalFileName)
         if (!route.needsUhdr || (route is StillRoute.Lib && route.forceDirect) ||
-            (route == StillRoute.Lib(LibCodec.Jxl) && ByteBuffer.wrap(bytes).hasJxlAnimation())
+            (route is StillRoute.Lib && ByteBuffer.wrap(bytes).keepReaderContainer(route.codec))
         ) {
             writeBytesAtomic(bytes, File(primaryPath.toString()))
             return@withContext primaryPath
@@ -432,7 +452,7 @@ object HdrConvertCache {
         }
         val route = classify(tmp, fileNameHint = originalFileName)
         if (!route.needsUhdr || (route is StillRoute.Lib && route.forceDirect) ||
-            (route == StillRoute.Lib(LibCodec.Jxl) && withStillInput(tmp.toOkioPath()) { it.hasJxlAnimation() } == true)
+            (route is StillRoute.Lib && withStillInput(tmp.toOkioPath()) { it.keepReaderContainer(route.codec) } == true)
         ) {
             commitTmp(tmp, File(primaryPath.toString()))
             return@withContext primaryPath
@@ -472,12 +492,12 @@ object HdrConvertCache {
         quality: Int = THUMB_WEBP_QUALITY,
         fileNameHint: String,
         onDecoded: ((width: Int, height: Int) -> Unit)? = null,
-    ): Boolean = withContext(Dispatchers.IO) {
+    ): Boolean = withContext(thumbDispatcher) {
         if (OriginDiskCache.existingThumb(destJpeg) != null) return@withContext true
         if (bytes.isEmpty()) return@withContext false
         withThumbConvertSlot {
             val edge = maxEdge.coerceIn(64, 2048)
-            val route = classify(bytes, bytes.size, fileNameHint)
+            val route = classify(bytes, bytes.size, fileNameHint, forNativeThumbnail = android.os.Process.is64Bit())
             ThumbnailMemory.withBytes(bytes, (route as? StillRoute.Lib)?.codec, edge) {
                 if (route is StillRoute.Lib && route.codec == LibCodec.Raw) {
                     val preview = File.createTempFile("rawprev", ".jpg", appCtx.cacheDir)

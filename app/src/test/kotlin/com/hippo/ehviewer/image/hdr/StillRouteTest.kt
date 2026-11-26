@@ -20,6 +20,20 @@ class StillRouteTest {
         assertFalse(needsGeneratedPageThumb("jpg"))
     }
 
+    @Test
+    fun avifSequenceUsesNativeDecoderOnlyForThumbnails() {
+        for (ext in listOf("avif", "avifs")) {
+            assertTrue(needsGeneratedPageThumb(ext))
+            for ((major, compatible) in listOf("avis" to "avif", "avif" to "avis")) {
+                val bytes = byteArrayOf(0, 0, 0, 20) + ("ftyp" + major).toByteArray() +
+                    ByteArray(4) + compatible.toByteArray()
+                val name = "cover.$ext"
+                assertEquals(StillRoute.Platform, classify(bytes, fileNameHint = name))
+                assertEquals(StillRoute.Lib(LibCodec.AvifPq), classify(bytes, fileNameHint = name, forNativeThumbnail = true))
+            }
+        }
+    }
+
     @Test(timeout = 5_000)
     fun largeJpegDoesNotRunHeifCicpFallback() {
         // A compressed JPEG can contain these byte pairs without any CICP metadata.

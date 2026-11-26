@@ -23,6 +23,9 @@ internal external fun toneMapReaderPixels(
     outCurve: FloatArray?,
 ): Boolean
 
+/** Encode captured premultiplied linear F16 into a preallocated ARGB_8888 animation bitmap. */
+internal external fun packReaderSdrAnimation(pixels: ByteBuffer, output: Bitmap, gamut: Int, displayP3: Boolean): Boolean
+
 /** In-place linear sRGB F16 to export gamut; alpha association stays unchanged. */
 internal external fun convertExportGamut(pixels: ByteBuffer, destinationGamut: Int): Boolean
 internal external fun endNativeReaderPixels(handle: Long): ByteBuffer?
@@ -136,6 +139,7 @@ external fun decodeJxlBytesToDirect(
     outBoost: FloatArray,
     exportBt2020: Boolean = false,
     outExif: Array<ByteArray?>? = null,
+    readerGainMap: Int = 0,
 ): ByteArray?
 
 external fun decodeAvifBytesToDirect(
@@ -326,7 +330,7 @@ external fun convertJpeg2000FdToUltraHdrMaxEdge(fd: Int, outputPath: String, max
 internal external fun mapStillInput(fd: Int): java.nio.ByteBuffer?
 internal external fun unmapStillInput(buffer: java.nio.ByteBuffer)
 internal external fun decodeJxrBufferToDirect(input: java.nio.ByteBuffer, maxEdge: Int, advancedColor: Boolean, panelBoost: Float, outInfo: IntArray, outBoost: FloatArray, exportBt2020: Boolean = false): ByteArray?
-internal external fun decodeJxlBufferToDirect(input: java.nio.ByteBuffer, maxEdge: Int, advancedColor: Boolean, outInfo: IntArray, outBoost: FloatArray, exportBt2020: Boolean = false, outExif: Array<ByteArray?>? = null): ByteArray?
+internal external fun decodeJxlBufferToDirect(input: java.nio.ByteBuffer, maxEdge: Int, advancedColor: Boolean, outInfo: IntArray, outBoost: FloatArray, exportBt2020: Boolean = false, outExif: Array<ByteArray?>? = null, readerGainMap: Int = 0): ByteArray?
 internal external fun decodeAvifBufferToDirect(input: java.nio.ByteBuffer, maxEdge: Int, advancedColor: Boolean, outInfo: IntArray, outBoost: FloatArray, outExif: Array<ByteArray?>? = null): ByteArray?
 
 /** Malloc-owned base F16 and gain (ALPHA_8 or F16) planes; release both with releaseStillBuffer.

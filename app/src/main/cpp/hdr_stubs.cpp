@@ -91,7 +91,7 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_convertJpeg2000BytesToUltraHdrMaxEdge(
 
 extern "C" JNIEXPORT jbyteArray JNICALL
 Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeJxlBytesToDirect(JNIEnv*, jclass, jbyteArray, jint,
-                                                                jboolean, jintArray, jfloatArray, jboolean, jobjectArray) {
+                                                                jboolean, jintArray, jfloatArray, jboolean, jobjectArray, jint) {
     return nullptr;
 }
 
@@ -170,7 +170,7 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeJxrBufferToDirect(
 
 extern "C" JNIEXPORT jbyteArray JNICALL
 Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeJxlBufferToDirect(
-        JNIEnv*, jclass, jobject, jint, jboolean, jintArray, jfloatArray, jboolean, jobjectArray) {
+        JNIEnv*, jclass, jobject, jint, jboolean, jintArray, jfloatArray, jboolean, jobjectArray, jint) {
     return nullptr;
 }
 
@@ -258,3 +258,7 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_toneMapReaderPixels(
         JNIEnv*, jclass, jbyteArray, jobject, jint, jint, jint, jint, jfloat, jfloat, jboolean, jfloatArray) {
     return JNI_FALSE;
 }
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_hippo_ehviewer_jni_HdrConvertKt_packReaderSdrAnimation(
+        JNIEnv*, jclass, jobject, jobject, jint, jboolean) { return JNI_FALSE; }

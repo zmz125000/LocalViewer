@@ -35,6 +35,7 @@ interface ReaderSession : AutoCloseable {
 
     /** Camera RAW pages reload when HDR display changes, because the bitmap itself changes. */
     fun containsRawStill(): Boolean = false
+    fun hasHdrDependentDecode(): Boolean = false
 
     /**
      * Becomes true after this session decodes a camera RAW page, and stays true.

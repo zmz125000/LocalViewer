@@ -23,7 +23,7 @@ val IMAGE_EXTENSIONS = setOf(
     "png", "apng", "webp", "awebp", "gif", "bmp",
     // Android / Coil platform ImageDecoder (minSdk 31 — HEIC works like Aves)
     "heic", "heif", "heics", "heifs", "hif",
-    "avif",
+    "avif", "avifs",
     "ico", "wbmp",
     // Coil [coil-svg]
     "svg", "svgz",
@@ -370,6 +370,7 @@ fun mimeTypeForFileName(name: String): String {
             "apng" -> "image/apng"
             "awebp" -> "image/webp"
             "ajxl" -> "image/jxl"
+            "avifs" -> "image/avif"
             "svg", "svgz" -> "image/svg+xml"
             "jxr", "wdp", "hdp" -> "image/vnd.ms-photo"
             "jp2", "j2k", "j2c", "jpc" -> "image/jp2"

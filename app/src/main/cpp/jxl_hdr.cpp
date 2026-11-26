@@ -9,6 +9,7 @@
 #include "decoded_image_info.h"
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cmath>
 #include <cstdint>
@@ -18,6 +19,10 @@
 #include <jxl/cms.h>
 #include <jxl/color_encoding.h>
 #include "jxl_rs.h"
+#include "reader_animation.h"
+#include <optional>
+#include <brotli/decode.h>
+#include "ultrahdr/gainmapmetadata.h"
 
 #include "hdr_encode.h"
 #include "hdr_parallel.h"
@@ -181,6 +186,186 @@ bool is_linear_working_encoding(const JxlRsColor& src, uhdr_color_gamut_t cg) {
         (src.primaries == JXL_PRIMARIES_2100 && cg == UHDR_CG_BT_2100);
 }
 
+struct GainMapBox {
+    const uint8_t* data = nullptr;
+    size_t size = 0;
+    std::vector<uint8_t> decompressed;
+};
+
+uint64_t read_big_endian(const uint8_t* bytes, size_t count) {
+    uint64_t value = 0;
+    for (size_t i = 0; i < count; ++i) value = (value << 8) | bytes[i];
+    return value;
+}
+
+GainMapBox find_gain_map(const uint8_t* data, size_t length) {
+    if (length < 12 || std::memcmp(data, "\0\0\0\x0cJXL \r\n\x87\n", 12)) return {};
+    for (size_t offset = 12; length - offset >= 8;) {
+        const auto* box = data + offset;
+        const auto* type = box + 4;
+        uint64_t size = read_big_endian(box, 4);
+        size_t header = 8;
+        if (size == 1) {
+            if (length - offset < 16) return {};
+            size = read_big_endian(box + 8, 8);
+            header = 16;
+        } else if (size == 0) {
+            size = length - offset;
+        }
+        if (size < header || size > length - offset) return {};
+        const auto* payload = box + header;
+        const size_t payload_size = size - header;
+        if (!std::memcmp(type, "jhgm", 4)) return {payload, payload_size, {}};
+        if (!std::memcmp(type, "brob", 4) && payload_size > 4 && !std::memcmp(payload, "jhgm", 4)) {
+            std::unique_ptr<BrotliDecoderState, decltype(&BrotliDecoderDestroyInstance)> decoder(
+                BrotliDecoderCreateInstance(nullptr, nullptr, nullptr), BrotliDecoderDestroyInstance);
+            if (!decoder) return {};
+            GainMapBox result;
+            const uint8_t* next_input = payload + 4;
+            size_t available_input = payload_size - 4;
+            std::array<uint8_t, 16 * 1024> chunk{};
+            while (result.decompressed.size() < 128u * 1024 * 1024) {
+                uint8_t* output = chunk.data();
+                size_t available_output = chunk.size();
+                const auto status = BrotliDecoderDecompressStream(decoder.get(), &available_input, &next_input,
+                    &available_output, &output, nullptr);
+                result.decompressed.insert(result.decompressed.end(), chunk.data(), output);
+                if (status == BROTLI_DECODER_RESULT_SUCCESS) {
+                    if (available_input != 0) return {};
+                    result.data = result.decompressed.data();
+                    result.size = result.decompressed.size();
+                    return result;
+                }
+                if (status != BROTLI_DECODER_RESULT_NEEDS_MORE_OUTPUT) return {};
+            }
+            return {};
+        }
+        offset += size;
+    }
+    return {};
+}
+
+struct JxlGainMap {
+    ultrahdr::uhdr_gainmap_metadata_frac metadata{};
+    const uint8_t* codestream = nullptr;
+    size_t codestream_size = 0;
+    const uint8_t* alternate_encoding = nullptr;
+    size_t color_size = 0;
+    size_t icc_size = 0;
+
+    bool parse(const GainMapBox& box) {
+        if (box.size < 8 || box.data[0] != 0) return false;
+        const size_t metadata_size = read_big_endian(box.data + 1, 2);
+        if (metadata_size > box.size - 8) return false;
+        const auto* rest = box.data + 3 + metadata_size;
+        const size_t remaining = box.size - 3 - metadata_size;
+        color_size = *rest;
+        if (color_size > remaining - 5) return false;
+        icc_size = read_big_endian(rest + 1 + color_size, 4);
+        if (icc_size > remaining - 5 - color_size) return false;
+        codestream = rest + 5 + color_size + icc_size;
+        alternate_encoding = rest + 1;
+        codestream_size = remaining - 5 - color_size - icc_size;
+        if (codestream_size < 2 || codestream[0] != 0xff || codestream[1] != 0x0a) return false;
+        const std::vector<uint8_t> bytes(box.data + 3, rest);
+        if (metadata.decodeGainmapMetadata(bytes, &metadata).error_code != UHDR_CODEC_OK ||
+            !metadata.baseHdrHeadroomD || !metadata.alternateHdrHeadroomD) return false;
+        for (unsigned c = 0; c < 3; ++c) {
+            if (!metadata.gainMapMinD[c] || !metadata.gainMapMaxD[c] || !metadata.gainMapGammaN[c] ||
+                !metadata.gainMapGammaD[c] || !metadata.baseOffsetD[c] || !metadata.alternateOffsetD[c]) return false;
+        }
+        return true;
+    }
+
+    float base_headroom() const { return float(metadata.baseHdrHeadroomN) / metadata.baseHdrHeadroomD; }
+    float alt_headroom() const { return float(metadata.alternateHdrHeadroomN) / metadata.alternateHdrHeadroomD; }
+};
+
+bool reconstruct_gain_map(const JxlGainMap& gain, std::vector<float>& base, unsigned width, unsigned height,
+                          uhdr_color_gamut_t& gamut, float base_scale, JxlRsWork work, const std::vector<uint8_t>& base_icc) {
+    JxlRsReader decoder(gain.codestream, gain.codestream_size, work);
+    if (!decoder) return false;
+    const auto& info = decoder.info();
+    const size_t count = size_t(info.xsize) * info.ysize;
+    if (!count || count > 80000000 || info.animated || info.has_black ||
+        !decoder.set_format(JxlRsFormat::u16)) return false;
+    std::vector<uint16_t> codes(count * 4);
+    double duration = 0;
+    if (decoder.next(codes.data(), codes.size() * sizeof(uint16_t), duration) != 1) return false;
+
+    auto math_gamut = gamut;
+    skcms_ICCProfile from{}, math_profile{}, destination{};
+    bool transform = false;
+    skcms_Matrix3x3 math_matrix{};
+    if (!gain.metadata.useBaseColorSpace && (gain.color_size || gain.icc_size)) {
+        // The gain map uses the alternate rendition's primaries for its math.
+        JxlRsColor color{};
+        size_t icc_size = 0;
+        auto* raw_icc = jxl_rs_gain_map_icc(gain.alternate_encoding, gain.color_size,
+            gain.codestream - gain.icc_size, gain.icc_size, color, icc_size);
+        skcms_ICCProfile profile{};
+        const bool valid = raw_icc && skcms_Parse(raw_icc, icc_size, &profile) && profile.has_toXYZD50;
+        if (valid) math_matrix = profile.toXYZD50;
+        jxl_rs_free_icc(raw_icc, icc_size);
+        if (!valid) return false;
+        math_gamut = linear_gamut(color, color.color_space == JXL_COLOR_SPACE_RGB && color.white_point == JXL_WHITE_POINT_D65, false);
+        transform = true;
+    } else if (!base_icc.empty()) {
+        skcms_ICCProfile profile{};
+        if (!skcms_Parse(base_icc.data(), base_icc.size(), &profile) || !profile.has_toXYZD50) return false;
+        math_matrix = profile.toXYZD50;
+        transform = true;
+    }
+    if (transform) {
+        skcms_Init(&math_profile);
+        skcms_SetXYZD50(&math_profile, &math_matrix);
+        skcms_SetTransferFunction(&math_profile, skcms_Identity_TransferFunction());
+        if (!make_linear_output_profile(gamut, &from) || !make_linear_output_profile(math_gamut, &destination) ||
+            !skcms_MakeUsableAsDestination(&math_profile) ||
+            !skcms_Transform(base.data(), skcms_PixelFormat_RGBA_ffff, skcms_AlphaFormat_Unpremul,
+                &from, base.data(), skcms_PixelFormat_RGBA_ffff, skcms_AlphaFormat_Unpremul,
+                &math_profile, size_t(width) * height)) return false;
+    }
+    float min_log[3], max_log[3], gamma_inv[3], base_offset[3], alt_offset[3];
+    const auto& m = gain.metadata;
+    for (unsigned c = 0; c < 3; ++c) {
+        min_log[c] = float(m.gainMapMinN[c]) / m.gainMapMinD[c];
+        max_log[c] = float(m.gainMapMaxN[c]) / m.gainMapMaxD[c];
+        gamma_inv[c] = float(m.gainMapGammaD[c]) / m.gainMapGammaN[c];
+        base_offset[c] = float(m.baseOffsetN[c]) / m.baseOffsetD[c];
+        alt_offset[c] = float(m.alternateOffsetN[c]) / m.alternateOffsetD[c];
+    }
+    const float direction = gain.alt_headroom() < gain.base_headroom() ? -1.f : 1.f;
+    hdr_parallel_pixels(height, hdr_pixel_jobs(size_t(width) * height), [&](size_t begin, size_t end, unsigned) {
+        for (size_t y = begin; y < end; ++y) {
+            const float sy = std::clamp((float(y) + .5f) * info.ysize / height - .5f, 0.f, float(info.ysize - 1));
+            const unsigned y0 = unsigned(sy), y1 = std::min(y0 + 1, info.ysize - 1);
+            for (unsigned x = 0; x < width; ++x) {
+                const float sx = std::clamp((float(x) + .5f) * info.xsize / width - .5f, 0.f, float(info.xsize - 1));
+                const unsigned x0 = unsigned(sx), x1 = std::min(x0 + 1, info.xsize - 1);
+                const float fx = sx - x0, fy = sy - y0;
+                auto* pixel = base.data() + (y * width + x) * 4;
+                for (unsigned c = 0; c < 3; ++c) {
+                    const auto sample = [&](unsigned col, unsigned row) { return codes[(size_t(row) * info.xsize + col) * 4 + c] / 65535.f; };
+                    const float top = sample(x0, y0) * (1.f - fx) + sample(x1, y0) * fx;
+                    const float bottom = sample(x0, y1) * (1.f - fx) + sample(x1, y1) * fx;
+                    const float value = top * (1.f - fy) + bottom * fy;
+                    const float log_gain = min_log[c] + (max_log[c] - min_log[c]) * std::pow(value, gamma_inv[c]);
+                    pixel[c] = (pixel[c] * base_scale + base_offset[c]) *
+                        std::exp2(std::clamp(log_gain * direction, -32.f, 32.f)) - alt_offset[c];
+                }
+            }
+        }
+    });
+    if (transform) {
+        skcms_Transform(base.data(), skcms_PixelFormat_RGBA_ffff, skcms_AlphaFormat_Unpremul,
+            &math_profile, base.data(), skcms_PixelFormat_RGBA_ffff, skcms_AlphaFormat_Unpremul,
+            &destination, size_t(width) * height);
+    }
+    gamut = math_gamut;
+    return true;
+}
+
 /**
  * Decode JXL → straight-alpha linear RGBA half (1.0 ≈ 203-nit SDR white).
  * [composite_alpha_on_black] is true only for JPEG/UHDR destinations.
@@ -191,7 +376,9 @@ int decode_jxl_to_linear(const uint8_t* data, size_t len, std::vector<Sample>& o
                              unsigned& w, unsigned& h, uhdr_color_gamut_t* out_cg,
                              bool* out_force_hdr = nullptr, int* out_transfer_cicp = nullptr,
                              bool composite_alpha_on_black = true, unsigned thumbnail_edge = 0,
-                             bool export_bt2020 = false, std::vector<uint8_t>* out_exif = nullptr, int* out_source_depth = nullptr, DecodedImageInfo* source = nullptr) {
+                             JxlRsWork work = JxlRsWork::foreground,
+                             bool export_bt2020 = false, std::vector<uint8_t>* out_exif = nullptr, int* out_source_depth = nullptr, DecodedImageInfo* source = nullptr,
+                             JxlRsReader* animation = nullptr, double* frame_time = nullptr, int reader_gainmap = 0) {
     const bool preserve_extended = export_pixels_preserve_scrgb();
     if (out_source_depth) *out_source_depth = 0;
     if (out_exif) out_exif->clear();
@@ -200,7 +387,9 @@ int decode_jxl_to_linear(const uint8_t* data, size_t len, std::vector<Sample>& o
     if (out_transfer_cicp) *out_transfer_cicp = 0;
     if (!data || len == 0) return -1;
 
-    JxlRsReader decoder(data, len);
+    std::optional<JxlRsReader> still;
+    if (!animation) still.emplace(data, len, work);
+    auto& decoder = animation ? *animation : *still;
     if (!decoder) return -2;
     const auto& info = decoder.info();
     w = info.xsize;
@@ -242,7 +431,7 @@ int decode_jxl_to_linear(const uint8_t* data, size_t len, std::vector<Sample>& o
 
     auto cg = linear_gamut(src_encoding, have_src, is_pq || is_hlg);
     if (out_cg) *out_cg = cg;
-    if (!decoder.set_format(JxlRsFormat::f32, info.has_black)) return -9;
+    if (!animation && !decoder.set_format(JxlRsFormat::f32, info.has_black)) return -9;
     JxlRsColor output_color{};
     const bool structured_output = decoder.color(output_color);
     const bool already_linear = structured_output && is_linear_working_encoding(output_color, cg);
@@ -254,8 +443,10 @@ int decode_jxl_to_linear(const uint8_t* data, size_t len, std::vector<Sample>& o
     std::vector<float> pixels(pixels_n * 4);
     std::vector<float> black(info.has_black ? pixels_n : 0);
     double duration = 0;
-    if (decoder.next(pixels.data(), pixels.size() * sizeof(float), duration,
-                     black.data(), black.size() * sizeof(float)) != 1) return -5;
+    const int frame_status = decoder.next(pixels.data(), pixels.size() * sizeof(float), duration,
+                                          black.data(), black.size() * sizeof(float));
+    if (frame_time) *frame_time = frame_status == 0 ? 0. : std::max(duration, 10.);
+    if (frame_status != 1) return -5;
     if (out_exif) *out_exif = JxlRsReader::exif(data, len);
 
     if (thumbnail_edge > 0 && std::max(w, h) > thumbnail_edge) {
@@ -359,7 +550,7 @@ int decode_jxl_to_linear(const uint8_t* data, size_t len, std::vector<Sample>& o
     // scRGB JXR. Convert before converted_sample clips negative channels. JXL's
     // own intensity_target remains authoritative; only explicitly tagged scRGB uses 80 nits.
     // For display, recover WCG from signed scRGB before the F16 pack bounds RGB.
-    const bool to_bt2020 = (export_bt2020 || (scrgb && !export_pixels_capture())) &&
+    bool to_bt2020 = (export_bt2020 || (scrgb && !export_pixels_capture())) &&
         info.exponent_bits_per_sample > 0 &&
         cg == UHDR_CG_BT_709 && have_src && is_linear_working_encoding(src_encoding, cg);
     if (to_bt2020) {
@@ -367,7 +558,7 @@ int decode_jxl_to_linear(const uint8_t* data, size_t len, std::vector<Sample>& o
         if (out_cg) *out_cg = cg;
     }
 
-    const bool declared_hdr = is_pq || is_hlg || intensity_hdr || scrgb;
+    bool declared_hdr = is_pq || is_hlg || intensity_hdr || scrgb;
     if (out_force_hdr) *out_force_hdr = declared_hdr;
     if (out_transfer_cicp) {
         if (is_pq) {
@@ -391,6 +582,37 @@ int decode_jxl_to_linear(const uint8_t* data, size_t len, std::vector<Sample>& o
         if (is_pq) scale = peak_nits / kSdrWhiteNits;
         else if constexpr (std::is_same_v<Sample, float>) scale = scrgb ? 80.f / kSdrWhiteNits : std::max(peak_nits / kSdrWhiteNits, 1.f);
         else scale = scrgb ? 80.f / kSdrWhiteNits : std::clamp(peak_nits / kSdrWhiteNits, 1.f, kMaxLinear);
+    }
+
+    if (reader_gainmap && !info.animated) {
+        const auto storage = find_gain_map(data, len);
+        JxlGainMap gain;
+        if (gain.parse(storage)) {
+            if (source) {
+                source->gainmap = true;
+                source->source_hdr = declared_hdr || std::max(gain.base_headroom(), gain.alt_headroom()) > 0.f ? 2 : 1;
+            }
+            const bool want_hdr = reader_gainmap == 2;
+            const bool alternate_hdr = gain.alt_headroom() > gain.base_headroom();
+            auto gain_gamut = to_bt2020 ? UHDR_CG_BT_709 : cg;
+            const bool known_base = have_src && (src_encoding.color_space == JXL_COLOR_SPACE_GRAY ||
+                (src_encoding.white_point == JXL_WHITE_POINT_D65 &&
+                    linear_gamut(src_encoding, true, false) == gain_gamut &&
+                    src_encoding.primaries != JXL_PRIMARIES_CUSTOM));
+            if (want_hdr == alternate_hdr && gain.alt_headroom() != gain.base_headroom() &&
+                reconstruct_gain_map(gain, pixels, w, h, gain_gamut, scale, work,
+                    known_base ? std::vector<uint8_t>{} : decoder.icc(true))) {
+                if (!to_bt2020 || gain_gamut != UHDR_CG_BT_709) {
+                    cg = gain_gamut;
+                    to_bt2020 = false;
+                }
+                scale = 1.f;
+                declared_hdr = alternate_hdr;
+                if (out_force_hdr) *out_force_hdr = declared_hdr;
+                if (out_cg) *out_cg = cg;
+                if (out_transfer_cicp) *out_transfer_cicp = 0;
+            }
+        }
     }
 
     const auto converted_sample = [&](size_t i, float* sample) {
@@ -441,7 +663,7 @@ int decode_jxl_to_linear(const uint8_t* data, size_t len, std::vector<Sample>& o
     });
     if constexpr (std::is_same_v<Sample, float>) out_rgba = std::move(pixels);
 
-    ALOGI("JXL CMS %ux%u cg=%d pq=%d hlg=%d original=%d intensity=%.1f scale=%.3f hdr=%d "
+    if (!animation) ALOGI("JXL CMS %ux%u cg=%d pq=%d hlg=%d original=%d intensity=%.1f scale=%.3f hdr=%d "
           "composite=%d",
           w, h, (int)cg, is_pq ? 1 : 0, is_hlg ? 1 : 0, decoder.outputs_original_profile() ? 1 : 0, intensity, scale,
           declared_hdr ? 1 : 0, composite_alpha_on_black ? 1 : 0);
@@ -542,7 +764,7 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_convertJxlBytesToUltraHdrMaxEdge(
     bool force_hdr = false;
     int rc = decode_jxl_to_linear(reinterpret_cast<const uint8_t*>(bytes),
                                       static_cast<size_t>(len), rgba, w, h, &cg, &force_hdr, nullptr,
-                                      true, maxEdge > 0 ? static_cast<unsigned>(maxEdge) : 0);
+                                      true, maxEdge > 0 ? static_cast<unsigned>(maxEdge) : 0, JxlRsWork::thumbnail);
     if (rc != 0) {
         env->ReleaseStringUTFChars(jOutput, out_path);
         env->ReleaseByteArrayElements(jInput, bytes, JNI_ABORT);
@@ -578,7 +800,7 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_convertJxlFdToUltraHdrMaxEdge(
     bool force_hdr = false;
     int rc = decode_jxl_to_linear(input.data,
                                       input.size, rgba, w, h, &cg, &force_hdr, nullptr,
-                                      true, maxEdge > 0 ? static_cast<unsigned>(maxEdge) : 0);
+                                      true, static_cast<unsigned>(maxEdge), JxlRsWork::thumbnail);
     input.reset();
     if (rc != 0) {
         return -20 + rc;
@@ -606,12 +828,13 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeJxlBytesToDirect(JNIEnv* env, jcl
                                                                 jbyteArray jInput, jint maxEdge,
                                                                 jboolean advancedColor,
                                                                 jintArray jOutInfo,
-                                                                jfloatArray jOutBoost, jboolean exportBt2020, jobjectArray jOutExif) {
+                                                                jfloatArray jOutBoost, jboolean exportBt2020, jobjectArray jOutExif, jint readerGainmap) try {
     if (!jInput || !jOutInfo || !jOutBoost) return nullptr;
     if (env->GetArrayLength(jOutInfo) < 6 || env->GetArrayLength(jOutBoost) < 1) return nullptr;
     const jsize len = env->GetArrayLength(jInput);
     if (len <= 0) return nullptr;
-    jbyte* bytes = env->GetByteArrayElements(jInput, nullptr);
+    const auto release = [env, jInput](jbyte* bytes) { env->ReleaseByteArrayElements(jInput, bytes, JNI_ABORT); };
+    std::unique_ptr<jbyte, decltype(release)> bytes(env->GetByteArrayElements(jInput, nullptr), release);
     if (!bytes) return nullptr;
 
     std::vector<uint8_t> exif;
@@ -625,12 +848,13 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeJxlBytesToDirect(JNIEnv* env, jcl
     jbyteArray result = nullptr;
     // Resize linear float samples in parallel before allocating display F16.
     // Exports retain the existing full-resolution F16 + explicit resize path.
-    int rc = decode_jxl_to_linear(reinterpret_cast<const uint8_t*>(bytes),
+    int rc = decode_jxl_to_linear(reinterpret_cast<const uint8_t*>(bytes.get()),
                                       static_cast<size_t>(len), rgba, w, h, &cg, &force_hdr,
                                       &transfer_cicp, /*composite_alpha_on_black=*/false,
                                       !export_pixels_capture() && maxEdge > 0 ? static_cast<unsigned>(maxEdge) : 0u,
+                                      JxlRsWork::foreground,
                                       exportBt2020 == JNI_TRUE && export_pixels_capture(), jOutExif ? &exif : nullptr,
-                                      &source_depth, &source);
+                                      &source_depth, &source, nullptr, nullptr, readerGainmap);
     if (rc == 0) {
         publish_decoded_exif(env, jOutExif, exif, true);
         if (maxEdge > 0) {
@@ -647,8 +871,9 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeJxlBytesToDirect(JNIEnv* env, jcl
     } else {
         ALOGE("JXL direct decode failed rc=%d", rc);
     }
-    env->ReleaseByteArrayElements(jInput, bytes, JNI_ABORT);
     return result;
+} catch (...) {
+    return nullptr;
 }
 
 /** Direct/mapped compressed input; the caller owns its lifetime. */
@@ -657,7 +882,7 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeJxlBufferToDirect(JNIEnv* env, jc
                                                                 jobject jInput, jint maxEdge,
                                                                 jboolean advancedColor,
                                                                 jintArray jOutInfo,
-                                                                jfloatArray jOutBoost, jboolean exportBt2020, jobjectArray jOutExif) try {
+                                                                jfloatArray jOutBoost, jboolean exportBt2020, jobjectArray jOutExif, jint readerGainmap) try {
     if (!jInput || !jOutInfo || !jOutBoost) return nullptr;
     if (env->GetArrayLength(jOutInfo) < 6 || env->GetArrayLength(jOutBoost) < 1) return nullptr;
     const jlong len = env->GetDirectBufferCapacity(jInput);
@@ -672,7 +897,7 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeJxlBufferToDirect(JNIEnv* env, jc
         bool hdr = false;
         int transfer = 0, depth = 0;
         if (decode_jxl_to_linear(bytes, size_t(len), rgba, w, h, &cg, &hdr, &transfer,
-            false, 0, exportBt2020 == JNI_TRUE, jOutExif ? &exif : nullptr, &depth)) return nullptr;
+            false, 0, JxlRsWork::foreground, exportBt2020 == JNI_TRUE, jOutExif ? &exif : nullptr, &depth)) return nullptr;
         publish_decoded_exif(env, jOutExif, exif, true);
         auto result = retain_export_f32(env, rgba, w, h, cg, hdr, transfer, jOutInfo, jOutBoost);
         if (result && env->GetArrayLength(jOutInfo) >= 7) env->SetIntArrayRegion(jOutInfo, 6, 1, &depth);
@@ -694,8 +919,9 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeJxlBufferToDirect(JNIEnv* env, jc
                                       static_cast<size_t>(len), rgba, w, h, &cg, &force_hdr,
                                       &transfer_cicp, /*composite_alpha_on_black=*/false,
                                       !export_pixels_capture() && maxEdge > 0 ? static_cast<unsigned>(maxEdge) : 0u,
+                                      JxlRsWork::foreground,
                                       exportBt2020 == JNI_TRUE && export_pixels_capture(), jOutExif ? &exif : nullptr,
-                                      &source_depth, &source);
+                                      &source_depth, &source, nullptr, nullptr, readerGainmap);
     if (rc == 0) {
         publish_decoded_exif(env, jOutExif, exif, true);
         if (maxEdge > 0) {
@@ -747,3 +973,52 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_extractJxlExifInput(JNIEnv* env, jclass
         return input.chunk.size();
     }));
 } catch (...) { return nullptr; }
+
+namespace {
+class JxlAnimation final : public ReaderAnimation {
+public:
+    std::vector<uint8_t> encoded;
+    std::optional<JxlRsReader> decoder;
+
+    bool reset() {
+        decoder.emplace(encoded.data(), encoded.size());
+        if (!*decoder) return false;
+        const auto& info = decoder->info();
+        loops = static_cast<int>(std::min(info.loops, uint32_t(INT32_MAX)));
+        return info.animated && info.xsize && info.ysize &&
+            uint64_t(info.xsize) * info.ysize <= 16ull * 1024 * 1024 &&
+            decoder->set_format(JxlRsFormat::f32, info.has_black);
+    }
+
+    jbyteArray next(JNIEnv* env, bool restart, bool advanced, jintArray info,
+                    jfloatArray boost, jintArray duration) override {
+        if (restart && !reset()) return nullptr;
+        std::vector<uint16_t> rgba;
+        unsigned w = 0, h = 0;
+        uhdr_color_gamut_t gamut = UHDR_CG_BT_709;
+        bool hdr = false;
+        int transfer = 0;
+        double time = -1;
+        DecodedImageInfo source;
+        const int status = decode_jxl_to_linear(encoded.data(), encoded.size(), rgba, w, h, &gamut, &hdr,
+            &transfer, false, 0, JxlRsWork::foreground, false, nullptr, nullptr, &source, &*decoder, &time);
+        const jint delay = status == 0 && std::isfinite(time) ? static_cast<jint>(std::clamp(time, 10., double(INT32_MAX))) :
+            status == 0 ? 100 : time == 0 ? 0 : -1;
+        env->SetIntArrayRegion(duration, 0, 1, &delay);
+        if (status != 0) return nullptr;
+        source.publish(env, info);
+        return pack_direct_to_jbyte_array(env, rgba, w, h, hdr, gamut, advanced, transfer, info, boost);
+    }
+};
+}
+
+std::unique_ptr<ReaderAnimation> open_jxl_animation(const uint8_t* data, size_t size) {
+    {
+        JxlRsReader probe(data, size);
+        if (!probe || !probe.info().animated) return nullptr;
+    }
+    auto animation = std::make_unique<JxlAnimation>();
+    animation->encoded.assign(data, data + size);
+    if (!animation->reset()) return nullptr;
+    return animation;
+}

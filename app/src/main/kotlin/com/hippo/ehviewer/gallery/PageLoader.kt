@@ -14,7 +14,6 @@ import com.ehviewer.core.model.GalleryInfo
 import com.ehviewer.core.util.logcat
 import com.hippo.ehviewer.EhDB
 import com.hippo.ehviewer.Settings
-import com.hippo.ehviewer.coil.hasJxlAnimation
 import com.hippo.ehviewer.image.ByteBufferSource
 import com.hippo.ehviewer.image.HI_RES_PREVIEW_EDGE
 import com.hippo.ehviewer.image.HiResTier
@@ -35,6 +34,7 @@ import com.hippo.ehviewer.image.hdr.StillRoute
 import com.hippo.ehviewer.image.hdr.classify
 import com.hippo.ehviewer.image.hdr.classifyPath
 import com.hippo.ehviewer.image.hdr.exportImageExtension
+import com.hippo.ehviewer.image.hdr.hasJxlGainMap
 import com.hippo.ehviewer.image.hdr.isRawStillExtension
 import com.hippo.ehviewer.image.hdr.needsGeneratedPageThumb
 import com.hippo.ehviewer.image.hdr.needsLibDecode
@@ -265,7 +265,13 @@ abstract class PageLoader(
         } else {
             null
         }
-        val image = tryDecodeLibDirect(index, raw, forceOriginal, hint, ::readSourceMetadata)
+        val image = Image.decodeReaderAnimation(
+            raw,
+            hint,
+            onNativeAnimation = { hasHdrDependentImage = true },
+            beforeClose = ::readSourceMetadata,
+        )
+            ?: tryDecodeLibDirect(index, raw, forceOriginal, hint, ::readSourceMetadata)
             ?: run {
                 readSourceMetadata()
                 val ready = DisplaySource.ensureReady(raw, hint, persistTo = persistTo)
@@ -287,6 +293,7 @@ abstract class PageLoader(
             else -> image.metadata.transfer ?: metadata.transfer
         }
         image.metadata = metadata.copy(
+            animated = image.metadata.animated,
             width = image.metadata.width ?: metadata.width,
             height = image.metadata.height ?: metadata.height,
             bitDepth = image.metadata.bitDepth ?: metadata.bitDepth,
@@ -338,11 +345,8 @@ abstract class PageLoader(
             is PathSource -> classifyPath(raw.source, nameHint)
             is ByteBufferSource -> classify(raw.source, nameHint)
         }
-        if (route == StillRoute.Lib(LibCodec.Jxl) &&
-            withStillInput(raw) { it.hasJxlAnimation() } == true
-        ) {
-            return null
-        }
+        val jxlGainMap = route == StillRoute.Lib(LibCodec.Jxl) &&
+            withStillInput(raw) { it.hasJxlGainMap() } == true
         // RAW is always a direct bitmap. Bypass-UHDR does not apply, and there is no gain map.
         val rawStill = (route is StillRoute.Lib && route.codec == LibCodec.Raw) ||
             isRawStillExtension(pageExt)
@@ -355,7 +359,7 @@ abstract class PageLoader(
         val precision = if (advanced && route == StillRoute.Platform) PlatformHeifDecode.precision(raw, nameHint) else null
         val deepHeif = precision?.highDepth == true
         if (rawStill) noteRawLoaded()
-        if (!rawStill && !hevcHdr && !avifDirect && !deepHeif && !Settings.readerLibDirectBitmap.value && !Settings.readerSdrToneMappingEnabled) return null
+        if (!rawStill && !hevcHdr && !avifDirect && !deepHeif && !jxlGainMap && !Settings.readerLibDirectBitmap.value && !Settings.readerSdrToneMappingEnabled) return null
         if (!route.needsLibDecode && !rawStill && !deepHeif) return null
         val maxEdge = Image.maxEdgeForReader(forceOriginal)
         val direct = (if (deepHeif) PlatformHeifDecode.decode(raw, precision, maxEdge) else null)
@@ -371,6 +375,7 @@ abstract class PageLoader(
         // Read from the still-open original before Image takes ownership/closes it.
         // Native JXL/AVIF have already collected EXIF while decoding.
         readSourceMetadata(direct)
+        if (jxlGainMap && direct.sourceHasGainmap) hasHdrDependentImage = true
         thumbSoftwareBitmapBeforeHardware(index, raw, direct.bitmap)
         // Native decoding can be selected for precision/codec support even when
         // the preference is off. Its SDR base still needs the OEM/Apple map.
@@ -865,6 +870,12 @@ abstract class PageLoader(
     }
 
     abstract override val title: String
+
+    // JXL gain maps and native color animations select different pixels for SDR and HDR display.
+    @Volatile
+    private var hasHdrDependentImage = false
+
+    override fun hasHdrDependentDecode(): Boolean = hasHdrDependentImage
 
     private val rawLoadedState = MutableStateFlow(false)
 

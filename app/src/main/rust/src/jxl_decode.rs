@@ -98,6 +98,7 @@ struct Decoder {
     offset: usize,
     info: Info,
     source_pixels: usize,
+    thumbnail: bool,
     sample_bytes: usize,
     black_plane: bool,
     icc: [Option<Vec<u8>>; 2],
@@ -105,6 +106,21 @@ struct Decoder {
 
 struct ParallelRunner;
 static DECODE_POOL: OnceLock<Option<rayon::ThreadPool>> = OnceLock::new();
+static THUMB_POOL: OnceLock<Option<rayon::ThreadPool>> = OnceLock::new();
+
+#[cfg(any(target_os = "android", target_os = "linux"))]
+fn set_background_thread_priority() {
+    unsafe extern "C" {
+        fn setpriority(which: i32, who: u32, prio: i32) -> i32;
+    }
+    // PRIO_PROCESS = 0, Android THREAD_PRIORITY_BACKGROUND = 10.
+    unsafe {
+        let _ = setpriority(0, 0, 10);
+    }
+}
+
+#[cfg(not(any(target_os = "android", target_os = "linux")))]
+fn set_background_thread_priority() {}
 
 impl JxlParallelRunner for ParallelRunner {
     fn run(&mut self, num: usize, fun: &JxlParallelRunnerFun<'_>) -> jxl::error::Result<()> {
@@ -117,7 +133,12 @@ impl JxlParallelRunner for ParallelRunner {
 }
 
 #[unsafe(no_mangle)]
-unsafe extern "C" fn jxl_rs_open(data: *const u8, len: usize, info: &mut Info) -> *mut Decoder {
+unsafe extern "C" fn jxl_rs_open(
+    data: *const u8,
+    len: usize,
+    info: &mut Info,
+    thumbnail: bool,
+) -> *mut Decoder {
     if data.is_null() || len == 0 || len > isize::MAX as usize {
         return std::ptr::null_mut();
     }
@@ -168,6 +189,7 @@ unsafe extern "C" fn jxl_rs_open(data: *const u8, len: usize, info: &mut Info) -
         offset: len - input.len(),
         info: *info,
         source_pixels: (width as usize).saturating_mul(height as usize),
+        thumbnail,
         sample_bytes: 0,
         black_plane: false,
         icc: [None, None],
@@ -357,20 +379,35 @@ unsafe extern "C" fn jxl_rs_next(
             }
         }
     };
-    // Share the worker budget across concurrent viewer, thumbnail and conversion decodes.
-    // Decide parallelism from source pixels so downsampled high-res decodes still use the pool.
+    // Use source pixels to decide when work benefits from parallelism. Thumbnail
+    // callers use their own pool even when the decoder does not downsample.
     let result = if decoder.source_pixels >= 512 * 1024 {
-        let pool = DECODE_POOL.get_or_init(|| {
-            let workers = std::thread::available_parallelism().ok()?.get().min(4);
-            if workers < 2 {
-                return None;
-            }
-            rayon::ThreadPoolBuilder::new()
-                .num_threads(workers)
-                .thread_name(|i| format!("LocalViewer:JXL-{i}"))
-                .build()
-                .ok()
-        });
+        let pool = if decoder.thumbnail {
+            THUMB_POOL.get_or_init(|| {
+                let workers = std::thread::available_parallelism().ok()?.get().min(4);
+                if workers < 2 {
+                    return None;
+                }
+                rayon::ThreadPoolBuilder::new()
+                    .num_threads(workers)
+                    .thread_name(|i| format!("LocalViewer:JXL-Thumb-{i}"))
+                    .start_handler(|_| set_background_thread_priority())
+                    .build()
+                    .ok()
+            })
+        } else {
+            DECODE_POOL.get_or_init(|| {
+                let workers = std::thread::available_parallelism().ok()?.get().min(4);
+                if workers < 2 {
+                    return None;
+                }
+                rayon::ThreadPoolBuilder::new()
+                    .num_threads(workers)
+                    .thread_name(|i| format!("LocalViewer:JXL-{i}"))
+                    .build()
+                    .ok()
+            })
+        };
         match pool {
             Some(pool) => pool.install(|| process(true)),
             None => process(false),
@@ -487,4 +524,46 @@ unsafe extern "C" fn jxl_rs_exif(
         output,
     )
     .unwrap_or(0)
+}
+
+// The gain-map container stores the same color encoding and compressed ICC
+// fields as the codestream, but outside its primary image header.
+#[unsafe(no_mangle)]
+unsafe extern "C" fn jxl_rs_gain_map_icc(
+    encoded_color: *const u8,
+    color_size: usize,
+    encoded_icc: *const u8,
+    icc_size: usize,
+    color: &mut Color,
+    size: &mut usize,
+) -> *mut u8 {
+    *size = 0;
+    const ICC_LIMIT: usize = 16 * 1024 * 1024;
+    if encoded_color.is_null() || encoded_icc.is_null() || color_size > 255 || icc_size > ICC_LIMIT {
+        return std::ptr::null_mut();
+    }
+    // SAFETY: the caller has bounds-checked both fields in the gain map box.
+    let encoding = unsafe { slice::from_raw_parts(encoded_color, color_size) };
+    let compressed_icc = unsafe { slice::from_raw_parts(encoded_icc, icc_size) };
+    let Ok(profile) = JxlColorProfile::from_raw_bytes(encoding, compressed_icc)
+    else {
+        return std::ptr::null_mut();
+    };
+    *color = Color::from(&profile);
+    let Some(icc) = profile.try_as_icc(255.0) else {
+        return std::ptr::null_mut();
+    };
+    if icc.is_empty() || icc.len() > ICC_LIMIT {
+        return std::ptr::null_mut();
+    }
+    *size = icc.len();
+    Box::into_raw(icc.into_owned().into_boxed_slice()).cast()
+}
+
+#[unsafe(no_mangle)]
+unsafe extern "C" fn jxl_rs_free_icc(icc: *mut u8, size: usize) {
+    if !icc.is_null() {
+        // SAFETY: the caller returns the original allocation and its length once.
+        drop(unsafe { Box::from_raw(std::ptr::slice_from_raw_parts_mut(icc, size)) });
+    }
 }

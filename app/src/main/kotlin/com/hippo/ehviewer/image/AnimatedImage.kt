@@ -9,7 +9,7 @@ package com.hippo.ehviewer.image
  */
 internal fun isAnimatedReaderExtension(ext: String?): Boolean {
     val e = ext?.lowercase()?.removePrefix(".") ?: return false
-    return e == "gif" || e == "webp" || e == "awebp" || e == "apng" || e == "ajxl"
+    return e == "gif" || e == "webp" || e == "awebp" || e == "apng" || e == "ajxl" || e == "avifs"
 }
 
 /** True when the reader should skip [DecodeSizeType] and decode at file resolution. */
