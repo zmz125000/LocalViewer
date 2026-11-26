@@ -23,9 +23,10 @@ struct JxlRsColor {
 };
 
 enum class JxlRsFormat : int { u8, u16, f16, f32 };
+enum class JxlRsWork { foreground, thumbnail };
 
 extern "C" {
-JxlRsDecoder* jxl_rs_open(const uint8_t*, size_t, JxlRsInfo&);
+JxlRsDecoder* jxl_rs_open(const uint8_t*, size_t, JxlRsInfo&, bool thumbnail);
 void jxl_rs_close(JxlRsDecoder*);
 bool jxl_rs_set_downsample(JxlRsDecoder&, uint8_t factor, uint32_t& width, uint32_t& height);
 bool jxl_rs_set_format(JxlRsDecoder&, JxlRsFormat, bool black_plane);
@@ -45,8 +46,9 @@ class JxlRsReader {
     JxlRsInfo info_{};
     std::unique_ptr<JxlRsDecoder, decltype(&jxl_rs_close)> decoder_;
 public:
-    JxlRsReader(const uint8_t* data, size_t size)
-        : data_(data), size_(size), decoder_(jxl_rs_open(data, size, info_), jxl_rs_close) {}
+    JxlRsReader(const uint8_t* data, size_t size, JxlRsWork work = JxlRsWork::foreground)
+        : data_(data), size_(size),
+          decoder_(jxl_rs_open(data, size, info_, work == JxlRsWork::thumbnail), jxl_rs_close) {}
 
     explicit operator bool() const { return static_cast<bool>(decoder_); }
     const JxlRsInfo& info() const { return info_; }

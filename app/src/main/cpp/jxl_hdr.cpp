@@ -191,6 +191,7 @@ int decode_jxl_to_linear(const uint8_t* data, size_t len, std::vector<Sample>& o
                              unsigned& w, unsigned& h, uhdr_color_gamut_t* out_cg,
                              bool* out_force_hdr = nullptr, int* out_transfer_cicp = nullptr,
                              bool composite_alpha_on_black = true, unsigned thumbnail_edge = 0,
+                             JxlRsWork work = JxlRsWork::foreground,
                              bool export_bt2020 = false, std::vector<uint8_t>* out_exif = nullptr, int* out_source_depth = nullptr, DecodedImageInfo* source = nullptr) {
     const bool preserve_extended = export_pixels_preserve_scrgb();
     if (out_source_depth) *out_source_depth = 0;
@@ -200,7 +201,7 @@ int decode_jxl_to_linear(const uint8_t* data, size_t len, std::vector<Sample>& o
     if (out_transfer_cicp) *out_transfer_cicp = 0;
     if (!data || len == 0) return -1;
 
-    JxlRsReader decoder(data, len);
+    JxlRsReader decoder(data, len, work);
     if (!decoder) return -2;
     const auto& info = decoder.info();
     w = info.xsize;
@@ -542,7 +543,7 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_convertJxlBytesToUltraHdrMaxEdge(
     bool force_hdr = false;
     int rc = decode_jxl_to_linear(reinterpret_cast<const uint8_t*>(bytes),
                                       static_cast<size_t>(len), rgba, w, h, &cg, &force_hdr, nullptr,
-                                      true, maxEdge > 0 ? static_cast<unsigned>(maxEdge) : 0);
+                                      true, maxEdge > 0 ? static_cast<unsigned>(maxEdge) : 0, JxlRsWork::thumbnail);
     if (rc != 0) {
         env->ReleaseStringUTFChars(jOutput, out_path);
         env->ReleaseByteArrayElements(jInput, bytes, JNI_ABORT);
@@ -578,7 +579,7 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_convertJxlFdToUltraHdrMaxEdge(
     bool force_hdr = false;
     int rc = decode_jxl_to_linear(input.data,
                                       input.size, rgba, w, h, &cg, &force_hdr, nullptr,
-                                      true, maxEdge > 0 ? static_cast<unsigned>(maxEdge) : 0);
+                                      true, static_cast<unsigned>(maxEdge), JxlRsWork::thumbnail);
     input.reset();
     if (rc != 0) {
         return -20 + rc;
@@ -629,6 +630,7 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeJxlBytesToDirect(JNIEnv* env, jcl
                                       static_cast<size_t>(len), rgba, w, h, &cg, &force_hdr,
                                       &transfer_cicp, /*composite_alpha_on_black=*/false,
                                       !export_pixels_capture() && maxEdge > 0 ? static_cast<unsigned>(maxEdge) : 0u,
+                                      JxlRsWork::foreground,
                                       exportBt2020 == JNI_TRUE && export_pixels_capture(), jOutExif ? &exif : nullptr,
                                       &source_depth, &source);
     if (rc == 0) {
@@ -672,7 +674,7 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeJxlBufferToDirect(JNIEnv* env, jc
         bool hdr = false;
         int transfer = 0, depth = 0;
         if (decode_jxl_to_linear(bytes, size_t(len), rgba, w, h, &cg, &hdr, &transfer,
-            false, 0, exportBt2020 == JNI_TRUE, jOutExif ? &exif : nullptr, &depth)) return nullptr;
+            false, 0, JxlRsWork::foreground, exportBt2020 == JNI_TRUE, jOutExif ? &exif : nullptr, &depth)) return nullptr;
         publish_decoded_exif(env, jOutExif, exif, true);
         auto result = retain_export_f32(env, rgba, w, h, cg, hdr, transfer, jOutInfo, jOutBoost);
         if (result && env->GetArrayLength(jOutInfo) >= 7) env->SetIntArrayRegion(jOutInfo, 6, 1, &depth);
@@ -694,6 +696,7 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeJxlBufferToDirect(JNIEnv* env, jc
                                       static_cast<size_t>(len), rgba, w, h, &cg, &force_hdr,
                                       &transfer_cicp, /*composite_alpha_on_black=*/false,
                                       !export_pixels_capture() && maxEdge > 0 ? static_cast<unsigned>(maxEdge) : 0u,
+                                      JxlRsWork::foreground,
                                       exportBt2020 == JNI_TRUE && export_pixels_capture(), jOutExif ? &exif : nullptr,
                                       &source_depth, &source);
     if (rc == 0) {

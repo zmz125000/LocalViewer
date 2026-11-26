@@ -98,7 +98,7 @@ struct Decoder {
     offset: usize,
     info: Info,
     source_pixels: usize,
-    downsampled: bool,
+    thumbnail: bool,
     sample_bytes: usize,
     black_plane: bool,
     icc: [Option<Vec<u8>>; 2],
@@ -133,7 +133,12 @@ impl JxlParallelRunner for ParallelRunner {
 }
 
 #[unsafe(no_mangle)]
-unsafe extern "C" fn jxl_rs_open(data: *const u8, len: usize, info: &mut Info) -> *mut Decoder {
+unsafe extern "C" fn jxl_rs_open(
+    data: *const u8,
+    len: usize,
+    info: &mut Info,
+    thumbnail: bool,
+) -> *mut Decoder {
     if data.is_null() || len == 0 || len > isize::MAX as usize {
         return std::ptr::null_mut();
     }
@@ -184,7 +189,7 @@ unsafe extern "C" fn jxl_rs_open(data: *const u8, len: usize, info: &mut Info) -
         offset: len - input.len(),
         info: *info,
         source_pixels: (width as usize).saturating_mul(height as usize),
-        downsampled: false,
+        thumbnail,
         sample_bytes: 0,
         black_plane: false,
         icc: [None, None],
@@ -209,7 +214,6 @@ extern "C" fn jxl_rs_set_downsample(
     };
     decoder.info.width = w;
     decoder.info.height = h;
-    decoder.downsampled = factor > 0;
     *width = w;
     *height = h;
     true
@@ -375,11 +379,10 @@ unsafe extern "C" fn jxl_rs_next(
             }
         }
     };
-    // Share the worker budget across concurrent viewer, thumbnail and conversion decodes.
-    // Decide parallelism from source pixels so downsampled high-res decodes still use the pool.
-    // Downsampled (thumbnail/capped) decodes use background priority so scroll UI is not starved.
+    // Use source pixels to decide when work benefits from parallelism. Thumbnail
+    // callers use their own pool even when the decoder does not downsample.
     let result = if decoder.source_pixels >= 512 * 1024 {
-        let pool = if decoder.downsampled {
+        let pool = if decoder.thumbnail {
             THUMB_POOL.get_or_init(|| {
                 let workers = std::thread::available_parallelism().ok()?.get().min(4);
                 if workers < 2 {

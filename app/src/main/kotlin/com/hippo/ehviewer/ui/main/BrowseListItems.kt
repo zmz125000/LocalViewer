@@ -120,6 +120,7 @@ import com.hippo.ehviewer.webdav.WebDavCache
 import com.hippo.ehviewer.webdav.WebDavClient
 import com.hippo.ehviewer.webdav.WebDavPasswordStore
 import com.hippo.ehviewer.webdav.WebDavRepository
+import java.io.FileNotFoundException
 import java.text.DateFormat
 import java.util.Calendar
 import java.util.Date
@@ -1653,6 +1654,7 @@ fun BrowseCoverThumb(
     var fetchFailed by remember(remoteKey) { mutableStateOf(false) }
     // Internal resume counter + external retryKey both re-run the download effect.
     var resumeEpoch by remember(remoteKey) { mutableIntStateOf(0) }
+    var retryMissingPageThumb by remember(remoteKey, retryKey, resumeEpoch) { mutableStateOf(false) }
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner, remoteKey) {
         if (cover !is BrowseCover.Smb && cover !is BrowseCover.WebDav &&
@@ -1685,19 +1687,20 @@ fun BrowseCoverThumb(
         remoteKey,
         retryKey,
         resumeEpoch,
+        retryMissingPageThumb,
         allowNetworkImageDownload,
         cacheThumbOriginal,
         downloadNetworkArchiveThumbs,
         allowRemoteFetch,
     ) {
         if (pageThumbId != null) {
-            val cached = ReaderPageThumb.findIfKnown(pageThumbId)
-                ?: withIOContext { ReaderPageThumb.find(pageThumbId) }
+            val cached = withIOContext { ReaderPageThumb.find(pageThumbId) }
             if (cached != null) {
                 if (localPath != cached) localPath = cached
                 fetchFailed = false
                 return@LaunchedEffect
             }
+            if (localPath?.let(ReaderPageThumb::isThumbPath) == true) localPath = null
         }
         when (cover) {
             is BrowseCover.Local -> {
@@ -2112,8 +2115,9 @@ fun BrowseCoverThumb(
     }
 
     // Disk thumbs are already ~768px JPEG (OriginDiskCache.THUMB_EDGE); Coil is a light second pass.
-    val request = remember(cover, localPath, resolvedDecodePx) {
-        localPath?.let { path ->
+    val requestPath = localPath
+    val request = remember(cover, requestPath, resolvedDecodePx) {
+        requestPath?.let { path ->
             val cacheKey = if (ReaderPageThumb.isThumbPath(path)) {
                 "pgt:${browseCoverThumbIdentity(cover) ?: path}@$resolvedDecodePx"
             } else {
@@ -2178,6 +2182,15 @@ fun BrowseCoverThumb(
                 contentDescription = null,
                 modifier = Modifier.fillMaxSize(),
                 contentScale = ContentScale.Crop,
+                onError = { state ->
+                    // The file can also be trimmed between the disk probe and Coil opening it.
+                    if (requestPath != null && localPath == requestPath &&
+                        ReaderPageThumb.isThumbPath(requestPath) &&
+                        state.result.throwable is FileNotFoundException
+                    ) {
+                        retryMissingPageThumb = true
+                    }
+                },
             )
         }
     }
