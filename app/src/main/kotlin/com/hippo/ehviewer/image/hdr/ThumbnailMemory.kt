@@ -116,9 +116,9 @@ internal object ThumbnailMemory {
         val thumb = edge.coerceIn(64, 2048).toLong().let { it * it * 24 }
         // Mapped input has one file-backed view; arrays may also be copied by JNI.
         val compressed = if (sourceBytes >= 0) sourceBytes.coerceAtMost(Long.MAX_VALUE / 4) * (if (mapped) 1 else 2) else Long.MAX_VALUE / 4
-        // JNI can pin/copy the compressed array. JXL decodes to a full-frame
-        // float buffer before resizing. Budget for full source planes when a
-        // codec-specific estimate is absent.
+        // JNI can pin/copy the compressed array. JXL/JXR decode into reduced
+        // planes when thumbnail downsampling applies; budget for full source
+        // planes when a codec-specific estimate is absent.
         // Bitmap pixel planes live on the native heap on supported Android versions.
         // HEVC assembles Annex-B access units for libde265 even from mapped HEIF.
         val hevcNative = codec == LibCodec.HevcHdr
@@ -132,14 +132,20 @@ internal object ThumbnailMemory {
                 avifYuvBytes.coerceAtMost(Long.MAX_VALUE / 8) * 4 + thumb + compressed
             }
             pixels == 0L -> Long.MAX_VALUE
-            codec == LibCodec.Jxr -> {
-                // Match setup_full_frame's transform-domain reduction. Raw/F16
-                // planes are allocated at this size, rather than at source size.
+            codec == LibCodec.Jxr || codec == LibCodec.Jxl -> {
+                // Match JXR's transform-domain reduction (up to 16x) and jxl-rs's
+                // set_downsample_factor (up to 8x) so output planes are budgeted
+                // at their decoded size rather than full source dimensions.
+                val maxScale = if (codec == LibCodec.Jxr) 16L else 8L
                 var scale = 1L
                 val longEdge = maxOf(w, h)
-                while (scale < 16 && (longEdge + scale * 2 - 1) / (scale * 2) >= edge &&
-                    (w + scale * 2 - 1) / (scale * 2) < (w + scale - 1) / scale &&
-                    (h + scale * 2 - 1) / (scale * 2) < (h + scale - 1) / scale
+                while (scale < maxScale && (longEdge + scale * 2 - 1) / (scale * 2) >= edge &&
+                    (
+                        codec == LibCodec.Jxl || (
+                            (w + scale * 2 - 1) / (scale * 2) < (w + scale - 1) / scale &&
+                                (h + scale * 2 - 1) / (scale * 2) < (h + scale - 1) / scale
+                            )
+                        )
                 ) {
                     scale *= 2
                 }

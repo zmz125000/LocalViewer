@@ -228,6 +228,18 @@ int decode_jxl_to_linear(const uint8_t* data, size_t len, std::vector<Sample>& o
         }
     }
 
+    if (thumbnail_edge > 0 && std::max(w, h) > thumbnail_edge) {
+        uint8_t factor = 0;
+        const unsigned long_edge = std::max(w, h);
+        while (factor < 3 && ((long_edge + (1u << (factor + 1)) - 1) >> (factor + 1)) >= thumbnail_edge) {
+            ++factor;
+        }
+        if (factor > 0 && decoder.set_downsample(factor)) {
+            w = decoder.info().xsize;
+            h = decoder.info().ysize;
+        }
+    }
+
     auto cg = linear_gamut(src_encoding, have_src, is_pq || is_hlg);
     if (out_cg) *out_cg = cg;
     if (!decoder.set_format(JxlRsFormat::f32, info.has_black)) return -9;

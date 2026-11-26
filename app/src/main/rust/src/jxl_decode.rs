@@ -97,6 +97,7 @@ struct Decoder {
     inner: JxlDecoder,
     offset: usize,
     info: Info,
+    source_pixels: usize,
     sample_bytes: usize,
     black_plane: bool,
     icc: [Option<Vec<u8>>; 2],
@@ -166,10 +167,34 @@ unsafe extern "C" fn jxl_rs_open(data: *const u8, len: usize, info: &mut Info) -
         inner,
         offset: len - input.len(),
         info: *info,
+        source_pixels: (width as usize).saturating_mul(height as usize),
         sample_bytes: 0,
         black_plane: false,
         icc: [None, None],
     }))
+}
+
+#[unsafe(no_mangle)]
+extern "C" fn jxl_rs_set_downsample(
+    decoder: &mut Decoder,
+    factor: u8,
+    width: &mut u32,
+    height: &mut u32,
+) -> bool {
+    if decoder.inner.set_downsample_factor(factor).is_err() {
+        return false;
+    }
+    let Some(basic) = decoder.inner.basic_info() else {
+        return false;
+    };
+    let (Ok(w), Ok(h)) = (u32::try_from(basic.size.0), u32::try_from(basic.size.1)) else {
+        return false;
+    };
+    decoder.info.width = w;
+    decoder.info.height = h;
+    *width = w;
+    *height = h;
+    true
 }
 
 #[unsafe(no_mangle)]
@@ -232,8 +257,9 @@ extern "C" fn jxl_rs_icc(decoder: &mut Decoder, original: bool, size: &mut usize
         } else {
             decoder.inner.output_color_profile()
         };
+        let intensity_target = decoder.info.intensity_target;
         profile
-            .and_then(JxlColorProfile::try_as_icc)
+            .and_then(|profile| profile.try_as_icc(intensity_target))
             .map_or_else(Vec::new, |profile| profile.into_owned())
     });
     *size = icc.len();
@@ -332,7 +358,8 @@ unsafe extern "C" fn jxl_rs_next(
         }
     };
     // Share the worker budget across concurrent viewer, thumbnail and conversion decodes.
-    let result = if width.saturating_mul(height) >= 512 * 1024 {
+    // Decide parallelism from source pixels so downsampled high-res decodes still use the pool.
+    let result = if decoder.source_pixels >= 512 * 1024 {
         let pool = DECODE_POOL.get_or_init(|| {
             let workers = std::thread::available_parallelism().ok()?.get().min(4);
             if workers < 2 {
