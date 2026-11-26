@@ -98,6 +98,7 @@ struct Decoder {
     offset: usize,
     info: Info,
     source_pixels: usize,
+    downsampled: bool,
     sample_bytes: usize,
     black_plane: bool,
     icc: [Option<Vec<u8>>; 2],
@@ -105,6 +106,21 @@ struct Decoder {
 
 struct ParallelRunner;
 static DECODE_POOL: OnceLock<Option<rayon::ThreadPool>> = OnceLock::new();
+static THUMB_POOL: OnceLock<Option<rayon::ThreadPool>> = OnceLock::new();
+
+#[cfg(any(target_os = "android", target_os = "linux"))]
+fn set_background_thread_priority() {
+    unsafe extern "C" {
+        fn setpriority(which: i32, who: u32, prio: i32) -> i32;
+    }
+    // PRIO_PROCESS = 0, Android THREAD_PRIORITY_BACKGROUND = 10.
+    unsafe {
+        let _ = setpriority(0, 0, 10);
+    }
+}
+
+#[cfg(not(any(target_os = "android", target_os = "linux")))]
+fn set_background_thread_priority() {}
 
 impl JxlParallelRunner for ParallelRunner {
     fn run(&mut self, num: usize, fun: &JxlParallelRunnerFun<'_>) -> jxl::error::Result<()> {
@@ -168,6 +184,7 @@ unsafe extern "C" fn jxl_rs_open(data: *const u8, len: usize, info: &mut Info) -
         offset: len - input.len(),
         info: *info,
         source_pixels: (width as usize).saturating_mul(height as usize),
+        downsampled: false,
         sample_bytes: 0,
         black_plane: false,
         icc: [None, None],
@@ -192,6 +209,7 @@ extern "C" fn jxl_rs_set_downsample(
     };
     decoder.info.width = w;
     decoder.info.height = h;
+    decoder.downsampled = factor > 0;
     *width = w;
     *height = h;
     true
@@ -359,18 +377,34 @@ unsafe extern "C" fn jxl_rs_next(
     };
     // Share the worker budget across concurrent viewer, thumbnail and conversion decodes.
     // Decide parallelism from source pixels so downsampled high-res decodes still use the pool.
+    // Downsampled (thumbnail/capped) decodes use background priority so scroll UI is not starved.
     let result = if decoder.source_pixels >= 512 * 1024 {
-        let pool = DECODE_POOL.get_or_init(|| {
-            let workers = std::thread::available_parallelism().ok()?.get().min(4);
-            if workers < 2 {
-                return None;
-            }
-            rayon::ThreadPoolBuilder::new()
-                .num_threads(workers)
-                .thread_name(|i| format!("LocalViewer:JXL-{i}"))
-                .build()
-                .ok()
-        });
+        let pool = if decoder.downsampled {
+            THUMB_POOL.get_or_init(|| {
+                let workers = std::thread::available_parallelism().ok()?.get().min(4);
+                if workers < 2 {
+                    return None;
+                }
+                rayon::ThreadPoolBuilder::new()
+                    .num_threads(workers)
+                    .thread_name(|i| format!("LocalViewer:JXL-Thumb-{i}"))
+                    .start_handler(|_| set_background_thread_priority())
+                    .build()
+                    .ok()
+            })
+        } else {
+            DECODE_POOL.get_or_init(|| {
+                let workers = std::thread::available_parallelism().ok()?.get().min(4);
+                if workers < 2 {
+                    return None;
+                }
+                rayon::ThreadPoolBuilder::new()
+                    .num_threads(workers)
+                    .thread_name(|i| format!("LocalViewer:JXL-{i}"))
+                    .build()
+                    .ok()
+            })
+        };
         match pool {
             Some(pool) => pool.install(|| process(true)),
             None => process(false),

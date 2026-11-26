@@ -3,6 +3,7 @@ package com.hippo.ehviewer.image.hdr
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.ImageDecoder
+import android.os.Process
 import android.util.Log
 import com.ehviewer.core.files.metadataOrNull
 import com.ehviewer.core.files.openFileDescriptor
@@ -43,8 +44,11 @@ import java.nio.file.Files
 import java.nio.file.StandardCopyOption
 import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
@@ -94,6 +98,23 @@ object HdrConvertCache {
      * conversions; nested stages of one thumbnail reuse the same admission.
      */
     private val thumbConvertSlots = ThumbnailWorkGate()
+
+    /**
+     * Background-priority workers for native thumbnail decode/encode so folder
+     * scroll UI/RenderThread are not starved by software codecs.
+     */
+    private val thumbDispatcher by lazy {
+        val nextId = AtomicInteger(1)
+        Executors.newFixedThreadPool(3) { runnable ->
+            Thread(
+                {
+                    runCatching { Process.setThreadPriority(Process.THREAD_PRIORITY_BACKGROUND) }
+                    runnable.run()
+                },
+                "LocalViewer:Thumb-${nextId.getAndIncrement()}",
+            ).apply { isDaemon = true }
+        }.asCoroutineDispatcher()
+    }
 
     suspend fun <T> withThumbConvertSlot(block: suspend () -> T): T = thumbConvertSlots.run(block)
 
@@ -296,7 +317,7 @@ object HdrConvertCache {
         quality: Int = THUMB_WEBP_QUALITY,
         fileNameHint: String = source.name,
         onDecoded: ((width: Int, height: Int) -> Unit)? = null,
-    ): Boolean = withContext(Dispatchers.IO) {
+    ): Boolean = withContext(thumbDispatcher) {
         // Existing thumb is not a decode — do not report a size.
         if (OriginDiskCache.existingThumb(dest) != null) return@withContext true
         withThumbConvertSlot {
@@ -472,7 +493,7 @@ object HdrConvertCache {
         quality: Int = THUMB_WEBP_QUALITY,
         fileNameHint: String,
         onDecoded: ((width: Int, height: Int) -> Unit)? = null,
-    ): Boolean = withContext(Dispatchers.IO) {
+    ): Boolean = withContext(thumbDispatcher) {
         if (OriginDiskCache.existingThumb(destJpeg) != null) return@withContext true
         if (bytes.isEmpty()) return@withContext false
         withThumbConvertSlot {

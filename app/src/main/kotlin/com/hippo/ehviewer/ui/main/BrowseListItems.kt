@@ -83,6 +83,7 @@ import com.hippo.ehviewer.coil.CoverThumb
 import com.hippo.ehviewer.coil.coverThumbRequest
 import com.hippo.ehviewer.collectAsState
 import com.hippo.ehviewer.image.hdr.isRawStillExtension
+import com.hippo.ehviewer.image.hdr.needsGeneratedPageThumb
 import com.hippo.ehviewer.image.hdr.readEmbeddedRawJpeg
 import com.hippo.ehviewer.library.ArchiveCoverCache
 import com.hippo.ehviewer.library.BrowseSession
@@ -1615,12 +1616,27 @@ fun BrowseCoverThumb(
         is BrowseCover.DocumentPage -> "doc\u0000${cover.cacheKey}\u0000${cover.index}"
         null -> null
     }
-    // Local image paths: bind immediately when [allowRemoteFetch] (browse). Reader
-    // photo-grid starts false so the first frame is placeholders only.
+    val pageThumbId = remember(remoteKey) { browseCoverThumbIdentity(cover) }
+    val isGeneratedLocalThumb = remember(remoteKey) {
+        cover is BrowseCover.Local &&
+            !ZipPaths.isZipPath(cover.path.toString()) &&
+            needsGeneratedPageThumb(FileUtils.getExtensionFromFilename(cover.path.name))
+    }
+    // Local image paths: bind cached thumb immediately when known; for generated
+    // formats (JXL/JXR/AVIF/HEIC/JP2), wait for LaunchedEffect so 40+ tablet grid
+    // cells don't stampede Coil / Dispatchers.Default before thumbs exist on disk.
     var localPath by remember(remoteKey) {
         mutableStateOf(
             when (cover) {
-                is BrowseCover.Local -> cover.path.takeIf { allowRemoteFetch }
+                is BrowseCover.Local -> {
+                    val known = pageThumbId?.let { ReaderPageThumb.findIfKnown(it) }
+                    when {
+                        known != null -> known
+                        isGeneratedLocalThumb -> null
+                        allowRemoteFetch -> cover.path
+                        else -> null
+                    }
+                }
                 is BrowseCover.LocalArchive,
                 is BrowseCover.SmbArchive,
                 is BrowseCover.WebDavArchive,
@@ -1674,20 +1690,29 @@ fun BrowseCoverThumb(
         downloadNetworkArchiveThumbs,
         allowRemoteFetch,
     ) {
-        val pageThumbId = browseCoverThumbIdentity(cover)
         if (pageThumbId != null) {
-            val cached = withIOContext { ReaderPageThumb.find(pageThumbId) }
+            val cached = ReaderPageThumb.findIfKnown(pageThumbId)
+                ?: withIOContext { ReaderPageThumb.find(pageThumbId) }
             if (cached != null) {
-                localPath = cached
+                if (localPath != cached) localPath = cached
                 fetchFailed = false
                 return@LaunchedEffect
             }
         }
         when (cover) {
             is BrowseCover.Local -> {
-                // Reader photo-grid first frame: placeholders only. Browse passes
-                // allowRemoteFetch=true so localPath is already set above.
-                if (allowRemoteFetch) localPath = cover.path
+                if (!allowRemoteFetch) return@LaunchedEffect
+                if (isGeneratedLocalThumb && pageThumbId != null) {
+                    // Brief settle lets fast-flung cells cancel before starting a
+                    // non-cancellable native decode, and caps queued cells like video thumbs.
+                    delay(60)
+                    val ready = ReaderPageThumb.withComposeGenerateJob {
+                        ReaderPageThumb.ensureFromFile(pageThumbId, cover.path, cover.path.name)
+                    }
+                    localPath = ready ?: cover.path
+                } else if (localPath == null) {
+                    localPath = cover.path
+                }
                 return@LaunchedEffect
             }
             is BrowseCover.DocumentPage -> {
