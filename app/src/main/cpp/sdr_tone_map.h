@@ -21,6 +21,7 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
 // IN THE SOFTWARE.
 #include "hdr_parallel.h"
+#include "pq_transfer.h"
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -56,6 +57,12 @@ inline RGB transform(const Matrix& m,const RGB& v) {
         m[1][0]*v[0]+m[1][1]*v[1]+m[1][2]*v[2],
         m[2][0]*v[0]+m[2][1]*v[1]+m[2][2]*v[2]};
 }
+constexpr Matrix multiply(const Matrix& a,const Matrix& b) {
+    Matrix result{};
+    for(unsigned row=0;row<3;++row)for(unsigned col=0;col<3;++col)
+        result[row][col]=a[row][0]*b[0][col]+a[row][1]*b[1][col]+a[row][2]*b[2][col];
+    return result;
+}
 inline Matrix inverse(const Matrix& m) {
     const double a=m[0][0],b=m[0][1],c=m[0][2],d=m[1][0],e=m[1][1],f=m[1][2],g=m[2][0],h=m[2][1],i=m[2][2];
     const double det=a*(e*i-f*h)-b*(d*i-f*g)+c*(d*h-e*g);
@@ -65,15 +72,29 @@ inline Matrix inverse(const Matrix& m) {
 }
 // SKIV's intermediate scRGB scale is 80 nits per unit, with PQ peak 125.
 inline double pq(double sc) {
-    const double p=std::pow(std::max(sc,0.)/125.,.1593017578125);
-    return std::pow((.8359375+18.8515625*p)/(1.+18.6875*p),78.84375);
+    return pq_transfer::encode(sc*(1./125.));
 }
 inline double inverse_pq(double code) {
-    const double p=std::pow(std::max(code,0.),1./78.84375);
-    return 125.*std::pow(std::max(p-.8359375,0.)/std::max(18.8515625-18.6875*p,1e-12),1./.1593017578125);
+    return 125.*pq_transfer::decode(code);
+}
+inline double pow118(double input) {
+    if(!(input>0.))return 0.;
+    if(input>=1.)return std::pow(input,1.18);
+    constexpr unsigned steps=2048;
+    static const auto table=[] {
+        std::array<float,steps+1> values{};
+        for(unsigned i=0;i<=steps;++i) {
+            const double x=double(i)/steps;
+            values[i]=float(std::pow(x*x,1.18));
+        }
+        return values;
+    }();
+    const double position=std::sqrt(input)*steps;
+    const auto index=std::min(unsigned(position),steps-1);
+    return table[index]+(table[index+1]-table[index])*(position-index);
 }
 inline double intensity(double input,double peak,double white) {
-    return std::pow(std::max(input,0.),1.18)*(1.+white/(peak*peak)*input)/(1.+input/white);
+    return pow118(input)*(1.+white/(peak*peak)*input)/(1.+input/white);
 }
 template<class Pixels> inline RGB input_rgb(const Pixels& pixels,size_t at,bool nonnegative=false) {
     RGB rgb{};
@@ -97,6 +118,10 @@ inline float smooth(float lo,float hi,float x) {
 }
 inline double metering_pq(double y) {
     return y>0. ? pq(std::min(y,125.)) : 0.;
+}
+inline double luminance(const Matrix& space,const RGB& rgb) {
+    const auto& y=space[1];
+    return y[0]*rgb[0]+y[1]*rgb[1]+y[2]*rgb[2];
 }
 inline double auto_tone_gain(double y,const AutoTone& tone) {
     constexpr float lo_pq=.25f;
@@ -131,18 +156,18 @@ template<class Pixels> inline ToneAnalysis analyze_tone(const Pixels& pixels,con
             const float alpha=pixels[i+3];
             if(!std::isfinite(alpha)||alpha<=0.f)continue;
             auto rgb=input_rgb(pixels,i);
-            const double y=transform(space,rgb)[1];
+            const double y=luminance(space,rgb);
             local.low=std::min(local.low,y);local.high=std::max(local.high,y);++local.count;
             if(!auto_curve)continue;
             for(auto& value:rgb)value=std::max(value,0.);
-            const double luminance=transform(space,rgb)[1];
-            const double p=metering_pq(luminance);
+            const double clipped_y=luminance(space,rgb);
+            const double p=metering_pq(clipped_y);
             const double weight=std::min(alpha,1.f);
-            local.clipped_low=std::min(local.clipped_low,luminance);
-            local.clipped_high=std::max(local.clipped_high,luminance);
+            local.clipped_low=std::min(local.clipped_low,clipped_y);
+            local.clipped_high=std::max(local.clipped_high,clipped_y);
             local.visible+=weight;
             local.sum_pq+=weight*p;
-            if(luminance>203./80.)local.hdr_area+=weight;
+            if(clipped_y>203./80.)local.hdr_area+=weight;
             local.excess_pq+=weight*std::max(p-shoulder_pq,0.);
         }
     });
@@ -177,16 +202,25 @@ template<class Pixels> inline ToneAnalysis analyze_tone(const Pixels& pixels,con
     const double high=tone.active()?total.clipped_high:total.high;
     double peak=std::max(high,0.);
     if(high>low) {
-        std::vector<uint64_t> histogram(65536);
-        for(size_t i=0;i<pixels.size();i+=4)if(std::isfinite(pixels[i+3])&&pixels[i+3]>0.f) {
-            const double y=std::max(transform(space,input_rgb(pixels,i,tone.active()))[1],0.);
-            const auto bin=size_t(std::clamp(std::round((y-low)/(high-low)*65536.),0.,65535.));++histogram[bin];
-        }
+        constexpr unsigned bins=65536;
+        const bool active=tone.active();
+        std::vector<uint64_t> histograms(size_t(bins)*jobs);
+        hdr_parallel_pixels(count_pixels,jobs,[&](size_t begin,size_t end,unsigned job) {
+            auto* histogram=histograms.data()+size_t(bins)*job;
+            for(size_t i=begin*4;i<end*4;i+=4) {
+                if(!std::isfinite(pixels[i+3])||pixels[i+3]<=0.f)continue;
+                const double y=std::max(luminance(space,input_rgb(pixels,i,active)),0.);
+                const auto bin=size_t(std::clamp(std::round((y-low)/(high-low)*bins),0.,double(bins-1)));
+                ++histogram[bin];
+            }
+        });
         double percent=100.;
-        for(int bin=65535;bin>=0;--bin) {
-            percent-=100.*double(histogram[size_t(bin)])/double(count);
+        for(int bin=bins-1;bin>=0;--bin) {
+            uint64_t frequency=0;
+            for(unsigned job=0;job<jobs;++job)frequency+=histograms[size_t(bins)*job+bin];
+            percent-=100.*double(frequency)/double(count);
             if(percent<=99.94) {
-                peak=std::max(0.,low+(high-low)*double(bin)/65536.);
+                peak=std::max(0.,low+(high-low)*double(bin)/bins);
                 break;
             }
         }
@@ -202,7 +236,9 @@ template<class Pixels> inline ToneAnalysis analyze_tone(const Pixels& pixels,con
 template<class Pixels> inline void tone_map_skiv_in_place(Pixels& hdr,int gamut,bool custom,float shoulder,float cap_nits,bool auto_curve=false) {
     using namespace skiv;
     const Matrix& space=gamut==2?rgb2020_xyz:gamut==1?rgbp3_xyz:rgb709_xyz;
-    const Matrix from_xyz=inverse(space);
+    const Matrix to_lms=multiply(xyz_lms,space);
+    constexpr Matrix lms_to_rgb709=multiply(xyz709,lms_xyz);
+    const Matrix rgb709_to_gamut=gamut?multiply(inverse(space),rgb709_xyz):Matrix{};
     const double cap=custom?std::clamp(double(cap_nits),204.,10000.):10000.;
     const auto analysis=analyze_tone(hdr,space,custom&&auto_curve);
     const auto& tone=analysis.auto_tone;
@@ -212,6 +248,10 @@ template<class Pixels> inline void tone_map_skiv_in_place(Pixels& hdr,int gamut,
     const double input_knee=pq(knee*203./80.),output_white=pq(203./80.);
     const double custom_peak=std::max(peak_pq,output_white);
     const double curve_knee=intensity(input_knee,custom_peak,white),curve_peak=intensity(custom_peak,custom_peak,white);
+    const double curve_scale=(output_white-input_knee)/std::max(curve_peak-curve_knee,1e-12);
+    const double peak_factor=custom?white/(custom_peak*custom_peak):white/(peak_pq*peak_pq);
+    const double inverse_white=1./white;
+    const double output_scale=custom?80./203.:1.;
     auto& output=hdr;
     const auto& source=hdr;
     const size_t pixels=hdr.size()/4;
@@ -220,30 +260,30 @@ template<class Pixels> inline void tone_map_skiv_in_place(Pixels& hdr,int gamut,
         const size_t i=pixel*4;
         if(!std::isfinite(source[i+3])||source[i+3]<=0.f){output[i]=output[i+1]=output[i+2]=0.f;continue;}
         const auto rgb_input=input_rgb(source,i,tone.active());
-        auto xyz=transform(space,rgb_input);
-        const double gain=auto_tone_gain(xyz[1],tone);
-        if(tone.active())for(auto& value:xyz)value*=gain;
-        auto lms=transform(xyz_lms,xyz);for(auto& value:lms)value=pq(value);
+        const double gain=tone.active()?auto_tone_gain(luminance(space,rgb_input),tone):1.;
+        auto lms=transform(to_lms,rgb_input);
+        for(auto& value:lms)value=pq(value*gain);
         auto ictcp=transform(lms_ictcp,lms);const double input=std::max(ictcp[0],0.);
         if(custom&&input<=input_knee) {
             if(tone.active())for(unsigned c=0;c<3;++c)output[i+c]=float(rgb_input[c]*gain*(80./203.));
             continue;
         }
-        double reference,mapped;
+        const double curve_input=custom?std::min(input,custom_peak):input;
+        const double powered=pow118(curve_input);
+        const double curve_value=powered*(1.+peak_factor*curve_input)/(1.+curve_input*inverse_white);
+        double reference=powered,mapped=curve_value;
         if(custom) {
-            const double clipped=std::min(input,custom_peak);
-            mapped=input_knee+(intensity(clipped,custom_peak,white)-curve_knee)*
-                (output_white-input_knee)/std::max(curve_peak-curve_knee,1e-12);
-            mapped=std::clamp(mapped,input_knee,output_white);reference=input;
-        } else {mapped=intensity(input,peak_pq,white);reference=std::pow(input,1.18);}
+            mapped=std::clamp(input_knee+(curve_value-curve_knee)*curve_scale,input_knee,output_white);
+            reference=input;
+        }
         const double scale=reference>0.&&mapped>0.?std::min(reference/mapped,mapped/reference):0.;
         ictcp[0]=mapped;ictcp[1]*=scale;ictcp[2]*=scale;
         lms=transform(ictcp_lms,ictcp);for(auto& value:lms)value=inverse_pq(value);
-        auto rgb=transform(xyz709,transform(lms_xyz,lms));
-        for(auto& value:rgb)value=std::clamp(value*(custom?80./203.:1.),0.,1.);
+        auto rgb=transform(lms_to_rgb709,lms);
+        for(auto& value:rgb)value=std::clamp(value*output_scale,0.,1.);
         // SKIV clips in its SDR BT.709 space. Rematrix that result back to the
         // export gamut so encoders keep their existing, matching ICC/CICP tags.
-        if(gamut)rgb=transform(from_xyz,transform(rgb709_xyz,rgb));
+        if(gamut)rgb=transform(rgb709_to_gamut,rgb);
         for(unsigned c=0;c<3;++c)output[i+c]=float(std::clamp(rgb[c],0.,1.));
     }
     });
