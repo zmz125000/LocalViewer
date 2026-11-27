@@ -432,7 +432,8 @@ bool apply_iso_gain_map_fast(const avifImage* image, std::vector<Sample>& out_rg
 /**
  * ISO 21496-1 gain map → linear RGBA half.
  * [avifImageApplyGainMap] clamps a linear destination to 0..1, which drops the
- * headroom. PQ output keeps it; [pq_eotf] brings those codes back to 203-nit linear.
+ * headroom. PQ output keeps it; the shared AVIF decode table brings those
+ * codes back to 203-nit linear.
  * @return true when [out_rgba] holds the tone-mapped HDR image.
  */
 template<class Sample>
@@ -479,15 +480,16 @@ bool apply_iso_gain_map(const avifImage* image, std::vector<Sample>& out_rgba, i
     const unsigned th = tone.height;
     const size_t pixels = static_cast<size_t>(tw) * static_cast<size_t>(th);
     out_rgba.resize(pixels * 4);
+    const auto& pq_linear = avif_linear_lut(AVIF_TRANSFER_CHARACTERISTICS_SMPTE2084);
     const uint8_t* row_base = tone.pixels;
     for (unsigned y = 0; y < th; y++) {
         const uint16_t* row =
             reinterpret_cast<const uint16_t*>(row_base + static_cast<size_t>(y) * tone.rowBytes);
         for (unsigned x = 0; x < tw; x++) {
             const uint16_t* p = row + x * 4;
-            const float rl = pq_eotf(p[0] / 65535.f) / kSdrWhiteNits;
-            const float gl = pq_eotf(p[1] / 65535.f) / kSdrWhiteNits;
-            const float bl = pq_eotf(p[2] / 65535.f) / kSdrWhiteNits;
+            const float rl = pq_linear[p[0]];
+            const float gl = pq_linear[p[1]];
+            const float bl = pq_linear[p[2]];
             float an = p[3] / 65535.f;
             auto clamp_hf = [&](float v) {
                 return sanitize_working<Sample>(v, preserve_extended);

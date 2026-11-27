@@ -8,6 +8,7 @@
 
 #include <jni.h>
 
+#include "pq_transfer.h"
 #include "ultrahdr_api.h"
 
 /** One captured export quality selection; existing native callers default to High. */
@@ -177,12 +178,9 @@ constexpr float kMaxLinear = kMaxNits / kSdrWhiteNits;
 
 /** ST 2084 OETF. Linear working RGB uses 1.0 = 203 nits, PQ uses 1.0 = 10000 nits. */
 inline float linear_to_pq_code(float linear) {
-    double luminance = static_cast<double>(linear) * kSdrWhiteNits / kMaxNits;
+    const double luminance = static_cast<double>(linear) * (kSdrWhiteNits / double(kMaxNits));
     if (!(luminance > 0.0)) return 0.f;
-    luminance = std::fmin(luminance, 1.0);
-    const double p = std::pow(luminance, 2610.0 / 16384.0);
-    return static_cast<float>(std::pow((3424.0 / 4096.0 + (2413.0 / 128.0) * p) /
-                                      (1.0 + (2392.0 / 128.0) * p), 2523.0 / 32.0));
+    return luminance >= 1.0 ? 1.f : float(pq_transfer::encode(luminance));
 }
 
 // BT.2100 HLG inverse EOTF, with the decoder's 1000-nit reference display
