@@ -23,14 +23,14 @@ internal class VideoLevelAdjustment(
     val setLevel: (Int?) -> Int?,
 )
 
-internal fun videoLevelControlAt(x: Float, viewWidth: Int): VideoLevelControl? = when {
-    x < viewWidth * .25f -> VideoLevelControl.VOLUME
-    x >= viewWidth * .75f -> VideoLevelControl.BRIGHTNESS
+internal fun videoLevelControlAt(x: Float, viewWidth: Int, swapped: Boolean): VideoLevelControl? = when {
+    x < viewWidth * .25f -> if (swapped) VideoLevelControl.BRIGHTNESS else VideoLevelControl.VOLUME
+    x >= viewWidth * .75f -> if (swapped) VideoLevelControl.VOLUME else VideoLevelControl.BRIGHTNESS
     else -> null
 }
 
-/** Sliding up by half a screen covers the slider's full range. */
-internal fun videoDragLevel(start: Int, dragY: Float, viewHeight: Int, range: IntRange): Int {
+internal fun videoDragLevel(start: Int, dragY: Float, viewHeight: Int, range: IntRange, tablet: Boolean): Int {
     val steps = (range.last - range.first).toFloat()
-    return (start - dragY * steps / (viewHeight.coerceAtLeast(1) * .5f)).roundToInt().coerceIn(range)
+    val fullRangeDrag = viewHeight.coerceAtLeast(1) * if (tablet) .25f else .5f
+    return (start - dragY * steps / fullRangeDrag).roundToInt().coerceIn(range)
 }

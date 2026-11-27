@@ -69,6 +69,9 @@ class SeekPlayerView @JvmOverloads constructor(
 
     /** Shorts-style swipe between playlist items. Horizontal scrub stays available. */
     var playlistSwipeMinutes = 0
+    var swapLevelGestures = true
+    private val isTablet: Boolean
+        get() = resources.configuration.smallestScreenWidthDp >= WIDTH_DP_MEDIUM_LOWER_BOUND
 
     internal var onTrackSelectionChanged: ((type: Int, subtitleLanguage: String?) -> Unit)? = null
     internal var levelAdjustment: ((VideoLevelControl) -> VideoLevelAdjustment)? = null
@@ -387,7 +390,7 @@ class SeekPlayerView @JvmOverloads constructor(
         var transportWidth = 0
         for (index in 0 until transport.childCount) transportWidth += transport.getChildAt(index).layoutParams.width
         val portrait = playerWidth < playerHeight
-        val tabletPortrait = portrait && resources.configuration.smallestScreenWidthDp >= WIDTH_DP_MEDIUM_LOWER_BOUND
+        val tabletPortrait = portrait && isTablet
         val phonePortrait = portrait && !tabletPortrait
         findViewById<View>(R.id.video_playlist).visibility = if (phonePortrait) GONE else VISIBLE
         findViewById<View>(R.id.video_loop).visibility = if (phonePortrait) GONE else VISIBLE
@@ -583,7 +586,7 @@ class SeekPlayerView @JvmOverloads constructor(
         private var requestedLevel = startLevel
 
         fun update(totalY: Float) {
-            val target = videoDragLevel(startLevel, totalY - activationY, height, adjustment.range)
+            val target = videoDragLevel(startLevel, totalY - activationY, height, adjustment.range, isTablet)
             if (target == requestedLevel) return
             requestedLevel = target
             panel.render(adjustment.setLevel(target))
@@ -828,7 +831,7 @@ class SeekPlayerView @JvmOverloads constructor(
                 }
                 if (scrollingNext) return true
                 if (!seeking && abs(totalY) >= scrubStartPx && abs(totalY) > abs(totalX) * 1.5f) {
-                    val control = videoLevelControlAt(downX, width)
+                    val control = videoLevelControlAt(downX, width, swapLevelGestures)
                     if (control != null) return startLevelDrag(control, totalY)
                     scrollingNext = playlistSwipeAllowed(playlistSwipeMinutes, current.duration)
                     return scrollingNext

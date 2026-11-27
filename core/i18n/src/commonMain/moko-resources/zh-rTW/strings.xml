@@ -109,6 +109,8 @@
     <string name="settings_video_scroll_to_next_5_minutes">5 分鐘</string>
     <string name="settings_video_scroll_to_next_10_minutes">10 分鐘</string>
     <string name="settings_video_scroll_to_next_always">一律</string>
+    <string name="settings_media3_swap_level_gestures">交換 Media3 手勢</string>
+    <string name="settings_media3_swap_level_gestures_summary">在左側滑動調整亮度，在右側滑動調整音量。</string>
     <string name="video_subtitle_tracks">字幕軌道</string>
     <string name="settings_media3_playback_resume">播放進度續播</string>
     <string name="settings_media3_playback_resume_summary">%s 是目前續播方式。</string>

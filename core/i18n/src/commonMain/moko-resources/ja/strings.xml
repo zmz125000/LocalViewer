@@ -170,6 +170,8 @@
     <string name="settings_video_scroll_to_next_5_minutes">5分</string>
     <string name="settings_video_scroll_to_next_10_minutes">10分</string>
     <string name="settings_video_scroll_to_next_always">常に</string>
+    <string name="settings_media3_swap_level_gestures">Media3 のジェスチャーを入れ替える</string>
+    <string name="settings_media3_swap_level_gestures_summary">左側のスワイプで明るさを、右側のスワイプで音量を調整します。</string>
     <string name="video_subtitle_tracks">字幕トラック</string>
     <string name="browse_menu_favorites_on_top">お気に入りを先頭に</string>
     <string name="browse_menu_page_count">ページ数</string>

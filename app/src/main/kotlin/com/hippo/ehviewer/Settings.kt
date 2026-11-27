@@ -187,6 +187,7 @@ object Settings : DataStorePreferences(null) {
 
     // Maximum video length in minutes for playlist swipes.
     val videoScrollToNext = intPref("video_scroll_to_next_mode", 5)
+    val media3SwapLevelGestures = boolPref("media3_swap_level_gestures", true)
 
     /**
      * When true (default): tap HTML → loopback HTTP + default browser, serving the
