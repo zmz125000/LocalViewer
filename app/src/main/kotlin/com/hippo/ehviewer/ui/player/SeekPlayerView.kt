@@ -627,9 +627,9 @@ class SeekPlayerView @JvmOverloads constructor(
         } else {
             0
         }
-        val bottom = gap + maxOf(controlsHeight, insets?.bottom ?: 0)
+        val verticalClearance = gap + maxOf(controlsHeight, insets?.top ?: 0, insets?.bottom ?: 0)
         val availableWidth = (width - left - right).coerceAtLeast(1)
-        drag.panel.sizeVerticalTrack(availableWidth, height - bottom - gap - (insets?.top ?: 0))
+        drag.panel.sizeVerticalTrack(availableWidth, height - 2 * verticalClearance)
         panel.background = controlMenuBackground()
         panel.clipToOutline = true
         panel.elevation = 8 * resources.displayMetrics.density
@@ -641,11 +641,10 @@ class SeekPlayerView @JvmOverloads constructor(
             FrameLayout.LayoutParams(
                 dp(48).coerceAtMost(availableWidth),
                 ViewGroup.LayoutParams.WRAP_CONTENT,
-                Gravity.BOTTOM or side,
+                Gravity.CENTER_VERTICAL or side,
             ).apply {
                 leftMargin = left
                 rightMargin = right
-                bottomMargin = bottom
             },
         )
         panel.animate().alpha(1f).setDuration(LEVEL_OVERLAY_FADE_MS).start()
