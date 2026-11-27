@@ -117,6 +117,7 @@ class Image private constructor(
     val displayScaler: Boolean = false,
     val gpuToneMapping: com.hippo.ehviewer.image.hdr.ReaderGpuToneMapping? = null,
     private val decodedColorSpaceIsSource: Boolean = true,
+    private val animationColorSpace: ColorSpace? = null,
 ) {
     var metadata: ImageMetadata = ImageMetadata()
         internal set
@@ -242,9 +243,12 @@ class Image private constructor(
             }
             else -> 1f
         }
-        isWideGamutContent = isWideGamutDirect || bitmapIsWideGamut(image)
-        // AWEBP already copied the buffer into a direct native decoder source.
+        isWideGamutContent = isWideGamutDirect || animationColorSpace?.isWideGamut == true || bitmapIsWideGamut(image)
         val drawable = (innerImage as? DrawableImage)?.drawable
+        if (drawable is Animatable) {
+            metadata = ImageMetadata(animated = true, colorSpace = animationColorSpace?.name)
+        }
+        // AWEBP already copied the buffer into a direct native decoder source.
         if (innerImage is BitmapImage || drawable is AnimatedWebPDrawable || drawable is ReaderColorAnimation || drawable is ReaderApngDrawable) {
             this.src?.close()
             this.src = null
@@ -263,7 +267,7 @@ class Image private constructor(
 
     /** Color tag fallback for formats without platform header metadata, including JXR/JXL. */
     internal val decodedColorSpace: ColorSpace?
-        get() = if (decodedColorSpaceIsSource) (innerImage as? BitmapImage)?.bitmap?.colorSpace else null
+        get() = if (decodedColorSpaceIsSource) animationColorSpace ?: (innerImage as? BitmapImage)?.bitmap?.colorSpace else null
 
     private fun bitmapIsWideGamut(image: CoilImage): Boolean {
         if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.O) return false
@@ -427,6 +431,7 @@ class Image private constructor(
             val capped: Boolean,
             val previewEdge: Int = HI_RES_PREVIEW_EDGE,
             val platformHbd: Boolean = false,
+            val animationColorSpace: ColorSpace? = null,
         )
 
         private suspend fun Either<ByteBufferSource, PathSource>.decodeCoilOnce(
@@ -444,6 +449,7 @@ class Image private constructor(
              */
             platformHbd: Boolean = false,
             comicRendering: Boolean = false,
+            animationColorSpace: ColorSpace? = null,
         ): CoilImage {
             val hardwareDirect = !platformHbd && (Settings.readerHardwareBitmap.value || hdrSafe)
             // A chosen kernel decodes the full software frame, then resamples once.
@@ -490,7 +496,10 @@ class Image private constructor(
                         }
                     }
                     maxBitmapSize(Size.ORIGINAL)
-                    // No forced colorSpace(DISPLAY_P3): preserves embedded ICC under the
+                    // AnimatedImageDrawable needs an explicit destination to retain its
+                    // source color space. Keep the ICC transfer as well as the primaries.
+                    animationColorSpace?.let { colorSpace(it) }
+                    // No forced colorSpace(DISPLAY_P3) for stills: preserves embedded ICC under the
                     // reader WCG window (advanced color on). sRGB stays sRGB-tagged (no
                     // oversaturation); P3 stays P3. 8-bit JPEGs stay 8888/HARDWARE.
                     when {
@@ -624,7 +633,9 @@ class Image private constructor(
             return dstW < srcW || dstH < srcH
         }
 
-        private fun Either<ByteBufferSource, PathSource>.encodedPixelSize(): Pair<Int, Int>? {
+        private fun Either<ByteBufferSource, PathSource>.encodedPixelSize(): Pair<Int, Int>? = encodedBounds()?.let { it.outWidth to it.outHeight }
+
+        private fun Either<ByteBufferSource, PathSource>.encodedBounds(): BitmapFactory.Options? {
             val opts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
             when (this) {
                 is Either.Right -> {
@@ -654,7 +665,7 @@ class Image private constructor(
                 }
             }
             if (opts.outWidth <= 0 || opts.outHeight <= 0) return null
-            return opts.outWidth to opts.outHeight
+            return opts
         }
 
         /** Coil FILL / FIT box. A multiplier of 1 or more means the file is already small enough. */
@@ -763,7 +774,14 @@ class Image private constructor(
             // Gain-map Ultra HDR + animated GIF/WebP/APNG: always ORIGIN.
             val mode = decodeMode(forceOriginal)
             val looksHdr = isAtLeastU && sourceLooksLikeHdrGainMap(this)
-            val looksAnimated = sourceLooksLikeAnimated()
+            val animationHeader = sourceAnimationHeader()
+            val looksAnimated = animationHeader != AnimationHeader.STILL
+            val animationColorSpace = if (animationHeader == AnimationHeader.WEBP_WITH_ICC) {
+                val space = runCatching { encodedBounds()?.outColorSpace }.getOrNull() as? ColorSpace.Rgb
+                space?.takeIf { isAtLeastU || it.transferParameters != null }
+            } else {
+                null
+            }
             val effectiveMode = if (readerShouldDecodeOriginal(forceOriginal, looksHdr, looksAnimated)) {
                 DecodeSizeType.ORIGIN
             } else {
@@ -800,6 +818,7 @@ class Image private constructor(
                     platformHbd = false,
                     longEdgeCap = longEdgeCap,
                     comicRendering = comicRendering && !hdr,
+                    animationColorSpace = animationColorSpace,
                 )
             }
 
@@ -834,7 +853,7 @@ class Image private constructor(
             if (bitmapImage != null && image !is BitmapImageWithExtraInfo && bitmapImage.detectGainmap()) {
                 return CoilDecoded(BitmapImageWithExtraInfo(image = bitmapImage, hasGainmap = true), capped, previewEdge, platformHbd)
             }
-            return CoilDecoded(image, capped, previewEdge, platformHbd)
+            return CoilDecoded(image, capped, previewEdge, platformHbd, animationColorSpace.takeIf { image is DrawableImage })
         }
 
         /**
@@ -896,6 +915,7 @@ class Image private constructor(
                 src,
                 displayScaler = image.image.allowsDisplayScaler(),
                 decodedColorSpaceIsSource = !image.platformHbd,
+                animationColorSpace = image.animationColorSpace,
             ).also { it.noteHiResPreview(image.capped, image.previewEdge) }
         }
 
@@ -1054,32 +1074,37 @@ class Image private constructor(
          * [coil3.gif.AnimatedImageDecoder] would otherwise [android.graphics.ImageDecoder.setTargetSize]
          * to [DecodeSizeType] (stills only).
          */
-        private fun Either<ByteBufferSource, PathSource>.sourceLooksLikeAnimated(): Boolean {
+        private fun Either<ByteBufferSource, PathSource>.sourceAnimationHeader(): AnimationHeader {
+            fun classify(bytes: ByteArray, count: Int): AnimationHeader = when {
+                hasAnimatedWebPIccProfile(bytes, count) -> AnimationHeader.WEBP_WITH_ICC
+                looksLikeAnimatedImageHeader(bytes, count) -> AnimationHeader.ANIMATED
+                else -> AnimationHeader.STILL
+            }
             return runCatching {
                 when (this) {
                     is Either.Left -> {
                         val dup = value.source.asReadOnlyBuffer()
-                        val n = minOf(dup.remaining(), ANIM_SNIFF_BYTES)
-                        if (n <= 0) return@runCatching false
-                        val bytes = ByteArray(n)
+                        val bytes = ByteArray(minOf(dup.remaining(), ANIM_SNIFF_BYTES))
                         dup.get(bytes)
-                        looksLikeAnimatedImageHeader(bytes, n)
+                        classify(bytes, bytes.size)
                     }
                     is Either.Right -> {
                         val path = value.source
                         val ext = FileUtils.getExtensionFromFilename(path.name)?.lowercase()
                             ?: FileUtils.getExtensionFromFilename(value.type)?.lowercase()
-                        if (ext == "gif" || ext == "awebp" || ext == "apng") return@runCatching true
-                        if (ext != null && ext !in ANIM_SNIFF_EXTS) return@runCatching false
+                        if (ext == "gif" || ext == "apng") return@runCatching AnimationHeader.ANIMATED
+                        if (ext != null && ext !in ANIM_SNIFF_EXTS) return@runCatching AnimationHeader.STILL
                         path.read {
                             val bytes = ByteArray(ANIM_SNIFF_BYTES)
-                            val n = readAtMostTo(bytes)
-                            n > 0 && looksLikeAnimatedImageHeader(bytes, n)
+                            val header = classify(bytes, readAtMostTo(bytes))
+                            if (ext == "awebp" && header == AnimationHeader.STILL) AnimationHeader.ANIMATED else header
                         }
                     }
                 }
-            }.getOrDefault(false)
+            }.getOrDefault(AnimationHeader.STILL)
         }
+
+        private enum class AnimationHeader { STILL, ANIMATED, WEBP_WITH_ICC }
     }
 }
 
