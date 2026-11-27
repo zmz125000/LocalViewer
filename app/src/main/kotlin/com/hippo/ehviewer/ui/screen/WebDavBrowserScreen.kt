@@ -414,6 +414,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
     val smallGalleryMinPages by Settings.browseSmallGalleryMinPages.collectAsState()
     val showHiddenFiles by Settings.browseShowHiddenFiles.collectAsState()
     val showVirtualGalleries = rememberEffectiveVirtualGalleries(folderId)
+    val maxVirtualGallerySubfolders by Settings.browseVirtualGalleryMaxSubfolders.collectAsState()
     val filteredEntries = remember(
         displayEntries,
         search.keyword,
@@ -422,6 +423,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
         smallGalleryMinPages,
         showHiddenFiles,
         showVirtualGalleries,
+        maxVirtualGallerySubfolders,
         virtual,
     ) {
         val liveSearch = search.keyword.trim().isNotEmpty()
@@ -437,6 +439,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                         BrowseContentMode.Folder,
                         showHiddenFiles,
                         showVirtualGalleries,
+                        maxVirtualGallerySubfolders,
                         allTypes = liveSearch,
                     )
                     .filterRemoteSmallGalleries(showSmallGalleries, smallGalleryMinPages)
@@ -446,6 +449,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                         BrowseContentMode.Video,
                         showHiddenFiles,
                         showVirtualGalleries,
+                        maxVirtualGallerySubfolders,
                         allTypes = liveSearch,
                     )
                     .filterRemoteSmallGalleries(showSmallGalleries, smallGalleryMinPages)
@@ -457,6 +461,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                         contentMode,
                         showHiddenFiles,
                         showVirtualGalleries,
+                        maxVirtualGallerySubfolders,
                         allTypes = liveSearch,
                     )
                     .filterRemoteSmallGalleries(showSmallGalleries, smallGalleryMinPages)
@@ -2599,6 +2604,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                     val dirKey = listedDir ?: relativeDir
                     val allowRemoteThumbs = listingSessionCurrent
                     val favoritesOnTop by Settings.browseFavoritesOnTop.collectAsState()
+                    val virtualGalleryOnTop by Settings.browseVirtualGalleryOnTop.collectAsState()
                     val browseSortModePref by Settings.browseSortMode.collectAsState()
                     val browseSortMode = BrowseSortMode.fromPref(browseSortModePref)
                     val browseSortAscending by Settings.browseSortAscending.collectAsState()
@@ -2612,6 +2618,8 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                             nameOf = { it.name },
                             dateOf = { it.lastModifiedMs },
                             sizeOf = { it.size },
+                            virtualOnTop = virtualGalleryOnTop,
+                            isVirtual = { it.virtual },
                         )
                     val dirs = if (favoritesOnTop) {
                         val (fav, rest) = dirsRaw.partition { isDirFavorite(it.relativeName) }
@@ -2625,6 +2633,8 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                         nameOf = { it.name },
                         dateOf = { it.lastModifiedMs },
                         sizeOf = { it.size },
+                        virtualOnTop = virtualGalleryOnTop,
+                        isVirtual = { it.virtual },
                     )
                     val videos = sections.videos
                         .filterIsInstance<BrowseEntryRemote.VideoFile>()
@@ -2634,6 +2644,8 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                             nameOf = { it.name },
                             dateOf = { it.lastModifiedMs },
                             sizeOf = { it.size },
+                            virtualOnTop = virtualGalleryOnTop,
+                            isVirtual = { it.virtual },
                         )
                     val documents = sections.documents.sortedForBrowseFolderUi(
                         browseSortMode,

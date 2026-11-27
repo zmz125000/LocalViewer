@@ -31,6 +31,7 @@ import com.ehviewer.core.util.launch
 import com.ehviewer.core.util.launchIO
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.asMutableState
+import com.hippo.ehviewer.library.SMB_PROMOTE_MAX_LEAVES
 import com.hippo.ehviewer.ui.DefaultPdfReader
 import com.hippo.ehviewer.ui.DefaultVideoPlayer
 import com.hippo.ehviewer.ui.Screen
@@ -382,6 +383,18 @@ fun AnimatedVisibilityScope.EhScreen(navigator: DestinationsNavigator) = Screen(
                     state = Settings.browseSmallGalleryMinPages.asMutableState(),
                 )
             }
+            IntSliderPreference(
+                maxValue = SMB_PROMOTE_MAX_LEAVES,
+                minValue = 1,
+                title = stringResource(id = R.string.settings_virtual_gallery_max_subfolders),
+                summary = stringResource(id = R.string.settings_virtual_gallery_max_subfolders_summary),
+                state = Settings.browseVirtualGalleryMaxSubfolders.asMutableState(),
+            )
+            SwitchPreference(
+                title = stringResource(id = R.string.settings_virtual_gallery_on_top),
+                summary = stringResource(id = R.string.settings_virtual_gallery_on_top_summary),
+                state = Settings.browseVirtualGalleryOnTop.asMutableState(),
+            )
             SwitchPreference(
                 title = stringResource(id = R.string.settings_library_startup_scan),
                 state = Settings.libraryStartupScan.asMutableState(),

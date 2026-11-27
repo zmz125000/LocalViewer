@@ -234,6 +234,10 @@
     <string name="settings_browse_small_galleries_summary">Show folder galleries below the minimum page count. Off hides them in the UI only.</string>
     <string name="settings_browse_small_gallery_min_pages">Minimum gallery pages</string>
     <string name="settings_browse_small_gallery_min_pages_summary">Hide folder galleries with fewer pages when Small galleries is off.</string>
+    <string name="settings_virtual_gallery_max_subfolders">Virtual gallery subfolders</string>
+    <string name="settings_virtual_gallery_max_subfolders_summary">Maximum subfolders promoted as virtual galleries or videos in folder view (1–3). Folders with more show normally.</string>
+    <string name="settings_virtual_gallery_on_top">Virtual galleries on top</string>
+    <string name="settings_virtual_gallery_on_top_summary">Sort promoted @ items at the top. Turn off to sort them alphabetically with other items.</string>
     <string name="browse_open_failed">No app found to open this file.</string>
     <string name="browse_open_large_message">This file is about %1$d MB (over %2$d MB). Download and open it?</string>
     <string name="browse_open_large_continue">Open</string>
