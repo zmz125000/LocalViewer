@@ -61,6 +61,16 @@ enum class BrowseSortMode(val prefValue: Int) {
     }
 }
 
+internal fun browseVirtualSortKey(
+    name: String,
+    virtual: Boolean,
+    virtualOnTop: Boolean,
+): String = if (!virtualOnTop && virtual && name.startsWith('@')) {
+    name.substring(1)
+} else {
+    name
+}
+
 /**
  * UI-only folder listing order. Listing / scan / thumbs / open-gallery keep name order.
  */
@@ -70,13 +80,22 @@ fun <T> Iterable<T>.sortedForBrowseFolderUi(
     nameOf: (T) -> String,
     dateOf: (T) -> Long,
     sizeOf: (T) -> Long = { 0L },
+    virtualOnTop: Boolean = true,
+    isVirtual: (T) -> Boolean = { false },
 ): List<T> {
-    val nameCmp = Comparator<T> { a, b -> naturalCompare(nameOf(a), nameOf(b)) }
+    val nameCmp = Comparator<T> { a, b ->
+        val rawA = nameOf(a)
+        val rawB = nameOf(b)
+        val keyA = browseVirtualSortKey(rawA, isVirtual(a), virtualOnTop)
+        val keyB = browseVirtualSortKey(rawB, isVirtual(b), virtualOnTop)
+        val byKey = naturalCompare(keyA, keyB)
+        if (byKey != 0) byKey else naturalCompare(rawA, rawB)
+    }
     val cmp = when (mode) {
         BrowseSortMode.Name -> nameCmp
         BrowseSortMode.Date -> Comparator { a, b ->
             val byDate = dateOf(a).compareTo(dateOf(b))
-            if (byDate != 0) byDate else naturalCompare(nameOf(a), nameOf(b))
+            if (byDate != 0) byDate else nameCmp.compare(a, b)
         }
         BrowseSortMode.Size -> Comparator { a, b ->
             val bySize = sizeOf(a).compareTo(sizeOf(b))

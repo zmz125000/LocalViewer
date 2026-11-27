@@ -140,6 +140,8 @@ sealed interface BrowseEntry {
         override val lastModifiedMs: Long = 0L,
         override val hidden: Boolean = false,
         override val virtual: Boolean = false,
+        /** Relative path under the listed directory (`S/leaf/clip.mp4` for promoted leaves). */
+        val relativeName: String = path.name,
     ) : BrowseEntry
 
     /**

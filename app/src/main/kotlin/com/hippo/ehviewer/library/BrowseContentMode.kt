@@ -136,70 +136,212 @@ private fun BrowseEntryRemote.asPhotoGalleryRow(): BrowseEntryRemote {
     )
 }
 
+private data class VirtualParentInfo(
+    val subfolders: MutableSet<String> = HashSet(),
+    var hasGallery: Boolean = false,
+    var hasVideo: Boolean = false,
+)
+
+private fun normalizeVirtualRel(raw: String): String = raw.replace('\\', '/').trim('/')
+
+/**
+ * Extract `(parentDir, leafSubfolderOrNull)` for a promoted virtual row.
+ * - Promoted `FolderGallery` / `PromotedVideoLeaf`: `"S/L"` -> `("S", "L")`; dual `"S"` -> `("S", null)`.
+ * - Promoted `VideoFile`: `"S/L/clip.mp4"` -> `("S", "L")`; direct `"S/clip.mp4"` -> `("S", null)`.
+ */
+private fun virtualParentAndLeaf(
+    relativePath: String,
+    isFile: Boolean,
+): Pair<String, String?>? {
+    val norm = normalizeVirtualRel(relativePath)
+    if (norm.isEmpty()) return null
+    val firstSlash = norm.indexOf('/')
+    if (firstSlash < 0) return if (isFile) null else norm to null
+    val parent = norm.substring(0, firstSlash)
+    if (parent.isEmpty()) return null
+    val rest = norm.substring(firstSlash + 1)
+    if (rest.isEmpty()) return parent to null
+    if (!isFile) {
+        val leaf = rest.substringBefore('/')
+        return parent to leaf.takeIf { it.isNotEmpty() }
+    }
+    val secondSlash = rest.indexOf('/')
+    val leaf = if (secondSlash > 0) rest.substring(0, secondSlash) else null
+    return parent to leaf
+}
+
+private class VirtualPromotionSuppression(
+    private val showVirtualGalleries: Boolean,
+    private val infoByParent: Map<String, VirtualParentInfo>,
+    private val demotedParents: Set<String>,
+) {
+    fun isVirtualHidden(parent: String?): Boolean = !showVirtualGalleries || (parent != null && parent in demotedParents)
+
+    fun isDirectoryVisible(
+        mode: BrowseContentMode,
+        dirRelativeName: String,
+        presence: DirPresence,
+        hasGallery: Boolean,
+        hasVideo: Boolean,
+        hasDocument: Boolean,
+    ): Boolean {
+        val norm = normalizeVirtualRel(dirRelativeName)
+        val directName = if (norm.isNotEmpty() && '/' !in norm) norm else null
+        val suppressed = !showVirtualGalleries || (directName != null && directName in demotedParents)
+        if (!suppressed) {
+            return presence.visibleIn(mode, hasGallery, hasVideo, hasDocument)
+        }
+        val info = directName?.let { infoByParent[it] }
+        if (info == null) {
+            // Bare PromotedShell without attached virtual rows when virtuals are off.
+            if (!showVirtualGalleries && presence == DirPresence.PromotedShell) return true
+            return presence.visibleIn(mode, hasGallery, hasVideo, hasDocument)
+        }
+        val effectivePresence = if (presence == DirPresence.PromotedShell) DirPresence.Navigable else presence
+        return effectivePresence.visibleIn(
+            mode,
+            hasGallery = hasGallery || info.hasGallery,
+            hasVideo = hasVideo || info.hasVideo,
+            hasDocument = hasDocument,
+        )
+    }
+}
+
+private fun localVirtualParentAndLeaf(entry: BrowseEntry): Pair<String, String?>? = when (entry) {
+    is BrowseEntry.FolderGallery -> virtualParentAndLeaf(entry.relativeName, isFile = false)
+    is BrowseEntry.Directory -> virtualParentAndLeaf(entry.relativeName, isFile = false)
+    is BrowseEntry.VideoFile -> virtualParentAndLeaf(entry.relativeName, isFile = true)
+    is BrowseEntry.ArchiveGallery, is BrowseEntry.RegularFile -> null
+}
+
+private fun remoteVirtualParentAndLeaf(entry: BrowseEntryRemote): Pair<String, String?>? = when (entry) {
+    is BrowseEntryRemote.FolderGallery -> virtualParentAndLeaf(entry.relativeName, isFile = false)
+    is BrowseEntryRemote.Directory -> virtualParentAndLeaf(entry.relativeName, isFile = false)
+    is BrowseEntryRemote.VideoFile -> virtualParentAndLeaf(entry.fileName, isFile = true)
+    is BrowseEntryRemote.ArchiveGallery, is BrowseEntryRemote.RegularFile -> null
+}
+
+private fun buildLocalVirtualSuppression(
+    entries: List<BrowseEntry>,
+    showVirtualGalleries: Boolean,
+    maxVirtualGallerySubfolders: Int,
+): VirtualPromotionSuppression {
+    val limit = maxVirtualGallerySubfolders.coerceIn(1, SMB_PROMOTE_MAX_LEAVES)
+    val infoByParent = HashMap<String, VirtualParentInfo>()
+    for (entry in entries) {
+        if (!entry.virtual) continue
+        val (parent, leaf) = localVirtualParentAndLeaf(entry) ?: continue
+        val info = infoByParent.getOrPut(parent) { VirtualParentInfo() }
+        if (leaf != null) info.subfolders += leaf
+        when (entry) {
+            is BrowseEntry.FolderGallery -> info.hasGallery = true
+            is BrowseEntry.Directory, is BrowseEntry.VideoFile -> info.hasVideo = true
+            is BrowseEntry.ArchiveGallery, is BrowseEntry.RegularFile -> Unit
+        }
+    }
+    val demoted = if (infoByParent.isEmpty()) {
+        emptySet()
+    } else {
+        infoByParent.entries.mapNotNullTo(HashSet()) { (parent, info) ->
+            if (info.subfolders.size > limit) parent else null
+        }
+    }
+    return VirtualPromotionSuppression(showVirtualGalleries, infoByParent, demoted)
+}
+
+private fun buildRemoteVirtualSuppression(
+    entries: List<BrowseEntryRemote>,
+    showVirtualGalleries: Boolean,
+    maxVirtualGallerySubfolders: Int,
+): VirtualPromotionSuppression {
+    val limit = maxVirtualGallerySubfolders.coerceIn(1, SMB_PROMOTE_MAX_LEAVES)
+    val infoByParent = HashMap<String, VirtualParentInfo>()
+    for (entry in entries) {
+        if (!entry.virtual) continue
+        val (parent, leaf) = remoteVirtualParentAndLeaf(entry) ?: continue
+        val info = infoByParent.getOrPut(parent) { VirtualParentInfo() }
+        if (leaf != null) info.subfolders += leaf
+        when (entry) {
+            is BrowseEntryRemote.FolderGallery -> info.hasGallery = true
+            is BrowseEntryRemote.Directory, is BrowseEntryRemote.VideoFile -> info.hasVideo = true
+            is BrowseEntryRemote.ArchiveGallery, is BrowseEntryRemote.RegularFile -> Unit
+        }
+    }
+    val demoted = if (infoByParent.isEmpty()) {
+        emptySet()
+    } else {
+        infoByParent.entries.mapNotNullTo(HashSet()) { (parent, info) ->
+            if (info.subfolders.size > limit) parent else null
+        }
+    }
+    return VirtualPromotionSuppression(showVirtualGalleries, infoByParent, demoted)
+}
+
 fun List<BrowseEntry>.filterByContentMode(
     mode: BrowseContentMode,
     showHiddenFiles: Boolean = true,
     showVirtualGalleries: Boolean = true,
+    maxVirtualGallerySubfolders: Int = SMB_PROMOTE_MAX_LEAVES,
     /**
      * Live folder search: keep hidden/virtual filters but do not hide types the
      * current Photo/Media/Video/Folder/Document mode would drop (e.g. files in Media).
      * Photo-grid and SMB share-root listings do not use this.
      */
     allTypes: Boolean = false,
-): List<BrowseEntry> = map { it.asPhotoGalleryRow() }.filter { e ->
-    if (!showHiddenFiles && e.hidden) return@filter false
-    if (!showVirtualGalleries && e.virtual) return@filter false
-    if (allTypes) return@filter true
-    when (mode) {
-        BrowseContentMode.Galleries -> when (e) {
-            is BrowseEntry.Directory -> {
-                if (hiddenDirectoryRevealed(showHiddenFiles, e.hidden, e.presence)) return@filter true
-                // When virtuals off, PromotedShell is the enterable real folder.
-                if (!showVirtualGalleries && e.presence == DirPresence.PromotedShell) return@filter true
-                e.presence.visibleIn(mode, e.hasGallery, e.hasVideo, e.hasDocument)
-            }
-            is BrowseEntry.FolderGallery, is BrowseEntry.ArchiveGallery -> true
-            is BrowseEntry.VideoFile, is BrowseEntry.RegularFile -> false
+): List<BrowseEntry> {
+    val suppression = buildLocalVirtualSuppression(this, showVirtualGalleries, maxVirtualGallerySubfolders)
+    return map { it.asPhotoGalleryRow() }.filter { e ->
+        if (!showHiddenFiles && e.hidden) return@filter false
+        if (e.virtual && suppression.isVirtualHidden(localVirtualParentAndLeaf(e)?.first)) {
+            return@filter false
         }
-        BrowseContentMode.Media -> when (e) {
-            is BrowseEntry.Directory -> {
-                if (hiddenDirectoryRevealed(showHiddenFiles, e.hidden, e.presence)) return@filter true
-                if (!showVirtualGalleries && e.presence == DirPresence.PromotedShell) return@filter true
-                e.presence.visibleIn(mode, e.hasGallery, e.hasVideo, e.hasDocument)
+        if (allTypes) return@filter true
+        when (mode) {
+            BrowseContentMode.Galleries -> when (e) {
+                is BrowseEntry.Directory -> {
+                    if (hiddenDirectoryRevealed(showHiddenFiles, e.hidden, e.presence)) return@filter true
+                    suppression.isDirectoryVisible(mode, e.relativeName, e.presence, e.hasGallery, e.hasVideo, e.hasDocument)
+                }
+                is BrowseEntry.FolderGallery, is BrowseEntry.ArchiveGallery -> true
+                is BrowseEntry.VideoFile, is BrowseEntry.RegularFile -> false
             }
-            is BrowseEntry.FolderGallery, is BrowseEntry.ArchiveGallery -> true
-            is BrowseEntry.VideoFile -> true
-            is BrowseEntry.RegularFile -> false
-        }
-        BrowseContentMode.Video -> when (e) {
-            is BrowseEntry.Directory -> {
-                if (hiddenDirectoryRevealed(showHiddenFiles, e.hidden, e.presence)) return@filter true
-                if (!showVirtualGalleries && e.presence == DirPresence.PromotedShell) return@filter true
-                e.presence.visibleIn(mode, e.hasGallery, e.hasVideo, e.hasDocument)
+            BrowseContentMode.Media -> when (e) {
+                is BrowseEntry.Directory -> {
+                    if (hiddenDirectoryRevealed(showHiddenFiles, e.hidden, e.presence)) return@filter true
+                    suppression.isDirectoryVisible(mode, e.relativeName, e.presence, e.hasGallery, e.hasVideo, e.hasDocument)
+                }
+                is BrowseEntry.FolderGallery, is BrowseEntry.ArchiveGallery -> true
+                is BrowseEntry.VideoFile -> true
+                is BrowseEntry.RegularFile -> false
             }
-            is BrowseEntry.VideoFile -> true
-            is BrowseEntry.FolderGallery, is BrowseEntry.ArchiveGallery, is BrowseEntry.RegularFile -> false
-        }
-        BrowseContentMode.Document -> when (e) {
-            is BrowseEntry.Directory -> {
-                if (hiddenDirectoryRevealed(showHiddenFiles, e.hidden, e.presence)) return@filter true
-                if (!showVirtualGalleries && e.presence == DirPresence.PromotedShell) return@filter true
-                e.presence.visibleIn(mode, e.hasGallery, e.hasVideo, e.hasDocument)
+            BrowseContentMode.Video -> when (e) {
+                is BrowseEntry.Directory -> {
+                    if (hiddenDirectoryRevealed(showHiddenFiles, e.hidden, e.presence)) return@filter true
+                    suppression.isDirectoryVisible(mode, e.relativeName, e.presence, e.hasGallery, e.hasVideo, e.hasDocument)
+                }
+                is BrowseEntry.VideoFile -> true
+                is BrowseEntry.FolderGallery, is BrowseEntry.ArchiveGallery, is BrowseEntry.RegularFile -> false
             }
-            is BrowseEntry.ArchiveGallery -> isBrowseDocumentFileName(e.name)
-            // Document names stay. Demoted comic archives are regular files with an
-            // archive extension; they leave Photo and must not land in this filter.
-            is BrowseEntry.RegularFile -> !isNonDocumentArchiveFileName(e.name)
-            is BrowseEntry.FolderGallery, is BrowseEntry.VideoFile -> false
-        }
-        BrowseContentMode.Folder -> when (e) {
-            is BrowseEntry.Directory ->
-                hiddenDirectoryRevealed(showHiddenFiles, e.hidden, e.presence) ||
-                    e.presence.visibleIn(mode, e.hasGallery, e.hasVideo, e.hasDocument)
-            is BrowseEntry.ArchiveGallery, is BrowseEntry.RegularFile -> true
-            // Real videos only — hide promoted rows (enter real dir instead).
-            is BrowseEntry.VideoFile -> !e.virtual
-            is BrowseEntry.FolderGallery -> false // synthetic / dual galleries
+            BrowseContentMode.Document -> when (e) {
+                is BrowseEntry.Directory -> {
+                    if (hiddenDirectoryRevealed(showHiddenFiles, e.hidden, e.presence)) return@filter true
+                    suppression.isDirectoryVisible(mode, e.relativeName, e.presence, e.hasGallery, e.hasVideo, e.hasDocument)
+                }
+                is BrowseEntry.ArchiveGallery -> isBrowseDocumentFileName(e.name)
+                // Document names stay. Demoted comic archives are regular files with an
+                // archive extension; they leave Photo and must not land in this filter.
+                is BrowseEntry.RegularFile -> !isNonDocumentArchiveFileName(e.name)
+                is BrowseEntry.FolderGallery, is BrowseEntry.VideoFile -> false
+            }
+            BrowseContentMode.Folder -> when (e) {
+                is BrowseEntry.Directory ->
+                    hiddenDirectoryRevealed(showHiddenFiles, e.hidden, e.presence) ||
+                        e.presence.visibleIn(mode, e.hasGallery, e.hasVideo, e.hasDocument)
+                is BrowseEntry.ArchiveGallery, is BrowseEntry.RegularFile -> true
+                // Real videos only — hide promoted rows (enter real dir instead).
+                is BrowseEntry.VideoFile -> !e.virtual
+                is BrowseEntry.FolderGallery -> false // synthetic / dual galleries
+            }
         }
     }
 }
@@ -249,6 +391,7 @@ fun List<BrowseEntryRemote>.filterRemoteByContentMode(
     mode: BrowseContentMode,
     showHiddenFiles: Boolean = true,
     showVirtualGalleries: Boolean = true,
+    maxVirtualGallerySubfolders: Int = SMB_PROMOTE_MAX_LEAVES,
     /**
      * Live folder search: keep hidden/virtual/unreachable filters but do not hide
      * types the current Photo/Media/Video/Folder/Document mode would drop (e.g. files in Media).
@@ -257,17 +400,19 @@ fun List<BrowseEntryRemote>.filterRemoteByContentMode(
     allTypes: Boolean = false,
 ): List<BrowseEntryRemote> {
     val unreachable = cachedUnreachableDirectoryNames(this)
+    val suppression = buildRemoteVirtualSuppression(this, showVirtualGalleries, maxVirtualGallerySubfolders)
     return map { it.asPhotoGalleryRow() }.filter { e ->
         if (e.isUnderUnreachableFolder(unreachable)) return@filter false
         if (!showHiddenFiles && e.hidden) return@filter false
-        if (!showVirtualGalleries && e.virtual) return@filter false
+        if (e.virtual && suppression.isVirtualHidden(remoteVirtualParentAndLeaf(e)?.first)) {
+            return@filter false
+        }
         if (allTypes) return@filter true
         when (mode) {
             BrowseContentMode.Galleries -> when (e) {
                 is BrowseEntryRemote.Directory -> {
                     if (hiddenDirectoryRevealed(showHiddenFiles, e.hidden, e.presence)) return@filter true
-                    if (!showVirtualGalleries && e.presence == DirPresence.PromotedShell) return@filter true
-                    e.presence.visibleIn(mode, e.hasGallery, e.hasVideo, e.hasDocument)
+                    suppression.isDirectoryVisible(mode, e.relativeName, e.presence, e.hasGallery, e.hasVideo, e.hasDocument)
                 }
                 is BrowseEntryRemote.FolderGallery, is BrowseEntryRemote.ArchiveGallery -> true
                 is BrowseEntryRemote.VideoFile, is BrowseEntryRemote.RegularFile -> false
@@ -275,8 +420,7 @@ fun List<BrowseEntryRemote>.filterRemoteByContentMode(
             BrowseContentMode.Media -> when (e) {
                 is BrowseEntryRemote.Directory -> {
                     if (hiddenDirectoryRevealed(showHiddenFiles, e.hidden, e.presence)) return@filter true
-                    if (!showVirtualGalleries && e.presence == DirPresence.PromotedShell) return@filter true
-                    e.presence.visibleIn(mode, e.hasGallery, e.hasVideo, e.hasDocument)
+                    suppression.isDirectoryVisible(mode, e.relativeName, e.presence, e.hasGallery, e.hasVideo, e.hasDocument)
                 }
                 is BrowseEntryRemote.FolderGallery, is BrowseEntryRemote.ArchiveGallery -> true
                 is BrowseEntryRemote.VideoFile -> true
@@ -285,8 +429,7 @@ fun List<BrowseEntryRemote>.filterRemoteByContentMode(
             BrowseContentMode.Video -> when (e) {
                 is BrowseEntryRemote.Directory -> {
                     if (hiddenDirectoryRevealed(showHiddenFiles, e.hidden, e.presence)) return@filter true
-                    if (!showVirtualGalleries && e.presence == DirPresence.PromotedShell) return@filter true
-                    e.presence.visibleIn(mode, e.hasGallery, e.hasVideo, e.hasDocument)
+                    suppression.isDirectoryVisible(mode, e.relativeName, e.presence, e.hasGallery, e.hasVideo, e.hasDocument)
                 }
                 is BrowseEntryRemote.VideoFile -> true
                 is BrowseEntryRemote.FolderGallery,
@@ -297,8 +440,7 @@ fun List<BrowseEntryRemote>.filterRemoteByContentMode(
             BrowseContentMode.Document -> when (e) {
                 is BrowseEntryRemote.Directory -> {
                     if (hiddenDirectoryRevealed(showHiddenFiles, e.hidden, e.presence)) return@filter true
-                    if (!showVirtualGalleries && e.presence == DirPresence.PromotedShell) return@filter true
-                    e.presence.visibleIn(mode, e.hasGallery, e.hasVideo, e.hasDocument)
+                    suppression.isDirectoryVisible(mode, e.relativeName, e.presence, e.hasGallery, e.hasVideo, e.hasDocument)
                 }
                 is BrowseEntryRemote.ArchiveGallery -> isBrowseDocumentFileName(e.name)
                 // Document names stay. Demoted comic archives are regular files with an

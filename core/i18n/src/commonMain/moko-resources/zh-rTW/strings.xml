@@ -210,6 +210,10 @@
     <string name="settings_browse_small_galleries_summary">顯示低於最少頁數的資料夾圖庫。關閉時僅在介面隱藏，不改掃描。</string>
     <string name="settings_browse_small_gallery_min_pages">最少圖庫頁數</string>
     <string name="settings_browse_small_gallery_min_pages_summary">關閉小圖庫時，隱藏頁數少於此值的資料夾圖庫。</string>
+    <string name="settings_virtual_gallery_max_subfolders">虛擬圖庫子資料夾數</string>
+    <string name="settings_virtual_gallery_max_subfolders_summary">資料夾檢視中提升為虛擬圖庫或影片的最大子資料夾數（1–3）。超過時正常顯示原資料夾。</string>
+    <string name="settings_virtual_gallery_on_top">虛擬圖庫置頂</string>
+    <string name="settings_virtual_gallery_on_top_summary">開啟時帶 @ 前綴的提升項目排在清單頂部；關閉時忽略 @ 前綴與一般項目混合排序。</string>
     <string name="browse_open_failed">沒有可開啟此檔案的應用程式。</string>
     <string name="browse_open_large_message">此檔案約 %1$d MB（超過 %2$d MB）。是否下載並開啟？</string>
     <string name="browse_open_large_continue">開啟</string>

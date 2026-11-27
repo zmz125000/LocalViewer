@@ -279,6 +279,23 @@ object Settings : DataStorePreferences(null) {
     val browseShowVirtualGalleries = boolPref("browse_show_virtual_galleries", true)
 
     /**
+     * Folder view display limit for promoted subfolders per folder (1..3, default 3).
+     * Listing and index cache always scan up to [com.hippo.ehviewer.library.SMB_PROMOTE_MAX_LEAVES];
+     * this only filters the folder UI (e.g. 1 = promote only when a folder has 1 subfolder).
+     */
+    val browseVirtualGalleryMaxSubfolders = intPref(
+        "browse_virtual_gallery_max_subfolders",
+        com.hippo.ehviewer.library.SMB_PROMOTE_MAX_LEAVES,
+    )
+
+    /**
+     * Folder view sorting: when true (default), promoted `@…` rows sort with the `@` prefix
+     * (near the top). When false, promoted `@…` rows sort without the leading `@` so they
+     * interleave alphabetically with normal rows.
+     */
+    val browseVirtualGalleryOnTop = boolPref("browse_virtual_gallery_on_top", false)
+
+    /**
      * Privacy: include hidden (dot / `.nomedia`) trees in the **library** SAF/FS scanner.
      * Default off. Toggling triggers a library rescan.
      */

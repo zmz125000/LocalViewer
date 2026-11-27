@@ -1327,6 +1327,7 @@ fun materializeLocalEntries(
                     lastModifiedMs = entry.lastModifiedMs,
                     hidden = entry.hidden,
                     virtual = entry.virtual,
+                    relativeName = entry.fileName,
                 )
             is BrowseEntryRemote.RegularFile ->
                 BrowseEntry.RegularFile(
