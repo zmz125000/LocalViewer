@@ -3,7 +3,6 @@ package com.hippo.ehviewer.gallery
 import android.graphics.Bitmap
 import android.os.Handler
 import android.os.Looper
-import android.os.Process
 import android.util.LruCache
 import androidx.compose.runtime.mutableIntStateOf
 import arrow.fx.coroutines.ExitCase
@@ -414,9 +413,7 @@ abstract class PageLoader(
         if (path != null) {
             scope.launch(Dispatchers.IO) {
                 waitForDecodeIdle()
-                withBackgroundThreadPriority {
-                    runCatching { ReaderPageThumb.ensureFromFile(identity, path) }
-                }
+                runCatching { ReaderPageThumb.ensureFromFile(identity, path) }
             }
             return
         }
@@ -427,10 +424,8 @@ abstract class PageLoader(
         scope.launch(Dispatchers.IO) {
             try {
                 waitForDecodeIdle()
-                withBackgroundThreadPriority {
-                    if (!bitmap.isRecycled) {
-                        runCatching { ReaderPageThumb.ensureFromBitmap(identity, bitmap) }
-                    }
+                if (!bitmap.isRecycled) {
+                    runCatching { ReaderPageThumb.ensureFromBitmap(identity, bitmap) }
                 }
             } finally {
                 image.unpin()
@@ -448,17 +443,6 @@ abstract class PageLoader(
             val busy = synchronized(jobs) { jobs.values.any { it.isActive } }
             if (!busy) return
             delay(PAGE_THUMB_IDLE_POLL_MS)
-        }
-    }
-
-    private suspend inline fun <T> withBackgroundThreadPriority(block: suspend () -> T): T {
-        val tid = Process.myTid()
-        val previous = Process.getThreadPriority(tid)
-        Process.setThreadPriority(tid, Process.THREAD_PRIORITY_BACKGROUND)
-        try {
-            return block()
-        } finally {
-            Process.setThreadPriority(tid, previous)
         }
     }
 

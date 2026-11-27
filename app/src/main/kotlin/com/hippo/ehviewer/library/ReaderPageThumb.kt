@@ -127,7 +127,7 @@ object ReaderPageThumb {
      * Fallback when the page has no on-disk source (mmap ZIP, software bitmap only).
      * HARDWARE bitmaps are refused — GPU readback hitch the reader viewport.
      */
-    suspend fun ensureFromBitmap(identity: String, bitmap: Bitmap): Path? = withContext(Dispatchers.IO) {
+    suspend fun ensureFromBitmap(identity: String, bitmap: Bitmap): Path? = withContext(HdrConvertCache.thumbDispatcher) {
         val destPath = dest(identity)
         OriginDiskCache.existingThumb(destPath)?.let { return@withContext it }
         if (bitmap.isRecycled) return@withContext null
