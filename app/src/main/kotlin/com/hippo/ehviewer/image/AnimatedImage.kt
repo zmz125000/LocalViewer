@@ -25,7 +25,7 @@ internal fun readerShouldDecodeOriginal(
  */
 internal fun looksLikeAnimatedImageHeader(bytes: ByteArray, length: Int = bytes.size): Boolean {
     val n = length.coerceIn(0, bytes.size)
-    return isGifHeader(bytes, n) || isAnimatedWebPHeader(bytes, n) || isApngHeader(bytes, n)
+    return isGifHeader(bytes, n) || animatedWebPFlags(bytes, n) and 0x02 != 0 || isApngHeader(bytes, n)
 }
 
 private fun isGifHeader(bytes: ByteArray, n: Int): Boolean {
@@ -34,13 +34,18 @@ private fun isGifHeader(bytes: ByteArray, n: Int): Boolean {
     return asciiEquals(bytes, 3, "87a", n) || asciiEquals(bytes, 3, "89a", n)
 }
 
-private fun isAnimatedWebPHeader(bytes: ByteArray, n: Int): Boolean {
-    // RIFF....WEBP VP8X  + flags at offset 20, bit 1 = animation (same as Coil).
-    if (n < 21) return false
-    if (!asciiEquals(bytes, 0, "RIFF", n)) return false
-    if (!asciiEquals(bytes, 8, "WEBP", n)) return false
-    if (!asciiEquals(bytes, 12, "VP8X", n)) return false
-    return bytes[20].toInt() and 0x02 != 0
+internal fun hasAnimatedWebPIccProfile(bytes: ByteArray, length: Int = bytes.size): Boolean = animatedWebPFlags(bytes, length.coerceIn(0, bytes.size)) and 0x22 == 0x22
+
+private fun animatedWebPFlags(bytes: ByteArray, n: Int): Int {
+    // The VP8X flags byte carries both the animation and ICC profile bits.
+    if (n < 21 ||
+        !asciiEquals(bytes, 0, "RIFF", n) ||
+        !asciiEquals(bytes, 8, "WEBP", n) ||
+        !asciiEquals(bytes, 12, "VP8X", n)
+    ) {
+        return 0
+    }
+    return bytes[20].toInt() and 0xff
 }
 
 private fun isApngHeader(bytes: ByteArray, n: Int): Boolean {

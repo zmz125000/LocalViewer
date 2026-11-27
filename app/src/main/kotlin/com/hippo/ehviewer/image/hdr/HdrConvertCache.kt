@@ -102,7 +102,7 @@ object HdrConvertCache {
      * Background-priority workers for native thumbnail decode/encode so folder
      * scroll UI/RenderThread are not starved by software codecs.
      */
-    private val thumbDispatcher by lazy {
+    internal val thumbDispatcher by lazy {
         val nextId = AtomicInteger(1)
         Executors.newFixedThreadPool(3) { runnable ->
             Thread(
@@ -670,7 +670,7 @@ object HdrConvertCache {
         output: File,
         codec: LibCodec,
         maxEdge: Int = 0,
-    ): Boolean = withContext(Dispatchers.IO) {
+    ): Boolean = withContext(if (maxEdge > 0) thumbDispatcher else Dispatchers.IO) {
         if (output.isFile && output.length() > 0L) return@withContext true
         if (input.isEmpty()) return@withContext false
         // Full-page gain-map AVIF stays on the direct bitmap path. A thumb (maxEdge > 0)

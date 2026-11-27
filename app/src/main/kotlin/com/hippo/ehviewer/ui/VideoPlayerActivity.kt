@@ -380,6 +380,7 @@ class VideoPlayerActivity : AppCompatActivity() {
         updatePlaybackOptionButtons()
         rotateWithVideo = Settings.videoRotateWithVideo.value
         playerView?.playlistSwipeMinutes = Settings.videoScrollToNext.value
+        playerView?.swapLevelGestures = Settings.media3SwapLevelGestures.value
         playerView?.onPlaylistScroll = { delta -> moveInPlaylist(delta) }
         playerView?.onTrackSelectionChanged = { type, subtitleLanguage ->
             if (pendingTrackDefaults) manualTrackChoicesBeforeRestore += type

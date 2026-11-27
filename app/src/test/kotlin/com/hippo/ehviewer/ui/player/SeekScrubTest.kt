@@ -42,18 +42,25 @@ class SeekScrubTest {
 
     @Test
     fun verticalGesturesReserveTheMiddleHalfForThePlaylist() {
-        assertEquals(VideoLevelControl.VOLUME, videoLevelControlAt(249f, 1000))
-        assertEquals(null, videoLevelControlAt(250f, 1000))
-        assertEquals(null, videoLevelControlAt(749f, 1000))
-        assertEquals(VideoLevelControl.BRIGHTNESS, videoLevelControlAt(750f, 1000))
+        assertEquals(VideoLevelControl.VOLUME, videoLevelControlAt(249f, 1000, swapped = false))
+        assertEquals(VideoLevelControl.BRIGHTNESS, videoLevelControlAt(750f, 1000, swapped = false))
+        assertEquals(VideoLevelControl.BRIGHTNESS, videoLevelControlAt(249f, 1000, swapped = true))
+        assertEquals(VideoLevelControl.VOLUME, videoLevelControlAt(750f, 1000, swapped = true))
+        for (swapped in listOf(false, true)) {
+            assertEquals(null, videoLevelControlAt(250f, 1000, swapped))
+            assertEquals(null, videoLevelControlAt(749f, 1000, swapped))
+        }
     }
 
     @Test
     fun verticalLevelDragUsesSliderStepsAndClampsToItsRange() {
-        assertEquals(7, videoDragLevel(7, -4f, 1000, 0..15))
-        assertEquals(10, videoDragLevel(7, -100f, 1000, 0..15))
-        assertEquals(0, videoDragLevel(7, 600f, 1000, 0..15))
-        assertEquals(1, videoDragLevel(50, 300f, 600, 1..100))
-        assertEquals(100, videoDragLevel(50, -300f, 600, 1..100))
+        assertEquals(7, videoDragLevel(7, -4f, 1000, 0..15, tablet = false))
+        assertEquals(10, videoDragLevel(7, -100f, 1000, 0..15, tablet = false))
+        assertEquals(13, videoDragLevel(7, -100f, 1000, 0..15, tablet = true))
+        assertEquals(15, videoDragLevel(0, -250f, 1000, 0..15, tablet = true))
+        assertEquals(0, videoDragLevel(7, 600f, 1000, 0..15, tablet = false))
+        assertEquals(83, videoDragLevel(50, -50f, 600, 1..100, tablet = true))
+        assertEquals(1, videoDragLevel(50, 300f, 600, 1..100, tablet = false))
+        assertEquals(100, videoDragLevel(50, -300f, 600, 1..100, tablet = false))
     }
 }

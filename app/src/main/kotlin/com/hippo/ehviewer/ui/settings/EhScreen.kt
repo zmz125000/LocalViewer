@@ -309,6 +309,10 @@ fun AnimatedVisibilityScope.EhScreen(navigator: DestinationsNavigator) = Screen(
                 entryValueRes = com.hippo.ehviewer.R.array.video_scroll_to_next_values,
                 state = Settings.videoScrollToNext.asMutableState(),
             )
+            SwitchPreference(
+                title = stringResource(id = R.string.settings_media3_swap_level_gestures),
+                state = Settings.media3SwapLevelGestures.asMutableState(),
+            )
             var defaultVideoPlayer by Settings.defaultVideoPlayerComponent.asMutableState()
             val alwaysAsk = stringResource(id = R.string.settings_default_video_player_always_ask)
             val noVideoApps = stringResource(id = R.string.settings_default_video_player_none)

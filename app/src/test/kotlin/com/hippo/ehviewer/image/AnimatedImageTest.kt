@@ -45,6 +45,21 @@ class AnimatedImageTest {
     }
 
     @Test
+    fun onlyAnimatedWebPWithIccRequestsColorSpace() {
+        val header = ByteArray(21)
+        "RIFF".encodeToByteArray().copyInto(header, 0)
+        "WEBP".encodeToByteArray().copyInto(header, 8)
+        "VP8X".encodeToByteArray().copyInto(header, 12)
+        header[20] = 0x32 // Animation, ICC profile, and alpha.
+        assertTrue(hasAnimatedWebPIccProfile(header))
+        assertFalse(hasAnimatedWebPIccProfile(header, 20))
+        header[20] = 0x20 // Still WebP with an embedded profile.
+        assertFalse(hasAnimatedWebPIccProfile(header))
+        header[20] = 0x02
+        assertFalse(hasAnimatedWebPIccProfile(header))
+    }
+
+    @Test
     fun staticWebPWithoutVp8xIsNotAnimated() {
         val header = ByteArray(16)
         "RIFF".encodeToByteArray().copyInto(header, 0)

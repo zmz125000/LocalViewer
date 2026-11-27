@@ -379,35 +379,30 @@ unsafe extern "C" fn jxl_rs_next(
             }
         }
     };
-    // Use source pixels to decide when work benefits from parallelism. Thumbnail
-    // callers use their own pool even when the decoder does not downsample.
+    // Use source pixels to decide when parallelism helps, even at reduced size.
+    // Running thumbnails in their own pool keeps the reader queue free.
     let result = if decoder.source_pixels >= 512 * 1024 {
-        let pool = if decoder.thumbnail {
-            THUMB_POOL.get_or_init(|| {
-                let workers = std::thread::available_parallelism().ok()?.get().min(4);
-                if workers < 2 {
-                    return None;
-                }
-                rayon::ThreadPoolBuilder::new()
-                    .num_threads(workers)
-                    .thread_name(|i| format!("LocalViewer:JXL-Thumb-{i}"))
-                    .start_handler(|_| set_background_thread_priority())
-                    .build()
-                    .ok()
-            })
+        let (pool, name) = if decoder.thumbnail {
+            (&THUMB_POOL, "LocalViewer:JXL-Thumb")
         } else {
-            DECODE_POOL.get_or_init(|| {
-                let workers = std::thread::available_parallelism().ok()?.get().min(4);
-                if workers < 2 {
-                    return None;
-                }
-                rayon::ThreadPoolBuilder::new()
-                    .num_threads(workers)
-                    .thread_name(|i| format!("LocalViewer:JXL-{i}"))
-                    .build()
-                    .ok()
-            })
+            (&DECODE_POOL, "LocalViewer:JXL")
         };
+        let thumbnail = decoder.thumbnail;
+        let pool = pool.get_or_init(|| {
+            let workers = std::thread::available_parallelism().ok()?.get().min(4);
+            if workers < 2 {
+                return None;
+            }
+            let builder = rayon::ThreadPoolBuilder::new()
+                .num_threads(workers)
+                .thread_name(move |i| format!("{name}-{i}"));
+            let builder = if thumbnail {
+                builder.start_handler(|_| set_background_thread_priority())
+            } else {
+                builder
+            };
+            builder.build().ok()
+        });
         match pool {
             Some(pool) => pool.install(|| process(true)),
             None => process(false),
