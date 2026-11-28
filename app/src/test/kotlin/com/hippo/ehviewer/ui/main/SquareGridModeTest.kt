@@ -1,5 +1,7 @@
 package com.hippo.ehviewer.ui.main
 
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.ShapeDefaults
 import androidx.compose.ui.unit.dp
 import com.ehviewer.core.model.BaseGalleryInfo
 import com.hippo.ehviewer.library.LOCAL_ARCHIVE_TOKEN
@@ -40,6 +42,15 @@ class SquareGridModeTest {
         // All: square for everything.
         assertEquals(SquareGridMode.SQUARE_ASPECT_RATIO, SquareGridMode.All.aspectRatio(isGallery = true), 1e-6f)
         assertEquals(SquareGridMode.SQUARE_ASPECT_RATIO, SquareGridMode.All.aspectRatio(isGallery = false), 1e-6f)
+
+        // History: ISO B for both Off and On, square only for All.
+        assertEquals(SquareGridMode.ISO_B_ASPECT_RATIO, SquareGridMode.Off.historyAspectRatio(), 1e-6f)
+        assertEquals(SquareGridMode.ISO_B_ASPECT_RATIO, SquareGridMode.On.historyAspectRatio(), 1e-6f)
+        assertEquals(SquareGridMode.SQUARE_ASPECT_RATIO, SquareGridMode.All.historyAspectRatio(), 1e-6f)
+
+        // ISO B grid cells use folder-grid corner radius (ShapeDefaults.Medium), square keeps 20.dp.
+        assertEquals(ShapeDefaults.Medium, captionBelowGridShape(SquareGridMode.ISO_B_ASPECT_RATIO))
+        assertEquals(RoundedCornerShape(20.dp), captionBelowGridShape(SquareGridMode.SQUARE_ASPECT_RATIO))
     }
 
     @Test
@@ -48,6 +59,9 @@ class SquareGridModeTest {
         assertEquals(56f, SquareGridMode.On.listLeadHeight(isGallery = false, width = 56.dp).value, 1e-3f)
         assertEquals(56f * 1.41421356f, SquareGridMode.On.listLeadHeight(isGallery = true, width = 56.dp).value, 1e-2f)
         assertEquals(56f * 1.41421356f, SquareGridMode.Off.listLeadHeight(isGallery = false, width = 56.dp).value, 1e-2f)
+        assertEquals(56f * 1.41421356f, SquareGridMode.Off.historyListLeadHeight(width = 56.dp).value, 1e-2f)
+        assertEquals(56f * 1.41421356f, SquareGridMode.On.historyListLeadHeight(width = 56.dp).value, 1e-2f)
+        assertEquals(56f, SquareGridMode.All.historyListLeadHeight(width = 56.dp).value, 1e-3f)
     }
 
     @Test

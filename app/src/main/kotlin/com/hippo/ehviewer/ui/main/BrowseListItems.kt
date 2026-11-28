@@ -1529,7 +1529,7 @@ private fun BrowseGridCell(
             modifier = Modifier
                 .fillMaxWidth()
                 .aspectRatio(aspectRatio)
-                .clip(captionBelowGridShape())
+                .clip(captionBelowGridShape(aspectRatio))
                 .background(
                     if (highlighted) {
                         MaterialTheme.colorScheme.secondaryContainer

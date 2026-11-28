@@ -26,7 +26,6 @@ import androidx.compose.material.icons.filled.Lan
 import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material3.Badge
 import androidx.compose.material3.Icon
-import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ShapeDefaults
 import androidx.compose.material3.Text
@@ -258,7 +257,9 @@ fun LocalGalleryListItem(
     val isVideoFile = gallery.kind == LOCAL_GALLERY_KIND_VIDEO_FILE
     val isImageFile = gallery.kind == LOCAL_GALLERY_KIND_IMAGE_FILE
     val isLooseFile = isArchive || isVideoFile || isImageFile
-    val leadMod = GalleryGridDefaults.listLeadModifier(isGallery = isLibraryGalleryKind(gallery.kind))
+    val isGallery = isLibraryGalleryKind(gallery.kind)
+    val leadMod = GalleryGridDefaults.listLeadModifier(isGallery = isGallery)
+    val leadHeight = GalleryGridDefaults.listLeadHeight(isGallery = isGallery)
     // Indexed sizes also work for MediaStore/SAF paths without a per-file query.
     // Keep the filesystem fallback for older archive rows not yet rescanned.
     val fileSizeBytes = remember(gallery.contentPath, gallery.size, isLooseFile) {
@@ -289,7 +290,7 @@ fun LocalGalleryListItem(
         readProgress = readProgress,
     )
     val videoThumbPath = gallery.coverPath ?: gallery.contentPath.takeIf { isVideoFile || isVideoFolder }
-    ListItem(
+    BrowseFolderListItem(
         headlineContent = {
             Text(
                 gallery.title.safFolderLabel(),
@@ -321,6 +322,8 @@ fun LocalGalleryListItem(
                 )
             }
         },
+        verticalAlignment = Alignment.Top,
+        leadHeight = leadHeight,
         modifier = modifier
             .fillMaxWidth()
             .combinedClickable(
@@ -334,7 +337,7 @@ fun LocalGalleryListItem(
 }
 
 /**
- * History list row — same [ListItem] + 56dp leading layout as browse folder list.
+ * History list row — top-aligned [BrowseFolderListItem] matching browse folder list.
  * Does not use EH thumb CDN / shared-element transitions.
  */
 @Composable
@@ -396,8 +399,9 @@ fun HistoryListItem(
         directoryFolderDisplayCoverKey(info, coverKey, videoFolderCover)
     }
     val directoryWithoutThumb = LocalHistory.isBrowseDirectory(info) && !browseFolderThumbs
-    val leadMod = GalleryGridDefaults.listLeadModifier(isGallery = LocalHistory.isGallery(info))
-    ListItem(
+    val leadMod = GalleryGridDefaults.historyListLeadModifier()
+    val leadHeight = GalleryGridDefaults.historyListLeadHeight()
+    BrowseFolderListItem(
         headlineContent = {
             Text(
                 info.title.orEmpty(),
@@ -448,6 +452,8 @@ fun HistoryListItem(
                 BrowseItemOverflowButton(actions, BrowseOverflowPlacement.ListTrailing)
             }
         },
+        verticalAlignment = Alignment.Top,
+        leadHeight = leadHeight,
         modifier = modifier
             .fillMaxWidth()
             .combinedClickable(
@@ -512,7 +518,7 @@ fun HistoryGridItem(
     val coverKey = remember(info.gid, info.thumbKey, info.token, info.uploader) {
         historyCoverKey(info)
     }
-    val aspectRatio = GalleryGridDefaults.cellAspectRatio(isGallery = LocalHistory.isGallery(info))
+    val aspectRatio = GalleryGridDefaults.historyAspectRatio()
     CaptionBelowGridFrame(
         onClick = onClick,
         onLongClick = onLongClick,
@@ -522,7 +528,7 @@ fun HistoryGridItem(
             modifier = Modifier
                 .fillMaxWidth()
                 .aspectRatio(aspectRatio)
-                .clip(captionBelowGridShape())
+                .clip(captionBelowGridShape(aspectRatio))
                 .background(MaterialTheme.colorScheme.surfaceContainerHigh),
         ) {
             CoverImage(
@@ -638,7 +644,7 @@ fun HistorySquareGridItem(
     val coverKey = remember(info.gid, info.thumbKey, info.token, info.uploader) {
         historyCoverKey(info)
     }
-    val aspectRatio = GalleryGridDefaults.cellAspectRatio(isGallery = LocalHistory.isGallery(info))
+    val aspectRatio = GalleryGridDefaults.historyAspectRatio()
     ElevatedCard(
         onClick = onClick,
         onLongClick = onLongClick,
@@ -726,7 +732,7 @@ fun HistoryDirectoryGridItem(
         WEBDAV_BROWSE_TOKEN -> Icons.Default.Cloud
         else -> null
     }
-    val aspectRatio = GalleryGridDefaults.cellAspectRatio(isGallery = false)
+    val aspectRatio = GalleryGridDefaults.historyAspectRatio()
     ElevatedCard(
         onClick = onClick,
         onLongClick = onLongClick,
@@ -851,7 +857,7 @@ fun LocalGalleryGridItem(
             modifier = Modifier
                 .fillMaxWidth()
                 .aspectRatio(aspectRatio)
-                .clip(captionBelowGridShape())
+                .clip(captionBelowGridShape(aspectRatio))
                 .background(MaterialTheme.colorScheme.surfaceContainerHigh),
         ) {
             val isArchive = gallery.kind == LOCAL_GALLERY_KIND_ARCHIVE
@@ -945,7 +951,7 @@ private fun HistoryGridItemCard(
     val coverKey = remember(info.gid, info.thumbKey, info.token, info.uploader) {
         historyCoverKey(info)
     }
-    val aspectRatio = GalleryGridDefaults.cellAspectRatio(isGallery = LocalHistory.isGallery(info))
+    val aspectRatio = GalleryGridDefaults.historyAspectRatio()
     ElevatedCard(
         modifier = modifier.fillMaxWidth(),
         onClick = onClick,

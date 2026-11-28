@@ -21,6 +21,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CardColors
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ShapeDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -43,7 +44,11 @@ import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.coil.CoverThumb
 import com.hippo.ehviewer.collectAsState
 
-internal fun captionBelowGridShape() = RoundedCornerShape(20.dp)
+internal fun captionBelowGridShape(aspectRatio: Float = SquareGridMode.SQUARE_ASPECT_RATIO) = if (aspectRatio < SquareGridMode.SQUARE_ASPECT_RATIO) {
+    ShapeDefaults.Medium
+} else {
+    RoundedCornerShape(20.dp)
+}
 
 @Composable
 internal fun captionBelowNameHeight(): Dp = with(LocalDensity.current) {
@@ -108,7 +113,15 @@ enum class SquareGridMode(val prefValue: Int) {
         All -> SQUARE_ASPECT_RATIO
     }
 
+    /** History cells use ISO B for both [Off] and [On], and square only for [All]. */
+    fun historyAspectRatio(): Float = when (this) {
+        Off, On -> ISO_B_ASPECT_RATIO
+        All -> SQUARE_ASPECT_RATIO
+    }
+
     fun listLeadHeight(isGallery: Boolean, width: Dp = CoverThumb.ListDisplay): Dp = width / aspectRatio(isGallery)
+
+    fun historyListLeadHeight(width: Dp = CoverThumb.ListDisplay): Dp = width / historyAspectRatio()
 
     companion object {
         const val SQUARE_ASPECT_RATIO = 1f
@@ -139,12 +152,23 @@ object GalleryGridDefaults {
     fun cellAspectRatio(isGallery: Boolean): Float = squareGridMode().aspectRatio(isGallery)
 
     @Composable
+    fun historyAspectRatio(): Float = squareGridMode().historyAspectRatio()
+
+    @Composable
     fun listLeadHeight(isGallery: Boolean, width: Dp = CoverThumb.ListDisplay): Dp = squareGridMode().listLeadHeight(isGallery, width)
+
+    @Composable
+    fun historyListLeadHeight(width: Dp = CoverThumb.ListDisplay): Dp = squareGridMode().historyListLeadHeight(width)
 
     @Composable
     fun listLeadModifier(isGallery: Boolean, width: Dp = CoverThumb.ListDisplay): Modifier = Modifier
         .width(width)
         .aspectRatio(cellAspectRatio(isGallery))
+
+    @Composable
+    fun historyListLeadModifier(width: Dp = CoverThumb.ListDisplay): Modifier = Modifier
+        .width(width)
+        .aspectRatio(historyAspectRatio())
 
     @Composable
     fun cellSize(): Dp {

@@ -33,7 +33,6 @@ import androidx.compose.material3.CircularWavyProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
-import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ShapeDefaults
 import androidx.compose.material3.Text
@@ -124,6 +123,7 @@ import com.hippo.ehviewer.smb.SmbRepository
 import com.hippo.ehviewer.ui.ExplorerGestureEnabled
 import com.hippo.ehviewer.ui.OpenFileExternally
 import com.hippo.ehviewer.ui.Screen
+import com.hippo.ehviewer.ui.main.BrowseFolderListItem
 import com.hippo.ehviewer.ui.main.BrowseFolderSection
 import com.hippo.ehviewer.ui.main.BrowseGridPlaceholderIconSize
 import com.hippo.ehviewer.ui.main.BrowseListLeadingIconSize
@@ -1184,8 +1184,9 @@ private fun FavoriteSourceListRow(
     }
     val isGallery = fav is FavoriteBrowseSource.Gallery && isLibraryGalleryKind(fav.gallery.kind)
     val leadMod = GalleryGridDefaults.listLeadModifier(isGallery = isGallery)
+    val leadHeight = GalleryGridDefaults.listLeadHeight(isGallery = isGallery)
     val listDecodePx = CoverThumb.listDecodePx()
-    ListItem(
+    BrowseFolderListItem(
         headlineContent = {
             Text(
                 fav.displayName,
@@ -1234,6 +1235,8 @@ private fun FavoriteSourceListRow(
                 }
             }
         },
+        verticalAlignment = Alignment.Top,
+        leadHeight = leadHeight,
         modifier = modifier
             .fillMaxWidth()
             .combinedClickable(
