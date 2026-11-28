@@ -66,6 +66,18 @@
         <item>1</item>
     </integer-array>
 
+    <string-array name="square_grid_entries" translatable="false">
+        <item>@string/settings_square_grid_off</item>
+        <item>@string/settings_square_grid_on</item>
+        <item>@string/settings_square_grid_all</item>
+    </string-array>
+
+    <integer-array name="square_grid_values" translatable="false">
+        <item>0</item>
+        <item>1</item>
+        <item>2</item>
+    </integer-array>
+
     <string-array name="gallery_site_entries" translatable="false">
         <item>@string/site_e</item>
         <item>@string/site_ex</item>

@@ -131,6 +131,7 @@ object BrowseModePersist {
 
     fun clearAll() {
         BrowseVirtualGalleryPersist.clearAll()
+        BrowseSquareGridPersist.clearAll()
         if (Settings.persistBrowseModes.value.isNotEmpty()) {
             Settings.persistBrowseModes.value = emptySet()
         }

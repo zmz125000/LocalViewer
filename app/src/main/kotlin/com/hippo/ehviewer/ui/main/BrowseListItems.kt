@@ -616,12 +616,12 @@ internal fun BrowseFolderListItem(
     modifier: Modifier = Modifier,
     trailingContent: (@Composable () -> Unit)? = null,
     verticalAlignment: Alignment.Vertical,
+    leadHeight: Dp = CoverThumb.ListDisplay,
 ) {
-    val leadSize = 56.dp
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .heightIn(min = leadSize)
+            .heightIn(min = leadHeight)
             .padding(horizontal = 16.dp, vertical = 8.dp),
         verticalAlignment = verticalAlignment,
     ) {
@@ -641,9 +641,9 @@ internal fun BrowseFolderListItem(
             }
         }
         if (trailingContent != null) {
-            // Top-aligned rows: pin overflow to the 56.dp thumb, not the full name height.
+            // Top-aligned rows: pin overflow to the thumb height, not the full name height.
             val trailingMod = if (verticalAlignment == Alignment.Top) {
-                Modifier.padding(start = 16.dp).height(leadSize)
+                Modifier.padding(start = 16.dp).height(leadHeight)
             } else {
                 Modifier.padding(start = 16.dp)
             }
@@ -745,6 +745,8 @@ fun BrowseDirectoryRow(
     showFavoriteStar: Boolean = false,
 ) {
     val name = name.safFolderLabel()
+    val leadMod = GalleryGridDefaults.listLeadModifier(isGallery = false)
+    val leadHeight = GalleryGridDefaults.listLeadHeight(isGallery = false)
     BrowseFolderListItem(
         headlineContent = { BrowseFavoriteTitle(name = name, favorited = showFavoriteStar) },
         supportingContent = {
@@ -756,7 +758,7 @@ fun BrowseDirectoryRow(
                 ),
             )
         },
-        // Same 56dp leading slot as [BrowseFolderGalleryRow]. Thumbs off: folder icon only,
+        // Same 56dp leading width as [BrowseFolderGalleryRow]. Thumbs off: folder icon only,
         // so [BrowseCoverThumb]'s fetch effect is not started.
         leadingContent = {
             val displayCover = cover.folderThumbDisplayCover()
@@ -764,9 +766,7 @@ fun BrowseDirectoryRow(
             if (videoSource != null) {
                 BrowseVideoThumbnail(
                     source = videoSource,
-                    modifier = Modifier
-                        .size(56.dp)
-                        .clip(ShapeDefaults.Medium),
+                    modifier = leadMod.clip(ShapeDefaults.Medium),
                     iconSize = BrowseListLeadingIconSize,
                     allowRemoteFetch = allowRemoteFetch,
                     decodeSizePx = CoverThumb.listDecodePx(),
@@ -774,6 +774,7 @@ fun BrowseDirectoryRow(
             } else if (showFolderThumb && displayCover != null) {
                 BrowseCoverThumb(
                     cover = displayCover,
+                    modifier = leadMod.clip(ShapeDefaults.Medium),
                     decodeSizePx = CoverThumb.listDecodePx(),
                     retryKey = thumbRetryKey,
                     allowRemoteFetch = allowRemoteFetch,
@@ -781,7 +782,7 @@ fun BrowseDirectoryRow(
                 )
             } else {
                 Box(
-                    modifier = Modifier.size(56.dp),
+                    modifier = leadMod,
                     contentAlignment = Alignment.Center,
                 ) {
                     Icon(
@@ -799,6 +800,7 @@ fun BrowseDirectoryRow(
             }
         },
         verticalAlignment = Alignment.CenterVertically,
+        leadHeight = leadHeight,
         modifier = modifier
             .fillMaxWidth()
             .folderSelectClicks(overflow, onClick, onLongClick),
@@ -832,6 +834,8 @@ fun BrowseFolderGalleryRow(
     val label = name.safFolderLabel()
     val shownPages = if (showPages) pageCount else 0
     val readProgress = rememberGalleryReadProgress(if (shownPages > 0 && !pageCountCapped) progressGid else 0L)
+    val leadMod = GalleryGridDefaults.listLeadModifier(isGallery = true)
+    val leadHeight = GalleryGridDefaults.listLeadHeight(isGallery = true)
     BrowseFolderListItem(
         headlineContent = { Text(label) },
         supportingContent = {
@@ -849,6 +853,7 @@ fun BrowseFolderGalleryRow(
         leadingContent = {
             BrowseCoverThumb(
                 cover = resolvedCover,
+                modifier = leadMod.clip(ShapeDefaults.Medium),
                 decodeSizePx = CoverThumb.listDecodePx(),
                 retryKey = thumbRetryKey,
                 allowRemoteFetch = allowRemoteFetch,
@@ -861,6 +866,7 @@ fun BrowseFolderGalleryRow(
             }
         },
         verticalAlignment = Alignment.Top,
+        leadHeight = leadHeight,
         modifier = modifier
             .fillMaxWidth()
             .folderSelectClicks(overflow, onClick, onLongClick),
@@ -889,6 +895,8 @@ fun BrowseArchiveGalleryRow(
     val shownPages = if (showPages) resolvedPages else 0
     val progressGid = rememberArchiveProgressGid(cover)
     val readProgress = rememberGalleryReadProgress(if (shownPages > 0) progressGid else 0L)
+    val leadMod = GalleryGridDefaults.listLeadModifier(isGallery = true)
+    val leadHeight = GalleryGridDefaults.listLeadHeight(isGallery = true)
     BrowseFolderListItem(
         headlineContent = { Text(name) },
         supportingContent = {
@@ -905,6 +913,7 @@ fun BrowseArchiveGalleryRow(
         leadingContent = {
             BrowseCoverThumb(
                 cover = cover,
+                modifier = leadMod.clip(ShapeDefaults.Medium),
                 decodeSizePx = CoverThumb.listDecodePx(),
                 retryKey = thumbRetryKey,
                 allowRemoteFetch = allowRemoteFetch,
@@ -918,6 +927,7 @@ fun BrowseArchiveGalleryRow(
             }
         },
         verticalAlignment = Alignment.Top,
+        leadHeight = leadHeight,
         modifier = modifier
             .fillMaxWidth()
             .folderSelectClicks(overflow, onClick, onLongClick),
@@ -942,6 +952,8 @@ fun BrowseVideoRow(
     lastModifiedMs: Long = 0L,
     overflow: BrowseOverflowActions? = null,
 ) {
+    val leadMod = GalleryGridDefaults.listLeadModifier(isGallery = false)
+    val leadHeight = GalleryGridDefaults.listLeadHeight(isGallery = false)
     BrowseFolderListItem(
         headlineContent = { Text(name) },
         supportingContent = {
@@ -954,10 +966,9 @@ fun BrowseVideoRow(
             )
         },
         leadingContent = {
-            // Same 56dp slot / [BrowseListLeadingIconSize] as [BrowseCoverThumb] list default.
             BrowseVideoThumbnail(
                 source = thumbnailSource,
-                modifier = Modifier.size(56.dp).clip(ShapeDefaults.Medium),
+                modifier = leadMod.clip(ShapeDefaults.Medium),
                 iconSize = BrowseListLeadingIconSize,
                 allowRemoteFetch = allowRemoteFetch,
             )
@@ -968,6 +979,7 @@ fun BrowseVideoRow(
             }
         },
         verticalAlignment = Alignment.Top,
+        leadHeight = leadHeight,
         modifier = modifier
             .fillMaxWidth()
             .folderSelectClicks(overflow, onClick, onLongClick),
@@ -997,6 +1009,8 @@ fun BrowseFileRow(
 ) {
     val longClick = onLongClick ?: onClick
     val usePhotoThumb = showPhotoThumb && cover != null
+    val leadMod = GalleryGridDefaults.listLeadModifier(isGallery = false)
+    val leadHeight = GalleryGridDefaults.listLeadHeight(isGallery = false)
     BrowseFolderListItem(
         headlineContent = { Text(name) },
         supportingContent = {
@@ -1008,10 +1022,10 @@ fun BrowseFileRow(
                 ),
             )
         },
-        // Same 56dp leading slot as [BrowseFolderGalleryRow] (file icon when no photo thumb).
         leadingContent = {
             BrowseCoverThumb(
                 cover = cover.takeIf { usePhotoThumb },
+                modifier = leadMod.clip(ShapeDefaults.Medium),
                 decodeSizePx = CoverThumb.listDecodePx(),
                 retryKey = thumbRetryKey,
                 allowRemoteFetch = allowRemoteFetch,
@@ -1025,6 +1039,7 @@ fun BrowseFileRow(
             }
         },
         verticalAlignment = Alignment.Top,
+        leadHeight = leadHeight,
         modifier = modifier
             .fillMaxWidth()
             .folderSelectClicks(overflow, onClick, longClick),
@@ -1060,10 +1075,11 @@ fun BrowseDirectoryGridItem(
     val useThumbStyle = showFolderThumb && displayCover != null
     val tap = folderSelectTap(overflow)
     val useCardStyle by Settings.gridCards.collectAsState()
+    val aspectRatio = GalleryGridDefaults.cellAspectRatio(isGallery = false)
     ElevatedCard(
         onClick = tap?.toggle ?: onClick,
         onLongClick = tap?.toggle ?: (onLongClick ?: onClick),
-        modifier = modifier.fillMaxWidth().aspectRatio(1f),
+        modifier = modifier.fillMaxWidth().aspectRatio(aspectRatio),
         colors = if (tap?.selected == true && useCardStyle && !useThumbStyle) {
             folderSelectedCardColors()
         } else {
@@ -1216,6 +1232,7 @@ fun BrowseFolderGalleryGridItem(
         modifier = modifier,
         onLongClick = onLongClick,
         overflow = overflow,
+        isGallery = true,
         thumb = {
             Box(Modifier.fillMaxSize()) {
                 BrowseCoverThumb(
@@ -1311,6 +1328,7 @@ fun BrowseArchiveGridItem(
         modifier = modifier,
         onLongClick = onLongClick ?: onClick,
         overflow = overflow,
+        isGallery = true,
         thumb = {
             Box(Modifier.fillMaxSize()) {
                 BrowseCoverThumb(
@@ -1489,9 +1507,10 @@ private fun BrowseGridCell(
     onLongClick: (() -> Unit)? = null,
     overflow: BrowseOverflowActions? = null,
     highlighted: Boolean = false,
+    isGallery: Boolean = false,
 ) {
     if (Settings.gridCards.collectAsState().value) {
-        BrowseGridCellCard(name, onClick, thumb, modifier, onLongClick, overflow, highlighted)
+        BrowseGridCellCard(name, onClick, thumb, modifier, onLongClick, overflow, highlighted, isGallery)
         return
     }
     val longClick = onLongClick ?: onClick
@@ -1500,6 +1519,7 @@ private fun BrowseGridCell(
     val namePadH = GalleryGridDefaults.namePaddingH()
     val captionGap = 6.dp
     val nameHeight = captionBelowNameHeight()
+    val aspectRatio = GalleryGridDefaults.cellAspectRatio(isGallery = isGallery)
     CaptionBelowGridFrame(
         onClick = tap?.toggle ?: onClick,
         onLongClick = tap?.toggle ?: longClick,
@@ -1508,8 +1528,8 @@ private fun BrowseGridCell(
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .aspectRatio(1f)
-                .clip(captionBelowGridShape())
+                .aspectRatio(aspectRatio)
+                .clip(captionBelowGridShape(aspectRatio))
                 .background(
                     if (highlighted) {
                         MaterialTheme.colorScheme.secondaryContainer
@@ -2448,6 +2468,7 @@ private fun BrowseGridCellCard(
     onLongClick: (() -> Unit)? = null,
     overflow: BrowseOverflowActions? = null,
     highlighted: Boolean = false,
+    isGallery: Boolean = false,
 ) {
     val longClick = onLongClick ?: onClick
     val tap = folderSelectTap(overflow)
@@ -2455,6 +2476,7 @@ private fun BrowseGridCellCard(
     val nameHeight = GalleryGridDefaults.nameHeight()
     val namePadH = GalleryGridDefaults.namePaddingH()
     val namePadBottom = GalleryGridDefaults.namePaddingBottom()
+    val aspectRatio = GalleryGridDefaults.cellAspectRatio(isGallery = isGallery)
     ElevatedCard(
         modifier = modifier.fillMaxWidth(),
         onClick = tap?.toggle ?: onClick,
@@ -2465,7 +2487,7 @@ private fun BrowseGridCellCard(
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .aspectRatio(1f)
+                    .aspectRatio(aspectRatio)
                     .clip(ShapeDefaults.Medium),
             ) {
                 thumb()

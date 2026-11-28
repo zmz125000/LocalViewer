@@ -40,10 +40,12 @@ import com.hippo.ehviewer.collectAsState
 import com.hippo.ehviewer.library.BrowseContentMode
 import com.hippo.ehviewer.library.BrowseFolderId
 import com.hippo.ehviewer.library.BrowseModePersist
+import com.hippo.ehviewer.library.BrowseSquareGridPersist
 import com.hippo.ehviewer.library.BrowseVirtualGalleryPersist
 import com.hippo.ehviewer.library.HistoryHideMode
 import com.hippo.ehviewer.library.HistoryHidePersist
 import com.hippo.ehviewer.library.naturalCompare
+import com.hippo.ehviewer.ui.main.SquareGridMode
 
 /** Folder-view UI sort field ([Settings.browseSortMode]). Separate from [LibrarySortMode]. */
 enum class BrowseSortMode(val prefValue: Int) {
@@ -61,15 +63,11 @@ enum class BrowseSortMode(val prefValue: Int) {
     }
 }
 
-internal fun browseVirtualSortKey(
+internal fun browseVirtualSortStart(
     name: String,
     virtual: Boolean,
     virtualOnTop: Boolean,
-): String = if (!virtualOnTop && virtual && name.startsWith('@')) {
-    name.substring(1)
-} else {
-    name
-}
+): Int = if (!virtualOnTop && virtual && name.startsWith('@')) 1 else 0
 
 /**
  * UI-only folder listing order. Listing / scan / thumbs / open-gallery keep name order.
@@ -86,9 +84,9 @@ fun <T> Iterable<T>.sortedForBrowseFolderUi(
     val nameCmp = Comparator<T> { a, b ->
         val rawA = nameOf(a)
         val rawB = nameOf(b)
-        val keyA = browseVirtualSortKey(rawA, isVirtual(a), virtualOnTop)
-        val keyB = browseVirtualSortKey(rawB, isVirtual(b), virtualOnTop)
-        val byKey = naturalCompare(keyA, keyB)
+        val startA = browseVirtualSortStart(rawA, isVirtual(a), virtualOnTop)
+        val startB = browseVirtualSortStart(rawB, isVirtual(b), virtualOnTop)
+        val byKey = naturalCompare(rawA, rawB, startA, startB)
         if (byKey != 0) byKey else naturalCompare(rawA, rawB)
     }
     val cmp = when (mode) {
@@ -204,6 +202,19 @@ fun rememberEffectiveVirtualGalleries(
     }
 }
 
+@Composable
+fun rememberEffectiveSquareGridMode(
+    folder: BrowseFolderId?,
+    skipAncestorKeys: Set<String> = emptySet(),
+): SquareGridMode {
+    val revision by BrowseSquareGridPersist.revision.collectAsState()
+    val saved by Settings.persistSquareGrid.collectAsState()
+    val global by Settings.squareGrid.collectAsState()
+    return remember(folder, skipAncestorKeys, revision, saved, global) {
+        BrowseSquareGridPersist.effective(folder, skipAncestorKeys)
+    }
+}
+
 /**
  * View-mode control for folder browsers: content filter, list/grid layout,
  * Name/Date UI sort (separate from Library), and display toggles.
@@ -266,6 +277,12 @@ fun BrowseViewModeMenu(
     }
     var favoritesOnTop by Settings.browseFavoritesOnTop.asMutableState()
     var photoGridMode by Settings.photoGridMode.asMutableState()
+    val squareGridMode = rememberEffectiveSquareGridMode(virtualGalleriesFolder, skipAncestorKeys)
+    val squareGridRevision by BrowseSquareGridPersist.revision.collectAsState()
+    val squareGridSaved by Settings.persistSquareGrid.collectAsState()
+    val squareGridMatch = remember(virtualGalleriesFolder, skipAncestorKeys, squareGridRevision, squareGridSaved, squareGridMode) {
+        virtualGalleriesFolder?.let { BrowseSquareGridPersist.resolve(it, skipAncestorKeys) }
+    }
     var browseRecentOpen by Settings.browseRecentOpen.asMutableState()
     var browseRecentExpanded by Settings.browseRecentExpanded.asMutableState()
     val historyHideFolders by Settings.historyHideFolders.collectAsState()
@@ -453,6 +470,18 @@ fun BrowseViewModeMenu(
                 label = stringResource(R.string.browse_menu_photo_grid),
                 checked = photoGridMode,
                 onClick = { photoGridMode = !photoGridMode },
+            )
+            ContentModeItem(
+                label = stringResource(R.string.settings_square_grid),
+                mark = when {
+                    squareGridMatch?.showLock == true -> ModeMark.Lock
+                    squareGridMode == SquareGridMode.All -> ModeMark.Tick
+                    else -> ModeMark.None
+                },
+                onClick = { BrowseSquareGridPersist.tap(virtualGalleriesFolder, skipAncestorKeys) },
+                onLongClick = virtualGalleriesFolder?.let { current ->
+                    { BrowseSquareGridPersist.longPress(current, skipAncestorKeys) }
+                },
             )
             ToggleMenuItem(
                 label = stringResource(R.string.browse_menu_zip_as_dir),

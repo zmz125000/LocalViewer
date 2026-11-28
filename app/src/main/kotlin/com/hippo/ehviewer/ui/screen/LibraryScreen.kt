@@ -33,7 +33,6 @@ import androidx.compose.material3.CircularWavyProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
-import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ShapeDefaults
 import androidx.compose.material3.Text
@@ -127,6 +126,7 @@ import com.hippo.ehviewer.ui.Screen
 import com.hippo.ehviewer.ui.destinations.EasyTierScreenDestination
 import com.hippo.ehviewer.ui.easytier.EasyTierDialog
 import com.hippo.ehviewer.ui.easytier.rememberEasyTierStartButtonAction
+import com.hippo.ehviewer.ui.main.BrowseFolderListItem
 import com.hippo.ehviewer.ui.main.BrowseFolderSection
 import com.hippo.ehviewer.ui.main.BrowseGridPlaceholderIconSize
 import com.hippo.ehviewer.ui.main.BrowseListLeadingIconSize
@@ -1197,9 +1197,11 @@ private fun FavoriteSourceListRow(
             resolvedThumb = withIOContext { HistoryThumbKey.resolveReadablePath(folderThumbKey) }
         }
     }
-    val leadSize = 56.dp
+    val isGallery = fav is FavoriteBrowseSource.Gallery && isLibraryGalleryKind(fav.gallery.kind)
+    val leadMod = GalleryGridDefaults.listLeadModifier(isGallery = isGallery)
+    val leadHeight = GalleryGridDefaults.listLeadHeight(isGallery = isGallery)
     val listDecodePx = CoverThumb.listDecodePx()
-    ListItem(
+    BrowseFolderListItem(
         headlineContent = {
             Text(
                 fav.displayName,
@@ -1227,20 +1229,16 @@ private fun FavoriteSourceListRow(
                     } else {
                         Icons.Default.Folder
                     },
-                    modifier = Modifier
-                        .size(leadSize)
-                        .clip(ShapeDefaults.Medium),
+                    modifier = leadMod.clip(ShapeDefaults.Medium),
                 )
                 browseFolderThumbs && resolvedThumb != null -> CoverImage(
                     coverPath = folderThumbKey,
                     sizePx = listDecodePx,
                     placeholder = Icons.Default.Folder,
-                    modifier = Modifier
-                        .size(leadSize)
-                        .clip(ShapeDefaults.Medium),
+                    modifier = leadMod.clip(ShapeDefaults.Medium),
                 )
                 else -> Box(
-                    modifier = Modifier.size(leadSize),
+                    modifier = leadMod,
                     contentAlignment = Alignment.Center,
                 ) {
                     Icon(
@@ -1252,6 +1250,8 @@ private fun FavoriteSourceListRow(
                 }
             }
         },
+        verticalAlignment = Alignment.Top,
+        leadHeight = leadHeight,
         modifier = modifier
             .fillMaxWidth()
             .combinedClickable(
@@ -1280,6 +1280,7 @@ internal fun FavoriteSourceGridCell(
     iconSize: Dp = BrowseGridPlaceholderIconSize,
     labelStyle: androidx.compose.ui.text.TextStyle = MaterialTheme.typography.labelMedium,
     modifier: Modifier = Modifier,
+    aspectRatio: Float? = null,
 ) {
     val namePadH = GalleryGridDefaults.namePaddingH()
     val namePadBottom = GalleryGridDefaults.namePaddingBottom()
@@ -1294,10 +1295,13 @@ internal fun FavoriteSourceGridCell(
     }
     val useGalleryThumbStyle = fav is FavoriteBrowseSource.Gallery ||
         (browseFolderThumbs && resolvedFolderThumb != null)
+    val cellAspectRatio = aspectRatio ?: GalleryGridDefaults.cellAspectRatio(
+        isGallery = fav is FavoriteBrowseSource.Gallery && isLibraryGalleryKind(fav.gallery.kind),
+    )
     ElevatedCard(
         onClick = onClick,
         onLongClick = onLongClick,
-        modifier = modifier.fillMaxWidth().aspectRatio(1f),
+        modifier = modifier.fillMaxWidth().aspectRatio(cellAspectRatio),
         colors = GalleryGridDefaults.cardColors(),
     ) {
         if (useGalleryThumbStyle) {

@@ -378,10 +378,10 @@ object LocalHistory {
     }
 
     /**
-     * History page / progress chip when the row is a readable gallery (not a dir-only pin).
-     * Browse-dir history keeps [pages] at 0 so it still hides the chip.
+     * True when the history record represents a gallery (folder gallery, archive gallery,
+     * or library gallery) rather than a browse-directory pin, video, or plain file.
      */
-    fun showsPageProgress(info: GalleryInfo): Boolean = when (info.token) {
+    fun isGallery(info: GalleryInfo): Boolean = when (info.token) {
         LOCAL_GALLERY_TOKEN,
         LOCAL_FOLDER_TOKEN,
         LOCAL_ARCHIVE_TOKEN,
@@ -389,9 +389,15 @@ object LocalHistory {
         SMB_ARCHIVE_TOKEN,
         WEBDAV_FOLDER_TOKEN,
         WEBDAV_ARCHIVE_TOKEN,
-        -> info.pages > 0
+        -> true
         else -> false
     }
+
+    /**
+     * History page / progress chip when the row is a readable gallery (not a dir-only pin).
+     * Browse-dir history keeps [pages] at 0 so it still hides the chip.
+     */
+    fun showsPageProgress(info: GalleryInfo): Boolean = isGallery(info) && info.pages > 0
 
     /**
      * Parent browse-dir pin written because [openedName] was opened.
