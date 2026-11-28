@@ -101,6 +101,26 @@ fun ReaderModeSetting(
         values = listOf(0, 1, 2),
         field = Settings.autoRotateMode.asMutableState(),
     )
+    val pressHoldZoom = Settings.pressHoldZoom.asMutableState()
+    SpinnerChoice(
+        title = stringResource(id = R.string.pref_press_hold_zoom),
+        entries = arrayOf(
+            stringResource(id = R.string.pref_press_hold_zoom_off),
+            "1.1x",
+            "1.2x",
+            "1.3x",
+            "1.4x",
+            "1.5x",
+        ),
+        values = PRESS_HOLD_ZOOM_VALUES,
+        field = pressHoldZoom,
+    )
+    AnimatedVisibility(visible = pressHoldZoom.value > 0) {
+        SwitchChoice(
+            title = stringResource(id = R.string.pref_press_hold_zoom_toggle),
+            field = Settings.pressHoldZoomToggle.asMutableState(),
+        )
+    }
     if (isDocument) {
         Spacer(modifier = Modifier.size(8.dp))
         DocumentStyleSetting()

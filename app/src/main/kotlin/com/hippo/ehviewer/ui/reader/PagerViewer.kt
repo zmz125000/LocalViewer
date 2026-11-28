@@ -365,20 +365,21 @@ private fun DualPageContainer(
     }
 
     val currentOnTap by rememberUpdatedState(onTap)
-    val currentOnLongClick by rememberUpdatedState(onLongClick)
+    val pressHoldZoom = rememberPressHoldZoom(zoomableState, onFallbackLongClick = onLongClick)
+    val currentFallbackLongClick by rememberUpdatedState(if (pressHoldZoom.enabled) null else onLongClick)
     readerDrawScaleProvider(zoomableState) {
         Box(
             modifier = Modifier
                 .fillMaxSize()
                 .pointerInput(Unit) {
-                    detectTapGestures(onLongPress = { currentOnLongClick(it) }, onTap = { currentOnTap(null, it) })
+                    detectTapGestures(onLongPress = { currentFallbackLongClick?.invoke(it) }, onTap = { currentOnTap(null, it) })
                 },
             contentAlignment = Alignment.Center,
         ) {
-            val zoomMod = Modifier.zoomable(
+            val zoomMod = pressHoldZoom.releaseModifier.zoomable(
                 state = zoomableState,
                 onClick = onTap.partially1(zoomableState),
-                onLongClick = onLongClick,
+                onLongClick = pressHoldZoom.onLongClick,
                 onDoubleClick = onDoubleClick,
             )
             if (solo) {
@@ -559,7 +560,8 @@ private fun PageContainer(
         }
     }
     val currentOnTap by rememberUpdatedState(onTap)
-    val currentOnLongClick by rememberUpdatedState(onLongClick)
+    val pressHoldZoom = rememberPressHoldZoom(zoomableState, onFallbackLongClick = onLongClick)
+    val currentFallbackLongClick by rememberUpdatedState(if (pressHoldZoom.enabled) null else onLongClick)
     readerDrawScaleProvider(zoomableState) {
         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             PagerItem(
@@ -568,12 +570,12 @@ private fun PageContainer(
                 contentScale = ContentScale.Inside,
                 viewportSize = layoutSize,
                 modifier = Modifier.pointerInput(Unit) {
-                    detectTapGestures(onLongPress = { currentOnLongClick(it) }, onTap = { currentOnTap(null, it) })
+                    detectTapGestures(onLongPress = { currentFallbackLongClick?.invoke(it) }, onTap = { currentOnTap(null, it) })
                 },
-                contentModifier = Modifier.zoomable(
+                contentModifier = pressHoldZoom.releaseModifier.zoomable(
                     state = zoomableState,
                     onClick = onTap.partially1(zoomableState),
-                    onLongClick = onLongClick,
+                    onLongClick = pressHoldZoom.onLongClick,
                     onDoubleClick = onDoubleClick,
                 ),
             )

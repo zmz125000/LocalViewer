@@ -1417,6 +1417,12 @@ object Settings : DataStorePreferences(null) {
      */
     val dualPageGap = boolPref("pref_dual_page_gap", false)
     val zoomStart = intPref("pref_zoom_start_key", 1)
+
+    /** Press & hold zoom percentage: 0 = Off, 110..150 = 1.1x..1.5x. */
+    val pressHoldZoom = intPref("pref_press_hold_zoom", 0)
+
+    /** When on, long press toggles zoom on/off; when off, zooms only while held. */
+    val pressHoldZoomToggle = boolPref("pref_press_hold_zoom_toggle", false)
     val showNavigationOverlayNewUser = boolPref("reader_navigation_overlay_new_user", true)
     val showNavigationOverlayOnStart = boolPref("reader_navigation_overlay_on_start", false)
     val stripExtraneousAds = boolPref("strip_extraneous_ads", false)
