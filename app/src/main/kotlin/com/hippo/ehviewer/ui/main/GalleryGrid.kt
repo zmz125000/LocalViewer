@@ -123,6 +123,9 @@ enum class SquareGridMode(val prefValue: Int) {
 
     fun historyListLeadHeight(width: Dp = CoverThumb.ListDisplay): Dp = width / historyAspectRatio()
 
+    /** Quick-menu toggle between [Off] and [All]. */
+    fun toggleOffAll(): SquareGridMode = if (this == All) Off else All
+
     companion object {
         const val SQUARE_ASPECT_RATIO = 1f
         const val ISO_B_ASPECT_RATIO = 1f / 1.41421356f

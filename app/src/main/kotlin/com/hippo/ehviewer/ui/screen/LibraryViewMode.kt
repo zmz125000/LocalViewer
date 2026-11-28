@@ -45,6 +45,7 @@ import com.hippo.ehviewer.library.ZipPaths
 import com.hippo.ehviewer.library.libraryBrowseRelative
 import com.hippo.ehviewer.library.naturalCompare
 import com.hippo.ehviewer.library.stableGalleryId
+import com.hippo.ehviewer.ui.main.SquareGridMode
 import com.hippo.ehviewer.ui.theme.ThemeSelectorRequest
 
 /** Library gallery secondary sort ([Settings.librarySortMode]). */
@@ -397,6 +398,8 @@ fun LibraryViewModeMenu(modifier: Modifier = Modifier) {
     val photoMode = LibraryPhotoMode.fromPref(photoModePref)
     val useGrid = listMode == 1
     var photoGridMode by Settings.photoGridMode.asMutableState()
+    var squareGridPref by Settings.squareGrid.asMutableState()
+    val squareGridMode = SquareGridMode.fromPref(squareGridPref)
     var browseZipAsDir by Settings.browseZipAsDir.asMutableState()
     var alwaysExitToDir by Settings.alwaysExitToDir.asMutableState()
     var showGalleryPages by Settings.showGalleryPages.asMutableState()
@@ -512,6 +515,11 @@ fun LibraryViewModeMenu(modifier: Modifier = Modifier) {
                 label = stringResource(R.string.browse_menu_photo_grid),
                 checked = photoGridMode,
                 onClick = { photoGridMode = !photoGridMode },
+            )
+            LibraryMenuToggleItem(
+                label = stringResource(R.string.settings_square_grid),
+                checked = squareGridMode == SquareGridMode.All,
+                onClick = { squareGridPref = squareGridMode.toggleOffAll().prefValue },
             )
             LibraryMenuToggleItem(
                 label = stringResource(R.string.library_photo_all),

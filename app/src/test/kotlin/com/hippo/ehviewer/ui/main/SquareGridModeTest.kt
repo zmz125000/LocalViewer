@@ -51,6 +51,11 @@ class SquareGridModeTest {
         // ISO B grid cells use folder-grid corner radius (ShapeDefaults.Medium), square keeps 20.dp.
         assertEquals(ShapeDefaults.Medium, captionBelowGridShape(SquareGridMode.ISO_B_ASPECT_RATIO))
         assertEquals(RoundedCornerShape(20.dp), captionBelowGridShape(SquareGridMode.SQUARE_ASPECT_RATIO))
+
+        // Quick-menu toggle switches between Off and All.
+        assertEquals(SquareGridMode.Off, SquareGridMode.All.toggleOffAll())
+        assertEquals(SquareGridMode.All, SquareGridMode.Off.toggleOffAll())
+        assertEquals(SquareGridMode.All, SquareGridMode.On.toggleOffAll())
     }
 
     @Test

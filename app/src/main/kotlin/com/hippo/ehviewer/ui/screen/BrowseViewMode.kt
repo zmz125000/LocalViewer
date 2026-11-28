@@ -44,6 +44,7 @@ import com.hippo.ehviewer.library.BrowseVirtualGalleryPersist
 import com.hippo.ehviewer.library.HistoryHideMode
 import com.hippo.ehviewer.library.HistoryHidePersist
 import com.hippo.ehviewer.library.naturalCompare
+import com.hippo.ehviewer.ui.main.SquareGridMode
 
 /** Folder-view UI sort field ([Settings.browseSortMode]). Separate from [LibrarySortMode]. */
 enum class BrowseSortMode(val prefValue: Int) {
@@ -266,6 +267,8 @@ fun BrowseViewModeMenu(
     }
     var favoritesOnTop by Settings.browseFavoritesOnTop.asMutableState()
     var photoGridMode by Settings.photoGridMode.asMutableState()
+    var squareGridPref by Settings.squareGrid.asMutableState()
+    val squareGridMode = SquareGridMode.fromPref(squareGridPref)
     var browseRecentOpen by Settings.browseRecentOpen.asMutableState()
     var browseRecentExpanded by Settings.browseRecentExpanded.asMutableState()
     val historyHideFolders by Settings.historyHideFolders.collectAsState()
@@ -453,6 +456,11 @@ fun BrowseViewModeMenu(
                 label = stringResource(R.string.browse_menu_photo_grid),
                 checked = photoGridMode,
                 onClick = { photoGridMode = !photoGridMode },
+            )
+            ToggleMenuItem(
+                label = stringResource(R.string.settings_square_grid),
+                checked = squareGridMode == SquareGridMode.All,
+                onClick = { squareGridPref = squareGridMode.toggleOffAll().prefValue },
             )
             ToggleMenuItem(
                 label = stringResource(R.string.browse_menu_zip_as_dir),
