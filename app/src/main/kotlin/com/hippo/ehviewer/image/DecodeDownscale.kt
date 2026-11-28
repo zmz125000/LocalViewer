@@ -114,28 +114,77 @@ private fun sampleIndex(dst: Int, dstSize: Int, srcSize: Int): Int {
     return floor(p + 0.5f).toInt().coerceIn(0, srcSize - 1)
 }
 
-private fun filtered(src: IntArray, srcW: Int, srcH: Int, dstW: Int, dstH: Int, kernel: Int): IntArray {
+internal fun filtered(src: IntArray, srcW: Int, srcH: Int, dstW: Int, dstH: Int, kernel: Int): IntArray {
     val radius = radiusOf(kernel)
     val xTaps = taps(dstW, srcW, radius, kernel)
     val yTaps = taps(dstH, srcH, radius, kernel)
     val span = radius * 2
     val out = IntArray(dstW * dstH)
-    val channel = FloatArray(4)
+    // Rolling cache of `span` horizontally-resampled rows in float ARGB (4 floats/pixel).
+    // Each output row needs at most `span` consecutive source rows, so `sy % span` never
+    // collides within a row and each referenced source row is resampled at most once.
+    val rowCacheSy = IntArray(span) { -1 }
+    val rowCache = Array(span) { FloatArray(dstW * 4) }
+    val xIndex = xTaps.index
+    val xWeight = xTaps.weight
+    val yIndex = yTaps.index
+    val yWeight = yTaps.weight
+
+    fun cachedHorizontalRow(sy: Int): FloatArray {
+        val slot = sy % span
+        val row = rowCache[slot]
+        if (rowCacheSy[slot] == sy) return row
+        val srcRow = sy * srcW
+        var outOff = 0
+        for (x in 0 until dstW) {
+            val xBase = x * span
+            var a = 0f
+            var r = 0f
+            var g = 0f
+            var b = 0f
+            for (i in 0 until span) {
+                val pixel = src[srcRow + xIndex[xBase + i]]
+                val w = xWeight[xBase + i]
+                a += ((pixel ushr 24) and 0xFF) * w
+                r += ((pixel ushr 16) and 0xFF) * w
+                g += ((pixel ushr 8) and 0xFF) * w
+                b += (pixel and 0xFF) * w
+            }
+            row[outOff] = a
+            row[outOff + 1] = r
+            row[outOff + 2] = g
+            row[outOff + 3] = b
+            outOff += 4
+        }
+        rowCacheSy[slot] = sy
+        return row
+    }
+
+    val tapRows = arrayOfNulls<FloatArray>(span)
+    val tapWeights = FloatArray(span)
     for (y in 0 until dstH) {
         val yBase = y * span
+        for (j in 0 until span) {
+            tapRows[j] = cachedHorizontalRow(yIndex[yBase + j])
+            tapWeights[j] = yWeight[yBase + j]
+        }
         val dstRow = y * dstW
+        var colOff = 0
         for (x in 0 until dstW) {
-            channel.fill(0f)
-            val xBase = x * span
+            var a = 0f
+            var r = 0f
+            var g = 0f
+            var b = 0f
             for (j in 0 until span) {
-                val sy = yTaps.index[yBase + j]
-                val wy = yTaps.weight[yBase + j]
-                val srcRow = sy * srcW
-                for (i in 0 until span) {
-                    addPixel(src[srcRow + xTaps.index[xBase + i]], wy * xTaps.weight[xBase + i], channel)
-                }
+                val row = tapRows[j]!!
+                val wy = tapWeights[j]
+                a += row[colOff] * wy
+                r += row[colOff + 1] * wy
+                g += row[colOff + 2] * wy
+                b += row[colOff + 3] * wy
             }
-            out[dstRow + x] = pack(channel)
+            out[dstRow + x] = packChannels(a, r, g, b)
+            colOff += 4
         }
     }
     return out
@@ -166,19 +215,12 @@ private fun taps(dst: Int, src: Int, radius: Int, kernel: Int): Taps {
     return Taps(index, weight)
 }
 
-private fun addPixel(pixel: Int, weight: Float, channel: FloatArray) {
-    channel[0] += ((pixel ushr 24) and 0xFF) * weight
-    channel[1] += ((pixel ushr 16) and 0xFF) * weight
-    channel[2] += ((pixel ushr 8) and 0xFF) * weight
-    channel[3] += (pixel and 0xFF) * weight
-}
-
-private fun pack(channel: FloatArray): Int {
-    val a = channel[0].roundToInt().coerceIn(0, 255)
-    val r = channel[1].roundToInt().coerceIn(0, 255)
-    val g = channel[2].roundToInt().coerceIn(0, 255)
-    val b = channel[3].roundToInt().coerceIn(0, 255)
-    return (a shl 24) or (r shl 16) or (g shl 8) or b
+private fun packChannels(a: Float, r: Float, g: Float, b: Float): Int {
+    val ia = a.roundToInt().coerceIn(0, 255)
+    val ir = r.roundToInt().coerceIn(0, 255)
+    val ig = g.roundToInt().coerceIn(0, 255)
+    val ib = b.roundToInt().coerceIn(0, 255)
+    return (ia shl 24) or (ir shl 16) or (ig shl 8) or ib
 }
 
 private fun Bitmap.createScaledBitmap(dstW: Int, dstH: Int): Bitmap {
