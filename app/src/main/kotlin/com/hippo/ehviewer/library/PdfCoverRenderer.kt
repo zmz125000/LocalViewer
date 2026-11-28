@@ -18,7 +18,6 @@ import com.hippo.ehviewer.image.hdr.HdrConvertCache
 import com.hippo.ehviewer.library.document.pdfXrefLoadable
 import java.io.File
 import java.io.FileOutputStream
-import java.io.IOException
 import java.nio.file.AtomicMoveNotSupportedException
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
@@ -46,8 +45,9 @@ import splitties.init.appCtx
  *   [BlockCacheArchiveByteSource] and exposes it to [PdfRenderer] via
  *   [StorageManager.openProxyFileDescriptor], fetching only the byte ranges PDFium requests.
  *
- * Rejects broken `startxref` files via [pdfXrefLoadable] before constructing [PdfRenderer]
- * so PDFium never scans a whole remote/local file to rebuild a missing xref table.
+ * Multiple PDFs run in parallel for network open, `startxref` validation/prefetch, and WebP
+ * encoding. Only the [PdfRenderer] open/render/close critical section is serialized with
+ * [pdfThumbMutex] to match Android's process-wide native PDFium lock.
  */
 internal object PdfCoverRenderer {
     private const val TAG = "PdfCover"
@@ -60,10 +60,16 @@ internal object PdfCoverRenderer {
 
     /**
      * Android's [PdfRenderer] synchronizes on a process-wide native PDFium lock.
-     * Serialize background cover renders so queued jobs don't hold idle network handles,
-     * block caches, or proxy HandlerThreads while waiting on that lock.
+     * Serialize only the PdfRenderer open/render/close section so network prefetch
+     * and WebP encoding still run in parallel across files.
      */
     private val pdfThumbMutex = Mutex()
+
+    private sealed interface RenderOutcome {
+        data class Rendered(val bitmap: Bitmap, val width: Int, val height: Int) : RenderOutcome
+        data object NoImages : RenderOutcome
+        data object Skip : RenderOutcome
+    }
 
     suspend fun renderLocalCover(
         archivePath: Path,
@@ -72,29 +78,46 @@ internal object PdfCoverRenderer {
         maxEdge: Int,
         quality: Int,
         onDecoded: (width: Int, height: Int) -> Unit,
-    ): CoverEnsureResult = pdfThumbMutex.withLock {
-        HdrConvertCache.withThumbConvertSlot {
-            withContext(HdrConvertCache.thumbDispatcher) {
-                currentCoroutineContext().ensureActive()
-                try {
-                    val pfd = archivePath.openFileDescriptor("r")
-                    renderFromPfd(
-                        pfd = pfd,
-                        cacheKey = cacheKey,
-                        dest = dest,
-                        maxEdge = maxEdge,
-                        quality = quality,
-                        checkXref = true,
-                        aborted = null,
-                        hadIoError = null,
-                        onDecoded = onDecoded,
-                    )
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (e: Throwable) {
-                    logcat(TAG, e)
-                    CoverEnsureResult.Skip
+    ): CoverEnsureResult {
+        currentCoroutineContext().ensureActive()
+        val pfd = try {
+            archivePath.openFileDescriptor("r")
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Throwable) {
+            logcat(TAG, e)
+            return CoverEnsureResult.Skip
+        }
+        var pfdHandedOff = false
+        return try {
+            if (!pdfXrefLoadable(pfd.statSize) { off, len -> preadPdf(pfd, off, len) }) {
+                logcat(TAG) { "skip PdfRenderer cover; startxref is not an xref key=$cacheKey" }
+                return CoverEnsureResult.Skip
+            }
+            HdrConvertCache.withThumbConvertSlot {
+                withContext(HdrConvertCache.thumbDispatcher) {
+                    val outcome = pdfThumbMutex.withLock {
+                        currentCoroutineContext().ensureActive()
+                        pfdHandedOff = true
+                        renderPage0Bitmap(
+                            pfd = pfd,
+                            cacheKey = cacheKey,
+                            maxEdge = maxEdge,
+                            aborted = null,
+                            hadIoError = null,
+                        )
+                    }
+                    encodeRenderedOutcome(outcome, dest, quality, aborted = null, onDecoded = onDecoded)
                 }
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Throwable) {
+            logcat(TAG, e)
+            CoverEnsureResult.Skip
+        } finally {
+            if (!pfdHandedOff) {
+                runCatching { pfd.close() }
             }
         }
     }
@@ -106,164 +129,180 @@ internal object PdfCoverRenderer {
         maxEdge: Int,
         quality: Int,
         onDecoded: (width: Int, height: Int) -> Unit,
-    ): CoverEnsureResult = pdfThumbMutex.withLock {
-        HdrConvertCache.withThumbConvertSlot {
-            withContext(HdrConvertCache.thumbDispatcher) {
-                currentCoroutineContext().ensureActive()
-                val rawSource = try {
-                    openSource()
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (e: Throwable) {
-                    logcat(TAG, e)
-                    return@withContext CoverEnsureResult.Skip
-                }
-                val cachedSource = try {
-                    BlockCacheArchiveByteSource(
-                        inner = rawSource,
-                        blockSize = PDF_THUMB_BLOCK_SIZE,
-                        maxBlocks = PDF_THUMB_MAX_BLOCKS,
-                    )
-                } catch (e: CancellationException) {
-                    runCatching { rawSource.close() }
-                    throw e
-                } catch (e: Throwable) {
-                    runCatching { rawSource.close() }
-                    logcat(TAG, e)
-                    return@withContext CoverEnsureResult.Skip
-                }
+    ): CoverEnsureResult {
+        currentCoroutineContext().ensureActive()
+        val rawSource = try {
+            openSource()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Throwable) {
+            logcat(TAG, e)
+            return CoverEnsureResult.Skip
+        }
+        val cachedSource = try {
+            BlockCacheArchiveByteSource(
+                inner = rawSource,
+                blockSize = PDF_THUMB_BLOCK_SIZE,
+                maxBlocks = PDF_THUMB_MAX_BLOCKS,
+            )
+        } catch (e: CancellationException) {
+            runCatching { rawSource.close() }
+            throw e
+        } catch (e: Throwable) {
+            runCatching { rawSource.close() }
+            logcat(TAG, e)
+            return CoverEnsureResult.Skip
+        }
 
-                val aborted = AtomicBoolean(false)
-                val hadIoError = AtomicBoolean(false)
-                var proxyOwnsSource = false
-                val abortAction: () -> Unit = {
-                    if (aborted.compareAndSet(false, true)) {
-                        runCatching { cachedSource.close() }
-                    }
-                }
-                val abortHandle = ArchiveAccess.registerAbortAction(abortAction)
-                val cancelHandle = currentCoroutineContext().job.invokeOnCompletion { cause ->
-                    if (cause != null) abortAction()
-                }
-                try {
-                    currentCoroutineContext().ensureActive()
-                    val size = cachedSource.size
-                    if (size <= 0L) return@withContext CoverEnsureResult.Skip
-                    if (!pdfXrefLoadable(size) { off, len -> readExact(cachedSource, off, len) }) {
-                        logcat(TAG) { "skip PdfRenderer cover; startxref is not an xref key=$cacheKey" }
-                        return@withContext CoverEnsureResult.Skip
-                    }
-                    currentCoroutineContext().ensureActive()
-                    if (aborted.get()) throw CancellationException("pdf cover aborted")
+        val aborted = AtomicBoolean(false)
+        val hadIoError = AtomicBoolean(false)
+        var proxyOwnsSource = false
+        val abortAction: () -> Unit = {
+            if (aborted.compareAndSet(false, true)) {
+                runCatching { cachedSource.close() }
+            }
+        }
+        val abortHandle = ArchiveAccess.registerAbortAction(abortAction)
+        val cancelHandle = currentCoroutineContext().job.invokeOnCompletion { cause ->
+            if (cause != null) abortAction()
+        }
+        return try {
+            // Parallel across files: size probe + tail/xref validation prefetches into cachedSource.
+            currentCoroutineContext().ensureActive()
+            val size = cachedSource.size
+            if (size <= 0L) return CoverEnsureResult.Skip
+            if (!pdfXrefLoadable(size) { off, len -> readExact(cachedSource, off, len) }) {
+                logcat(TAG) { "skip PdfRenderer cover; startxref is not an xref key=$cacheKey" }
+                return CoverEnsureResult.Skip
+            }
+            currentCoroutineContext().ensureActive()
+            if (aborted.get()) throw CancellationException("pdf cover aborted")
 
-                    val storage = appCtx.getSystemService(StorageManager::class.java)
-                        ?: return@withContext CoverEnsureResult.Skip
-                    val thread = HandlerThread("LocalViewer-pdfthumb", Process.THREAD_PRIORITY_BACKGROUND)
-                        .apply { start() }
-                    val callback = PdfThumbProxyCallback(
-                        source = cachedSource,
-                        size = size,
-                        thread = thread,
-                        aborted = aborted,
-                        hadIoError = hadIoError,
-                    )
-                    val pfd = try {
-                        storage.openProxyFileDescriptor(
-                            ParcelFileDescriptor.MODE_READ_ONLY,
-                            callback,
-                            Handler(thread.looper),
+            val storage = appCtx.getSystemService(StorageManager::class.java)
+                ?: return CoverEnsureResult.Skip
+
+            HdrConvertCache.withThumbConvertSlot {
+                withContext(HdrConvertCache.thumbDispatcher) {
+                    val outcome = pdfThumbMutex.withLock {
+                        currentCoroutineContext().ensureActive()
+                        if (aborted.get()) throw CancellationException("pdf cover aborted")
+                        val thread = HandlerThread("LocalViewer-pdfthumb", Process.THREAD_PRIORITY_BACKGROUND)
+                            .apply { start() }
+                        val callback = PdfThumbProxyCallback(
+                            source = cachedSource,
+                            size = size,
+                            thread = thread,
+                            aborted = aborted,
+                            hadIoError = hadIoError,
                         )
-                    } catch (e: Throwable) {
-                        callback.shutdown()
-                        throw e
+                        val pfd = try {
+                            storage.openProxyFileDescriptor(
+                                ParcelFileDescriptor.MODE_READ_ONLY,
+                                callback,
+                                Handler(thread.looper),
+                            )
+                        } catch (e: Throwable) {
+                            callback.shutdown()
+                            throw e
+                        }
+                        // From here on, pfd -> callback.onRelease() owns cachedSource and thread.
+                        proxyOwnsSource = true
+                        renderPage0Bitmap(
+                            pfd = pfd,
+                            cacheKey = cacheKey,
+                            maxEdge = maxEdge,
+                            aborted = aborted,
+                            hadIoError = hadIoError,
+                        )
                     }
-                    // From here on, pfd -> callback.onRelease() owns cachedSource and thread.
-                    proxyOwnsSource = true
-                    renderFromPfd(
-                        pfd = pfd,
-                        cacheKey = cacheKey,
-                        dest = dest,
-                        maxEdge = maxEdge,
-                        quality = quality,
-                        checkXref = false,
-                        aborted = aborted,
-                        hadIoError = hadIoError,
-                        onDecoded = onDecoded,
-                    )
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (e: Throwable) {
-                    logcat(TAG, e)
-                    CoverEnsureResult.Skip
-                } finally {
-                    cancelHandle.dispose()
-                    abortHandle.close()
-                    if (!proxyOwnsSource) {
-                        runCatching { cachedSource.close() }
-                    }
+                    encodeRenderedOutcome(outcome, dest, quality, aborted = aborted, onDecoded = onDecoded)
                 }
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Throwable) {
+            logcat(TAG, e)
+            CoverEnsureResult.Skip
+        } finally {
+            cancelHandle.dispose()
+            abortHandle.close()
+            if (!proxyOwnsSource) {
+                runCatching { cachedSource.close() }
             }
         }
     }
 
-    private suspend fun renderFromPfd(
+    /**
+     * Takes ownership of [pfd] and always closes either the constructed [PdfRenderer]
+     * (which closes [pfd]) or [pfd] directly on failure.
+     */
+    private suspend fun renderPage0Bitmap(
         pfd: ParcelFileDescriptor,
         cacheKey: String,
-        dest: Path,
         maxEdge: Int,
-        quality: Int,
-        checkXref: Boolean,
         aborted: AtomicBoolean?,
         hadIoError: AtomicBoolean?,
-        onDecoded: (width: Int, height: Int) -> Unit,
-    ): CoverEnsureResult {
+    ): RenderOutcome {
         var pfdOwnedByCaller = true
         var renderer: PdfRenderer? = null
         return try {
-            if (checkXref) {
-                if (!pdfXrefLoadable(pfd.statSize) { off, len -> preadPdf(pfd, off, len) }) {
-                    logcat(TAG) { "skip PdfRenderer cover; startxref is not an xref key=$cacheKey" }
-                    return CoverEnsureResult.Skip
-                }
-            }
             currentCoroutineContext().ensureActive()
             renderer = PdfRenderer(pfd)
             // PdfRenderer takes ownership of pfd on success and closes it in renderer.close().
             pfdOwnedByCaller = false
             if (aborted?.get() == true) throw CancellationException("pdf cover aborted")
-            if (hadIoError?.get() == true) return CoverEnsureResult.Skip
+            if (hadIoError?.get() == true) return RenderOutcome.Skip
 
             val pageCount = renderer.pageCount
             if (pageCount > 0) {
                 PdfPageCounts.note(cacheKey, pageCount)
             }
             if (pageCount <= 0) {
-                return CoverEnsureResult.NoImages
+                return RenderOutcome.NoImages
             }
 
             currentCoroutineContext().ensureActive()
-            val (rw, rh) = renderer.openPage(0).use { page ->
+            renderer.openPage(0).use { page ->
                 val (w, h) = computeThumbDimensions(page.width, page.height, maxEdge)
                 val bitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+                var keepBitmap = false
                 try {
                     bitmap.eraseColor(Color.WHITE)
                     page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
                     if (aborted?.get() == true) throw CancellationException("pdf cover aborted")
                     currentCoroutineContext().ensureActive()
-                    if (hadIoError?.get() == true) return CoverEnsureResult.Skip
-                    writeBitmapWebp(bitmap, File(dest.toString()), quality)
+                    if (hadIoError?.get() == true) return RenderOutcome.Skip
+                    keepBitmap = true
+                    RenderOutcome.Rendered(bitmap, w, h)
                 } finally {
-                    if (!bitmap.isRecycled) bitmap.recycle()
+                    if (!keepBitmap && !bitmap.isRecycled) bitmap.recycle()
                 }
-                w to h
             }
-            onDecoded(rw, rh)
-            CoverEnsureResult.Hit(dest)
         } finally {
             runCatching { renderer?.close() }
             if (pfdOwnedByCaller) {
                 runCatching { pfd.close() }
             }
+        }
+    }
+
+    private suspend fun encodeRenderedOutcome(
+        outcome: RenderOutcome,
+        dest: Path,
+        quality: Int,
+        aborted: AtomicBoolean?,
+        onDecoded: (width: Int, height: Int) -> Unit,
+    ): CoverEnsureResult = when (outcome) {
+        RenderOutcome.NoImages -> CoverEnsureResult.NoImages
+        RenderOutcome.Skip -> CoverEnsureResult.Skip
+        is RenderOutcome.Rendered -> try {
+            if (aborted?.get() == true) throw CancellationException("pdf cover aborted")
+            currentCoroutineContext().ensureActive()
+            writeBitmapWebp(outcome.bitmap, File(dest.toString()), quality)
+            onDecoded(outcome.width, outcome.height)
+            CoverEnsureResult.Hit(dest)
+        } finally {
+            if (!outcome.bitmap.isRecycled) outcome.bitmap.recycle()
         }
     }
 
