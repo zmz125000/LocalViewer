@@ -1518,8 +1518,9 @@ private fun BrowseGridCell(
     // Same caption metrics as Library grid (GalleryGridDefaults).
     val namePadH = GalleryGridDefaults.namePaddingH()
     val captionGap = 6.dp
-    val nameHeight = captionBelowNameHeight()
     val aspectRatio = GalleryGridDefaults.cellAspectRatio(isGallery = isGallery)
+    val captionMaxLines = gridCaptionMaxLines(isGallery = isGallery, aspectRatio = aspectRatio)
+    val nameHeight = captionBelowNameHeight(captionMaxLines)
     CaptionBelowGridFrame(
         onClick = tap?.toggle ?: onClick,
         onLongClick = tap?.toggle ?: longClick,
@@ -1562,7 +1563,7 @@ private fun BrowseGridCell(
                         Text(
                             text = name,
                             style = MaterialTheme.typography.labelMedium,
-                            maxLines = 2,
+                            maxLines = captionMaxLines,
                             overflow = TextOverflow.Ellipsis,
                             textAlign = TextAlign.Center,
                             modifier = trigger.fillMaxWidth(),
@@ -1573,7 +1574,7 @@ private fun BrowseGridCell(
                 Text(
                     text = name,
                     style = MaterialTheme.typography.labelMedium,
-                    maxLines = 2,
+                    maxLines = captionMaxLines,
                     overflow = TextOverflow.Ellipsis,
                     textAlign = TextAlign.Center,
                     modifier = Modifier.fillMaxWidth(),
@@ -1823,6 +1824,7 @@ fun BrowseCoverThumb(
                                 cover.remoteRelativeFile,
                                 pipeline = !isDocumentFileName(name) && !isMobiContainerFileName(name),
                                 yieldable = true,
+                                readahead = !isPdfFileName(name),
                             )
                         }
                     }
@@ -1874,6 +1876,7 @@ fun BrowseCoverThumb(
                                 password,
                                 cover.remoteRelativeFile,
                                 pipeline = !isDocumentFileName(name) && !isMobiContainerFileName(name),
+                                readahead = !isPdfFileName(name),
                             )
                         }
                     }
@@ -2473,10 +2476,11 @@ private fun BrowseGridCellCard(
     val longClick = onLongClick ?: onClick
     val tap = folderSelectTap(overflow)
     // Same caption metrics as Library grid (GalleryGridDefaults).
-    val nameHeight = GalleryGridDefaults.nameHeight()
+    val aspectRatio = GalleryGridDefaults.cellAspectRatio(isGallery = isGallery)
+    val captionMaxLines = gridCaptionMaxLines(isGallery = isGallery, aspectRatio = aspectRatio)
+    val nameHeight = GalleryGridDefaults.nameHeight(captionMaxLines)
     val namePadH = GalleryGridDefaults.namePaddingH()
     val namePadBottom = GalleryGridDefaults.namePaddingBottom()
-    val aspectRatio = GalleryGridDefaults.cellAspectRatio(isGallery = isGallery)
     ElevatedCard(
         modifier = modifier.fillMaxWidth(),
         onClick = tap?.toggle ?: onClick,
@@ -2510,7 +2514,7 @@ private fun BrowseGridCellCard(
                     Text(
                         text = name,
                         style = MaterialTheme.typography.labelMedium,
-                        maxLines = 2,
+                        maxLines = captionMaxLines,
                         overflow = TextOverflow.Ellipsis,
                         textAlign = TextAlign.Start,
                         modifier = Modifier.weight(1f),

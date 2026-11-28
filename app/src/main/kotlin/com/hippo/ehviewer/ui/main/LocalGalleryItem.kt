@@ -512,13 +512,14 @@ fun HistoryGridItem(
     }
     val namePadH = GalleryGridDefaults.namePaddingH()
     val captionGap = 6.dp
-    val nameHeight = captionBelowNameHeight()
+    val aspectRatio = GalleryGridDefaults.historyAspectRatio()
+    val captionMaxLines = gridCaptionMaxLines(isGallery = LocalHistory.isGallery(info), aspectRatio = aspectRatio)
+    val nameHeight = captionBelowNameHeight(captionMaxLines)
     val breakableTitle = remember(info.title) { breakableHistoryTitle(info.title.orEmpty()) }
     val gridDecodePx = GalleryGridDefaults.gridDecodePx()
     val coverKey = remember(info.gid, info.thumbKey, info.token, info.uploader) {
         historyCoverKey(info)
     }
-    val aspectRatio = GalleryGridDefaults.historyAspectRatio()
     CaptionBelowGridFrame(
         onClick = onClick,
         onLongClick = onLongClick,
@@ -586,7 +587,7 @@ fun HistoryGridItem(
                             text = title,
                             inlineContent = inlineContent,
                             style = MaterialTheme.typography.labelMedium,
-                            maxLines = 2,
+                            maxLines = captionMaxLines,
                             overflow = TextOverflow.Ellipsis,
                             textAlign = TextAlign.Start,
                             modifier = trigger.fillMaxWidth(),
@@ -598,7 +599,7 @@ fun HistoryGridItem(
                     text = title,
                     inlineContent = inlineContent,
                     style = MaterialTheme.typography.labelMedium,
-                    maxLines = 2,
+                    maxLines = captionMaxLines,
                     overflow = TextOverflow.Ellipsis,
                     textAlign = TextAlign.Start,
                     modifier = if (onCaptionLongClick != null) {
@@ -681,7 +682,7 @@ fun HistorySquareGridItem(
             Text(
                 text = info.title.orEmpty(),
                 style = MaterialTheme.typography.labelMedium,
-                maxLines = 2,
+                maxLines = gridCaptionMaxLines(isGallery = LocalHistory.isGallery(info), aspectRatio = aspectRatio),
                 overflow = TextOverflow.Ellipsis,
                 textAlign = TextAlign.Start,
                 modifier = Modifier
@@ -845,9 +846,11 @@ fun LocalGalleryGridItem(
     }
     val namePadH = GalleryGridDefaults.namePaddingH()
     val captionGap = 6.dp
-    val nameHeight = captionBelowNameHeight()
     val gridDecodePx = GalleryGridDefaults.gridDecodePx()
-    val aspectRatio = GalleryGridDefaults.cellAspectRatio(isGallery = isLibraryGalleryKind(gallery.kind))
+    val isGallery = isLibraryGalleryKind(gallery.kind)
+    val aspectRatio = GalleryGridDefaults.cellAspectRatio(isGallery = isGallery)
+    val captionMaxLines = gridCaptionMaxLines(isGallery = isGallery, aspectRatio = aspectRatio)
+    val nameHeight = captionBelowNameHeight(captionMaxLines)
     CaptionBelowGridFrame(
         onClick = onClick,
         onLongClick = onLongClick,
@@ -914,7 +917,7 @@ fun LocalGalleryGridItem(
             Text(
                 text = gallery.title.safFolderLabel(),
                 style = MaterialTheme.typography.labelMedium,
-                maxLines = 2,
+                maxLines = captionMaxLines,
                 overflow = TextOverflow.Ellipsis,
                 textAlign = TextAlign.Center,
                 modifier = Modifier.align(Alignment.TopCenter).fillMaxWidth(),
@@ -944,14 +947,15 @@ private fun HistoryGridItemCard(
         LocalHistory.KindLabel.Video -> Icons.Default.Movie
         else -> Icons.Default.Folder
     }
-    val nameHeight = GalleryGridDefaults.nameHeight()
+    val aspectRatio = GalleryGridDefaults.historyAspectRatio()
+    val captionMaxLines = gridCaptionMaxLines(isGallery = LocalHistory.isGallery(info), aspectRatio = aspectRatio)
+    val nameHeight = GalleryGridDefaults.nameHeight(captionMaxLines)
     val namePadH = GalleryGridDefaults.namePaddingH()
     val namePadBottom = GalleryGridDefaults.namePaddingBottom()
     val gridDecodePx = GalleryGridDefaults.gridDecodePx()
     val coverKey = remember(info.gid, info.thumbKey, info.token, info.uploader) {
         historyCoverKey(info)
     }
-    val aspectRatio = GalleryGridDefaults.historyAspectRatio()
     ElevatedCard(
         modifier = modifier.fillMaxWidth(),
         onClick = onClick,
@@ -1022,7 +1026,7 @@ private fun HistoryGridItemCard(
                     Text(
                         text = info.title.orEmpty(),
                         style = MaterialTheme.typography.labelMedium,
-                        maxLines = 2,
+                        maxLines = captionMaxLines,
                         overflow = TextOverflow.Ellipsis,
                         textAlign = TextAlign.Start,
                         modifier = Modifier.weight(1f),
@@ -1048,11 +1052,13 @@ private fun LocalGalleryGridItemCard(
     showProgress: Boolean,
     modifier: Modifier = Modifier,
 ) {
-    val nameHeight = GalleryGridDefaults.nameHeight()
+    val isGallery = isLibraryGalleryKind(gallery.kind)
+    val aspectRatio = GalleryGridDefaults.cellAspectRatio(isGallery = isGallery)
+    val captionMaxLines = gridCaptionMaxLines(isGallery = isGallery, aspectRatio = aspectRatio)
+    val nameHeight = GalleryGridDefaults.nameHeight(captionMaxLines)
     val namePadH = GalleryGridDefaults.namePaddingH()
     val namePadBottom = GalleryGridDefaults.namePaddingBottom()
     val gridDecodePx = GalleryGridDefaults.gridDecodePx()
-    val aspectRatio = GalleryGridDefaults.cellAspectRatio(isGallery = isLibraryGalleryKind(gallery.kind))
     ElevatedCard(
         modifier = modifier.fillMaxWidth(),
         onClick = onClick,
@@ -1126,7 +1132,7 @@ private fun LocalGalleryGridItemCard(
                 Text(
                     text = gallery.title.safFolderLabel(),
                     style = MaterialTheme.typography.labelMedium,
-                    maxLines = 2,
+                    maxLines = captionMaxLines,
                     overflow = TextOverflow.Ellipsis,
                     textAlign = TextAlign.Start,
                     modifier = Modifier.fillMaxWidth().padding(bottom = namePadBottom),

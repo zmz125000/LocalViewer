@@ -1273,4 +1273,7 @@
     <string name="image_conversion_tone_mapper">SDR トーンマッピング</string>
     <string name="image_conversion_tone_off">オフ</string>
     <string name="image_conversion_tone_custom">SKIV（カスタム）</string>
+    <string name="pref_press_hold_zoom">長押しズーム</string>
+    <string name="pref_press_hold_zoom_off">オフ</string>
+    <string name="pref_press_hold_zoom_toggle">長押しでズーム切り替え</string>
 </resources>

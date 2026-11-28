@@ -1,0 +1,38 @@
+package com.hippo.ehviewer.ui.reader
+
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+class PressHoldZoomTest {
+    @Test
+    fun pressHoldZoomFactorMapsOffAndSupportedSteps() {
+        assertEquals(0f, pressHoldZoomFactor(0), 0f)
+        assertEquals(0f, pressHoldZoomFactor(100), 0f)
+        assertEquals(1.2f, pressHoldZoomFactor(120), 0.0001f)
+        assertEquals(1.4f, pressHoldZoomFactor(140), 0.0001f)
+        assertEquals(1.6f, pressHoldZoomFactor(160), 0.0001f)
+        assertEquals(1.8f, pressHoldZoomFactor(180), 0.0001f)
+        assertEquals(2f, pressHoldZoomFactor(200), 0.0001f)
+        assertEquals(listOf(0, 120, 140, 160, 180, 200), PRESS_HOLD_ZOOM_VALUES)
+    }
+
+    @Test
+    fun pressHoldZoomTimeoutUsesThirdOfLongPressTimeout() {
+        assertEquals(133L, pressHoldZoomTimeoutMillis(400L))
+        assertEquals(166L, pressHoldZoomTimeoutMillis(500L))
+        assertEquals(1L, pressHoldZoomTimeoutMillis(0L))
+        assertEquals(1.5f, PRESS_HOLD_PAN_MULTIPLIER, 0f)
+    }
+
+    @Test
+    fun isZoomedForPressHoldDetectsMinimum11xRegardlessOfInitialScale() {
+        assertFalse(isZoomedForPressHold(currentScale = 1f, initialScale = 1f))
+        assertFalse(isZoomedForPressHold(currentScale = 2f, initialScale = 2f))
+        assertFalse(isZoomedForPressHold(currentScale = 1f, initialScale = 0f))
+        assertTrue(isZoomedForPressHold(currentScale = 1.1f, initialScale = 1f))
+        assertTrue(isZoomedForPressHold(currentScale = 2.2f, initialScale = 2f))
+        assertTrue(isZoomedForPressHold(currentScale = 0.55f, initialScale = 0.5f))
+    }
+}

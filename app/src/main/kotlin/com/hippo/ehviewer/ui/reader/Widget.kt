@@ -118,8 +118,9 @@ fun SwitchChoice(
     title: String,
     field: MutableState<Boolean>,
     summary: String? = null,
+    enabled: Boolean = true,
 ) {
-    SwitchChoice(title, field.value, { field.value = it }, summary)
+    SwitchChoice(title, field.value, { field.value = it }, summary, enabled)
 }
 
 @Composable
@@ -128,21 +129,23 @@ fun SwitchChoice(
     checked: Boolean,
     onCheckedChange: (Boolean) -> Unit,
     summary: String? = null,
+    enabled: Boolean = true,
 ) {
+    val contentAlpha = if (enabled) 1f else 0.38f
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .then(if (summary == null) Modifier.height(48.dp) else Modifier)
-            .clickable { onCheckedChange(!checked) }
+            .clickable(enabled = enabled) { onCheckedChange(!checked) }
             .padding(horizontal = 16.dp, vertical = if (summary == null) 0.dp else 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
-            Text(text = title, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(text = title, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = contentAlpha))
             if (summary != null) {
                 Text(
                     text = summary,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f * contentAlpha),
                     style = MaterialTheme.typography.bodySmall,
                 )
             }
@@ -150,6 +153,7 @@ fun SwitchChoice(
         Switch(
             checked = checked,
             onCheckedChange = onCheckedChange,
+            enabled = enabled,
         )
     }
 }

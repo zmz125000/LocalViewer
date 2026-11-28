@@ -213,6 +213,7 @@ import com.hippo.ehviewer.ui.reader.readerPdfCacheKey
 import com.hippo.ehviewer.ui.reader.readerPhotoGridSheetMaxWidth
 import com.hippo.ehviewer.ui.reader.readerSheetBox
 import com.hippo.ehviewer.ui.reader.rememberComicColorFilter
+import com.hippo.ehviewer.ui.reader.rememberPressHoldZoom
 import com.hippo.ehviewer.ui.reader.scrollDown
 import com.hippo.ehviewer.ui.reader.scrollLeft
 import com.hippo.ehviewer.ui.reader.scrollRight
@@ -2438,6 +2439,7 @@ private fun PdfReaderScreen(
                         zoomableState.resetZoom()
                     }
                     var multiTouch by remember { mutableStateOf(false) }
+                    val webtoonPressHoldZoom = rememberPressHoldZoom(zoomableState)
                     val viewerModifier = Modifier
                         .fillMaxSize()
                         .onSizeChanged { size ->
@@ -2463,35 +2465,37 @@ private fun PdfReaderScreen(
                             }
                         }
                         .thenIf(isWebtoon) {
-                            zoomable(
-                                state = zoomableState,
-                                gestures = gestures,
-                                onClick = { offset ->
-                                    val w = viewportPx.width.takeIf { it > 0 }
-                                        ?: listState.layoutInfo.viewportSize.width
-                                    val h = viewportPx.height.takeIf { it > 0 }
-                                        ?: listState.layoutInfo.viewportSize.height
-                                    if (w <= 0 || h <= 0) return@zoomable
-                                    when (navigator.getAction(Offset(offset.x / w, offset.y / h))) {
-                                        NavigationRegion.MENU -> {
-                                            if (!suppressPageClick) appbarVisible = !appbarVisible
+                            then(webtoonPressHoldZoom.releaseModifier)
+                                .zoomable(
+                                    state = zoomableState,
+                                    gestures = gestures,
+                                    onClick = { offset ->
+                                        val w = viewportPx.width.takeIf { it > 0 }
+                                            ?: listState.layoutInfo.viewportSize.width
+                                        val h = viewportPx.height.takeIf { it > 0 }
+                                            ?: listState.layoutInfo.viewportSize.height
+                                        if (w <= 0 || h <= 0) return@zoomable
+                                        when (navigator.getAction(Offset(offset.x / w, offset.y / h))) {
+                                            NavigationRegion.MENU -> {
+                                                if (!suppressPageClick) appbarVisible = !appbarVisible
+                                            }
+                                            NavigationRegion.NEXT -> {
+                                                scope.launch { stepPdfPage(forward = true) }
+                                            }
+                                            NavigationRegion.PREV -> {
+                                                scope.launch { stepPdfPage(forward = false) }
+                                            }
+                                            NavigationRegion.RIGHT -> {
+                                                scope.launch { stepPdfPage(forward = !tapRtl) }
+                                            }
+                                            NavigationRegion.LEFT -> {
+                                                scope.launch { stepPdfPage(forward = tapRtl) }
+                                            }
                                         }
-                                        NavigationRegion.NEXT -> {
-                                            scope.launch { stepPdfPage(forward = true) }
-                                        }
-                                        NavigationRegion.PREV -> {
-                                            scope.launch { stepPdfPage(forward = false) }
-                                        }
-                                        NavigationRegion.RIGHT -> {
-                                            scope.launch { stepPdfPage(forward = !tapRtl) }
-                                        }
-                                        NavigationRegion.LEFT -> {
-                                            scope.launch { stepPdfPage(forward = tapRtl) }
-                                        }
-                                    }
-                                },
-                                onDoubleClick = doubleTap,
-                            )
+                                    },
+                                    onLongClick = webtoonPressHoldZoom.onLongClick,
+                                    onDoubleClick = doubleTap,
+                                )
                         }
                         .then(
                             if (isWebtoon) {
@@ -2926,13 +2930,16 @@ private fun PdfSingleImagePage(
         appliedScale = scaleType
         zoomableState.resetZoom()
     }
+    val pressHoldZoom = rememberPressHoldZoom(zoomableState)
     readerDrawScaleProvider(zoomableState) {
         Box(
             modifier = Modifier
                 .fillMaxSize()
+                .then(pressHoldZoom.releaseModifier)
                 .zoomable(
                     state = zoomableState,
                     onClick = onClick,
+                    onLongClick = pressHoldZoom.onLongClick,
                     onDoubleClick = onDoubleClick,
                 ),
         ) {
@@ -3041,13 +3048,16 @@ private fun PdfDualSpread(
     val leftW = (spreadPx.width * if (gap) 0.5f else leftAspect / combined).roundToInt().coerceAtLeast(1)
     val rightW = (spreadPx.width.roundToInt() - leftW).coerceAtLeast(1)
     val cellH = spreadPx.height.roundToInt().coerceAtLeast(1)
+    val pressHoldZoom = rememberPressHoldZoom(zoomableState)
     readerDrawScaleProvider(zoomableState) {
         Box(
             modifier = Modifier
                 .fillMaxSize()
+                .then(pressHoldZoom.releaseModifier)
                 .zoomable(
                     state = zoomableState,
                     onClick = onClick,
+                    onLongClick = pressHoldZoom.onLongClick,
                     onDoubleClick = onDoubleClick,
                 ),
             contentAlignment = Alignment.Center,
@@ -3161,9 +3171,11 @@ private fun PdfSingleVectorPage(
     DisposableEffect(index, styleGeneration) {
         onDispose { bitmap?.recycle() }
     }
+    val pressHoldZoom = rememberPressHoldZoom(zoomableState)
     Box(
         modifier = Modifier
             .fillMaxSize()
+            .then(pressHoldZoom.releaseModifier)
             .zoomable(
                 state = zoomableState,
                 // A fitted ebook page matches the viewer. Pan at rest steals the
@@ -3175,6 +3187,7 @@ private fun PdfSingleVectorPage(
                     EnabledZoomGestures(zoom = true, pan = false)
                 },
                 onClick = onClick,
+                onLongClick = pressHoldZoom.onLongClick,
                 onDoubleClick = onDoubleClick,
             ),
         contentAlignment = Alignment.Center,

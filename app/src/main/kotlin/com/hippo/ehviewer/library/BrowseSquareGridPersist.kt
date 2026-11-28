@@ -58,23 +58,13 @@ object BrowseSquareGridPersist {
     fun effective(folder: BrowseFolderId?, skipAncestorKeys: Set<String> = emptySet()): SquareGridMode = folder?.let { resolve(it, skipAncestorKeys)?.effective }
         ?: SquareGridMode.fromPref(Settings.squareGrid.value)
 
-    fun tap(folder: BrowseFolderId?, skipAncestorKeys: Set<String> = emptySet()) {
-        val match = folder?.let { resolve(it, skipAncestorKeys) }
-        if (match == null) {
-            val current = SquareGridMode.fromPref(Settings.squareGrid.value)
-            Settings.squareGrid.value = current.toggleOffAll().prefValue
-            return
-        }
-        val next = match.effective.toggleOffAll()
-        if (next == match.saved) overrides.remove(match.governingKey) else overrides[match.governingKey] = next
-        changes.update { it + 1 }
-    }
+    fun isLockedOff(folder: BrowseFolderId?, skipAncestorKeys: Set<String> = emptySet()): Boolean = folder?.let { resolve(it, skipAncestorKeys)?.effective == SquareGridMode.Off } == true
 
     /**
-     * Lock this folder (and its subfolders) to [SquareGridMode.Off].
-     * Long-pressing an active own lock removes it.
+     * Toggle the per-folder [SquareGridMode.Off] lock for [folder] (and its subfolders)
+     * without changing the global [Settings.squareGrid] preference.
      */
-    fun longPress(folder: BrowseFolderId?, skipAncestorKeys: Set<String> = emptySet()) {
+    fun toggleLock(folder: BrowseFolderId?, skipAncestorKeys: Set<String> = emptySet()) {
         if (folder == null) return
         val match = resolve(folder, skipAncestorKeys)
         val current = Settings.persistSquareGrid.value
@@ -84,6 +74,14 @@ object BrowseSquareGridPersist {
             current + folder.key
         }
         overrides.remove(folder.key)
+        changes.update { it + 1 }
+    }
+
+    /** Toggle the global [Settings.squareGrid] preference between All and Off. */
+    fun toggleGlobal() {
+        Settings.squareGrid.value = SquareGridMode.fromPref(Settings.squareGrid.value)
+            .toggleOffAll()
+            .prefValue
         changes.update { it + 1 }
     }
 

@@ -1475,4 +1475,7 @@
     <string name="image_conversion_tone_off">Off</string>
     <string name="image_conversion_tone_custom">SKIV (custom)</string>
     <string name="image_conversion_tone_skiv" translatable="false">SKIV</string>
+    <string name="pref_press_hold_zoom">Press &amp; hold zoom</string>
+    <string name="pref_press_hold_zoom_off">Off</string>
+    <string name="pref_press_hold_zoom_toggle">Press &amp; hold toggle</string>
 </resources>

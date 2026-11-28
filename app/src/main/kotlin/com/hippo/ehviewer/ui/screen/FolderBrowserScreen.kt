@@ -293,6 +293,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
     val showHiddenFiles by Settings.browseShowHiddenFiles.collectAsState()
     val showVirtualGalleries = rememberEffectiveVirtualGalleries(folderId)
     val effectiveSquareGridMode = rememberEffectiveSquareGridMode(folderId)
+    val squareGridLockedOff = rememberSquareGridLockedOff(folderId)
     val maxVirtualGallerySubfolders by Settings.browseVirtualGalleryMaxSubfolders.collectAsState()
     // Same virtual-layer rules as SMB RPC root / photo grid (not regular folder-view mode).
     val relativeDirForMode = stack.lastOrNull()?.relativePath.orEmpty()
@@ -398,11 +399,11 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
     var refreshing by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     val listMode by Settings.listMode.collectAsState()
-    val useGrid = browseUseGrid(listMode, contentMode, virtual)
+    val useGrid = browseUseGrid(listMode, contentMode, virtual, squareGridLockedOff)
     val showGalleryPages by Settings.showGalleryPages.collectAsState()
     val browseFolderThumbs by Settings.browseFolderThumbs.collectAsState()
 
-    val scrollLayoutKey = browseScrollLayoutKey(listMode, contentMode, virtual)
+    val scrollLayoutKey = browseScrollLayoutKey(listMode, contentMode, virtual, squareGridLockedOff)
     val favoriteKeys by Settings.favoriteBrowseSources.collectAsState()
     val addedToFavourites = stringResource(id = R.string.add_to_favourites)
     val removedFromFavourites = stringResource(id = R.string.remove_from_favourites)

@@ -341,11 +341,12 @@ class EhApplication : Application(), SingletonImageLoader.Factory {
             add(CoverPathFetcher.Factory())
             add(CoverPathKeyer)
             // minSdk 32: hardware bitmaps + platform animated image decoder always available.
+            // Response unwind order: MapExtraInfo -> QrCode -> DetectBorder -> CropBorder -> HardwareBitmap.
             add(HardwareBitmapInterceptor)
-            add(MapExtraInfoInterceptor)
             add(CropBorderInterceptor)
             add(DetectBorderInterceptor)
             add(QrCodeInterceptor)
+            add(MapExtraInfoInterceptor)
             // GIF / animated WebP / animated HEIF: platform ImageDecoder (setTargetSize
             // for folder thumbs). The custom libwebp drawable always decoded at file
             // resolution and pegged CPU on a single cover thumb.

@@ -100,6 +100,18 @@ fun WebtoonViewer(
 
     // While 2+ fingers are down, stop strip scroll so pinch can own the pointer stream.
     var multiTouch by remember { mutableStateOf(false) }
+    val pressHoldZoom = rememberPressHoldZoom(
+        zoomableState = zoomableState,
+        onFallbackLongClick = { ofs ->
+            val coord = if (horizontal) ofs.x else ofs.y
+            val info = stripState.layoutInfo.visibleItemsInfo.find { item ->
+                coord >= item.screenStart && coord < item.screenEnd
+            }
+            if (info != null) {
+                items.getOrNull(info.index)?.let(onSelectPage)
+            }
+        },
+    )
 
     val listModifier = modifier
         .onSizeChanged { size ->
@@ -113,6 +125,7 @@ fun WebtoonViewer(
                 }
             }
         }
+        .then(pressHoldZoom.releaseModifier)
         .zoomable(
             state = zoomableState,
             gestures = gestures,
@@ -154,15 +167,7 @@ fun WebtoonViewer(
                     }
                 }
             },
-            onLongClick = { ofs ->
-                val coord = if (horizontal) ofs.x else ofs.y
-                val info = stripState.layoutInfo.visibleItemsInfo.find { item ->
-                    coord >= item.screenStart && coord < item.screenEnd
-                }
-                if (info != null) {
-                    items.getOrNull(info.index)?.let(onSelectPage)
-                }
-            },
+            onLongClick = pressHoldZoom.onLongClick,
             onDoubleClick = doubleTap,
         )
 

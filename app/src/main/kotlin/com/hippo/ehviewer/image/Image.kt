@@ -451,7 +451,8 @@ class Image private constructor(
             comicRendering: Boolean = false,
             animationColorSpace: ColorSpace? = null,
         ): CoilImage {
-            val hardwareDirect = !platformHbd && (Settings.readerHardwareBitmap.value || hdrSafe)
+            val cropEnabled = Settings.cropBorder.value && !hdrSafe && !platformHbd
+            val hardwareDirect = !platformHbd && !cropEnabled && (Settings.readerHardwareBitmap.value || hdrSafe)
             // A chosen kernel decodes the full software frame, then resamples once.
             // Default 0 keeps the codec subsample. Gain maps and deep color stay on that path.
             // The 4096 px hi-res cap uses the kernel only when that toggle is on.
@@ -518,7 +519,7 @@ class Image private constructor(
                             // Pixels have to stay readable until the resample. Upload runs after.
                             allowHardware(false)
                             hardwareThreshold(0)
-                            maybeCropBorder(!hardwareDirect && Settings.cropBorder.value)
+                            maybeCropBorder(cropEnabled)
                             detectQrCode(!hardwareDirect && checkExtraneousAds)
                         }
                         hardwareDirect -> {
@@ -532,7 +533,7 @@ class Image private constructor(
                         else -> {
                             allowHardware(false)
                             hardwareThreshold(Settings.hardwareBitmapThreshold.value)
-                            maybeCropBorder(Settings.cropBorder.value)
+                            maybeCropBorder(cropEnabled)
                             detectQrCode(checkExtraneousAds)
                         }
                     }

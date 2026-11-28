@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalView
@@ -15,6 +16,7 @@ import androidx.compose.ui.res.stringResource
 import com.ehviewer.core.i18n.R
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.asMutableState
+import com.hippo.ehviewer.collectAsState
 import com.hippo.ehviewer.image.hdr.ReaderToneMapper
 
 @Composable
@@ -77,10 +79,14 @@ fun ReaderGeneralSetting(
         summary = stringResource(id = R.string.pref_reader_lib_direct_bitmap_summary),
         field = Settings.readerLibDirectBitmap.asMutableState(),
     )
+    val cropBorder by Settings.cropBorder.collectAsState()
+    val readerHardwareBitmap = Settings.readerHardwareBitmap.asMutableState()
     SwitchChoice(
         title = stringResource(id = R.string.pref_reader_hardware_bitmap),
         summary = stringResource(id = R.string.pref_reader_hardware_bitmap_summary),
-        field = Settings.readerHardwareBitmap.asMutableState(),
+        checked = !cropBorder && readerHardwareBitmap.value,
+        onCheckedChange = { readerHardwareBitmap.value = it },
+        enabled = !cropBorder,
     )
     val hiResOptimize = Settings.readerHiResOptimize.asMutableState()
     SwitchChoice(
