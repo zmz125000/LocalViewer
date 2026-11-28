@@ -77,6 +77,14 @@ object BrowseSquareGridPersist {
         changes.update { it + 1 }
     }
 
+    /** Toggle the global [Settings.squareGrid] preference between All and Off. */
+    fun toggleGlobal() {
+        Settings.squareGrid.value = SquareGridMode.fromPref(Settings.squareGrid.value)
+            .toggleOffAll()
+            .prefValue
+        changes.update { it + 1 }
+    }
+
     fun clearAll() {
         if (Settings.persistSquareGrid.value.isNotEmpty()) {
             Settings.persistSquareGrid.value = emptySet()

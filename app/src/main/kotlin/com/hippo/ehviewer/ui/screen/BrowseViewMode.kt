@@ -437,6 +437,7 @@ fun BrowseViewModeMenu(
                         else -> ModeMark.None
                     },
                     onClick = { BrowseSquareGridPersist.toggleLock(virtualGalleriesFolder, skipAncestorKeys) },
+                    onLongClick = { BrowseSquareGridPersist.toggleGlobal() },
                 )
             }
             // Under List/Grid: folder sort with ↑↓ (separate from Library sort).
