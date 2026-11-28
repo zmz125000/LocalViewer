@@ -63,15 +63,11 @@ enum class BrowseSortMode(val prefValue: Int) {
     }
 }
 
-internal fun browseVirtualSortKey(
+internal fun browseVirtualSortStart(
     name: String,
     virtual: Boolean,
     virtualOnTop: Boolean,
-): String = if (!virtualOnTop && virtual && name.startsWith('@')) {
-    name.substring(1)
-} else {
-    name
-}
+): Int = if (!virtualOnTop && virtual && name.startsWith('@')) 1 else 0
 
 /**
  * UI-only folder listing order. Listing / scan / thumbs / open-gallery keep name order.
@@ -88,9 +84,9 @@ fun <T> Iterable<T>.sortedForBrowseFolderUi(
     val nameCmp = Comparator<T> { a, b ->
         val rawA = nameOf(a)
         val rawB = nameOf(b)
-        val keyA = browseVirtualSortKey(rawA, isVirtual(a), virtualOnTop)
-        val keyB = browseVirtualSortKey(rawB, isVirtual(b), virtualOnTop)
-        val byKey = naturalCompare(keyA, keyB)
+        val startA = browseVirtualSortStart(rawA, isVirtual(a), virtualOnTop)
+        val startB = browseVirtualSortStart(rawB, isVirtual(b), virtualOnTop)
+        val byKey = naturalCompare(rawA, rawB, startA, startB)
         if (byKey != 0) byKey else naturalCompare(rawA, rawB)
     }
     val cmp = when (mode) {

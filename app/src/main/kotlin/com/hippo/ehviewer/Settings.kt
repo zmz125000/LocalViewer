@@ -279,14 +279,11 @@ object Settings : DataStorePreferences(null) {
     val browseShowVirtualGalleries = boolPref("browse_show_virtual_galleries", true)
 
     /**
-     * Folder view display limit for promoted subfolders per folder (1..3, default 3).
+     * Folder view display limit for promoted subfolders per folder (1..3, default 2).
      * Listing and index cache always scan up to [com.hippo.ehviewer.library.SMB_PROMOTE_MAX_LEAVES];
      * this only filters the folder UI (e.g. 1 = promote only when a folder has 1 subfolder).
      */
-    val browseVirtualGalleryMaxSubfolders = intPref(
-        "browse_virtual_gallery_max_subfolders",
-        com.hippo.ehviewer.library.SMB_PROMOTE_MAX_LEAVES,
-    )
+    val browseVirtualGalleryMaxSubfolders = intPref("browse_virtual_gallery_max_subfolders", 2)
 
     /**
      * Folder view sorting: when true (default), promoted `@…` rows sort with the `@` prefix

@@ -528,9 +528,9 @@ fun humanizePathName(raw: String): String {
  * case-sensitive tie-break — both can throw
  * `Comparison method violates its general contract` on large WebDAV/SMB lists.
  */
-fun naturalCompare(a: String, b: String): Int {
-    var i = 0
-    var j = 0
+fun naturalCompare(a: String, b: String, startA: Int = 0, startB: Int = 0): Int {
+    var i = startA
+    var j = startB
     val na = a.length
     val nb = b.length
     while (i < na && j < nb) {
