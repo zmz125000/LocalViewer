@@ -137,6 +137,12 @@ fun AnimatedVisibilityScope.EhScreen(navigator: DestinationsNavigator) = Screen(
                 title = stringResource(id = R.string.settings_eh_thumb_columns),
                 state = Settings.gridCellSize.asMutableState(),
             )
+            SimpleMenuPreferenceInt(
+                title = stringResource(id = R.string.settings_square_grid),
+                entry = com.hippo.ehviewer.R.array.square_grid_entries,
+                entryValueRes = com.hippo.ehviewer.R.array.square_grid_values,
+                state = Settings.squareGrid.asMutableState(),
+            )
             SwitchPreference(
                 title = stringResource(id = R.string.settings_eh_show_gallery_pages),
                 state = Settings.showGalleryPages.asMutableState(),

@@ -238,6 +238,10 @@
     <string name="settings_virtual_gallery_max_subfolders_summary">Maximum subfolders promoted as virtual galleries or videos in folder view (1–3). Folders with more show normally.</string>
     <string name="settings_virtual_gallery_on_top">Virtual galleries on top</string>
     <string name="settings_virtual_gallery_on_top_summary">Sort promoted @ items at the top. Turn off to sort them alphabetically with other items.</string>
+    <string name="settings_square_grid">Square grid</string>
+    <string name="settings_square_grid_off">Off</string>
+    <string name="settings_square_grid_on">On</string>
+    <string name="settings_square_grid_all">All</string>
     <string name="browse_open_failed">No app found to open this file.</string>
     <string name="browse_open_large_message">This file is about %1$d MB (over %2$d MB). Download and open it?</string>
     <string name="browse_open_large_continue">Open</string>

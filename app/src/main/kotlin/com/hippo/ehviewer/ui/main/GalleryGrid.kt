@@ -9,11 +9,13 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.plus
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CardColors
@@ -87,6 +89,36 @@ internal fun CaptionBelowGridFrame(
 }
 
 /**
+ * Aspect-ratio mode for Library / Folder / History grid cells and list thumbnails
+ * ([Settings.squareGrid]).
+ *
+ * - [Off] (0): ISO B portrait (`1 : √2`) for folders, files, and galleries.
+ * - [On] (1): ISO B portrait for gallery cells (grid and list view); square (`1:1`) for others.
+ * - [All] (2): Square (`1:1`) for everything (default).
+ */
+enum class SquareGridMode(val prefValue: Int) {
+    Off(0),
+    On(1),
+    All(2),
+    ;
+
+    fun aspectRatio(isGallery: Boolean): Float = when (this) {
+        Off -> ISO_B_ASPECT_RATIO
+        On -> if (isGallery) ISO_B_ASPECT_RATIO else SQUARE_ASPECT_RATIO
+        All -> SQUARE_ASPECT_RATIO
+    }
+
+    fun listLeadHeight(isGallery: Boolean, width: Dp = CoverThumb.ListDisplay): Dp = width / aspectRatio(isGallery)
+
+    companion object {
+        const val SQUARE_ASPECT_RATIO = 1f
+        const val ISO_B_ASPECT_RATIO = 1f / 1.41421356f
+
+        fun fromPref(value: Int): SquareGridMode = entries.firstOrNull { it.prefValue == value } ?: All
+    }
+}
+
+/**
  * Shared Library / Browse thumb-grid layout.
  *
  * [Settings.gridCellSize] is the minimum cell edge. [GridCells.Adaptive] then
@@ -96,6 +128,23 @@ internal fun CaptionBelowGridFrame(
 object GalleryGridDefaults {
     /** M3 NavigationRail container width. Medium+ windows place it beside the grid. */
     private val MainNavRailWidth = 80.dp
+
+    @Composable
+    fun squareGridMode(): SquareGridMode {
+        val pref by Settings.squareGrid.collectAsState()
+        return SquareGridMode.fromPref(pref)
+    }
+
+    @Composable
+    fun cellAspectRatio(isGallery: Boolean): Float = squareGridMode().aspectRatio(isGallery)
+
+    @Composable
+    fun listLeadHeight(isGallery: Boolean, width: Dp = CoverThumb.ListDisplay): Dp = squareGridMode().listLeadHeight(isGallery, width)
+
+    @Composable
+    fun listLeadModifier(isGallery: Boolean, width: Dp = CoverThumb.ListDisplay): Modifier = Modifier
+        .width(width)
+        .aspectRatio(cellAspectRatio(isGallery))
 
     @Composable
     fun cellSize(): Dp {

@@ -214,6 +214,10 @@
     <string name="settings_virtual_gallery_max_subfolders_summary">資料夾檢視中提升為虛擬圖庫或影片的最大子資料夾數（1–3）。超過時正常顯示原資料夾。</string>
     <string name="settings_virtual_gallery_on_top">虛擬圖庫置頂</string>
     <string name="settings_virtual_gallery_on_top_summary">開啟時帶 @ 前綴的提升項目排在清單頂部；關閉時忽略 @ 前綴與一般項目混合排序。</string>
+    <string name="settings_square_grid">方形網格</string>
+    <string name="settings_square_grid_off">關閉</string>
+    <string name="settings_square_grid_on">開啟</string>
+    <string name="settings_square_grid_all">全部</string>
     <string name="browse_open_failed">沒有可開啟此檔案的應用程式。</string>
     <string name="browse_open_large_message">此檔案約 %1$d MB（超過 %2$d MB）。是否下載並開啟？</string>
     <string name="browse_open_large_continue">開啟</string>

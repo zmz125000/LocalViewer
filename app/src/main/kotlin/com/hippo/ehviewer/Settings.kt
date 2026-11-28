@@ -344,6 +344,14 @@ object Settings : DataStorePreferences(null) {
      */
     val gridCellSize = intPref("grid_cell_size", GRID_CELL_DEFAULT_DP)
 
+    /**
+     * Grid & list thumbnail aspect ratio for Library / Folder / History:
+     * 0 = Off (ISO B portrait for folders, files, and galleries),
+     * 1 = On (ISO B portrait for gallery cells in grid and list view; square for others),
+     * 2 = All (square 1:1 for everything, default).
+     */
+    val squareGrid = intPref("square_grid", 2)
+
     val enableFileDeletion = boolPref("enable_file_deletion", true)
     val useTrashBin = boolPref("use_trash_bin", true)
 

@@ -137,6 +137,7 @@ import com.hippo.ehviewer.ui.main.BrowseSectionHeader
 import com.hippo.ehviewer.ui.main.FolderPlace
 import com.hippo.ehviewer.ui.main.GalleryGridDefaults
 import com.hippo.ehviewer.ui.main.LocalBrowseListHeaderInset
+import com.hippo.ehviewer.ui.main.SquareGridMode
 import com.hippo.ehviewer.ui.main.UploadTransfers
 import com.hippo.ehviewer.ui.main.rememberUploadLocalDestinationPicker
 import com.hippo.ehviewer.ui.navToLocalFolderReader
@@ -945,6 +946,7 @@ private fun ExplorerFavoritesGrid(
                 fav = fav,
                 iconSize = iconSize,
                 labelStyle = labelStyle,
+                aspectRatio = SquareGridMode.SQUARE_ASPECT_RATIO,
                 onClick = {
                     openFavorite(navigator, fav, roots, navTab)
                     onNavigated()
@@ -965,6 +967,7 @@ private fun ExplorerFavoritesGrid(
                     fav = FavoriteBrowseSource.Smb(source),
                     iconSize = iconSize,
                     labelStyle = labelStyle,
+                    aspectRatio = SquareGridMode.SQUARE_ASPECT_RATIO,
                     onClick = {
                         openSmbRoot(navigator, source, navTab)
                         bindOpenedWindow(navTab)
@@ -978,6 +981,7 @@ private fun ExplorerFavoritesGrid(
                     fav = FavoriteBrowseSource.WebDav(source),
                     iconSize = iconSize,
                     labelStyle = labelStyle,
+                    aspectRatio = SquareGridMode.SQUARE_ASPECT_RATIO,
                     onClick = {
                         openWebDavRoot(navigator, source, navTab)
                         bindOpenedWindow(navTab)
@@ -1000,6 +1004,7 @@ private fun ExplorerFavoritesGrid(
                     fav = FavoriteBrowseSource.Local(root),
                     iconSize = iconSize,
                     labelStyle = labelStyle,
+                    aspectRatio = SquareGridMode.SQUARE_ASPECT_RATIO,
                     onClick = {
                         openLocalRootWindow(navigator, root, navTab)
                         onNavigated()

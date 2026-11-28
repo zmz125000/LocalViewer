@@ -185,6 +185,10 @@
     <string name="settings_virtual_gallery_max_subfolders_summary">フォルダ表示で仮想ギャラリー・動画として昇格する最大サブフォルダ数（1〜3）。超える場合は通常のフォルダとして表示します。</string>
     <string name="settings_virtual_gallery_on_top">仮想ギャラリーを先頭に</string>
     <string name="settings_virtual_gallery_on_top_summary">オンのとき @ 付き昇格項目を先頭に並べます。オフのときは @ を無視して通常の名前順に並べます。</string>
+    <string name="settings_square_grid">正方形グリッド</string>
+    <string name="settings_square_grid_off">オフ</string>
+    <string name="settings_square_grid_on">オン</string>
+    <string name="settings_square_grid_all">すべて</string>
     <string name="browse_open_failed">このファイルを開くアプリが見つかりません。</string>
     <string name="browse_open_large_message">このファイルは約 %1$d MB（%2$d MB 超）です。ダウンロードして開きますか？</string>
     <string name="browse_open_large_continue">開く</string>
