@@ -27,7 +27,6 @@ import com.hippo.ehviewer.jni.solidCurrentExtension
 import com.hippo.ehviewer.jni.solidExtractCurrentToFd
 import com.hippo.ehviewer.jni.solidNextPlayable
 import com.hippo.ehviewer.library.document.MobiText
-import com.hippo.ehviewer.library.document.PdfImageEngine
 import java.io.File
 import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
@@ -808,7 +807,7 @@ object ArchiveCoverCache {
     }
 
     /**
-     * Network/local-stream document cover (PDF/EPUB image extract).
+     * Network/local-stream document cover (PDF via [PdfCoverRenderer], EPUB via image extract).
      * Does not use libarchive / [ArchiveAccess].
      */
     suspend fun ensureDocumentStreamCover(
@@ -821,21 +820,30 @@ object ArchiveCoverCache {
         withCoverExtractSlot {
             existingCover(dest)?.let { return@withCoverExtractSlot CoverEnsureResult.Hit(it) }
             coverFromDocumentExtractCache(cacheKey)?.let { return@withCoverExtractSlot CoverEnsureResult.Hit(it) }
+            if (isPdfCacheKey(cacheKey)) {
+                return@withCoverExtractSlot PdfCoverRenderer.renderStreamCover(
+                    cacheKey = cacheKey,
+                    openSource = openSource,
+                    dest = dest,
+                    maxEdge = THUMB_EDGE,
+                    quality = THUMB_WEBP_QUALITY,
+                    onDecoded = { w, h -> noteCoverDecoded(cacheKey, w, h) },
+                ).also { if (it is CoverEnsureResult.Hit) onPdfCoverWritten(it.path) }
+            }
             try {
                 openSource().use { source ->
                     ArchiveAccess.registerAbortAction {
                         runCatching { source.close() }
                     }.use {
                         val size = runCatching { source.size }.getOrDefault(0L)
-                        val engine = openDocumentCoverEngine(cacheKey, source, size)
+                        val engine = openEpubCoverEngine(source, size)
                             ?: return@use CoverEnsureResult.Skip
-                        notePdfMetadataPages(cacheKey, engine)
                         // Opened and no image pages: drop the photo tag. Document mode
                         // still keeps PDF/EPUB by filename. A failed open stays Skip.
                         if (engine.pageCount <= 0) return@use CoverEnsureResult.NoImages
                         // Extract page 0 only (coverOnly engine). Do **not** saveIndex:
                         // a 1-member incomplete index is treated as a full page list by
-                        // openFromIndex and makes multi-page PDFs/EPUBs open as 1 page.
+                        // openFromIndex and makes multi-page EPUBs open as 1 page.
                         val thumb = extractDocumentCover(cacheKey, engine)
                         if (thumb != null) CoverEnsureResult.Hit(thumb) else CoverEnsureResult.Skip
                     }
@@ -856,12 +864,21 @@ object ArchiveCoverCache {
         return withCoverExtractSlot {
             existingCover(dest)?.let { return@withCoverExtractSlot CoverEnsureResult.Hit(it) }
             coverFromDocumentExtractCache(key)?.let { return@withCoverExtractSlot CoverEnsureResult.Hit(it) }
+            if (isPdfFileName(archivePath.name) || isPdfCacheKey(key)) {
+                return@withCoverExtractSlot PdfCoverRenderer.renderLocalCover(
+                    archivePath = archivePath,
+                    cacheKey = key,
+                    dest = dest,
+                    maxEdge = THUMB_EDGE,
+                    quality = THUMB_WEBP_QUALITY,
+                    onDecoded = { w, h -> noteCoverDecoded(key, w, h) },
+                ).also { if (it is CoverEnsureResult.Hit) onPdfCoverWritten(it.path) }
+            }
             try {
                 archivePath.openFileDescriptor("r").use { pfd ->
                     PfdArchiveByteSource(pfd, ownsPfd = false).use { source ->
-                        val engine = openDocumentCoverEngine(key, source, pfd.statSize)
+                        val engine = openEpubCoverEngine(source, pfd.statSize)
                             ?: return@withCoverExtractSlot CoverEnsureResult.Skip
-                        notePdfMetadataPages(key, engine)
                         // Opened and no image pages: drop the photo tag. Document mode
                         // still keeps PDF/EPUB by filename. A failed open stays Skip.
                         if (engine.pageCount <= 0) return@withCoverExtractSlot CoverEnsureResult.NoImages
@@ -880,47 +897,28 @@ object ArchiveCoverCache {
         }
     }
 
+    private fun isPdfCacheKey(cacheKey: String): Boolean {
+        val base = cacheKey.substringAfterLast('/').substringAfterLast('\\').substringAfterLast(':')
+        return isPdfFileName(base) || cacheKey.endsWith(".pdf", ignoreCase = true)
+    }
+
+    private fun onPdfCoverWritten(path: Path) {
+        markPresent(path)
+        OriginDiskCache.scheduleTrim()
+    }
+
     private suspend fun extractDocumentCover(
         cacheKey: String,
         engine: com.hippo.ehviewer.library.document.DocumentImageEngine,
     ): Path? {
-        if (engine is PdfImageEngine) {
-            // Creating a reader page first can allocate hundreds of MiB of ARGB
-            // pixels. Sample before expanding colors, as the photo grid does.
-            return HdrConvertCache.withThumbConvertSlot {
-                val bytes = engine.extractCoverThumb(0) ?: return@withThumbConvertSlot null
-                writeCoverFromPageBytes(cacheKey, bytes, "webp")
-            }
-        }
         val page = engine.extractToCache(cacheKey, 0) ?: return null
         return writeCoverFromExtractedPage(cacheKey, page)
     }
 
-    /** Catalog `/Count` from the parser this thumb fetch already opened. */
-    private fun notePdfMetadataPages(
-        cacheKey: String,
-        engine: com.hippo.ehviewer.library.document.DocumentImageEngine,
-    ) {
-        val pdf = engine as? PdfImageEngine ?: return
-        PdfPageCounts.note(cacheKey, pdf.metadataPageCount)
-    }
-
-    private fun openDocumentCoverEngine(
-        cacheKey: String,
+    private fun openEpubCoverEngine(
         source: ArchiveByteSource,
         size: Long,
-    ): com.hippo.ehviewer.library.document.DocumentImageEngine? {
-        val base = cacheKey.substringAfterLast('/').substringAfterLast(':')
-        return when {
-            isEpubFileName(base) || cacheKey.endsWith(".epub", ignoreCase = true) ->
-                com.hippo.ehviewer.library.document.EpubEngine.open(source, size, coverOnly = true)
-            isPdfFileName(base) || cacheKey.endsWith(".pdf", ignoreCase = true) ->
-                com.hippo.ehviewer.library.document.PdfImageEngine.open(source, size, coverOnly = true)
-            else ->
-                com.hippo.ehviewer.library.document.EpubEngine.open(source, size, coverOnly = true)
-                    ?: com.hippo.ehviewer.library.document.PdfImageEngine.open(source, size, coverOnly = true)
-        }
-    }
+    ): com.hippo.ehviewer.library.document.DocumentImageEngine? = com.hippo.ehviewer.library.document.EpubEngine.open(source, size, coverOnly = true)
 
     /**
      * Lazy browse thumb for network solid archives (RAR/CBR/7z):

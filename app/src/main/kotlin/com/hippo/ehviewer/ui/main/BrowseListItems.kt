@@ -1823,6 +1823,7 @@ fun BrowseCoverThumb(
                                 cover.remoteRelativeFile,
                                 pipeline = !isDocumentFileName(name) && !isMobiContainerFileName(name),
                                 yieldable = true,
+                                readahead = !isPdfFileName(name),
                             )
                         }
                     }
@@ -1874,6 +1875,7 @@ fun BrowseCoverThumb(
                                 password,
                                 cover.remoteRelativeFile,
                                 pipeline = !isDocumentFileName(name) && !isMobiContainerFileName(name),
+                                readahead = !isPdfFileName(name),
                             )
                         }
                     }
