@@ -1,5 +1,7 @@
 package com.hippo.ehviewer.coil
 
+import android.graphics.Bitmap
+import android.os.Build
 import androidx.compose.ui.unit.IntRect
 import coil3.Extras
 import coil3.getExtra
@@ -22,6 +24,12 @@ fun ImageRequest.Builder.maybeCropBorder(enable: Boolean) = apply {
 val ImageRequest.maybeCropBorder: Boolean
     get() = getExtra(maybeCropBorderKey)
 
+internal fun Bitmap.isBasicSdrForCrop(): Boolean {
+    if (config != Bitmap.Config.ARGB_8888 && config != Bitmap.Config.RGB_565) return false
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && colorSpace?.isWideGamut == true) return false
+    return true
+}
+
 object DetectBorderInterceptor : Interceptor {
     override suspend fun intercept(chain: Chain): ImageResult {
         val result = chain.proceed()
@@ -29,6 +37,7 @@ object DetectBorderInterceptor : Interceptor {
             val image = result.image
             if (image is BitmapImageWithExtraInfo && !image.hasQrCode && !image.hasGainmap) {
                 val bitmap = image.image.bitmap
+                if (!bitmap.isBasicSdrForCrop()) return result
                 val ratio = if (image.height > image.width) {
                     image.height / image.width
                 } else {

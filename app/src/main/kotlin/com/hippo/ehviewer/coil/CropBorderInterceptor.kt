@@ -23,14 +23,15 @@ object CropBorderInterceptor : Interceptor {
         if (result is SuccessResult) {
             val image = result.image
             if (image is BitmapImageWithExtraInfo) {
-                // Cropping would drop Ultra HDR gain maps.
+                // Cropping only applies to basic SDR bitmaps (never gain maps / HDR / wide gamut).
                 if (image.hasGainmap) return result
+                val src = image.image.bitmap
+                if (!src.isBasicSdrForCrop()) return result
                 // Copy with cropped region
                 val srcSize = IntSize(image.width, image.height)
                 if (image.rect.size != srcSize) {
                     val (x, y) = image.rect.topLeft
                     val (w, h) = image.rect.size
-                    val src = image.image.bitmap
 
                     // Large hardware bitmaps have rendering issues (e.g. crash, empty) on some devices.
                     // This is not ideal but I haven't figured out how to probe the threshold.
