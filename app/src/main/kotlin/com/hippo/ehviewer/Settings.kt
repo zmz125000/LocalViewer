@@ -1418,7 +1418,7 @@ object Settings : DataStorePreferences(null) {
     val dualPageGap = boolPref("pref_dual_page_gap", false)
     val zoomStart = intPref("pref_zoom_start_key", 1)
 
-    /** Press & hold zoom percentage: 0 = Off, 110..150 = 1.1x..1.5x. */
+    /** Press & hold zoom percentage: 0 = Off, 120..200 = 1.2x..2x. */
     val pressHoldZoom = intPref("pref_press_hold_zoom", 0)
 
     /** When on, long press toggles zoom on/off; when off, zooms only while held. */

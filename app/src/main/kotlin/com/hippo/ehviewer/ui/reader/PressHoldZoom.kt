@@ -22,7 +22,7 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
 import me.saket.telephoto.zoomable.ZoomableState
 
-internal val PRESS_HOLD_ZOOM_VALUES = listOf(0, 110, 120, 130, 140, 150)
+internal val PRESS_HOLD_ZOOM_VALUES = listOf(0, 120, 140, 160, 180, 200)
 
 private const val PRESS_HOLD_ZOOM_IN_DURATION_MS = 120
 

@@ -617,4 +617,7 @@
     <string name="image_conversion_tone_mapper">SDR 色調映射</string>
     <string name="image_conversion_tone_off">關閉</string>
     <string name="image_conversion_tone_custom">SKIV（自訂）</string>
+    <string name="pref_press_hold_zoom">長按縮放</string>
+    <string name="pref_press_hold_zoom_off">關閉</string>
+    <string name="pref_press_hold_zoom_toggle">長按切換縮放</string>
 </resources>

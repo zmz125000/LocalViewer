@@ -10,12 +10,12 @@ class PressHoldZoomTest {
     fun pressHoldZoomFactorMapsOffAndSupportedSteps() {
         assertEquals(0f, pressHoldZoomFactor(0), 0f)
         assertEquals(0f, pressHoldZoomFactor(100), 0f)
-        assertEquals(1.1f, pressHoldZoomFactor(110), 0.0001f)
         assertEquals(1.2f, pressHoldZoomFactor(120), 0.0001f)
-        assertEquals(1.3f, pressHoldZoomFactor(130), 0.0001f)
         assertEquals(1.4f, pressHoldZoomFactor(140), 0.0001f)
-        assertEquals(1.5f, pressHoldZoomFactor(150), 0.0001f)
-        assertEquals(listOf(0, 110, 120, 130, 140, 150), PRESS_HOLD_ZOOM_VALUES)
+        assertEquals(1.6f, pressHoldZoomFactor(160), 0.0001f)
+        assertEquals(1.8f, pressHoldZoomFactor(180), 0.0001f)
+        assertEquals(2f, pressHoldZoomFactor(200), 0.0001f)
+        assertEquals(listOf(0, 120, 140, 160, 180, 200), PRESS_HOLD_ZOOM_VALUES)
     }
 
     @Test
