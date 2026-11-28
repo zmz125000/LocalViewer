@@ -142,6 +142,7 @@ fun PagerItem(
             val optimize by Settings.readerHiResOptimize.collectAsState()
             val drawScale = LocalReaderDrawScale.current
             val zoomSettled = LocalReaderZoomSettled.current
+            val scrollSettled = LocalReaderScrollSettled.current
             // Kernel cache scale. Updated when the pinch and settle animation stop,
             // not on each zoom frame, so the shader does not run during the gesture.
             val settledZoom = remember { mutableFloatStateOf(1f) }
@@ -154,6 +155,18 @@ fun PagerItem(
                     delay(ZOOM_CACHE_SETTLE_MS)
                     val zoom = scale?.takeIf { it.isFinite() && it > 0f } ?: 1f
                     if (settledZoom.floatValue != zoom) settledZoom.floatValue = zoom
+                }
+            }
+            // Defer new GPU scaler bakes while the webtoon strip is actively scrolling/flinging.
+            val scalerBakeAllowed = remember { mutableStateOf(scrollSettled()) }
+            LaunchedEffect(scrollSettled) {
+                snapshotFlow { scrollSettled() }.collectLatest { settled ->
+                    if (!settled) {
+                        scalerBakeAllowed.value = false
+                    } else {
+                        delay(SCROLL_CACHE_SETTLE_MS)
+                        scalerBakeAllowed.value = true
+                    }
                 }
             }
             val fullFlow = remember(page.index, pageLoader) { pageLoader.hiResFullFlow(page.index) }
@@ -215,7 +228,14 @@ fun PagerItem(
                 }
                 val previous = shown.image
                 shown.image = display
-                painter = display.toPainter(upMode, downMode, limitUpscale, allowDisplayScaler, settledZoom)
+                painter = display.toPainter(
+                    upMode,
+                    downMode,
+                    limitUpscale,
+                    allowDisplayScaler,
+                    settledZoom,
+                    scalerBakeAllowed,
+                )
                 if (previous != null && previous !== display) {
                     // The display list can sample the old bitmap for a frame after the swap.
                     shown.retiring = previous
@@ -273,6 +293,9 @@ fun PagerItem(
             DisposableEffect(page, painter) {
                 page.displayReadyFlow.value = painter != null
                 onDispose { page.displayReadyFlow.value = false }
+            }
+            LaunchedEffect(painter, inViewport) {
+                if (!inViewport) (painter as? BitmapPainter)?.onHidden()
             }
             painter?.let { painter ->
                 val drawable = (painter as? DrawablePainter)?.drawable
@@ -530,6 +553,7 @@ private fun Image.toPainter(
     limitUpscale: State<Boolean>,
     allowScaler: Boolean,
     settledZoom: FloatState,
+    allowBake: State<Boolean>,
 ) = when (val image = innerImage) {
     is BitmapImage -> BitmapPainter(
         image.bitmap,
@@ -539,6 +563,7 @@ private fun Image.toPainter(
         limitUpscale,
         displayScaler && allowScaler,
         settledZoom,
+        allowBake,
         gpuToneMapping,
     )
     is DrawableImage -> DrawablePainter(image.drawable)
@@ -552,6 +577,9 @@ private const val MIN_ONSCREEN_FRACTION = 0.01f
 
 /** Scale must sit still this long before the kernel cache rebuilds. */
 private const val ZOOM_CACHE_SETTLE_MS = 120L
+
+/** Strip scroll must settle this long before unbaked GPU scaler layers bake. */
+private const val SCROLL_CACHE_SETTLE_MS = 80L
 
 @Composable
 fun AdsPlaceholder(

@@ -176,7 +176,8 @@ fun WebtoonViewer(
     val cacheFraction = if (horizontal) WEBTOON_HORIZONTAL_CACHE_FRACTION else SCROLL_FRACTION
 
     // key axis so vertical ↔ horizontal swap does not reuse incompatible item measure.
-    readerDrawScaleProvider(zoomableState) {
+    val scrollSettled = remember(stripState) { { !stripState.isScrollInProgress } }
+    readerDrawScaleProvider(zoomableState, scrollSettled = scrollSettled) {
         key(horizontal) {
             WebtoonStrip(
                 state = stripState,

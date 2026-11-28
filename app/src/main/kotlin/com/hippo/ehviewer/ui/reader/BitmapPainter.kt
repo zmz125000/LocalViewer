@@ -29,6 +29,7 @@ class BitmapPainter(
      * Reading it here redraws once, then the kernel bakes at that scale.
      */
     private val settledZoom: FloatState,
+    private val allowBake: State<Boolean>,
     private val toneMapping: com.hippo.ehviewer.image.hdr.ReaderGpuToneMapping? = null,
 ) : Painter() {
     private val srcRect = intrinsicSize.toRect().toAndroidRectF()
@@ -36,6 +37,12 @@ class BitmapPainter(
     private val matrix = Matrix()
     private var pageScaler: Any? = null
     private var scalerFailed = false
+    private val readAllowBake: () -> Boolean = { allowBake.value }
+
+    /** Mark that this page left the viewport and HWUI may have evicted its cached layer. */
+    fun onHidden() {
+        pageScaler?.let { DisplayScaler.markHidden(it) }
+    }
 
     /** Drop the cached kernel layer after this painter leaves the display list. */
     fun releaseCache() {
@@ -53,7 +60,7 @@ class BitmapPainter(
             val zoom = settledZoom.floatValue.coerceAtLeast(1f)
             val cacheW = (dstRect.width() * zoom).coerceAtMost(bitmap.width.toFloat()).fastRoundToInt().coerceAtLeast(1)
             val cacheH = (dstRect.height() * zoom).coerceAtMost(bitmap.height.toFloat()).fastRoundToInt().coerceAtLeast(1)
-            if (drawDisplayScaler(native, dstRect, 3, cacheW, cacheH)) return@drawIntoCanvas
+            if (drawDisplayScaler(native, dstRect, 3, cacheW, cacheH, ALWAYS_BAKE)) return@drawIntoCanvas
         }
         val plan = if (!allowScaler || dstRect.width() < 1f || dstRect.height() < 1f) {
             ScalerDraw(0, 1, 1)
@@ -75,8 +82,8 @@ class BitmapPainter(
             native.drawBitmap(bitmap, matrix, if (plan.mode == 1) nearestPaint else paint)
             return@drawIntoCanvas
         }
-        if (drawDisplayScaler(native, dstRect, plan.mode, plan.cacheW, plan.cacheH)) return@drawIntoCanvas
-        releaseShader()
+        if (drawDisplayScaler(native, dstRect, plan.mode, plan.cacheW, plan.cacheH, readAllowBake)) return@drawIntoCanvas
+        if (scalerFailed) releaseShader()
         matrix.setRectToRect(srcRect, dstRect, Matrix.ScaleToFit.FILL)
         native.drawBitmap(bitmap, matrix, paint)
     }
@@ -87,19 +94,23 @@ class BitmapPainter(
         mode: Int,
         cacheW: Int,
         cacheH: Int,
+        allowBake: () -> Boolean,
     ): Boolean {
         if (!DisplayScaler.wantsShader(mode) || scalerFailed || dst.width() < 1f || dst.height() < 1f) {
             return false
         }
-        val scaler = pageScaler ?: try {
-            DisplayScaler.create(bitmap, toneMapping).also { pageScaler = it }
-        } catch (e: RuntimeException) {
-            scalerFailed = true
-            android.util.Log.e("DisplayScaler", "shader unavailable", e)
-            return false
+        val scaler = pageScaler ?: run {
+            if (!allowBake()) return false
+            try {
+                DisplayScaler.create(bitmap, toneMapping).also { pageScaler = it }
+            } catch (e: RuntimeException) {
+                scalerFailed = true
+                android.util.Log.e("DisplayScaler", "shader unavailable", e)
+                return false
+            }
         }
         return try {
-            DisplayScaler.draw(scaler, canvas, dst, mode, cacheW, cacheH)
+            DisplayScaler.draw(scaler, canvas, dst, mode, cacheW, cacheH, allowBake)
         } catch (e: RuntimeException) {
             scalerFailed = true
             releaseShader()
@@ -113,6 +124,8 @@ class BitmapPainter(
         pageScaler = null
     }
 }
+
+private val ALWAYS_BAKE: () -> Boolean = { true }
 
 private val paint = Paint().apply {
     isAntiAlias = true

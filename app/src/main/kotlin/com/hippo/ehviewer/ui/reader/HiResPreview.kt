@@ -17,6 +17,13 @@ internal val LocalReaderDrawScale = compositionLocalOf<() -> Float?> { { 1f } }
  */
 internal val LocalReaderZoomSettled = compositionLocalOf<() -> Boolean> { { true } }
 
+/**
+ * True when the continuous strip is not actively dragging or flinging.
+ * Unbaked GPU scaler layers defer baking until scroll settles so newly visible
+ * webtoon pages do not stall scroll frames.
+ */
+internal val LocalReaderScrollSettled = compositionLocalOf<() -> Boolean> { { true } }
+
 /** Graphics-layer scale applied by telephoto, or null until the gesture state exists. */
 internal fun ZoomableState.readerDrawScaleOrNull(): Float? {
     val transformation = contentTransformation
@@ -29,12 +36,17 @@ internal fun ZoomableState.readerDrawScaleOrNull(): Float? {
 internal fun ZoomableState.readerZoomSettled(): Boolean = !isAnimationRunning
 
 @Composable
-internal fun readerDrawScaleProvider(state: ZoomableState, content: @Composable () -> Unit) {
+internal fun readerDrawScaleProvider(
+    state: ZoomableState,
+    scrollSettled: () -> Boolean = { true },
+    content: @Composable () -> Unit,
+) {
     val scale = remember(state) { { state.readerDrawScaleOrNull() } }
     val settled = remember(state) { { state.readerZoomSettled() } }
     CompositionLocalProvider(
         LocalReaderDrawScale provides scale,
         LocalReaderZoomSettled provides settled,
+        LocalReaderScrollSettled provides scrollSettled,
         content = content,
     )
 }
