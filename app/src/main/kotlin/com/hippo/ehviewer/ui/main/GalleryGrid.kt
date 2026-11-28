@@ -24,6 +24,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ShapeDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -135,6 +136,13 @@ enum class SquareGridMode(val prefValue: Int) {
 }
 
 /**
+ * Optional per-folder override for [GalleryGridDefaults.squareGridMode], provided by
+ * folder browsers so locked folders and their subfolders use [SquareGridMode.Off]
+ * without altering the global preference.
+ */
+val LocalSquareGridModeOverride = compositionLocalOf<SquareGridMode?> { null }
+
+/**
  * Shared Library / Browse thumb-grid layout.
  *
  * [Settings.gridCellSize] is the minimum cell edge. [GridCells.Adaptive] then
@@ -147,6 +155,7 @@ object GalleryGridDefaults {
 
     @Composable
     fun squareGridMode(): SquareGridMode {
+        LocalSquareGridModeOverride.current?.let { return it }
         val pref by Settings.squareGrid.collectAsState()
         return SquareGridMode.fromPref(pref)
     }

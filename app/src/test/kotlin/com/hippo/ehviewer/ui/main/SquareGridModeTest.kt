@@ -4,6 +4,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ShapeDefaults
 import androidx.compose.ui.unit.dp
 import com.ehviewer.core.model.BaseGalleryInfo
+import com.hippo.ehviewer.library.BrowseFolderId
+import com.hippo.ehviewer.library.BrowseSquareGridPersist
 import com.hippo.ehviewer.library.LOCAL_ARCHIVE_TOKEN
 import com.hippo.ehviewer.library.LOCAL_BROWSE_TOKEN
 import com.hippo.ehviewer.library.LOCAL_FILE_TOKEN
@@ -94,5 +96,49 @@ class SquareGridModeTest {
         )) {
             assertFalse(token, LocalHistory.isGallery(info(token)))
         }
+    }
+
+    @Test
+    fun folderSquareGridLockAppliesOffToFolderAndSubfolders() {
+        val parent = BrowseFolderId.local(1L, "Comics")
+        val child = BrowseFolderId.local(1L, "Comics/Series/Vol1")
+        val sibling = BrowseFolderId.local(1L, "Photos")
+        val saved = setOf(parent.key)
+
+        val parentMatch = BrowseSquareGridPersist.resolveLocked(parent, saved)!!
+        assertEquals(SquareGridMode.Off, parentMatch.saved)
+        assertEquals(SquareGridMode.Off, parentMatch.effective)
+        assertTrue(parentMatch.ownedHere)
+        assertTrue(parentMatch.showLock)
+
+        val childMatch = BrowseSquareGridPersist.resolveLocked(child, saved)!!
+        assertEquals(parent.key, childMatch.governingKey)
+        assertEquals(SquareGridMode.Off, childMatch.effective)
+        assertFalse(childMatch.ownedHere)
+        assertFalse(childMatch.showLock)
+
+        // Sibling outside the locked tree is unaffected.
+        assertEquals(null, BrowseSquareGridPersist.resolveLocked(sibling, saved))
+
+        // Session RAM override temporarily switches the locked tree to All and hides the lock icon.
+        val overridden = BrowseSquareGridPersist.resolveLocked(
+            parent,
+            saved,
+            overrides = mapOf(parent.key to SquareGridMode.All),
+        )!!
+        assertEquals(SquareGridMode.All, overridden.effective)
+        assertFalse(overridden.showLock)
+
+        // Skipped ancestor keys (e.g. SMB RPC share root) do not govern real share paths.
+        val smbRoot = BrowseFolderId.smb(2L, "")
+        val smbShare = BrowseFolderId.smb(2L, "Books")
+        assertEquals(
+            null,
+            BrowseSquareGridPersist.resolveLocked(
+                smbShare,
+                savedKeys = setOf(smbRoot.key),
+                skipAncestorKeys = setOf(smbRoot.key),
+            ),
+        )
     }
 }

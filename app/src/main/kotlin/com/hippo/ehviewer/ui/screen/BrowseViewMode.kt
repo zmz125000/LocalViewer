@@ -40,6 +40,7 @@ import com.hippo.ehviewer.collectAsState
 import com.hippo.ehviewer.library.BrowseContentMode
 import com.hippo.ehviewer.library.BrowseFolderId
 import com.hippo.ehviewer.library.BrowseModePersist
+import com.hippo.ehviewer.library.BrowseSquareGridPersist
 import com.hippo.ehviewer.library.BrowseVirtualGalleryPersist
 import com.hippo.ehviewer.library.HistoryHideMode
 import com.hippo.ehviewer.library.HistoryHidePersist
@@ -205,6 +206,19 @@ fun rememberEffectiveVirtualGalleries(
     }
 }
 
+@Composable
+fun rememberEffectiveSquareGridMode(
+    folder: BrowseFolderId?,
+    skipAncestorKeys: Set<String> = emptySet(),
+): SquareGridMode {
+    val revision by BrowseSquareGridPersist.revision.collectAsState()
+    val saved by Settings.persistSquareGrid.collectAsState()
+    val global by Settings.squareGrid.collectAsState()
+    return remember(folder, skipAncestorKeys, revision, saved, global) {
+        BrowseSquareGridPersist.effective(folder, skipAncestorKeys)
+    }
+}
+
 /**
  * View-mode control for folder browsers: content filter, list/grid layout,
  * Name/Date UI sort (separate from Library), and display toggles.
@@ -267,8 +281,12 @@ fun BrowseViewModeMenu(
     }
     var favoritesOnTop by Settings.browseFavoritesOnTop.asMutableState()
     var photoGridMode by Settings.photoGridMode.asMutableState()
-    var squareGridPref by Settings.squareGrid.asMutableState()
-    val squareGridMode = SquareGridMode.fromPref(squareGridPref)
+    val squareGridMode = rememberEffectiveSquareGridMode(virtualGalleriesFolder, skipAncestorKeys)
+    val squareGridRevision by BrowseSquareGridPersist.revision.collectAsState()
+    val squareGridSaved by Settings.persistSquareGrid.collectAsState()
+    val squareGridMatch = remember(virtualGalleriesFolder, skipAncestorKeys, squareGridRevision, squareGridSaved, squareGridMode) {
+        virtualGalleriesFolder?.let { BrowseSquareGridPersist.resolve(it, skipAncestorKeys) }
+    }
     var browseRecentOpen by Settings.browseRecentOpen.asMutableState()
     var browseRecentExpanded by Settings.browseRecentExpanded.asMutableState()
     val historyHideFolders by Settings.historyHideFolders.collectAsState()
@@ -457,10 +475,17 @@ fun BrowseViewModeMenu(
                 checked = photoGridMode,
                 onClick = { photoGridMode = !photoGridMode },
             )
-            ToggleMenuItem(
+            ContentModeItem(
                 label = stringResource(R.string.settings_square_grid),
-                checked = squareGridMode == SquareGridMode.All,
-                onClick = { squareGridPref = squareGridMode.toggleOffAll().prefValue },
+                mark = when {
+                    squareGridMatch?.showLock == true -> ModeMark.Lock
+                    squareGridMode == SquareGridMode.All -> ModeMark.Tick
+                    else -> ModeMark.None
+                },
+                onClick = { BrowseSquareGridPersist.tap(virtualGalleriesFolder, skipAncestorKeys) },
+                onLongClick = virtualGalleriesFolder?.let { current ->
+                    { BrowseSquareGridPersist.longPress(current, skipAncestorKeys) }
+                },
             )
             ToggleMenuItem(
                 label = stringResource(R.string.browse_menu_zip_as_dir),
