@@ -428,6 +428,17 @@ fun BrowseViewModeMenu(
                     expanded = false
                 },
             )
+            if (virtualGalleriesFolder != null) {
+                ContentModeItem(
+                    label = stringResource(R.string.settings_square_grid),
+                    mark = when {
+                        squareGridMatch?.showLock == true -> ModeMark.Lock
+                        squareGridMode == SquareGridMode.All -> ModeMark.Tick
+                        else -> ModeMark.None
+                    },
+                    onClick = { BrowseSquareGridPersist.toggleLock(virtualGalleriesFolder, skipAncestorKeys) },
+                )
+            }
             // Under List/Grid: folder sort with ↑↓ (separate from Library sort).
             SortMenuItem(
                 label = stringResource(R.string.library_sort_name),
@@ -485,18 +496,6 @@ fun BrowseViewModeMenu(
                 label = stringResource(R.string.browse_menu_photo_grid),
                 checked = photoGridMode,
                 onClick = { photoGridMode = !photoGridMode },
-            )
-            ContentModeItem(
-                label = stringResource(R.string.settings_square_grid),
-                mark = when {
-                    squareGridMatch?.showLock == true -> ModeMark.Lock
-                    squareGridMode == SquareGridMode.All -> ModeMark.Tick
-                    else -> ModeMark.None
-                },
-                onClick = { BrowseSquareGridPersist.tap(virtualGalleriesFolder, skipAncestorKeys) },
-                onLongClick = virtualGalleriesFolder?.let { current ->
-                    { BrowseSquareGridPersist.longPress(current, skipAncestorKeys) }
-                },
             )
             ToggleMenuItem(
                 label = stringResource(R.string.browse_menu_zip_as_dir),

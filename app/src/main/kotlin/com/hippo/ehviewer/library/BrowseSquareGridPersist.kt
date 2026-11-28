@@ -60,23 +60,11 @@ object BrowseSquareGridPersist {
 
     fun isLockedOff(folder: BrowseFolderId?, skipAncestorKeys: Set<String> = emptySet()): Boolean = folder?.let { resolve(it, skipAncestorKeys)?.effective == SquareGridMode.Off } == true
 
-    fun tap(folder: BrowseFolderId?, skipAncestorKeys: Set<String> = emptySet()) {
-        val match = folder?.let { resolve(it, skipAncestorKeys) }
-        if (match == null) {
-            val current = SquareGridMode.fromPref(Settings.squareGrid.value)
-            Settings.squareGrid.value = current.toggleOffAll().prefValue
-            return
-        }
-        val next = match.effective.toggleOffAll()
-        if (next == match.saved) overrides.remove(match.governingKey) else overrides[match.governingKey] = next
-        changes.update { it + 1 }
-    }
-
     /**
-     * Lock this folder (and its subfolders) to [SquareGridMode.Off].
-     * Long-pressing an active own lock removes it.
+     * Toggle the per-folder [SquareGridMode.Off] lock for [folder] (and its subfolders)
+     * without changing the global [Settings.squareGrid] preference.
      */
-    fun longPress(folder: BrowseFolderId?, skipAncestorKeys: Set<String> = emptySet()) {
+    fun toggleLock(folder: BrowseFolderId?, skipAncestorKeys: Set<String> = emptySet()) {
         if (folder == null) return
         val match = resolve(folder, skipAncestorKeys)
         val current = Settings.persistSquareGrid.value
