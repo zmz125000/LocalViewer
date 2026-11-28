@@ -19,10 +19,11 @@ class PressHoldZoomTest {
     }
 
     @Test
-    fun pressHoldZoomTimeoutHalvesLongPressTimeout() {
-        assertEquals(200L, pressHoldZoomTimeoutMillis(400L))
-        assertEquals(250L, pressHoldZoomTimeoutMillis(500L))
+    fun pressHoldZoomTimeoutUsesThirdOfLongPressTimeout() {
+        assertEquals(133L, pressHoldZoomTimeoutMillis(400L))
+        assertEquals(166L, pressHoldZoomTimeoutMillis(500L))
         assertEquals(1L, pressHoldZoomTimeoutMillis(0L))
+        assertEquals(1.5f, PRESS_HOLD_PAN_MULTIPLIER, 0f)
     }
 
     @Test

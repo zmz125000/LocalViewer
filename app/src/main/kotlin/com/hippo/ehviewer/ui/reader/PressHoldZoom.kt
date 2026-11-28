@@ -25,10 +25,11 @@ import me.saket.telephoto.zoomable.ZoomableState
 internal val PRESS_HOLD_ZOOM_VALUES = listOf(0, 120, 140, 160, 180, 200)
 
 private const val PRESS_HOLD_ZOOM_IN_DURATION_MS = 120
+internal const val PRESS_HOLD_PAN_MULTIPLIER = 1.5f
 
 internal fun pressHoldZoomFactor(prefValue: Int): Float = if (prefValue > 100) prefValue / 100f else 0f
 
-internal fun pressHoldZoomTimeoutMillis(longPressTimeoutMillis: Long): Long = (longPressTimeoutMillis / 2L).coerceAtLeast(1L)
+internal fun pressHoldZoomTimeoutMillis(longPressTimeoutMillis: Long): Long = (longPressTimeoutMillis / 3L).coerceAtLeast(1L)
 
 internal fun isZoomedForPressHold(currentScale: Float, initialScale: Float): Boolean = initialScale > 0f && currentScale.isFinite() && initialScale.isFinite() && currentScale / initialScale > 1.01f
 
@@ -92,7 +93,7 @@ class PressHoldZoomController internal constructor(
                     total += more
                 }
                 if (total != Offset.Zero) {
-                    zoomableState.panBy(total, animationSpec = snap())
+                    zoomableState.panBy(total * PRESS_HOLD_PAN_MULTIPLIER, animationSpec = snap())
                 }
             }
         }
