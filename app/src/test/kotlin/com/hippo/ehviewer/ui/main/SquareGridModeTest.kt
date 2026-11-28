@@ -4,6 +4,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ShapeDefaults
 import androidx.compose.ui.unit.dp
 import com.ehviewer.core.model.BaseGalleryInfo
+import com.hippo.ehviewer.coil.CoverThumb
 import com.hippo.ehviewer.library.BrowseContentMode
 import com.hippo.ehviewer.library.BrowseFolderId
 import com.hippo.ehviewer.library.BrowseSquareGridPersist
@@ -73,6 +74,20 @@ class SquareGridModeTest {
         assertEquals(56f * 1.41421356f, SquareGridMode.Off.historyListLeadHeight(width = 56.dp).value, 1e-2f)
         assertEquals(56f * 1.41421356f, SquareGridMode.On.historyListLeadHeight(width = 56.dp).value, 1e-2f)
         assertEquals(56f, SquareGridMode.All.historyListLeadHeight(width = 56.dp).value, 1e-3f)
+    }
+
+    @Test
+    fun tabletListThumbUsesLargerDisplaySize() {
+        assertEquals(CoverThumb.ListDisplay, CoverThumb.listDisplay(smallestWidthDp = 411))
+        assertEquals(CoverThumb.ListDisplay, CoverThumb.listDisplay(smallestWidthDp = 599))
+        assertEquals(CoverThumb.TabletListDisplay, CoverThumb.listDisplay(smallestWidthDp = 600))
+        assertEquals(CoverThumb.TabletListDisplay, CoverThumb.listDisplay(smallestWidthDp = 840))
+        assertTrue(CoverThumb.TabletListDisplay > CoverThumb.ListDisplay)
+        assertEquals(
+            CoverThumb.TabletListDisplay.value * 1.41421356f,
+            SquareGridMode.Off.listLeadHeight(isGallery = true, width = CoverThumb.TabletListDisplay).value,
+            1e-2f,
+        )
     }
 
     @Test

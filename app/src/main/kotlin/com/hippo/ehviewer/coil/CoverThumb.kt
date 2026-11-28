@@ -3,9 +3,11 @@ package com.hippo.ehviewer.coil
 import android.content.Context
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.window.core.layout.WindowSizeClass.Companion.WIDTH_DP_MEDIUM_LOWER_BOUND
 import coil3.request.ImageRequest
 import coil3.request.crossfade
 import coil3.size.Precision
@@ -19,14 +21,26 @@ import com.hippo.ehviewer.ktbuilder.imageRequest
  * memory cache can hold many more list/grid cells while scrolling.
  */
 object CoverThumb {
-    /** Browse list leading square (matches default cover thumb). */
+    /** Browse list leading square on phones (matches default cover thumb). */
     val ListDisplay = 56.dp
+
+    /** Larger browse list leading width on tablets (sw ≥ 600dp). */
+    val TabletListDisplay = 80.dp
+
+    fun listDisplay(smallestWidthDp: Int): Dp = if (smallestWidthDp >= WIDTH_DP_MEDIUM_LOWER_BOUND) {
+        TabletListDisplay
+    } else {
+        ListDisplay
+    }
+
+    @Composable
+    fun listDisplay(): Dp = listDisplay(LocalConfiguration.current.smallestScreenWidthDp)
 
     /** Decode at 2× display size for crisp thumbs; clamp to disk thumb long edge. */
     fun decodePx(displayPx: Int): Int = (displayPx * 2).coerceIn(128, 768)
 
     @Composable
-    fun listDecodePx(display: Dp = ListDisplay): Int {
+    fun listDecodePx(display: Dp = listDisplay()): Int {
         val density = LocalDensity.current
         return remember(display, density.density) {
             decodePx(with(density) { display.roundToPx() })
