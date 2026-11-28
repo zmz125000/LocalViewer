@@ -1,5 +1,9 @@
 package com.hippo.ehviewer.ui.reader
 
+import androidx.compose.animation.core.snap
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
@@ -14,12 +18,17 @@ import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.collectAsState
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
 import me.saket.telephoto.zoomable.ZoomableState
 
 internal val PRESS_HOLD_ZOOM_VALUES = listOf(0, 110, 120, 130, 140, 150)
 
+private const val PRESS_HOLD_ZOOM_IN_DURATION_MS = 120
+
 internal fun pressHoldZoomFactor(prefValue: Int): Float = if (prefValue > 100) prefValue / 100f else 0f
+
+internal fun pressHoldZoomTimeoutMillis(longPressTimeoutMillis: Long): Long = (longPressTimeoutMillis / 2L).coerceAtLeast(1L)
 
 internal fun isZoomedForPressHold(currentScale: Float, initialScale: Float): Boolean = initialScale > 0f && currentScale.isFinite() && initialScale.isFinite() && currentScale / initialScale > 1.01f
 
@@ -29,61 +38,87 @@ class PressHoldZoomController internal constructor(
     private val scope: CoroutineScope,
     private val getFactor: () -> Float,
     private val getToggle: () -> Boolean,
-    private val getFallback: () -> ((Offset) -> Unit)?,
 ) {
-    private var pointerDown = false
-    private var holdZoomActive = false
     private var zoomJob: Job? = null
+    private var panChannel: Channel<Offset>? = null
 
-    val enabled: Boolean
-        get() = getFactor() > 0f
-
-    internal fun onPointerCountsChanged(pressedCount: Int) {
-        val anyPressed = pressedCount > 0
-        pointerDown = anyPressed
-        if (!holdZoomActive) return
-        if (pressedCount >= 2) {
-            // User added a second finger to pinch; hand control over without snapping back.
-            holdZoomActive = false
-        } else if (!anyPressed) {
-            holdZoomActive = false
-            launchResetZoom()
-        }
-    }
-
-    internal fun handleLongClick(centroid: Offset) {
+    internal fun onToggleLongPress(centroid: Offset) {
         val factor = getFactor()
-        if (factor <= 0f) {
-            getFallback()?.invoke(centroid)
-            return
-        }
+        if (factor <= 0f) return
         val transformation = zoomableState.contentTransformation
         if (!transformation.isSpecified || zoomableState.zoomFraction == null) return
         val initialScale = transformation.scaleMetadata.initialScale.scaleX
         if (initialScale <= 0f || !initialScale.isFinite()) return
 
-        if (getToggle()) {
-            holdZoomActive = false
-            if (isZoomedForPressHold(transformation.scale.scaleX, initialScale)) {
-                launchResetZoom()
-            } else {
-                launchZoomTo(initialScale * factor, centroid)
-            }
+        if (isZoomedForPressHold(transformation.scale.scaleX, initialScale)) {
+            launchResetZoom()
         } else {
-            if (!pointerDown) return
-            holdZoomActive = true
-            launchZoomTo(initialScale * factor, centroid)
+            panChannel?.close()
+            panChannel = null
+            zoomJob?.cancel()
+            zoomJob = scope.launch {
+                zoomableState.zoomTo(
+                    zoomFactor = initialScale * factor,
+                    centroid = centroid,
+                    animationSpec = tween(durationMillis = PRESS_HOLD_ZOOM_IN_DURATION_MS),
+                )
+            }
         }
     }
 
-    private fun launchZoomTo(zoomFactor: Float, centroid: Offset) {
+    internal fun onHoldStart(centroid: Offset): Boolean {
+        val factor = getFactor()
+        if (factor <= 0f) return false
+        val transformation = zoomableState.contentTransformation
+        if (!transformation.isSpecified || zoomableState.zoomFraction == null) return false
+        val initialScale = transformation.scaleMetadata.initialScale.scaleX
+        if (initialScale <= 0f || !initialScale.isFinite()) return false
+
+        panChannel?.close()
+        val channel = Channel<Offset>(Channel.UNLIMITED)
+        panChannel = channel
         zoomJob?.cancel()
         zoomJob = scope.launch {
-            zoomableState.zoomTo(zoomFactor = zoomFactor, centroid = centroid)
+            zoomableState.zoomTo(
+                zoomFactor = initialScale * factor,
+                centroid = centroid,
+                animationSpec = tween(durationMillis = PRESS_HOLD_ZOOM_IN_DURATION_MS),
+            )
+            // Drain any drag deltas accumulated during zoom-in, then stream live pan deltas.
+            for (first in channel) {
+                var total = first
+                while (true) {
+                    val more = channel.tryReceive().getOrNull() ?: break
+                    total += more
+                }
+                if (total != Offset.Zero) {
+                    zoomableState.panBy(total, animationSpec = snap())
+                }
+            }
+        }
+        return true
+    }
+
+    internal fun onHoldDrag(delta: Offset) {
+        if (delta != Offset.Zero) {
+            panChannel?.trySend(delta)
         }
     }
 
+    internal fun onHoldHandOffToPinch() {
+        panChannel?.close()
+        panChannel = null
+    }
+
+    internal fun onHoldRelease() {
+        launchResetZoom()
+    }
+
+    internal fun isToggleMode(): Boolean = getToggle()
+
     private fun launchResetZoom() {
+        panChannel?.close()
+        panChannel = null
         zoomJob?.cancel()
         zoomJob = scope.launch {
             zoomableState.resetZoom()
@@ -102,28 +137,70 @@ fun rememberPressHoldZoom(
     val factor = pressHoldZoomFactor(prefValue)
     val currentFactor by rememberUpdatedState(factor)
     val currentToggle by rememberUpdatedState(toggle)
-    val currentFallback by rememberUpdatedState(onFallbackLongClick)
     val controller = remember(zoomableState, scope) {
         PressHoldZoomController(
             zoomableState = zoomableState,
             scope = scope,
             getFactor = { currentFactor },
             getToggle = { currentToggle },
-            getFallback = { currentFallback },
         )
     }
     val enabled = factor > 0f
-    val onLongClick: ((Offset) -> Unit)? = when {
-        enabled -> controller::handleLongClick
-        onFallbackLongClick != null -> onFallbackLongClick
-        else -> null
-    }
-    val releaseModifier = if (enabled && !toggle) {
+    // When enabled, press-and-hold is handled at half the standard timeout by [releaseModifier].
+    val onLongClick: ((Offset) -> Unit)? = if (enabled) null else onFallbackLongClick
+    val gestureModifier = if (enabled) {
         Modifier.pointerInput(controller) {
-            awaitPointerEventScope {
-                while (true) {
-                    val event = awaitPointerEvent(PointerEventPass.Initial)
-                    controller.onPointerCountsChanged(event.changes.count { it.pressed })
+            awaitEachGesture {
+                val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                val timeoutMs = pressHoldZoomTimeoutMillis(viewConfiguration.longPressTimeoutMillis)
+                var currentPosition = down.position
+                val timedOut = withTimeoutOrNull(timeoutMs) {
+                    while (true) {
+                        val event = awaitPointerEvent(PointerEventPass.Initial)
+                        if (event.changes.count { it.pressed } > 1) return@withTimeoutOrNull false
+                        val change = event.changes.firstOrNull { it.id == down.id }
+                        if (change == null || !change.pressed) return@withTimeoutOrNull false
+                        currentPosition = change.position
+                        if ((currentPosition - down.position).getDistance() > viewConfiguration.touchSlop) {
+                            return@withTimeoutOrNull false
+                        }
+                    }
+                    @Suppress("UNREACHABLE_CODE")
+                    false
+                } == null
+                if (!timedOut) return@awaitEachGesture
+
+                if (controller.isToggleMode()) {
+                    controller.onToggleLongPress(currentPosition)
+                    // Consume until release so lifting the finger does not trigger a tap.
+                    while (true) {
+                        val event = awaitPointerEvent(PointerEventPass.Initial)
+                        event.changes.forEach { it.consume() }
+                        if (event.changes.none { it.pressed }) break
+                    }
+                } else {
+                    if (!controller.onHoldStart(currentPosition)) return@awaitEachGesture
+                    var lastPosition = currentPosition
+                    while (true) {
+                        val event = awaitPointerEvent(PointerEventPass.Initial)
+                        if (event.changes.count { it.pressed } >= 2) {
+                            // User added a second finger to pinch; hand control over without snapping back.
+                            controller.onHoldHandOffToPinch()
+                            break
+                        }
+                        val change = event.changes.firstOrNull { it.id == down.id }
+                        if (change == null || !change.pressed) {
+                            change?.consume()
+                            controller.onHoldRelease()
+                            break
+                        }
+                        val delta = change.position - lastPosition
+                        lastPosition = change.position
+                        change.consume()
+                        if (delta != Offset.Zero) {
+                            controller.onHoldDrag(delta)
+                        }
+                    }
                 }
             }
         }
@@ -133,7 +210,7 @@ fun rememberPressHoldZoom(
     return PressHoldZoomBinding(
         enabled = enabled,
         onLongClick = onLongClick,
-        releaseModifier = releaseModifier,
+        releaseModifier = gestureModifier,
     )
 }
 

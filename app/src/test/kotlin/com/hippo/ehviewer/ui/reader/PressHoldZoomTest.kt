@@ -19,6 +19,13 @@ class PressHoldZoomTest {
     }
 
     @Test
+    fun pressHoldZoomTimeoutHalvesLongPressTimeout() {
+        assertEquals(200L, pressHoldZoomTimeoutMillis(400L))
+        assertEquals(250L, pressHoldZoomTimeoutMillis(500L))
+        assertEquals(1L, pressHoldZoomTimeoutMillis(0L))
+    }
+
+    @Test
     fun isZoomedForPressHoldDetectsMinimum11xRegardlessOfInitialScale() {
         assertFalse(isZoomedForPressHold(currentScale = 1f, initialScale = 1f))
         assertFalse(isZoomedForPressHold(currentScale = 2f, initialScale = 2f))
