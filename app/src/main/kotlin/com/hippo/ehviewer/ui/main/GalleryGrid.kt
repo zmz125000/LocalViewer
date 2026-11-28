@@ -169,18 +169,21 @@ object GalleryGridDefaults {
     fun historyAspectRatio(): Float = squareGridMode().historyAspectRatio()
 
     @Composable
-    fun listLeadHeight(isGallery: Boolean, width: Dp = CoverThumb.ListDisplay): Dp = squareGridMode().listLeadHeight(isGallery, width)
+    fun listLeadWidth(): Dp = CoverThumb.listDisplay()
 
     @Composable
-    fun historyListLeadHeight(width: Dp = CoverThumb.ListDisplay): Dp = squareGridMode().historyListLeadHeight(width)
+    fun listLeadHeight(isGallery: Boolean, width: Dp = listLeadWidth()): Dp = squareGridMode().listLeadHeight(isGallery, width)
 
     @Composable
-    fun listLeadModifier(isGallery: Boolean, width: Dp = CoverThumb.ListDisplay): Modifier = Modifier
+    fun historyListLeadHeight(width: Dp = listLeadWidth()): Dp = squareGridMode().historyListLeadHeight(width)
+
+    @Composable
+    fun listLeadModifier(isGallery: Boolean, width: Dp = listLeadWidth()): Modifier = Modifier
         .width(width)
         .aspectRatio(cellAspectRatio(isGallery))
 
     @Composable
-    fun historyListLeadModifier(width: Dp = CoverThumb.ListDisplay): Modifier = Modifier
+    fun historyListLeadModifier(width: Dp = listLeadWidth()): Modifier = Modifier
         .width(width)
         .aspectRatio(historyAspectRatio())
 

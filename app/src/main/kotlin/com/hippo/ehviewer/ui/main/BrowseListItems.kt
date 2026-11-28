@@ -616,7 +616,7 @@ internal fun BrowseFolderListItem(
     modifier: Modifier = Modifier,
     trailingContent: (@Composable () -> Unit)? = null,
     verticalAlignment: Alignment.Vertical,
-    leadHeight: Dp = CoverThumb.ListDisplay,
+    leadHeight: Dp = GalleryGridDefaults.listLeadWidth(),
 ) {
     Row(
         modifier = modifier
@@ -1588,7 +1588,7 @@ private fun BrowseGridCell(
 fun BrowseCoverThumb(
     cover: BrowseCover?,
     modifier: Modifier = Modifier
-        .size(56.dp)
+        .size(GalleryGridDefaults.listLeadWidth())
         .clip(ShapeDefaults.Medium),
     placeholderSize: Dp = BrowseListLeadingIconSize,
     decodeSizePx: Int? = null,

@@ -37,16 +37,34 @@ internal object DisplayScaler {
         return PageScaler(bitmap, toneMapping)
     }
 
-    fun draw(scaler: Any, canvas: Canvas, dst: RectF, mode: Int, cacheW: Int, cacheH: Int): Boolean {
+    fun draw(
+        scaler: Any,
+        canvas: Canvas,
+        dst: RectF,
+        mode: Int,
+        cacheW: Int,
+        cacheH: Int,
+        allowBake: () -> Boolean,
+    ): Boolean {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return false
-        (scaler as PageScaler).draw(canvas, dst, mode, cacheW, cacheH)
-        return true
+        return (scaler as PageScaler).draw(canvas, dst, mode, cacheW, cacheH, allowBake)
+    }
+
+    fun markHidden(scaler: Any) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
+        (scaler as PageScaler).markHidden()
     }
 
     fun release(scaler: Any) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
         (scaler as PageScaler).release()
     }
+}
+
+private enum class BlitResult {
+    Drawn,
+    Deferred,
+    Unsupported,
 }
 
 /**
@@ -64,20 +82,37 @@ internal class PageScaler(bitmap: Bitmap, private val toneMapping: ReaderGpuTone
     private val paint = Paint().apply { isDither = true }
     private val directShaders = arrayOfNulls<RuntimeShader>(4)
     private var tiles = emptyList<Tile>()
-
-    // Display list holds the native shader. This keeps the Java peer alive until the layer is dropped.
-    private val retainedShaders = ArrayList<RuntimeShader>()
     private var tiledW = 0
     private var tiledH = 0
     private var tiledMode = 0
     private var cacheUnsupported = false
+    private var layerMayBeEvicted = false
 
-    fun draw(canvas: Canvas, dst: RectF, mode: Int, cacheW: Int, cacheH: Int) {
+    fun markHidden() {
+        layerMayBeEvicted = true
+    }
+
+    fun draw(
+        canvas: Canvas,
+        dst: RectF,
+        mode: Int,
+        cacheW: Int,
+        cacheH: Int,
+        allowBake: () -> Boolean,
+    ): Boolean {
         val w = cacheW.coerceAtLeast(1)
         val h = cacheH.coerceAtLeast(1)
         val kernel = mode.coerceIn(3, 6)
-        if (!cacheUnsupported && blitCached(canvas, dst, w, h, kernel)) return
+        if (!cacheUnsupported) {
+            when (blitCached(canvas, dst, w, h, kernel, allowBake)) {
+                BlitResult.Drawn -> return true
+                BlitResult.Deferred -> return false
+                BlitResult.Unsupported -> Unit
+            }
+        }
+        if (!allowBake()) return false
         drawDirect(canvas, dst, kernel)
+        return true
     }
 
     fun release() {
@@ -85,15 +120,26 @@ internal class PageScaler(bitmap: Bitmap, private val toneMapping: ReaderGpuTone
         directShaders.fill(null)
     }
 
-    private fun blitCached(canvas: Canvas, dst: RectF, w: Int, h: Int, mode: Int): Boolean {
-        val ready = try {
-            ensureTiles(w, h, mode)
-        } catch (e: RuntimeException) {
-            cacheUnsupported = true
-            discardTiles()
-            false
+    private fun blitCached(
+        canvas: Canvas,
+        dst: RectF,
+        w: Int,
+        h: Int,
+        mode: Int,
+        allowBake: () -> Boolean,
+    ): BlitResult {
+        val gridMatches = tiles.isNotEmpty() && tiledW == w && tiledH == h && tiledMode == mode
+        if (!gridMatches) {
+            if (!allowBake()) return BlitResult.Deferred
+            val prepared = try {
+                prepareTiles(w, h, mode)
+            } catch (e: RuntimeException) {
+                cacheUnsupported = true
+                discardTiles()
+                false
+            }
+            if (!prepared) return BlitResult.Unsupported
         }
-        if (!ready) return false
         val sx = dst.width() / tiledW.coerceAtLeast(1)
         val sy = dst.height() / tiledH.coerceAtLeast(1)
         canvas.save()
@@ -102,7 +148,28 @@ internal class PageScaler(bitmap: Bitmap, private val toneMapping: ReaderGpuTone
             // layer scale then lands those pixels on the screen.
             canvas.translate(dst.left, dst.top)
             canvas.scale(sx, sy)
+            var needsBake = layerMayBeEvicted
+            if (!needsBake) {
+                for (tile in tiles) {
+                    if (isTileCulled(canvas, tile)) continue
+                    if (!tile.node.hasDisplayList()) {
+                        needsBake = true
+                        break
+                    }
+                }
+            }
+            if (needsBake) {
+                if (!allowBake()) return BlitResult.Deferred
+                for (tile in tiles) {
+                    if (isTileCulled(canvas, tile)) continue
+                    if (!tile.node.hasDisplayList()) {
+                        recordTile(tile, w, h, mode)
+                    }
+                }
+                layerMayBeEvicted = false
+            }
             for (tile in tiles) {
+                if (isTileCulled(canvas, tile)) continue
                 canvas.save()
                 try {
                     canvas.translate(tile.x.toFloat(), tile.y.toFloat())
@@ -111,56 +178,56 @@ internal class PageScaler(bitmap: Bitmap, private val toneMapping: ReaderGpuTone
                     canvas.restore()
                 }
             }
-            return true
+            return BlitResult.Drawn
         } catch (e: RuntimeException) {
             cacheUnsupported = true
             discardTiles()
-            return false
+            return BlitResult.Unsupported
         } finally {
             canvas.restore()
         }
     }
 
-    private fun ensureTiles(w: Int, h: Int, mode: Int): Boolean {
-        // A node nothing draws loses its display list. A webtoon page scrolled out of
-        // view stays composed, and drawing those empty nodes on return leaves it blank.
-        if (tiles.isNotEmpty() && tiledW == w && tiledH == h && tiledMode == mode &&
-            tiles.all { it.node.hasDisplayList() }
-        ) {
-            return true
-        }
+    private fun isTileCulled(canvas: Canvas, tile: Tile): Boolean {
+        val left = tile.x.toFloat()
+        val top = tile.y.toFloat()
+        return canvas.quickReject(left, top, left + tile.width, top + tile.height)
+    }
+
+    private fun prepareTiles(w: Int, h: Int, mode: Int): Boolean {
         discardTiles()
         val plan = scalerCacheTiles(w, h)
+        if (plan.isEmpty()) return false
         val built = ArrayList<Tile>(plan.size)
-        try {
-            for (tile in plan) {
-                // Uniforms are read when the layer rasterizes, so tiles cannot share a shader.
-                val shader = newShader(mode)
-                shader.setFloatUniform("dstOrigin", tile.x.toFloat(), tile.y.toFloat())
-                shader.setFloatUniform("dstSize", w.toFloat(), h.toFloat())
-                val tilePaint = Paint(paint).apply { this.shader = shader }
-                val node = RenderNode("reader-scaler")
-                node.setPosition(0, 0, tile.width, tile.height)
-                // Bake the kernel into a texture. Scroll then blits this node.
-                node.setUseCompositingLayer(true, null)
-                val recording = node.beginRecording()
-                try {
-                    recording.drawRect(0f, 0f, tile.width.toFloat(), tile.height.toFloat(), tilePaint)
-                } finally {
-                    node.endRecording()
-                }
-                retainedShaders += shader
-                built += Tile(node, tile.x, tile.y)
-            }
-        } catch (e: RuntimeException) {
-            for (tile in built) tile.node.discardDisplayList()
-            throw e
+        for (tile in plan) {
+            val node = RenderNode("reader-scaler")
+            node.setPosition(0, 0, tile.width, tile.height)
+            // Bake the kernel into a texture. Scroll then blits this node.
+            node.setUseCompositingLayer(true, null)
+            built += Tile(node, tile.x, tile.y, tile.width, tile.height)
         }
         tiles = built
         tiledW = w
         tiledH = h
         tiledMode = mode
-        return built.isNotEmpty()
+        layerMayBeEvicted = false
+        return true
+    }
+
+    private fun recordTile(tile: Tile, w: Int, h: Int, mode: Int) {
+        // Uniforms are read when the layer rasterizes, so tiles cannot share a shader.
+        val shader = newShader(mode)
+        shader.setFloatUniform("dstOrigin", tile.x.toFloat(), tile.y.toFloat())
+        shader.setFloatUniform("dstSize", w.toFloat(), h.toFloat())
+        val tilePaint = Paint(paint).apply { this.shader = shader }
+        val recording = tile.node.beginRecording()
+        try {
+            recording.drawRect(0f, 0f, tile.width.toFloat(), tile.height.toFloat(), tilePaint)
+        } finally {
+            tile.node.endRecording()
+        }
+        // Display list holds the native shader. Keep the Java peer alive until the tile is dropped.
+        tile.shader = shader
     }
 
     private fun drawDirect(canvas: Canvas, dst: RectF, mode: Int) {
@@ -194,14 +261,24 @@ internal class PageScaler(bitmap: Bitmap, private val toneMapping: ReaderGpuTone
     }
 
     private fun discardTiles() {
-        for (tile in tiles) tile.node.discardDisplayList()
+        for (tile in tiles) {
+            tile.node.discardDisplayList()
+            tile.shader = null
+        }
         tiles = emptyList()
-        retainedShaders.clear()
         tiledW = 0
         tiledH = 0
+        layerMayBeEvicted = false
     }
 
-    private class Tile(val node: RenderNode, val x: Int, val y: Int)
+    private class Tile(
+        val node: RenderNode,
+        val x: Int,
+        val y: Int,
+        val width: Int,
+        val height: Int,
+        var shader: RuntimeShader? = null,
+    )
 }
 
 /** GPU layer edge. Larger pages are split so a long webtoon strip still caches. */
@@ -303,10 +380,19 @@ internal fun scalerCacheTiles(width: Int, height: Int, maxEdge: Int = SCALER_CAC
 }
 
 @RequiresApi(33)
+private val BSPLINE_SOURCE = cubicSource(b = "1.0", c = "0.0")
+
+@RequiresApi(33)
+private val CATMULL_SOURCE = cubicSource(b = "0.0", c = "0.5")
+
+@RequiresApi(33)
+private val MITCHELL_SOURCE = cubicSource(b = "0.3333333", c = "0.3333333")
+
+@RequiresApi(33)
 private fun shaderSource(mode: Int): String = when (mode) {
-    3 -> cubicSource(b = "1.0", c = "0.0")
-    4 -> cubicSource(b = "0.0", c = "0.5")
-    5 -> cubicSource(b = "0.3333333", c = "0.3333333")
+    3 -> BSPLINE_SOURCE
+    4 -> CATMULL_SOURCE
+    5 -> MITCHELL_SOURCE
     else -> LANCZOS_SOURCE
 }
 
@@ -340,27 +426,40 @@ private fun cubicSource(b: String, c: String) = """
         return 0.0;
     }
 
-    half4 texel(int ix, int iy) {
-        float x = clamp(float(ix), 0.0, srcSize.x - 1.0) + 0.5;
-        float y = clamp(float(iy), 0.0, srcSize.y - 1.0) + 0.5;
-        return contents.eval(float2(x, y));
-    }
-
     half4 main(float2 frag) {
         float2 p = (frag + dstOrigin) * srcSize / dstSize - float2(0.5);
-        int baseX = int(floor(p.x)) - 1;
-        int baseY = int(floor(p.y)) - 1;
+        float maxX = srcSize.x - 1.0;
+        float maxY = srcSize.y - 1.0;
+        float baseX = floor(p.x) - 1.0;
+        float baseY = floor(p.y) - 1.0;
+        float sx0 = clamp(baseX, 0.0, maxX) + 0.5;
+        float sx1 = clamp(baseX + 1.0, 0.0, maxX) + 0.5;
+        float sx2 = clamp(baseX + 2.0, 0.0, maxX) + 0.5;
+        float sx3 = clamp(baseX + 3.0, 0.0, maxX) + 0.5;
+        float wx0 = mitchell(p.x - baseX);
+        float wx1 = mitchell(p.x - (baseX + 1.0));
+        float wx2 = mitchell(p.x - (baseX + 2.0));
+        float wx3 = mitchell(p.x - (baseX + 3.0));
+        float wxSum = wx0 + wx1 + wx2 + wx3;
         half4 acc = half4(0.0);
-        float wsum = 0.0;
+        float wySum = 0.0;
         for (int j = 0; j < 4; ++j) {
-            float wy = mitchell(p.y - float(baseY + j));
-            for (int i = 0; i < 4; ++i) {
-                float w = wy * mitchell(p.x - float(baseX + i));
-                acc += texel(baseX + i, baseY + j) * w;
-                wsum += w;
-            }
+            float y = baseY + float(j);
+            float wy = mitchell(p.y - y);
+            float sy = clamp(y, 0.0, maxY) + 0.5;
+            half4 row = contents.eval(float2(sx0, sy)) * wx0
+                + contents.eval(float2(sx1, sy)) * wx1
+                + contents.eval(float2(sx2, sy)) * wx2
+                + contents.eval(float2(sx3, sy)) * wx3;
+            acc += row * wy;
+            wySum += wy;
         }
-        if (wsum == 0.0) return texel(int(floor(p.x + 0.5)), int(floor(p.y + 0.5)));
+        float wsum = wxSum * wySum;
+        if (wsum == 0.0) {
+            float cx = clamp(floor(p.x + 0.5), 0.0, maxX) + 0.5;
+            float cy = clamp(floor(p.y + 0.5), 0.0, maxY) + 0.5;
+            return contents.eval(float2(cx, cy));
+        }
         return clamp(acc / wsum, half4(0.0), half4(1.0));
     }
 """.trimIndent()
@@ -380,27 +479,46 @@ private const val LANCZOS_SOURCE = """
         return sin(a) * sin(a / 3.0) * 3.0 / (a * a);
     }
 
-    half4 texel(int ix, int iy) {
-        float x = clamp(float(ix), 0.0, srcSize.x - 1.0) + 0.5;
-        float y = clamp(float(iy), 0.0, srcSize.y - 1.0) + 0.5;
-        return contents.eval(float2(x, y));
-    }
-
     half4 main(float2 frag) {
         float2 p = (frag + dstOrigin) * srcSize / dstSize - float2(0.5);
-        int baseX = int(floor(p.x)) - 2;
-        int baseY = int(floor(p.y)) - 2;
+        float maxX = srcSize.x - 1.0;
+        float maxY = srcSize.y - 1.0;
+        float baseX = floor(p.x) - 2.0;
+        float baseY = floor(p.y) - 2.0;
+        float sx0 = clamp(baseX, 0.0, maxX) + 0.5;
+        float sx1 = clamp(baseX + 1.0, 0.0, maxX) + 0.5;
+        float sx2 = clamp(baseX + 2.0, 0.0, maxX) + 0.5;
+        float sx3 = clamp(baseX + 3.0, 0.0, maxX) + 0.5;
+        float sx4 = clamp(baseX + 4.0, 0.0, maxX) + 0.5;
+        float sx5 = clamp(baseX + 5.0, 0.0, maxX) + 0.5;
+        float wx0 = lanczos3(p.x - baseX);
+        float wx1 = lanczos3(p.x - (baseX + 1.0));
+        float wx2 = lanczos3(p.x - (baseX + 2.0));
+        float wx3 = lanczos3(p.x - (baseX + 3.0));
+        float wx4 = lanczos3(p.x - (baseX + 4.0));
+        float wx5 = lanczos3(p.x - (baseX + 5.0));
+        float wxSum = wx0 + wx1 + wx2 + wx3 + wx4 + wx5;
         half4 acc = half4(0.0);
-        float wsum = 0.0;
+        float wySum = 0.0;
         for (int j = 0; j < 6; ++j) {
-            float wy = lanczos3(p.y - float(baseY + j));
-            for (int i = 0; i < 6; ++i) {
-                float w = wy * lanczos3(p.x - float(baseX + i));
-                acc += texel(baseX + i, baseY + j) * w;
-                wsum += w;
-            }
+            float y = baseY + float(j);
+            float wy = lanczos3(p.y - y);
+            float sy = clamp(y, 0.0, maxY) + 0.5;
+            half4 row = contents.eval(float2(sx0, sy)) * wx0
+                + contents.eval(float2(sx1, sy)) * wx1
+                + contents.eval(float2(sx2, sy)) * wx2
+                + contents.eval(float2(sx3, sy)) * wx3
+                + contents.eval(float2(sx4, sy)) * wx4
+                + contents.eval(float2(sx5, sy)) * wx5;
+            acc += row * wy;
+            wySum += wy;
         }
-        if (wsum == 0.0) return texel(int(floor(p.x + 0.5)), int(floor(p.y + 0.5)));
+        float wsum = wxSum * wySum;
+        if (wsum == 0.0) {
+            float cx = clamp(floor(p.x + 0.5), 0.0, maxX) + 0.5;
+            float cy = clamp(floor(p.y + 0.5), 0.0, maxY) + 0.5;
+            return contents.eval(float2(cx, cy));
+        }
         return clamp(acc / wsum, half4(0.0), half4(1.0));
     }
 """
