@@ -316,8 +316,9 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
     val photoGrid = virtual == BrowseVirtualKind.PhotoGrid
     val folderId = BrowseFolderId.webDav(sourceId, relativeDirForMode)
     val contentMode = rememberEffectiveBrowseContentMode(folderId)
-    val useGrid = browseUseGrid(listMode, contentMode, virtual)
-    val scrollLayoutKey = browseScrollLayoutKey(listMode, contentMode, virtual)
+    val squareGridLockedOff = rememberSquareGridLockedOff(folderId)
+    val useGrid = browseUseGrid(listMode, contentMode, virtual, squareGridLockedOff)
+    val scrollLayoutKey = browseScrollLayoutKey(listMode, contentMode, virtual, squareGridLockedOff)
     val favoriteKeys by Settings.favoriteBrowseSources.collectAsState()
     val addedToFavourites = stringResource(id = R.string.add_to_favourites)
     val removedFromFavourites = stringResource(id = R.string.remove_from_favourites)

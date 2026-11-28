@@ -42,8 +42,10 @@ import com.hippo.ehviewer.library.BrowseFolderId
 import com.hippo.ehviewer.library.BrowseModePersist
 import com.hippo.ehviewer.library.BrowseSquareGridPersist
 import com.hippo.ehviewer.library.BrowseVirtualGalleryPersist
+import com.hippo.ehviewer.library.BrowseVirtualKind
 import com.hippo.ehviewer.library.HistoryHideMode
 import com.hippo.ehviewer.library.HistoryHidePersist
+import com.hippo.ehviewer.library.browseUseGrid
 import com.hippo.ehviewer.library.naturalCompare
 import com.hippo.ehviewer.ui.main.SquareGridMode
 
@@ -215,6 +217,18 @@ fun rememberEffectiveSquareGridMode(
     }
 }
 
+@Composable
+fun rememberSquareGridLockedOff(
+    folder: BrowseFolderId?,
+    skipAncestorKeys: Set<String> = emptySet(),
+): Boolean {
+    val revision by BrowseSquareGridPersist.revision.collectAsState()
+    val saved by Settings.persistSquareGrid.collectAsState()
+    return remember(folder, skipAncestorKeys, revision, saved) {
+        BrowseSquareGridPersist.isLockedOff(folder, skipAncestorKeys)
+    }
+}
+
 /**
  * View-mode control for folder browsers: content filter, list/grid layout,
  * Name/Date UI sort (separate from Library), and display toggles.
@@ -257,10 +271,17 @@ fun BrowseViewModeMenu(
         folder?.let { BrowseModePersist.resolve(it, skipAncestorKeys) }
     }
     val contentMode = match?.effective ?: BrowseContentMode.fromPref(contentModePref)
+    val squareGridMode = rememberEffectiveSquareGridMode(virtualGalleriesFolder, skipAncestorKeys)
+    val squareGridRevision by BrowseSquareGridPersist.revision.collectAsState()
+    val squareGridSaved by Settings.persistSquareGrid.collectAsState()
+    val squareGridMatch = remember(virtualGalleriesFolder, skipAncestorKeys, squareGridRevision, squareGridSaved, squareGridMode) {
+        virtualGalleriesFolder?.let { BrowseSquareGridPersist.resolve(it, skipAncestorKeys) }
+    }
+    val squareGridLockedOff = squareGridMatch?.effective == SquareGridMode.Off
     val useGrid = if (onEphemeralLayout != null) {
         ephemeralUseList != true
     } else {
-        !contentMode.forceList && listMode == 1
+        browseUseGrid(listMode, contentMode, BrowseVirtualKind.None, squareGridLockedOff)
     }
     var browseSortModePref by Settings.browseSortMode.asMutableState()
     var browseSortAscending by Settings.browseSortAscending.asMutableState()
@@ -277,12 +298,6 @@ fun BrowseViewModeMenu(
     }
     var favoritesOnTop by Settings.browseFavoritesOnTop.asMutableState()
     var photoGridMode by Settings.photoGridMode.asMutableState()
-    val squareGridMode = rememberEffectiveSquareGridMode(virtualGalleriesFolder, skipAncestorKeys)
-    val squareGridRevision by BrowseSquareGridPersist.revision.collectAsState()
-    val squareGridSaved by Settings.persistSquareGrid.collectAsState()
-    val squareGridMatch = remember(virtualGalleriesFolder, skipAncestorKeys, squareGridRevision, squareGridSaved, squareGridMode) {
-        virtualGalleriesFolder?.let { BrowseSquareGridPersist.resolve(it, skipAncestorKeys) }
-    }
     var browseRecentOpen by Settings.browseRecentOpen.asMutableState()
     var browseRecentExpanded by Settings.browseRecentExpanded.asMutableState()
     val historyHideFolders by Settings.historyHideFolders.collectAsState()

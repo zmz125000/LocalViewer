@@ -99,21 +99,28 @@ fun localBrowseVirtual(
     else -> BrowseVirtualKind.None
 }
 
-/** Effective list/grid: photo-grid wins, then Document force-list, else [listMode]. */
+/**
+ * Effective list/grid: photo-grid wins, then Document force-list (unless square-grid Off lock
+ * switches Document mode to B-paper grid), else [listMode].
+ */
 fun browseUseGrid(
     listMode: Int,
     contentMode: BrowseContentMode,
     virtual: BrowseVirtualKind,
-): Boolean = virtual.forceGrid || (!contentMode.forceList && listMode == 1)
+    squareGridLocked: Boolean = false,
+): Boolean = virtual.forceGrid ||
+    (contentMode.forceList && squareGridLocked) ||
+    (!contentMode.forceList && listMode == 1)
 
 fun browseScrollLayoutKey(
     listMode: Int,
     contentMode: BrowseContentMode,
     virtual: BrowseVirtualKind,
+    squareGridLocked: Boolean = false,
 ): Int {
     val layout = when {
         virtual.forceGrid -> 1
-        contentMode.forceList -> 0
+        contentMode.forceList -> if (squareGridLocked) 1 else 0
         else -> listMode
     }
     return layout * 10 + contentMode.prefValue + virtual.scrollKeyBoost

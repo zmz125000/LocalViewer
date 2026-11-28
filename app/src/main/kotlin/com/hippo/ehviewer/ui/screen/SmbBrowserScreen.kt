@@ -342,8 +342,12 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
         folder = folderId,
         skipAncestorKeys = smbModeSkipAncestors,
     )
-    val useGrid = browseUseGrid(listMode, contentMode, virtual)
-    val scrollLayoutKey = browseScrollLayoutKey(listMode, contentMode, virtual)
+    val squareGridLockedOff = rememberSquareGridLockedOff(
+        folder = folderId,
+        skipAncestorKeys = smbModeSkipAncestors,
+    )
+    val useGrid = browseUseGrid(listMode, contentMode, virtual, squareGridLockedOff)
+    val scrollLayoutKey = browseScrollLayoutKey(listMode, contentMode, virtual, squareGridLockedOff)
     val favoriteKeys by Settings.favoriteBrowseSources.collectAsState()
     val addedToFavourites = stringResource(id = R.string.add_to_favourites)
     val removedFromFavourites = stringResource(id = R.string.remove_from_favourites)

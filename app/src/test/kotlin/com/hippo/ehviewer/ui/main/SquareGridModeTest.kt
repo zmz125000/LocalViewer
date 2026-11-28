@@ -4,8 +4,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ShapeDefaults
 import androidx.compose.ui.unit.dp
 import com.ehviewer.core.model.BaseGalleryInfo
+import com.hippo.ehviewer.library.BrowseContentMode
 import com.hippo.ehviewer.library.BrowseFolderId
 import com.hippo.ehviewer.library.BrowseSquareGridPersist
+import com.hippo.ehviewer.library.BrowseVirtualKind
 import com.hippo.ehviewer.library.LOCAL_ARCHIVE_TOKEN
 import com.hippo.ehviewer.library.LOCAL_BROWSE_TOKEN
 import com.hippo.ehviewer.library.LOCAL_FILE_TOKEN
@@ -20,6 +22,8 @@ import com.hippo.ehviewer.library.WEBDAV_ARCHIVE_TOKEN
 import com.hippo.ehviewer.library.WEBDAV_BROWSE_TOKEN
 import com.hippo.ehviewer.library.WEBDAV_FILE_TOKEN
 import com.hippo.ehviewer.library.WEBDAV_FOLDER_TOKEN
+import com.hippo.ehviewer.library.browseScrollLayoutKey
+import com.hippo.ehviewer.library.browseUseGrid
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -140,5 +144,33 @@ class SquareGridModeTest {
                 skipAncestorKeys = setOf(smbRoot.key),
             ),
         )
+    }
+
+    @Test
+    fun galleryGridCaptionUsesThreeLinesOnlyInIsoBMode() {
+        assertEquals(3, gridCaptionMaxLines(isGallery = true, aspectRatio = SquareGridMode.ISO_B_ASPECT_RATIO))
+        assertEquals(2, gridCaptionMaxLines(isGallery = true, aspectRatio = SquareGridMode.SQUARE_ASPECT_RATIO))
+        assertEquals(2, gridCaptionMaxLines(isGallery = false, aspectRatio = SquareGridMode.ISO_B_ASPECT_RATIO))
+        assertEquals(2, gridCaptionMaxLines(isGallery = false, aspectRatio = SquareGridMode.SQUARE_ASPECT_RATIO))
+    }
+
+    @Test
+    fun documentModeSwitchesToGridWhenSquareGridLockedOff() {
+        // Default Document mode forces list even when listMode == 1 (grid).
+        assertFalse(browseUseGrid(listMode = 1, BrowseContentMode.Document, BrowseVirtualKind.None, squareGridLocked = false))
+        assertFalse(browseUseGrid(listMode = 0, BrowseContentMode.Document, BrowseVirtualKind.None, squareGridLocked = false))
+
+        // With square-grid Off lock active, Document mode switches to B-paper grid regardless of listMode.
+        assertTrue(browseUseGrid(listMode = 0, BrowseContentMode.Document, BrowseVirtualKind.None, squareGridLocked = true))
+        assertTrue(browseUseGrid(listMode = 1, BrowseContentMode.Document, BrowseVirtualKind.None, squareGridLocked = true))
+
+        // Scroll layout key distinguishes Document list vs Document locked B-paper grid.
+        val listKey = browseScrollLayoutKey(listMode = 0, BrowseContentMode.Document, BrowseVirtualKind.None, squareGridLocked = false)
+        val gridKey = browseScrollLayoutKey(listMode = 0, BrowseContentMode.Document, BrowseVirtualKind.None, squareGridLocked = true)
+        assertTrue(listKey != gridKey)
+
+        // Non-Document modes still follow listMode.
+        assertFalse(browseUseGrid(listMode = 0, BrowseContentMode.Media, BrowseVirtualKind.None, squareGridLocked = true))
+        assertTrue(browseUseGrid(listMode = 1, BrowseContentMode.Media, BrowseVirtualKind.None, squareGridLocked = true))
     }
 }

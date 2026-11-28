@@ -58,6 +58,8 @@ object BrowseSquareGridPersist {
     fun effective(folder: BrowseFolderId?, skipAncestorKeys: Set<String> = emptySet()): SquareGridMode = folder?.let { resolve(it, skipAncestorKeys)?.effective }
         ?: SquareGridMode.fromPref(Settings.squareGrid.value)
 
+    fun isLockedOff(folder: BrowseFolderId?, skipAncestorKeys: Set<String> = emptySet()): Boolean = folder?.let { resolve(it, skipAncestorKeys)?.effective == SquareGridMode.Off } == true
+
     fun tap(folder: BrowseFolderId?, skipAncestorKeys: Set<String> = emptySet()) {
         val match = folder?.let { resolve(it, skipAncestorKeys) }
         if (match == null) {

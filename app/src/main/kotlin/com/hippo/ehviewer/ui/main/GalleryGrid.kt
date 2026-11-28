@@ -51,9 +51,11 @@ internal fun captionBelowGridShape(aspectRatio: Float = SquareGridMode.SQUARE_AS
     RoundedCornerShape(20.dp)
 }
 
+internal fun gridCaptionMaxLines(isGallery: Boolean, aspectRatio: Float): Int = if (isGallery && aspectRatio < SquareGridMode.SQUARE_ASPECT_RATIO) 3 else 2
+
 @Composable
-internal fun captionBelowNameHeight(): Dp = with(LocalDensity.current) {
-    (MaterialTheme.typography.labelMedium.lineHeight * 2).toDp()
+internal fun captionBelowNameHeight(maxLines: Int = 2): Dp = with(LocalDensity.current) {
+    (MaterialTheme.typography.labelMedium.lineHeight * maxLines).toDp()
 }
 
 @Composable
@@ -298,7 +300,13 @@ object GalleryGridDefaults {
     fun spacedBy(): Arrangement.HorizontalOrVertical = Arrangement.spacedBy(gutter())
 
     @Composable
-    fun nameHeight(): Dp = dimensionResource(R.dimen.gallery_grid_name_height)
+    fun nameHeight(maxLines: Int = 2): Dp = if (maxLines <= 2) {
+        dimensionResource(R.dimen.gallery_grid_name_height)
+    } else {
+        dimensionResource(R.dimen.gallery_grid_name_height) + with(LocalDensity.current) {
+            (MaterialTheme.typography.labelMedium.lineHeight * (maxLines - 2)).toDp()
+        }
+    }
 
     @Composable
     fun namePaddingH(): Dp = dimensionResource(R.dimen.gallery_grid_name_padding_h)
